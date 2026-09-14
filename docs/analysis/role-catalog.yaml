@@ -1,0 +1,1154 @@
+# Origin: `analysis/role-catalog.yaml` in `futurebuildai/hh_pro_dibbits` at commit 829d387baec93556ffa0e9242f4091e9be9544ec (read only source).
+# Copied into `hh/docs/analysis/` by Session HH-2 lane HH-2.5; content below this header is unchanged.
+
+# Role and micro-app catalog for the unified Hardscape House app (HH-1, lane L4).
+#
+# Derived read-only from two repositories:
+#   hardscapeos_dibbits  the dealer ERP (Go modular monolith + Lit 3, six Vite entries)
+#   hh_pro_dibbits       the contractor procurement portal (React over a framework-free core)
+#
+# It replaces the three-frontend sketch in FUTURESHADE-CONTEXT.md section 4.3 (yard, counter, pro)
+# with the roles and surfaces that actually exist in the two codebases. Structure follows section 4.5:
+# micro-app per role, shell per audience, offline declared per scope, a kit per app.
+#
+# House rules observed: no em or en dashes, no durations or calendar words, every claim cites a path.
+#
+# Revision after the PR review: the single internal shell (hh-internal) is now two shells split by work
+# context per DECISIONS.md D2 (hh-work, hh-field). Coverage check re-run after the split
+# (scratchpad coverage-check over dashboard-nav.ts, the six ERP entries plus the harness document, the
+# Open questions 1 to 7, 9 and 12 are resolved in DECISIONS.md (D1 to D6); 8 and 11 are pending there with
+# the checkpoint that decides each named.
+# ERP portal routes and the HH Pro routes): registry pairs=28 entries=7 portal routes=14 hhpro routes=10 micro_apps=15 shells=5 launcher_sections=0 coverage: complete
+#
+# Revision on analysis/hh-demo-layer (PR review fixes F1 and F2): the hh-public brand is hh-pro per
+# DECISIONS.md D2 (a contractor's tokens render as an override inside that frame per D12), and the two
+# new public bundles are declared as micro-apps, demo-entry (HH-7.7) and hh-site (HH-10.6), so HH-2.2's
+# manifest generation has a catalog source for every frontend. Coverage check re-run with the session
+# checker over the same inputs: registry pairs=28 entries=7 portal routes=14 hhpro routes=10
+# micro_apps=16 shells=5 launcher_sections=1 coverage: complete. The previous line's micro_apps=15 and
+# launcher_sections=0 were stale: operator-console moved out of micro_apps into launcher_sections under
+# DECISIONS.md D4 without the counts being re-run, and the checker's count of 14 before this revision
+# is the true pre-revision value.
+
+catalog: 1
+
+audiences:
+  - id: internal
+    shell: [hh-work, hh-field]
+    shell_kind: internal-installable
+    brand: fb-tokens
+    notes: >-
+      Dealer staff, in two installable shells split by work context per DECISIONS.md D2: hh-work for
+      office roles on desktop and tablet, hh-field for yard and driving work on a phone with camera and
+      GPS permissions and offline full mode. House Messages loads in both. Today this is one Vite entry (index.html) whose shell owns a frozen hash registry,
+      a per-screen gate table and a per-role landing, plus two staff surfaces already split out of it
+      for byte reasons (drive.html, messages.html). Context 4.5 makes internal utility-first on the
+      FutureBuild tokens; the shipped palette is "HH Yard Dark" in tokens.css, which is an open question.
+    sources:
+      - hardscapeos_dibbits/app/src/app-shell.ts
+      - hardscapeos_dibbits/app/src/dashboard-nav.ts
+      - hardscapeos_dibbits/app/src/nav-access.ts
+      - hardscapeos_dibbits/app/vite.config.ts
+      - hardscapeos_dibbits/app/src/styles/tokens.css
+      - hardscapeos_dibbits/CLAUDE.md
+
+  - id: external
+    shell: hh-pro
+    shell_kind: standalone-public
+    brand: hh-pro
+    notes: >-
+      Contractor tenants. Two implementations exist of the same audience: the ERP's own Lit portal
+      (portal.html, capability-gated hash routes) and the React HH Pro product (procurement board,
+      order workspace, AR and Pay, assistant). Both are logged-in-only; neither has a cart.
+    sources:
+      - hardscapeos_dibbits/app/portal.html
+      - hardscapeos_dibbits/app/src/portal/portal-shell.ts
+      - hh_pro_dibbits/src/ui/App.tsx
+      - hh_pro_dibbits/CLAUDE.md
+
+  - id: external
+    shell: hh-public
+    shell_kind: standalone-public
+    brand: hh-pro
+    notes: >-
+      Unauthenticated, token-credentialed pages: a homeowner accepting a proposal, somebody holding a
+      printed will-call code, a member of the public reporting a failed installation. Every one of
+      these uses bare fetch rather than the authenticated api() helper, by explicit rule, so no staff
+      bearer token can reach a pre-auth surface. The brand is settled: hh-pro, per DECISIONS.md D2
+      (hh-public stays a web shell with brand hh-pro). A contractor-branded proposal renders the
+      contractor's own tokens as an override inside that frame per DECISIONS.md D12, never the
+      dealer's tokens on a contractor's document.
+    sources:
+      - hardscapeos_dibbits/app/src/quote-public.ts
+      - hardscapeos_dibbits/app/src/dispatch-willcall-public.ts
+      - hardscapeos_dibbits/app/src/warranty-intake-public.ts
+      - hh_pro_dibbits/src/ui/pages/CustomerQuotePage.tsx
+      - hh_pro_dibbits/src/ui/styles/theme.css
+
+  - id: operator
+    shell: fb-launcher
+    shell_kind: launcher
+    brand: fb-tokens
+    notes: >-
+      FutureBuild staff with cross-org access. Two shipped surfaces already belong to this person
+      rather than to the dealer: the platform key roster, whose read is staff-wide and whose write the
+      server marks can_edit for the platform operator, and the pre-auth demo chooser that mints a
+      session per role and is inert on every box but the demo droplet.
+    sources:
+      - hardscapeos_dibbits/app/src/nav-access.ts
+      - hardscapeos_dibbits/app/src/_demo.ts
+      - hardscapeos_dibbits/app/demo.html
+      - hh_pro_dibbits/server/admin-api.ts
+
+roles:
+  # ── Internal, tier 1 ────────────────────────────────────────────────────────────────────────
+  - id: general_manager
+    label: General Manager
+    audience: internal
+    origin: hardscapeos
+    origin_codes: [GENERAL_MANAGER]
+    tier: 1
+    scope: global
+    devices: [desktop, tablet, phone]
+    environment: office
+    top_jobs:
+      - Decide the override requests only leadership may decide (margin below floor, journal over threshold, freight above quote).
+      - Read the business across both branches from the reporting console and the commission register.
+      - Approve a credit or COD exception that a branch cannot clear on its own.
+    micro_apps: [manager-home, money-desk, dealer-admin, house-messages]
+    sources:
+      - hardscapeos_dibbits/backend/internal/identity/rbac.go
+      - hardscapeos_dibbits/backend/migrations/0015_rbac_roles.sql
+      - hardscapeos_dibbits/backend/migrations/0140_dashboard_layouts.sql
+      - hardscapeos_dibbits/app/src/nav-access.ts
+
+  - id: financial_controller
+    label: Financial Controller
+    audience: internal
+    origin: hardscapeos
+    origin_codes: [FINANCIAL_CONTROLLER]
+    tier: 1
+    scope: global
+    devices: [desktop]
+    environment: office
+    top_jobs:
+      - Work the general ledger and the posting queue, and close the period from the statements pack.
+      - Reconcile the bank import through match and rules.
+      - Decide rail approvals and credit or COD overrides that carry money.
+    micro_apps: [money-desk, manager-home, dealer-admin]
+    sources:
+      - hardscapeos_dibbits/backend/internal/identity/rbac.go
+      - hardscapeos_dibbits/app/src/ar-console.ts
+      - hardscapeos_dibbits/app/src/app-shell.ts
+
+  - id: hr
+    label: HR
+    audience: internal
+    origin: hardscapeos
+    origin_codes: [HR]
+    tier: 1
+    scope: global
+    devices: [desktop]
+    environment: office
+    top_jobs:
+      - Maintain staff records, role assignment and branch grants.
+      - Read the audit trail for a person or an action.
+      - Answer a staff question from the messaging hub.
+    micro_apps: [dealer-admin, house-messages]
+    sources:
+      - hardscapeos_dibbits/backend/internal/identity/rbac.go
+      - hardscapeos_dibbits/backend/migrations/0140_dashboard_layouts.sql
+      - hardscapeos_dibbits/app/src/nav-access.ts
+
+  # ── Internal, tier 2 ────────────────────────────────────────────────────────────────────────
+  - id: branch_manager
+    label: Branch Manager
+    audience: internal
+    origin: hardscapeos
+    origin_codes: [BRANCH_MANAGER]
+    tier: 2
+    scope: branch
+    devices: [desktop, tablet, phone]
+    environment: office
+    top_jobs:
+      - Open a branch Home that leads with what needs a person, then the branch numbers.
+      - Commit a delivery date and stand behind it when dispatch escalates.
+      - Sell on credit at the counter when a clerk is blocked, and clear the branch queues.
+    micro_apps: [manager-home, dispatch-board, counter-till, buying-and-stock, house-messages]
+    sources:
+      - hardscapeos_dibbits/backend/internal/identity/rbac.go
+      - hardscapeos_dibbits/.claude/skills/hardscape-dashboard-widgets/SKILL.md
+      - hardscapeos_dibbits/app/src/dispatch-surface.ts
+
+  - id: sales_manager
+    label: Sales Manager
+    audience: internal
+    origin: hardscapeos
+    origin_codes: [SALES_MANAGER]
+    tier: 2
+    scope: branch
+    devices: [desktop, tablet]
+    environment: office
+    top_jobs:
+      - Govern pricing rules, customer overrides and quantity breaks.
+      - Read the commission register and the sales reports.
+      - Take over a quote or an order the counter cannot commit.
+    micro_apps: [manager-home, quote-desk, counter-till, dealer-admin]
+    sources:
+      - hardscapeos_dibbits/backend/internal/identity/rbac.go
+      - hardscapeos_dibbits/app/src/nav-access.ts
+      - hardscapeos_dibbits/app/src/dashboard-nav.ts
+
+  - id: yard_manager
+    label: Yard Manager
+    audience: internal
+    origin: hardscapeos
+    origin_codes: [YARD_MANAGER]
+    tier: 2
+    scope: branch
+    devices: [tablet, desktop, phone]
+    environment: yard
+    top_jobs:
+      - Run the pick queue, resolve shortages and stage what is going out.
+      - Commit a delivery date on a load being built.
+      - Count stock and settle the on-hand ledger against what is on the ground.
+    micro_apps: [yard-pick, dispatch-board, buying-and-stock, manager-home, house-messages]
+    sources:
+      - hardscapeos_dibbits/backend/internal/identity/rbac.go
+      - hardscapeos_dibbits/app/src/yard-console.ts
+      - hardscapeos_dibbits/backend/migrations/0204_yard_landing_retires_its_takeover.sql
+
+  - id: logistics_manager
+    label: Logistics Manager
+    audience: internal
+    origin: hardscapeos
+    origin_codes: [LOGISTICS_MANAGER]
+    tier: 2
+    scope: branch
+    devices: [desktop, tablet, phone]
+    environment: office
+    top_jobs:
+      - Build the loads on the load board, which is the screen this person opens first.
+      - Commit and re-time delivery dates, including the freight raise that needs an approval.
+      - Keep the truck and driver registry and mint will-call codes.
+    micro_apps: [dispatch-board, manager-home, house-messages]
+    sources:
+      - hardscapeos_dibbits/app/src/dispatch-surface.ts
+      - hardscapeos_dibbits/backend/internal/identity/rbac.go
+      - hardscapeos_dibbits/backend/migrations/0204_yard_landing_retires_its_takeover.sql
+
+  - id: procurement_manager
+    label: Procurement Manager
+    audience: internal
+    origin: hardscapeos
+    origin_codes: [PROCUREMENT_MANAGER]
+    tier: 2
+    scope: branch
+    devices: [desktop]
+    environment: office
+    top_jobs:
+      - Draft and place purchase orders and read where each one got to.
+      - Close the gaps the yard reports between what was sold and what is on hand.
+      - Watch landed cost and the weighted average behind it.
+    micro_apps: [buying-and-stock, manager-home, house-messages]
+    sources:
+      - hardscapeos_dibbits/app/src/purchasing-console.ts
+      - hardscapeos_dibbits/app/src/inventory-home.ts
+      - hardscapeos_dibbits/backend/internal/identity/rbac.go
+
+  - id: payables_receivables
+    label: Payables and Receivables
+    audience: internal
+    origin: hardscapeos
+    origin_codes: [PAYABLES_RECEIVABLES]
+    tier: 2
+    scope: global
+    devices: [desktop]
+    environment: office
+    top_jobs:
+      - Enter the vendor bill, read the three-way match and post it or name the variance.
+      - "Work the receivables console: aging, credit holds, statements, the bounced-payment queue."
+      - Run a collections campaign against what is past due.
+    micro_apps: [money-desk, buying-and-stock, house-messages]
+    sources:
+      - hardscapeos_dibbits/app/src/purchasing-console.ts
+      - hardscapeos_dibbits/app/src/ar-console.ts
+      - hardscapeos_dibbits/backend/internal/identity/rbac.go
+
+  # ── Internal, tier 3 ────────────────────────────────────────────────────────────────────────
+  - id: inside_sales
+    label: Inside Sales
+    audience: internal
+    origin: hardscapeos
+    origin_codes: [INSIDE_SALES]
+    tier: 3
+    scope: branch
+    devices: [desktop, tablet, kiosk]
+    environment: counter
+    top_jobs:
+      - "Ring a sale at the till: scan or search, resolve the customer, take the tender, hand over the receipt."
+      - Find an invoice, print it, email it, take a cheque against it.
+      - Build a quote off the catalogue and the material calculator while the customer is standing there.
+    micro_apps: [counter-till, quote-desk, house-messages]
+    sources:
+      - hardscapeos_dibbits/app/src/pos-terminal.ts
+      - hardscapeos_dibbits/app/src/nav-access.ts
+      - hardscapeos_dibbits/.claude/skills/hardscape-ui-design/SKILL.md
+
+  - id: outside_sales
+    label: Outside Sales
+    audience: internal
+    origin: hardscapeos
+    origin_codes: [OUTSIDE_SALES]
+    tier: 3
+    scope: branch
+    devices: [tablet, phone, desktop]
+    environment: site
+    top_jobs:
+      - Size a job on the customer's driveway with the material calculator and turn it into a quote.
+      - Convert an accepted quote into an order against the customer's credit.
+      - Read the customer's open orders and deliveries before walking in.
+    micro_apps: [quote-desk, counter-till, house-messages]
+    sources:
+      - hardscapeos_dibbits/backend/internal/identity/rbac.go
+      - hardscapeos_dibbits/app/src/dashboard-nav.ts
+      - hardscapeos_dibbits/backend/migrations/0140_dashboard_layouts.sql
+
+  - id: yard_team
+    label: Yard Team
+    audience: internal
+    origin: hardscapeos
+    origin_codes: [YARD_TEAM]
+    tier: 3
+    scope: branch
+    devices: [tablet, phone, kiosk]
+    environment: yard
+    top_jobs:
+      - Take the next pick ticket, pick it, weigh it and stage it.
+      - Report a shortage against a line instead of silently picking short.
+      - Receive a truck against the outstanding purchase order lines.
+    micro_apps: [yard-pick, house-messages]
+    sources:
+      - hardscapeos_dibbits/app/src/yard-console.ts
+      - hardscapeos_dibbits/app/src/purchasing-console.ts
+      - hardscapeos_dibbits/backend/migrations/0141_dashboard_profile_home.sql
+
+  - id: driver
+    label: Driver
+    audience: internal
+    origin: hardscapeos
+    origin_codes: [DRIVERS, dispatch_drivers]
+    tier: 3
+    scope: branch
+    devices: [phone]
+    environment: truck
+    top_jobs:
+      - Read the run in stop order and move a stop through its lifecycle.
+      - Capture proof of delivery at the stop, or record a could-not-deliver with its handback sentence.
+      - Close out the run from the end-of-run summary.
+    micro_apps: [drive-run, house-messages]
+    sources:
+      - hardscapeos_dibbits/app/src/drive.ts
+      - hardscapeos_dibbits/app/drive.html
+      - hardscapeos_dibbits/app/src/_driver-redirect.ts
+      - hardscapeos_dibbits/backend/internal/identity/rbac.go
+
+  # ── Internal, above the business roles ──────────────────────────────────────────────────────
+  - id: super_admin
+    label: Platform Administrator
+    audience: internal
+    origin: hardscapeos
+    origin_codes: [SUPER_ADMIN]
+    tier: 1
+    scope: global
+    devices: [desktop]
+    environment: office
+    top_jobs:
+      - Mint and assign staff, including the only role permitted to mint another platform admin.
+      - Read the audit log, which is the one screen gated to this tier and scope alone.
+      - Configure the assistant spend limits and the platform key roster.
+    micro_apps: [dealer-admin, manager-home, operator-console]
+    sources:
+      - hardscapeos_dibbits/backend/internal/identity/rbac.go
+      - hardscapeos_dibbits/backend/migrations/0043
+      - hardscapeos_dibbits/app/src/nav-access.ts
+
+  - id: dealer_admin
+    label: Dealer Administrator
+    audience: internal
+    origin: hhpro
+    origin_codes: [HHPRO_ADMIN_TOKEN]
+    tier: 1
+    scope: global
+    devices: [desktop]
+    environment: office
+    top_jobs:
+      - Set the dealer branding tokens, terms and company name that every contractor-facing sentence reads.
+      - Turn contractor feature flags on and off for this deployment.
+      - Configure the assistant credential and the per-account spend cap, and read usage.
+    micro_apps: [dealer-admin, operator-console]
+    sources:
+      - hh_pro_dibbits/src/admin/AdminApp.tsx
+      - hh_pro_dibbits/server/admin-api.ts
+      - hh_pro_dibbits/src/core/config/runtime.ts
+      - hh_pro_dibbits/CLAUDE.md
+
+  # ── External, contractor tenants ────────────────────────────────────────────────────────────
+  - id: contractor_owner
+    label: Contractor Owner
+    audience: external
+    origin: both
+    origin_codes: [owner, account_admin]
+    tier: external
+    scope: tenant
+    devices: [phone, desktop]
+    environment: site
+    top_jobs:
+      - Move a card across Plan, Quote, Order and Invoice and see one unambiguous stage per order.
+      - Build and send a contractor-branded proposal to the homeowner and read back the signed acceptance.
+      - Add and remove crew, change their roles, and never lose the last owner.
+    micro_apps: [pro-procurement, pro-pay, pro-field]
+    sources:
+      - hh_pro_dibbits/src/core/domain/team.ts
+      - hh_pro_dibbits/src/ui/App.tsx
+      - hardscapeos_dibbits/app/src/portal/portal-api.ts
+      - hardscapeos_dibbits/app/src/portal/portal-shell.ts
+
+  - id: contractor_buyer
+    label: Contractor Project Manager
+    audience: external
+    origin: both
+    origin_codes: [pm, buyer]
+    tier: external
+    scope: tenant
+    devices: [phone, desktop]
+    environment: site
+    top_jobs:
+      - Build the scope of an order from the catalogue at the account price, not list.
+      - Push an order to the supplier quote desk when a line has no price behind it.
+      - Track the order to the truck and reschedule before it is out for delivery.
+    micro_apps: [pro-procurement, pro-field]
+    sources:
+      - hh_pro_dibbits/src/core/domain/team.ts
+      - hh_pro_dibbits/src/core/selectors/pricing.ts
+      - hh_pro_dibbits/src/ui/pages/OrderPage.tsx
+      - hardscapeos_dibbits/app/src/portal/portal-api.ts
+
+  - id: contractor_ap
+    label: Contractor Accounts Payable
+    audience: external
+    origin: hhpro
+    origin_codes: [ap]
+    tier: external
+    scope: tenant
+    devices: [desktop, phone]
+    environment: office
+    top_jobs:
+      - Select open invoices and pay them, seeing the card fee before choosing the method.
+      - Read what is past due, by the one definition of late the whole product shares.
+      - Add and remove stored payment methods.
+    micro_apps: [pro-pay]
+    sources:
+      - hh_pro_dibbits/src/core/domain/team.ts
+      - hh_pro_dibbits/src/core/actions/payments.ts
+      - hh_pro_dibbits/src/core/selectors/ar.ts
+      - hardscapeos_dibbits/app/src/portal/portal-payment-methods.ts
+
+  - id: contractor_field
+    label: Contractor Field Crew
+    audience: external
+    origin: both
+    origin_codes: [field, field_crew]
+    tier: external
+    scope: tenant
+    devices: [phone]
+    environment: site
+    top_jobs:
+      - Read where the order is in the step flow, including the will-call substitution.
+      - Confirm a will-call pickup, which is the one thing this role may change.
+      - Edit the delivery instructions the driver will read.
+    micro_apps: [pro-field]
+    sources:
+      - hh_pro_dibbits/src/core/domain/team.ts
+      - hh_pro_dibbits/src/core/selectors/tracking.ts
+      - hardscapeos_dibbits/app/src/portal/portal-api.ts
+      - hardscapeos_dibbits/app/src/portal/portal-order-detail.ts
+
+  # ── External, unauthenticated ───────────────────────────────────────────────────────────────
+  - id: homeowner
+    label: Homeowner or Walk-up Public
+    audience: external
+    origin: both
+    origin_codes: [token-credentialed, no role code]
+    tier: external
+    scope: tenant
+    devices: [phone, desktop]
+    environment: home
+    top_jobs:
+      - Open a proposal from a one-time link, read what it covers, and accept it with a signature or a typed attestation.
+      - Confirm a will-call collection against a printed code, with a typed name and an explicit affirmative.
+      - Report a failed installation with photos and get a reference number back, with no login offered.
+    micro_apps: [public-desk]
+    sources:
+      - hh_pro_dibbits/src/ui/pages/CustomerQuotePage.tsx
+      - hh_pro_dibbits/src/core/domain/customer-quote.ts
+      - hardscapeos_dibbits/app/src/quote-public.ts
+      - hardscapeos_dibbits/app/src/dispatch-willcall-public.ts
+      - hardscapeos_dibbits/app/src/warranty-intake-public.ts
+
+  # ── Operator ────────────────────────────────────────────────────────────────────────────────
+  - id: fb_operator
+    label: FutureBuild Operator
+    audience: internal
+    origin: new
+    origin_codes: [operator]
+    tier: 1
+    scope: global
+    devices: [desktop]
+    environment: office
+    top_jobs:
+      - Provision an org and intersect the app manifest with that org's capability manifest.
+      - Hold the platform floor a dealer's own override is overriding, and write it.
+      - Mint a demo session per role against a demo deployment without touching a dealer's data.
+    micro_apps: [operator-console]
+    sources:
+      - hardscapeos_dibbits/app/src/nav-access.ts
+      - hardscapeos_dibbits/app/src/_demo.ts
+      - hardscapeos_dibbits/app/demo.html
+      - hh_pro_dibbits/server/admin-store.ts
+
+micro_apps:
+  - id: counter-till
+    name: Counter Till
+    audience: internal
+    roles: [inside_sales, sales_manager, branch_manager, outside_sales]
+    devices: [desktop, tablet, kiosk]
+    kit: scan-and-confirm
+    brand: fb-tokens
+    shell: hh-work
+    offline:
+      mode: read_cache_only
+      scopes: [customers, products, price_matrix, parked_tickets, invoices, warranty_claims]
+      conflict_policy: {}
+      note: "DECISIONS.md D5: the till has no outbox; tenders, payments and every money-moving action resolve online."
+    three_jobs:
+      - "Ring a sale: scan or search, resolve the customer, take the tender, hand over the receipt."
+      - Find an invoice and act on it (print, email, take a cheque).
+      - Take a return, or capture a warranty claim from the person standing there.
+    shared_entities:
+      - "order: write; handed to yard-pick as a pick ticket"
+      - "invoice: write; read by money-desk and by pro-pay"
+      - "customer: read from dealer-admin"
+      - "quote: read from quote-desk, converted here"
+      - "warranty_claim: write; handed to manager-home for the board"
+    replaces:
+      hardscapeos: [sales/pos, sales/invoices, sales/returns, "warranty/warranty (claim capture and detail)"]
+      hhpro: []
+    sources:
+      - hardscapeos_dibbits/app/src/pos-terminal.ts
+      - hardscapeos_dibbits/app/src/nav-access.ts
+      - hardscapeos_dibbits/app/src/app-shell.ts
+      - hardscapeos_dibbits/app/src/warranty-surface.ts
+
+  - id: quote-desk
+    name: Quote Desk
+    audience: internal
+    roles: [inside_sales, outside_sales, sales_manager]
+    devices: [tablet, desktop, phone]
+    kit: guided-flow
+    brand: fb-tokens
+    shell: hh-work
+    offline:
+      mode: read_cache_plus_outbox
+      scopes: [products, price_matrix, customers, quotes]
+      conflict_policy:
+        quotes: last_write_wins_by_field
+        price_matrix: server_wins
+    three_jobs:
+      - Browse the catalogue and size the job (how much of this for a patio of this area).
+      - Build the quote, and meet the margin guard when the price falls below the floor.
+      - Send the quote to the customer on a share link, then convert the accepted one to an order.
+    shared_entities:
+      - "quote: write; handed to public-desk by share token and to counter-till for conversion"
+      - "product: read from dealer-admin"
+      - "approval_request: write; handed to manager-home when margin is below floor"
+      - "order: write on conversion; handed to dispatch-board"
+    replaces:
+      hardscapeos: [sales/catalogue, sales/calculator, sales/quote, sales/quotes]
+      hhpro: []
+    sources:
+      - hardscapeos_dibbits/app/src/dashboard-nav.ts
+      - hardscapeos_dibbits/app/src/nav-access.ts
+      - hardscapeos_dibbits/backend/internal/identity/rbac.go
+      - hardscapeos_dibbits/docs/contractor-portal-plan.md
+
+  - id: yard-pick
+    name: Yard Pick and Receive
+    audience: internal
+    roles: [yard_team, yard_manager]
+    devices: [tablet, phone, kiosk]
+    kit: scan-and-confirm
+    brand: fb-tokens
+    shell: hh-field
+    offline:
+      mode: full
+      scopes: [pick_tasks, shortages, receiving, inventory_lookup, weights, attachments]
+      conflict_policy:
+        pick_tasks: server_wins
+        shortages: manual
+        receiving: manual
+        weights: server_wins
+        attachments: last_write_wins_by_field
+    three_jobs:
+      - Take the next pick ticket off the queue, pick it line by line, and stage it.
+      - Report a shortage against a line rather than picking short in silence.
+      - Receive a truck against the outstanding purchase order lines, whole load or line by line.
+    shared_entities:
+      - "pick_task: write; taken from dispatch-board and counter-till"
+      - "stock_move: write; read by buying-and-stock"
+      - "purchase_order: read from buying-and-stock; receipt written back to it"
+      - "will_call: write; handed to public-desk by printed code"
+    replaces:
+      hardscapeos: [yard/yard, "purchasing/purchasing (receiving tab)"]
+      hhpro: []
+    sources:
+      - hardscapeos_dibbits/app/src/yard-console.ts
+      - hardscapeos_dibbits/app/src/purchasing-console.ts
+      - hardscapeos_dibbits/backend/migrations/0141_dashboard_profile_home.sql
+      - hardscapeos_dibbits/backend/migrations/0204_yard_landing_retires_its_takeover.sql
+
+  - id: drive-run
+    name: HH Drive
+    audience: internal
+    roles: [driver]
+    devices: [phone]
+    kit: guided-flow
+    brand: fb-tokens
+    shell: hh-field
+    offline:
+      mode: full
+      scopes: [runs, stops, pod, attachments]
+      conflict_policy:
+        stops: server_wins
+        pod: manual
+        attachments: last_write_wins_by_field
+    three_jobs:
+      - Read the run in stop order and move a stop through en route, arrived, delivered.
+      - Capture proof of delivery at the stop, or record a could-not-deliver with its handback sentence.
+      - Close the run from the end-of-run summary.
+    shared_entities:
+      - "delivery_stop: write; taken from dispatch-board"
+      - "pod: write; read by counter-till (invoicing) and by pro-field (tracking)"
+      - "order: read only, and never with a figure of any kind on it"
+    replaces:
+      hardscapeos: ["dispatch/dispatch (driver sub-tab)", drive.html]
+      hhpro: []
+    sources:
+      - hardscapeos_dibbits/app/src/drive.ts
+      - hardscapeos_dibbits/app/drive.html
+      - hardscapeos_dibbits/app/src/dispatch-surface.ts
+      - hardscapeos_dibbits/app/src/_driver-redirect.ts
+
+  - id: dispatch-board
+    name: Dispatch and Load Building
+    audience: internal
+    roles: [logistics_manager, yard_manager, branch_manager]
+    devices: [desktop, tablet, phone]
+    kit: list-detail
+    brand: fb-tokens
+    shell: hh-work
+    offline:
+      mode: read_cache_plus_outbox
+      scopes: [loads, delivery_stops, trucks, drivers, will_call]
+      conflict_policy:
+        loads: server_wins
+        delivery_stops: server_wins
+        will_call: server_wins
+    three_jobs:
+      - Build the loads on the load board, which is the screen this role opens first.
+      - Commit or re-time a delivery date, raising the approval when freight goes above what was quoted.
+      - Keep the truck and driver registry, and mint a will-call code for a counter collection.
+    shared_entities:
+      - "order: read from counter-till and quote-desk"
+      - "delivery_stop: write; handed to drive-run"
+      - "pick_task: write; handed to yard-pick"
+      - "approval_request: write; handed to manager-home for the freight decision"
+    replaces:
+      hardscapeos: ["dispatch/dispatch (load board, board, schedule, fleet, will-call)"]
+      hhpro: []
+    sources:
+      - hardscapeos_dibbits/app/src/dispatch-surface.ts
+      - hardscapeos_dibbits/backend/internal/identity/rbac.go
+      - hardscapeos_dibbits/backend/migrations/0204_yard_landing_retires_its_takeover.sql
+
+  - id: buying-and-stock
+    name: Buying and Stock
+    audience: internal
+    roles: [procurement_manager, yard_manager, branch_manager]
+    devices: [desktop, tablet]
+    kit: list-detail
+    brand: fb-tokens
+    shell: hh-work
+    offline:
+      mode: read_cache_plus_outbox
+      scopes: [purchase_orders, vendors, inventory_lookup, cycle_counts]
+      conflict_policy:
+        purchase_orders: server_wins
+        cycle_counts: manual
+    three_jobs:
+      - Draft an order, place it, and read where each placed order got to.
+      - Close the gap the yard reported between what was sold and what is on hand.
+      - Count stock and settle the on-hand ledger, including landed cost and the weighted average.
+    shared_entities:
+      - "purchase_order: write; handed to yard-pick for receiving and to money-desk for the bill"
+      - "stock_move: read from yard-pick and counter-till"
+      - "product: read from dealer-admin"
+    replaces:
+      hardscapeos: ["purchasing/purchasing (orders tab)", inventory/inventory]
+      hhpro: []
+    sources:
+      - hardscapeos_dibbits/app/src/purchasing-console.ts
+      - hardscapeos_dibbits/app/src/inventory-home.ts
+      - hardscapeos_dibbits/app/src/nav-access.ts
+
+  - id: money-desk
+    name: Money Desk
+    audience: internal
+    roles: [financial_controller, payables_receivables, general_manager]
+    devices: [desktop]
+    kit: list-detail
+    brand: fb-tokens
+    shell: hh-work
+    offline:
+      mode: none
+      scopes: []
+      conflict_policy: {}
+    three_jobs:
+      - Work the ledger and the posting queue, and produce the period pack (income statement, balance sheet, trial balance).
+      - Reconcile the bank import through import, match and rules.
+      - "Work receivables: aging, credit holds, statements, bounced payments, collections; and payables: the vendor bill and its three-way match."
+    shared_entities:
+      - "invoice: read from counter-till; payment applied here and read by pro-pay"
+      - "vendor_bill: write against a purchase_order from buying-and-stock"
+      - "journal: write; an over-threshold journal parks an approval_request for manager-home"
+      - "lien holdback: write; read by manager-home"
+    replaces:
+      hardscapeos: [finance/gl, finance/bankrec, finance/statements, finance/ar, compliance/lien, compliance/tax, "purchasing/purchasing (bills tab)"]
+      hhpro: []
+    sources:
+      - hardscapeos_dibbits/app/src/ar-console.ts
+      - hardscapeos_dibbits/app/src/purchasing-console.ts
+      - hardscapeos_dibbits/app/src/dashboard-nav.ts
+      - hardscapeos_dibbits/app/src/nav-access.ts
+
+  - id: manager-home
+    name: Manager Home
+    audience: internal
+    roles: [branch_manager, sales_manager, yard_manager, logistics_manager, procurement_manager, general_manager, financial_controller, super_admin]
+    devices: [desktop, tablet, phone]
+    kit: dashboard
+    brand: fb-tokens
+    shell: hh-work
+    offline:
+      mode: read_cache_only
+      scopes: [widget_measures, approvals, warranty_board]
+      conflict_policy:
+        approvals: server_wins
+    three_jobs:
+      - Open a role landing that leads with one "needs you" widget, then the numbers that role reads.
+      - Decide a parked approval (margin below floor, journal over threshold, freight above quote), with no self-approval.
+      - Run a report or read the commission register, then export or print it.
+    shared_entities:
+      - "approval_request: read and decide; raised by quote-desk, money-desk and dispatch-board"
+      - "warranty_claim: read and settle; raised by counter-till and public-desk"
+      - "report: read across sales, inventory, dispatch and payroll"
+    replaces:
+      hardscapeos: [reporting/reporting, admin/approvals, "warranty/warranty (board, reports, registry)", "#home (the shell dashboard)"]
+      hhpro: []
+    sources:
+      - hardscapeos_dibbits/.claude/skills/hardscape-dashboard-widgets/SKILL.md
+      - hardscapeos_dibbits/app/src/reporting-console.ts
+      - hardscapeos_dibbits/app/src/warranty-surface.ts
+      - hardscapeos_dibbits/backend/internal/identity/rbac.go
+      - hardscapeos_dibbits/backend/migrations/0140_dashboard_layouts.sql
+
+  - id: house-messages
+    name: House Messages
+    audience: internal
+    roles: [inside_sales, outside_sales, yard_team, driver, yard_manager, logistics_manager, branch_manager, sales_manager, procurement_manager, payables_receivables, general_manager, financial_controller, hr, super_admin]
+    devices: [desktop, tablet, phone, kiosk]
+    kit: inbox
+    brand: fb-tokens
+    shell: [hh-work, hh-field]
+    offline:
+      mode: read_cache_plus_outbox
+      scopes: [channels, messages, acks, notify_prefs]
+      conflict_policy:
+        messages: server_wins
+        acks: server_wins
+        notify_prefs: last_write_wins_by_field
+    three_jobs:
+      - Read the channels that concern this person, with an unread count and the house queue.
+      - Post, reply in thread, or send one of the canned one-tap acknowledgements.
+      - Acknowledge a forced-ack alert on a shared screen, which blocks the screen until it is tapped.
+    shared_entities:
+      - "message_thread: read and write; every other micro-app can deep link a record into a thread"
+      - "approval_request: read; a card fans out to each eligible approver's channel"
+      - "order: read by reference from a rollup line"
+    replaces:
+      hardscapeos: [messaging/messaging, messages.html, "kiosk takeover (index.html ?kiosk=1)"]
+      hhpro: []
+    sources:
+      - hardscapeos_dibbits/app/src/messaging-hub.ts
+      - hardscapeos_dibbits/app/messages.html
+      - hardscapeos_dibbits/app/src/kiosk-takeover.ts
+      - hardscapeos_dibbits/backend/internal/identity/rbac.go
+
+  - id: dealer-admin
+    name: Dealer Admin
+    audience: internal
+    roles: [super_admin, general_manager, hr, dealer_admin, sales_manager]
+    devices: [desktop]
+    kit: list-detail
+    brand: fb-tokens
+    shell: hh-work
+    offline:
+      mode: none
+      scopes: []
+      conflict_policy: {}
+    three_jobs:
+      - Add and remove staff, assign roles and branch grants, and deactivate an account.
+      - "Govern pricing: tier rules, category rules, customer overrides, quantity breaks."
+      - "Configure the deployment a contractor sees: branding tokens, terms, company name, feature flags, assistant spend."
+    shared_entities:
+      - "user: write; every micro-app reads the acting identity from it"
+      - "product and price rule: write; read by quote-desk, counter-till and pro-procurement"
+      - "dealer config: write; read by every external micro-app for branding and supplier name"
+      - "audit entry: read; written by every privileged action anywhere"
+    replaces:
+      hardscapeos: [admin/staff, admin/audit, admin/assist-admin, sales/pricing]
+      hhpro: ["admin.html (branding, terms, flags, spend cap)", "src/admin/AdminApp.tsx"]
+    sources:
+      - hardscapeos_dibbits/app/src/nav-access.ts
+      - hardscapeos_dibbits/app/src/dashboard-nav.ts
+      - hh_pro_dibbits/src/admin/AdminApp.tsx
+      - hh_pro_dibbits/server/admin-api.ts
+      - hh_pro_dibbits/src/core/domain/config.ts
+
+  - id: pro-procurement
+    name: Pro Procurement Board
+    audience: external
+    roles: [contractor_owner, contractor_buyer]
+    devices: [phone, desktop]
+    kit: list-detail
+    brand: hh-pro
+    shell: hh-pro
+    offline:
+      mode: read_cache_plus_outbox
+      scopes: [projects, orders, scope_items, price_matrix, catalog, customer_quotes, team]
+      conflict_policy:
+        orders: server_wins
+        scope_items: last_write_wins_by_field
+        customer_quotes: manual
+        team: manual
+    three_jobs:
+      - Move a card across Plan, Quote, Order and Invoice, and read the refusal sentence verbatim when a move is rejected.
+      - Build the scope of an order from the catalogue at the account price, and push it to the supplier quote desk when a line has no price.
+      - Build a contractor-branded proposal for the homeowner and send it on a one-time link.
+    shared_entities:
+      - "order: write; handed to quote-desk and counter-till on the supplier side"
+      - "customer_quote: write; handed to public-desk by one-time token"
+      - "product and price: read from dealer-admin through the pricing binding"
+      - "project: write; read by pro-field and pro-pay"
+    replaces:
+      hardscapeos: ["portal /dashboard", "portal /orders", "portal /orders/:id", "portal /projects", "portal /projects/:id", "portal /quotes", "portal /procurement", "portal /procurement/:id", "portal /team", "portal /settings", portal.html]
+      hhpro: ["/", "/orders/:orderId", "/orders/:orderId/quote", "/projects/:projectId", "/catalog", "/catalog/:sku", "/today"]
+    sources:
+      - hh_pro_dibbits/src/ui/App.tsx
+      - hh_pro_dibbits/src/ui/pages/BoardPage.tsx
+      - hh_pro_dibbits/src/ui/pages/OrderPage.tsx
+      - hh_pro_dibbits/src/core/domain/stage.ts
+      - hardscapeos_dibbits/app/src/portal/portal-shell.ts
+
+  - id: pro-pay
+    name: Pro Pay
+    audience: external
+    roles: [contractor_ap, contractor_owner]
+    devices: [desktop, phone]
+    kit: list-detail
+    brand: hh-pro
+    shell: hh-pro
+    offline:
+      mode: read_cache_only
+      scopes: [invoices, payments, payment_methods, aging]
+      conflict_policy:
+        invoices: server_wins
+        payments: server_wins
+    three_jobs:
+      - Select open invoices and pay them, with the card fee shown per method before the method is chosen.
+      - Read what is past due by the one definition of late the aging bucket and the overdue flag both derive from.
+      - Add or remove a stored payment method.
+    shared_entities:
+      - "invoice: read; written by counter-till and money-desk"
+      - "payment: write; read by money-desk, where a decline is data rather than an error"
+      - "payment_method: write; tokenized by the vault, never held in the client"
+    replaces:
+      hardscapeos: ["portal /invoices", "portal /payment-methods"]
+      hhpro: ["/pay"]
+    sources:
+      - hh_pro_dibbits/src/ui/pages/PayPage.tsx
+      - hh_pro_dibbits/src/core/actions/payments.ts
+      - hh_pro_dibbits/src/core/selectors/ar.ts
+      - hardscapeos_dibbits/app/src/portal/portal-payment-methods.ts
+      - hardscapeos_dibbits/app/src/portal/portal-invoices.ts
+
+  - id: pro-field
+    name: Pro Field
+    audience: external
+    roles: [contractor_field, contractor_buyer, contractor_owner]
+    devices: [phone]
+    kit: list-detail
+    brand: hh-pro
+    shell: hh-pro
+    offline:
+      mode: read_cache_plus_outbox
+      scopes: [orders, tracking_events, delivery_instructions, pickups]
+      conflict_policy:
+        tracking_events: server_wins
+        delivery_instructions: last_write_wins_by_field
+        pickups: manual
+    three_jobs:
+      - Read where the order is in the step flow, with the will-call step substituted for out-for-delivery.
+      - Confirm a will-call pickup, which cancels the pending auto-collect rather than adding an additional delivered event.
+      - Edit the delivery instructions the driver will read at the stop.
+    shared_entities:
+      - "delivery_stop: read; written by drive-run"
+      - "order: read; written by pro-procurement"
+      - "pickup: write; read by counter-till and yard-pick at the collection counter"
+    replaces:
+      hardscapeos: ["portal /orders/:id (tracking and delivery instructions)"]
+      hhpro: ["/orders/:orderId/tracking"]
+    sources:
+      - hh_pro_dibbits/src/ui/pages/OrderTrackingPage.tsx
+      - hh_pro_dibbits/src/core/selectors/tracking.ts
+      - hh_pro_dibbits/src/core/actions/fulfillment.ts
+      - hardscapeos_dibbits/app/src/portal/portal-order-detail.ts
+
+  - id: public-desk
+    name: Public Desk
+    audience: external
+    roles: [homeowner]
+    devices: [phone, desktop]
+    kit: guided-flow
+    brand: hh-pro
+    shell: hh-public
+    offline:
+      mode: none
+      scopes: []
+      conflict_policy: {}
+    three_jobs:
+      - Open a proposal or a quote from a one-time link, read the lines and the terms, and accept it.
+      - Confirm a will-call collection against a printed code with a typed full name and an explicit affirmative.
+      - Report a failed installation with photos and receive a reference number, with no account offered.
+    shared_entities:
+      - "customer_quote: read and accept; written by pro-procurement, acceptance read back there"
+      - "quote: read and accept; written by quote-desk"
+      - "will_call: read and confirm; minted by dispatch-board or yard-pick"
+      - "warranty_claim: write; handed to manager-home and counter-till"
+    replaces:
+      hardscapeos: [quote.html, "index.html #will-call/<token>", "index.html warranty public intake"]
+      hhpro: ["/q/:token"]
+    sources:
+      - hardscapeos_dibbits/app/src/quote-public.ts
+      - hardscapeos_dibbits/app/src/dispatch-willcall-public.ts
+      - hardscapeos_dibbits/app/src/warranty-intake-public.ts
+      - hardscapeos_dibbits/app/src/app-shell.ts
+      - hh_pro_dibbits/src/ui/pages/CustomerQuotePage.tsx
+
+  - id: demo-entry
+    name: Demo Entry
+    audience: external
+    # roles empty: pre-auth, reached by link; the demo role is chosen on the page, not held by the visitor.
+    roles: []
+    devices: [phone, desktop]
+    # guided-flow because the page is a guided sequence, not a work surface: role card, expiring session, install.
+    kit: guided-flow
+    brand: hh-pro
+    shell: hh-public
+    offline:
+      mode: none
+      scopes: []
+      conflict_policy: {}
+      note: "Pre-auth like public-desk: bare fetch by rule, no session machinery in the bundle, nothing cached."
+    three_jobs:
+      - Enter the hh-demo org as one of the six seeded demo roles from a role card, on an expiring session with no signup.
+      - Install HH Field or HH Pro as a PWA from a QR code and land in the demo org as the card's role.
+      - Follow the same link an operator handed over from the launcher, so a guided demo and a self-serve visit share one entry path.
+    shared_entities:
+      - "demo_session: minted here per role against a pre-provisioned demo user; expiry comes from the org's policy, never from the page"
+    replaces:
+      hardscapeos: []
+      hhpro: []
+    sources:
+      - hh_pro_dibbits/analysis/sessions/HH-7-counter-till-and-quote-desk.md
+      - hardscapeos_dibbits/app/src/_demo.ts
+      - hardscapeos_dibbits/app/demo.html
+
+  - id: hh-site
+    name: Audience Landing Pages
+    audience: external
+    # roles empty: pre-auth, reached by link from the marketing site or a search result.
+    roles: []
+    devices: [phone, desktop]
+    # guided-flow because each landing walks a visitor from the recording to one next action, the role's entry link.
+    kit: guided-flow
+    brand: hh-pro
+    shell: hh-public
+    offline:
+      mode: none
+      scopes: []
+      conflict_policy: {}
+    three_jobs:
+      - Show a prospect the walkthrough recording for their audience, with two lines on what they are looking at.
+      - Hand the prospect the demo-entry link for their role.
+      - Carry the regenerated clip when a tour definition changes, so no landing page shows a recording the runner did not produce.
+    shared_entities:
+      - "tour_recording: read; produced by scripts/tour-record from a definition in statecharts/tours"
+      - "demo_session: linked, never minted here; demo-entry mints it"
+    replaces:
+      hardscapeos: []
+      hhpro: []
+    sources:
+      - hh_pro_dibbits/analysis/sessions/HH-10-hh-pro-shell-and-public-desk.md
+      - hh_pro_dibbits/scripts/capture-guide.mjs
+
+# Launcher sections are surfaces the launcher (and later the Shade's operator mode) renders over hh's
+# org-scoped operator endpoints. They are listed here so their replaces: coverage still holds; they are
+# not micro-apps and do not become manifest frontends (DECISIONS.md D4).
+launcher_sections:
+  - id: operator-console
+    name: Operator Console
+    owner: "the launcher session (S3-L), per DECISIONS.md D4; not an hh micro-app and not a manifest frontend"
+    audience: operator
+    roles: [fb_operator, super_admin, dealer_admin]
+    devices: [desktop]
+    kit: dashboard
+    brand: fb-tokens
+    shell: fb-launcher
+    offline:
+      mode: none
+      scopes: []
+      conflict_policy: {}
+    three_jobs:
+      - Read and write the platform floor a dealer's override is overriding (the key roster whose read is staff-wide and whose write the server marks).
+      - Hold the LLM credential, which is validated before it is stored and has no route back out, and set the per-account cap.
+      - Mint a demo session per role against a demo deployment, without touching a dealer's own data.
+    shared_entities:
+      - "dealer config: write; read by dealer-admin and every external micro-app"
+      - "credential: write only; never returned by any route"
+      - "usage counter: read; counted per contractor account"
+    replaces:
+      hardscapeos: [admin/hotkeys, demo.html]
+      hhpro: ["admin.html (credential and usage half)", "server/admin-store.ts"]
+    sources:
+      - hardscapeos_dibbits/app/src/nav-access.ts
+      - hardscapeos_dibbits/app/demo.html
+      - hardscapeos_dibbits/app/src/_demo.ts
+      - hh_pro_dibbits/server/admin-store.ts
+      - hh_pro_dibbits/CLAUDE.md
+
+shells:
+  - id: hh-work
+    audience: internal
+    kind: internal-installable
+    devices: [desktop, tablet]
+    permissions: []
+    loads: [counter-till, quote-desk, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+    switcher: true
+    device_unlock: true
+    notes: "DECISIONS.md D2: the office shell. Never asks for camera or location permission."
+    sources:
+      - hardscapeos_dibbits/app/src/app-shell.ts
+      - hardscapeos_dibbits/app/src/nav-access.ts
+      - hardscapeos_dibbits/app/src/kiosk-takeover.ts
+      - hardscapeos_dibbits/backend/migrations/0141_dashboard_profile_home.sql
+      - hh_pro_dibbits/analysis/DECISIONS.md
+
+  - id: hh-field
+    audience: internal
+    kind: internal-installable
+    devices: [phone, tablet]
+    permissions: [camera, gps]
+    offline: full
+    loads: [yard-pick, drive-run, house-messages]
+    switcher: true
+    device_unlock: true
+    notes: "DECISIONS.md D2: the phone-first shell for yard and driving work; the only internal shell that holds camera and GPS permissions."
+    sources:
+      - hardscapeos_dibbits/app/src/drive.ts
+      - hardscapeos_dibbits/app/drive.html
+      - hardscapeos_dibbits/app/src/yard-console.ts
+      - hardscapeos_dibbits/backend/migrations/0204_yard_landing_retires_its_takeover.sql
+      - hh_pro_dibbits/analysis/DECISIONS.md
+
+  - id: hh-pro
+    audience: external
+    kind: standalone-public
+    loads: [pro-procurement, pro-pay, pro-field]
+    switcher: true
+    device_unlock: false
+    sources:
+      - hh_pro_dibbits/src/ui/layouts/PortalLayout.tsx
+      - hh_pro_dibbits/src/ui/App.tsx
+      - hardscapeos_dibbits/app/src/portal/portal-shell.ts
+
+  - id: hh-public
+    audience: external
+    kind: standalone-public
+    loads: [public-desk, demo-entry, hh-site]
+    switcher: false
+    device_unlock: false
+    notes: "DECISIONS.md D2: brand hh-pro. The three pre-auth bundles share one bundle fence and bare fetch: public-desk (HH-10.3), demo-entry (HH-7.7), hh-site (HH-10.6)."
+    sources:
+      - hardscapeos_dibbits/app/quote.html
+      - hardscapeos_dibbits/app/src/quote-public.ts
+      - hh_pro_dibbits/src/ui/pages/CustomerQuotePage.tsx
+      - hh_pro_dibbits/analysis/DECISIONS.md
+
+  - id: fb-launcher
+    audience: operator
+    kind: launcher
+    loads: [operator-console]
+    switcher: true
+    device_unlock: false
+    sources:
+      - hardscapeos_dibbits/app/demo.html
+      - hh_pro_dibbits/server/admin-plugin.ts
+
+dropped:
+  - what: "index.html (the ERP shell document)"
+    reason: "It is not a micro-app: its chrome, launcher, tab strip, hash router and per-role landing become the shared shell-chrome package the hh-work and hh-field shells load (DECISIONS.md D2)."
+    path: hardscapeos_dibbits/app/src/app-shell.ts
+  - what: admin/account
+    reason: "My Account is shell chrome, not a micro-app. Context 4.5 puts org, user, app switcher, sync state and notifications in identical chrome across every shell."
+    path: hardscapeos_dibbits/app/src/account-settings.ts
+  - what: admin/assist
+    reason: "The assistant is chrome opened over whatever micro-app is in front, not a destination. HH Pro already mounts it that way as a sheet in the shell; its spend and limits screen stays a real surface in dealer-admin."
+    path: hh_pro_dibbits/src/ui/components/assistant/AssistantSheet.tsx
+  - what: quick-action-harness.html
+    reason: "A screenshot and interaction harness, not a shipped surface."
+    path: hardscapeos_dibbits/app/quick-action-harness.html
+
+open_questions:
+  - Is HH Drive a micro-app inside the internal shell or its own standalone shell, given it pins its own theme, ships its own manifest and deliberately carries no navigation at all?
+  - Do Counter Till and Quote Desk share one shell tab for inside sales, or stay two micro-apps because outside sales never touches the till?
+  - Is the homeowner acceptance page a micro-app in a public shell, or a public route rendered by the shell that issued the token?
+  - "Which brand layer wins on an accepted proposal: the contractor tokens (which HH Pro rules must beat the dealer's) or the dealer tokens the ERP quote page uses?"
+  - Do the contractor tenant roles unify on the HH Pro set (owner, pm, ap, field) or the ERP portal set (account_admin, buyer, field_crew), and what does the migration do to a tenant holding the other?
+  - Is "driver" a role code or a membership row, given the shipped rule that the driver app asks the server rather than reading a role code?
+  - Does the operator get a micro-app inside the app, or only the launcher, given the platform key roster's read is staff-wide and only its write is the operator's?
+  - Does the per-role landing stay a served table row (profile to landing unit and module) or become the shell's micro-app switcher default?
+  - Does the till get an outbox at all, or is every money-moving action online-only, given credit and margin gates resolve server-side?
+  - Do Yard Pick and Dispatch share a shell surface for the yard manager, who is the one role that opens both from the same tablet?
+  - Should warranty be its own micro-app rather than split between claim capture at the counter and the board under Manager Home?
+  - Which entity is the deep-link root for an order that exists on both sides (the contractor's order and the dealer's sales order), and does one id or two travel in fb://hh/order/<id>?
