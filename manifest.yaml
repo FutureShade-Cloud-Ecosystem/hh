@@ -1,0 +1,306 @@
+# manifest.yaml, the App Shape manifest for the hh monorepo.
+# GENERATED FILE. Produced by scripts/generate-manifest.ts from the role
+# catalog; do not edit by hand. Change the catalog or the generator, then:
+#   bun scripts/generate-manifest.ts
+# Drift check (also run by the manifest-catalog test):
+#   bun scripts/generate-manifest.ts --check
+#
+# Catalog source: docs/analysis/role-catalog.yaml by default; pass a path or
+# set HH_ROLE_CATALOG to override.
+#
+# runtimes, tenancy, database seed, capabilities, agent seats and
+# observability come from context/FUTURESHADE-CONTEXT.md section 4.3.
+#
+# frontends: one entry per micro-app in the catalog; audience, roles,
+# devices, kit, shell, brand and the offline block (mode, scopes, per-entity
+# conflict policy) are copied verbatim. Launcher sections are not frontends
+# (analysis/DECISIONS.md D4) and never appear here. Conflict policy values
+# follow context section 4.5: server_wins, last_write_wins_by_field, or
+# manual (which surfaces a review card).
+#
+# gate: role  means the bundle is served after sign-in and the core gates
+#             every endpoint by role from the JWT; the shell is never the
+#             security boundary (context section 4.5).
+# gate: token means roles is empty in the catalog: the bundle is served
+#             pre-auth and the one-time or printed token is the credential,
+#             so no role check runs.
+
+shape: 1
+app: hh
+name: Hardscape House
+runtimes: [core, web, tauri, agents]
+tenancy: multi-org
+
+# extensions: pg_trgm per context section 4.3; citext per the HH-2.4
+# extensions ADR draft, which adds citext (a standard contrib extension the
+# baseline migrations depend on) to the App Shape extension allowlist.
+database:
+  extensions: [pg_trgm, citext]
+  seed: db/seed/demo.sql
+
+capabilities:
+  features: [threads, member_sandboxes, intake_rooms]
+
+agents:
+  seats: [product_lead]
+  intake_rooms: [ideas, product_feedback]
+
+observability:
+  service: hh
+
+frontends:
+  - id: counter-till
+    name: Counter Till
+    audience: internal
+    roles: [inside_sales, sales_manager, branch_manager, outside_sales]
+    gate: role
+    devices: [desktop, tablet, kiosk]
+    kit: scan-and-confirm
+    shell: hh-work
+    brand: fb-tokens
+    # offline note from the catalog: DECISIONS.md D5: the till has no outbox; tenders, payments and every money-moving action resolve online.
+    offline:
+      mode: read_cache_only
+      scopes: [customers, products, price_matrix, parked_tickets, invoices, warranty_claims]
+      conflict_policy: {}
+
+  - id: quote-desk
+    name: Quote Desk
+    audience: internal
+    roles: [inside_sales, outside_sales, sales_manager]
+    gate: role
+    devices: [tablet, desktop, phone]
+    kit: guided-flow
+    shell: hh-work
+    brand: fb-tokens
+    offline:
+      mode: read_cache_plus_outbox
+      scopes: [products, price_matrix, customers, quotes]
+      conflict_policy:
+        quotes: last_write_wins_by_field
+        price_matrix: server_wins
+
+  - id: yard-pick
+    name: Yard Pick and Receive
+    audience: internal
+    roles: [yard_team, yard_manager]
+    gate: role
+    devices: [tablet, phone, kiosk]
+    kit: scan-and-confirm
+    shell: hh-field
+    brand: fb-tokens
+    offline:
+      mode: full
+      scopes: [pick_tasks, shortages, receiving, inventory_lookup, weights, attachments]
+      conflict_policy:
+        pick_tasks: server_wins
+        shortages: manual
+        receiving: manual
+        weights: server_wins
+        attachments: last_write_wins_by_field
+
+  - id: drive-run
+    name: HH Drive
+    audience: internal
+    roles: [driver]
+    gate: role
+    devices: [phone]
+    kit: guided-flow
+    shell: hh-field
+    brand: fb-tokens
+    offline:
+      mode: full
+      scopes: [runs, stops, pod, attachments]
+      conflict_policy:
+        stops: server_wins
+        pod: manual
+        attachments: last_write_wins_by_field
+
+  - id: dispatch-board
+    name: Dispatch and Load Building
+    audience: internal
+    roles: [logistics_manager, yard_manager, branch_manager]
+    gate: role
+    devices: [desktop, tablet, phone]
+    kit: list-detail
+    shell: hh-work
+    brand: fb-tokens
+    offline:
+      mode: read_cache_plus_outbox
+      scopes: [loads, delivery_stops, trucks, drivers, will_call]
+      conflict_policy:
+        loads: server_wins
+        delivery_stops: server_wins
+        will_call: server_wins
+
+  - id: buying-and-stock
+    name: Buying and Stock
+    audience: internal
+    roles: [procurement_manager, yard_manager, branch_manager]
+    gate: role
+    devices: [desktop, tablet]
+    kit: list-detail
+    shell: hh-work
+    brand: fb-tokens
+    offline:
+      mode: read_cache_plus_outbox
+      scopes: [purchase_orders, vendors, inventory_lookup, cycle_counts]
+      conflict_policy:
+        purchase_orders: server_wins
+        cycle_counts: manual
+
+  - id: money-desk
+    name: Money Desk
+    audience: internal
+    roles: [financial_controller, payables_receivables, general_manager]
+    gate: role
+    devices: [desktop]
+    kit: list-detail
+    shell: hh-work
+    brand: fb-tokens
+    offline:
+      mode: none
+      scopes: []
+      conflict_policy: {}
+
+  - id: manager-home
+    name: Manager Home
+    audience: internal
+    roles: [branch_manager, sales_manager, yard_manager, logistics_manager, procurement_manager, general_manager, financial_controller, super_admin]
+    gate: role
+    devices: [desktop, tablet, phone]
+    kit: dashboard
+    shell: hh-work
+    brand: fb-tokens
+    offline:
+      mode: read_cache_only
+      scopes: [widget_measures, approvals, warranty_board]
+      conflict_policy:
+        approvals: server_wins
+
+  - id: house-messages
+    name: House Messages
+    audience: internal
+    roles: [inside_sales, outside_sales, yard_team, driver, yard_manager, logistics_manager, branch_manager, sales_manager, procurement_manager, payables_receivables, general_manager, financial_controller, hr, super_admin]
+    gate: role
+    devices: [desktop, tablet, phone, kiosk]
+    kit: inbox
+    shell: [hh-work, hh-field]
+    brand: fb-tokens
+    offline:
+      mode: read_cache_plus_outbox
+      scopes: [channels, messages, acks, notify_prefs]
+      conflict_policy:
+        messages: server_wins
+        acks: server_wins
+        notify_prefs: last_write_wins_by_field
+
+  - id: dealer-admin
+    name: Dealer Admin
+    audience: internal
+    roles: [super_admin, general_manager, hr, dealer_admin, sales_manager]
+    gate: role
+    devices: [desktop]
+    kit: list-detail
+    shell: hh-work
+    brand: fb-tokens
+    offline:
+      mode: none
+      scopes: []
+      conflict_policy: {}
+
+  - id: pro-procurement
+    name: Pro Procurement Board
+    audience: external
+    roles: [contractor_owner, contractor_buyer]
+    gate: role
+    devices: [phone, desktop]
+    kit: list-detail
+    shell: hh-pro
+    brand: hh-pro
+    offline:
+      mode: read_cache_plus_outbox
+      scopes: [projects, orders, scope_items, price_matrix, catalog, customer_quotes, team]
+      conflict_policy:
+        orders: server_wins
+        scope_items: last_write_wins_by_field
+        customer_quotes: manual
+        team: manual
+
+  - id: pro-pay
+    name: Pro Pay
+    audience: external
+    roles: [contractor_ap, contractor_owner]
+    gate: role
+    devices: [desktop, phone]
+    kit: list-detail
+    shell: hh-pro
+    brand: hh-pro
+    offline:
+      mode: read_cache_only
+      scopes: [invoices, payments, payment_methods, aging]
+      conflict_policy:
+        invoices: server_wins
+        payments: server_wins
+
+  - id: pro-field
+    name: Pro Field
+    audience: external
+    roles: [contractor_field, contractor_buyer, contractor_owner]
+    gate: role
+    devices: [phone]
+    kit: list-detail
+    shell: hh-pro
+    brand: hh-pro
+    offline:
+      mode: read_cache_plus_outbox
+      scopes: [orders, tracking_events, delivery_instructions, pickups]
+      conflict_policy:
+        tracking_events: server_wins
+        delivery_instructions: last_write_wins_by_field
+        pickups: manual
+
+  - id: public-desk
+    name: Public Desk
+    audience: external
+    roles: [homeowner]
+    gate: role
+    devices: [phone, desktop]
+    kit: guided-flow
+    shell: hh-public
+    brand: hh-pro
+    offline:
+      mode: none
+      scopes: []
+      conflict_policy: {}
+
+  - id: demo-entry
+    name: Demo Entry
+    audience: external
+    roles: []
+    # pre-auth: served without sign-in; the token is the credential and no role check runs
+    gate: token
+    devices: [phone, desktop]
+    kit: guided-flow
+    shell: hh-public
+    brand: hh-pro
+    # offline note from the catalog: Pre-auth like public-desk: bare fetch by rule, no session machinery in the bundle, nothing cached.
+    offline:
+      mode: none
+      scopes: []
+      conflict_policy: {}
+
+  - id: hh-site
+    name: Audience Landing Pages
+    audience: external
+    roles: []
+    # pre-auth: served without sign-in; the token is the credential and no role check runs
+    gate: token
+    devices: [phone, desktop]
+    kit: guided-flow
+    shell: hh-public
+    brand: hh-pro
+    offline:
+      mode: none
+      scopes: []
+      conflict_policy: {}
