@@ -1,0 +1,9 @@
+{
+  "name": "hh-web",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ]
+}

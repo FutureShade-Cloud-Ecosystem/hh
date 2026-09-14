@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - 'qa/**'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: App Shape check
+        run: bash scripts/check-shape.sh
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+      - name: Build and vet core
+        working-directory: core
+        run: |
+          go build ./...
+          go vet ./...
