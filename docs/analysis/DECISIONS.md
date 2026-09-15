@@ -106,6 +106,6 @@ Whether Appwrite Team memberships surface as OIDC claims stays a S2 check. D3 st
 
 ## Still open, by design
 
-- Q8 (per-role landing) at HH-6's mid checkpoint with Grant; default is the switcher seeded from the served row.
-- Q11 (warranty micro-app) at HH-9's design sync with Grant.
+- Q8 (per-role landing) at HH-6's mid checkpoint with Colton; default is the switcher seeded from the served row.
+- Q11 (warranty micro-app) at HH-9's design sync with Colton.
 - The state of the delivery's BisTrack phase at HH-11's start checkpoint.
