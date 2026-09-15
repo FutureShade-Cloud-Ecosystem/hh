@@ -95,6 +95,11 @@ export function buildManifest(doc: CatalogDoc): string {
     if (!app.offline || !app.offline.mode) {
       throw new Error(`${app.id}: missing offline block or offline mode`);
     }
+    if (!Array.isArray(app.roles)) {
+      throw new Error(
+        `${app.id}: the roles key is required; an empty list means pre-auth token gating, a missing key is an error`,
+      );
+    }
   }
   for (const section of doc.launcher_sections ?? []) {
     if (seen.has(section.id)) {
@@ -160,7 +165,7 @@ export function buildManifest(doc: CatalogDoc): string {
   );
 
   for (const app of doc.micro_apps) {
-    const roles = app.roles ?? [];
+    const roles = app.roles;
     const gate = roles.length === 0 ? "token" : "role";
     out.push(`  - id: ${scalar(app.id)}`);
     out.push(`    name: ${scalar(app.name)}`);

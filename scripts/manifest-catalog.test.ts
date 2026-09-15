@@ -98,7 +98,7 @@ describe("frontends and catalog cannot disagree", () => {
       expect(frontend, app.id).toBeDefined();
       expect(frontend!.name).toBe(app.name);
       expect(frontend!.audience).toBe(app.audience);
-      expect(frontend!.roles).toEqual(app.roles ?? []);
+      expect(frontend!.roles).toEqual(app.roles);
       expect(frontend!.devices).toEqual(app.devices);
       expect(frontend!.kit).toBe(app.kit);
       expect(frontend!.shell).toEqual(app.shell);
@@ -138,7 +138,7 @@ describe("pre-auth gating", () => {
 
   test("the pre-auth set matches the catalog's empty-roles set exactly", () => {
     const catalogPreAuth = catalog.micro_apps
-      .filter((app) => (app.roles ?? []).length === 0)
+      .filter((app) => app.roles.length === 0)
       .map((app) => app.id)
       .sort();
     const manifestPreAuth = manifest.frontends
@@ -146,6 +146,26 @@ describe("pre-auth gating", () => {
       .map((frontend) => frontend.id)
       .sort();
     expect(manifestPreAuth).toEqual(catalogPreAuth);
+  });
+
+  test("a missing roles key fails generation and names the entry", () => {
+    const broken = {
+      catalog: 1,
+      micro_apps: [
+        {
+          id: "roles-probe",
+          name: "Roles Probe",
+          audience: "internal",
+          devices: ["desktop"],
+          kit: "list-detail",
+          shell: "hh-work",
+          brand: "fb-tokens",
+          offline: { mode: "none", scopes: [], conflict_policy: {} },
+        },
+      ],
+    } as unknown as CatalogDoc;
+    expect(() => buildManifest(broken)).toThrow(/roles-probe/);
+    expect(() => buildManifest(broken)).toThrow(/roles key is required/);
   });
 });
 
