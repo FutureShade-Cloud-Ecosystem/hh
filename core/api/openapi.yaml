@@ -89,8 +89,11 @@ paths:
       summary: Pull every change in a scope since a sequence number
       x-role: scope-member
       x-addition: context 4.5 sync protocol; no ERP source route
+      security:
+        - StaffBearer: []
+        - TenantBearer: []
       parameters:
-        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/XOrgSync"
         - $ref: "#/components/parameters/SyncScope"
         - $ref: "#/components/parameters/Since"
         - $ref: "#/components/parameters/Limit"
@@ -114,8 +117,11 @@ paths:
       summary: Replay the client outbox against a scope, in order
       x-role: scope-member
       x-addition: context 4.5 sync protocol; no ERP source route
+      security:
+        - StaffBearer: []
+        - TenantBearer: []
       parameters:
-        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/XOrgSync"
         - $ref: "#/components/parameters/SyncScope"
       requestBody:
         required: true
@@ -21266,6 +21272,13 @@ components:
       in: header
       required: true
       description: Org slug. Resolved and validated against Team membership before any database is touched (context 4.4).
+      schema:
+        type: string
+    XOrgSync:
+      name: X-Org
+      in: header
+      required: false
+      description: "Org slug for sync callers. Required with StaffBearer, resolved and validated against Team membership before any database is touched. Never sent with TenantBearer: the org comes from the Team and the tenant from the token, per the rule that tenant routes never take X-Org."
       schema:
         type: string
     Id:
