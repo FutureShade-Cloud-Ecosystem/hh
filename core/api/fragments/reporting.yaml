@@ -1,0 +1,1252 @@
+paths:
+  # --- reporting: template catalogue (staff gate) ---------------------------
+  /api/v1/reporting/templates:
+    get:
+      operationId: reportingListTemplates
+      tags: [staff-reporting]
+      summary: List report templates grouped by category
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The template catalogue, grouped by category
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingTemplateCatalog"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/reporting/templates/{code}:
+    get:
+      operationId: reportingGetTemplate
+      tags: [staff-reporting]
+      summary: Read one report template, with its declared parameters and columns
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: code
+          in: path
+          required: true
+          description: The template code
+          schema: { type: string }
+      responses:
+        "200":
+          description: The template
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingTemplate"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/reporting/templates/{code}/run:
+    get:
+      operationId: reportingRunTemplate
+      tags: [staff-reporting]
+      summary: Run a report template and return the result grid
+      description: >-
+        Query keys are the template's declared parameters (see the template's
+        params list). Only the first value of a repeated key is read; unknown
+        keys are refused with 400. A scoped caller who omits branch_id where
+        the template scopes by branch is refused by the branch fence.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The executed report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/reporting/templates/{code}/export.csv:
+    get:
+      operationId: reportingExportTemplateCsv
+      tags: [staff-reporting]
+      summary: Run a report template and download the result as CSV
+      description: >-
+        Same parameter binding as the run route. The body is CSV text with a
+        Content-Disposition attachment filename, not JSON; the wire shape is
+        raw bytes rather than a struct.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The report as a CSV download
+          content:
+            text/csv:
+              schema: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/reporting/templates/{code}/print:
+    post:
+      operationId: reportingPrintTemplate
+      tags: [staff-reporting]
+      summary: Run a report template, freeze it as an artefact, and queue it for print
+      description: >-
+        The body is optional. When params is absent the URL query is bound
+        instead, under the same rules as the run route.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportingPrintRequest"
+      responses:
+        "201":
+          description: The frozen run artefact, queued for print
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingRun"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- reporting: frozen run artefacts (manager gate) -----------------------
+  /api/v1/reporting/runs:
+    get:
+      operationId: reportingListRuns
+      tags: [staff-reporting]
+      summary: List frozen report run artefacts
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of run artefacts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingRunPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/reporting/runs/{id}:
+    get:
+      operationId: reportingGetRun
+      tags: [staff-reporting]
+      summary: Read one frozen run artefact
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The run artefact
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingRun"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/reporting/runs/{id}/document:
+    get:
+      operationId: reportingGetRunDocument
+      tags: [staff-reporting]
+      summary: Serve the frozen HTML document of a run artefact
+      description: >-
+        The body is the artefact's stored HTML served under a restrictive
+        Content-Security-Policy, not JSON; the wire shape is a document, not a
+        struct. This is the document the print route opens.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The frozen report document
+          content:
+            text/html:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- reporting: saved views (staff gate) ----------------------------------
+  /api/v1/reporting/saved-views:
+    get:
+      operationId: reportingListSavedViews
+      tags: [staff-reporting]
+      summary: List saved parameter sets
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: template_code
+          in: query
+          required: false
+          description: Narrow to views of one template
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of saved views
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingSavedViewPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: reportingSaveView
+      tags: [staff-reporting]
+      summary: Save a parameter set for a template
+      description: Params are re-validated on every run, never on save.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportingSavedViewWrite"
+      responses:
+        "201":
+          description: The saved view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingSavedView"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/reporting/saved-views/{id}:
+    delete:
+      operationId: reportingDeleteSavedView
+      tags: [staff-reporting]
+      summary: Delete a saved view
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: Deleted
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- reporting: commission rules (reads manager, writes admin) ------------
+  /api/v1/reporting/commission/rules:
+    get:
+      operationId: reportingListCommissionRules
+      tags: [staff-reporting]
+      summary: List commission rules
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: rep_user_id
+          in: query
+          required: false
+          description: Narrow to one rep's rules
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The page of commission rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingCommissionRulePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: reportingCreateCommissionRule
+      tags: [staff-reporting]
+      summary: Create a commission rule
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportingCommissionRule"
+      responses:
+        "201":
+          description: The created rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingCommissionRule"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/reporting/commission/rules/{id}:
+    delete:
+      operationId: reportingRetireCommissionRule
+      tags: [staff-reporting]
+      summary: Retire a commission rule
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: Retired
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- reporting: commission preview, runs, accruals (manager gate) ---------
+  /api/v1/reporting/commission/preview:
+    get:
+      operationId: reportingCommissionPreview
+      tags: [staff-reporting]
+      summary: Preview computed commission periods without freezing them
+      description: >-
+        posts_to_gl is always false and note is the server-owned caveat: the
+        figures are computed from invoiced sales and have no general-ledger
+        entry.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: rep_user_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: from
+          in: query
+          required: false
+          description: Window start, inclusive
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          description: Window end, inclusive
+          schema: { type: string, format: date }
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The page of computed periods, unfrozen
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingCommissionPeriodPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/reporting/commission/runs:
+    get:
+      operationId: reportingListCommissionRuns
+      tags: [staff-reporting]
+      summary: List frozen commission runs
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: from
+          in: query
+          required: false
+          description: Window start, inclusive
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          description: Window end, inclusive
+          schema: { type: string, format: date }
+        - name: rep_user_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The page of frozen commission runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingCommissionPeriodPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: reportingComputeCommissionRun
+      tags: [staff-reporting]
+      summary: Compute and freeze one rep's commission period
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportingCommissionComputeRequest"
+      responses:
+        "201":
+          description: The frozen commission period with its drill-through lines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingCommissionPeriod"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/reporting/commission/runs/{id}:
+    get:
+      operationId: reportingGetCommissionRun
+      tags: [staff-reporting]
+      summary: Read one frozen commission run with its drill-through
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The commission period with its lines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingCommissionPeriod"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/reporting/commission/runs/{id}/export.csv:
+    get:
+      operationId: reportingExportCommissionRunCsv
+      tags: [staff-reporting]
+      summary: Download one frozen commission run as CSV
+      description: >-
+        The body is CSV text with a Content-Disposition attachment filename,
+        not JSON; the wire shape is raw bytes rather than a struct.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The commission run as a CSV download
+          content:
+            text/csv:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/reporting/commission/runs/{id}/print:
+    post:
+      operationId: reportingPrintCommissionRun
+      tags: [staff-reporting]
+      summary: Queue a frozen commission run for print
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportingPrintRequest"
+      responses:
+        "201":
+          description: The run artefact, queued for print
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingRun"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/reporting/commission/accruals:
+    get:
+      operationId: reportingListCommissionAccruals
+      tags: [staff-reporting]
+      summary: "Read the commission accrual register: owed and unpaid, per rep"
+      description: >-
+        posts_to_gl is always false and note is the server-owned caveat: the
+        figures are computed from invoiced sales and have no general-ledger
+        entry.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: from
+          in: query
+          required: false
+          description: Window start, inclusive
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          description: Window end, inclusive
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: The accrual register plus its total
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingAccrual"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/reporting/commission/attribution-check:
+    get:
+      operationId: reportingAttributionCheck
+      tags: [staff-reporting]
+      summary: Cross-check commission attribution against the rep-assignment resolver
+      description: >-
+        Answers whether this module's bulk attribution agrees with the owning
+        module's own resolution order, one check per invoice. When the seam is
+        not wired the answer is bound=false with an explanation, not an error.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: from
+          in: query
+          required: false
+          description: Window start, inclusive
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          description: Window end, inclusive
+          schema: { type: string, format: date }
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The attribution cross-check result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingAttributionCheck"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- audit: the append-only trail reads -----------------------------------
+  /api/v1/audit:
+    get:
+      operationId: auditListEntries
+      tags: [staff-audit]
+      summary: List audit trail entries (admin deep viewer)
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: entity_type
+          in: query
+          required: false
+          schema: { type: string }
+        - name: action
+          in: query
+          required: false
+          description: One action verb, for example ORDER_CHANGED or PAYMENT_RECEIVED
+          schema: { type: string }
+        - name: actor_id
+          in: query
+          required: false
+          description: Narrow to one actor; malformed values are refused with 400
+          schema: { type: string, format: uuid }
+        - name: since
+          in: query
+          required: false
+          description: Return only entries at or after this timestamp; malformed values are refused with 400
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: The page of audit entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEntryPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/audit/{id}:
+    get:
+      operationId: auditGetEntry
+      tags: [staff-audit]
+      summary: Read one audit entry (admin deep viewer)
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The audit entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEntry"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/audit/transaction/{entityType}/{entityId}:
+    get:
+      operationId: auditReopenTransaction
+      tags: [staff-audit]
+      summary: Read the per-entity trail for the operator transaction-reopen view
+      description: >-
+        Admin-only deep fields (identifiers, override reasons, raw payloads)
+        are stripped server-side before the response leaves, so a frontline
+        client never receives them. seq is the causal sort key for the trail.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: entityType
+          in: path
+          required: true
+          schema: { type: string }
+        - name: entityId
+          in: path
+          required: true
+          description: Malformed values are refused with 400
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The entity's trail, masked for the operator
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEntryPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- export: native xlsx downloads (staff gate) ---------------------------
+  /api/v1/exports/catalogue.xlsx:
+    get:
+      operationId: exportCatalogueXlsx
+      tags: [staff-export]
+      summary: Download the priced catalogue as a native workbook
+      description: >-
+        Takes the same filter query parameters as the catalogue list, plus
+        sort and dir, so the file cannot disagree with the screen. An empty
+        filter result is a 200 with a real workbook: headers, title, zero
+        rows. The body is a binary workbook, not JSON.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: finish
+          in: query
+          required: false
+          schema: { type: string }
+        - name: color_family
+          in: query
+          required: false
+          schema: { type: string }
+        - name: application
+          in: query
+          required: false
+          schema: { type: string }
+        - name: color
+          in: query
+          required: false
+          schema: { type: string }
+        - name: manufacturer
+          in: query
+          required: false
+          schema: { type: string }
+        - name: collection
+          in: query
+          required: false
+          schema: { type: string }
+        - name: category_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: q
+          in: query
+          required: false
+          description: Free-text search
+          schema: { type: string }
+        - name: active
+          in: query
+          required: false
+          description: Defaults to true here; pass false to include discontinued products
+          schema: { type: boolean }
+        - name: in_stock_only
+          in: query
+          required: false
+          schema: { type: boolean }
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: sort
+          in: query
+          required: false
+          description: An unknown key means no sort, not an error
+          schema:
+            type: string
+            enum: [name, manufacturer, color, application, on_hand, available, list_price]
+        - name: dir
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+        - name: filter_summary
+          in: query
+          required: false
+          description: Human rendering of the applied filters, stamped onto the sheet; capped server-side
+          schema: { type: string }
+      responses:
+        "200":
+          description: The catalogue workbook
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/exports/statement.xlsx:
+    get:
+      operationId: exportStatementXlsx
+      tags: [staff-export]
+      summary: Download a financial statement as a native workbook
+      description: >-
+        The same builder backs the finance module's own format=xlsx route, so
+        the two doors cannot drift. The body is a binary workbook, not JSON.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: report
+          in: query
+          required: false
+          description: Defaults to the income statement
+          schema:
+            type: string
+            enum: [income-statement, balance-sheet, trial-balance, ar-aging, gl-detail]
+        - name: year
+          in: query
+          required: false
+          description: Whole number; absent means not narrowed
+          schema: { type: integer, format: int32, minimum: 0 }
+        - name: month
+          in: query
+          required: false
+          description: Whole number 1 to 12; absent means the whole year
+          schema: { type: integer, format: int32, minimum: 1, maximum: 12 }
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: branch_name
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The statement workbook
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/exports/transactions.xlsx:
+    get:
+      operationId: exportTransactionsXlsx
+      tags: [staff-export]
+      summary: Download the general-ledger transaction export as a native workbook
+      description: The body is a binary workbook, not JSON.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: year
+          in: query
+          required: false
+          description: Whole number; absent means not narrowed
+          schema: { type: integer, format: int32, minimum: 0 }
+        - name: month
+          in: query
+          required: false
+          description: Whole number 1 to 12; absent means the whole year
+          schema: { type: integer, format: int32, minimum: 1, maximum: 12 }
+        - name: account_code
+          in: query
+          required: false
+          schema: { type: string }
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: branch_name
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The transactions workbook
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/exports/audit.xlsx:
+    get:
+      operationId: exportAuditXlsx
+      tags: [staff-export]
+      summary: Download the audit trail as a native workbook
+      description: >-
+        Reads the same service and filter as the audit list, so the file is
+        the screen's rows. The body is a binary workbook, not JSON.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: entity_type
+          in: query
+          required: false
+          schema: { type: string }
+        - name: action
+          in: query
+          required: false
+          schema: { type: string }
+        - name: actor_id
+          in: query
+          required: false
+          description: Malformed values are refused with 400
+          schema: { type: string, format: uuid }
+        - name: since
+          in: query
+          required: false
+          description: Return only entries at or after this timestamp; malformed values are refused with 400
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          description: Whole number, zero or more; the read is clamped server-side
+          schema: { type: integer, format: int32, minimum: 0 }
+      responses:
+        "200":
+          description: The audit workbook
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+components:
+  schemas:
+    # --- reporting ------------------------------------------------------------
+    ReportingColumn:
+      type: object
+      description: >-
+        One entry in a template's explicit column allowlist. kind decides how
+        the value is read, totalled and rendered; total marks a column that
+        rolls into the report's totals row.
+      required: [name, label, kind, total]
+      properties:
+        name: { type: string }
+        label: { type: string }
+        kind:
+          type: string
+          enum: [text, int, cents, qty, date, bool]
+        total: { type: boolean }
+    ReportingParamSpec:
+      type: object
+      description: >-
+        One declared parameter. The order of a template's params is the bind
+        order; values is the closed set for kind enum only.
+      required: [name, kind, required, label]
+      properties:
+        name: { type: string }
+        kind:
+          type: string
+          enum: [date, uuid, enum, int]
+        required: { type: boolean }
+        label: { type: string }
+        values:
+          type: array
+          items: { type: string }
+    ReportingTemplate:
+      type: object
+      description: >-
+        A report definition joined to its catalog entry. The query text is
+        never serialized; the surface needs what a report returns, not how it
+        is computed.
+      required: [code, name, category, description, legacy_name, sort_order, is_active, params, columns]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        category:
+          type: string
+          enum: [SALES, MARGIN, AR, INVENTORY, PURCHASING, TAX, PAYMENTS, CREDIT, DELIVERY, WARRANTY, COMMISSION]
+        description: { type: string }
+        legacy_name: { type: string }
+        sort_order: { type: integer, format: int32 }
+        is_active: { type: boolean }
+        params:
+          type: array
+          items: { $ref: "#/components/schemas/ReportingParamSpec" }
+        columns:
+          type: array
+          items: { $ref: "#/components/schemas/ReportingColumn" }
+    ReportingCategory:
+      type: object
+      required: [code, label, templates]
+      properties:
+        code: { type: string }
+        label: { type: string }
+        templates:
+          type: array
+          items: { $ref: "#/components/schemas/ReportingTemplate" }
+    ReportingTemplateCatalog:
+      type: object
+      required: [categories]
+      properties:
+        categories:
+          type: array
+          items: { $ref: "#/components/schemas/ReportingCategory" }
+    ReportingResult:
+      type: object
+      description: >-
+        One executed report. Rows are positional and align with columns by
+        index; params echoes back exactly what was bound, so a screenshot of
+        a report says what it is a report of.
+      required: [code, name, category, columns, rows, row_count, totals, params, run_at]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        category: { type: string }
+        columns:
+          type: array
+          items: { $ref: "#/components/schemas/ReportingColumn" }
+        rows:
+          type: array
+          items:
+            type: array
+            items: true
+        row_count: { type: integer, format: int32 }
+        totals:
+          type: object
+          additionalProperties: true
+        params:
+          type: object
+          additionalProperties: { type: string }
+        run_at: { type: string, format: date-time }
+    ReportingRun:
+      type: object
+      description: >-
+        A persisted report artefact, written only on the print path. html is
+        the frozen document served by the document route.
+      required: [id, kind, template_code, params, row_count, totals, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        kind:
+          type: string
+          enum: [TEMPLATE, COMMISSION]
+        template_code: { type: string }
+        name: { type: string }
+        params:
+          type: object
+          additionalProperties: { type: string }
+        branch_id: { type: string, format: uuid }
+        row_count: { type: integer, format: int32 }
+        totals:
+          type: object
+          additionalProperties: true
+        html: { type: string }
+        print_job_id: { type: string, format: uuid }
+        run_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+    ReportingRunPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ReportingRun" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    ReportingPrintRequest:
+      type: object
+      description: >-
+        print_branch_id is a transport concern (where the paper comes out),
+        not a report parameter.
+      properties:
+        params:
+          type: object
+          additionalProperties: { type: string }
+        print_branch_id: { type: string, format: uuid }
+    ReportingSavedView:
+      type: object
+      description: A stored parameter set; params are re-validated on every run, never on save
+      required: [id, template_code, owner_user_id, name, params, is_shared, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        template_code: { type: string }
+        owner_user_id: { type: string, format: uuid }
+        name: { type: string }
+        params:
+          type: object
+          additionalProperties: { type: string }
+        is_shared: { type: boolean }
+        created_at: { type: string, format: date-time }
+    ReportingSavedViewWrite:
+      type: object
+      required: [template_code, name, params, is_shared]
+      properties:
+        template_code: { type: string }
+        name: { type: string }
+        params:
+          type: object
+          additionalProperties: { type: string }
+        is_shared: { type: boolean }
+    ReportingSavedViewPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ReportingSavedView" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    ReportingCommissionRule:
+      type: object
+      description: >-
+        One commission rule: this rep earns this rate, on either REVENUE or
+        MARGIN, optionally only for this category and/or this branch. Rates
+        are integer basis points; money is integer cents.
+      required: [id, rep_user_id, basis, rate_bps, effective_from, is_active, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        rep_user_id: { type: string, format: uuid }
+        rep_name: { type: string }
+        basis:
+          type: string
+          enum: [REVENUE, MARGIN]
+        rate_bps:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 10000
+        category_id: { type: string, format: uuid }
+        category_code: { type: string }
+        branch_id: { type: string, format: uuid }
+        effective_from: { type: string, format: date }
+        effective_to: { type: string, format: date }
+        is_active: { type: boolean }
+        note: { type: string }
+        created_at: { type: string, format: date-time }
+    ReportingCommissionRulePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ReportingCommissionRule" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    ReportingAttributedLine:
+      type: object
+      description: One invoice line with its rep and its cost, as read for a commission run
+      required: [invoice_id, invoice_line_id, invoice_no, invoice_date, customer_name, product_sku, branch_id, qty_base, revenue_cents, cost_cents]
+      properties:
+        invoice_id: { type: string, format: uuid }
+        invoice_line_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        invoice_date: { type: string, format: date }
+        customer_name: { type: string }
+        product_sku: { type: string }
+        category_id: { type: string, format: uuid }
+        category_code: { type: string }
+        branch_id: { type: string, format: uuid }
+        qty_base: { type: number }
+        revenue_cents: { type: integer, format: int64 }
+        cost_cents: { type: integer, format: int64 }
+        rep_user_id: { type: string, format: uuid }
+    ReportingCommissionLine:
+      description: >-
+        One computed drill-through row. no_rule_reason is set when a line was
+        attributed to a rep but earned nothing, and says why.
+      allOf:
+        - $ref: "#/components/schemas/ReportingAttributedLine"
+        - type: object
+          required: [margin_cents, basis, basis_cents, rate_bps, commission_cents]
+          properties:
+            margin_cents: { type: integer, format: int64 }
+            basis:
+              type: string
+              enum: [REVENUE, MARGIN]
+            basis_cents: { type: integer, format: int64 }
+            rate_bps: { type: integer, format: int32 }
+            commission_cents: { type: integer, format: int64 }
+            rule_id: { type: string, format: uuid }
+            run_id: { type: string, format: uuid }
+            no_rule_reason: { type: string }
+    ReportingCommissionPeriod:
+      type: object
+      description: >-
+        One rep's computed period: the header plus its drill-through lines.
+        posts_to_gl is always false and is serialized anyway, so the surface
+        renders the caveat from the server's own answer. unattributed_cents
+        is revenue in the window that belongs to no rep.
+      required: [rep_user_id, rep_name, period_start, period_end, sale_count, revenue_cents, cost_cents, margin_cents, commission_cents, status, computed_at, posts_to_gl, unattributed_cents, unattributed_count]
+      properties:
+        run_id: { type: string, format: uuid }
+        rep_user_id: { type: string, format: uuid }
+        rep_name: { type: string }
+        period_start: { type: string, format: date }
+        period_end: { type: string, format: date }
+        branch_id: { type: string, format: uuid }
+        sale_count: { type: integer, format: int32 }
+        revenue_cents: { type: integer, format: int64 }
+        cost_cents: { type: integer, format: int64 }
+        margin_cents: { type: integer, format: int64 }
+        commission_cents: { type: integer, format: int64 }
+        status:
+          type: string
+          enum: [ACCRUED]
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/ReportingCommissionLine" }
+        computed_at: { type: string, format: date-time }
+        posts_to_gl: { type: boolean }
+        unattributed_cents: { type: integer, format: int64 }
+        unattributed_count: { type: integer, format: int32 }
+    ReportingCommissionPeriodPage:
+      type: object
+      description: >-
+        Carries posts_to_gl (always false) server-side so the surface renders
+        the caveat from the answer; note is present on the preview response.
+      required: [items, posts_to_gl]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ReportingCommissionPeriod" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+        posts_to_gl: { type: boolean }
+        note: { type: string }
+    ReportingCommissionComputeRequest:
+      type: object
+      required: [rep_user_id, from, to, branch_id]
+      properties:
+        rep_user_id: { type: string, format: uuid }
+        from:
+          type: string
+          format: date
+          description: Window start, inclusive
+        to:
+          type: string
+          format: date
+          description: Window end, inclusive
+        branch_id: { type: string, format: uuid }
+    ReportingAccrualLine:
+      type: object
+      description: "One row of the accrual register: what is owed and unpaid"
+      required: [rep_user_id, rep_name, period_count, commission_cents]
+      properties:
+        rep_user_id: { type: string, format: uuid }
+        rep_name: { type: string }
+        period_count: { type: integer, format: int32 }
+        commission_cents: { type: integer, format: int64 }
+    ReportingAccrual:
+      type: object
+      description: >-
+        The accrual register plus its total. posts_to_gl is false, always;
+        note is the server-owned sentence a controller reads before believing
+        the number.
+      required: [from, to, lines, total_cents, posts_to_gl, note]
+      properties:
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/ReportingAccrualLine" }
+        total_cents: { type: integer, format: int64 }
+        posts_to_gl: { type: boolean }
+        note: { type: string }
+    ReportingAttributionMismatch:
+      type: object
+      description: One sale where the bulk attribution and the owner module's own resolver disagree
+      required: [invoice_id, invoice_no, customer_id, report_rep_user_id, seam_rep_user_id, seam_level]
+      properties:
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        report_rep_user_id: { type: string, format: uuid }
+        seam_rep_user_id: { type: string, format: uuid }
+        seam_level: { type: string }
+    ReportingAttributionCheck:
+      type: object
+      description: >-
+        The cross-check answer. bound=false with an explanation means the
+        rep-assignment resolver is not wired in this deployment; the check is
+        a cross-check, and its absence removes a safety net, not a feature.
+      required: [bound, checked, mismatches, explanation]
+      properties:
+        bound: { type: boolean }
+        checked: { type: integer, format: int32 }
+        mismatches:
+          type: array
+          items: { $ref: "#/components/schemas/ReportingAttributionMismatch" }
+        explanation: { type: string }
+
+    # --- audit ----------------------------------------------------------------
+    AuditEntry:
+      type: object
+      description: >-
+        One audit trail row, projected for the viewers. seq is the monotonic
+        insertion key and the causal sort key for a per-entity trail; 0 for a
+        row that predates it.
+      required: [id, action, entity_type, changes, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        action: { type: string }
+        entity_type: { type: string }
+        entity_id: { type: string, format: uuid }
+        actor_id: { type: string, format: uuid }
+        actor_role: { type: string }
+        branch_id: { type: string, format: uuid }
+        changes:
+          type: object
+          additionalProperties: true
+        request_id: { type: string }
+        created_at: { type: string, format: date-time }
+        seq: { type: integer, format: int64 }
+    AuditEntryPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AuditEntry" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }

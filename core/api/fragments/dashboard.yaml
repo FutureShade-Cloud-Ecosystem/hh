@@ -1,0 +1,1871 @@
+paths:
+  /api/v1/dashboard:
+    get:
+      operationId: dashboardGetHome
+      tags: [staff-dashboard]
+      summary: Read the caller's home, the resolved layout with home config, tabs and hotkeys
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The resolved cockpit payload for the calling staff member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardLayout"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dashboard/catalog:
+    get:
+      operationId: dashboardGetCatalog
+      tags: [staff-dashboard]
+      summary: Read the full tile catalog with wiring state and the caller's profile
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: Every catalog tile, the profile set, and the caller's resolved profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardCatalogView"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dashboard/layout:
+    put:
+      operationId: dashboardPutLayout
+      tags: [staff-dashboard]
+      summary: Save the caller's own tile layout override (whole document)
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DashboardLayoutBody"
+      responses:
+        "200":
+          description: The stored layout rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardLayoutBody"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      operationId: dashboardDeleteLayout
+      tags: [staff-dashboard]
+      summary: Reset the caller's layout to the role default
+      description: >-
+        Answers with the layout the reset landed on, not just a count, so the
+        client does not re-fetch.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The number of cleared rows plus the layout the reset landed on
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardLayoutReset"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dashboard/tabs:
+    put:
+      operationId: dashboardPutTabs
+      tags: [staff-dashboard]
+      summary: Save the caller's own pinned-tab strip (whole document)
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DashboardTabsBody"
+      responses:
+        "200":
+          description: The caller's strip after the save (source is always user)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardTabStrip"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      operationId: dashboardDeleteTabs
+      tags: [staff-dashboard]
+      summary: Reset the caller's pinned tabs to the role default
+      description: >-
+        Answers with the strip the reset landed on, not just a count, so the
+        client does not re-fetch.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The number of cleared rows plus the strip the reset landed on
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardTabsReset"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dashboard/profiles:
+    get:
+      operationId: dashboardListProfiles
+      tags: [staff-dashboard]
+      summary: List every layout profile with its home config
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: One entry per job shape; a fixed closed set, not a paginated list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardProfilesView"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dashboard/profiles/{profile}:
+    get:
+      operationId: dashboardGetProfile
+      tags: [staff-dashboard]
+      summary: Read one role default layout and its home config
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/DashboardProfileParam"
+      responses:
+        "200":
+          description: The role default rows plus home config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardProfileDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: dashboardPutProfile
+      tags: [staff-dashboard]
+      summary: Edit one role default layout (whole document)
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/DashboardProfileParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DashboardLayoutBody"
+      responses:
+        "200":
+          description: The stored role default rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardLayoutBody"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/dashboard/profiles/{profile}/home:
+    put:
+      operationId: dashboardPutProfileHome
+      tags: [staff-dashboard]
+      summary: Edit one role's landing surface and takeover config
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/DashboardProfileParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DashboardHomeConfig"
+      responses:
+        "200":
+          description: The stored home config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardHomeConfig"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/dashboard/profiles/{profile}/tabs:
+    get:
+      operationId: dashboardGetProfileTabs
+      tags: [staff-dashboard]
+      summary: Read one role default pinned-tab strip
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/DashboardProfileParam"
+      responses:
+        "200":
+          description: The role default pins
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardProfileTabs"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: dashboardPutProfileTabs
+      tags: [staff-dashboard]
+      summary: Edit one role default pinned-tab strip (whole document)
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/DashboardProfileParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DashboardTabsBody"
+      responses:
+        "200":
+          description: The stored role default pins
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardTabsBody"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/dashboard/widgets:
+    get:
+      operationId: dashboardGetWidgets
+      tags: [staff-dashboard]
+      summary: Read the caller's resolved widget home
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The resolved widget layout; widgets naming measures the caller may not see are absent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardWidgetLayout"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: dashboardPutWidgets
+      tags: [staff-dashboard]
+      summary: Save the caller's own widget layout (whole document)
+      description: >-
+        A submitted widget naming a measure outside the caller's catalog
+        refuses the whole save with 422 and stores nothing; the same message
+        covers a measure this build does not have, so the refusal cannot
+        enumerate what exists.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DashboardWidgetsBody"
+      responses:
+        "200":
+          description: The stored widget rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardWidgetsBody"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: A widget names a measure, shape, split, range, branch or span the caller is not offered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: The widget substrate is not migrated on this deployment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: dashboardDeleteWidgets
+      tags: [staff-dashboard]
+      summary: Reset the caller's widget layout to the role default
+      description: >-
+        Answers with the layout the reset landed on, not just a count, so the
+        client does not re-fetch.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The number of cleared rows plus the layout the reset landed on
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardWidgetsReset"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: The widget substrate is not migrated on this deployment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/dashboard/widgets/catalog:
+    get:
+      operationId: dashboardGetWidgetCatalog
+      tags: [staff-dashboard]
+      summary: Read the widget builder's catalog of measures, shapes, sizes, spans, splits and ranges
+      description: >-
+        The measures come from the caller's own gated catalog, so a measure
+        they may not see is not in the payload at all.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The builder catalog narrowed to this caller
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardWidgetCatalog"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dashboard/widgets/gallery:
+    get:
+      operationId: dashboardGetWidgetGallery
+      tags: [staff-dashboard]
+      summary: Read the ready-made widgets the caller's role is offered
+      description: >-
+        Entries are narrowed to the caller's own catalog before they leave;
+        an entry the caller may not see is absent from the payload.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The resolved gallery cards for this caller's role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardGallery"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dashboard/widgets/data:
+    get:
+      operationId: dashboardGetWidgetData
+      tags: [staff-dashboard]
+      summary: Read the numbers behind the caller's own widgets, selected by widget key
+      description: >-
+        The key selects; everything measured (measure, split, branch, window)
+        comes from the caller's stored row, so no query parameter can widen
+        what gets measured. Keys that are not the caller's, widgets naming
+        measures outside their catalog, and widgets narrowed to a branch they
+        no longer hold produce no entry. The key parameter may repeat and is
+        truncated to the server's bound rather than refused.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: key
+          in: query
+          required: false
+          description: A widget key from the caller's resolved layout; repeat for each widget to measure
+          explode: true
+          schema:
+            type: array
+            items: { type: string }
+      responses:
+        "200":
+          description: One datum per measured widget, keyed by widget key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardWidgetDataResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dashboard/needs:
+    get:
+      operationId: dashboardGetNeeds
+      tags: [staff-dashboard]
+      summary: Read the Needs-you queue for the caller's role
+      description: >-
+        Rows are computed server side from per-role source policy; a source
+        with no adapter, a failed adapter, or a zero count is an absent row,
+        never an error. Rows whose destination is a manager-gated surface are
+        absent for callers below that tier.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The queue; rows is always an array, never null
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardNeedsQueue"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dashboard/profiles/{profile}/widgets:
+    get:
+      operationId: dashboardGetProfileWidgets
+      tags: [staff-dashboard]
+      summary: Read one role default widget layout
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/DashboardProfileParam"
+      responses:
+        "200":
+          description: The stored role default widget rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardProfileWidgets"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: dashboardPutProfileWidgets
+      tags: [staff-dashboard]
+      summary: Edit one role default widget layout (whole document)
+      description: >-
+        Role defaults are written against the full measure catalog and may not
+        narrow to a branch, because curation hides things and never grants
+        anything.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/DashboardProfileParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DashboardWidgetsBody"
+      responses:
+        "200":
+          description: The stored role default widget rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardWidgetsBody"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: A widget names a measure, shape, split, range or span the catalog does not offer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: The widget substrate is not migrated on this deployment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/dashboard/profiles/{profile}/gallery:
+    get:
+      operationId: dashboardGetProfileGallery
+      tags: [staff-dashboard]
+      summary: Read one role's gallery as stored, retired entries included
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/DashboardProfileParam"
+      responses:
+        "200":
+          description: The stored gallery entries for the role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardProfileGallery"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: dashboardPutProfileGallery
+      tags: [staff-dashboard]
+      summary: Edit one role's widget gallery (whole document)
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/DashboardProfileParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DashboardGalleryBody"
+      responses:
+        "200":
+          description: The stored gallery entries; an empty gallery is an empty array, never null
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardGalleryBody"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: An entry names a measure, shape, split, range or span the catalog does not offer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: The gallery substrate is not migrated on this deployment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/dashboard/metrics:
+    get:
+      operationId: dashboardGetMetrics
+      tags: [staff-dashboard]
+      summary: Read the composed-metric catalog this caller may compose from
+      description: >-
+        Cost-class metrics are byte-absent for callers below the manager tier;
+        there is no payload of hidden metrics for a client to filter.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The vetted metrics, dimensions and chart shapes for this caller
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardMetricCatalogView"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dashboard/viz:
+    get:
+      operationId: dashboardGetViz
+      tags: [staff-dashboard]
+      summary: Read the series for the composed tiles named by tile id
+      description: >-
+        The tile parameter may repeat and is truncated to the server's bound
+        rather than refused. A composed tile naming a metric outside the
+        caller's catalog produces no tile.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: tile
+          in: query
+          required: false
+          description: A composed tile id (viz.<metric>-<dimension>-<shape>); repeat for each tile to measure
+          explode: true
+          schema:
+            type: array
+            items: { type: string }
+      responses:
+        "200":
+          description: One composed tile per recognised id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardVizResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/quick-actions:
+    get:
+      operationId: dashboardGetQuickActions
+      tags: [staff-dashboard]
+      summary: Read the quick actions the caller may see, resolved
+      description: >-
+        Only what this caller may see is returned; there is no payload of
+        hidden actions for a client to filter.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The caller's profile plus the visible actions (always an array, never null)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardQuickActionsMine"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/quick-actions/config:
+    get:
+      operationId: dashboardGetQuickActionConfig
+      tags: [staff-dashboard]
+      summary: Read every quick action with its switch and per-profile matrix
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The admin view of the registry plus the profile set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardQuickActionConfigView"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/quick-actions/config/{action}:
+    put:
+      operationId: dashboardPutQuickActionConfig
+      tags: [staff-dashboard]
+      summary: Edit one quick action's visibility (global switch plus per-profile matrix)
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: action
+          in: path
+          required: true
+          description: The registered action id (a stable dotted string)
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DashboardQuickActionConfigBody"
+      responses:
+        "200":
+          description: The action's resolved admin view after the save
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardEffectiveActionConfig"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/surfaces/{surface}/config:
+    get:
+      operationId: settingsGetSurfaceConfig
+      tags: [staff-settings]
+      summary: Read one surface's resolved config of profile, role items, user items, workspace and policy
+      description: >-
+        profile in the answer is the caller's own resolved job shape and is
+        security-bearing. The profile query parameter asks for another job
+        shape's curation and is refused for a non-admin caller before the
+        store is touched.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/SettingsSurfaceParam"
+        - name: branch_id
+          in: query
+          required: false
+          description: Branch context for the module policy and workspace defaults hooks
+          schema: { type: string }
+        - name: profile
+          in: query
+          required: false
+          description: Read another job shape's curation instead of the caller's own; admin only
+          schema:
+            $ref: "#/components/schemas/DashboardProfile"
+      responses:
+        "200":
+          description: The resolved surface view for the calling user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsSurfaceConfig"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: A malformed surface id or an unknown profile, refused in words
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/surfaces/{surface}/items:
+    put:
+      operationId: settingsPutRoleItems
+      tags: [staff-settings]
+      summary: Replace the dealer's item curation for one surface and profile
+      description: >-
+        Dealer curation is gated on the caller being an administrator, decided
+        in the service where the caller is resolved; the door guard is staff.
+        The item set is validated for shape only: item ids belong to the
+        frontend registry and are never checked against a server-side list.
+      x-role: requireStaff
+      x-guards: ["service:isAdmin"]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/SettingsSurfaceParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsRoleItemsBody"
+      responses:
+        "200":
+          description: The curation was stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsSavedResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: A malformed surface id, unknown profile, or an item set that fails shape validation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: settingsDeleteRoleItems
+      tags: [staff-settings]
+      summary: Clear the dealer's curation of one kind on one surface and profile
+      description: >-
+        Clears one kind so the level beneath the dealer answers again. profile
+        and kind are query parameters rather than body fields because a DELETE
+        with a body is a shape intermediate proxies may drop. Admin-gated in
+        the service, exactly like the PUT.
+      x-role: requireStaff
+      x-guards: ["service:isAdmin"]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/SettingsSurfaceParam"
+        - name: profile
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/DashboardProfile"
+        - name: kind
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/SettingsItemKind"
+      responses:
+        "200":
+          description: The curation was cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsResetResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: A malformed surface id, unknown profile, or an unknown kind, refused in words
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: This deployment's store cannot clear dealer curation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/surfaces/{surface}/my-items:
+    put:
+      operationId: settingsPutMyItems
+      tags: [staff-settings]
+      summary: Replace the caller's own item override for one surface (whole or absent)
+      description: >-
+        Self-service on purpose: hiding a column is not an admin act. The
+        stored set is the override.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/SettingsSurfaceParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsMyItemsBody"
+      responses:
+        "200":
+          description: The override was stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsSavedResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: A malformed surface id or an item set that fails shape validation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: settingsDeleteMyItems
+      tags: [staff-settings]
+      summary: Delete the caller's item override for one surface (reset is a DELETE)
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/SettingsSurfaceParam"
+      responses:
+        "200":
+          description: The override was cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsResetResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: A malformed surface id, refused in words
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/surfaces/{surface}/my-workspace:
+    put:
+      operationId: settingsPutMyWorkspace
+      tags: [staff-settings]
+      summary: Save the caller's workspace ergonomics row for one surface
+      description: >-
+        Requires idempotency_key; a verbatim replay of the last accepted key
+        returns the stored row without a second write, with replayed set.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/SettingsSurfaceParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsWorkspaceSaveInput"
+      responses:
+        "200":
+          description: The resolved workspace view after the save
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsWorkspaceView"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: A missing idempotency key, out-of-range geometry, or a malformed open_ref
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: settingsDeleteMyWorkspace
+      tags: [staff-settings]
+      summary: Delete the caller's workspace row for one surface (reset is a DELETE)
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/SettingsSurfaceParam"
+      responses:
+        "200":
+          description: The workspace row was cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsResetResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: A malformed surface id, refused in words
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/platform/hotkeys:
+    get:
+      operationId: settingsGetPlatformHotkeys
+      tags: [staff-settings]
+      summary: Read every surface's platform hotkey roster plus the caller's can_edit answer
+      description: >-
+        Staff-wide read: a dealer's administrator seeing the platform floor is
+        how they understand what their own override is overriding. can_edit is
+        the server's answer to whether this caller may write, so the client
+        carries no authority logic.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: One roster per platform surface, the reserved shell keys, and can_edit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsPlatformHotkeyView"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/platform/hotkeys/{surface}:
+    put:
+      operationId: settingsPutPlatformHotkeys
+      tags: [staff-settings]
+      summary: Replace one surface's platform hotkey roster, whole
+      description: >-
+        Gated on the platform operator (the identity model's super admin),
+        decided in the service where the caller is resolved; the door guard is
+        staff. Positions are renumbered from the submitted order rather than
+        trusted from the body. A binding the shell hardcodes, or one the
+        dealer tier already claims for a different action on the same surface,
+        is refused with 422.
+      x-role: requireStaff
+      x-guards: ["service:isSuperAdmin"]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: surface
+          in: path
+          required: true
+          description: One platform roster surface
+          schema:
+            type: string
+            enum: [app.shell, pos.counter]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsPlatformRosterBody"
+      responses:
+        "200":
+          description: The roster was stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsSavedResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: An unknown surface, a malformed roster, a duplicate action or binding, or a cross-tier collision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: The platform key roster is not available on this deployment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+components:
+  parameters:
+    DashboardProfileParam:
+      name: profile
+      in: path
+      required: true
+      description: One layout profile (job shape)
+      schema:
+        $ref: "#/components/schemas/DashboardProfile"
+    SettingsSurfaceParam:
+      name: surface
+      in: path
+      required: true
+      description: >-
+        One surface id: lowercase letters, digits, dots, dashes or
+        underscores. Shape validated only; the registry of what a surface is
+        belongs to the frontend.
+      schema:
+        type: string
+        pattern: "^[a-z0-9][a-z0-9._-]{0,63}$"
+
+  schemas:
+    # --- shared vocabulary ---------------------------------------------------
+    DashboardProfile:
+      type: string
+      description: The five layout job shapes; the role-code-to-profile mapping is data, not code
+      enum: [counter, yard, driver, manager, admin]
+    DashboardKind:
+      type: string
+      description: How a tile or measure's number is classified so the client formats it without guessing
+      enum: [count, money_cents, days, basis_points]
+    DashboardSource:
+      type: string
+      description: Which layer decided a layout or strip; what the reset affordance keys off
+      enum: [user, role, catalog]
+    DashboardTileState:
+      type: string
+      description: >-
+        Which kind of answer a tile carries; a client renders the nothing
+        state for anything that is not ok, and hidden tiles carry no
+        measurement at all
+      enum: [ok, unwired, error, hidden]
+    DashboardSeverity:
+      type: string
+      description: The queue's three-word severity vocabulary; status colour always ships with a word
+      enum: [good, watch, stop]
+    DashboardWidgetShape:
+      type: string
+      description: The bento body forms, a closed set
+      enum: [stat, trend, bars, column, share, list, board, gauge]
+    DashboardWidgetSize:
+      type: string
+      description: The bento preset letters, smallest first by area
+      enum: [S, T, M, L, XL]
+    DashboardSplit:
+      type: string
+      description: A widget's split field; none first, then the series dimensions
+      enum: [none, branch, status, bucket]
+    DashboardRange:
+      type: string
+      description: >-
+        The named windows a widget may carry. open, all_time and now name
+        populations rather than periods and resolve to no window.
+      enum: [today, wtd, mtd, qtd, ytd, last_7, last_14, last_30, last_90, open, all_time, now]
+    DashboardDimension:
+      type: string
+      description: The dimensions a metric series may be split by, a closed set
+      enum: [branch, status, bucket]
+    DashboardChartShape:
+      type: string
+      description: The chart composer's three shapes, deciding how a series is drawn
+      enum: [bar, split, list]
+    DashboardTone:
+      type: string
+      description: What a measured point's state means, when it means anything; omitted when neutral
+      enum: [good, watch, stop]
+
+    # --- tiles, layout, tabs, hotkeys ----------------------------------------
+    DashboardPart:
+      type: object
+      description: One component of a compound metric; the tile's own number stays the headline
+      required: [label, number]
+      properties:
+        label: { type: string }
+        number: { type: integer, format: int64 }
+        kind:
+          $ref: "#/components/schemas/DashboardKind"
+    DashboardTileMeta:
+      type: object
+      description: The catalog entry for one tile, including the deep link it navigates to
+      required: [tile_id, label, module, kind, glyph, accent, default_visible, lead]
+      properties:
+        tile_id: { type: string }
+        label: { type: string }
+        module:
+          type: string
+          description: The owning module, named in the unwired label
+        kind:
+          $ref: "#/components/schemas/DashboardKind"
+        glyph: { type: string }
+        accent: { type: string }
+        unit:
+          type: string
+          description: Shell unit key for the deep link
+        screen:
+          type: string
+          description: Shell tab for the deep link
+        default_visible: { type: boolean }
+        default_on_profiles:
+          type: object
+          additionalProperties: { type: boolean }
+          description: Job shapes for which a layout silent about this tile gets it appended visible
+        lead: { type: string }
+    DashboardCatalogEntry:
+      description: A catalog tile plus whether anything is actually measuring it
+      allOf:
+        - $ref: "#/components/schemas/DashboardTileMeta"
+        - type: object
+          required: [wired]
+          properties:
+            wired: { type: boolean }
+    DashboardTile:
+      description: One resolved, measured tile as it goes over the wire
+      allOf:
+        - $ref: "#/components/schemas/DashboardTileMeta"
+        - type: object
+          required: [position, visible, state]
+          properties:
+            position: { type: integer, format: int32 }
+            visible: { type: boolean }
+            state:
+              $ref: "#/components/schemas/DashboardTileState"
+            number:
+              type: [integer, "null"]
+              format: int64
+              description: Absent unless state is ok; a zero is indistinguishable from an unmeasured tile
+            hint: { type: string }
+            parts:
+              type: array
+              items: { $ref: "#/components/schemas/DashboardPart" }
+            as_of:
+              type: string
+              description: The period a measurement is for, as the provider's own calendar day literal
+            note:
+              type: string
+              description: Explains a non-ok state in the words the tile shows
+    DashboardLayoutRow:
+      type: object
+      description: One stored (or submitted) layout entry
+      required: [tile_id, position, visible]
+      properties:
+        tile_id: { type: string }
+        position: { type: integer, format: int32 }
+        visible: { type: boolean }
+    DashboardLayoutBody:
+      type: object
+      required: [tiles]
+      properties:
+        tiles:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardLayoutRow" }
+    DashboardLayoutReset:
+      type: object
+      required: [cleared, layout]
+      properties:
+        cleared:
+          type: integer
+          format: int32
+          description: The number of override rows the reset removed
+        layout:
+          $ref: "#/components/schemas/DashboardLayout"
+    DashboardHomeConfig:
+      type: object
+      description: The role-based screen takeover, as config rather than a hardcoded switch on role code
+      required: [profile, takeover, mobile_only]
+      properties:
+        profile:
+          $ref: "#/components/schemas/DashboardProfile"
+        landing_unit:
+          type: string
+          description: A shell surface named with the shell's own keys
+        landing_module:
+          type: string
+          description: The module within the landing unit
+        takeover:
+          type: boolean
+          description: Land straight on that surface instead of the dashboard home
+        mobile_only:
+          type: boolean
+          description: The takeover applies only below the mobile breakpoint
+    DashboardTabPin:
+      type: object
+      description: One stored (or submitted) pinned-tab row; tab_key is the body of a frozen deep link
+      required: [tab_key, position, visible]
+      properties:
+        tab_key: { type: string }
+        position: { type: integer, format: int32 }
+        visible: { type: boolean }
+    DashboardTabStrip:
+      type: object
+      required: [source, pins]
+      properties:
+        source:
+          $ref: "#/components/schemas/DashboardSource"
+        pins:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardTabPin" }
+    DashboardTabsBody:
+      type: object
+      required: [pins]
+      properties:
+        pins:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardTabPin" }
+    DashboardTabsReset:
+      type: object
+      required: [cleared, tabs]
+      properties:
+        cleared:
+          type: integer
+          format: int32
+        tabs:
+          $ref: "#/components/schemas/DashboardTabStrip"
+    DashboardHotkeyBinding:
+      type: object
+      description: One dealer-level row, a canonical chord spelling bound to a named action
+      required: [binding, action]
+      properties:
+        binding: { type: string }
+        action: { type: string }
+    DashboardLayout:
+      type: object
+      description: The GET /api/v1/dashboard payload
+      required: [profile, source, tiles, home, tabs, hotkeys]
+      properties:
+        profile:
+          $ref: "#/components/schemas/DashboardProfile"
+        source:
+          $ref: "#/components/schemas/DashboardSource"
+        tiles:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardTile" }
+        home:
+          $ref: "#/components/schemas/DashboardHomeConfig"
+        tabs:
+          $ref: "#/components/schemas/DashboardTabStrip"
+        hotkeys:
+          type: array
+          description: Always an array, never null
+          items: { $ref: "#/components/schemas/DashboardHotkeyBinding" }
+    DashboardCatalogView:
+      type: object
+      required: [tiles, profiles, profile]
+      properties:
+        tiles:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardCatalogEntry" }
+        profiles:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardProfile" }
+        profile:
+          $ref: "#/components/schemas/DashboardProfile"
+    DashboardProfileSummary:
+      type: object
+      required: [profile, home]
+      properties:
+        profile:
+          $ref: "#/components/schemas/DashboardProfile"
+        home:
+          $ref: "#/components/schemas/DashboardHomeConfig"
+    DashboardProfilesView:
+      type: object
+      required: [profiles]
+      properties:
+        profiles:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardProfileSummary" }
+    DashboardProfileDetail:
+      type: object
+      required: [profile, tiles, home]
+      properties:
+        profile:
+          $ref: "#/components/schemas/DashboardProfile"
+        tiles:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardLayoutRow" }
+        home:
+          $ref: "#/components/schemas/DashboardHomeConfig"
+    DashboardProfileTabs:
+      type: object
+      required: [profile, pins]
+      properties:
+        profile:
+          $ref: "#/components/schemas/DashboardProfile"
+        pins:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardTabPin" }
+
+    # --- widgets ---------------------------------------------------------------
+    DashboardWidget:
+      type: object
+      description: >-
+        One stored (or submitted) widget. An absent branch_id means the
+        branches the caller may see, and cols/rows absent means the preset
+        decides the span.
+      required: [widget_key, shape, measure, split, range, size, title, position, visible]
+      properties:
+        widget_key: { type: string }
+        shape:
+          $ref: "#/components/schemas/DashboardWidgetShape"
+        measure: { type: string }
+        split:
+          $ref: "#/components/schemas/DashboardSplit"
+        branch_id:
+          type: string
+          format: uuid
+          description: A narrowing filter, never a grant; absent means every branch the caller may see
+        range:
+          $ref: "#/components/schemas/DashboardRange"
+        size:
+          $ref: "#/components/schemas/DashboardWidgetSize"
+        cols:
+          type: integer
+          format: int32
+          description: The free span's columns; zero paired with zero means the preset decides
+        rows:
+          type: integer
+          format: int32
+          description: The free span's rows; zero paired with zero means the preset decides
+        title:
+          type: string
+          description: Empty means derive it from the measure on the server
+        position: { type: integer, format: int32 }
+        visible: { type: boolean }
+    DashboardWidgetView:
+      description: One resolved widget on the wire, with what the client needs to draw and deep-link it
+      allOf:
+        - $ref: "#/components/schemas/DashboardWidget"
+        - type: object
+          required: [label, kind, module, span_cols, span_rows]
+          properties:
+            label: { type: string }
+            kind:
+              $ref: "#/components/schemas/DashboardKind"
+            module: { type: string }
+            unit: { type: string }
+            screen: { type: string }
+            span_cols:
+              type: integer
+              format: int32
+              description: The grid footprint for the widget, computed on the server
+            span_rows:
+              type: integer
+              format: int32
+    DashboardWidgetLayout:
+      type: object
+      description: The GET /api/v1/dashboard/widgets payload
+      required: [profile, source, widgets]
+      properties:
+        profile:
+          $ref: "#/components/schemas/DashboardProfile"
+        source:
+          $ref: "#/components/schemas/DashboardSource"
+        widgets:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardWidgetView" }
+    DashboardWidgetsBody:
+      type: object
+      required: [widgets]
+      properties:
+        widgets:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardWidget" }
+    DashboardWidgetsReset:
+      type: object
+      required: [cleared, layout]
+      properties:
+        cleared:
+          type: integer
+          format: int32
+        layout:
+          $ref: "#/components/schemas/DashboardWidgetLayout"
+    DashboardProfileWidgets:
+      type: object
+      required: [profile, widgets]
+      properties:
+        profile:
+          $ref: "#/components/schemas/DashboardProfile"
+        widgets:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardWidget" }
+    DashboardMetricMeta:
+      type: object
+      description: >-
+        One composed-metric catalog entry. The cost classification is a
+        server-side fact and never crosses the wire.
+      required: [metric_id, label, module, kind, dimensions, shapes, splits, widget_shapes, ranges, lead]
+      properties:
+        metric_id: { type: string }
+        label: { type: string }
+        module: { type: string }
+        kind:
+          $ref: "#/components/schemas/DashboardKind"
+        dimensions:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardDimension" }
+        shapes:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardChartShape" }
+        splits:
+          type: array
+          description: The widget builder's split options for this measure, none first
+          items: { $ref: "#/components/schemas/DashboardSplit" }
+        widget_shapes:
+          type: array
+          description: The bento body forms this measure may take
+          items: { $ref: "#/components/schemas/DashboardWidgetShape" }
+        ranges:
+          type: array
+          description: The windows this measure can actually be asked for, natural one first
+          items: { $ref: "#/components/schemas/DashboardRange" }
+        unit: { type: string }
+        screen: { type: string }
+        lead: { type: string }
+    DashboardWidgetCatalog:
+      type: object
+      description: The widget builder's one read
+      required: [measures, shapes, sizes, spans, span_cols, max_rows, splits, ranges, profile]
+      properties:
+        measures:
+          type: array
+          description: Always an array, never null
+          items: { $ref: "#/components/schemas/DashboardMetricMeta" }
+        shapes:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardWidgetShape" }
+        sizes:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardWidgetSize" }
+        spans:
+          type: object
+          description: Each preset letter mapped to its [columns, rows] pair
+          additionalProperties:
+            type: array
+            items: { type: integer, format: int32 }
+        span_cols:
+          type: array
+          description: The snap set the resize grip lands on
+          items: { type: integer, format: int32 }
+        max_rows:
+          type: integer
+          format: int32
+        splits:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardSplit" }
+        ranges:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardRange" }
+        profile:
+          $ref: "#/components/schemas/DashboardProfile"
+    DashboardGalleryEntry:
+      type: object
+      description: One curated ready-made widget; an entry has no branch and its key never lands on a saved layout
+      required: [entry_key, shape, measure, split, range, size, title, blurb, position, visible]
+      properties:
+        entry_key: { type: string }
+        shape:
+          $ref: "#/components/schemas/DashboardWidgetShape"
+        measure: { type: string }
+        split:
+          $ref: "#/components/schemas/DashboardSplit"
+        range:
+          $ref: "#/components/schemas/DashboardRange"
+        size:
+          $ref: "#/components/schemas/DashboardWidgetSize"
+        cols:
+          type: integer
+          format: int32
+        rows:
+          type: integer
+          format: int32
+        title: { type: string }
+        blurb: { type: string }
+        position: { type: integer, format: int32 }
+        visible: { type: boolean }
+    DashboardGalleryCard:
+      description: One resolved gallery entry, with what the browser needs to draw its mini preview
+      allOf:
+        - $ref: "#/components/schemas/DashboardGalleryEntry"
+        - type: object
+          required: [label, kind, module, span_cols, span_rows]
+          properties:
+            label: { type: string }
+            kind:
+              $ref: "#/components/schemas/DashboardKind"
+            module: { type: string }
+            unit: { type: string }
+            screen: { type: string }
+            span_cols:
+              type: integer
+              format: int32
+            span_rows:
+              type: integer
+              format: int32
+    DashboardGallery:
+      type: object
+      description: The GET /api/v1/dashboard/widgets/gallery payload
+      required: [profile, entries]
+      properties:
+        profile:
+          $ref: "#/components/schemas/DashboardProfile"
+        entries:
+          type: array
+          description: Always an array, never null
+          items: { $ref: "#/components/schemas/DashboardGalleryCard" }
+    DashboardGalleryBody:
+      type: object
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardGalleryEntry" }
+    DashboardProfileGallery:
+      type: object
+      required: [profile, entries]
+      properties:
+        profile:
+          $ref: "#/components/schemas/DashboardProfile"
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardGalleryEntry" }
+    DashboardPoint:
+      type: object
+      description: One bar, segment or row of a composed tile
+      required: [label, number]
+      properties:
+        label: { type: string }
+        number: { type: integer, format: int64 }
+        tone:
+          $ref: "#/components/schemas/DashboardTone"
+    DashboardWidgetDatum:
+      type: object
+      description: One widget's measurement, keyed by the widget it belongs to
+      required: [widget_key, state, range]
+      properties:
+        widget_key: { type: string }
+        state:
+          type: string
+          description: The tile state vocabulary minus hidden; a measurement never fails the page
+          enum: [ok, unwired, error]
+        total:
+          type: [integer, "null"]
+          format: int64
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardPoint" }
+        note: { type: string }
+        range:
+          $ref: "#/components/schemas/DashboardRange"
+    DashboardWidgetDataResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          description: Always an array, never null
+          items: { $ref: "#/components/schemas/DashboardWidgetDatum" }
+
+    # --- needs queue -------------------------------------------------------------
+    DashboardNeedsRow:
+      type: object
+      description: One line of the Needs-you queue
+      required: [source_key, what, count, severity, module]
+      properties:
+        source_key: { type: string }
+        what: { type: string }
+        count: { type: integer, format: int32 }
+        age:
+          type: string
+          description: The humanised age of the oldest item, computed on the server
+        age_minutes:
+          type: integer
+          format: int32
+          description: The same fact as a number
+        severity:
+          $ref: "#/components/schemas/DashboardSeverity"
+        module: { type: string }
+        unit: { type: string }
+        screen: { type: string }
+        view:
+          type: string
+          description: The filter the destination surface should apply
+        action:
+          type: string
+          description: The one word on the row's tap target
+    DashboardNeedsQueue:
+      type: object
+      description: The GET /api/v1/dashboard/needs payload
+      required: [profile, rows, total, worst]
+      properties:
+        profile:
+          $ref: "#/components/schemas/DashboardProfile"
+        rows:
+          type: array
+          description: Always an array, never null; never truncated by the server
+          items: { $ref: "#/components/schemas/DashboardNeedsRow" }
+        total:
+          type: integer
+          format: int32
+          description: The queue's headline, summed on the server over every row
+        worst:
+          $ref: "#/components/schemas/DashboardSeverity"
+
+    # --- composed metrics -------------------------------------------------------
+    DashboardComposition:
+      type: object
+      description: A parsed composed-tile id
+      required: [tile_id, metric_id, dimension, shape]
+      properties:
+        tile_id: { type: string }
+        metric_id: { type: string }
+        dimension:
+          $ref: "#/components/schemas/DashboardDimension"
+        shape:
+          $ref: "#/components/schemas/DashboardChartShape"
+    DashboardVizTile:
+      description: One composed tile as it goes over the wire
+      allOf:
+        - $ref: "#/components/schemas/DashboardComposition"
+        - type: object
+          required: [label, kind, module, position, state]
+          properties:
+            label: { type: string }
+            kind:
+              $ref: "#/components/schemas/DashboardKind"
+            module: { type: string }
+            unit: { type: string }
+            screen: { type: string }
+            position: { type: integer, format: int32 }
+            state:
+              type: string
+              enum: [ok, unwired, error]
+            total:
+              type: [integer, "null"]
+              format: int64
+            points:
+              type: array
+              items: { $ref: "#/components/schemas/DashboardPoint" }
+            note: { type: string }
+    DashboardMetricCatalogView:
+      type: object
+      required: [metrics, dimensions, shapes, profile]
+      properties:
+        metrics:
+          type: array
+          description: Always an array, never null
+          items: { $ref: "#/components/schemas/DashboardMetricMeta" }
+        dimensions:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardDimension" }
+        shapes:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardChartShape" }
+        profile:
+          $ref: "#/components/schemas/DashboardProfile"
+    DashboardVizResponse:
+      type: object
+      required: [tiles]
+      properties:
+        tiles:
+          type: array
+          description: Always an array, never null
+          items: { $ref: "#/components/schemas/DashboardVizTile" }
+
+    # --- quick actions ------------------------------------------------------------
+    DashboardActionMeta:
+      type: object
+      description: One registered quick action, what it is called, where it goes, and what it asks for on arrival
+      required: [action_id, label, glyph, title, unit, screen, intent, lead, default_enabled, default_profiles]
+      properties:
+        action_id: { type: string }
+        label: { type: string }
+        glyph: { type: string }
+        title:
+          type: string
+          description: The button's tooltip and accessible name, one string so the two cannot drift
+        unit: { type: string }
+        screen: { type: string }
+        intent:
+          type: string
+          description: The instruction handed to the destination surface on arrival
+        lead: { type: string }
+        default_enabled: { type: boolean }
+        default_profiles:
+          type: object
+          additionalProperties: { type: boolean }
+    DashboardEffectiveActionConfig:
+      description: One action as the admin surface sees it, resolved per job shape
+      allOf:
+        - $ref: "#/components/schemas/DashboardActionMeta"
+        - type: object
+          required: [enabled, profiles, stored]
+          properties:
+            enabled: { type: boolean }
+            profiles:
+              type: object
+              description: Keyed by every job shape, always fully populated
+              additionalProperties: { type: boolean }
+            stored:
+              type: boolean
+              description: False when nothing has ever been saved for this action
+    DashboardQuickActionsMine:
+      type: object
+      required: [profile, actions]
+      properties:
+        profile:
+          $ref: "#/components/schemas/DashboardProfile"
+        actions:
+          type: array
+          description: Always an array, never null
+          items: { $ref: "#/components/schemas/DashboardActionMeta" }
+    DashboardQuickActionConfigView:
+      type: object
+      required: [actions, profiles]
+      properties:
+        actions:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardEffectiveActionConfig" }
+        profiles:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardProfile" }
+    DashboardQuickActionConfigBody:
+      type: object
+      description: The global switch plus the per-profile matrix; unknown profile keys are dropped on save
+      required: [enabled, profiles]
+      properties:
+        enabled: { type: boolean }
+        profiles:
+          type: object
+          additionalProperties: { type: boolean }
+
+    # --- settings: the configurable-surfaces kit ----------------------------------
+    SettingsItemKind:
+      type: string
+      enum: [panel, column, chip, action]
+    SettingsItem:
+      type: object
+      description: One curation row, a frontend-registry id at a position, shown or hidden
+      required: [kind, id, position, visible]
+      properties:
+        kind:
+          $ref: "#/components/schemas/SettingsItemKind"
+        id:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9._-]{0,63}$"
+          description: An id from the surface's frontend registry; the server validates shape only
+        position:
+          type: integer
+          format: int32
+          minimum: 0
+        visible: { type: boolean }
+    SettingsArrangement:
+      type: string
+      enum: [PRIMARY_LEFT, PRIMARY_RIGHT]
+    SettingsWorkspaceView:
+      type: object
+      description: The resolved workspace answer
+      required: [split_pct, arrangement, primary_collapsed, secondary_collapsed, cost_hidden, source]
+      properties:
+        split_pct:
+          type: integer
+          format: int32
+          minimum: 20
+          maximum: 80
+        arrangement:
+          $ref: "#/components/schemas/SettingsArrangement"
+        primary_collapsed: { type: boolean }
+        secondary_collapsed: { type: boolean }
+        cost_hidden: { type: boolean }
+        open_ref:
+          type: string
+          description: The surface-neutral reference to the object last open here; display state, never authority
+        source:
+          type: string
+          description: user when the caller's stored row answered, dealer when the surface defaults did
+          enum: [user, dealer]
+        replayed:
+          type: boolean
+          description: Set when the write was an idempotent replay of the last accepted key
+    SettingsWorkspaceSaveInput:
+      type: object
+      required: [idempotency_key]
+      properties:
+        split_pct:
+          type: integer
+          format: int32
+          description: Zero means the surface default
+        arrangement:
+          $ref: "#/components/schemas/SettingsArrangement"
+        primary_collapsed: { type: boolean }
+        secondary_collapsed: { type: boolean }
+        cost_hidden: { type: boolean }
+        open_ref: { type: string }
+        idempotency_key:
+          type: string
+          description: Required on a workspace write; the write_key idempotent replay contract
+    SettingsSurfaceConfig:
+      type: object
+      description: The GET /api/v1/surfaces/{surface}/config answer
+      required: [surface_id, profile, role_items, user_items, workspace]
+      properties:
+        surface_id: { type: string }
+        profile:
+          type: string
+          description: The caller's own resolved job shape; security-bearing, never the requested one
+        items_profile:
+          type: string
+          description: Whose curation role_items actually is; set when an admin asked for another job shape
+        role_items:
+          type: array
+          items: { $ref: "#/components/schemas/SettingsItem" }
+        user_items:
+          type: array
+          description: The caller's override; empty when none exists
+          items: { $ref: "#/components/schemas/SettingsItem" }
+        workspace:
+          $ref: "#/components/schemas/SettingsWorkspaceView"
+        policy:
+          type: object
+          additionalProperties: true
+          description: The module's policy knobs via the surface hook; fields a caller may not see are byte-absent
+    SettingsRoleItemsBody:
+      type: object
+      required: [profile, items]
+      properties:
+        profile:
+          $ref: "#/components/schemas/DashboardProfile"
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SettingsItem" }
+    SettingsMyItemsBody:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SettingsItem" }
+    SettingsSavedResponse:
+      type: object
+      required: [saved]
+      properties:
+        saved:
+          type: boolean
+          enum: [true]
+    SettingsResetResponse:
+      type: object
+      required: [reset]
+      properties:
+        reset:
+          type: boolean
+          enum: [true]
+    SettingsPlatformHotkey:
+      type: object
+      description: One row of a platform roster, which action, which key, where in the list
+      required: [action, binding, position]
+      properties:
+        action: { type: string }
+        binding: { type: string }
+        position: { type: integer, format: int32 }
+    SettingsPlatformRoster:
+      type: object
+      description: >-
+        One surface's whole platform roster plus the dealer tier immediately
+        above it, served together because a collision is only visible with
+        both. dealer is empty for app.shell, always.
+      required: [surface, keys, dealer]
+      properties:
+        surface:
+          type: string
+          enum: [app.shell, pos.counter]
+        keys:
+          type: array
+          items: { $ref: "#/components/schemas/SettingsPlatformHotkey" }
+        dealer:
+          type: array
+          items: { $ref: "#/components/schemas/SettingsPlatformHotkey" }
+    SettingsReservedKey:
+      type: object
+      description: One keystroke the app shell owns outright; no tier binds it and no tier can free it
+      required: [binding, holds]
+      properties:
+        binding: { type: string }
+        holds:
+          type: string
+          description: A plain-language phrase for what the shell already does with this keystroke
+    SettingsPlatformHotkeyView:
+      type: object
+      description: The GET /api/v1/platform/hotkeys answer
+      required: [rosters, can_edit, reserved]
+      properties:
+        rosters:
+          type: array
+          items: { $ref: "#/components/schemas/SettingsPlatformRoster" }
+        can_edit:
+          type: boolean
+          description: The server's answer to whether this caller may write the roster
+        reserved:
+          type: array
+          items: { $ref: "#/components/schemas/SettingsReservedKey" }
+    SettingsPlatformRosterBody:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          description: Positions are renumbered from the submitted order on save
+          items: { $ref: "#/components/schemas/SettingsPlatformHotkey" }

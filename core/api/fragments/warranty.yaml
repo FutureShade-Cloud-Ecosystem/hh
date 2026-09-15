@@ -1,0 +1,2274 @@
+# Fragment: warranty, lien, compliance (HardscapeOS ERP modules WTY-01, W6 M6).
+# Sources: backend/internal/warranty, backend/internal/lien, backend/internal/compliance.
+# Guards resolved from RegisterRoutes signatures and the main.go call sites:
+# warranty takes RequireStaff, RequireManager, RequireAdmin; lien is RequireManager
+# throughout (the holdback release adds an in-service dual gate, noted in x-guards);
+# compliance is RequireManager throughout. The public intake doorway is unguarded by
+# design (warranty.Handler.RegisterPublicRoutes).
+
+paths:
+  # --- warranty: FR-1 vendor registry ----------------------------------------
+  /api/v1/warranty/vendors:
+    get:
+      operationId: warrantyListVendorProfiles
+      tags: [staff-warranty]
+      summary: List vendor warranty profiles
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of vendor warranty profiles
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyVendorProfilePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/warranty/vendors/{vendorID}:
+    get:
+      operationId: warrantyGetVendorProfile
+      tags: [staff-warranty]
+      summary: Read one vendor's warranty profile, including product overrides
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The vendor warranty profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyVendorProfile"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: warrantyUpsertVendorProfile
+      tags: [staff-warranty]
+      summary: Create or replace a vendor's warranty profile
+      description: >-
+        The path is the source of truth for which vendor the profile belongs
+        to; the server overwrites vendor_id from the path.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorID
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyVendorProfileInput"
+      responses:
+        "200":
+          description: The stored vendor warranty profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyVendorProfile"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/warranty/vendors/{vendorID}/overrides:
+    post:
+      operationId: warrantyAddProductOverride
+      tags: [staff-warranty]
+      summary: Add a per-product deviation from a vendor's default terms
+      description: >-
+        The profile is resolved from the vendor in the path, so the caller
+        supplies only the product and the deviating terms.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorID
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyProductOverrideInput"
+      responses:
+        "201":
+          description: The created product override
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyProductOverride"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- warranty: FR-2 claim capture + reads -----------------------------------
+  /api/v1/warranty/claims:
+    get:
+      operationId: warrantyListClaims
+      tags: [staff-warranty]
+      summary: List warranty claims
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: phase
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [INTAKE, TRIAGE, SUBMITTED, WAITING_ON_DECISION, DECISION, SETTLEMENT, CLOSED, REJECTED, ABANDONED]
+        - name: vendor_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of claims
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyClaimPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: warrantyCreateClaim
+      tags: [staff-warranty]
+      summary: Capture a warranty claim from the office, counter, or an invoice line
+      description: >-
+        opened_at supports back-dating (FR-9): when set, the claim enters with
+        its true opened stamp rather than the server clock.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyClaimInput"
+      responses:
+        "201":
+          description: The created claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyClaim"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: A field value violates a claim rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/warranty/claims/{id}:
+    get:
+      operationId: warrantyGetClaim
+      tags: [staff-warranty]
+      summary: Read one warranty claim
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyClaim"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/warranty/claims/{id}/events:
+    get:
+      operationId: warrantyListClaimEvents
+      tags: [staff-warranty]
+      summary: List the audit-spine events of a claim
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of claim events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyClaimEventPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/warranty/claims/{id}/checklist:
+    get:
+      operationId: warrantyGetClaimChecklist
+      tags: [staff-warranty]
+      summary: Read the claim's checklist resolved against its ticks
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of checklist states
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyChecklistStatePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: warrantyTickClaimChecklist
+      tags: [staff-warranty]
+      summary: Toggle one checklist item on a claim
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyChecklistTickInput"
+      responses:
+        "200":
+          description: The checklist item state after the tick
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyChecklistState"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: The item key is not on the claim's checklist
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # --- warranty: FR-3 lifecycle ------------------------------------------------
+  /api/v1/warranty/claims/{id}/assign:
+    post:
+      operationId: warrantyAssignClaim
+      tags: [staff-warranty]
+      summary: Assign a claim to a vendor and an owner
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyClaimAssignInput"
+      responses:
+        "200":
+          description: The claim after assignment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyClaim"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: The assignment violates a claim rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/warranty/claims/{id}/advance:
+    post:
+      operationId: warrantyAdvanceClaimPhase
+      tags: [staff-warranty]
+      summary: Advance a claim to a new phase
+      description: >-
+        Required checklist items on the current phase gate the move (FR-3);
+        exit transitions to REJECTED or ABANDONED are never gated. occurred_at
+        supports back-dating the transition (FR-9).
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyPhaseTransitionInput"
+      responses:
+        "200":
+          description: The claim after the transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyClaim"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: The transition is illegal or the checklist gate is unmet
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/warranty/claims/{id}/evidence:
+    post:
+      operationId: warrantyAttachClaimEvidence
+      tags: [staff-warranty]
+      summary: Attach a masked evidence reference to a claim
+      description: >-
+        FR-4 seam: the body carries a reference, not file bytes; the module
+        has no file storage of its own for this route.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyEvidenceInput"
+      responses:
+        "201":
+          description: The evidence event recorded on the claim's audit spine
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyClaimEvent"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- warranty: FR-5 settlement ----------------------------------------------
+  /api/v1/warranty/claims/{id}/settle:
+    post:
+      operationId: warrantySettleClaim
+      tags: [staff-warranty]
+      summary: Record a settlement outcome and amounts on a claim
+      description: >-
+        Manager-gated (PRD section 4). The outcome drives the per-outcome
+        money path from warranty_outcome_paths; manual_override records a
+        settlement whose money was booked outside the module and requires a
+        reason. Re-settlement of a settled claim is refused.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantySettlementInput"
+      responses:
+        "200":
+          description: The recorded settlement, including which money path ran
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantySettlementResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: The outcome or amounts violate a settlement rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/warranty/claims/{id}/postings:
+    get:
+      operationId: warrantyListClaimPostings
+      tags: [staff-warranty]
+      summary: List the executed settlement money paths of a claim
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of settlement postings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantySettlementPostingPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- warranty: FR-7 reporting + board ----------------------------------------
+  /api/v1/warranty/reports:
+    get:
+      operationId: warrantyGetReports
+      tags: [staff-warranty]
+      summary: Read the warranty metrics bundle in one call
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The metrics bundle the reporting screen reads
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyReportBundle"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/warranty/board:
+    get:
+      operationId: warrantyGetBoard
+      tags: [staff-warranty]
+      summary: Read the Kanban columns with their claims in one call
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: vendor_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The confirmed phases plus the exit columns, each with its claims
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyBoard"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- warranty: DIB-221 recovery worklist -------------------------------------
+  /api/v1/warranty/recovery:
+    get:
+      operationId: warrantyGetRecoveryBoard
+      tags: [staff-warranty]
+      summary: Read the outstanding vendor-money recovery worklist
+      description: >-
+        open_only defaults true: this is a worklist, and a reconciled claim
+        belongs in history rather than on the board.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: vendor_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: open_only
+          in: query
+          required: false
+          schema: { type: boolean, default: true }
+      responses:
+        "200":
+          description: The recovery board, rolled up per vendor with aging buckets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyRecoveryBoard"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/warranty/claims/{id}/recovery:
+    get:
+      operationId: warrantyListRecoveryActions
+      tags: [staff-warranty]
+      summary: List a claim's recovery chase log, oldest first
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of recovery actions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyRecoveryActionPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: warrantyLogRecoveryAction
+      tags: [staff-warranty]
+      summary: Log one recovery chase action against a claim
+      description: >-
+        A RECEIVED action reconciles against what the claim accrued; an
+        over-receipt is refused. occurred_at is back-datable, symmetric with
+        capture and advance (FR-9).
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyRecoveryActionInput"
+      responses:
+        "201":
+          description: The recorded recovery action
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyRecoveryAction"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: The action vocabulary, amount shape, or reconciliation rule was violated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # --- warranty: DIB-222 intake evidence (staff side) ---------------------------
+  /api/v1/warranty/claims/{id}/photos:
+    get:
+      operationId: warrantyListIntakePhotos
+      tags: [staff-warranty]
+      summary: List a claim's public-intake photos, metadata only
+      description: Bytes ride the per-photo byte route; this list never carries them.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of intake photo metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyIntakePhotoPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/warranty/claims/{id}/photos/{photoId}:
+    get:
+      operationId: warrantyGetIntakePhotoBytes
+      tags: [staff-warranty]
+      summary: Read one intake photo's bytes
+      description: >-
+        The response body is the raw raster; the stored content type is echoed
+        back and was verified against the magic bytes at intake. The checksum
+        rides the ETag header, so a matching If-None-Match answers 304.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: photoId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The photo bytes
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+        "304":
+          description: The caller's cached copy matches the stored checksum
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- warranty: DIB-223 SLA ----------------------------------------------------
+  /api/v1/warranty/sla:
+    get:
+      operationId: warrantyGetSLABoard
+      tags: [staff-warranty]
+      summary: Read the live SLA timers plus the outstanding alerts
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: include_acknowledged
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: "The SLA surface: timers, alerts, and the configured targets"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantySLABoard"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/warranty/sla/targets:
+    get:
+      operationId: warrantyListSLATargets
+      tags: [staff-warranty]
+      summary: List the configured per-phase SLA targets
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of SLA targets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantySLATargetPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/warranty/sla/sweep:
+    post:
+      operationId: warrantySweepSLA
+      tags: [staff-warranty]
+      summary: Evaluate every open claim's timer and raise alerts for breaches
+      description: >-
+        Manager-gated because the sweep is the write that makes the system
+        notify people. Idempotent: one durable alert per claim and phase,
+        upserted on repeat runs.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The alerts the sweep raised or refreshed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantySLASweepResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/warranty/claims/{id}/sla/{alertId}/ack:
+    post:
+      operationId: warrantyAckSLAAlert
+      tags: [staff-warranty]
+      summary: Mark an SLA alert as seen by the acting staff member
+      description: The alert is not deleted; acknowledgement is recorded on the row.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: alertId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Acknowledged; nothing is returned
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: The alert id is required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # --- warranty: DIB-222 public intake (the one unguarded route) -----------------
+  /api/public/v1/warranty/intake:
+    post:
+      operationId: warrantySubmitPublicIntake
+      tags: [public]
+      summary: Submit a warranty claim from the public intake form
+      description: >-
+        The one unguarded warranty route, registered from its own
+        RegisterPublicRoutes method so the absence of a guard is an explicit
+        decision. There is no token: the doorway is open by design and defends
+        itself with a configured body cap, a per-address rate limit keyed on a
+        hash of the server-observed address, and content-type checks against
+        the magic bytes of each photo. There is no public read: the reference
+        returned here is a receipt to quote on the phone, not a lookup key.
+      x-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyPublicIntakeInput"
+      responses:
+        "201":
+          description: "The receipt: a high-entropy reference and a sentence, nothing more"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyPublicIntakeResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "413":
+          description: The submission or one photo exceeds the configured size cap
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415":
+          description: The body is not application/json, or a photo is not a JPEG, PNG or WebP image
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: A required field is missing or a value violates an intake rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: Too many submissions from this connection inside the configured window
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: The intake form is closed or not configured
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # --- lien: the Lien Cockpit (W6 M6). All routes RequireManager; the release ---
+  # --- adds the in-service dual gate (x-guards). --------------------------------
+  /api/v1/lien/jobs:
+    get:
+      operationId: lienListJobs
+      tags: [staff-lien]
+      summary: List lien jobs
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of lien jobs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienJobPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: lienCreateJob
+      tags: [staff-lien]
+      summary: Create a lien job, the umbrella a holdback and release cycle attaches to
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LienJobInput"
+      responses:
+        "201":
+          description: The created lien job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienJob"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: A field value violates a lien job rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/lien/jobs/{id}:
+    get:
+      operationId: lienGetJob
+      tags: [staff-lien]
+      summary: Read one lien job
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The lien job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienJob"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/lien/jobs/{id}/sync:
+    post:
+      operationId: lienSyncJobHoldbacks
+      tags: [staff-lien]
+      summary: Book retention rows from billing's holdback invoices, idempotently
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: What the sync booked and what it skipped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienSyncResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/lien/jobs/{id}/documents:
+    get:
+      operationId: lienListJobDocuments
+      tags: [staff-lien]
+      summary: List a job's rendered lien documents
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of lien documents
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienDocumentPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/lien/triage:
+    get:
+      operationId: lienGetTriage
+      tags: [staff-lien]
+      summary: Read the triage worklist, badge-classified
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of triage worklist rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienTriageItemPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/lien/holdback/aging:
+    get:
+      operationId: lienGetHoldbackAging
+      tags: [staff-lien]
+      summary: Read outstanding holdbacks aged into buckets
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of holdback aging rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienAgingRowPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/lien/documents:
+    post:
+      operationId: lienCreateDocument
+      tags: [staff-lien]
+      summary: Render a statute-driven document from merge-field data
+      description: >-
+        The server renders the template and stamps the next version. Every
+        rendered document carries the DRAFT banner until the shared
+        review-status row flips it.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LienDocumentInput"
+      responses:
+        "201":
+          description: The rendered, versioned document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienDocument"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: The template_kind is not a renderable form
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/lien/documents/{id}/versions:
+    get:
+      operationId: lienListDocumentVersions
+      tags: [staff-lien]
+      summary: List every version of one lien document
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of document versions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienDocumentPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/lien/holdback/{jobID}/release:
+    post:
+      operationId: lienReleaseHoldback
+      tags: [staff-lien]
+      summary: Release a job's holdback and post the release journal
+      description: >-
+        Posts the release journal (DR 2350 / CR 1150) through the GL provider
+        and registers the release on the compliance calendar. The route gate
+        is RequireManager; inside the service a four-eyes dual gate runs on
+        top: the initiating gatekeeper must hold the general-manager authority
+        and the co-signer named in the body is resolved server-side and must
+        currently hold a finance authority, never trusting the role asserted
+        in the request. A PAYABLE-direction holdback is recordable but its
+        release is refused. The co-signer body is optional to decode; an empty
+        approval fails the dual gate.
+      x-role: requireManager
+      x-guards: [holdback-release-dual-gate]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: jobID
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LienReleaseApproval"
+      responses:
+        "200":
+          description: The outcome of the holdback release
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienReleaseResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: Nothing to release, or a PAYABLE-direction release was refused
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # --- compliance: the deadline calendar + shared review-status banner ----------
+  /api/v1/compliance/calendar:
+    get:
+      operationId: complianceListCalendar
+      tags: [staff-compliance]
+      summary: List compliance-calendar deadlines
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [OPEN, SATISFIED, WAIVED, OVERDUE]
+      responses:
+        "200":
+          description: The page of compliance deadlines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComplianceDeadlinePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/compliance/upcoming:
+    get:
+      operationId: complianceListUpcoming
+      tags: [staff-compliance]
+      summary: List open deadlines due within the horizon, marking past-due rows OVERDUE
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: horizon_days
+          in: query
+          required: false
+          description: How far ahead to look, in days; the module default applies when omitted
+          schema: { type: integer, format: int32 }
+      responses:
+        "200":
+          description: The page of upcoming deadlines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComplianceDeadlinePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/compliance/review-status:
+    get:
+      operationId: complianceGetReviewStatus
+      tags: [staff-compliance]
+      summary: Read the review-status banner for a subject
+      description: >-
+        The shared, data-driven banner source every lien screen derives its
+        DRAFT banner from. A subject with no explicit row answers the module
+        default banner, so this route always answers a banner.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: subject_type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [LIEN_JOB, LIEN_DOCUMENT, HOLDBACK, OTHER]
+        - name: subject_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The review-status banner for the subject
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComplianceReviewStatus"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: complianceUpsertReviewStatus
+      tags: [staff-compliance]
+      summary: Set the review-status banner for a subject
+      description: Manager-gated; a banner change is a row edit, not a redeploy.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ComplianceReviewStatusInput"
+      responses:
+        "200":
+          description: The stored review-status banner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComplianceReviewStatus"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: The state is not in the review-status vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+components:
+  schemas:
+    # --- warranty: FR-1 vendor registry ----------------------------------------
+    WarrantyDocRef:
+      type: object
+      description: One policy-document reference on a vendor profile
+      required: [title, ref]
+      properties:
+        title: { type: string }
+        ref: { type: string }
+    WarrantyProductOverride:
+      type: object
+      description: A per-product deviation from a vendor's default terms (FR-1)
+      required: [id, profile_id, product_id, coverage, notes]
+      properties:
+        id: { type: string }
+        profile_id: { type: string }
+        product_id: { type: string }
+        product_name: { type: string }
+        coverage: { type: string }
+        term_months:
+          type: [integer, "null"]
+          format: int32
+          description: Null means unknown or none
+        notes: { type: string }
+        created_at: { type: string, format: date-time }
+    WarrantyVendorProfile:
+      type: object
+      description: >-
+        One vendor's warranty terms (FR-1). Status carries the explicit
+        UNDOCUMENTED state so a claim against an undocumented vendor prompts
+        capture of the negotiated terms.
+      required: [id, vendor_id, status, coverage, channel, channel_ref, docs, notes]
+      properties:
+        id: { type: string }
+        vendor_id: { type: string }
+        vendor_name:
+          type: string
+          description: Joined from the vendor master for display
+        vendor_no: { type: string }
+        status:
+          type: string
+          enum: [DOCUMENTED, UNDOCUMENTED]
+        coverage: { type: string }
+        term_months:
+          type: [integer, "null"]
+          format: int32
+          description: Null means unknown or none
+        channel:
+          type: string
+          enum: [EMAIL, PORTAL, REP, PHONE, OTHER]
+        channel_ref: { type: string }
+        docs:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyDocRef" }
+        notes: { type: string }
+        overrides:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyProductOverride" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    WarrantyVendorProfileInput:
+      type: object
+      description: The create or update profile payload
+      required: [vendor_id, status, coverage, term_months, channel, channel_ref, docs, notes]
+      properties:
+        vendor_id: { type: string }
+        status:
+          type: string
+          enum: [DOCUMENTED, UNDOCUMENTED]
+        coverage: { type: string }
+        term_months:
+          type: [integer, "null"]
+          format: int32
+        channel:
+          type: string
+          enum: [EMAIL, PORTAL, REP, PHONE, OTHER]
+        channel_ref: { type: string }
+        docs:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyDocRef" }
+        notes: { type: string }
+    WarrantyProductOverrideInput:
+      type: object
+      description: >-
+        The add-override payload. The server derives profile_id from the
+        vendor in the path; a profile_id in the body is overwritten.
+      required: [profile_id, product_id, coverage, term_months, notes]
+      properties:
+        profile_id: { type: string }
+        product_id: { type: string }
+        coverage: { type: string }
+        term_months:
+          type: [integer, "null"]
+          format: int32
+        notes: { type: string }
+    WarrantyVendorProfilePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyVendorProfile" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    # --- warranty: FR-2 claim object --------------------------------------------
+    WarrantyAddress:
+      type: object
+      description: The job-site (failure-location) address shape
+      properties:
+        line1: { type: string }
+        city: { type: string }
+        province: { type: string }
+        postal: { type: string }
+    WarrantyClaimLine:
+      type: object
+      description: One product and quantity on a claim, carrying both sheet purchase dates (FR-2)
+      required: [id, claim_id, product_text, qty, notes]
+      properties:
+        id: { type: string }
+        claim_id: { type: string }
+        product_id: { type: string }
+        product_text: { type: string }
+        qty:
+          type: string
+          description: The decimal quantity as a string; never a float
+        uom_code: { type: string }
+        purchase_date_supplier: { type: string, format: date }
+        purchase_date_contractor: { type: string, format: date }
+        notes: { type: string }
+    WarrantyClaimLineInput:
+      type: object
+      description: One line on the capture form
+      required: [product_id, product_text, qty, uom_code, purchase_date_supplier, purchase_date_contractor, notes]
+      properties:
+        product_id: { type: string }
+        product_text: { type: string }
+        qty:
+          type: string
+          description: The decimal quantity as a string; never a float
+        uom_code: { type: string }
+        purchase_date_supplier: { type: string, format: date }
+        purchase_date_contractor: { type: string, format: date }
+        notes: { type: string }
+    WarrantyClaim:
+      type: object
+      description: >-
+        A tracked warranty-claim object (FR-2). claim_no is the public #WTY-n
+        form. An empty vendor_id means the vendor is unknown pending triage.
+      required: [id, claim_no, job_address, branch_id, phase, source, description, expected_cents, realized_cents]
+      properties:
+        id: { type: string }
+        claim_no: { type: string }
+        customer_id: { type: string }
+        customer_name: { type: string }
+        job_address: { $ref: "#/components/schemas/WarrantyAddress" }
+        vendor_id: { type: string }
+        vendor_name: { type: string }
+        owner_id: { type: string }
+        owner_name: { type: string }
+        branch_id: { type: string }
+        phase:
+          type: string
+          enum: [INTAKE, TRIAGE, SUBMITTED, WAITING_ON_DECISION, DECISION, SETTLEMENT, CLOSED, REJECTED, ABANDONED]
+        source:
+          type: string
+          enum: [INTAKE, COUNTER, WEB]
+        description: { type: string }
+        invoice_id: { type: string }
+        order_id: { type: string }
+        po_id: { type: string }
+        supplier_purchase_date: { type: string, format: date }
+        submitted_at: { type: string, format: date-time }
+        sla_due: { type: string, format: date-time }
+        outcome:
+          type: string
+          enum: [VENDOR_CREDIT, REPLACEMENT_STOCK, CUSTOMER_ACCOMMODATION, WRITE_OFF]
+        expected_cents: { type: integer, format: int64 }
+        realized_cents: { type: integer, format: int64 }
+        gl_journal_id: { type: string }
+        opened_at: { type: string, format: date-time }
+        closed_at: { type: string, format: date-time }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyClaimLine" }
+        created_at: { type: string, format: date-time }
+    WarrantyClaimInput:
+      type: object
+      description: >-
+        The capture payload. An empty vendor_id means unknown pending triage.
+        opened_at supports back-dating (FR-9); empty means the server clock.
+      required: [customer_id, job_address, vendor_id, owner_id, branch_id, source, description, invoice_id, order_id, po_id, supplier_purchase_date, expected_cents, opened_at, lines]
+      properties:
+        customer_id: { type: string }
+        job_address: { $ref: "#/components/schemas/WarrantyAddress" }
+        vendor_id: { type: string }
+        owner_id: { type: string }
+        branch_id: { type: string }
+        source:
+          type: string
+          enum: [INTAKE, COUNTER, WEB]
+        description: { type: string }
+        invoice_id: { type: string }
+        order_id: { type: string }
+        po_id: { type: string }
+        supplier_purchase_date: { type: string, format: date }
+        expected_cents: { type: integer, format: int64 }
+        opened_at:
+          type: string
+          format: date-time
+          description: The true opened stamp for a back-dated claim (FR-9); empty means the server clock
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyClaimLineInput" }
+    WarrantyClaimPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyClaim" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    WarrantyClaimAssignInput:
+      type: object
+      required: [vendor_id, owner_id]
+      properties:
+        vendor_id: { type: string }
+        owner_id: { type: string }
+
+    # --- warranty: FR-3 lifecycle ------------------------------------------------
+    WarrantyClaimEvent:
+      type: object
+      description: >-
+        One audit-spine row: a phase transition, a checklist tick, a
+        settlement, a note, or evidence.
+      required: [id, claim_id, event_type, note, occurred_at]
+      properties:
+        id: { type: string }
+        claim_id: { type: string }
+        event_type:
+          type: string
+          enum: [CREATED, PHASE_CHANGE, CHECKLIST_TICK, SETTLEMENT, NOTE, EVIDENCE]
+        from_phase:
+          type: string
+          enum: [INTAKE, TRIAGE, SUBMITTED, WAITING_ON_DECISION, DECISION, SETTLEMENT, CLOSED, REJECTED, ABANDONED]
+        to_phase:
+          type: string
+          enum: [INTAKE, TRIAGE, SUBMITTED, WAITING_ON_DECISION, DECISION, SETTLEMENT, CLOSED, REJECTED, ABANDONED]
+        checklist_item_id: { type: string }
+        checklist_key: { type: string }
+        checked:
+          type: [boolean, "null"]
+        note: { type: string }
+        evidence_ref: { type: string }
+        actor_id: { type: string }
+        detail:
+          type: object
+          additionalProperties: true
+        occurred_at: { type: string, format: date-time }
+    WarrantyClaimEventPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyClaimEvent" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    WarrantyChecklistItem:
+      type: object
+      description: One checklist-template row (FR-3); required items gate advancement out of the phase
+      required: [id, phase, item_key, label, required, sort_order]
+      properties:
+        id: { type: string }
+        phase:
+          type: string
+          enum: [INTAKE, TRIAGE, SUBMITTED, WAITING_ON_DECISION, DECISION, SETTLEMENT]
+        vendor_id:
+          type: string
+          description: Empty means the default row applied to every vendor
+        item_key: { type: string }
+        label: { type: string }
+        required: { type: boolean }
+        sort_order: { type: integer, format: int32 }
+    WarrantyChecklistState:
+      type: object
+      description: A checklist item resolved against a claim's ticks; what the card shows
+      required: [item, checked]
+      properties:
+        item: { $ref: "#/components/schemas/WarrantyChecklistItem" }
+        checked: { type: boolean }
+    WarrantyChecklistStatePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyChecklistState" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    WarrantyChecklistTickInput:
+      type: object
+      required: [item_key, checked]
+      properties:
+        item_key: { type: string }
+        checked: { type: boolean }
+    WarrantyPhaseTransitionInput:
+      type: object
+      description: >-
+        Advances a claim to a new phase. occurred_at supports back-dating the
+        transition (FR-9); empty means the server clock.
+      required: [to_phase, note, occurred_at]
+      properties:
+        to_phase:
+          type: string
+          enum: [INTAKE, TRIAGE, SUBMITTED, WAITING_ON_DECISION, DECISION, SETTLEMENT, CLOSED, REJECTED, ABANDONED]
+        note: { type: string }
+        occurred_at: { type: string, format: date-time }
+    WarrantyEvidenceInput:
+      type: object
+      description: Attaches a masked evidence reference to a claim (FR-4 seam)
+      required: [evidence_ref, note]
+      properties:
+        evidence_ref: { type: string }
+        note: { type: string }
+
+    # --- warranty: FR-5 settlement + money paths --------------------------------
+    WarrantySettlementInput:
+      type: object
+      description: >-
+        Records a settlement outcome and amounts (FR-5). expected_cents is
+        nullable so an omitted value keeps the captured exposure while an
+        explicit zero is honoured as a decision. manual_override keeps the
+        manual settlement available as an explicit, reason-bearing override:
+        the per-outcome money path is deliberately not executed and the
+        posting row carries status MANUAL.
+      required: [outcome, expected_cents, realized_cents, note, manual_override, override_reason]
+      properties:
+        outcome:
+          type: string
+          enum: [VENDOR_CREDIT, REPLACEMENT_STOCK, CUSTOMER_ACCOMMODATION, WRITE_OFF]
+        expected_cents:
+          type: [integer, "null"]
+          format: int64
+        realized_cents: { type: integer, format: int64 }
+        note: { type: string }
+        manual_override: { type: boolean }
+        override_reason: { type: string }
+    WarrantySettlementResult:
+      type: object
+      description: >-
+        Reports a recorded settlement: whether the GL journal posted, which
+        named money path ran, and what it produced. accrued_cents is what the
+        settlement put on the recovery board as outstanding vendor money;
+        non-zero only for the vendor-recovery path when it actually posted.
+      required: [claim_id, outcome, expected_cents, realized_cents, gl_posted, gl_note, accrued_cents]
+      properties:
+        claim_id: { type: string }
+        outcome:
+          type: string
+          enum: [VENDOR_CREDIT, REPLACEMENT_STOCK, CUSTOMER_ACCOMMODATION, WRITE_OFF]
+        expected_cents: { type: integer, format: int64 }
+        realized_cents: { type: integer, format: int64 }
+        gl_journal_id: { type: string }
+        gl_posted: { type: boolean }
+        gl_note: { type: string }
+        money_path:
+          type: string
+          enum: [VENDOR_RECOVERY, CUSTOMER_CREDIT, INVENTORY_REPLACEMENT, EXPENSE_WRITE_OFF]
+        path_seam:
+          type: string
+          enum: [GL, BILLING, INVENTORY]
+        path_status:
+          type: string
+          enum: [POSTED, NO_EFFECT, SEAM_UNWIRED, FALLBACK_GL, FAILED, MANUAL]
+        external_ref:
+          type: string
+          description: The billing credit-memo number or inventory movement reference
+        accrued_cents: { type: integer, format: int64 }
+    WarrantySettlementPosting:
+      type: object
+      description: >-
+        One executed money path. Status is the honest report of what happened
+        (0129_warranty_settlement_paths.sql).
+      required: [claim_id, outcome, money_path, seam, status, amount_cents, accrues_recovery]
+      properties:
+        id: { type: string }
+        claim_id: { type: string }
+        outcome:
+          type: string
+          enum: [VENDOR_CREDIT, REPLACEMENT_STOCK, CUSTOMER_ACCOMMODATION, WRITE_OFF]
+        money_path:
+          type: string
+          enum: [VENDOR_RECOVERY, CUSTOMER_CREDIT, INVENTORY_REPLACEMENT, EXPENSE_WRITE_OFF]
+        seam:
+          type: string
+          enum: [GL, BILLING, INVENTORY]
+        status:
+          type: string
+          enum: [POSTED, NO_EFFECT, SEAM_UNWIRED, FALLBACK_GL, FAILED, MANUAL]
+        amount_cents: { type: integer, format: int64 }
+        accrues_recovery: { type: boolean }
+        gl_journal_id: { type: string }
+        external_ref: { type: string }
+        request:
+          type: object
+          additionalProperties: true
+        error_text: { type: string }
+        note: { type: string }
+        posted_at: { type: string, format: date-time }
+    WarrantySettlementPostingPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantySettlementPosting" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    # --- warranty: FR-7 reporting + board ----------------------------------------
+    WarrantyFunnelCount:
+      type: object
+      description: The claim count currently in one phase
+      required: [phase, count]
+      properties:
+        phase:
+          type: string
+          enum: [INTAKE, TRIAGE, SUBMITTED, WAITING_ON_DECISION, DECISION, SETTLEMENT, CLOSED, REJECTED, ABANDONED]
+        count: { type: integer, format: int32 }
+    WarrantyManufacturerFrequency:
+      type: object
+      description: One vendor's claim volume plus win and loss counts
+      required: [vendor_id, vendor_name, total_claims, open_claims, won_claims, lost_claims, win_rate, expected_cents, realized_cents]
+      properties:
+        vendor_id: { type: string }
+        vendor_name: { type: string }
+        total_claims: { type: integer, format: int32 }
+        open_claims: { type: integer, format: int32 }
+        won_claims:
+          type: integer
+          format: int32
+          description: Settled with a credit, replacement, or accommodation
+        lost_claims:
+          type: integer
+          format: int32
+          description: Rejected, abandoned, or written off
+        win_rate:
+          type: number
+          description: Won over decided; zero when no claims are decided
+        expected_cents: { type: integer, format: int64 }
+        realized_cents: { type: integer, format: int64 }
+    WarrantyTimeToSettlement:
+      type: object
+      description: The settlement-cycle summary
+      required: [settled_count, avg_days, median_days, min_days, max_days]
+      properties:
+        settled_count: { type: integer, format: int32 }
+        avg_days: { type: number }
+        median_days: { type: number }
+        min_days: { type: integer, format: int32 }
+        max_days: { type: integer, format: int32 }
+    WarrantyExposureByVendor:
+      type: object
+      description: The open-recovery exposure aggregated per vendor
+      required: [vendor_id, vendor_name, open_claims, exposure_cents]
+      properties:
+        vendor_id: { type: string }
+        vendor_name: { type: string }
+        open_claims: { type: integer, format: int32 }
+        exposure_cents:
+          type: integer
+          format: int64
+          description: The sum of expected_cents on open claims
+    WarrantyOpenClaimAge:
+      type: object
+      description: One open claim's age classification
+      required: [claim_id, claim_no, phase, age_days, bucket, expected_cents]
+      properties:
+        claim_id: { type: string }
+        claim_no: { type: string }
+        phase:
+          type: string
+          enum: [INTAKE, TRIAGE, SUBMITTED, WAITING_ON_DECISION, DECISION, SETTLEMENT, CLOSED, REJECTED, ABANDONED]
+        vendor_id: { type: string }
+        vendor_name: { type: string }
+        age_days: { type: integer, format: int32 }
+        bucket:
+          type: string
+          enum: ["0-30", "31-60", "61-90", "90+"]
+        expected_cents: { type: integer, format: int64 }
+    WarrantyReportBundle:
+      type: object
+      description: The whole metrics payload the reporting screen reads in one call
+      required: [funnel, by_manufacturer, time_to_settlement, exposure_by_vendor, open_claims_by_age, total_open, total_exposure_cents]
+      properties:
+        funnel:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyFunnelCount" }
+        by_manufacturer:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyManufacturerFrequency" }
+        time_to_settlement: { $ref: "#/components/schemas/WarrantyTimeToSettlement" }
+        exposure_by_vendor:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyExposureByVendor" }
+        open_claims_by_age:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyOpenClaimAge" }
+        total_open: { type: integer, format: int32 }
+        total_exposure_cents: { type: integer, format: int64 }
+    WarrantyBoardColumn:
+      type: object
+      description: "One Kanban column: a phase and the claims in it"
+      required: [phase, claims]
+      properties:
+        phase:
+          type: string
+          enum: [INTAKE, TRIAGE, SUBMITTED, WAITING_ON_DECISION, DECISION, SETTLEMENT, CLOSED, REJECTED, ABANDONED]
+        claims:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyClaim" }
+    WarrantyBoard:
+      type: object
+      description: "The one-call board load: the confirmed phases plus the exit columns"
+      required: [columns]
+      properties:
+        columns:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyBoardColumn" }
+
+    # --- warranty: DIB-221 recovery ----------------------------------------------
+    WarrantyRecoveryRow:
+      type: object
+      description: >-
+        One claim's recovery position. Aging is measured from the accrual,
+        never from the claim's opened stamp.
+      required: [claim_id, claim_no, branch_id, accrued_cents, received_cents, outstanding_cents, promised_cents, action_count, age_days, bucket, reconciled]
+      properties:
+        claim_id: { type: string }
+        claim_no: { type: string }
+        branch_id: { type: string }
+        vendor_id: { type: string }
+        vendor_name: { type: string }
+        accrued_cents: { type: integer, format: int64 }
+        received_cents: { type: integer, format: int64 }
+        outstanding_cents: { type: integer, format: int64 }
+        promised_cents: { type: integer, format: int64 }
+        accrued_at: { type: string, format: date-time }
+        last_action_at: { type: string, format: date-time }
+        action_count: { type: integer, format: int32 }
+        age_days: { type: integer, format: int32 }
+        bucket:
+          type: string
+          enum: ["0-30", "31-60", "61-90", "90+"]
+        reconciled: { type: boolean }
+    WarrantyRecoveryAction:
+      type: object
+      description: One row of the recovery chase log
+      required: [claim_id, action, amount_cents, note]
+      properties:
+        id: { type: string }
+        claim_id: { type: string }
+        vendor_id: { type: string }
+        action:
+          type: string
+          enum: [CONTACT_MADE, PROMISED, RECEIVED, DISPUTED, NOTE]
+        amount_cents: { type: integer, format: int64 }
+        promised_date: { type: string, format: date }
+        reference: { type: string }
+        note: { type: string }
+        actor_id: { type: string }
+        actor_name: { type: string }
+        occurred_at: { type: string, format: date-time }
+    WarrantyRecoveryActionInput:
+      type: object
+      description: >-
+        The log-an-action payload. PROMISED and RECEIVED must carry a positive
+        amount_cents; the other actions cannot carry an amount. occurred_at is
+        back-datable (FR-9); empty means the server clock.
+      required: [action, amount_cents, promised_date, reference, note, occurred_at]
+      properties:
+        action:
+          type: string
+          enum: [CONTACT_MADE, PROMISED, RECEIVED, DISPUTED, NOTE]
+        amount_cents: { type: integer, format: int64 }
+        promised_date: { type: string, format: date }
+        reference: { type: string }
+        note: { type: string }
+        occurred_at: { type: string, format: date-time }
+    WarrantyRecoveryActionPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyRecoveryAction" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    WarrantyVendorRecovery:
+      type: object
+      description: "One vendor's roll-up: the outstanding balance with its aging split"
+      required: [vendor_id, vendor_name, claim_count, accrued_cents, received_cents, outstanding_cents, promised_cents, buckets, oldest_days, claims]
+      properties:
+        vendor_id: { type: string }
+        vendor_name: { type: string }
+        claim_count: { type: integer, format: int32 }
+        accrued_cents: { type: integer, format: int64 }
+        received_cents: { type: integer, format: int64 }
+        outstanding_cents: { type: integer, format: int64 }
+        promised_cents: { type: integer, format: int64 }
+        buckets:
+          type: object
+          additionalProperties: { type: integer, format: int64 }
+          description: Outstanding cents per aging bucket
+        oldest_days: { type: integer, format: int32 }
+        claims:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyRecoveryRow" }
+    WarrantyRecoveryBoard:
+      type: object
+      description: The whole recovery payload the board reads in one call
+      required: [vendors, buckets, total_accrued_cents, total_received_cents, total_outstanding_cents, total_promised_cents, open_claim_count, reconciled_claim_count, as_of]
+      properties:
+        vendors:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyVendorRecovery" }
+        buckets:
+          type: object
+          additionalProperties: { type: integer, format: int64 }
+          description: Outstanding cents per aging bucket, across all vendors
+        total_accrued_cents: { type: integer, format: int64 }
+        total_received_cents: { type: integer, format: int64 }
+        total_outstanding_cents: { type: integer, format: int64 }
+        total_promised_cents: { type: integer, format: int64 }
+        open_claim_count: { type: integer, format: int32 }
+        reconciled_claim_count: { type: integer, format: int32 }
+        as_of: { type: string, format: date-time }
+
+    # --- warranty: DIB-222 intake -------------------------------------------------
+    WarrantyIntakeContact:
+      type: object
+      description: What the submitter says about themselves; untrusted display data
+      required: [name, email, phone]
+      properties:
+        name: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        company: { type: string }
+    WarrantyPublicIntakeLine:
+      type: object
+      description: >-
+        One product line as a member of the public can describe it: free text
+        and a quantity. There is no product picker on a public form.
+      required: [product_text, qty, notes]
+      properties:
+        product_text: { type: string }
+        qty: { type: string }
+        notes: { type: string }
+    WarrantyPublicIntakePhoto:
+      type: object
+      description: >-
+        One uploaded photo: a declared content type and base64 bytes. The
+        declared type is verified against the magic bytes at the door.
+      required: [content_type, data_base64, caption]
+      properties:
+        content_type:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+        data_base64: { type: string }
+        caption: { type: string }
+    WarrantyPublicIntakeInput:
+      type: object
+      description: The whole public intake form payload
+      required: [contact, job_address, description, purchased_on, lines, photos]
+      properties:
+        contact: { $ref: "#/components/schemas/WarrantyIntakeContact" }
+        job_address: { $ref: "#/components/schemas/WarrantyAddress" }
+        description: { type: string }
+        purchased_on:
+          type: string
+          format: date
+          description: Self-reported purchase date
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyPublicIntakeLine" }
+        photos:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyPublicIntakePhoto" }
+    WarrantyPublicIntakeResult:
+      type: object
+      description: >-
+        Deliberately minimal: a high-entropy reference and a sentence. No
+        claim id, no claim number, nothing that maps the inside of the
+        business.
+      required: [reference, message]
+      properties:
+        reference: { type: string }
+        message: { type: string }
+    WarrantyIntakePhoto:
+      type: object
+      description: A stored intake photo, staff-side metadata read; bytes ride the byte route
+      required: [content_type, byte_size]
+      properties:
+        id: { type: string }
+        claim_id: { type: string }
+        content_type:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+        byte_size: { type: integer, format: int32 }
+        caption: { type: string }
+        checksum: { type: string }
+        uploaded_at: { type: string, format: date-time }
+    WarrantyIntakePhotoPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyIntakePhoto" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    # --- warranty: DIB-223 SLA -----------------------------------------------------
+    WarrantySLATarget:
+      type: object
+      description: >-
+        One configured per-phase target. An empty vendor_id is the default row
+        applied to every vendor.
+      required: [phase, target_hours, is_active]
+      properties:
+        id: { type: string }
+        phase:
+          type: string
+          enum: [INTAKE, TRIAGE, SUBMITTED, WAITING_ON_DECISION, DECISION, SETTLEMENT]
+        vendor_id: { type: string }
+        vendor_name: { type: string }
+        target_hours: { type: integer, format: int32 }
+        is_active: { type: boolean }
+        notes: { type: string }
+    WarrantySLATargetPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantySLATarget" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    WarrantySLATimer:
+      type: object
+      description: >-
+        One open claim's live timer for its current phase. Phase entry is
+        derived from the audit spine, falling back to opened_at for a claim
+        still in INTAKE. NO_TARGET means the phase has no configured active
+        target: untimed, and said so.
+      required: [claim_id, claim_no, branch_id, phase, target_hours, phase_since, state, elapsed_hours, remaining_hours, overdue_hours, exposure_cents]
+      properties:
+        claim_id: { type: string }
+        claim_no: { type: string }
+        branch_id: { type: string }
+        vendor_id: { type: string }
+        vendor_name: { type: string }
+        owner_id: { type: string }
+        phase:
+          type: string
+          enum: [INTAKE, TRIAGE, SUBMITTED, WAITING_ON_DECISION, DECISION, SETTLEMENT]
+        target_hours: { type: integer, format: int32 }
+        phase_since: { type: string, format: date-time }
+        due_at: { type: string, format: date-time }
+        state:
+          type: string
+          enum: [OK, DUE_SOON, BREACHED, NO_TARGET]
+        elapsed_hours: { type: integer, format: int32 }
+        remaining_hours:
+          type: integer
+          format: int32
+          description: Negative once breached
+        overdue_hours:
+          type: integer
+          format: int32
+          description: Zero unless breached
+        exposure_cents: { type: integer, format: int64 }
+    WarrantySLAAlert:
+      type: object
+      description: A durable overdue record; one per claim and phase
+      required: [claim_id, phase, due_at, breached_at, overdue_hours, notify_status]
+      properties:
+        id: { type: string }
+        claim_id: { type: string }
+        claim_no: { type: string }
+        branch_id: { type: string }
+        vendor_name: { type: string }
+        owner_id: { type: string }
+        phase:
+          type: string
+          enum: [INTAKE, TRIAGE, SUBMITTED, WAITING_ON_DECISION, DECISION, SETTLEMENT]
+        due_at: { type: string, format: date-time }
+        breached_at: { type: string, format: date-time }
+        overdue_hours: { type: integer, format: int32 }
+        acknowledged_at: { type: string, format: date-time }
+        acknowledged_by: { type: string }
+        notify_status:
+          type: string
+          enum: [SUPPRESSED, SENT, FAILED]
+        notify_ref: { type: string }
+        notify_error: { type: string }
+        exposure_cents: { type: integer, format: int64 }
+    WarrantySLABoard:
+      type: object
+      description: "The in-module SLA surface: live timers plus the outstanding alerts"
+      required: [timers, alerts, targets, breached_count, due_soon_count, as_of]
+      properties:
+        timers:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantySLATimer" }
+        alerts:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantySLAAlert" }
+        targets:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantySLATarget" }
+        breached_count: { type: integer, format: int32 }
+        due_soon_count: { type: integer, format: int32 }
+        as_of: { type: string, format: date-time }
+    WarrantySLASweepResult:
+      type: object
+      description: The alerts a sweep raised or refreshed, with the count alongside
+      required: [raised, count]
+      properties:
+        raised:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantySLAAlert" }
+        count: { type: integer, format: int32 }
+
+    # --- lien ----------------------------------------------------------------------
+    LienJob:
+      type: object
+      description: >-
+        A Construction-Act improvement: the umbrella a holdback and release
+        cycle attaches to. holdback_direction and hst_on_holdback ride the
+        metadata of the underlying table.
+      required: [id, job_no, branch_id, description, contract_cents, holdback_pct_bps, status, holdback_direction, hst_on_holdback]
+      properties:
+        id: { type: string }
+        job_no: { type: string }
+        customer_id: { type: string }
+        branch_id: { type: string }
+        description: { type: string }
+        contract_cents: { type: integer, format: int64 }
+        holdback_pct_bps: { type: integer, format: int32 }
+        substantial_perf_date: { type: string, format: date }
+        last_supply_date: { type: string, format: date }
+        status:
+          type: string
+          enum: [OPEN, SUBSTANTIALLY_PERFORMED, RELEASED, CLOSED]
+        holdback_direction:
+          type: string
+          enum: [RECEIVABLE, PAYABLE]
+        hst_on_holdback: { type: boolean }
+        created_at: { type: string, format: date-time }
+    LienJobInput:
+      type: object
+      description: The create-job payload
+      required: [job_no, customer_id, branch_id, description, contract_cents, holdback_pct_bps, substantial_perf_date, last_supply_date, holdback_direction, hst_on_holdback]
+      properties:
+        job_no: { type: string }
+        customer_id: { type: string }
+        branch_id: { type: string }
+        description: { type: string }
+        contract_cents: { type: integer, format: int64 }
+        holdback_pct_bps: { type: integer, format: int32 }
+        substantial_perf_date: { type: string, format: date }
+        last_supply_date: { type: string, format: date }
+        holdback_direction:
+          type: string
+          enum: [RECEIVABLE, PAYABLE]
+        hst_on_holdback: { type: boolean }
+    LienJobPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/LienJob" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    LienDocument:
+      type: object
+      description: >-
+        A rendered, versioned, DRAFT-bannered Construction-Act document. data
+        holds the merge fields the template rendered from.
+      required: [id, job_id, template_kind, status, version, rendered_content, data, is_draft_banner]
+      properties:
+        id: { type: string }
+        job_id: { type: string }
+        template_kind:
+          type: string
+          enum: [CONDITIONAL_RELEASE, UNCONDITIONAL_RELEASE, STATUTORY_DECLARATION, DISCHARGE, NOTICE, OTHER]
+        status:
+          type: string
+          enum: [DRAFT, PENDING, ISSUED, SUPERSEDED]
+        version: { type: integer, format: int32 }
+        rendered_content: { type: string }
+        data:
+          type: object
+          additionalProperties: true
+        is_draft_banner: { type: boolean }
+        created_at: { type: string, format: date-time }
+    LienDocumentInput:
+      type: object
+      description: >-
+        The render-document payload. data supplies the merge fields; the
+        server renders the statute-driven template and stamps the next
+        version.
+      required: [job_id, template_kind, data]
+      properties:
+        job_id: { type: string }
+        template_kind:
+          type: string
+          enum: [CONDITIONAL_RELEASE, UNCONDITIONAL_RELEASE, STATUTORY_DECLARATION, DISCHARGE, NOTICE, OTHER]
+        data:
+          type: object
+          additionalProperties: true
+    LienDocumentPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/LienDocument" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    LienSyncResult:
+      type: object
+      description: Reports an idempotent holdback sync from billing's holdback invoices
+      required: [job_id, booked_count, skipped_count, booked_cents]
+      properties:
+        job_id: { type: string }
+        booked_count: { type: integer, format: int32 }
+        skipped_count: { type: integer, format: int32 }
+        booked_cents: { type: integer, format: int64 }
+    LienReleaseApproval:
+      type: object
+      description: >-
+        The four-eyes co-signer the dual-gate release requires. The claimed
+        approver is resolved server-side; the asserted role is never trusted
+        on its own.
+      required: [approver_id, approver_role]
+      properties:
+        approver_id: { type: string }
+        approver_role: { type: string }
+    LienReleaseResult:
+      type: object
+      description: The outcome of a holdback release
+      required: [job_id, amount_cents, gl_journal_id, released_at, approved_by, gatekeeper_by]
+      properties:
+        job_id: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        gl_journal_id: { type: string }
+        released_at: { type: string, format: date-time }
+        approved_by: { type: string }
+        gatekeeper_by: { type: string }
+    LienAgingRow:
+      type: object
+      description: One job's outstanding holdback, aged into a bucket
+      required: [job_id, job_no, branch_id, holdback_direction, outstanding_cents, oldest_days, bucket, release_eligible]
+      properties:
+        job_id: { type: string }
+        job_no: { type: string }
+        branch_id: { type: string }
+        holdback_direction:
+          type: string
+          enum: [RECEIVABLE, PAYABLE]
+        outstanding_cents: { type: integer, format: int64 }
+        oldest_days: { type: integer, format: int32 }
+        bucket:
+          type: string
+          enum: ["0-30", "31-60", "61-90", "90+"]
+        release_eligible:
+          type: boolean
+          description: True when the direction is RECEIVABLE and the statutory release window has passed
+    LienAgingRowPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/LienAgingRow" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    LienTriageItem:
+      type: object
+      description: "One triage worklist row: a job needing attention, badge-classified"
+      required: [job_id, job_no, branch_id, holdback_direction, outstanding_cents, oldest_days, badge, note]
+      properties:
+        job_id: { type: string }
+        job_no: { type: string }
+        branch_id: { type: string }
+        holdback_direction:
+          type: string
+          enum: [RECEIVABLE, PAYABLE]
+        outstanding_cents: { type: integer, format: int64 }
+        oldest_days: { type: integer, format: int32 }
+        badge:
+          type: string
+          enum: [RELEASE_DUE, OVERDUE, AGING, PAYABLE_MANUAL, OK]
+        note: { type: string }
+    LienTriageItemPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/LienTriageItem" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    # --- compliance -----------------------------------------------------------------
+    ComplianceDeadline:
+      type: object
+      description: One compliance-calendar entry; the worklist row
+      required: [id, job_id, deadline_kind, due_date, rule_days, status]
+      properties:
+        id: { type: string }
+        job_id: { type: string }
+        deadline_kind:
+          type: string
+          enum: [HOLDBACK_RELEASE, LIEN_EXPIRY, NOTICE_DEADLINE, PROOF_OF_CLAIM, OTHER]
+        due_date: { type: string, format: date }
+        rule_days: { type: integer, format: int32 }
+        status:
+          type: string
+          enum: [OPEN, SATISFIED, WAIVED, OVERDUE]
+    ComplianceDeadlinePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ComplianceDeadline" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    ComplianceReviewStatus:
+      type: object
+      description: >-
+        One shared banner row: the data-driven review state the lien screens
+        read for a subject (a job or a document).
+      required: [subject_type, subject_id, state, banner_text, is_draft]
+      properties:
+        subject_type:
+          type: string
+          enum: [LIEN_JOB, LIEN_DOCUMENT, HOLDBACK, OTHER]
+        subject_id: { type: string }
+        state:
+          type: string
+          enum: [DRAFT, PENDING, APPROVED, REJECTED]
+        banner_text: { type: string }
+        is_draft: { type: boolean }
+        reviewed_by: { type: string }
+        reviewed_at: { type: string, format: date-time }
+    ComplianceReviewStatusInput:
+      type: object
+      description: The review-status upsert payload
+      required: [subject_type, subject_id, state, banner_text]
+      properties:
+        subject_type:
+          type: string
+          enum: [LIEN_JOB, LIEN_DOCUMENT, HOLDBACK, OTHER]
+        subject_id: { type: string }
+        state:
+          type: string
+          enum: [DRAFT, PENDING, APPROVED, REJECTED]
+        banner_text: { type: string }

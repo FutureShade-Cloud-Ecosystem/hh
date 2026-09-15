@@ -1,0 +1,46 @@
+# Route parity ledger for core/api/tools/parity.mjs.
+#
+# The parity check lists every literal "<METHOD> /api..." route registered in
+# hardscapeos_dibbits/backend/internal (the same grep
+# analysis/hardscapeos-inventory.md section 2.6 used, non-test Go only),
+# applies the portal rename (/api/portal/v1/X -> /api/v1/tenant/X), and diffs
+# the result against the routes in core/api/openapi.yaml. Every ERP route
+# absent from the document must appear under drops: with a reason; every
+# document route with no ERP source must appear under additions: with a
+# reason. An unexplained line on either side fails the check.
+#
+# House rules: no em or en dashes; no dates.
+
+drops:
+  - route: "POST /api/v1/orders/…"
+    reason: "Not a route: a comment line in order/activity.go:27 quoting an API framing the surface exists to hide. The literal grep cannot tell comments from registrations."
+
+additions:
+  - route: "GET /api/v1/sync/{scope}"
+    reason: "Context 4.5 sync protocol, one pull per manifest offline scope; the ERP has no sync endpoint."
+  - route: "POST /api/v1/sync/{scope}"
+    reason: "Context 4.5 sync protocol, the outbox replay; the ERP has no sync endpoint."
+  - route: "POST /api/v1/attachments"
+    reason: "D10 canonical attachment entity (metadata record; bytes in Appwrite Storage); the ERP has only per-owner file routes."
+  - route: "GET /api/v1/attachments/{id}"
+    reason: "D10 canonical attachment entity; the ERP has only per-owner file routes."
+  - route: "POST /api/v1/attachments/{id}/links"
+    reason: "D10 polymorphic attachment_link; replaces per-owner attachment columns."
+  - route: "GET /api/v1/tenants/{tenantId}/brand"
+    reason: "D12 tenant_brand staff read; the ERP keeps dealer branding in portal config only."
+  - route: "PUT /api/v1/tenants/{tenantId}/brand"
+    reason: "D12 tenant_brand staff write for the dealer-admin surface; no ERP source."
+  - route: "GET /api/v1/operator/platform-keys"
+    reason: "D4 operator read for the launcher (the platform key roster); source hh_pro_dibbits/server/admin-store.ts, not the ERP."
+  - route: "PUT /api/v1/operator/platform-keys/{key}"
+    reason: "D4 operator write for the launcher; the server marks the write; no ERP source."
+  - route: "PUT /api/v1/operator/dealer-credential"
+    reason: "D4 write-only dealer credential route (validated before stored, never returned); source hh_pro_dibbits/server/admin-store.ts storeKey."
+  - route: "GET /api/v1/operator/usage"
+    reason: "D4 per-account usage counter read for the launcher; source hh_pro_dibbits/server/admin-store.ts."
+  - route: "POST /api/v1/demo/session"
+    reason: "Registered via string concatenation (demo/handler.go RouteSession constant), so the literal grep cannot see it; source hardscapeos_dibbits/backend/internal/demo/handler.go."
+  - route: "GET /api/v1/demo/flows"
+    reason: "Registered via string concatenation (demo/handler.go RouteFlows constant), so the literal grep cannot see it; source hardscapeos_dibbits/backend/internal/demo/handler.go."
+  - route: "GET /api/v1/bistrack/status"
+    reason: "Registered from a route-descriptor table (bistrack/handler.go:45), so the literal grep cannot see it; staff-gated read-only status."

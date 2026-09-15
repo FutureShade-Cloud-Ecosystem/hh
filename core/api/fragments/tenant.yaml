@@ -1,0 +1,2411 @@
+# Fragment: the tenant API (lane HH-2.3), transcribed from the HardscapeOS ERP
+# contractor portal (backend/internal/portal, 52 routes) with every route
+# renamed from /api/portal/v1/X to /api/v1/tenant/X, same method, same path
+# parameter names.
+#
+# Guards: the portal handler self-registers (main.go passes no identity guard;
+# the portal verifies its own JWT). Each route is wrapped by one of the
+# handler's own gates, transcribed as x-role: public (login, accept-invite,
+# config, password-reset request/confirm), x-role: tenant (h.authn: any
+# authenticated tenant user, no capability check), or
+# x-role: capability:<name> from portal/rbac.go Capabilities (h.admin is
+# manage_users). Tenant routes never take X-Org; authenticated operations
+# carry security: [{TenantBearer: []}].
+#
+# Seams: a BFF feature whose domain seam is not wired answers 501 at runtime;
+# the contract records the intended success shape.
+#
+# List envelopes: the ERP paginates by offset (httpx.Page: items, total,
+# limit, offset). The core paginates by cursor; every Page schema here adds
+# next_cursor and keeps total and offset as deprecated legacy fields present
+# only in the recorded captures.
+
+paths:
+  # --- tenant-auth: pre-auth and self-service surfaces -----------------------
+  /api/v1/tenant/login:
+    post:
+      operationId: tenantLogin
+      tags: [tenant-auth]
+      summary: Mint a tenant session from email and password
+      description: >-
+        A wrong email, a wrong password and a non-active account all return
+        the same generic 401.
+      x-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantLoginRequest"
+      responses:
+        "200":
+          description: The bearer token, the caller's user record and the dealer config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantLoginResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/tenant/accept-invite:
+    post:
+      operationId: tenantAcceptInvite
+      tags: [tenant-auth]
+      summary: Consume an invite token and activate the invited user
+      description: >-
+        Pre-auth route credentialed by the single-use invite token in the
+        body, delivered out of band; an invalid or spent token is a 400.
+      x-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantAcceptInviteRequest"
+      responses:
+        "201":
+          description: The activated user record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantUser"
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/v1/tenant/config:
+    get:
+      operationId: tenantGetConfig
+      tags: [tenant-auth]
+      summary: Read the dealer branding config the portal chrome renders
+      x-role: public
+      security: []
+      responses:
+        "200":
+          description: The tenant-facing dealer config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantConfig"
+
+  /api/v1/tenant/password-reset/request:
+    post:
+      operationId: tenantRequestPasswordReset
+      tags: [tenant-auth]
+      summary: Request a password-reset link for an email
+      description: >-
+        Enumeration-safe by construction: the response is identical whether
+        or not the email maps to an account. The raw token is delivered out
+        of band and is never echoed in a response.
+      x-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantPasswordResetRequest"
+      responses:
+        "202":
+          description: Accepted, always, with an identical body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantStatusResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/v1/tenant/password-reset/confirm:
+    post:
+      operationId: tenantConfirmPasswordReset
+      tags: [tenant-auth]
+      summary: Consume a reset token and set the new password
+      description: >-
+        Pre-auth route credentialed by the single-use reset token in the
+        body; a successful reset revokes the account's other sessions.
+      x-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantPasswordResetConfirm"
+      responses:
+        "200":
+          description: The password was changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantStatusResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/v1/tenant/token/refresh:
+    post:
+      operationId: tenantRefreshToken
+      tags: [tenant-auth]
+      summary: Exchange a still-valid tenant token for a fresh one on the same session
+      description: >-
+        Sliding renewal with an absolute session ceiling: the new token is
+        minted from the freshly loaded user, so a role change takes effect on
+        the next refresh. Every refusal (expired, tampered, unknown or
+        deactivated user, session past its ceiling) is the same plain 401.
+      x-role: tenant
+      security: [{ TenantBearer: [] }]
+      responses:
+        "200":
+          description: The login payload plus the token and session expiry instants
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantRefreshResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/tenant/me:
+    get:
+      operationId: tenantGetMe
+      tags: [tenant-auth]
+      summary: Read the caller's own user record with the capabilities the gates resolved
+      description: >-
+        capabilities is the value the request guards consulted to let this
+        call through, so the client renders permissions it cannot get wrong.
+      x-role: tenant
+      security: [{ TenantBearer: [] }]
+      responses:
+        "200":
+          description: The user record plus the resolved capability set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantMe"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      operationId: tenantUpdateMe
+      tags: [tenant-auth]
+      summary: Partially edit the caller's name and notification preferences
+      description: >-
+        Partial update: only the fields present in the body are written; an
+        omitted field is left unchanged. A null notification_prefs normalizes
+        to an empty object.
+      x-role: tenant
+      security: [{ TenantBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantUpdateMeRequest"
+      responses:
+        "200":
+          description: The updated user record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantUser"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/tenant/me/password:
+    post:
+      operationId: tenantChangePassword
+      tags: [tenant-auth]
+      summary: Change the caller's password after verifying the current one
+      description: >-
+        Success revokes the account's other sessions. A wrong current
+        password is a 403.
+      x-role: tenant
+      security: [{ TenantBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantPasswordChangeRequest"
+      responses:
+        "200":
+          description: The password was changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantStatusResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- tenant-team: users and invites (manage_users) --------------------------
+  /api/v1/tenant/users:
+    get:
+      operationId: tenantListUsers
+      tags: [tenant-team]
+      summary: List the account's portal users
+      x-role: capability:manage_users
+      security: [{ TenantBearer: [] }]
+      responses:
+        "200":
+          description: The account's users (a flat array, not a page)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TenantUser" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tenant/users/{id}/role:
+    put:
+      operationId: tenantUpdateUserRole
+      tags: [tenant-team]
+      summary: Change a teammate's role
+      description: >-
+        The last-active-admin invariant is enforced atomically; demoting the
+        final admin is a 409.
+      x-role: capability:manage_users
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantRoleUpdateRequest"
+      responses:
+        "200":
+          description: The role was changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantStatusResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/tenant/users/{id}/status:
+    put:
+      operationId: tenantUpdateUserStatus
+      tags: [tenant-team]
+      summary: Change a teammate's status
+      description: >-
+        The last-active-admin invariant is enforced atomically; deactivating
+        the final admin is a 409.
+      x-role: capability:manage_users
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantStatusUpdateRequest"
+      responses:
+        "200":
+          description: The status was changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantStatusResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/tenant/invites:
+    get:
+      operationId: tenantListInvites
+      tags: [tenant-team]
+      summary: List the account's outstanding invites
+      description: >-
+        The raw invite token is never read back; the token field on a listed
+        invite is empty.
+      x-role: capability:manage_users
+      security: [{ TenantBearer: [] }]
+      responses:
+        "200":
+          description: The account's invites (a flat array, not a page)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TenantInvite" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: tenantCreateInvite
+      tags: [tenant-team]
+      summary: Invite a person to the account under a role
+      description: >-
+        The create response is the only place the raw invite token appears;
+        delivery is out of band. A duplicate email is a 409.
+      x-role: capability:manage_users
+      security: [{ TenantBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantInviteCreateRequest"
+      responses:
+        "201":
+          description: The created invite, carrying the raw token this once
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantInvite"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --- tenant-dashboard --------------------------------------------------------
+  /api/v1/tenant/dashboard:
+    get:
+      operationId: tenantGetDashboard
+      tags: [tenant-dashboard]
+      summary: Read the account home (account facts, balances and a recent-orders strip)
+      description: >-
+        The account's balance_cents is composed in from the billing seam so
+        the account view and the available-credit math share one snapshot.
+        recent_orders is capped at a short strip by the server.
+      x-role: capability:view_billing
+      security: [{ TenantBearer: [] }]
+      responses:
+        "200":
+          description: The dashboard payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantDashboard"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/tenant/billing/summary:
+    get:
+      operationId: tenantGetBillingSummary
+      tags: [tenant-dashboard]
+      summary: Read the AR roll-up (open balance, credit limit, headroom and hold flag)
+      description: >-
+        available_credit_cents is the credit limit minus the open AR balance,
+        floored at zero.
+      x-role: capability:view_billing
+      security: [{ TenantBearer: [] }]
+      responses:
+        "200":
+          description: The billing summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantBillingSummary"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- tenant-billing: invoices (InvoiceView, D9) ------------------------------
+  /api/v1/tenant/invoices:
+    get:
+      operationId: tenantListInvoices
+      tags: [tenant-billing]
+      summary: List the tenant's invoices
+      description: >-
+        Cross-tenant rows simply never appear. A status outside the invoices
+        CHECK vocabulary is a 400.
+      x-role: capability:view_billing
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          description: Filter to one invoices CHECK status
+          schema:
+            type: string
+            enum: [DRAFT, FINALIZED, PARTIALLY_PAID, PAID, VOID]
+      responses:
+        "200":
+          description: The page of invoices (list rows carry no lines)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantInvoicePage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tenant/invoices/{id}:
+    get:
+      operationId: tenantGetInvoice
+      tags: [tenant-billing]
+      summary: Read one invoice with its lines
+      description: >-
+        Tenant-scoped: a cross-tenant or unknown id is a 404, never a 403, so
+        existence does not leak across tenants.
+      x-role: capability:view_billing
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The invoice detail (InvoiceView plus the ERP line shape)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantInvoiceDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- tenant-orders ------------------------------------------------------------
+  /api/v1/tenant/orders:
+    get:
+      operationId: tenantListOrders
+      tags: [tenant-orders]
+      summary: List the tenant's orders
+      description: >-
+        A status outside the orders CHECK vocabulary is a 400.
+      x-role: capability:view_orders_deliveries
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          description: Filter to one orders CHECK status
+          schema:
+            type: string
+            enum: [DRAFT, CONFIRMED, PICKING, READY, PARTIALLY_FULFILLED, FULFILLED, INVOICED, CLOSED, CANCELLED]
+      responses:
+        "200":
+          description: The page of orders
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantOrderPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tenant/orders/{id}:
+    get:
+      operationId: tenantGetOrder
+      tags: [tenant-orders]
+      summary: Read one order with lines and delivery instructions
+      description: >-
+        Tenant-scoped: a cross-tenant or unknown id is a 404, never a 403.
+      x-role: capability:view_orders_deliveries
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The order detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantOrderDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/tenant/orders/{id}/delivery-instructions:
+    put:
+      operationId: tenantSetDeliveryInstructions
+      tags: [tenant-orders]
+      summary: Attach or update the contractor's note for a scheduled delivery
+      x-role: capability:edit_delivery_instructions
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantDeliveryInstructionsRequest"
+      responses:
+        "200":
+          description: The instructions were stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantStatusResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/tenant/orders/{id}/reorder-preview:
+    get:
+      operationId: tenantGetReorderPreview
+      tags: [tenant-orders]
+      summary: Grade every line of a past order at current pricing and availability
+      description: >-
+        The line picker's working set: each source line repriced at the
+        account's current tier with an availability verdict; flagged lines
+        render unselectable.
+      x-role: capability:view_orders_deliveries
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The reorder preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantReorderPreview"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/tenant/orders/{id}/reorder:
+    post:
+      operationId: tenantCreateReorder
+      tags: [tenant-orders]
+      summary: Create a DRAFT order from selected lines of a past order, repriced
+      description: >-
+        idempotency_key is client-generated; a retried request returns the
+        same draft. When a selected line is no longer orderable the answer is
+        a 409 carrying the per-line rejection reasons.
+      x-role: capability:create_orders
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantReorderRequest"
+      responses:
+        "201":
+          description: The created draft order's identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantReorderResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Some selected lines cannot be reordered; the body carries the per-line reasons
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantReorderConflict"
+
+  /api/v1/tenant/orders/{id}/return-eligibility:
+    get:
+      operationId: tenantGetReturnEligibility
+      tags: [tenant-orders]
+      summary: Read the order's returnable lines with prior returns netted out
+      description: >-
+        Quantity sold minus prior returns, computed through the POS return
+        rail's netting. A non-POS order or a cross-tenant id is a 404.
+      x-role: capability:view_orders_deliveries
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The return eligibility lookup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantReturnEligibility"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/tenant/orders/{id}/return-requests:
+    post:
+      operationId: tenantCreateReturnRequest
+      tags: [tenant-orders]
+      summary: Request a return on selected lines of an order
+      description: >-
+        Intent only: the request lands PENDING and moves no money or stock
+        until a staff member approves it on the ERP side. Tenant and
+        requester attribution come from the verified token, never the body.
+        reason_code OTHER requires the free-text note.
+      x-role: capability:create_orders
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantReturnRequestCreate"
+      responses:
+        "201":
+          description: The recorded PENDING return request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantReturnRequest"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/tenant/return-requests:
+    get:
+      operationId: tenantListReturnRequests
+      tags: [tenant-orders]
+      summary: List the account's return requests, newest first
+      x-role: capability:view_orders_deliveries
+      security: [{ TenantBearer: [] }]
+      responses:
+        "200":
+          description: The account's return requests (a flat array, not a page)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TenantReturnRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- tenant-quotes: dealer quotes (D8) ---------------------------------------
+  /api/v1/tenant/quotes:
+    get:
+      operationId: tenantListQuotes
+      tags: [tenant-quotes]
+      summary: List the tenant's dealer quotes
+      description: >-
+        These are dealer quotes (dealer to contractor); the canonical
+        contract entity is DealerQuote (D8). Quotes carry prices, so the gate
+        is submit_rfq and field crew is shut out. A status outside the quotes
+        CHECK vocabulary is a 400.
+      x-role: capability:submit_rfq
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          description: Filter to one quotes CHECK status
+          schema:
+            type: string
+            enum: [DRAFT, SENT, ACCEPTED, CONVERTED, EXPIRED, LOST]
+      responses:
+        "200":
+          description: The page of quotes (list rows carry no lines)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantQuotePage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tenant/quotes/{id}:
+    get:
+      operationId: tenantGetQuote
+      tags: [tenant-quotes]
+      summary: Read one dealer quote with its priced lines
+      description: >-
+        The canonical contract entity is DealerQuote (D8). Tenant-scoped: a
+        cross-tenant or unknown id is a 404, never a 403.
+      x-role: capability:submit_rfq
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The quote detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantQuoteDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/tenant/quotes/{id}/accept:
+    post:
+      operationId: tenantAcceptQuote
+      tags: [tenant-quotes]
+      summary: Mark a SENT dealer quote ACCEPTED
+      description: >-
+        An out-of-state transition is a 409.
+      x-role: capability:submit_rfq
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The quote after the transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantQuote"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/tenant/quotes/{id}/reject:
+    post:
+      operationId: tenantRejectQuote
+      tags: [tenant-quotes]
+      summary: Mark a SENT or ACCEPTED dealer quote LOST
+      description: >-
+        An out-of-state transition is a 409.
+      x-role: capability:submit_rfq
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The quote after the transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantQuote"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/tenant/quotes/{id}/convert:
+    post:
+      operationId: tenantConvertQuote
+      tags: [tenant-quotes]
+      summary: Convert an ACCEPTED dealer quote into an order
+      description: >-
+        The credit and hold gate runs inside the conversion transaction, the
+        same gate the POS ring uses; a credit refusal is a 409 whose message
+        carries the policy reason, and an out-of-state transition is a 409.
+        The body is optional in the strongest sense: a request with no body
+        at all converts exactly as before, with fulfillment unspecified. When
+        a body is present, fulfillment is PICKUP or WILL_CALL; anything else
+        is a 400 that names the two.
+      x-role: capability:create_orders
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantQuoteConvertRequest"
+      responses:
+        "200":
+          description: The identity of the freshly created order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantQuoteConvertResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --- tenant-payments -----------------------------------------------------------
+  /api/v1/tenant/payment-methods:
+    get:
+      operationId: tenantListPaymentMethods
+      tags: [tenant-payments]
+      summary: List the tenant's active stored payment methods
+      description: >-
+        Display metadata only: brand, last4 and expiry. The opaque vault
+        token is never serialized, and no PAN or account number ever reaches
+        this surface.
+      x-role: capability:manage_payment_methods
+      security: [{ TenantBearer: [] }]
+      responses:
+        "200":
+          description: The stored methods (a flat array, not a page)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TenantPaymentMethod" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: tenantAddPaymentMethod
+      tags: [tenant-payments]
+      summary: Exchange a one-time hosted-field nonce for a vaulted method
+      description: >-
+        Card and bank data is captured only in the processor's hosted fields;
+        this route only ever sees the opaque nonce, never a PAN.
+      x-role: capability:manage_payment_methods
+      security: [{ TenantBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantAddPaymentMethodRequest"
+      responses:
+        "201":
+          description: The vaulted method's display metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantPaymentMethod"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tenant/payment-methods/{id}:
+    delete:
+      operationId: tenantRemovePaymentMethod
+      tags: [tenant-payments]
+      summary: Detach a stored method at the processor and soft-delete it locally
+      description: >-
+        IDOR-checked: a cross-tenant or missing id is a 404, never a 403.
+      x-role: capability:manage_payment_methods
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The method was removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantStatusResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/tenant/payment-methods/{id}/default:
+    put:
+      operationId: tenantSetDefaultPaymentMethod
+      tags: [tenant-payments]
+      summary: Promote one stored method to the tenant's default
+      description: >-
+        IDOR-checked: a cross-tenant or missing id is a 404, never a 403.
+      x-role: capability:manage_payment_methods
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The default was changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantStatusResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/tenant/payments:
+    get:
+      operationId: tenantListPayments
+      tags: [tenant-payments]
+      summary: List the tenant's payment history with allocations
+      description: >-
+        The tenant-safe projection: staff attribution on allocations never
+        leaves the building.
+      x-role: capability:view_billing
+      security: [{ TenantBearer: [] }]
+      responses:
+        "200":
+          description: The payment history (a flat array, not a page)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TenantPayment" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: tenantCreatePayment
+      tags: [tenant-payments]
+      summary: Pay one or more invoices with one charge split across allocations
+      description: >-
+        One charge for the summed balance of the selected invoices, split
+        atomically. The summed amount, the processor customer and the
+        idempotency key are derived server-side from the session; the client
+        idempotency_key is advisory and is re-bound server-side. Funding is a
+        stored method id or a one-time nonce. A hard decline is a 402; a
+        transient pending verdict is a 409 and the caller may safely retry
+        the same request. Legally retained holdback is excluded from what an
+        invoice can pay.
+      x-role: capability:pay_invoices
+      security: [{ TenantBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantPayRequest"
+      responses:
+        "201":
+          description: The recorded payment with its allocations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantPayment"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "402":
+          description: The charge was declined
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --- tenant-procurement: the planning board (all behind submit_rfq) -----------
+  /api/v1/tenant/procurement/projects:
+    get:
+      operationId: tenantListProcurementProjects
+      tags: [tenant-procurement]
+      summary: List the tenant's non-terminal planning projects
+      description: >-
+        A flat working set for the board, grouped by status client-side; this
+        is deliberately not a paginated envelope.
+      x-role: capability:submit_rfq
+      security: [{ TenantBearer: [] }]
+      responses:
+        "200":
+          description: The board's projects
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantProjectBoard"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: tenantCreateProcurementProject
+      tags: [tenant-procurement]
+      summary: Open a new PLANNING project
+      description: >-
+        The project is attributed to the calling tenant user.
+      x-role: capability:submit_rfq
+      security: [{ TenantBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantProjectCreateRequest"
+      responses:
+        "201":
+          description: The created project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantProject"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tenant/procurement/projects/{id}:
+    get:
+      operationId: tenantGetProcurementProject
+      tags: [tenant-procurement]
+      summary: Read one planning project with its lines
+      description: >-
+        Tenant-scoped: a cross-tenant id resolves to 404 (IDOR-safe).
+      x-role: capability:submit_rfq
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The project detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantProjectDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: tenantUpdateProcurementProject
+      tags: [tenant-procurement]
+      summary: Rename a project or move its lane
+      description: >-
+        Partial update: both fields are optional and the status transition is
+        validated; an invalid lane move is a 409.
+      x-role: capability:submit_rfq
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantProjectUpdateRequest"
+      responses:
+        "200":
+          description: The project after the update
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantProject"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      operationId: tenantDeleteProcurementProject
+      tags: [tenant-procurement]
+      summary: Remove a PLANNING project
+      description: >-
+        Only a project still in PLANNING may be removed; in any other lane
+        the answer is a 409.
+      x-role: capability:submit_rfq
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: The project was removed
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/tenant/procurement/projects/{id}/lines:
+    post:
+      operationId: tenantAddProcurementLine
+      tags: [tenant-procurement]
+      summary: Append a catalog line to a project
+      x-role: capability:submit_rfq
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantProjectLineAddRequest"
+      responses:
+        "201":
+          description: The added line
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantProjectLine"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/tenant/procurement/projects/{id}/lines/{lineId}:
+    put:
+      operationId: tenantUpdateProcurementLine
+      tags: [tenant-procurement]
+      summary: Edit quantity, unit or notes on a project line
+      description: >-
+        Partial update: every field is optional.
+      x-role: capability:submit_rfq
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: lineId
+          in: path
+          required: true
+          description: The project line id
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantProjectLineUpdateRequest"
+      responses:
+        "200":
+          description: The line after the update
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantProjectLine"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: tenantRemoveProcurementLine
+      tags: [tenant-procurement]
+      summary: Remove one line from a project
+      x-role: capability:submit_rfq
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: lineId
+          in: path
+          required: true
+          description: The project line id
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: The line was removed
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/tenant/procurement/projects/{id}/submit-rfq:
+    post:
+      operationId: tenantSubmitProcurementRFQ
+      tags: [tenant-procurement]
+      summary: Transition a project PLANNING to QUOTING with indicative line prices
+      description: >-
+        Each line is priced indicatively (provisional, never authoritative)
+        and flagged priced=true; the rendered price carries an indicative
+        badge. An out-of-state submit is a 409.
+      x-role: capability:submit_rfq
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The project detail after the transition, lines indicatively priced
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantProjectDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --- tenant-projects: the jobs and spend rollup (view_billing) ----------------
+  /api/v1/tenant/projects:
+    get:
+      operationId: tenantListProjectRollup
+      tags: [tenant-projects]
+      summary: List the tenant's jobs with the spend rollup
+      description: >-
+        Per project: order count, spend (money-bearing invoices only, DRAFT
+        and VOID excluded), and the count of scheduled or dispatched
+        deliveries touching the project's orders.
+      x-role: capability:view_billing
+      security: [{ TenantBearer: [] }]
+      responses:
+        "200":
+          description: The project rollup list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantProjectRollupList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tenant/projects/{id}:
+    get:
+      operationId: tenantGetProjectRollup
+      tags: [tenant-projects]
+      summary: Read one job's full rollup with the quoted-versus-actual variance
+      description: >-
+        The variance is like-for-like: quoted_spend_cents sums invoices for
+        only the quote-originated orders, so an ad-hoc unquoted order
+        inflates spend_cents but can never manufacture a false overrun.
+        Tenant-scoped: a cross-tenant or unknown id is a 404, never a 403.
+      x-role: capability:view_billing
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The project dashboard rollup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantProjectDashboard"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- tenant-catalog ------------------------------------------------------------
+  /api/v1/tenant/catalog/search:
+    get:
+      operationId: tenantSearchCatalog
+      tags: [tenant-catalog]
+      summary: Fuzzy and by-SKU catalog search for the planning line picker
+      description: >-
+        Ranked compact hits over a shared dealer catalog; tenant-agnostic
+        data behind a capability gate because the picker is a procurement
+        tool.
+      x-role: capability:submit_rfq
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: The search text (fuzzy on name, prefix on SKU)
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          description: Maximum hits; the server clamps the value
+          schema: { type: integer, format: int32, minimum: 1 }
+      responses:
+        "200":
+          description: The ranked catalog hits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantCatalogSearchResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tenant/catalog/products/{id}:
+    get:
+      operationId: tenantGetCatalogProduct
+      tags: [tenant-catalog]
+      summary: Read one product's contractor-safe detail
+      description: >-
+        An allow-listed projection: no price, no cost, no margin, no vendor
+        and no reservation detail ever crosses this route. A discontinued
+        product is reported with is_active false rather than hidden. An
+        unknown or malformed id is a 404.
+      x-role: capability:submit_rfq
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The contractor-safe product detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantCatalogProduct"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- tenant-addresses ------------------------------------------------------------
+  /api/v1/tenant/addresses:
+    get:
+      operationId: tenantListAddresses
+      tags: [tenant-addresses]
+      summary: List the account's delivery sites
+      description: >-
+        A union of the account's billing address, its job-site addresses and
+        the sites orders were actually delivered to, with kind keeping the
+        provenance visible. Every row is tenant-fenced in the query itself.
+      x-role: capability:view_orders_deliveries
+      security: [{ TenantBearer: [] }]
+      responses:
+        "200":
+          description: The account's delivery sites
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantAddressListResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tenant/addresses/{id}:
+    get:
+      operationId: tenantGetAddress
+      tags: [tenant-addresses]
+      summary: Resolve one delivery site of the account
+      description: >-
+        The id is synthetic and namespaced by kind; a cross-tenant, unknown
+        or malformed id is the same 404, so existence never leaks.
+      x-role: capability:view_orders_deliveries
+      security: [{ TenantBearer: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The synthetic, kind-namespaced address id (for example project:<uuid>)
+          schema: { type: string }
+      responses:
+        "200":
+          description: The address
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantAddress"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  schemas:
+    # --- auth, account and team ---------------------------------------------
+
+    TenantRole:
+      type: string
+      description: >-
+        A contractor portal role (the portal_users and portal_invites CHECK
+        set). buyer_no_pay and ap_finance are deltas of buyer: the project
+        manager who orders but cannot pay, and the payables user who pays
+        but cannot order.
+      enum: [account_admin, buyer, buyer_no_pay, ap_finance, field_crew]
+
+    TenantUserStatus:
+      type: string
+      enum: [active, inactive, pending]
+
+    TenantCapabilities:
+      type: object
+      description: >-
+        The single authority every tenant endpoint gates on, resolved from
+        the caller's role; served on GET /me so the client renders
+        permissions it cannot get wrong.
+      required: [manage_users, view_billing, pay_invoices, manage_payment_methods, submit_rfq, create_orders, view_orders_deliveries, edit_delivery_instructions, manage_files]
+      properties:
+        manage_users: { type: boolean, description: Add and remove the account's portal users }
+        view_billing: { type: boolean, description: "Dashboard, invoices and AR balance" }
+        pay_invoices: { type: boolean, description: Move money against open invoices }
+        manage_payment_methods: { type: boolean, description: Add and remove stored (vaulted) methods }
+        submit_rfq: { type: boolean, description: Turn a planning list into a priced quote }
+        create_orders: { type: boolean, description: Convert or commit an order against credit }
+        view_orders_deliveries: { type: boolean, description: See orders and delivery status }
+        edit_delivery_instructions: { type: boolean, description: Annotate a scheduled delivery }
+        manage_files: { type: boolean, description: Upload and share account documents }
+
+    TenantUser:
+      type: object
+      required: [id, customer_id, email, name, role, status, notification_prefs, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid, description: The contractor account this user belongs to }
+        email: { type: string }
+        name: { type: string }
+        role: { $ref: "#/components/schemas/TenantRole" }
+        status: { $ref: "#/components/schemas/TenantUserStatus" }
+        notification_prefs:
+          type: object
+          additionalProperties: true
+          description: The user's notification preferences map (present in the live capture)
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    TenantMe:
+      type: object
+      description: >-
+        The caller's own user record with the capabilities the request
+        guards resolved for this call attached beside it (an extension of
+        the user object, not a nesting of it).
+      allOf:
+        - $ref: "#/components/schemas/TenantUser"
+        - type: object
+          required: [capabilities]
+          properties:
+            capabilities: { $ref: "#/components/schemas/TenantCapabilities" }
+
+    TenantInvite:
+      type: object
+      required: [id, customer_id, email, role, token, expires_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        email: { type: string }
+        role: { $ref: "#/components/schemas/TenantRole" }
+        token:
+          type: string
+          description: >-
+            The raw single-use invite token, populated only in the create
+            response; only its hash is stored, so reads return an empty
+            string.
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    TenantConfig:
+      type: object
+      description: >-
+        The dealer branding payload the portal chrome renders (transcribed
+        from the portal config struct), extended by the contractor's own
+        brand record under tenant scope (D12), present when one is on file.
+      required: [id, dealer_name, logo_url, primary_color, support_email, support_phone]
+      properties:
+        id: { type: string, description: The dealer config key }
+        dealer_name: { type: string }
+        logo_url: { type: string }
+        primary_color: { type: string }
+        support_email: { type: string }
+        support_phone: { type: string }
+        brand:
+          $ref: "#/components/schemas/TenantBrand"
+
+    TenantLoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string }
+        password: { type: string, writeOnly: true }
+
+    TenantLoginResponse:
+      type: object
+      required: [token, user, config]
+      properties:
+        token: { type: string, description: The tenant bearer token }
+        user: { $ref: "#/components/schemas/TenantUser" }
+        config: { $ref: "#/components/schemas/TenantConfig" }
+
+    TenantRefreshResponse:
+      type: object
+      description: >-
+        The login payload plus the two instants a client needs to schedule
+        itself: when this token dies, and when the session it belongs to
+        dies no matter what (the absolute ceiling does not move on refresh).
+      allOf:
+        - $ref: "#/components/schemas/TenantLoginResponse"
+        - type: object
+          required: [expires_at, session_expires_at]
+          properties:
+            expires_at: { type: string, format: date-time, description: This token's own expiry }
+            session_expires_at: { type: string, format: date-time, description: "The absolute session ceiling, carried from the original login" }
+
+    TenantAcceptInviteRequest:
+      type: object
+      required: [token, name, password]
+      properties:
+        token: { type: string, description: The raw invite token from the out-of-band link }
+        name: { type: string }
+        password: { type: string, writeOnly: true }
+
+    TenantPasswordChangeRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password: { type: string, writeOnly: true }
+        new_password: { type: string, writeOnly: true }
+
+    TenantPasswordResetRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string }
+
+    TenantPasswordResetConfirm:
+      type: object
+      required: [token, new_password]
+      properties:
+        token: { type: string, description: The raw reset token from the out-of-band link }
+        new_password: { type: string, writeOnly: true }
+
+    TenantStatusResponse:
+      type: object
+      description: The bare acknowledgement envelope the simple writes return
+      required: [status]
+      properties:
+        status: { type: string }
+
+    TenantUpdateMeRequest:
+      type: object
+      description: >-
+        Partial self-profile edit: only the fields present are written; an
+        omitted field is left unchanged.
+      properties:
+        name: { type: string }
+        notification_prefs:
+          type: [object, "null"]
+          additionalProperties: true
+          description: A preferences map; null normalizes to an empty object
+
+    TenantInviteCreateRequest:
+      type: object
+      required: [email, role]
+      properties:
+        email: { type: string }
+        role: { $ref: "#/components/schemas/TenantRole" }
+
+    TenantRoleUpdateRequest:
+      type: object
+      required: [role]
+      properties:
+        role: { $ref: "#/components/schemas/TenantRole" }
+
+    TenantStatusUpdateRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { $ref: "#/components/schemas/TenantUserStatus" }
+
+    # --- dashboard and billing ----------------------------------------------
+
+    TenantAccount:
+      type: object
+      description: >-
+        The resolved account facts the tenant surface gates and prices on.
+        balance_cents is not a customers column; the BFF composes the AR
+        figure in from the billing seam.
+      required: [customer_id, account_no, name, customer_type, branch_id, payment_terms_days, credit_limit_cents, on_hold, tax_exempt, balance_cents, is_active]
+      properties:
+        customer_id: { type: string, format: uuid }
+        account_no: { type: string }
+        name: { type: string }
+        customer_type:
+          type: string
+          enum: [CONTRACTOR, RETAIL, BUILDER, GOVERNMENT, INTERNAL]
+        branch_id:
+          type: string
+          description: The account's home branch id; empty when unset
+        payment_terms_days: { type: integer, format: int32 }
+        credit_limit_cents: { type: integer, format: int64 }
+        on_hold: { type: boolean }
+        tax_exempt: { type: boolean }
+        balance_cents:
+          type: integer
+          format: int64
+          description: The current AR balance, composed from the billing seam
+        is_active: { type: boolean }
+
+    TenantDashboard:
+      type: object
+      required: [account, open_balance_cents, available_credit_cents, recent_orders]
+      properties:
+        account: { $ref: "#/components/schemas/TenantAccount" }
+        open_balance_cents: { type: integer, format: int64 }
+        available_credit_cents:
+          type: integer
+          format: int64
+          description: Credit limit minus open AR, floored at zero
+        recent_orders:
+          type: array
+          description: A short strip of the most recent orders (present in the live capture)
+          items: { $ref: "#/components/schemas/TenantOrder" }
+
+    TenantBillingSummary:
+      type: object
+      required: [open_balance_cents, credit_limit_cents, available_credit_cents, on_hold, payment_terms_days]
+      properties:
+        open_balance_cents: { type: integer, format: int64 }
+        credit_limit_cents: { type: integer, format: int64 }
+        available_credit_cents:
+          type: integer
+          format: int64
+          description: Credit limit minus open AR, floored at zero
+        on_hold: { type: boolean }
+        payment_terms_days: { type: integer, format: int32 }
+
+    # --- invoices (InvoiceView, D9) -------------------------------------------
+
+    TenantInvoice:
+      type: object
+      description: >-
+        The AR view of one invoice, list-row form (no lines). holdback_cents
+        is the legally retained portion and is excluded from what the
+        contractor can pay. order_id is an empty string when the invoice is
+        not order-linked; it maps to InvoiceView's nullable order_id.
+      required: [id, invoice_no, customer_id, order_id, status, issue_date, due_date, subtotal_cents, tax_cents, holdback_cents, total_cents, balance_cents]
+      properties:
+        id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        order_id:
+          type: string
+          description: The backing order id, or an empty string when not order-linked
+        status:
+          type: string
+          enum: [DRAFT, FINALIZED, PARTIALLY_PAID, PAID, VOID]
+        issue_date: { type: string, format: date-time }
+        due_date: { type: string, format: date-time }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        holdback_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        balance_cents: { type: integer, format: int64, description: The open amount }
+
+    TenantInvoiceLine:
+      type: object
+      description: >-
+        One invoice_lines row as the ERP serves it. Quantities are DECIMAL
+        serialized as strings to preserve scale; qty_entered and uom_entered
+        map onto InvoiceViewLine's quantity and uom.
+      required: [line_no, product_id, description, qty_entered, uom_entered, unit_price_cents, line_total_cents]
+      properties:
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string, description: The product id; empty for a free-text line }
+        description: { type: string }
+        qty_entered: { type: string, description: "DECIMAL as string, scale preserved" }
+        uom_entered: { type: string }
+        unit_price_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64 }
+
+    TenantInvoiceDetail:
+      type: object
+      description: >-
+        The invoice detail. InvoiceView is canonical (D9); the second
+        fragment of this allOf carries the ERP-only extras, namely the lines
+        in the ERP invoice_lines shape.
+      allOf:
+        - $ref: "#/components/schemas/InvoiceView"
+        - type: object
+          properties:
+            lines:
+              type: array
+              description: The invoice lines in the ERP wire shape
+              items: { $ref: "#/components/schemas/TenantInvoiceLine" }
+
+    TenantInvoicePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TenantInvoice" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+        total:
+          type: integer
+          format: int32
+          deprecated: true
+          description: Legacy offset field present only in recorded captures; the new core paginates by cursor
+        offset:
+          type: integer
+          format: int32
+          deprecated: true
+          description: Legacy offset field present only in recorded captures; the new core paginates by cursor
+
+    # --- orders, reorder and returns ------------------------------------------
+
+    TenantOrder:
+      type: object
+      description: >-
+        The list and summary view of one dealer order as the tenant sees it.
+        The contractor's board projection of the same aggregate is OrderCard
+        (D7); the dealer-state to board-stage map lives on OrderCard.
+      required: [id, order_no, customer_id, quote_id, status, fulfillment, requested_date, subtotal_cents, tax_cents, total_cents, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The canonical core id; deep links fb://hh/order/<id> carry this id only (D6)
+        legacy_contractor_id:
+          type: [string, "null"]
+          description: >-
+            The contractor-side alias for the mapping period (D6): readable,
+            never a key. The canonical core id is id, and deep links
+            fb://hh/order/<id> carry the canonical id only.
+        order_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        quote_id:
+          type: string
+          description: The originating quote id, or an empty string when not quote-originated
+        status:
+          type: string
+          enum: [DRAFT, CONFIRMED, PICKING, READY, PARTIALLY_FULFILLED, FULFILLED, INVOICED, CLOSED, CANCELLED]
+        fulfillment:
+          type: string
+          enum: [PICKUP, DELIVERY, WILL_CALL]
+        requested_date: { type: string, format: date-time }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+
+    TenantOrderLine:
+      type: object
+      description: >-
+        One order_lines row with allocation and fulfillment progress for the
+        status tracker. Quantities are DECIMAL serialized as strings.
+      required: [line_no, product_id, description, qty_entered, uom_entered, qty_base, allocated_base, fulfilled_base, unit_price_cents, line_total_cents]
+      properties:
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string, description: The product id; empty for a free-text line }
+        description: { type: string }
+        qty_entered: { type: string, description: DECIMAL as string }
+        uom_entered: { type: string }
+        qty_base: { type: string, description: "Quantity in base UOM, DECIMAL as string" }
+        allocated_base: { type: string, description: DECIMAL as string }
+        fulfilled_base: { type: string, description: DECIMAL as string }
+        unit_price_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64 }
+
+    TenantOrderDetail:
+      type: object
+      description: One order with its lines and the contractor's delivery note
+      allOf:
+        - $ref: "#/components/schemas/TenantOrder"
+        - type: object
+          required: [lines, delivery_instructions]
+          properties:
+            lines:
+              type: array
+              items: { $ref: "#/components/schemas/TenantOrderLine" }
+            delivery_instructions: { type: string }
+
+    TenantOrderPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TenantOrder" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+        total:
+          type: integer
+          format: int32
+          deprecated: true
+          description: Legacy offset field present only in recorded captures; the new core paginates by cursor
+        offset:
+          type: integer
+          format: int32
+          deprecated: true
+          description: Legacy offset field present only in recorded captures; the new core paginates by cursor
+
+    TenantDeliveryInstructionsRequest:
+      type: object
+      required: [instructions]
+      properties:
+        instructions:
+          type: string
+          maxLength: 2000
+          description: The contractor's free-text note for a scheduled delivery
+
+    TenantReorderPreview:
+      type: object
+      description: >-
+        Every source line of a past order, repriced at the account's current
+        tier with an availability verdict; flagged lines render unselectable.
+      required: [source_order_id, source_order_no, branch_id, lines]
+      properties:
+        source_order_id: { type: string, format: uuid }
+        source_order_no: { type: string }
+        branch_id: { type: string }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/TenantReorderLine" }
+
+    TenantReorderLine:
+      type: object
+      description: >-
+        One source line graded for reorder. line_no is the source order line
+        number, the value a submit selects. Price fields are zero when
+        available is false.
+      required: [line_no, product_id, description, qty_entered, uom_entered, unit_price_cents, price_uom, line_total_cents, available]
+      properties:
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string }
+        description: { type: string }
+        qty_entered: { type: string, description: DECIMAL as string }
+        uom_entered: { type: string }
+        unit_price_cents: { type: integer, format: int64, description: "The currently resolved price, pre-tax" }
+        price_uom: { type: string }
+        line_total_cents: { type: integer, format: int64 }
+        available: { type: boolean }
+        reason: { type: string, description: "Machine code explaining why, when available is false" }
+
+    TenantReorderRequest:
+      type: object
+      required: [lines]
+      properties:
+        lines:
+          type: array
+          description: The source order line numbers to reorder
+          items: { type: integer, format: int32 }
+        idempotency_key:
+          type: string
+          description: Client-generated; a retried request returns the same draft
+
+    TenantReorderResult:
+      type: object
+      description: The identity of the created DRAFT order
+      required: [order_id, order_no, status]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        status: { type: string }
+
+    TenantReorderRejection:
+      type: object
+      required: [line_no, reason]
+      properties:
+        line_no: { type: integer, format: int32, description: The source order line number }
+        reason: { type: string, description: The machine code for the refusal }
+
+    TenantReorderConflict:
+      type: object
+      description: The 409 body when selected lines are no longer orderable
+      required: [error, lines]
+      properties:
+        error: { type: string }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/TenantReorderRejection" }
+
+    TenantReturnableLine:
+      type: object
+      description: One original order line with prior-return sums netted out
+      required: [order_line_id, product_id, description, qty_sold, qty_returned, unit_price_cents, line_total_cents, tax_cents]
+      properties:
+        order_line_id: { type: string, format: uuid }
+        product_id: { type: string }
+        description: { type: string }
+        qty_sold: { type: number }
+        qty_returned: { type: number }
+        unit_price_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+
+    TenantReturnEligibility:
+      type: object
+      description: The order's returnable lines plus the tender facts of the original sale
+      required: [order_id, order_no, branch_id, customer_id, invoice_id, sale_tender, card_refundable, lines]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        branch_id: { type: string }
+        customer_id: { type: string, format: uuid }
+        invoice_id: { type: string, description: The settled invoice id; empty when none applies }
+        sale_tender: { type: string, description: The tender of the original sale }
+        card_refundable:
+          type: boolean
+          description: True when the original card capture carries a gateway reference
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/TenantReturnableLine" }
+
+    TenantReturnRequestLine:
+      type: object
+      required: [order_line_id, product_id, description, qty_base]
+      properties:
+        order_line_id: { type: string, format: uuid }
+        product_id: { type: string }
+        description: { type: string }
+        qty_base: { type: number }
+
+    TenantReturnRequestLineInput:
+      type: object
+      required: [order_line_id, qty_base]
+      properties:
+        order_line_id: { type: string, format: uuid }
+        qty_base: { type: number }
+
+    TenantReturnRequest:
+      type: object
+      description: >-
+        One return request in the tenant-safe projection: the staff-side
+        decided_by attribution never appears here; decided_at and
+        decision_reason stay, since they are the customer's answer.
+      required: [id, request_no, order_id, order_no, customer_id, branch_id, status, reason_code, note, fee_cents, created_at, lines]
+      properties:
+        id: { type: string, format: uuid }
+        request_no: { type: string }
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        branch_id: { type: string }
+        status:
+          type: string
+          enum: [PENDING, APPROVED, REJECTED]
+        reason_code:
+          type: string
+          enum: [DAMAGED, DEFECT, WRONG_ITEM, NO_LONGER_NEEDED, OTHER]
+        note: { type: string }
+        requested_by: { type: string, description: The tenant's own portal user id }
+        decided_at: { type: string, format: date-time }
+        decision_reason: { type: string }
+        fee_cents: { type: integer, format: int64 }
+        return_id: { type: string, description: The POS return id once approved }
+        return_no: { type: string }
+        created_at: { type: string, format: date-time }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/TenantReturnRequestLine" }
+
+    TenantReturnRequestCreate:
+      type: object
+      required: [reason_code, lines]
+      properties:
+        reason_code:
+          type: string
+          enum: [DAMAGED, DEFECT, WRONG_ITEM, NO_LONGER_NEEDED, OTHER]
+        note:
+          type: string
+          maxLength: 2000
+          description: Required when reason_code is OTHER
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/TenantReturnRequestLineInput" }
+
+    # --- quotes (dealer quotes, D8) ---------------------------------------------
+
+    TenantQuote:
+      type: object
+      description: >-
+        A dealer quote (dealer to contractor); the canonical contract entity
+        is DealerQuote (D8) and this schema transcribes the ERP wire shape
+        this surface serves. valid_until is document-level validity (D14).
+      required: [id, quote_no, customer_id, status, valid_until, subtotal_cents, tax_cents, total_cents, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        quote_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [DRAFT, SENT, ACCEPTED, CONVERTED, EXPIRED, LOST]
+        valid_until: { type: string, format: date-time }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+
+    TenantQuoteLine:
+      type: object
+      description: >-
+        One quote_lines row in the ERP wire shape; the canonical line entity
+        is QuoteLine (D8) and qty_entered and uom_entered map onto its
+        quantity and uom.
+      required: [line_no, product_id, description, qty_entered, uom_entered, unit_price_cents, line_total_cents]
+      properties:
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string }
+        description: { type: string }
+        qty_entered: { type: string, description: "DECIMAL as string, scale preserved" }
+        uom_entered: { type: string }
+        unit_price_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64 }
+
+    TenantQuoteDetail:
+      type: object
+      description: One dealer quote with its priced lines (canonical entity DealerQuote, D8)
+      allOf:
+        - $ref: "#/components/schemas/TenantQuote"
+        - type: object
+          required: [lines]
+          properties:
+            lines:
+              type: array
+              items: { $ref: "#/components/schemas/TenantQuoteLine" }
+
+    TenantQuotePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TenantQuote" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+        total:
+          type: integer
+          format: int32
+          deprecated: true
+          description: Legacy offset field present only in recorded captures; the new core paginates by cursor
+        offset:
+          type: integer
+          format: int32
+          deprecated: true
+          description: Legacy offset field present only in recorded captures; the new core paginates by cursor
+
+    TenantQuoteConvertRequest:
+      type: object
+      description: >-
+        The optional convert extension. A request with no body at all
+        converts with fulfillment unspecified; when a body is present,
+        fulfillment is PICKUP or WILL_CALL and anything else is a 400.
+      properties:
+        fulfillment:
+          type: string
+          enum: [PICKUP, WILL_CALL]
+
+    TenantQuoteConvertResult:
+      type: object
+      description: The identity of the order the conversion created
+      required: [order_id, order_no]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+
+    # --- payments -----------------------------------------------------------------
+
+    TenantPaymentMethod:
+      type: object
+      description: >-
+        A vaulted payment method: display metadata only. The opaque vault
+        token is never serialized and no PAN or account number ever appears.
+      required: [id, customer_id, gateway, method_type, brand, last4, exp_month, exp_year, is_default, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        gateway: { type: string, description: The processor that vaulted the method (stub or run) }
+        method_type:
+          type: string
+          enum: [CARD, BANK]
+        brand: { type: string, description: Card brand or bank name }
+        last4: { type: string }
+        exp_month: { type: integer, format: int32 }
+        exp_year: { type: integer, format: int32 }
+        is_default: { type: boolean }
+        status:
+          type: string
+          enum: [active, removed]
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    TenantAddPaymentMethodRequest:
+      type: object
+      required: [nonce]
+      properties:
+        nonce:
+          type: string
+          description: The one-time hosted-field nonce to exchange for a durable vault token
+        make_default: { type: boolean }
+
+    TenantPaymentAllocation:
+      type: object
+      description: >-
+        One slice of a payment applied to one invoice, tenant-safe: the
+        staff attribution fields never appear on this surface.
+      required: [invoice_id, amount_cents, created_at]
+      properties:
+        invoice_id: { type: string, format: uuid }
+        amount_cents: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+
+    TenantPayment:
+      type: object
+      description: A recorded payment with its per-invoice allocations
+      required: [id, payment_no, customer_id, method, amount_cents, status, gateway_ref, received_at, allocations]
+      properties:
+        id: { type: string, format: uuid }
+        payment_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        method: { type: string, description: "The tender, for example CARD or EFT" }
+        amount_cents: { type: integer, format: int64 }
+        status:
+          type: string
+          enum: [RECEIVED, DEPOSITED, BOUNCED, REFUNDED, VOID, PENDING]
+        gateway_ref: { type: string }
+        received_at: { type: string, format: date-time }
+        allocations:
+          type: array
+          items: { $ref: "#/components/schemas/TenantPaymentAllocation" }
+
+    TenantPayRequest:
+      type: object
+      description: >-
+        A multi-invoice payment: one charge for the summed balance of the
+        selected invoices, funded by a stored method id or a one-time nonce.
+        The server re-binds idempotency to the account and the request hash
+        before charging; the client key is advisory.
+      required: [invoice_ids]
+      properties:
+        invoice_ids:
+          type: array
+          items: { type: string, format: uuid }
+        payment_method_id:
+          type: string
+          format: uuid
+          description: A stored method, or use nonce for add-at-checkout
+        nonce:
+          type: string
+          description: A one-time hosted-field nonce, or use payment_method_id
+        idempotency_key: { type: string }
+
+    # --- procurement (the planning board) -----------------------------------------
+
+    TenantProjectStatus:
+      type: string
+      description: A planning project's lane on the board (the procurement_projects CHECK set)
+      enum: [PLANNING, QUOTING, ORDERED, FULFILLED, CANCELLED]
+
+    TenantProject:
+      type: object
+      description: >-
+        The list and summary view of one planning-board project. line_count
+        and subtotal_cents are derived aggregates over the project's lines,
+        not stored columns.
+      required: [id, customer_id, name, status, line_count, subtotal_cents, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        name: { type: string }
+        status: { $ref: "#/components/schemas/TenantProjectStatus" }
+        line_count: { type: integer, format: int32 }
+        subtotal_cents: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    TenantProjectLine:
+      type: object
+      description: >-
+        One planning-board line. indicative prices are populated by the RFQ
+        submit and flagged priced; they are provisional, never authoritative.
+      required: [id, line_no, product_id, sku, description, qty_entered, uom, notes, indicative_unit_price_cents, indicative_line_total_cents, priced]
+      properties:
+        id: { type: string, format: uuid }
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        description: { type: string }
+        qty_entered: { type: string, description: "DECIMAL as string, scale preserved" }
+        uom: { type: string }
+        notes: { type: string }
+        indicative_unit_price_cents: { type: integer, format: int64 }
+        indicative_line_total_cents: { type: integer, format: int64 }
+        priced: { type: boolean, description: True once the RFQ submit priced this line indicatively }
+
+    TenantProjectDetail:
+      type: object
+      description: One planning project with its lines
+      allOf:
+        - $ref: "#/components/schemas/TenantProject"
+        - type: object
+          required: [lines]
+          properties:
+            lines:
+              type: array
+              items: { $ref: "#/components/schemas/TenantProjectLine" }
+
+    TenantProjectBoard:
+      type: object
+      description: The board envelope, the tenant's non-terminal projects as a flat working set
+      required: [projects]
+      properties:
+        projects:
+          type: array
+          items: { $ref: "#/components/schemas/TenantProject" }
+
+    TenantProjectCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+
+    TenantProjectUpdateRequest:
+      type: object
+      description: Rename and/or lane move; both fields optional (partial update)
+      properties:
+        name: { type: string }
+        status: { $ref: "#/components/schemas/TenantProjectStatus" }
+
+    TenantProjectLineAddRequest:
+      type: object
+      required: [product_id, qty_entered, uom]
+      properties:
+        product_id: { type: string, format: uuid }
+        qty_entered: { type: string, description: DECIMAL as string }
+        uom: { type: string }
+        notes: { type: string }
+
+    TenantProjectLineUpdateRequest:
+      type: object
+      description: Partial line edit; every field optional
+      properties:
+        qty_entered: { type: string, description: DECIMAL as string }
+        uom: { type: string }
+        notes: { type: string }
+
+    # --- projects and jobs rollup ------------------------------------------------
+
+    TenantProjectSummary:
+      type: object
+      description: >-
+        One job's list-row rollup: order count, spend (money-bearing
+        invoices only) and the count of scheduled or dispatched deliveries.
+      required: [id, name, job_address, order_count, spend_cents, delivery_count, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        job_address: { type: string }
+        order_count: { type: integer, format: int32 }
+        spend_cents:
+          type: integer
+          format: int64
+          description: Sum of money-bearing invoice totals for the project's orders
+        delivery_count:
+          type: integer
+          format: int32
+          description: Scheduled or dispatched deliveries touching the project's orders
+        created_at: { type: string, format: date-time }
+
+    TenantProjectOrder:
+      type: object
+      description: An order drill row within a job
+      required: [id, order_no, status, total_cents]
+      properties:
+        id: { type: string, format: uuid }
+        order_no: { type: string }
+        status: { type: string }
+        total_cents: { type: integer, format: int64 }
+
+    TenantProjectInvoice:
+      type: object
+      description: >-
+        An invoice drill row within a job, restricted to the money-bearing
+        statuses so the drill total reconciles with spend_cents.
+      required: [id, invoice_no, status, total_cents, balance_cents]
+      properties:
+        id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        status: { type: string }
+        total_cents: { type: integer, format: int64 }
+        balance_cents: { type: integer, format: int64 }
+
+    TenantProjectDashboard:
+      type: object
+      description: >-
+        One job's full rollup: the summary plus the quoted-versus-actual
+        variance and the order and invoice drill lists. The variance is
+        like-for-like: quoted_spend_cents covers only quote-originated
+        orders, so ad-hoc spend never manufactures a false overrun.
+      allOf:
+        - $ref: "#/components/schemas/TenantProjectSummary"
+        - type: object
+          required: [quoted_cents, quoted_spend_cents, variance_cents, has_quote, orders, invoices]
+          properties:
+            quoted_cents:
+              type: integer
+              format: int64
+              description: Sum of the distinct quote totals behind the project's quote-originated orders
+            quoted_spend_cents:
+              type: integer
+              format: int64
+              description: The like-for-like spend leg; at most spend_cents
+            variance_cents:
+              type: integer
+              format: int64
+              description: quoted_spend_cents minus quoted_cents; meaningful only when has_quote is true
+            has_quote: { type: boolean }
+            orders:
+              type: array
+              items: { $ref: "#/components/schemas/TenantProjectOrder" }
+            invoices:
+              type: array
+              items: { $ref: "#/components/schemas/TenantProjectInvoice" }
+
+    TenantProjectRollupList:
+      type: object
+      required: [projects]
+      properties:
+        projects:
+          type: array
+          items: { $ref: "#/components/schemas/TenantProjectSummary" }
+
+    # --- catalog ------------------------------------------------------------------
+
+    TenantCatalogResult:
+      type: object
+      description: The compact catalog hit the planning line picker consumes
+      required: [product_id, sku, name, category, base_uom]
+      properties:
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        category: { type: string, description: The product's category code }
+        base_uom: { type: string }
+
+    TenantCatalogSearchResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TenantCatalogResult" }
+
+    TenantBranchAvailability:
+      type: object
+      description: One yard's position on one product, contractor-safe
+      required: [branch_id, on_hand_base, in_stock]
+      properties:
+        branch_id: { type: string }
+        on_hand_base:
+          type: number
+          description: The physical balance in the product's base unit
+        in_stock: { type: boolean }
+        lead_time_days:
+          type: integer
+          format: int32
+          description: >-
+            This branch's replenishment lead time; absent when no policy is
+            on file (zero is a promise, never a stand-in for unknown)
+
+    TenantCatalogProduct:
+      type: object
+      description: >-
+        The contractor-safe product detail: an allow-listed projection with
+        no price, no cost, no margin, no vendor and no reservation detail.
+        Packaging quantities are absent when unknown; zero per skid is never
+        reported. lead_time_days is resolved across branches: zero when the
+        product is on hand somewhere, otherwise the shortest lead time on
+        file, absent when none is on file.
+      required: [product_id, sku, name, description, manufacturer, collection, color, color_family, finish, texture, application, product_size, sold_by, base_uom, dimensions_lwh, is_special_order, is_active, availability]
+      properties:
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        description: { type: string }
+        manufacturer: { type: string }
+        collection: { type: string }
+        color: { type: string }
+        color_family: { type: string }
+        finish: { type: string }
+        texture: { type: string }
+        application: { type: string }
+        product_size: { type: string }
+        sold_by: { type: string, description: The selling unit }
+        base_uom: { type: string, description: The stocking unit }
+        dimensions_lwh: { type: string }
+        full_skid_quantity:
+          type: [integer, "null"]
+          format: int32
+        layer_quantity:
+          type: [integer, "null"]
+          format: int32
+        pallet_count:
+          type: [integer, "null"]
+          format: int32
+        minimum_order_qty: { type: string, description: DECIMAL as string }
+        is_special_order: { type: boolean }
+        is_active:
+          type: boolean
+          description: False means discontinued; reported rather than hidden
+        lead_time_days:
+          type: [integer, "null"]
+          format: int32
+          description: The headline availability answer, resolved across branches
+        availability:
+          type: array
+          description: One row per branch with a stock record or a lead-time policy, stocked branches first
+          items: { $ref: "#/components/schemas/TenantBranchAvailability" }
+
+    # --- addresses -----------------------------------------------------------------
+
+    TenantAddressKind:
+      type: string
+      description: The provenance of a delivery site; clients key picker grouping off this
+      enum: [billing, job_site, delivery]
+
+    TenantAddress:
+      type: object
+      description: >-
+        One delivery site of the account. The id is synthetic and namespaced
+        by kind, and it is a stable handle: the same site yields the same id
+        across calls, so a client may store it and resolve it later.
+        province and postal are the ERP's spellings; clients map them onto
+        their own vocabulary.
+      required: [id, kind, label, line1, line2, city, province, postal]
+      properties:
+        id:
+          type: string
+          description: The synthetic, kind-namespaced site id (for example project:<uuid>)
+        kind: { $ref: "#/components/schemas/TenantAddressKind" }
+        label: { type: string }
+        line1: { type: string }
+        line2: { type: string }
+        city: { type: string }
+        province: { type: string }
+        postal: { type: string }
+        last_used_at:
+          type: [string, "null"]
+          format: date-time
+          description: The most recent delivery to this site (delivery kind only)
+
+    TenantAddressListResponse:
+      type: object
+      required: [addresses]
+      properties:
+        addresses:
+          type: array
+          items: { $ref: "#/components/schemas/TenantAddress" }

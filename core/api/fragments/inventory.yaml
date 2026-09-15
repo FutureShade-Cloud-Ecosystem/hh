@@ -1,0 +1,1965 @@
+paths:
+  # --- inventory: stock-move ledger and weighted-average cost reads ---------
+  /api/v1/inventory/on-hand:
+    get:
+      operationId: inventoryOnHand
+      tags: [staff-inventory]
+      summary: Read on-hand and weighted-average cost for one product across branches
+      description: >-
+        A product with no stock rows is a normal answer: the page is empty,
+        never not-found.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: product_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The on-hand page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryOnHandPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/inventory/moves:
+    get:
+      operationId: inventoryListMoves
+      tags: [staff-inventory]
+      summary: List the recent stock-move ledger for a product
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: product_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: branch_id
+          in: query
+          required: false
+          description: Restrict to one branch; omitted means every branch
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The move ledger page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryMovePage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/inventory/pending-fulfilment:
+    get:
+      operationId: inventoryListPendingFulfilment
+      tags: [staff-inventory]
+      summary: List sold lines awaiting a stock move (COLLECT_LATER and DELIVERED)
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The pending fulfilment page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryPendingFulfilmentPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/inventory/receive:
+    post:
+      operationId: inventoryReceivePO
+      tags: [staff-inventory]
+      summary: Receive a purchase order into stock (all outstanding units, or explicit per-line quantities)
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryReceiveRequest"
+      responses:
+        "200":
+          description: The receipt outcome, including the value that hit GRNI
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryReceiptResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/inventory/transit-days:
+    get:
+      operationId: inventoryListTransitDays
+      tags: [staff-inventory]
+      summary: List every ordered branch pair with its configured transit time
+      description: >-
+        Every ordered branch pair is listed, configured or not: a pair with no
+        row (configured false) is the one shipping with no promised arrival.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The branch pair page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryTransitDaysPairPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: inventoryPutTransitDays
+      tags: [staff-inventory]
+      summary: Store or clear one route's transit time
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventorySetTransitDaysInput"
+      responses:
+        "200":
+          description: The branch pair after the write
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryTransitDaysPair"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- inventory: cross-branch visibility and browse -------------------------
+  /api/v1/inventory/branch-stock:
+    get:
+      operationId: inventoryBranchStock
+      tags: [staff-inventory]
+      summary: Read the four-bucket stock view for one product, per branch
+      description: >-
+        Without branch_id every branch is answered, including branches with no
+        stock record (a zeroed row). available_base is on_hand_base minus
+        reserved_base and may be negative.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: product_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The per-branch stock page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryBranchStockPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/inventory/browse:
+    get:
+      operationId: inventoryBrowse
+      tags: [staff-inventory]
+      summary: Browse products with attribute facets and the stock position per row
+      description: >-
+        Multi-valued facets arrive comma-separated. Facet counts are computed
+        with every filter applied except the facet's own. in_stock_only grades
+        available stock, not on-hand.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: text
+          in: query
+          required: false
+          description: Free text over sku, name, manufacturer and collection
+          schema: { type: string }
+        - name: branch_id
+          in: query
+          required: false
+          description: Scopes the stock columns; omitted means engagement-wide totals
+          schema: { type: string }
+        - name: color_family
+          in: query
+          required: false
+          description: Comma-separated values
+          schema: { type: string }
+        - name: texture
+          in: query
+          required: false
+          description: Comma-separated values
+          schema: { type: string }
+        - name: product_size
+          in: query
+          required: false
+          description: Comma-separated values
+          schema: { type: string }
+        - name: sold_by
+          in: query
+          required: false
+          description: Comma-separated values
+          schema: { type: string }
+        - name: manufacturer
+          in: query
+          required: false
+          description: Comma-separated values
+          schema: { type: string }
+        - name: collection
+          in: query
+          required: false
+          description: Comma-separated values
+          schema: { type: string }
+        - name: color
+          in: query
+          required: false
+          description: Comma-separated values
+          schema: { type: string }
+        - name: finish
+          in: query
+          required: false
+          description: Comma-separated values
+          schema: { type: string }
+        - name: application
+          in: query
+          required: false
+          description: Comma-separated values
+          schema: { type: string }
+        - name: is_featured
+          in: query
+          required: false
+          schema: { type: boolean }
+        - name: is_special_order
+          in: query
+          required: false
+          schema: { type: boolean }
+        - name: in_stock_only
+          in: query
+          required: false
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: The browse page with facet counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryBrowsePage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- inventory: reservations and allocation policy -------------------------
+  /api/v1/inventory/reservations:
+    get:
+      operationId: inventoryListReservations
+      tags: [staff-inventory]
+      summary: List the ACTIVE stock holds, newest first
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: product_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The reservation page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryReservationPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: inventoryCreateReservation
+      tags: [staff-inventory]
+      summary: Hold stock for an order, quote or transfer
+      description: >-
+        The branch allocation policy grades the hold: only HARD holds subtract
+        from available. A type the policy grades NONE writes nothing and
+        answers applied false, which is not an error. location_id defaults to
+        branch_id.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryReserveInput"
+      responses:
+        "200":
+          description: The written reservation and the policy that graded it
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryReserveResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/inventory/reservations/release:
+    post:
+      operationId: inventoryReleaseReservation
+      tags: [staff-inventory]
+      summary: Close reservations by id or by source document
+      description: >-
+        One of reservation_id or source_ref_id is required. status defaults to
+        RELEASED and must be a terminal reservation status.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryReleaseRequest"
+      responses:
+        "200":
+          description: How many reservations were closed, and with which status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryReleaseResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/inventory/reservations/expire:
+    post:
+      operationId: inventoryExpireReservations
+      tags: [staff-inventory]
+      summary: Run the reservation expiry sweep now
+      description: >-
+        Flips every ACTIVE reservation whose expires_at has passed to EXPIRED
+        and unwinds the projection for the HARD ones. The same service method
+        runs on the jobs runner.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The number of reservations expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryExpireResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/inventory/allocation-policy:
+    get:
+      operationId: inventoryGetAllocationPolicy
+      tags: [staff-inventory]
+      summary: Read a branch's resolved allocation policy
+      description: >-
+        A branch with no configuration row resolves to the system default and
+        is_default is true. An omitted branch_id resolves to the system
+        default too.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The resolved policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryAllocationPolicy"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: inventoryPutAllocationPolicy
+      tags: [staff-inventory]
+      summary: Upsert a branch's allocation policy
+      description: >-
+        TRANSFER holds are not policy driven: they are always HARD with no
+        expiry, so the no-overdraft guard cannot be switched off from a
+        settings screen.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryAllocationPolicy"
+      responses:
+        "200":
+          description: The stored policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryAllocationPolicy"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- inventory: inter-branch transfers --------------------------------------
+  /api/v1/inventory/transfers:
+    get:
+      operationId: inventoryListTransfers
+      tags: [staff-inventory]
+      summary: List inter-branch transfers, newest first
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          description: Matches transfers from or to this branch
+          schema: { type: string }
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [DRAFT, IN_TRANSIT, RECEIVED, CANCELLED]
+      responses:
+        "200":
+          description: The transfer page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryTransferPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: inventoryCreateTransfer
+      tags: [staff-inventory]
+      summary: Open a DRAFT transfer between two branches
+      description: >-
+        A draft touches no stock: the overdraft guard sits at ship, not at
+        create.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryCreateTransferInput"
+      responses:
+        "200":
+          description: The created transfer with its lines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryTransfer"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/inventory/transfers/{id}:
+    get:
+      operationId: inventoryGetTransfer
+      tags: [staff-inventory]
+      summary: Read one transfer with its lines
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The transfer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryTransfer"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/inventory/transfers/{id}/ship:
+    post:
+      operationId: inventoryShipTransfer
+      tags: [staff-inventory]
+      summary: Load the truck; grade available stock and capture the promised arrival
+      description: >-
+        The body is optional. No body means no opinion: the branch pair's
+        configured transit time fills eta, and an unconfigured pair leaves it
+        empty. An eta value is stored verbatim; an empty eta is the clerk
+        clearing the field, stored as no promised arrival and never
+        re-defaulted. Only a DRAFT can ship.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryShipTransferRequest"
+      responses:
+        "200":
+          description: The transfer, now IN_TRANSIT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryTransfer"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/inventory/transfers/{id}/receive:
+    post:
+      operationId: inventoryReceiveTransfer
+      tags: [staff-inventory]
+      summary: Unload the truck at the destination branch
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The transfer, now RECEIVED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryTransfer"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/inventory/transfers/{id}/cancel:
+    post:
+      operationId: inventoryCancelTransfer
+      tags: [staff-inventory]
+      summary: Cancel a transfer
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The transfer, now CANCELLED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryTransfer"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/inventory/incoming-transfers:
+    get:
+      operationId: inventoryListIncomingTransfers
+      tags: [staff-inventory]
+      summary: List the open transfer legs bringing one product into the caller's branches
+      description: >-
+        Inbound only: stock shipped out of a branch has already left its
+        on-hand. eta is the stored promised arrival, empty when the transfer
+        carries no promise; nothing here derives a date at read time. Rows are
+        limited to the branches the caller's scope reaches.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: product_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The in-transit line page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryInTransitLinePage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- inventory: replenishment ----------------------------------------------
+  /api/v1/inventory/shortfall:
+    get:
+      operationId: inventoryShortfall
+      tags: [staff-inventory]
+      summary: List the replenishment worklist, worst shortfall first
+      description: >-
+        Graded on the projected position (available plus in transit plus on
+        order), not on-hand. on_order_degraded is true when the on-order leg
+        was not measured; it is always present rather than omitted when false.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          description: Omitted means all branches
+          schema: { type: string }
+      responses:
+        "200":
+          description: The shortfall page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryShortfallPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/inventory/reorder-points:
+    get:
+      operationId: inventoryListReorderPoints
+      tags: [staff-inventory]
+      summary: List the managed replenishment lines at a branch
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The reorder point page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryReorderPointPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: inventoryPutReorderPoint
+      tags: [staff-inventory]
+      summary: Upsert one managed replenishment line
+      description: >-
+        A body with no is_active keeps the line managed: the server defaults
+        is_active to true so editing a quantity never silently retires the
+        line.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryReorderPoint"
+      responses:
+        "200":
+          description: The stored reorder point
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryReorderPoint"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/inventory/reorder-points/bootstrap:
+    post:
+      operationId: inventoryBootstrapReorderPoints
+      tags: [staff-inventory]
+      summary: Open a managed line for every stocked product at a branch
+      description: >-
+        The point opens at half of current on-hand and the order multiple
+        comes from the catalogue skid quantity where known. Re-runnable; never
+        overwrites a line a person has tuned.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryBootstrapRequest"
+      responses:
+        "200":
+          description: The number of reorder points created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryBootstrapResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/inventory/shortfall/create-po:
+    post:
+      operationId: inventoryCreatePOFromShortfall
+      tags: [staff-inventory]
+      summary: Draft a purchase order from selected shortfall lines
+      description: >-
+        The selection must share one preferred vendor; a line with none is
+        refused. When the purchasing seam is unbound the answer is 503 with
+        the draft carried alongside the error, so the surface can show what
+        would have been ordered.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryCreatePOFromShortfallRequest"
+      responses:
+        "200":
+          description: The created draft purchase order and the draft as sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryCreatePOResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Purchasing seam unbound; the error body carries the draft under a draft key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/inventory/reorder-po:
+    post:
+      operationId: inventoryReorderPO
+      tags: [staff-inventory]
+      summary: Draft a purchase order for one product from its replenishment line
+      description: >-
+        qty_base of zero means use the replenishment suggestion. Always a
+        DRAFT, never an ordered PO. The same 503-with-draft posture as
+        shortfall/create-po applies when purchasing is unbound.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryReorderRequest"
+      responses:
+        "200":
+          description: The reorder outcome
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryReorderResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Purchasing seam unbound; the error body carries the draft under a draft key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/inventory/nudge-procurement:
+    post:
+      operationId: inventoryNudgeProcurement
+      tags: [staff-inventory]
+      summary: Post one procurement nudge for a product at a branch
+      description: >-
+        Writes nothing in inventory: one system event naming the product, the
+        branch and the position. Idempotent per product and branch within the
+        posting cycle; a repeat answers posted false.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryNudgeRequest"
+      responses:
+        "200":
+          description: The nudge outcome
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryNudgeResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Messaging seam unbound; the error body carries the message under a body key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # --- invcount: count sheets -------------------------------------------------
+  /api/v1/counts/sheets:
+    get:
+      operationId: invcountListSheets
+      tags: [staff-invcount]
+      summary: List count sheets
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [OPEN, FROZEN, COUNTED, POSTED, CANCELLED]
+      responses:
+        "200":
+          description: The sheet page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvCountSheetPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: invcountCreateSheet
+      tags: [staff-invcount]
+      summary: Open a new OPEN count sheet for a branch
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvCountCreateSheetRequest"
+      responses:
+        "201":
+          description: The created sheet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvCountSheet"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/counts/sheets/{id}:
+    get:
+      operationId: invcountGetSheet
+      tags: [staff-invcount]
+      summary: Read a sheet with its lines and the variance summary
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The sheet detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvCountSheetDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/counts/sheets/{id}/freeze:
+    post:
+      operationId: invcountFreezeSheet
+      tags: [staff-invcount]
+      summary: Capture the on-hand snapshot onto the sheet and flip it FROZEN
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The frozen sheet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvCountSheet"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/counts/sheets/{id}/counts:
+    post:
+      operationId: invcountSubmitCounts
+      tags: [staff-invcount]
+      summary: Submit the maker's counted quantities and reasons; flips the sheet COUNTED
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvCountSubmitCountsRequest"
+      responses:
+        "200":
+          description: The sheet, now COUNTED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvCountSheet"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/counts/sheets/{id}/approve:
+    post:
+      operationId: invcountApproveSheet
+      tags: [staff-invcount]
+      summary: Record the checker's approval (the maker-checker gate)
+      description: >-
+        The checker must differ from the maker; a same-person approval is
+        refused.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The approved sheet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvCountSheet"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/counts/sheets/{id}/post:
+    post:
+      operationId: invcountPostSheet
+      tags: [staff-invcount]
+      summary: Post the counted variances (stock moves plus a reason-coded GL journal), idempotently
+      description: >-
+        Posts from COUNTED only, with a checker approval distinct from the
+        maker. Re-posting a POSTED sheet is a no-op through the per-sheet GL
+        idempotency key.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The sheet detail after posting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvCountSheetDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: Maker-checker violation or missing checker approval
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/counts/sheets/{id}/cancel:
+    post:
+      operationId: invcountCancelSheet
+      tags: [staff-invcount]
+      summary: Abandon a sheet before post
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The sheet is CANCELLED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvCountCancelResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/counts/reason-codes:
+    get:
+      operationId: invcountListReasonCodes
+      tags: [staff-invcount]
+      summary: List the per-reason GL account mappings (the reason picker)
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The reason code page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvCountReasonCodePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/counts/negative-stock:
+    get:
+      operationId: invcountListNegativeStock
+      tags: [staff-invcount]
+      summary: List products carrying by-design negative on-hand (sell-before-receipt detection)
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The negative stock page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvCountNegativeStockPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/counts/recon:
+    get:
+      operationId: invcountRecon
+      tags: [staff-invcount]
+      summary: Run and read the inventory to GL reconciliation for one period and branch
+      description: >-
+        Run-once per period and branch: the run is created lazily on first
+        read. The GL side ties against the 1200 inventory account; when the
+        GL balance seam is unbound the run completes with the subledger side
+        computed and answers OUT_OF_TIE rather than failing.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: true
+          schema: { type: string }
+        - name: year
+          in: query
+          required: false
+          description: Fiscal year override; defaults to the current period
+          schema: { type: integer, format: int32 }
+        - name: month
+          in: query
+          required: false
+          description: Fiscal month override (1 to 12); defaults to the current period
+          schema: { type: integer, format: int32, minimum: 1, maximum: 12 }
+      responses:
+        "200":
+          description: The current period run plus the branch's recon history page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvCountReconResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+components:
+  schemas:
+    # --- inventory schemas -----------------------------------------------------
+    InventoryStockMove:
+      type: object
+      description: One immutable ledger line; corrections are compensating moves
+      required: [id, product_id, branch_id, qty_base, uom, direction, move_type, source_type, source_ref_id, unit_cost_cents, occurred_at]
+      properties:
+        id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        qty_base: { type: number }
+        uom: { type: string }
+        direction:
+          type: string
+          enum: [IN, OUT]
+        move_type:
+          type: string
+          enum: [RECEIPT, SHIP, COUNT, ADJUST, RETURN, TRANSFER]
+        source_type: { type: string }
+        source_ref_id: { type: string }
+        unit_cost_cents: { type: integer, format: int64 }
+        occurred_at: { type: string, format: date-time }
+
+    InventoryOnHand:
+      type: object
+      description: A product's on-hand and available at a branch/location; available_base may be negative, by design
+      required: [product_id, location_id, branch_id, on_hand_base, allocated_base, available_base, avg_cost_cents]
+      properties:
+        product_id: { type: string, format: uuid }
+        location_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        on_hand_base: { type: number }
+        allocated_base: { type: number }
+        available_base: { type: number }
+        avg_cost_cents:
+          type: integer
+          format: int64
+          description: The branch weighted-average unit cost
+
+    InventoryPendingFulfilment:
+      type: object
+      description: One COLLECT_LATER or DELIVERED line awaiting a stock move
+      required: [order_id, product_id, qty_base, sale_type]
+      properties:
+        order_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        qty_base: { type: number }
+        sale_type:
+          type: string
+          enum: [COLLECT_NOW, COLLECT_LATER, DELIVERED]
+
+    InventoryReceiveLineReq:
+      type: object
+      description: Receives an explicit quantity against one PO line; over-receipt is guarded
+      required: [po_line_id, qty_base]
+      properties:
+        po_line_id: { type: string, format: uuid }
+        qty_base: { type: number }
+
+    InventoryReceiveRequest:
+      type: object
+      description: An empty lines list receives every outstanding unit on the PO
+      required: [po_id, lines]
+      properties:
+        po_id: { type: string, format: uuid }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/InventoryReceiveLineReq" }
+
+    InventoryReceiptResult:
+      type: object
+      description: The outcome of a receive, including the value that hit GRNI
+      required: [receipt_id, po_id, po_no, branch_id, status, currency, fx_rate, lines_received, value_cad_cents]
+      properties:
+        receipt_id: { type: string, format: uuid }
+        po_id: { type: string, format: uuid }
+        po_no: { type: string }
+        branch_id: { type: string, format: uuid }
+        status:
+          type: string
+          description: The PO status after the receipt (PARTIALLY_RECEIVED or RECEIVED)
+        currency: { type: string }
+        fx_rate: { type: number }
+        lines_received: { type: integer, format: int32 }
+        value_cad_cents: { type: integer, format: int64 }
+
+    InventoryTransitDaysPair:
+      type: object
+      description: One branch route as the admin surface reads and writes it
+      required: [from_branch_id, from_branch_code, from_branch_name, to_branch_id, to_branch_code, to_branch_name, transit_days, configured, updated_at]
+      properties:
+        from_branch_id: { type: string, format: uuid }
+        from_branch_code: { type: string }
+        from_branch_name: { type: string }
+        to_branch_id: { type: string, format: uuid }
+        to_branch_code: { type: string }
+        to_branch_name: { type: string }
+        transit_days:
+          type: integer
+          format: int32
+          description: Added to a ship date to pre-fill the promised arrival; 0 is legal and promises arrival on the ship day itself
+        configured:
+          type: boolean
+          description: False means the pair has no row and a ship between those yards promises nothing
+        updated_at:
+          type: string
+          description: When a person last reviewed this number; empty when never
+
+    InventorySetTransitDaysInput:
+      type: object
+      required: [from_branch_id, to_branch_id, transit_days, clear]
+      properties:
+        from_branch_id: { type: string, format: uuid }
+        to_branch_id: { type: string, format: uuid }
+        transit_days: { type: integer, format: int32, minimum: 0, maximum: 60 }
+        clear:
+          type: boolean
+          description: True removes the row instead of storing a number
+
+    InventoryBranchStock:
+      type: object
+      description: The four-bucket view of one product at one branch
+      required: [product_id, branch_id, branch_code, branch_name, on_hand_base, reserved_base, in_transit_base, available_base, soft_held_base, avg_cost_cents]
+      properties:
+        product_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        branch_code: { type: string }
+        branch_name: { type: string }
+        on_hand_base: { type: number }
+        reserved_base:
+          type: number
+          description: HARD holds only
+        in_transit_base:
+          type: number
+          description: Units shipped to this branch and not yet received
+        available_base:
+          type: number
+          description: on_hand_base minus reserved_base; may be negative
+        soft_held_base:
+          type: number
+          description: Advisory quote holds; shown but never subtracted from available_base
+        avg_cost_cents: { type: integer, format: int64 }
+
+    InventoryBrowseRow:
+      type: object
+      description: One product on the browse surface, with its stock position
+      required: [product_id, sku, name, manufacturer, collection, color_family, texture, product_size, sold_by, color, finish, application, is_featured, is_special_order, on_hand_base, reserved_base, available_base, in_transit_base, avg_cost_cents]
+      properties:
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        manufacturer: { type: string }
+        collection: { type: string }
+        color_family: { type: string }
+        texture: { type: string }
+        product_size: { type: string }
+        sold_by: { type: string }
+        color: { type: string }
+        finish: { type: string }
+        application: { type: string }
+        is_featured: { type: boolean }
+        is_special_order: { type: boolean }
+        on_hand_base: { type: number }
+        reserved_base: { type: number }
+        available_base: { type: number }
+        in_transit_base: { type: number }
+        avg_cost_cents: { type: integer, format: int64 }
+
+    InventoryFacetValue:
+      type: object
+      required: [value, count]
+      properties:
+        value: { type: string }
+        count: { type: integer, format: int32 }
+
+    InventoryFacet:
+      type: object
+      required: [field, label, values]
+      properties:
+        field: { type: string }
+        label: { type: string }
+        values:
+          type: array
+          items: { $ref: "#/components/schemas/InventoryFacetValue" }
+
+    InventoryReservation:
+      type: object
+      description: One typed hold on stock
+      required: [id, product_id, branch_id, location_id, res_type, hold_mode, qty_base, status, source_type, source_ref_id, reason, expires_at, created_at, closed_at]
+      properties:
+        id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        location_id: { type: string, format: uuid }
+        res_type:
+          type: string
+          enum: [ORDER, QUOTE, TRANSFER]
+        hold_mode:
+          type: string
+          enum: [HARD, SOFT, NONE]
+        qty_base: { type: number }
+        status:
+          type: string
+          enum: [ACTIVE, RELEASED, CONSUMED, EXPIRED]
+        source_type: { type: string }
+        source_ref_id: { type: string }
+        reason: { type: string }
+        expires_at:
+          type: string
+          description: Empty when the hold never expires
+        created_at: { type: string, format: date-time }
+        closed_at:
+          type: string
+          description: Empty while the hold is ACTIVE
+
+    InventoryReserveInput:
+      type: object
+      required: [product_id, branch_id, location_id, res_type, qty_base, source_type, source_ref_id, reason]
+      properties:
+        product_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        location_id:
+          type: string
+          format: uuid
+          description: Defaults to branch_id when empty
+        res_type:
+          type: string
+          enum: [ORDER, QUOTE, TRANSFER]
+        qty_base: { type: number }
+        source_type: { type: string }
+        source_ref_id: { type: string }
+        reason: { type: string }
+
+    InventoryReserveResult:
+      type: object
+      description: applied false means branch policy graded this type NONE and nothing was written; not an error
+      required: [reservation, applied, policy]
+      properties:
+        reservation: { $ref: "#/components/schemas/InventoryReservation" }
+        applied: { type: boolean }
+        policy: { $ref: "#/components/schemas/InventoryAllocationPolicy" }
+
+    InventoryReleaseRequest:
+      type: object
+      required: [reservation_id, source_type, source_ref_id, status]
+      properties:
+        reservation_id:
+          type: string
+          description: Close this one reservation; takes precedence over the source pair
+        source_type: { type: string }
+        source_ref_id:
+          type: string
+          description: Close every ACTIVE reservation raised by this source document
+        status:
+          type: string
+          enum: [RELEASED, CONSUMED, EXPIRED]
+          description: The terminal status to close with; defaults to RELEASED
+
+    InventoryReleaseResult:
+      type: object
+      required: [released, status]
+      properties:
+        released:
+          type: integer
+          format: int32
+          description: How many reservations were closed
+        status:
+          type: string
+          enum: [RELEASED, CONSUMED, EXPIRED]
+
+    InventoryExpireResult:
+      type: object
+      required: [expired]
+      properties:
+        expired: { type: integer, format: int32 }
+
+    InventoryAllocationPolicy:
+      type: object
+      description: The resolved per-branch allocation policy
+      required: [branch_id, order_mode, quote_mode, order_ttl_hours, quote_ttl_hours, is_default]
+      properties:
+        branch_id: { type: string }
+        order_mode:
+          type: string
+          enum: [HARD, SOFT, NONE]
+        quote_mode:
+          type: string
+          enum: [HARD, SOFT, NONE]
+        order_ttl_hours:
+          type: integer
+          format: int32
+          description: Zero means the hold never expires
+        quote_ttl_hours: { type: integer, format: int32 }
+        is_default:
+          type: boolean
+          description: True when no configuration row exists and the system default was used
+
+    InventoryTransfer:
+      type: object
+      description: One inter-branch transfer document
+      required: [id, transfer_no, from_branch_id, to_branch_id, status, notes, shipped_at, received_at, created_at, eta, lines]
+      properties:
+        id: { type: string, format: uuid }
+        transfer_no: { type: string }
+        from_branch_id: { type: string, format: uuid }
+        to_branch_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [DRAFT, IN_TRANSIT, RECEIVED, CANCELLED]
+        notes: { type: string }
+        shipped_at:
+          type: string
+          description: Empty until the transfer ships
+        received_at:
+          type: string
+          description: Empty until the transfer is received
+        created_at: { type: string, format: date-time }
+        eta:
+          type: string
+          description: The promised arrival day captured at ship time; empty means no promise was made
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/InventoryTransferLine" }
+
+    InventoryTransferLine:
+      type: object
+      description: One product on a transfer, carrying both halves of the ship/receive pair
+      required: [id, line_no, product_id, sku, product_name, uom, qty_base, qty_shipped_base, qty_received_base, unit_cost_cents, ship_move_id, recv_move_id]
+      properties:
+        id: { type: string, format: uuid }
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        product_name: { type: string }
+        uom: { type: string }
+        qty_base: { type: number }
+        qty_shipped_base: { type: number }
+        qty_received_base: { type: number }
+        unit_cost_cents: { type: integer, format: int64 }
+        ship_move_id: { type: string }
+        recv_move_id: { type: string }
+
+    InventoryCreateTransferLine:
+      type: object
+      required: [product_id, qty_base]
+      properties:
+        product_id: { type: string, format: uuid }
+        qty_base: { type: number }
+
+    InventoryCreateTransferInput:
+      type: object
+      required: [from_branch_id, to_branch_id, notes, lines]
+      properties:
+        from_branch_id: { type: string, format: uuid }
+        to_branch_id: { type: string, format: uuid }
+        notes: { type: string }
+        lines:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/InventoryCreateTransferLine" }
+
+    InventoryShipTransferRequest:
+      type: object
+      description: Absent body or absent eta means no opinion; an empty eta clears the promised arrival
+      properties:
+        eta:
+          type: [string, "null"]
+          description: The promised arrival day, or empty to clear it
+
+    InventoryInTransitLine:
+      type: object
+      description: One open leg of an inter-branch transfer for one product
+      required: [transfer_id, transfer_no, from_branch_id, from_branch_code, from_branch_name, to_branch_id, to_branch_code, qty_base, uom, shipped_at, eta]
+      properties:
+        transfer_id: { type: string, format: uuid }
+        transfer_no: { type: string }
+        from_branch_id: { type: string, format: uuid }
+        from_branch_code: { type: string }
+        from_branch_name: { type: string }
+        to_branch_id: { type: string, format: uuid }
+        to_branch_code: { type: string }
+        qty_base:
+          type: number
+          description: What is still on the truck (shipped minus received)
+        uom: { type: string }
+        shipped_at: { type: string }
+        eta:
+          type: string
+          description: The stored promised arrival day; empty when the transfer carries no promise
+
+    InventoryShortfallRow:
+      type: object
+      description: One line of the replenishment worklist
+      required: [product_id, sku, product_name, branch_id, branch_code, uom, on_hand_base, reserved_base, available_base, in_transit_base, on_order_base, projected_base, reorder_point_base, reorder_qty_base, order_multiple_base, suggested_qty_base, short_base, preferred_vendor_id, preferred_vendor_name, lead_time_days, avg_cost_cents, suggested_value_cents]
+      properties:
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        product_name: { type: string }
+        branch_id: { type: string, format: uuid }
+        branch_code: { type: string }
+        uom:
+          type: string
+          description: The product's base unit; every quantity on this row is expressed in it
+        on_hand_base: { type: number }
+        reserved_base: { type: number }
+        available_base: { type: number }
+        in_transit_base: { type: number }
+        on_order_base: { type: number }
+        projected_base:
+          type: number
+          description: available plus in_transit plus on_order; the number graded against the point
+        reorder_point_base: { type: number }
+        reorder_qty_base: { type: number }
+        order_multiple_base: { type: number }
+        suggested_qty_base:
+          type: number
+          description: Closes the gap to the point, floored at the reorder quantity, rounded up to the order multiple
+        short_base:
+          type: number
+          description: How far under the point the projected position sits; positive on every listed row
+        preferred_vendor_id: { type: string }
+        preferred_vendor_name: { type: string }
+        lead_time_days: { type: integer, format: int32 }
+        avg_cost_cents: { type: integer, format: int64 }
+        suggested_value_cents:
+          type: integer
+          format: int64
+          description: suggested_qty_base times the branch weighted-average cost
+
+    InventoryReorderPoint:
+      type: object
+      description: The per (product, branch) replenishment policy row
+      required: [product_id, sku, product_name, branch_id, reorder_point_base, reorder_qty_base, order_multiple_base, preferred_vendor_id, lead_time_days, is_active, notes]
+      properties:
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        product_name: { type: string }
+        branch_id: { type: string, format: uuid }
+        reorder_point_base: { type: number }
+        reorder_qty_base: { type: number }
+        order_multiple_base:
+          type: number
+          description: Zero means no multiple
+        preferred_vendor_id: { type: string }
+        lead_time_days: { type: integer, format: int32 }
+        is_active: { type: boolean }
+        notes: { type: string }
+
+    InventoryBootstrapRequest:
+      type: object
+      required: [branch_id]
+      properties:
+        branch_id: { type: string, format: uuid }
+
+    InventoryBootstrapResult:
+      type: object
+      required: [created]
+      properties:
+        created: { type: integer, format: int32 }
+
+    InventorySuggestedPOLine:
+      type: object
+      required: [product_id, qty_base, unit_cost_cents]
+      properties:
+        product_id: { type: string, format: uuid }
+        qty_base: { type: number }
+        unit_cost_cents: { type: integer, format: int64 }
+
+    InventorySuggestedPO:
+      type: object
+      description: The draft this module hands to purchasing, primitive-only by design
+      required: [branch_id, vendor_id, memo, lines]
+      properties:
+        branch_id: { type: string, format: uuid }
+        vendor_id: { type: string, format: uuid }
+        memo: { type: string }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/InventorySuggestedPOLine" }
+
+    InventoryCreatePOFromShortfallRequest:
+      type: object
+      required: [branch_id, product_ids]
+      properties:
+        branch_id: { type: string, format: uuid }
+        product_ids:
+          type: array
+          minItems: 1
+          items: { type: string, format: uuid }
+
+    InventoryCreatePOResult:
+      type: object
+      required: [po_id, po_no, draft]
+      properties:
+        po_id: { type: string }
+        po_no: { type: string }
+        draft: { $ref: "#/components/schemas/InventorySuggestedPO" }
+
+    InventoryReorderRequest:
+      type: object
+      required: [product_id, branch_id, qty_base]
+      properties:
+        product_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        qty_base:
+          type: number
+          description: Zero means use the replenishment suggestion
+
+    InventoryReorderResult:
+      type: object
+      required: [po_id, po_no, draft, suggested_qty_base, uom, vendor_name]
+      properties:
+        po_id: { type: string }
+        po_no: { type: string }
+        draft: { $ref: "#/components/schemas/InventorySuggestedPO" }
+        suggested_qty_base:
+          type: number
+          description: The quantity the replenishment arithmetic proposed, whether or not the caller overrode it
+        uom: { type: string }
+        vendor_name: { type: string }
+
+    InventoryNudgeRequest:
+      type: object
+      required: [product_id, branch_id]
+      properties:
+        product_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+
+    InventoryNudgeResult:
+      type: object
+      required: [posted, channel, class, body, note]
+      properties:
+        posted:
+          type: boolean
+          description: False means the nudge was already on the board
+        channel: { type: string }
+        class: { type: string }
+        body: { type: string }
+        note: { type: string }
+
+    # --- inventory page envelopes ---------------------------------------------
+    InventoryOnHandPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InventoryOnHand" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    InventoryMovePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InventoryStockMove" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    InventoryPendingFulfilmentPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InventoryPendingFulfilment" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    InventoryTransitDaysPairPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InventoryTransitDaysPair" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    InventoryBranchStockPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InventoryBranchStock" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    InventoryBrowsePage:
+      type: object
+      required: [items, facets]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InventoryBrowseRow" }
+        facets:
+          type: array
+          description: Facet counts for the current filter; a facet with no values is dropped
+          items: { $ref: "#/components/schemas/InventoryFacet" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    InventoryReservationPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InventoryReservation" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    InventoryTransferPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InventoryTransfer" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    InventoryInTransitLinePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InventoryInTransitLine" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    InventoryShortfallPage:
+      type: object
+      required: [items, on_order_degraded]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InventoryShortfallRow" }
+        on_order_degraded:
+          type: boolean
+          description: True when no on-order reader is bound and every on_order_base is an unmeasured zero
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    InventoryReorderPointPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InventoryReorderPoint" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    # --- invcount schemas ------------------------------------------------------
+    InvCountSheet:
+      type: object
+      description: One snapshot-frozen cycle count; counted_by is the maker, approved_by the checker (must differ)
+      required: [id, sheet_no, branch_id, scope, status, notes]
+      properties:
+        id: { type: string, format: uuid }
+        sheet_no: { type: string }
+        branch_id: { type: string, format: uuid }
+        scope:
+          type: string
+          description: FULL, AD_HOC, or CATEGORY:<category id>
+        status:
+          type: string
+          enum: [OPEN, FROZEN, COUNTED, POSTED, CANCELLED]
+        freeze_at: { type: string, format: date-time }
+        counted_by: { type: string }
+        approved_by: { type: string }
+        approved_at: { type: string, format: date-time }
+        posted_at: { type: string, format: date-time }
+        notes: { type: string }
+        created_at: { type: string, format: date-time }
+
+    InvCountLine:
+      type: object
+      description: A snapshot on-hand vs counted reading, its variance, the valuation and the reason
+      required: [id, sheet_id, product_id, location_id, snapshot_qty_base, counted_qty_base, variance_base, unit_cost_cents, variance_value_cents]
+      properties:
+        id: { type: string, format: uuid }
+        sheet_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        product_name: { type: string }
+        location_id: { type: string, format: uuid }
+        snapshot_qty_base: { type: number }
+        counted_qty_base:
+          type: [number, "null"]
+          description: Null until the maker counts this line
+        variance_base: { type: number }
+        unit_cost_cents: { type: integer, format: int64 }
+        variance_value_cents: { type: integer, format: int64 }
+        reason_code: { type: string }
+        move_id:
+          type: string
+          format: uuid
+          description: The COUNT stock move written at post
+
+    InvCountReasonCode:
+      type: object
+      description: A per-reason GL account mapping; account_code is the reason leg of the adjustment journal
+      required: [code, description, account_code, is_active]
+      properties:
+        code: { type: string }
+        description: { type: string }
+        account_code: { type: string }
+        is_active: { type: boolean }
+
+    InvCountReconRun:
+      type: object
+      description: One inventory to GL reconciliation run for a period and branch
+      required: [id, fiscal_year, month, subledger_cents, gl_1200_cents, delta_cents, status]
+      properties:
+        id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        fiscal_year: { type: integer, format: int32 }
+        month: { type: integer, format: int32, minimum: 1, maximum: 12 }
+        subledger_cents: { type: integer, format: int64 }
+        gl_1200_cents: { type: integer, format: int64 }
+        delta_cents: { type: integer, format: int64 }
+        status:
+          type: string
+          enum: [OPEN, TIED, OUT_OF_TIE]
+        run_by: { type: string }
+        created_at: { type: string, format: date-time }
+
+    InvCountVarianceSummary:
+      type: object
+      required: [line_count, counted_lines, variance_lines, net_variance_value_cents, abs_variance_value_cents]
+      properties:
+        line_count: { type: integer, format: int32 }
+        counted_lines: { type: integer, format: int32 }
+        variance_lines: { type: integer, format: int32 }
+        net_variance_value_cents: { type: integer, format: int64 }
+        abs_variance_value_cents: { type: integer, format: int64 }
+
+    InvCountSheetDetail:
+      type: object
+      description: A sheet plus its lines and a variance summary (the count-variance screen payload)
+      required: [sheet, lines, summary]
+      properties:
+        sheet: { $ref: "#/components/schemas/InvCountSheet" }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/InvCountLine" }
+        summary: { $ref: "#/components/schemas/InvCountVarianceSummary" }
+
+    InvCountNegativeStockRow:
+      type: object
+      description: One product carrying by-design negative on-hand
+      required: [product_id, location_id, on_hand_base, avg_cost_cents]
+      properties:
+        product_id: { type: string, format: uuid }
+        location_id: { type: string, format: uuid }
+        on_hand_base: { type: number }
+        avg_cost_cents: { type: integer, format: int64 }
+
+    InvCountCreateSheetRequest:
+      type: object
+      required: [branch_id, scope, notes]
+      properties:
+        branch_id: { type: string, format: uuid }
+        scope:
+          type: string
+          description: FULL, AD_HOC, or CATEGORY:<category id>; empty defaults to FULL
+        notes: { type: string }
+
+    InvCountCountLineInput:
+      type: object
+      description: One counted line the maker submits
+      required: [product_id, location_id, counted_qty_base, reason_code]
+      properties:
+        product_id: { type: string, format: uuid }
+        location_id: { type: string, format: uuid }
+        counted_qty_base: { type: number }
+        reason_code:
+          type: string
+          description: The reason for the variance, from the reason-codes list
+
+    InvCountSubmitCountsRequest:
+      type: object
+      required: [lines]
+      properties:
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/InvCountCountLineInput" }
+
+    InvCountCancelResult:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [CANCELLED]
+
+    InvCountReconResult:
+      type: object
+      required: [current, history]
+      properties:
+        current: { $ref: "#/components/schemas/InvCountReconRun" }
+        history: { $ref: "#/components/schemas/InvCountReconRunPage" }
+
+    # --- invcount page envelopes -----------------------------------------------
+    InvCountSheetPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InvCountSheet" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    InvCountReasonCodePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InvCountReasonCode" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    InvCountNegativeStockPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InvCountNegativeStockRow" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    InvCountReconRunPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InvCountReconRun" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
