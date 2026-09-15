@@ -166,6 +166,20 @@ Reason: a schema frozen on seed data alone is frozen on less evidence than its o
 
 Touches: `docs/BLOCKERS.md`, HH-3.1's acceptance, and Phase B's preconditions.
 
+**D32 (resolves what of the carried baseline's fixture text reaches `hh`'s history).** The baseline's DDL, filenames and version numbers are carried verbatim. Its fixture text is scrubbed of third-party identifying values before the first commit, because migrations are forward-only and this is the only point at which it can be done without rewriting history.
+
+Scrubbed, in comments as well as in SQL values: names of the client's customers, names of individuals, email addresses on live domains, and street addresses. Not scrubbed: the client's own business name, which the repository names already carry and which identifies no third party; branch town names standing alone, which are public business locations; reserved-domain test logins; and fixture identifiers such as `dibbits_truck`, which the ERP's own gate suite depends on. Replacement values are invented and checked not to resolve to a real business or a real street, because a scrub that lands on somebody else's name has not fixed anything.
+
+Why now: the exposure's cost grows rather than holding steady. Rewriting history on a repository with one Session in it is cheap; rewriting it after HH-4 through HH-12, with merged pull requests, a tracker citing commits and a ledger citing blob hashes, is not, and it breaks every citation. Underneath the privacy question there is also a product boundary: `hh` is the product that every later dealer implementation inherits, and under ADR-013 one dealer's customer data belongs in that dealer's implementation repository, not in the baseline all of them carry.
+
+What it costs, accepted: data applied from zero differs from the ERP's, which is correct, because the from-zero path is a development fixture and not a replica, and the restored-dump path is unaffected since these migrations are skipped there by version. And HH-3.7's diff against ERP head shows the scrub on every affected file forever, which `core/db/PORTED.md` absorbs by recording each file's ERP blob hash so the tracking lane compares against the recorded original rather than against the scrubbed text.
+
+Mechanism: the replacement map is built on the workstation, never committed, never reported, and discarded once the proofs pass. Three proofs, all required: the from-zero apply succeeds; the ERP's gate suite passes; and a search for every original literal across `core/db/migrations` returns zero, reported as a count rather than as the literals. The third is what proves no occurrence was missed.
+
+This overrides the live brief's instruction to carry the baseline unedited. That instruction stands for DDL, filenames and version numbers, and no longer stands for fixture text.
+
+Touches: `core/db/migrations`, `core/db/PORTED.md`, `core/db/README.md`, `docs/BLOCKERS.md` (the pending entry is closed by this decision).
+
 ## Carried as verification, not decided
 
 Whether Appwrite Team memberships surface as OIDC claims stays a S2 check. D3 stands either way: if claims are absent, a Function enriches userinfo and the engine resolves the coarse gate from Team membership by lookup.
