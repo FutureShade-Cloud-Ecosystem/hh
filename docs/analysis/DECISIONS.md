@@ -142,6 +142,30 @@ Taken by the supervisor rather than by Colton, like D24, because it corrects the
 
 Touches: the second provenance line of `docs/analysis/role-catalog.yaml` and of the seven session files D25 reassigned, and the house rules in `AGENTS.md`.
 
+## HH-3.1: schema and the freeze
+
+**D28 (resolves where the engine reads Team membership when OIDC claims are absent).** No durable Team-membership cache table. If the S2 check finds that Appwrite Team memberships do not surface as OIDC claims, HH-3.3 resolves membership against Appwrite per request and holds the answer in a short-lived in-process cache, so a revocation takes effect within that window with no invalidation path to design and no stale-authorization table to reason about. The schema therefore assumes nothing about the claim in either direction, which is what D3 already requires of it. A durable cache, if load ever justifies one, is an HH-5 migration rather than a table carried unused through four phases.
+
+Stated because the question arose and the word is overloaded: membership here is which organizations a person belongs to, which is coarse authorization. It is not the credential. The credential is the platform JWT verified against the JWK Set, it is required on every non-public route regardless, and nothing caches it.
+
+Touches: `core/db/migrations` (no membership cache table), HH-3.3's org resolution and `docs/adr/0020-org-resolution.md`.
+
+**D29 (resolves how D1's estimate label is proved after the fact).** Every `price_snapshot` records how that line's price was resolved: by the core, or served from a cached band. D1 labels a cached band an estimate and D14 expires that label with the document, and neither is checkable if the only record of it is whichever client drew the screen. With the field, the pre-switch pricing difference report reads it rather than inferring it, which matters because that report is the one a sales manager signs before sales roles move.
+
+Touches: `core/db/migrations` (`price_snapshot` gains the resolution source), HH-3.6's pricing rules, HH-11's pre-switch report.
+
+**D30 (resolves how a synced row carries the id its offline outbox replays with).** The entities the plan flow adds (`plan`, `plan_line`, `customer_quote`, `quote_acceptance`, `attachment`) take client-generatable UUID keys, so a create made in a yard with no signal needs no server round trip and no local-to-server id map in the client. Every synced table, carried and new, gains an idempotency key that the client generates and the server accepts, which is what lets HH-3.5's property test (two replays of one outbox produce one server state) assert something real rather than trust the client to deduplicate.
+
+On the carried ERP tables the column is nullable at the database level and its presence is enforced at the API boundary, never by a not-null constraint, so neither the ERP's own suite nor any writer in the in-flight delivery can be broken by it. The tracking lane records the change in `core/db/PORTED.md`.
+
+Touches: `core/db/migrations`, `core/db/PORTED.md`, HH-3.5's sync routes, the `offline-store` local schema in HH-4.
+
+**D31 (resolves what Phase A runs against while no restored dump exists).** Phase A's fixture is the migrations applied from zero plus the ERP's own seed. The two checks that need a restored HardscapeOS dump are neither skipped nor weakened: that the migrations apply cleanly on top of a restored dump, and D16's requirement that the special-order migration parse every synthetic sku in that dump. Both are recorded as open in `docs/BLOCKERS.md` and are preconditions of Phase B, which does not start until both have been run against a restored dump and reported. The ERP's own integration suite still runs in Phase A against the seeded database, because that is the check proving the additions are invisible to the running application and it does not need production data.
+
+Reason: a schema frozen on seed data alone is frozen on less evidence than its own acceptance line asks for. Saying which half has been proved is cheaper than letting a green suite imply both, and the freeze is the one thing in this Session that cannot be revisited cheaply.
+
+Touches: `docs/BLOCKERS.md`, HH-3.1's acceptance, and Phase B's preconditions.
+
 ## Carried as verification, not decided
 
 Whether Appwrite Team memberships surface as OIDC claims stays a S2 check. D3 stands either way: if claims are absent, a Function enriches userinfo and the engine resolves the coarse gate from Team membership by lookup.
