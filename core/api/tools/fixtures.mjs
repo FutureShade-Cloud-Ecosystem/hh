@@ -6,7 +6,13 @@
 // this script fails until the finding is resolved in the schema or recorded
 // as a known divergence in KNOWN_FINDINGS below.
 //
+// The fixtures are vendored byte for byte under core/api/fixtures-live/ (D22
+// in docs/analysis/DECISIONS.md), so this check runs in ci with no sibling
+// checkout.
+//
 // Usage: node fixtures.mjs [path-to-hh_pro_dibbits]
+// Env: HH_PRO_ROOT, like the path argument, reads the fixtures from that live
+// checkout instead of the vendored copy.
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,11 +20,10 @@ import YAML from "yaml";
 import Ajv2020 from "ajv/dist/2020.js";
 
 const apiDir = join(dirname(fileURLToPath(import.meta.url)), "..");
-const repoRoot = join(apiDir, "..", "..");
-const proRoot = resolve(
-  process.env.HH_PRO_ROOT ?? process.argv[2] ?? join(repoRoot, "..", "hh_pro_dibbits"),
-);
-const fixturesDir = join(proRoot, "src/core/supplier/__tests__/fixtures-live");
+const proOverride = process.env.HH_PRO_ROOT ?? process.argv[2];
+const fixturesDir = proOverride
+  ? join(resolve(proOverride), "src/core/supplier/__tests__/fixtures-live")
+  : join(apiDir, "fixtures-live");
 
 const doc = YAML.parse(readFileSync(join(apiDir, "openapi.yaml"), "utf8"));
 

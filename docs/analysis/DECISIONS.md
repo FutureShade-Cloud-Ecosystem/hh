@@ -1,6 +1,7 @@
 > Origin: `analysis/DECISIONS.md` in `futurebuildai/hh_pro_dibbits` at commit 829d387baec93556ffa0e9242f4091e9be9544ec (read only source).
 > Copied into `hh/docs/analysis/` by Session HH-2 lane HH-2.5; the content below this header was unchanged at the time of the copy.
 > This copy is the live decisions file from D20 onward; the copy in hh_pro_dibbits is frozen at the close of HH-1.
+> In-body `analysis/...` paths resolve to `docs/analysis/...` in this copy.
 
 # HH-1 decisions, as taken by Colton
 
@@ -99,12 +100,54 @@ Touches: HH-10.6 (scope states the marketing site links in and owns no copy; acc
 
 **D21 (resolves where the repository lives).** The `hh` monorepo was transferred into the FutureShade org, `FutureShade-Cloud-Ecosystem`, under the `futurebuildai` GitHub account, which also holds the copies of the OSS cloud infrastructure the platform deploys across. The Go module path follows the new owner. HH-2's brief and context section 6 name the old account; both are amended by this decision rather than by an edit to the frozen analysis.
 
+## HH-3: preflight
+
+**D22 (resolves where the contract gates run).** The contract gates run in `ci`, not on a workstation. The App Shape makes the `ci` check the gate and requires route parity to fail the build when code and contract diverge; a gate that runs only where one person happens to be sitting is not a gate. Mechanism: the two sibling-dependent gates take vendored inputs rather than sibling checkouts. `parity.mjs` does not need the ERP repository, it needs the ERP's route list, so that list is vendored as `core/api/erp-routes.txt` behind a provenance header naming the ERP commit it was taken from, and the script reads the file instead of shelling out to `grep` across a sibling. `fixtures.mjs` does not need HH Pro, it needs the sixteen recorded captures, so they are vendored under `core/api/fixtures-live/` behind the same kind of header. Both inputs are snapshots of frozen sources by nature, which is why vendoring them is recording what they are rather than working around what CI lacks. The alternatives are rejected: submodules need deploy keys for two private repositories in Actions and drag an entire ERP tree along for sixteen JSON files; a self-hosted runner makes `ci` depend on one desk being powered on.
+
+Named as a blocker rather than worked around, per the decision: a vendored route list is a snapshot, so `ci` proves contract against snapshot, not contract against the live ERP. The second half of that proof belongs to HH-3.7, the tracking lane, whose acceptance already extends parity to diff against the ERP head. So the gate splits in two, each half running where it can honestly run: `ci` checks contract against snapshot on every pull request, and the tracking lane checks snapshot against ERP head with a human deciding ported or deferred on each change. Refreshing `core/api/erp-routes.txt` becomes a named output of the tracking lane. Until that lane runs for the first time, the snapshot is the ERP at the HH-2 baseline and nothing has moved.
+
+Touches: `core/api/tools/parity.mjs`, `core/api/tools/fixtures.mjs`, `core/api/tools/check-all.mjs`, `.github/workflows/ci.yml`, `docs/BLOCKERS.md` (the workstation-only entry is deleted), HH-3.7's Produces.
+
+**D23 (resolves `public-desk`'s gate).** `public-desk` is token-gated, like `demo-entry` and `hh-site`. The homeowner role is carried by the magic-link token, not by an account the person creates, which follows from D2 putting homeowner acceptance on a magic-link page under HH Pro's brand. `hh-public` stays purely pre-auth and no homeowner ever gets an account.
+
+This corrects the catalog rather than changing direction, and the contract already says so. The `CustomerQuote` schema that HH-2.3 shipped describes the flow in its own words: "Contractor to homeowner (D8): carries the acceptance artifact and the magic-link token ... acceptance is a public magic-link page with no install." The catalog row carrying `roles: [homeowner]` and therefore `gate: role` was the outlier against the contract the same Session produced. The word `homeowner` appears exactly once in the whole contract, in that description, and never as an `x-role`, so the gating vocabulary loses nothing.
+
+Touches: `docs/analysis/role-catalog.yaml` (`public-desk` roles becomes empty, gate becomes token by the generator's own rule), `manifest.yaml` (regenerated), the pre-auth set in `scripts/manifest-catalog.test.ts` grows to three. The catalog copy in `hh` becomes the live catalog from D23 onward, its provenance header amended by one sentence exactly as `DECISIONS.md` was at D20, and the copy in `hh_pro_dibbits` stays frozen at the close of HH-1.
+
+**D24 (resolves what the frozen analysis is for, and where live planning artifacts live).** The copied tree under `docs/analysis/` is history. Its bodies stay frozen, and its provenance header gains one sentence stating that in-body `analysis/...` paths resolve to `docs/analysis/...` in this copy, so a harness handed one of these briefs can resolve what it reads without the freeze being broken. Live planning artifacts do not live there: from HH-3 onward, the session brief a harness actually works against lives at `docs/sessions/HH-<n>.md`, and the frozen copy under `docs/analysis/sessions/` is the version of record for what HH-1 wrote. Where a live brief and its frozen origin disagree, the live one wins and says so in its first line.
+
+Reason: 55 in-body references stopped resolving when the tree moved, while the same files use the new spelling 18 times, so the tree contradicts itself; and HH-3's brief has to change (D22, D23, D25, and four contract gaps) while the freeze has to hold. Rewriting the frozen bodies would break the freeze for real and cost the provenance that makes the copy worth having. This is the cheaper and more honest split: history stays honest, live planning is allowed to move.
+
+Taken by the supervisor rather than by Colton, because HH-3's lanes need resolvable paths and a live brief before they can start, and because it is reversible.
+
+Touches: the provenance header of every file under `docs/analysis/`, a new `docs/sessions/` directory, `AGENTS.md` gains one line naming which tree is which.
+
+**D25 (resolves who performs the human actions).** Until FutureBuild Cloud is deployed and refined, Colton performs every human action in the path: every checkpoint, every sign-off, every design sync. Grant becomes the designer after that. The session files are amended so design-sync checkpoints name Colton, and Q8 (per-role landing default) and Q11 (warranty as its own micro-app) become decisions Colton makes at their checkpoints rather than items pending another person.
+
+Reason: a checkpoint that names someone who is not yet in the path is a checkpoint that will be skipped or silently reassigned, and the plan already carries three of them. Naming the person who is actually there makes the gate real.
+
+Touches: `DECISIONS.md` "Still open, by design" (Q8 and Q11 lose "with Grant"), the HH-6, HH-9 and HH-10 human-checkpoint lines, and any Produces line that assigns a design review.
+
+**D26 (resolves whether HH-3.5 is attended).** HH-3.5 is attended. It implements the per-entity conflict policy, and a wrong `server_wins` where `manual` was meant silently overwrites work a crew did in a yard with no signal, discovered by the crew rather than by a test. That is the same class of failure as a wrong schema, one step further out, so it takes the same control: the lane does not run while nobody is at the terminal, and where a policy cannot be read off the domain map it stops and asks rather than choosing and recording a blocker. Colton reads the policy entity by entity before the lane's routes are integrated.
+
+Phase C therefore carries HH-3.2, HH-3.4 and HH-3.6 only, HH-3.5 runs alone as Phase D, and the tracking lane becomes Phase E. Placing HH-3.5 after the other three rather than before costs one phase and buys two things: the sync lane writes against the final module set HH-3.6 lands, and Colton is free while Phase C runs. HH-3.4 is now the only HH-3 lane that is neither attended nor Claude-preferred under an all-Kimi routing, which is where the harness choice bites.
+
+Touches: `docs/sessions/HH-3.md` (the phases table, the HH-3.5 lane heading and acceptance, the integrator order, the human checkpoints, the harness note).
+
+**D27 (resolves what the freeze on `docs/analysis/` permits, and how a file records that its body changed).** The rule is: no body under `docs/analysis/` changes except where a recorded decision names the file live or names the edit an exception. Two files are live: `DECISIONS.md` from D20 and `role-catalog.yaml` from D23. Two body edits are recorded exceptions: D23's single `roles` line in the catalog, and D25's reassignment of the performer in the checkpoint, design-sync and design-review lines. Three corrections follow. The provenance line asserting that the content below it is unchanged is amended, on each file whose body a decision has changed, to name the decision that changed it. The frozen-tree sentence in `AGENTS.md` gains the same exception clause. And any later body edit under `docs/analysis/` carries a decision number or does not happen.
+
+Reason: the preflight left eight files asserting in their own headers that their bodies were unchanged in the same commit range that changed them, and an `AGENTS.md` sentence saying those bodies are never edited beside two files the same session edited. A freeze documented inaccurately is not a freeze, it is a claim, and the next lane to notice will either stop and ask or decide quietly. Both cost more than the clause does.
+
+Taken by the supervisor rather than by Colton, like D24, because it corrects the documentation of a rule rather than the rule itself, and because it is reversible.
+
+Touches: the second provenance line of `docs/analysis/role-catalog.yaml` and of the seven session files D25 reassigned, and the house rules in `AGENTS.md`.
+
 ## Carried as verification, not decided
 
 Whether Appwrite Team memberships surface as OIDC claims stays a S2 check. D3 stands either way: if claims are absent, a Function enriches userinfo and the engine resolves the coarse gate from Team membership by lookup.
 
 ## Still open, by design
 
-- Q8 (per-role landing) at HH-6's mid checkpoint with Grant; default is the switcher seeded from the served row.
-- Q11 (warranty micro-app) at HH-9's design sync with Grant.
+- Q8 (per-role landing) at HH-6's mid checkpoint with Colton; default is the switcher seeded from the served row.
+- Q11 (warranty micro-app) at HH-9's design sync with Colton.
 - The state of the delivery's BisTrack phase at HH-11's start checkpoint.

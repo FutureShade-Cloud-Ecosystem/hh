@@ -1,5 +1,6 @@
 > Origin: `analysis/microapps/counter-till.md` in `futurebuildai/hh_pro_dibbits` at commit 829d387baec93556ffa0e9242f4091e9be9544ec (read only source).
 > Copied into `hh/docs/analysis/` by Session HH-2 lane HH-2.5; content below this header is unchanged.
+> In-body `analysis/...` paths resolve to `docs/analysis/...` in this copy.
 
 # counter-till: Counter Till
 

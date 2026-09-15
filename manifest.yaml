@@ -263,8 +263,9 @@ frontends:
   - id: public-desk
     name: Public Desk
     audience: external
-    roles: [homeowner]
-    gate: role
+    roles: []
+    # pre-auth: served without sign-in; the token is the credential and no role check runs
+    gate: token
     devices: [phone, desktop]
     kit: guided-flow
     shell: hh-public

@@ -1,0 +1,25 @@
+{
+  "items": [
+    {
+      "product_id": "a7000000-0000-4000-9000-000000000011",
+      "sku": "DBS-OAKS-VINTAGE",
+      "name": "Oaks Vintage Paver",
+      "category": "PAVER",
+      "base_uom": "PC"
+    },
+    {
+      "product_id": "a7000000-0000-4000-9000-000000000024",
+      "sku": "DBS-SIKA-SEALER",
+      "name": "Sika Paver Sealer 4L",
+      "category": "ACCESSORY",
+      "base_uom": "EA"
+    },
+    {
+      "product_id": "a7000000-0000-4000-9000-000000000009",
+      "sku": "DBS-PM-LAFITT",
+      "name": "Permacon Lafitt Paver",
+      "category": "PAVER",
+      "base_uom": "PC"
+    }
+  ]
+}

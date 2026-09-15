@@ -1,0 +1,25 @@
+{
+  "id": "0dd4ec29-9616-4754-9f5f-667da1722018",
+  "invoice_no": "#INV-30",
+  "customer_id": "df000000-0000-4000-9000-000000000001",
+  "order_id": "ae58d658-427f-40a1-b10e-e7603cb2a7ba",
+  "status": "PAID",
+  "issue_date": "2026-08-20T00:00:00Z",
+  "due_date": "2026-08-20T00:00:00Z",
+  "subtotal_cents": 90000,
+  "tax_cents": 11700,
+  "holdback_cents": 0,
+  "total_cents": 101700,
+  "balance_cents": 0,
+  "lines": [
+    {
+      "line_no": 1,
+      "product_id": "a7000000-0000-4000-9000-000000000022",
+      "description": "",
+      "qty_entered": "15.0000",
+      "uom_entered": "T",
+      "unit_price_cents": 6000,
+      "line_total_cents": 90000
+    }
+  ]
+}

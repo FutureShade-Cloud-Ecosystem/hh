@@ -1,0 +1,25 @@
+{
+  "items": [
+    {
+      "product_id": "a7000000-0000-4000-9000-000000000021",
+      "sku": "DBS-AGG-SAND",
+      "name": "Concrete Sand",
+      "category": "BULK",
+      "base_uom": "T"
+    },
+    {
+      "product_id": "a7000000-0000-4000-9000-000000000023",
+      "sku": "DBS-GATOR-SAND",
+      "name": "Alliance Gator Polymeric Sand",
+      "category": "ACCESSORY",
+      "base_uom": "BAG"
+    },
+    {
+      "product_id": "a7000000-0000-4000-9000-000000000015",
+      "sku": "DBS-BANAS-COPING",
+      "name": "Banas Sandstone Coping",
+      "category": "SLABSTEP",
+      "base_uom": "PC"
+    }
+  ]
+}

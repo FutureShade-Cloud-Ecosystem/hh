@@ -4,52 +4,29 @@
 // the document must have an ERP source, apart from the entries in
 // core/api/drop-list.yaml (drops and additions, each with a reason).
 //
-// The ERP route list comes from the same grep
+// The ERP route list is vendored as core/api/erp-routes.txt (D22 in
+// docs/analysis/DECISIONS.md), so this check runs in ci with no sibling
+// checkout. The file holds the output of the same grep
 // analysis/hardscapeos-inventory.md section 2.6 used:
 //   grep -rhoE '"(GET|POST|PUT|PATCH|DELETE) /api[^"]*"' backend/internal
-// over non-test Go files, deduplicated. Portal routes are renamed
-// /api/portal/v1/X -> /api/v1/tenant/X before the diff.
+// over non-test Go files, deduplicated, with portal routes renamed
+// /api/portal/v1/X -> /api/v1/tenant/X, behind a header naming the ERP
+// commit. refresh-erp-routes.mjs writes it and holds the grep and the rename.
 //
 // Usage: node parity.mjs [path-to-hardscapeos_dibbits]
-// Env: HH_ERP_ROOT overrides the default (<hh repo root>/../hardscapeos_dibbits).
+// Env: HH_ERP_ROOT, like the path argument, runs the grep against that live
+// checkout instead of reading the vendored list.
 import { readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
 import YAML from "yaml";
+import { readVendoredRoutes, routesFromCheckout } from "./refresh-erp-routes.mjs";
 
 const apiDir = join(dirname(fileURLToPath(import.meta.url)), "..");
-const repoRoot = join(apiDir, "..", "..");
-const erpRoot = resolve(
-  process.env.HH_ERP_ROOT ?? process.argv[2] ?? join(repoRoot, "..", "hardscapeos_dibbits"),
-);
-
-const raw = execFileSync(
-  "grep",
-  [
-    "-rhoE",
-    '"(GET|POST|PUT|PATCH|DELETE) /api[^"]*"',
-    "backend/internal",
-    "--include=*.go",
-    "--exclude=*_test.go",
-  ],
-  { cwd: erpRoot, encoding: "utf8" },
-);
-
-const RENAME = [["/api/portal/v1/", "/api/v1/tenant/"]];
-const rename = (route) => {
-  for (const [from, to] of RENAME) {
-    if (route.includes(` ${from}`)) return route.replace(` ${from}`, ` ${to}`);
-  }
-  return route;
-};
+const erpOverride = process.env.HH_ERP_ROOT ?? process.argv[2];
 
 const erpRoutes = new Set(
-  raw
-    .split("\n")
-    .map((l) => l.trim().replace(/^"|"$/g, ""))
-    .filter(Boolean)
-    .map(rename),
+  erpOverride ? routesFromCheckout(resolve(erpOverride)) : readVendoredRoutes(),
 );
 
 const doc = YAML.parse(readFileSync(join(apiDir, "openapi.yaml"), "utf8"));

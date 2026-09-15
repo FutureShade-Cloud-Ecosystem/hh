@@ -33,16 +33,10 @@ regeneration. `scripts/generate-manifest.ts --check` is the drift gate the `ci`
 job can run once HH-2.1's workflow exists. When a real `fb check` is available
 it must be run against `manifest.yaml` and this note removed.
 
-## HH-2 fix round: the OpenAPI parity and fixture gates are workstation-only
+## HH-3 preflight
 
-The `ci` job runs the repo-local steps of the OpenAPI acceptance suite (the
-assembly in `core/api/tools/merge.mjs` with a drift diff over
-`core/api/openapi.yaml`, `statemap.mjs`, `d8-isolation.mjs`). The other two
-steps cannot run on a hosted runner: `parity.mjs` greps every route
-registered in `hardscapeos_dibbits` and `fixtures.mjs` validates the
-recorded captures in `hh_pro_dibbits`, and ci has neither sibling
-repository. Until a decision lands on where they run (a runner with both
-siblings mounted, or a platform-side gate), they are workstation-only
-pre-merge gates: run `node core/api/tools/check-all.mjs` with both sibling
-repositories checked out beside this one before merging contract changes.
-Where these two gates run permanently is an open decision.
+- **Where the D25 reassignment stopped: Colton's review outcome.**
+  - Accepted: unassigned approvals, sign-offs and read-backs on the checkpoint lines now name Colton.
+  - Accepted: dealer and delivery staff left alone; the sales manager, the finance controller and the droplet operator each give their own sign-off.
+  - Accepted: the "switched and observed" outcome lines in HH-6 and HH-10 left alone.
+  - Overruled: the HH-4 acceptance lines "Grant can open" and "Grant opens" now name Colton (addendum item 6).

@@ -149,6 +149,14 @@ describe("pre-auth gating", () => {
     expect(manifestPreAuth).toEqual(catalogPreAuth);
   });
 
+  test("the pre-auth set is demo-entry, hh-site and public-desk (analysis/DECISIONS.md D23)", () => {
+    const manifestPreAuth = manifest.frontends
+      .filter((frontend) => frontend.gate === "token")
+      .map((frontend) => frontend.id)
+      .sort();
+    expect(manifestPreAuth).toEqual(["demo-entry", "hh-site", "public-desk"]);
+  });
+
   test("a missing roles key fails validation and names the entry and the key", () => {
     const broken = {
       catalog: 1,

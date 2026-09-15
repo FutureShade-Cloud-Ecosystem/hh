@@ -1,0 +1,7 @@
+{
+  "open_balance_cents": 70000,
+  "credit_limit_cents": 5000000,
+  "available_credit_cents": 4930000,
+  "on_hold": false,
+  "payment_terms_days": 30
+}

@@ -1,5 +1,6 @@
 > Origin: `analysis/sessions/HH-2-skeleton-and-contract.md` in `futurebuildai/hh_pro_dibbits` at commit 829d387baec93556ffa0e9242f4091e9be9544ec (read only source).
-> Copied into `hh/docs/analysis/` by Session HH-2 lane HH-2.5; content below this header is unchanged.
+> Copied into `hh/docs/analysis/` by Session HH-2 lane HH-2.5; content below this header is unchanged except the human-checkpoints line, whose performer was reassigned by D25.
+> In-body `analysis/...` paths resolve to `docs/analysis/...` in this copy.
 
 # HH-2: hh monorepo skeleton and the contract
 
@@ -41,7 +42,7 @@ Lanes (parallel unless marked):
 
 Integrator: lanes land on `qa/HH-2` in the order 2.1, 2.5, 2.2, 2.3, 2.4. The only expected conflict is `AGENTS.md` between 2.1 and 2.4 (the ADR lane adds a "decisions pending" section); take 2.1's body and append 2.4's section.
 Verifier: `ci` green; `fb check` exits 0; the route-parity test passes with an empty diff; the manifest-catalog test passes; a scan of the whole repository for em and en dashes returns nothing; every ADR draft names the sessions it gates.
-Human checkpoints: start (Colton confirms `DECISIONS.md` is current and the empty `hh` repository exists under the `futurebuildai` account); mid (none, no UI); end (Colton signs off the ADR drafts and the OpenAPI document's drop list; Grant reads the manifest's `frontends:` block against the catalog).
+Human checkpoints: start (Colton confirms `DECISIONS.md` is current and the empty `hh` repository exists under the `futurebuildai` account); mid (none, no UI); end (Colton signs off the ADR drafts and the OpenAPI document's drop list; Colton reads the manifest's `frontends:` block against the catalog).
 Exit test: the `hh` repository exists in the layout, `ci` and `fb check` pass, `core/api/openapi.yaml` covers every ERP route not on the drop list and every tenant route validates the recorded fixtures, `manifest.yaml` and the catalog cannot disagree, and the ADR drafts exist with a stated decision or a stated pending ruling.
 Produces: the `hh` repository skeleton; `manifest.yaml`; `core/api/openapi.yaml`; four ADR drafts; `docs/analysis/`.
 Unlocks: HH-3 (core), HH-4 (shared packages).
