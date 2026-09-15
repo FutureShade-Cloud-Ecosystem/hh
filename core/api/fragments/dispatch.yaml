@@ -1,0 +1,2421 @@
+# Fragment: dispatch (HardscapeOS ERP module internal/dispatch).
+# Sources: module.go (RegisterRoutes, RegisterPublicRoutes), handler_w3.go
+# (RegisterW3Routes), model.go, model_w3.go, loadboard.go, freightraise.go,
+# willcall.go, manifest.go, service_loadboard.go, transitions.go; guards from
+# cmd/server/main.go (RequireStaff / RequireManager call sites).
+# Every staff route is branch-fenced in the service (x-guards: requireBranch);
+# the will-call mint additionally requires a staged pick (requirePicked).
+
+paths:
+  # --- fleet registry -------------------------------------------------------
+  /api/v1/dispatch/trucks:
+    get:
+      operationId: dispatchListTrucks
+      tags: [staff-dispatch]
+      summary: List the truck registry for a branch
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: include_inactive
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: The page of trucks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchTruckPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: dispatchCreateTruck
+      tags: [staff-dispatch]
+      summary: Register a truck (a truck row outlives every run on it)
+      x-role: requireManager
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchTruck"
+      responses:
+        "201":
+          description: The new truck id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchCreatedRef"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dispatch/drivers:
+    get:
+      operationId: dispatchListDrivers
+      tags: [staff-dispatch]
+      summary: List the driver registry for a branch
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: include_inactive
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: The page of drivers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchDriverPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: dispatchCreateDriver
+      tags: [staff-dispatch]
+      summary: Register a driver
+      x-role: requireManager
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchDriver"
+      responses:
+        "201":
+          description: The new driver id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchCreatedRef"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- the board and stops --------------------------------------------------
+  /api/v1/dispatch/board:
+    get:
+      operationId: dispatchGetBoard
+      tags: [staff-dispatch]
+      summary: Read the board for one branch and date (runs, stops, unassigned lane)
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: date
+          in: query
+          required: false
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: The board
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchBoard"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dispatch/stops:
+    post:
+      operationId: dispatchScheduleStop
+      tags: [staff-dispatch]
+      summary: Schedule one order for delivery on one date
+      description: >-
+        The branch is never taken from the caller: it is copied from the order
+        through the order seam. commit_state is an intent, not an assertion;
+        asking for COMMITTED without the commit capability is refused.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchScheduleInput"
+      responses:
+        "201":
+          description: The scheduled stop
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchStop"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/stops/{id}:
+    get:
+      operationId: dispatchGetStop
+      tags: [staff-dispatch]
+      summary: Read one stop with its photo metadata and MTO classification
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The stop detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchStopDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/dispatch/stops/{id}/assign:
+    post:
+      operationId: dispatchAssignStop
+      tags: [staff-dispatch]
+      summary: Put a stop on a run at a position (stop_no 0 appends)
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchAssignInput"
+      responses:
+        "200":
+          description: The stop after the assignment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchStop"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/stops/{id}/status:
+    post:
+      operationId: dispatchAdvanceStop
+      tags: [staff-dispatch]
+      summary: Move a stop along the forward-only lifecycle
+      description: >-
+        The legal moves are READY to LOADED or CANCELLED, LOADED to EN_ROUTE or
+        CANCELLED, EN_ROUTE to DELIVERED or FAILED; terminal states admit no
+        further move. An illegal move answers 409, never 400.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchAdvanceStopInput"
+      responses:
+        "200":
+          description: The stop after the move
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchStop"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/stops/{id}/pod:
+    post:
+      operationId: dispatchCapturePod
+      tags: [staff-dispatch]
+      summary: Capture the proof-of-delivery attestation (typed name plus explicit affirmative)
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchPODInput"
+      responses:
+        "200":
+          description: The stop detail with the attestation recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchStopDetail"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/stops/{id}/photos:
+    post:
+      operationId: dispatchUploadStopPhoto
+      tags: [staff-dispatch]
+      summary: Attach a POD photo to a stop
+      description: >-
+        The request body is the raw image bytes with an image Content-Type, not
+        multipart, so no JSON schema applies; the byte size is bounded server
+        side. The caption rides in the query string.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: caption
+          in: query
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema: { type: string, format: binary }
+          image/png:
+            schema: { type: string, format: binary }
+          image/webp:
+            schema: { type: string, format: binary }
+      responses:
+        "201":
+          description: The photo metadata (never the bytes)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchPhotoMeta"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/dispatch/photos/{id}:
+    get:
+      operationId: dispatchGetPhoto
+      tags: [staff-dispatch]
+      summary: Read one POD photo's bytes
+      description: >-
+        The response is the raw image, not JSON; the Content-Type is the one
+        recorded at upload. Evidence caches privately, never in a shared cache.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The photo bytes
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- runs -----------------------------------------------------------------
+  /api/v1/dispatch/runs:
+    get:
+      operationId: dispatchListRuns
+      tags: [staff-dispatch]
+      summary: List runs for a branch, optionally for one date
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: date
+          in: query
+          required: false
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: The page of runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchRunPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: dispatchCreateRun
+      tags: [staff-dispatch]
+      summary: Open a run for a branch and date (truck and driver may be settled later)
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchCreateRunInput"
+      responses:
+        "201":
+          description: The created run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchRun"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dispatch/runs/{id}:
+    get:
+      operationId: dispatchGetRun
+      tags: [staff-dispatch]
+      summary: Read one run with its stops in stop order
+      description: >-
+        An id lookup answers 403 across branches; the number lookup on
+        run-by-no answers 404 instead. The two are deliberately separate paths.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The run detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchRunDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/dispatch/run-by-no/{runNo}:
+    get:
+      operationId: dispatchGetRunByNo
+      tags: [staff-dispatch]
+      summary: Read one run by its visible run number
+      description: >-
+        A number lookup answers 404 where the id lookup answers 403, so a run
+        number is not an existence oracle for a branch the caller cannot see.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: runNo
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The run detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchRunDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/dispatch/runs/{id}/crew:
+    post:
+      operationId: dispatchAssignCrew
+      tags: [staff-dispatch]
+      summary: Assign the truck and driver on a run
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchCrewInput"
+      responses:
+        "200":
+          description: The run after the assignment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchRun"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/runs/{id}/dispatch:
+    post:
+      operationId: dispatchDispatchRun
+      tags: [staff-dispatch]
+      summary: Dispatch a run (a run needs both a truck and a driver first)
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The dispatched run detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchRunDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/runs/{id}/complete:
+    post:
+      operationId: dispatchCompleteRun
+      tags: [staff-dispatch]
+      summary: Complete a run (refused while stops are still in flight)
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The completed run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchRun"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/runs/{id}/cancel:
+    post:
+      operationId: dispatchCancelRun
+      tags: [staff-dispatch]
+      summary: Cancel a planned run (a dispatched run cannot be cancelled)
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The cancelled run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchRun"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/runs/{id}/manifest:
+    get:
+      operationId: dispatchGetRunManifest
+      tags: [staff-dispatch]
+      summary: Read the printable run manifest
+      description: >-
+        The response is a self-contained HTML print document, not JSON: the
+        yard prints from a browser dialog and the sheet must render identically
+        on any machine. Served no-store because a cached copy would show stops
+        that have since moved.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The manifest as a self-contained HTML document
+          content:
+            text/html:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/dispatch/runs/{id}/manifest/print:
+    post:
+      operationId: dispatchPrintRunManifest
+      tags: [staff-dispatch]
+      summary: Record a manifest print through the shared print queue (DELIVERY_DOC)
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "201":
+          description: The queued print job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchPrintJobRef"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- the load board --------------------------------------------------------
+  /api/v1/dispatch/loadboard:
+    get:
+      operationId: dispatchGetLoadBoard
+      tags: [staff-dispatch]
+      summary: Read the whole load board surface in one call
+      description: >-
+        Truck lanes with gauges and commit verdicts, the staging lane of
+        unassigned loads inside the working window, the quick counts, and the
+        effective policy. Money figures are absent from the payload for a
+        caller the dealer's load_value_visibility refuses; value_visible says
+        whether an absence means refused or unpriced.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: date
+          in: query
+          required: false
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: The load board view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchLoadBoardView"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dispatch/loadboard/calendar:
+    get:
+      operationId: dispatchGetLoadBoardCalendar
+      tags: [staff-dispatch]
+      summary: Read per-date load counts over a range
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: The page of per-date counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchCalendarDayPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dispatch/loadboard/gaps:
+    get:
+      operationId: dispatchGetLoadBoardGaps
+      tags: [staff-dispatch]
+      summary: List the procurement gaps across a branch's loads for one date
+      description: >-
+        gaps_checked false means the availability seam did not answer, so an
+        empty list must not be read as the yard being clear.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: date
+          in: query
+          required: false
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: The page of gaps
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchGapPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dispatch/orders/{id}/gaps:
+    get:
+      operationId: dispatchGetOrderGaps
+      tags: [staff-dispatch]
+      summary: List the procurement gaps for one order (the yard's view)
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The page of gaps for the order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchGapPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/dispatch/loads/mark-loaded:
+    post:
+      operationId: dispatchMarkLoaded
+      tags: [staff-dispatch]
+      summary: Mark several stops loaded in one call
+      description: >-
+        The bulk gesture answers 200 with a per-stop outcome list even when
+        some stops refused: a bulk load where one of nine did not take is not
+        a failed request. Each stop is branch-fenced individually, so a list is
+        not a way around the fence.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchMarkLoadedInput"
+      responses:
+        "200":
+          description: One outcome per submitted stop
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchLoadOutcomeList"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dispatch/policy/history:
+    get:
+      operationId: dispatchGetPolicyHistory
+      tags: [staff-dispatch]
+      summary: Read who changed which dispatch policy rule and what it was before
+      description: >-
+        Staff-gated at the route; the service restricts the trail to managers
+        to match the policy write, because somebody who may change the rules
+        may see who changed them.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The page of policy changes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchPolicyChangePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dispatch/policy:
+    get:
+      operationId: dispatchGetPolicy
+      tags: [staff-dispatch]
+      summary: Read the effective dispatch policy for a branch
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The effective policy (branch override over the dealer default)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchPolicy"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: dispatchPutPolicy
+      tags: [staff-dispatch]
+      summary: Save the dispatch policy for a branch
+      description: >-
+        Malformed values are refused in words before any database CHECK can
+        fire; omitted knobs normalise to the column defaults rather than to
+        zero.
+      x-role: requireManager
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchPolicy"
+      responses:
+        "200":
+          description: The stored policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchPolicy"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/dispatch/stops/{id}/reopen:
+    post:
+      operationId: dispatchReopenStop
+      tags: [staff-dispatch]
+      summary: Reopen one committed load, with a reason recorded
+      description: >-
+        Reopening is an ordinary act on the load itself. The manager gate at
+        the route is the coarse half; the service checks the dealer's
+        reopen_policy and the caller's own authority, answering 403 when this
+        person may not and 409 when the load's state refuses.
+      x-role: requireManager
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchReopenInput"
+      responses:
+        "200":
+          description: The stop, back to REQUESTED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchStop"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/runs/{id}/reopen:
+    post:
+      operationId: dispatchReopenRun
+      tags: [staff-dispatch]
+      summary: Reopen a whole run, returning its loads to REQUESTED
+      x-role: requireManager
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchReopenInput"
+      responses:
+        "200":
+          description: The run, with its reopen stamps set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchRun"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/runs/{id}/reopen/clear:
+    post:
+      operationId: dispatchClearRunReopen
+      tags: [staff-dispatch]
+      summary: Clear a run's reopen marker once its loads are committed again
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The run after the clear
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchRun"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/stops/{id}/commit:
+    post:
+      operationId: dispatchCommitStop
+      tags: [staff-dispatch]
+      summary: Commit a load to a date
+      description: >-
+        Staff-gated at the route and gated by capability in the service: only
+        a caller with the commit capability may commit, so a salesperson is
+        refused whatever they send. A COMMITTED load refuses its own mutation.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchCommitInput"
+      responses:
+        "200":
+          description: The committed stop
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchStop"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/stops/{id}/load-facts:
+    post:
+      operationId: dispatchSetLoadFacts
+      tags: [staff-dispatch]
+      summary: Record what a load weighs and takes up
+      description: >-
+        Every field is a pointer so leaving a field alone and setting it to
+        zero are different requests; clear names the measurements to blank.
+        Not lock-guarded: recording what a load actually weighs is the yard
+        telling the truth about the plan, not a change to it. Never money.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchLoadFactsInput"
+      responses:
+        "200":
+          description: The stop after the write
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchStop"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/dispatch/freight-split:
+    post:
+      operationId: dispatchSplitFreight
+      tags: [staff-dispatch]
+      summary: Divide one order's freight across its loads
+      description: >-
+        The server divides and the server validates; a client can ask for a
+        split count and can propose a raised freight figure, but can never hand
+        over per-load numbers and have them stored unchecked. A proposal above
+        the quoted baseline does not apply: it parks on the approvals queue and
+        the response carries it under parked with nothing written.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchSplitInput"
+      responses:
+        "200":
+          description: The loads with their shares, or the parked proposal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchSplitResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/freight-raises/{id}:
+    get:
+      operationId: dispatchGetFreightRaise
+      tags: [staff-dispatch]
+      summary: Read the parked freight raise behind an approval card
+      description: >-
+        Answers 200 with no money rather than 403 for a caller the dealer's
+        load-value policy refuses: the approver still sees which order and
+        whose, and the figures are absent from the payload, not blanked on a
+        screen.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The parked proposal, with money only for a cleared caller
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchFreightRaiseView"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/dispatch/auto-assign:
+    post:
+      operationId: dispatchAutoAssign
+      tags: [staff-dispatch]
+      summary: The auto-assign seam (Pro module)
+      description: >-
+        The core build registers the route and answers 501 with a sentence
+        naming what would answer it, rather than shipping a heuristic that
+        looks like intelligence. A Pro build satisfies the seam and the route
+        starts answering; nothing else changes.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "501":
+          description: Not implemented in the core build; the Pro module owns this seam
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- the driver's own board -------------------------------------------------
+  /api/v1/dispatch/my-runs:
+    get:
+      operationId: dispatchListMyRuns
+      tags: [staff-dispatch]
+      summary: List the runs assigned to the caller's driver record
+      description: >-
+        The only read that populates stop_lines: what comes off the truck at
+        each stop, with no money field of any kind on the line type.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: date
+          in: query
+          required: false
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: The page of the driver's runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchRunDetailPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- will-call, staff side --------------------------------------------------
+  /api/v1/dispatch/will-call:
+    post:
+      operationId: dispatchMintWillCall
+      tags: [staff-dispatch]
+      summary: Mint a will-call pickup code for an order
+      description: >-
+        The order must be WILL_CALL fulfilment, and the tag follows the pick:
+        the mint is refused until the yard has a staged pick for the order
+        (requirePicked). The raw token is in this response and nowhere else,
+        ever; it is served no-store. One live code per order; a second mint is
+        a 409 until the first is revoked.
+      x-role: requireStaff
+      x-guards: [requireBranch, requirePicked]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchWillCallMintInput"
+      responses:
+        "201":
+          description: The pickup row plus the raw token (returned once, never stored)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchMintedPickup"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    get:
+      operationId: dispatchListWillCall
+      tags: [staff-dispatch]
+      summary: List an order's pickup codes (never the raw tokens)
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: order_id
+          in: query
+          required: false
+          description: An order id or the visible order number, resolved branch-scoped
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of pickup codes for the order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchWillCallPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/dispatch/will-call/{id}/revoke:
+    post:
+      operationId: dispatchRevokeWillCall
+      tags: [staff-dispatch]
+      summary: Revoke a live pickup code
+      description: >-
+        Revocation is an explicit act so a reprint is a decision, not a side
+        effect. A code that is not live answers 409.
+      x-role: requireManager
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The revocation marker
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchWillCallRevokeResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --- Wave 3: MTO, reschedules, scans, payment holds -------------------------
+  /api/v1/dispatch/stops/{id}/mto:
+    post:
+      operationId: dispatchSetStopMto
+      tags: [staff-dispatch]
+      summary: Classify a load as STANDARD, MTO or MIXED
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchMTOInput"
+      responses:
+        "200":
+          description: The stop detail with the classification recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchStopDetail"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/stops/{id}/attach-photos:
+    post:
+      operationId: dispatchAttachStopPhotos
+      tags: [staff-dispatch]
+      summary: Fold late-arriving photos into the stop's POD record
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The stop detail after the fold
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchStopDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/stops/{id}/reschedule:
+    post:
+      operationId: dispatchRescheduleStop
+      tags: [staff-dispatch]
+      summary: Move one unassigned stop to another date, with a reason
+      description: >-
+        The move is refused with 409 once the stop has left the planning stage:
+        a delivery that has gone is a fact, not a plan.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchRescheduleInput"
+      responses:
+        "200":
+          description: Where the stop went and the trail row that recorded it
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchRescheduleResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/stops/{id}/reschedules:
+    get:
+      operationId: dispatchListStopReschedules
+      tags: [staff-dispatch]
+      summary: Read one stop's reschedule trail
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of reschedule rows for the stop
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchReschedulePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/dispatch/stops/{id}/payment-hold:
+    get:
+      operationId: dispatchGetStopPaymentHold
+      tags: [staff-dispatch]
+      summary: Read the payment banner for one stop
+      description: >-
+        Computed per read from the AR dispatch gate, never stored: a payment
+        state cached on a delivery row is wrong the moment the customer pays.
+        The reason sentence is written for a driver to read at the gate.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The hold decision for the stop
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchStopPaymentHold"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/dispatch/runs/{id}/reschedule:
+    post:
+      operationId: dispatchRescheduleRun
+      tags: [staff-dispatch]
+      summary: Move a planned run and its stops to another date, with a reason
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchRescheduleInput"
+      responses:
+        "200":
+          description: Where the run went, how many stops moved, and the trail row
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchRescheduleResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/runs/{id}/reschedules:
+    get:
+      operationId: dispatchListRunReschedules
+      tags: [staff-dispatch]
+      summary: Read one run's reschedule trail
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of reschedule rows for the run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchReschedulePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/dispatch/runs/{id}/payment-holds:
+    get:
+      operationId: dispatchListRunPaymentHolds
+      tags: [staff-dispatch]
+      summary: Read the payment banners for every stop on a run
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of hold decisions, one per stop
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchPaymentHoldPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/dispatch/scans:
+    post:
+      operationId: dispatchRecordScan
+      tags: [staff-dispatch]
+      summary: Record a pallet or load checkpoint
+      description: >-
+        Checkpoints are places a load has been, forward-only: a scan behind one
+        the load has already reached answers 409. stop_id is optional because
+        RECEIVED and YARD happen before any delivery is scheduled.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchScanInput"
+      responses:
+        "201":
+          description: The recorded checkpoint
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchScanCheckpoint"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dispatch/scan-trail:
+    get:
+      operationId: dispatchGetScanTrail
+      tags: [staff-dispatch]
+      summary: Read an order's scan trail, grouped by load
+      description: >-
+        complete is true only when every load on the order has reached
+        DELIVERED: an order with three pallets and two delivered is not a
+        delivered order.
+      x-role: requireStaff
+      x-guards: [requireBranch]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: order_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The trail with per-load progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchScanTrail"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- will-call, public side (the token is the credential) -------------------
+  /api/public/v1/will-call/{token}:
+    get:
+      operationId: dispatchPublicGetWillCall
+      tags: [public]
+      summary: Read what a will-call token holder needs before confirming
+      description: >-
+        Pre-auth: the token in the path is the credential (a sha256-hashed
+        pickup code printed as a QR square on the rack tag). The payload is the
+        minimum needed to know the pickup is the right one, and nothing a staff
+        member would see: no prices, no cost, no other order. A code that
+        exists but is revoked, expired or already used answers 410, not 404, so
+        the holder learns the code died rather than being told the order never
+        existed.
+      x-role: public
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: The raw pickup code; only its hash is stored
+          schema: { type: string }
+      responses:
+        "200":
+          description: The public pickup view, served no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchPublicWillCall"
+        "404": { $ref: "#/components/responses/NotFound" }
+        "410":
+          description: The code exists but is revoked, expired or already used
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/public/v1/will-call/{token}/confirm:
+    post:
+      operationId: dispatchPublicConfirmWillCall
+      tags: [public]
+      summary: Self-confirm a will-call pickup with a typed name and affirmative
+      description: >-
+        Pre-auth: the token in the path is the credential. A blank name is not
+        a signature and the affirmative is a required separate act; both are
+        refused in words. The attestation is sealed through the same provider
+        as a delivery POD, with no staff actor.
+      x-role: public
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: The raw pickup code; only its hash is stored
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchWillCallConfirmInput"
+      responses:
+        "200":
+          description: The pickup view after confirmation, served no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchPublicWillCall"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "410":
+          description: The code exists but is revoked, expired or already used
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+components:
+  schemas:
+    # --- fleet ----------------------------------------------------------------
+    DispatchTruck:
+      type: object
+      description: One dispatch_trucks row. The three capacities are advisory and nullable on purpose; a truck nobody has measured draws no gauge rather than a green one.
+      required: [id, branch_id, code, name, truck_type, is_active]
+      properties:
+        id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        truck_type:
+          type: string
+          enum: [FLATBED, BOOM, DUMP, PICKUP, TRAILER]
+        capacity_kg: { type: [number, "null"] }
+        capacity_m3: { type: [number, "null"] }
+        pallet_positions: { type: [integer, "null"], format: int32 }
+        is_active: { type: boolean }
+    DispatchTruckPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchTruck" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    DispatchDriver:
+      type: object
+      description: One dispatch_drivers row. user_id is empty for a driver with no staff login (casual and contract drivers are normal here).
+      required: [id, branch_id, name, is_active]
+      properties:
+        id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        user_id: { type: string }
+        name: { type: string }
+        phone: { type: string }
+        licence_class: { type: string }
+        is_active: { type: boolean }
+    DispatchDriverPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchDriver" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    # --- stops, runs, photos --------------------------------------------------
+    DispatchStop:
+      type: object
+      description: >-
+        One delivery_stops row plus the order and customer identifiers the
+        board and the manifest show. Every measurement is nullable: null means
+        nobody measured it, which is a different fact from zero. The two money
+        facts (the load's value and its freight share) are never on this
+        payload; they ride on DispatchLoadStop behind the visibility policy.
+      required: [id, branch_id, order_id, stop_no, scheduled_date, status, photo_count, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        customer_name: { type: string }
+        run_id: { type: string, format: uuid }
+        run_no: { type: string }
+        stop_no: { type: integer, format: int32 }
+        scheduled_date: { type: string, format: date }
+        status:
+          type: string
+          enum: [READY, LOADED, EN_ROUTE, DELIVERED, FAILED, CANCELLED]
+        time_window: { type: string }
+        contact_name: { type: string }
+        contact_phone: { type: string }
+        address_line: { type: string }
+        city: { type: string }
+        postal_code: { type: string }
+        latitude: { type: [number, "null"] }
+        longitude: { type: [number, "null"] }
+        instructions: { type: string }
+        pod_signature_ref: { type: string }
+        pod_received_by: { type: string }
+        pod_at: { type: [string, "null"], format: date-time }
+        failure_reason: { type: string }
+        loaded_at: { type: [string, "null"], format: date-time }
+        en_route_at: { type: [string, "null"], format: date-time }
+        delivered_at: { type: [string, "null"], format: date-time }
+        handoff_at: { type: [string, "null"], format: date-time }
+        photo_count: { type: integer, format: int32 }
+        created_at: { type: string, format: date-time }
+        weight_kg: { type: [number, "null"] }
+        volume_m3: { type: [number, "null"] }
+        pallet_positions: { type: [integer, "null"], format: int32 }
+        freight_is_override: { type: boolean }
+        load_seq:
+          type: integer
+          format: int32
+          description: Which load of a split order this stop is
+        load_count:
+          type: integer
+          format: int32
+          description: How many loads the order is split across
+        requested_date:
+          type: string
+          format: date
+          description: The original ask, kept when it differs from the committed date
+        commit_state:
+          type: string
+          enum: [REQUESTED, COMMITTED]
+        committed_at: { type: [string, "null"], format: date-time }
+        reopened_at: { type: [string, "null"], format: date-time }
+        reopen_reason: { type: string }
+    DispatchPhotoMeta:
+      type: object
+      description: A POD photo without its bytes (the list read); bytes come only from the per-photo route
+      required: [id, stop_id, content_type, byte_size, captured_at]
+      properties:
+        id: { type: string, format: uuid }
+        stop_id: { type: string, format: uuid }
+        content_type:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+        byte_size: { type: integer, format: int32 }
+        caption: { type: string }
+        captured_at: { type: string, format: date-time }
+    DispatchStopMTO:
+      type: object
+      description: One stop's made-to-order compliance trio. weight_kg is nullable because null and zero are different facts.
+      required: [mto_class]
+      properties:
+        mto_class:
+          type: string
+          enum: [STANDARD, MTO, MIXED]
+        mto_note: { type: string }
+        weight_kg: { type: [number, "null"] }
+    DispatchStopDetail:
+      type: object
+      description: One stop with its POD photo metadata and its MTO classification, the drawer-level read
+      allOf:
+        - $ref: "#/components/schemas/DispatchStop"
+        - type: object
+          required: [photos, mto]
+          properties:
+            photos:
+              type: array
+              items: { $ref: "#/components/schemas/DispatchPhotoMeta" }
+            mto: { $ref: "#/components/schemas/DispatchStopMTO" }
+    DispatchLoadGauge:
+      type: object
+      description: >-
+        One truck's load against one truck's capacity. Every figure is nullable
+        and absent when unmeasured, which is the marshal-layer gate: the money
+        figures (value_cents, valued_stops, freight_cents) are present only for
+        a caller the dealer's load_value_visibility allows.
+      required: [stop_count, weight_band, weighed_stops, volume_band, measured_stops, pallet_band, band]
+      properties:
+        stop_count: { type: integer, format: int32 }
+        weight_kg: { type: [number, "null"] }
+        capacity_kg: { type: [number, "null"] }
+        weight_band:
+          type: string
+          enum: [UNKNOWN, GREEN, AMBER, RED]
+        weighed_stops: { type: integer, format: int32 }
+        volume_m3: { type: [number, "null"] }
+        capacity_m3: { type: [number, "null"] }
+        volume_band:
+          type: string
+          enum: [UNKNOWN, GREEN, AMBER, RED]
+        measured_stops: { type: integer, format: int32 }
+        pallets: { type: [integer, "null"], format: int32 }
+        pallet_positions: { type: [integer, "null"], format: int32 }
+        pallet_band:
+          type: string
+          enum: [UNKNOWN, GREEN, AMBER, RED]
+        value_cents: { type: [integer, "null"], format: int64 }
+        valued_stops: { type: [integer, "null"], format: int32 }
+        freight_cents: { type: [integer, "null"], format: int64 }
+        band:
+          type: string
+          enum: [UNKNOWN, GREEN, AMBER, RED]
+          description: The pessimistic fold of the weight, volume and pallet bands
+    DispatchLoadCommit:
+      type: object
+      description: >-
+        The computed commit verdict for one truck's lane. The four booleans are
+        four different facts: committed is about the load, reopenable about the
+        dealer's policy, can_reopen and can_commit about this caller.
+      required: [committed, reopenable, can_reopen, can_commit, due_to_commit, prompt_hours, reopened]
+      properties:
+        committed: { type: boolean }
+        reopenable: { type: boolean }
+        can_reopen: { type: boolean }
+        can_commit: { type: boolean }
+        reason: { type: string }
+        due_to_commit:
+          type: boolean
+          description: A prompt that still-REQUESTED loads are close to their delivery date; it refuses nothing
+        prompt_hours: { type: integer, format: int32 }
+        reopened: { type: boolean }
+        reopened_at: { type: string }
+        reopen_reason: { type: string }
+    DispatchRun:
+      type: object
+      description: >-
+        One delivery_runs row plus the display names the board reads.
+        commit_state is the run's bulk ledger (AUTO, or REOPENED when a
+        dispatch manager reopened the whole truck); the loads are the authority
+        on whether a load is frozen.
+      required: [id, run_no, branch_id, scheduled_date, status, stop_count, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        run_no: { type: string }
+        branch_id: { type: string, format: uuid }
+        scheduled_date: { type: string, format: date }
+        truck_id: { type: string, format: uuid }
+        driver_id: { type: string, format: uuid }
+        truck_code: { type: string }
+        driver_name: { type: string }
+        status:
+          type: string
+          enum: [PLANNED, DISPATCHED, COMPLETED, CANCELLED]
+        notes: { type: string }
+        dispatched_at: { type: [string, "null"], format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        stop_count: { type: integer, format: int32 }
+        created_at: { type: string, format: date-time }
+        commit_state:
+          type: string
+          enum: [AUTO, REOPENED]
+        reopened_at: { type: string }
+        reopen_reason: { type: string }
+        commit:
+          description: The folded commit verdict, present on reads that build it
+          anyOf:
+            - $ref: "#/components/schemas/DispatchLoadCommit"
+            - type: "null"
+        gauge:
+          description: The load-against-capacity gauge, present on reads that build it
+          anyOf:
+            - $ref: "#/components/schemas/DispatchLoadGauge"
+            - type: "null"
+    DispatchRunPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchRun" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    DispatchDriverLine:
+      type: object
+      description: >-
+        One line of material coming off the truck at a stop, as the driver
+        meets it. Carries no money field of any kind. qty is decimal-as-string
+        in the line's own UOM: the number the driver reads is the number the
+        counter said.
+      required: [line_no, sku, description, qty, uom]
+      properties:
+        line_no: { type: integer, format: int32 }
+        sku: { type: string }
+        description: { type: string }
+        qty: { type: string }
+        uom: { type: string }
+    DispatchRunDetail:
+      type: object
+      description: >-
+        One run with its stops in stop order, plus the straight-line distance
+        estimate when the branch has a depot coordinate and at least one stop
+        is geocoded. stop_lines is populated on exactly one read (the driver's
+        own board).
+      allOf:
+        - $ref: "#/components/schemas/DispatchRun"
+        - type: object
+          required: [stops, geocoded_stops, ungeocoded_stops]
+          properties:
+            stops:
+              type: array
+              items: { $ref: "#/components/schemas/DispatchStop" }
+            estimated_km: { type: [number, "null"] }
+            geocoded_stops: { type: integer, format: int32 }
+            ungeocoded_stops: { type: integer, format: int32 }
+            stop_lines:
+              type: object
+              additionalProperties:
+                type: array
+                items: { $ref: "#/components/schemas/DispatchDriverLine" }
+              description: What comes off the truck at each stop, keyed by stop id
+    DispatchRunDetailPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchRunDetail" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    DispatchBoard:
+      type: object
+      description: The board view for one branch and date; unassigned is the first column and the normal birthplace of a stop
+      required: [branch_id, date, runs, stops, unassigned]
+      properties:
+        branch_id: { type: string, format: uuid }
+        date: { type: string, format: date }
+        runs:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchRun" }
+        stops:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchStop" }
+        unassigned:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchStop" }
+    DispatchCreatedRef:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string, format: uuid }
+    DispatchPrintJobRef:
+      type: object
+      required: [job_id, doc_type]
+      properties:
+        job_id: { type: string, format: uuid }
+        doc_type:
+          type: string
+          enum: [DELIVERY_DOC]
+
+    # --- inputs -----------------------------------------------------------------
+    DispatchScheduleInput:
+      type: object
+      description: >-
+        Schedules one order for delivery on one date. commit_state normalises
+        to REQUESTED when omitted, the safe direction; date_state is the
+        previous name for the same field, accepted for compatibility, and
+        commit_state wins when both are present. There is deliberately no value
+        field: a load's dollar figure is stamped from the order, never accepted
+        from the request.
+      required: [order_id, scheduled_date, time_window, contact_name, contact_phone, address_line, city, postal_code, latitude, longitude, instructions, commit_state, requested_date, weight_kg, volume_m3, pallet_positions]
+      properties:
+        order_id:
+          type: string
+          description: An order id or the visible order number, resolved branch-scoped
+        scheduled_date: { type: string, format: date }
+        time_window: { type: string }
+        contact_name: { type: string }
+        contact_phone: { type: string }
+        address_line: { type: string }
+        city: { type: string }
+        postal_code: { type: string }
+        latitude: { type: [number, "null"] }
+        longitude: { type: [number, "null"] }
+        instructions: { type: string }
+        commit_state:
+          type: string
+          enum: [REQUESTED, COMMITTED]
+        requested_date: { type: string, format: date }
+        date_state:
+          type: string
+          enum: [REQUESTED, COMMITTED]
+          description: The previous name for commit_state, accepted for compatibility
+        weight_kg: { type: [number, "null"] }
+        volume_m3: { type: [number, "null"] }
+        pallet_positions: { type: [integer, "null"], format: int32 }
+    DispatchAssignInput:
+      type: object
+      required: [run_id, stop_no]
+      properties:
+        run_id: { type: string, format: uuid }
+        stop_no:
+          type: integer
+          format: int32
+          description: Zero appends
+    DispatchAdvanceStopInput:
+      type: object
+      required: [status, reason]
+      properties:
+        status:
+          type: string
+          enum: [READY, LOADED, EN_ROUTE, DELIVERED, FAILED, CANCELLED]
+        reason: { type: string }
+    DispatchPODInput:
+      type: object
+      description: The delivery attestation; both fields required and neither inferred
+      required: [received_by, affirmed]
+      properties:
+        received_by: { type: string }
+        affirmed: { type: boolean }
+    DispatchCreateRunInput:
+      type: object
+      required: [branch_id, scheduled_date, truck_id, driver_id, notes]
+      properties:
+        branch_id: { type: string, format: uuid }
+        scheduled_date: { type: string, format: date }
+        truck_id: { type: string, format: uuid }
+        driver_id: { type: string, format: uuid }
+        notes: { type: string }
+    DispatchCrewInput:
+      type: object
+      required: [truck_id, driver_id]
+      properties:
+        truck_id: { type: string, format: uuid }
+        driver_id: { type: string, format: uuid }
+    DispatchReopenInput:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string }
+    DispatchCommitInput:
+      type: object
+      required: [scheduled_date]
+      properties:
+        scheduled_date: { type: string, format: date }
+    DispatchLoadFactsInput:
+      type: object
+      description: >-
+        What somebody weighing a load types. Every measurement is nullable so
+        leaving it alone and setting it to zero are different requests; clear
+        names the measurements to blank.
+      properties:
+        weight_kg: { type: [number, "null"] }
+        volume_m3: { type: [number, "null"] }
+        pallet_positions: { type: [integer, "null"], format: int32 }
+        clear:
+          type: array
+          items:
+            type: string
+            enum: [weight_kg, volume_m3, pallet_positions]
+    DispatchMTOInput:
+      type: object
+      required: [mto_class]
+      properties:
+        mto_class:
+          type: string
+          enum: [STANDARD, MTO, MIXED]
+        mto_note: { type: string }
+        weight_kg: { type: [number, "null"] }
+
+    # --- the load board payloads ---------------------------------------------
+    DispatchLoadStop:
+      type: object
+      description: >-
+        A stop as the load board sees it: the ordinary stop plus the two money
+        figures, which exist on this type and no other. A caller the policy
+        refuses gets both absent.
+      allOf:
+        - $ref: "#/components/schemas/DispatchStop"
+        - type: object
+          properties:
+            value_cents: { type: [integer, "null"], format: int64 }
+            freight_cents: { type: [integer, "null"], format: int64 }
+            gap_count:
+              type: integer
+              format: int32
+              description: How many lines on this load the yard is short of; zero renders nothing
+    DispatchLoadRow:
+      type: object
+      description: One truck's lane on the board
+      required: [run, gauge, commit, stops]
+      properties:
+        run: { $ref: "#/components/schemas/DispatchRun" }
+        gauge: { $ref: "#/components/schemas/DispatchLoadGauge" }
+        commit: { $ref: "#/components/schemas/DispatchLoadCommit" }
+        stops:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchLoadStop" }
+    DispatchQuickCounts:
+      type: object
+      description: >-
+        The cards across the top, computed from the same rows the board renders
+        in the same call so a card and the board cannot disagree. The pickup
+        counts are open customer pickups split by stage, counted from the pick
+        queue population; pickups_capped says the split was computed over a
+        bounded slice, so the numbers are a floor rather than the truth.
+      required: [deliveries, pickups, pickups_awaiting_pick, pickups_ready_to_collect, unassigned, ready, requested, committed, due]
+      properties:
+        deliveries: { type: integer, format: int32 }
+        pickups: { type: integer, format: int32 }
+        pickups_awaiting_pick: { type: integer, format: int32 }
+        pickups_ready_to_collect: { type: integer, format: int32 }
+        pickups_capped: { type: boolean }
+        unassigned: { type: integer, format: int32 }
+        ready: { type: integer, format: int32 }
+        requested: { type: integer, format: int32 }
+        committed: { type: integer, format: int32 }
+        due:
+          type: integer
+          format: int32
+          description: Loads still REQUESTED whose delivery date is inside the commit prompt window
+    DispatchPolicy:
+      type: object
+      description: The effective dispatch_policy row (branch override over the dealer default)
+      required: [commit_prompt_hours, reopen_policy, load_value_visibility, commit_horizon_weeks, working_view_days, freight_split_mode, driver_session_hours]
+      properties:
+        branch_id: { type: string, format: uuid }
+        commit_prompt_hours: { type: integer, format: int32 }
+        reopen_policy:
+          type: string
+          enum: [ANYONE, MANAGER, NOBODY]
+        load_value_visibility:
+          type: string
+          enum: [MANAGER_UP, ALL_STAFF, HIDDEN]
+        commit_horizon_weeks: { type: integer, format: int32 }
+        working_view_days: { type: integer, format: int32 }
+        freight_split_mode:
+          type: string
+          enum: [EVEN, MANUAL]
+        driver_session_hours:
+          type: integer
+          format: int32
+          description: Read from the dealer default row only; a branch override is stored and echoed but inert at token issue
+    DispatchLoadBoardView:
+      type: object
+      description: The whole load board surface in one read
+      required: [branch_id, date, policy, value_visible, gaps_checked, can_commit, can_reopen, working_from, working_to, working_days, counts, trucks, loads, staging]
+      properties:
+        branch_id: { type: string, format: uuid }
+        date: { type: string, format: date }
+        policy: { $ref: "#/components/schemas/DispatchPolicy" }
+        value_visible:
+          type: boolean
+          description: A capability echo, not data; says whether an absent figure means refused or unpriced
+        gaps_checked:
+          type: boolean
+          description: False means the availability seam did not answer, so no gaps must not be read as the yard being clear
+        can_commit: { type: boolean }
+        can_reopen: { type: boolean }
+        working_from: { type: string, format: date }
+        working_to: { type: string, format: date }
+        working_days: { type: integer, format: int32 }
+        counts: { $ref: "#/components/schemas/DispatchQuickCounts" }
+        trucks:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchTruck" }
+        loads:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchLoadRow" }
+        staging:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchLoadStop" }
+    DispatchPolicyChange:
+      type: object
+      description: One policy change, with who as a person rather than a role
+      required: [field, before, after]
+      properties:
+        field: { type: string }
+        before: { type: string }
+        after: { type: string }
+        who: { type: string }
+        when: { type: string }
+    DispatchPolicyChangePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchPolicyChange" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    DispatchCalendarDay:
+      type: object
+      required: [date, runs, stops, unassigned, full, requested]
+      properties:
+        date: { type: string, format: date }
+        runs: { type: integer, format: int32 }
+        stops: { type: integer, format: int32 }
+        unassigned: { type: integer, format: int32 }
+        full: { type: integer, format: int32 }
+        requested: { type: integer, format: int32 }
+    DispatchCalendarDayPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchCalendarDay" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    DispatchProcurementGap:
+      type: object
+      description: One line on a load the yard does not have enough of
+      required: [stop_id, sku, qty_needed, qty_on_hand, qty_short]
+      properties:
+        stop_id: { type: string, format: uuid }
+        order_no: { type: string }
+        sku: { type: string }
+        description: { type: string }
+        qty_needed: { type: number }
+        qty_on_hand: { type: number }
+        qty_short: { type: number }
+        uom: { type: string }
+    DispatchGapPage:
+      type: object
+      required: [items, checked]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchProcurementGap" }
+        checked:
+          type: boolean
+          description: False means the availability seam did not answer
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    DispatchMarkLoadedInput:
+      type: object
+      required: [stop_ids]
+      properties:
+        stop_ids:
+          type: array
+          items: { type: string, format: uuid }
+    DispatchLoadOutcome:
+      type: object
+      description: What happened to one stop in a bulk load; not an error type, both halves are news
+      required: [stop_id, loaded]
+      properties:
+        stop_id: { type: string, format: uuid }
+        order_no: { type: string }
+        loaded: { type: boolean }
+        refusal:
+          type: string
+          description: The sentence for a stop that did not move; empty when the stop loaded
+    DispatchLoadOutcomeList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchLoadOutcome" }
+
+    # --- freight ---------------------------------------------------------------
+    DispatchSplitInput:
+      type: object
+      description: >-
+        Asks for a split. loads is how many trucks the order goes out on;
+        amounts is an optional override in the same order and must sum to the
+        freight exactly. freight_cents is a proposed charge, opt-in and only
+        upward; a rise above the quoted baseline parks on the approvals queue
+        rather than applying.
+      required: [order_id, loads]
+      properties:
+        order_id: { type: string, format: uuid }
+        loads: { type: integer, format: int32 }
+        amounts:
+          type: array
+          items: { type: integer, format: int64 }
+        freight_cents: { type: [integer, "null"], format: int64 }
+    DispatchSplitResult:
+      type: object
+      description: >-
+        What the surface renders back. When parked is absent the split happened
+        and loads carry their new shares; when parked is present nothing was
+        written and the proposal waits on the approvals queue.
+      required: [order_id, freight_cents, override, loads]
+      properties:
+        order_id: { type: string, format: uuid }
+        freight_cents: { type: integer, format: int64 }
+        override: { type: boolean }
+        loads:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchLoadStop" }
+        parked:
+          anyOf:
+            - $ref: "#/components/schemas/DispatchFreightRaiseView"
+            - type: "null"
+    DispatchFreightRaiseMoney:
+      type: object
+      description: The money on a freight raise, its own type so a gated figure never rides on a general payload
+      required: [quoted_freight_cents, current_freight_cents, proposed_freight_cents, delta_cents]
+      properties:
+        quoted_freight_cents: { type: integer, format: int64 }
+        current_freight_cents: { type: integer, format: int64 }
+        proposed_freight_cents: { type: integer, format: int64 }
+        delta_cents:
+          type: integer
+          format: int64
+          description: Proposed minus quoted, computed on the server
+    DispatchFreightRaiseView:
+      type: object
+      description: >-
+        A parked proposal as a surface sees it. Every field is safe for any
+        caller who may see the load board at all except money, which is absent
+        for a caller the dealer's load-value policy refuses. asked_by is a
+        word, never a role code. state mirrors a decision the approvals queue
+        owns.
+      required: [id, order_id, branch_id, loads, asked_by, asked_at, state]
+      properties:
+        id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        customer_name: { type: string }
+        branch_id: { type: string, format: uuid }
+        loads: { type: integer, format: int32 }
+        asked_by: { type: string }
+        asked_at: { type: string, format: date-time }
+        state:
+          type: string
+          enum: [PARKED, APPLIED, REFUSED]
+        approval_id: { type: string, format: uuid }
+        money:
+          anyOf:
+            - $ref: "#/components/schemas/DispatchFreightRaiseMoney"
+            - type: "null"
+
+    # --- will-call ---------------------------------------------------------------
+    DispatchWillCall:
+      type: object
+      description: One will_call_pickups row as staff see it; never the raw token
+      required: [id, order_id, branch_id, status, expires_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [ACTIVE, CONFIRMED, REVOKED]
+        expires_at: { type: string, format: date-time }
+        signature_ref: { type: string }
+        collected_by: { type: string }
+        confirmed_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+    DispatchWillCallPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchWillCall" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    DispatchWillCallMintInput:
+      type: object
+      required: [order_id, ttl_hours]
+      properties:
+        order_id:
+          type: string
+          description: An order id or the visible order number, resolved branch-scoped
+        ttl_hours:
+          type: integer
+          format: int32
+          description: The tag lifetime; zero or omitted takes the default, persisted per row
+    DispatchMintedPickup:
+      type: object
+      description: The mint response; the raw token exists in this response and nowhere else
+      allOf:
+        - $ref: "#/components/schemas/DispatchWillCall"
+        - type: object
+          required: [token]
+          properties:
+            token: { type: string }
+    DispatchWillCallRevokeResult:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [REVOKED]
+    DispatchPublicWillCall:
+      type: object
+      description: >-
+        What the token holder sees: enough to know they are confirming the
+        right pickup, and nothing a staff member would see. Written on the
+        assumption the reader is not authenticated.
+      required: [order_no, branch_name, customer_name, line_count, status]
+      properties:
+        order_no: { type: string }
+        branch_name: { type: string }
+        customer_name: { type: string }
+        line_count: { type: integer, format: int32 }
+        status:
+          type: string
+          enum: [ACTIVE, CONFIRMED, REVOKED]
+        collected_by: { type: string }
+    DispatchWillCallConfirmInput:
+      type: object
+      description: The self-confirmation; a blank name is not a signature and the affirmative is a separate required act
+      required: [typed_name, affirmed]
+      properties:
+        typed_name: { type: string }
+        affirmed: { type: boolean }
+
+    # --- reschedules --------------------------------------------------------------
+    DispatchReschedule:
+      type: object
+      description: One dispatch_reschedules row
+      required: [id, branch_id, entity_type, entity_id, from_date, to_date, reason, stops_moved, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        entity_type:
+          type: string
+          enum: [delivery_stop, delivery_run]
+        entity_id: { type: string, format: uuid }
+        from_date: { type: string, format: date }
+        to_date: { type: string, format: date }
+        reason: { type: string }
+        stops_moved: { type: integer, format: int32 }
+        actor_id: { type: string }
+        created_at: { type: string, format: date-time }
+    DispatchReschedulePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchReschedule" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    DispatchRescheduleInput:
+      type: object
+      description: Moves a stop or run to another date; the reason is required
+      required: [to_date, reason]
+      properties:
+        to_date: { type: string, format: date }
+        reason: { type: string }
+    DispatchRescheduleResult:
+      type: object
+      description: What a successful move reports back
+      required: [entity_type, entity_id, from_date, to_date, stops_moved, reschedule_id]
+      properties:
+        entity_type:
+          type: string
+          enum: [delivery_stop, delivery_run]
+        entity_id: { type: string, format: uuid }
+        from_date: { type: string, format: date }
+        to_date: { type: string, format: date }
+        stops_moved: { type: integer, format: int32 }
+        reschedule_id: { type: string, format: uuid }
+        stop:
+          anyOf:
+            - $ref: "#/components/schemas/DispatchStop"
+            - type: "null"
+        run:
+          anyOf:
+            - $ref: "#/components/schemas/DispatchRun"
+            - type: "null"
+        history:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchReschedule" }
+
+    # --- scans ---------------------------------------------------------------------
+    DispatchScanInput:
+      type: object
+      description: One scan; stop_id is optional because RECEIVED and YARD happen before any delivery is scheduled
+      required: [order_id, stop_id, load_ref, checkpoint, note]
+      properties:
+        order_id: { type: string, format: uuid }
+        stop_id: { type: string, format: uuid }
+        load_ref: { type: string }
+        checkpoint:
+          type: string
+          enum: [RECEIVED, YARD, PICKED, IN_TRANSIT, DELIVERED]
+        note: { type: string }
+    DispatchScanCheckpoint:
+      type: object
+      description: One load_scan_checkpoints row; checkpoints are places a load has been, not document states
+      required: [id, branch_id, order_id, load_ref, checkpoint, scanned_at]
+      properties:
+        id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        stop_id: { type: string, format: uuid }
+        load_ref: { type: string }
+        checkpoint:
+          type: string
+          enum: [RECEIVED, YARD, PICKED, IN_TRANSIT, DELIVERED]
+        scanned_by: { type: string }
+        scanned_at: { type: string, format: date-time }
+        note: { type: string }
+        pod_signature_ref: { type: string }
+    DispatchScanLoad:
+      type: object
+      description: One physical load's progress through the five checkpoints
+      required: [load_ref, reached, furthest, last_scanned_at]
+      properties:
+        load_ref: { type: string }
+        reached:
+          type: array
+          items:
+            type: string
+            enum: [RECEIVED, YARD, PICKED, IN_TRANSIT, DELIVERED]
+        furthest:
+          type: string
+          enum: [RECEIVED, YARD, PICKED, IN_TRANSIT, DELIVERED]
+        pod_signature_ref:
+          type: string
+          description: Set once the DELIVERED checkpoint is tied to the attestation
+        last_scanned_at: { type: string, format: date-time }
+    DispatchScanTrail:
+      type: object
+      required: [order_id, checkpoints, loads, complete]
+      properties:
+        order_id: { type: string, format: uuid }
+        checkpoints:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchScanCheckpoint" }
+        loads:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchScanLoad" }
+        complete:
+          type: boolean
+          description: True only when every load on the order has reached DELIVERED
+
+    # --- the AR dispatch gate -------------------------------------------------------
+    DispatchStopPaymentHold:
+      type: object
+      description: >-
+        The driver-facing banner payload, computed per read from the gate and
+        never stored. reason is written for a driver to read; code is the
+        machine handle so surfaces can style the banner without parsing prose.
+      required: [stop_id, order_id, held]
+      properties:
+        stop_id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        held: { type: boolean }
+        reason: { type: string }
+        code: { type: string }
+        amount_due_cents: { type: integer, format: int64 }
+    DispatchPaymentHoldPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DispatchStopPaymentHold" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }

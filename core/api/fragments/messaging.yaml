@@ -1,0 +1,1290 @@
+# Fragment: messaging + feedback (HardscapeOS ERP modules messaging, feedback).
+# Sources: backend/internal/messaging/*.go, backend/internal/feedback/*.go,
+# guards from backend/cmd/server/main.go (RegisterRoutes and
+# RegisterConversationRoutes both receive RequireStaff, RequireAdmin; feedback
+# RegisterRoutes receives RequireStaff).
+
+paths:
+  /api/v1/messaging/channels:
+    get:
+      operationId: messagingListChannels
+      tags: [staff-messaging]
+      summary: List the caller's channels with per-caller unread projection
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The caller's channels; unread_count, mentioned and latest_at are per-caller
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannelList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/messaging/channels/{id}/messages:
+    get:
+      operationId: messagingListMessages
+      tags: [staff-messaging]
+      summary: List a channel's messages, newest first
+      description: >-
+        Cursor paginated in the ERP (MessagePage). The contract normalizes the
+        envelope to the shared page shape: the ERP wire names the array
+        messages and omits limit; here they are items and limit.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingMessagePage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: messagingPostMessage
+      tags: [staff-messaging]
+      summary: Post a text message, optionally as a thread reply
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingMessagePost"
+      responses:
+        "201":
+          description: The posted message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingMessage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/messaging/channels/{id}/threads/{rootID}:
+    get:
+      operationId: messagingListThread
+      tags: [staff-messaging]
+      summary: List the replies under one thread root
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: rootID
+          in: path
+          required: true
+          description: The thread root message id
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The thread replies
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingMessageList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/messaging/channels/{id}/read:
+    post:
+      operationId: messagingMarkRead
+      tags: [staff-messaging]
+      summary: Mark a channel read for the caller
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Read marker written
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/messaging/channels/{id}/messages/{msgID}/ack:
+    post:
+      operationId: messagingAckMessage
+      tags: [staff-messaging]
+      summary: Acknowledge one forced-ack message
+      description: >-
+        The body is optional: an absent or empty body acks with the default
+        method TAP (the kiosk confirm button). Only malformed JSON is a 400
+        from the decode; an unknown method is a 400 from the service.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: msgID
+          in: path
+          required: true
+          description: The message being acknowledged
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingAckRequest"
+      responses:
+        "200":
+          description: The recorded acknowledgement
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingAck"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/messaging/channels/{id}/messages/{msgID}/ack-progress:
+    get:
+      operationId: messagingGetAckProgress
+      tags: [staff-messaging]
+      summary: Read the ack arithmetic for one forced-ack message
+      description: >-
+        Required counts the channel's members at read time; acked counts
+        distinct users; remaining is floored at zero; complete requires at
+        least one required ack.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: msgID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The ack arithmetic
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingAckProgress"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/messaging/unacked:
+    get:
+      operationId: messagingListUnacked
+      tags: [staff-messaging]
+      summary: List the caller's unacknowledged forced-ack messages, newest first
+      description: The kiosk poll surface; only the caller's own channels are considered
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The caller's pending forced-ack messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingMessageList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/messaging/channels/{id}/notify-prefs:
+    get:
+      operationId: messagingGetNotifyPrefs
+      tags: [staff-messaging]
+      summary: Read the caller's notification prefs for one channel
+      description: Absent rows read as the defaults (desktop on, escalation override on, mode ALL)
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The effective prefs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingNotifyPrefs"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: messagingPutNotifyPrefs
+      tags: [staff-messaging]
+      summary: Merge a patch into the caller's notification prefs for one channel
+      description: >-
+        Every field is optional; an omitted field keeps the current value.
+        When both mode and muted are sent, mode wins. Muting an escalation
+        channel is refused with 409.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingPrefsPatch"
+      responses:
+        "200":
+          description: The prefs after the upsert
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingNotifyPrefs"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/messaging/unread:
+    get:
+      operationId: messagingGetUnread
+      tags: [staff-messaging]
+      summary: Read the caller's unread summary across channels
+      description: The badge source; clients short-poll this when the stream is buffered
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: Per-channel unread counts plus the total
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingUnreadSummary"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/messaging/stream-ticket:
+    post:
+      operationId: messagingMintStreamTicket
+      tags: [staff-messaging]
+      summary: Mint a short-lived, single-use, user-bound stream ticket
+      description: >-
+        For a browser EventSource, which cannot send the Bearer header: the
+        ticket is presented as the ticket query parameter on GET
+        /api/v1/messaging/stream. The ticket value is a credential; it is
+        never logged or returned by any other route.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The minted ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingStreamTicket"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "501":
+          description: Stream tickets are not enabled; use the Bearer stream or the poll fallback
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/messaging/stream:
+    get:
+      operationId: messagingStream
+      tags: [staff-messaging]
+      summary: Open the server-sent event stream for the caller
+      description: >-
+        A live text/event-stream feed, not a JSON body. Two auth paths on one
+        route: a Bearer staff credential, or the single-use ticket query
+        parameter minted by POST /api/v1/messaging/stream-ticket (an
+        EventSource cannot send a header). The ticket is bound to the user
+        that minted it, so the stream serves exactly that user's membership
+        view. Event names: message (a MessagingMessage), unread (a
+        channel_id nudge), approval.decided (the requester's own approval
+        outcome). A slow or stuck connection drops events; the client
+        reconciles by polling GET /api/v1/messaging/unread.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: ticket
+          in: query
+          required: false
+          description: The single-use stream ticket; alternative to the Bearer credential
+          schema: { type: string }
+      responses:
+        "200":
+          description: The SSE stream; each event is an event line plus a JSON data line
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "501":
+          description: The stream hub is not wired; poll GET /api/v1/messaging/unread
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/messaging/export:
+    get:
+      operationId: messagingExport
+      tags: [staff-messaging]
+      summary: Export messages for HR and audit review
+      description: >-
+        Admin only, behind the same gate as the audit viewer. Rows are
+        admin-masked before they leave: deleted messages are tombstoned and
+        cleartext-looking identifiers are redacted. All filters are optional.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: channel_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: user_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: since
+          in: query
+          required: false
+          description: Lower bound on created_at
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          required: false
+          description: Upper bound on created_at
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          description: Row cap, clamped server side
+          schema: { type: integer, format: int32, minimum: 1 }
+      responses:
+        "200":
+          description: The masked export rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingExportResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/messaging/event-classes:
+    get:
+      operationId: messagingListEventClasses
+      tags: [staff-messaging]
+      summary: List the event classification config with effective classes applied
+      description: >-
+        Any staffer may read the config. Each row's class is the effective
+        one: a topic on the forced-ack allowlist reads CRITICAL and locked
+        whatever the stored row says.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The classification rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingEventClassList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/messaging/event-classes/{topic}:
+    put:
+      operationId: messagingPutEventClass
+      tags: [staff-messaging]
+      summary: Reclassify one event topic
+      description: >-
+        Admin only. A locked row (a CRITICAL forced-ack topic) is refused
+        with 409; an unknown topic is 404; a class outside the CHECK set is
+        400.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: topic
+          in: path
+          required: true
+          description: The event topic, for example an msg.event.* outbox topic
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingEventClassPut"
+      responses:
+        "200":
+          description: The row after the write, with the effective class applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingEventClass"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/messaging/payment-rules:
+    get:
+      operationId: messagingGetPaymentRules
+      tags: [staff-messaging]
+      summary: Read the caller's targeted payment notification rules
+      description: >-
+        Always the full closed rule set; a rule the caller has never touched
+        is present and false, so an undecided rule and a switched-off rule
+        read identically.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The caller's full rule set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingPaymentRulePrefs"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/messaging/payment-rules/{rule}:
+    put:
+      operationId: messagingPutPaymentRule
+      tags: [staff-messaging]
+      summary: Set one of the caller's own payment notification rules
+      description: >-
+        Self-scoped: the user id comes from the verified staff identity,
+        never from the path or body, so no route reads or changes another
+        staffer's rules.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: rule
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [ONLINE, CROSS_BRANCH, OWN_ORDER]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingPaymentRulePut"
+      responses:
+        "200":
+          description: The caller's full rule set after the write
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingPaymentRulePrefs"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/messaging/rep-assignments:
+    get:
+      operationId: messagingListRepAssignments
+      tags: [staff-messaging]
+      summary: List rep assignments, optionally filtered by rep or customer
+      description: Staff readable; a rep needs to see their own book and the routing rule is not a secret
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: rep_user_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: customer_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The assignment rows with display joins
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingRepAssignmentList"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: messagingAssignRep
+      tags: [staff-messaging]
+      summary: Assign a rep to a customer, or to one order of a customer
+      description: >-
+        Admin only: who owns which customer is a book-of-business decision.
+        An empty order_id writes the customer-level default; a set order_id
+        writes the per-order override (split books).
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingRepAssignRequest"
+      responses:
+        "200":
+          description: The written assignment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingRepAssignment"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      operationId: messagingUnassignRep
+      tags: [staff-messaging]
+      summary: Remove a rep assignment
+      description: The target rides the query string (customer_id plus optional order_id), matching the ERP's composite-key delete convention
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customer_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: order_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The removal echo
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingRepUnassignResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/messaging/rep-route:
+    get:
+      operationId: messagingPreviewRepRoute
+      tags: [staff-messaging]
+      summary: Preview where a message from one customer would route right now
+      description: Read-only; the admin UI's before and after for an assignment change. Nothing is sent
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customer_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: order_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The resolution level, the route kind, and the winning rep if any
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingRepRoutePreview"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/messaging/inbound/customer:
+    post:
+      operationId: messagingInboundCustomer
+      tags: [staff-messaging]
+      summary: Route one inbound customer message into the hub
+      description: >-
+        The ingress the portal and SMS bridges call server side with a
+        service identity. One message in, one routed post out: the assigned
+        rep's DM when an assignment resolves, the branch house queue (or the
+        global floor) otherwise. event_key makes the post idempotent across
+        redelivery.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingCustomerInbound"
+      responses:
+        "200":
+          description: What happened to the inbound
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingRouteResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/messaging/channels/{id}/house-queue:
+    get:
+      operationId: messagingListHouseQueue
+      tags: [staff-messaging]
+      summary: List the house queue for one channel
+      description: Membership gated in the service on top of the staff gate; open=1 restricts to unclaimed conversations
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: open
+          in: query
+          required: false
+          description: When "1", only unclaimed conversations are returned
+          schema:
+            type: string
+            enum: ["1"]
+      responses:
+        "200":
+          description: The queue rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingHouseQueue"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/messaging/house-conversations/{convID}/claim:
+    post:
+      operationId: messagingClaimHouseConversation
+      tags: [staff-messaging]
+      summary: Claim one unclaimed house conversation
+      description: >-
+        The one write a rep makes for themselves. The claim writes a
+        customer-level assignment with source CLAIM, which is what makes the
+        claim sticky: the next inbound from that customer resolves to the
+        claimer. An already-claimed conversation is a 409.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: convID
+          in: path
+          required: true
+          description: The house conversation id
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The conversation after the claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingHouseConversation"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/feedback:
+    post:
+      operationId: feedbackCreate
+      tags: [staff-feedback]
+      summary: File one staff feedback submission to the tracking board
+      description: >-
+        The in-app widget posts a bug, feedback note, or flag; each becomes
+        an issue on the tracker board. JSON for text only, or
+        multipart/form-data when a screenshot is attached (the image part is
+        optional, re-validated server side against its sniffed content type,
+        and capped). The upstream board credential lives server side only;
+        no route accepts or returns it. Submissions are rate limited per
+        user.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedbackSubmission"
+          multipart/form-data:
+            schema:
+              type: object
+              required: [type, message]
+              properties:
+                type:
+                  type: string
+                  enum: [bug, feedback, flag]
+                message: { type: string }
+                screen: { type: string }
+                url: { type: string }
+                user_agent: { type: string }
+                image:
+                  type: string
+                  format: binary
+                  description: Optional screenshot; the sniffed type must be PNG, JPEG or WebP
+      responses:
+        "201":
+          description: The submission filed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedbackResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429":
+          description: The caller exceeded the per-user submission budget
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: The upstream board is unreachable; the submission was not filed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+components:
+  schemas:
+    MessagingChannel:
+      type: object
+      description: >-
+        One conversation surface. unread_count, mentioned and latest_at are
+        populated only in the list-my-channels projection; they are
+        per-caller, not intrinsic to the channel.
+      required: [id, kind, name, topic, tier, is_archived, created_at, unread_count, mentioned]
+      properties:
+        id: { type: string, format: uuid }
+        kind:
+          type: string
+          enum: [BRANCH, TEAM, TOPIC, DM, APPROVAL]
+        branch_id: { type: string }
+        slug: { type: string }
+        name: { type: string }
+        topic: { type: string }
+        tier:
+          type: string
+          enum: [STANDARD, ESCALATION, FIREHOSE]
+        is_archived: { type: boolean }
+        created_at: { type: string, format: date-time }
+        unread_count: { type: integer, format: int32 }
+        mentioned: { type: boolean }
+        latest_at:
+          type: [string, "null"]
+          format: date-time
+
+    MessagingChannelList:
+      type: object
+      required: [channels]
+      properties:
+        channels:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingChannel" }
+
+    MessagingMessage:
+      type: object
+      description: >-
+        One post. author_id is empty for a system EVENT message. ref carries
+        the structured MessagingEventRef for EVENT messages and
+        MessagingApprovalRef for APPROVAL cards. thread_root_id is empty for
+        a top-level message. superseded_by non-empty means a newer fact
+        about the same record auto-resolved this message (last write wins):
+        it renders as superseded and never requires an ack.
+      required: [id, channel_id, kind, body, reply_count, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        channel_id: { type: string, format: uuid }
+        author_id: { type: string }
+        author_name:
+          type: string
+          description: Resolved display name; empty for a system message
+        kind:
+          type: string
+          enum: [TEXT, EVENT, APPROVAL]
+        body: { type: string }
+        ref:
+          type: object
+          additionalProperties: true
+          description: MessagingEventRef or MessagingApprovalRef by kind
+        thread_root_id: { type: string, format: uuid }
+        reply_count:
+          type: integer
+          format: int32
+          description: Populated for top-level messages in the stream
+        requires_ack:
+          type: boolean
+          description: A forced-ack message the kiosk blocks on
+        priority:
+          type: string
+          enum: [NORMAL, HIGH]
+        state_key:
+          type: string
+          description: The state-conflict key; empty means the message supersedes nothing and is never superseded
+        superseded_by: { type: string }
+        superseded_at:
+          type: [string, "null"]
+          format: date-time
+        edited_at:
+          type: [string, "null"]
+          format: date-time
+        deleted_at:
+          type: [string, "null"]
+          format: date-time
+        created_at: { type: string, format: date-time }
+
+    MessagingEventRef:
+      type: object
+      description: >-
+        The structured ref an EVENT message carries. amount_cents is the
+        money the event carries; count and rollup_day appear on a rollup
+        root; rules names why a targeted payment notice reached this
+        recipient.
+      required: [topic]
+      properties:
+        topic: { type: string }
+        entity: { type: string }
+        deep_link: { type: string }
+        summary: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        count: { type: integer, format: int32 }
+        rollup_day: { type: string }
+        rules:
+          type: array
+          items:
+            type: string
+            enum: [ONLINE, CROSS_BRANCH, OWN_ORDER]
+
+    MessagingApprovalRef:
+      type: object
+      description: >-
+        The typed ref an APPROVAL card carries: a read-only pointer back at
+        the approval request row, never a second copy of approval state.
+        status is a display echo stamped on decision; the live truth is the
+        request row.
+      required: [approval_id, policy_type, status]
+      properties:
+        approval_id: { type: string, format: uuid }
+        policy_type: { type: string }
+        subject_ref:
+          type: string
+          description: The quote or journal the override binds to
+        branch_id: { type: string, format: uuid }
+        amount_cents:
+          type: integer
+          format: int64
+          description: The journal debit total; margin cards carry 0
+        requested_by: { type: string }
+        detail: { type: string }
+        deep_link: { type: string }
+        status:
+          type: string
+          enum: [PENDING, APPROVED, REJECTED]
+
+    MessagingMessageList:
+      type: object
+      description: The unpaginated message collection the thread, unacked and similar reads return
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingMessage" }
+
+    MessagingMessagePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingMessage" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    MessagingMessagePost:
+      type: object
+      required: [body]
+      properties:
+        body: { type: string }
+        thread_root_id:
+          type: string
+          format: uuid
+          description: Set to reply inside a thread
+
+    MessagingAckRequest:
+      type: object
+      description: An empty body is valid and means the default method TAP
+      properties:
+        method:
+          type: string
+          enum: [TAP, QUICK_REPLY, VOICE]
+          default: TAP
+
+    MessagingAck:
+      type: object
+      description: One acknowledgement of a forced-ack message by one user
+      required: [message_id, user_id, method, acked_at]
+      properties:
+        message_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        method:
+          type: string
+          enum: [TAP, QUICK_REPLY, VOICE]
+        acked_at: { type: string, format: date-time }
+
+    MessagingAckProgress:
+      type: object
+      description: >-
+        The per-message ack arithmetic. remaining is floored at zero (an
+        acked member can later leave the channel, dropping required while
+        their ack row remains); complete requires required greater than
+        zero.
+      required: [message_id, required, acked, remaining, complete, acks]
+      properties:
+        message_id: { type: string, format: uuid }
+        required: { type: integer, format: int32 }
+        acked:
+          type: integer
+          format: int32
+          description: Distinct users; a re-ack updates and never double counts
+        remaining: { type: integer, format: int32 }
+        complete: { type: boolean }
+        acks:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingAck" }
+
+    MessagingNotifyPrefs:
+      type: object
+      description: >-
+        One user's notification tuning for one channel. muted is the boolean
+        shadow of mode, kept in sync so the toast and badge pipelines never
+        disagree. inherited is true when the user has made no choice and the
+        mode shown is the channel's default.
+      required: [channel_id, user_id, desktop_enabled, escalation_override, muted, mode]
+      properties:
+        channel_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        desktop_enabled: { type: boolean }
+        escalation_override:
+          type: boolean
+          description: A firehose escalation pierces the mute when this is on
+        muted: { type: boolean }
+        mode:
+          type: string
+          enum: [ALL, MENTIONS, MUTED]
+        inherited: { type: boolean }
+        updated_at: { type: string, format: date-time }
+
+    MessagingPrefsPatch:
+      type: object
+      description: >-
+        Every field optional; an omitted field keeps the current value. When
+        both mode and muted are sent, mode wins.
+      properties:
+        desktop_enabled: { type: boolean }
+        escalation_override: { type: boolean }
+        muted: { type: boolean }
+        mode:
+          type: string
+          enum: [ALL, MENTIONS, MUTED]
+
+    MessagingChannelUnread:
+      type: object
+      required: [channel_id, unread_count, mentioned]
+      properties:
+        channel_id: { type: string, format: uuid }
+        unread_count: { type: integer, format: int32 }
+        mentioned: { type: boolean }
+        latest_at:
+          type: [string, "null"]
+          format: date-time
+
+    MessagingUnreadSummary:
+      type: object
+      required: [total, channels]
+      properties:
+        total: { type: integer, format: int32 }
+        channels:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingChannelUnread" }
+
+    MessagingStreamTicket:
+      type: object
+      required: [ticket, expires_in_seconds]
+      properties:
+        ticket:
+          type: string
+          description: The signed, user-bound, single-use ticket credential
+        expires_in_seconds: { type: integer, format: int32 }
+
+    MessagingExportMessage:
+      type: object
+      description: >-
+        One admin-masked export row: deleted messages are tombstoned and
+        cleartext-looking identifiers are redacted before the row leaves the
+        system.
+      required: [id, channel_id, kind, body, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        channel_id: { type: string, format: uuid }
+        author_id: { type: string }
+        author_name: { type: string }
+        kind:
+          type: string
+          enum: [TEXT, EVENT, APPROVAL]
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+        edited_at:
+          type: [string, "null"]
+          format: date-time
+        deleted_at:
+          type: [string, "null"]
+          format: date-time
+
+    MessagingExportResponse:
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingExportMessage" }
+
+    MessagingEventClass:
+      type: object
+      description: >-
+        One classification config row, read with the effective class
+        applied: a topic on the forced-ack allowlist reads CRITICAL and
+        locked whatever the stored row says.
+      required: [event_topic, class, locked]
+      properties:
+        event_topic: { type: string }
+        class:
+          type: string
+          enum: [ROUTINE, NOTABLE, CRITICAL]
+        locked:
+          type: boolean
+          description: Locked rows cannot be reclassified; the write refuses with 409
+        label: { type: string }
+        updated_at: { type: string, format: date-time }
+        updated_by: { type: string }
+
+    MessagingEventClassList:
+      type: object
+      required: [classes]
+      properties:
+        classes:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingEventClass" }
+
+    MessagingEventClassPut:
+      type: object
+      required: [class]
+      properties:
+        class:
+          type: string
+          enum: [ROUTINE, NOTABLE, CRITICAL]
+
+    MessagingPaymentRulePrefs:
+      type: object
+      description: >-
+        One user's answer for every payment notification rule, always the
+        full closed set (ONLINE, CROSS_BRANCH, OWN_ORDER) with unstored
+        rules present and false.
+      required: [user_id, rules]
+      properties:
+        user_id: { type: string, format: uuid }
+        rules:
+          type: object
+          additionalProperties: { type: boolean }
+          description: Keyed by rule id from the closed set
+
+    MessagingPaymentRulePut:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+
+    MessagingRepAssignment:
+      type: object
+      description: >-
+        One rep assignment row. order_id empty is the customer-level default;
+        order_id set is the per-order override (split books). Resolution
+        order: the override for the named order, then the customer-level row,
+        then the house queue. customer_name, order_no and rep_name are
+        display joins on the list read.
+      required: [id, customer_id, rep_user_id, source, assigned_at]
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        rep_user_id: { type: string, format: uuid }
+        rep_name: { type: string }
+        source:
+          type: string
+          enum: [MANUAL, CLAIM, IMPORT]
+        assigned_by: { type: string }
+        assigned_at: { type: string, format: date-time }
+        note: { type: string }
+
+    MessagingRepAssignmentList:
+      type: object
+      required: [assignments]
+      properties:
+        assignments:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingRepAssignment" }
+
+    MessagingRepAssignRequest:
+      type: object
+      required: [customer_id, rep_user_id]
+      properties:
+        customer_id: { type: string, format: uuid }
+        order_id:
+          type: string
+          format: uuid
+          description: Empty writes the customer-level default; set writes the per-order override
+        rep_user_id: { type: string, format: uuid }
+        source:
+          type: string
+          enum: [MANUAL, CLAIM, IMPORT]
+          default: MANUAL
+        note: { type: string }
+
+    MessagingRepUnassignResponse:
+      type: object
+      required: [unassigned, customer_id, order_id]
+      properties:
+        unassigned: { type: boolean }
+        customer_id: { type: string, format: uuid }
+        order_id:
+          type: string
+          description: The order override removed, empty when the customer-level row was removed
+
+    MessagingRepRoutePreview:
+      type: object
+      description: The routing answer without sending anything; rep fields are empty when level is NONE
+      required: [level, kind, rep_user_id, rep_name]
+      properties:
+        level:
+          type: string
+          enum: [ORDER, CUSTOMER, NONE]
+          description: Which ledger row answered the routing question
+        kind:
+          type: string
+          enum: [REP_DM, HOUSE]
+          description: Where an inbound would land
+        rep_user_id: { type: string }
+        rep_name: { type: string }
+
+    MessagingCustomerInbound:
+      type: object
+      description: >-
+        One inbound customer message presented for routing. order_id is the
+        only thing that can activate the per-order override. branch_id
+        selects the house queue when nothing is assigned; empty falls to the
+        global floor. channel is the display-only origin marker.
+      required: [customer_id]
+      properties:
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        branch_id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        body: { type: string }
+        event_key:
+          type: string
+          description: Idempotency key for the routed post, exactly like a system event
+        channel:
+          type: string
+          enum: [PORTAL, SMS, EMAIL]
+
+    MessagingRouteResult:
+      type: object
+      description: What happened to one inbound; inserted is false for an idempotent redelivery
+      required: [kind, level, channel_id, message, inserted]
+      properties:
+        kind:
+          type: string
+          enum: [REP_DM, HOUSE]
+        level:
+          type: string
+          enum: [ORDER, CUSTOMER, NONE]
+        channel_id: { type: string, format: uuid }
+        channel_slug: { type: string }
+        rep_user_id: { type: string, format: uuid }
+        conversation_id:
+          type: string
+          format: uuid
+          description: Present on house queue routes only
+        message: { $ref: "#/components/schemas/MessagingMessage" }
+        inserted: { type: boolean }
+
+    MessagingHouseConversation:
+      type: object
+      description: One house queue row; claimed_by empty means still open
+      required: [id, customer_id, channel_id, first_at, last_at, message_count]
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        branch_id: { type: string, format: uuid }
+        channel_id: { type: string, format: uuid }
+        first_at: { type: string, format: date-time }
+        last_at: { type: string, format: date-time }
+        message_count: { type: integer, format: int32 }
+        claimed_by: { type: string, format: uuid }
+        claimed_by_name: { type: string }
+        claimed_at:
+          type: [string, "null"]
+          format: date-time
+
+    MessagingHouseQueue:
+      type: object
+      required: [conversations]
+      properties:
+        conversations:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingHouseConversation" }
+
+    FeedbackSubmission:
+      type: object
+      description: >-
+        What the widget sends. The trusted actor comes from the staff
+        session server side; screen, url and user_agent are client-supplied
+        display context only.
+      required: [type, message]
+      properties:
+        type:
+          type: string
+          enum: [bug, feedback, flag]
+          description: Maps to the tracker priority (bug files high, the rest medium)
+        message: { type: string }
+        screen: { type: string }
+        url: { type: string }
+        user_agent: { type: string }
+
+    FeedbackResult:
+      type: object
+      required: [issue_id]
+      properties:
+        issue_id:
+          type: string
+          description: The tracker issue id the submission became

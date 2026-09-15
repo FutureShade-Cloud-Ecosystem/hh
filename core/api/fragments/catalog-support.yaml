@@ -1,0 +1,2020 @@
+# Fragment: assist + product + tour + customer + printing + branches (lane HH-2.3).
+# Sources: hardscapeos_dibbits/backend/internal/{assist,product,tour,customer,
+# printing,branches}. Guards from cmd/server/main.go call sites:
+#   assist    RegisterRoutes(mux, RequireStaff, RequireAdmin)          main.go:1808
+#   product   RegisterRoutes(mux, RequireManager as writeGuard)        main.go:185
+#             RegisterSearchRoute(mux, RequireStaff)                   main.go:189
+#             RegisterCounterRoutes(mux, RequireStaff, RequireManager) main.go:919
+#   customer  RegisterRoutes(mux, RequireStaff, RequireManager as the
+#             variadic writeGuard)                                     main.go:214
+#   tour      RegisterRoutes(mux, RequireStaff)                        main.go:1882
+#   printing  RegisterRoutes(mux, RequireStaff)                        main.go:613
+#   branches  RegisterRoutes(mux, RequireStaff)                        main.go:223
+# The product catalogue reads (GET /api/v1/products, /facets, /{id}) and the
+# image byte read are registered UNGUARDED in the ERP by an explicit,
+# documented decision (the catalogue is public data; an <img src> cannot carry
+# an Authorization header), so they are transcribed as x-role: public.
+# The tour platform routes are RequireStaff at the mux plus an IsSuperAdmin
+# check inside the service; that second gate is carried in x-guards.
+
+paths:
+  # --- assist: the structured command layer and the chat pilot --------------
+  /api/v1/assist/commands:
+    get:
+      operationId: assistListCommands
+      tags: [staff-assist]
+      summary: List the commands the caller may run, already filtered by tier
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The caller's command list and whether chat is switched on
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistCommandList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/assist/command:
+    post:
+      operationId: assistRunCommand
+      tags: [staff-assist]
+      summary: Run one structured command as the caller
+      description: >-
+        An unknown command answers 404, a refused or switched-off command
+        answers 403 with one deliberately identical sentence, and a lookup
+        whose backing capability is not wired on this deployment answers 503.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssistCommandRequest"
+      responses:
+        "200":
+          description: The command result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          description: The lookup is not switched on in this system yet
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/assist/chat:
+    post:
+      operationId: assistChat
+      tags: [staff-assist]
+      summary: Ask the assistant a question, with the prior turns as history
+      description: >-
+        The provider's tool calls are dispatched through the same registry a
+        button press goes through, with the caller that arrived on the
+        request. usage is stripped from the response when the deployment hides
+        per-person spend from non-admins. Reaching the caller's allowance is
+        an ordinary answer (limit_reached), never an error.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssistChatRequest"
+      responses:
+        "200":
+          description: The assistant's answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistAnswer"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: The chat capability is not switched on in this system yet
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/assist/me:
+    get:
+      operationId: assistGetMe
+      tags: [staff-assist]
+      summary: Read the caller's own allowance, spend and chat availability
+      description: >-
+        The budget is always visible; spend and over_budget are present only
+        when the deployment lets non-admins see their own spend. A person
+        refused for hitting a limit has to be able to see what the limit was.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The caller's allowance picture
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistMe"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/assist/admin/spend:
+    get:
+      operationId: assistAdminSpend
+      tags: [staff-assist]
+      summary: Read the per-person spend report for the current period
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: One row per person, highest spend first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistSpendReport"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/assist/admin/limits:
+    get:
+      operationId: assistAdminLimits
+      tags: [staff-assist]
+      summary: Read the role defaults, the per-user overrides and the code default
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The limits editor's whole payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistLimitsView"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/assist/admin/limits/role/{role}:
+    put:
+      operationId: assistPutRoleLimit
+      tags: [staff-assist]
+      summary: Set a role's default token allowance
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: role
+          in: path
+          required: true
+          description: The role code whose default is being set
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssistBudgetBody"
+      responses:
+        "200":
+          description: The stored role default
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistRoleLimitResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/assist/admin/limits/user/{user}:
+    put:
+      operationId: assistPutUserLimit
+      tags: [staff-assist]
+      summary: Set one person's override allowance (whole-or-absent, replaces the role default)
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: user
+          in: path
+          required: true
+          description: The staff user id whose override is being set
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssistBudgetBody"
+      responses:
+        "200":
+          description: The stored override
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistUserLimitResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      operationId: assistResetUserLimit
+      tags: [staff-assist]
+      summary: Reset one person to their role default (idempotent)
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: user
+          in: path
+          required: true
+          description: The staff user id whose override is being cleared
+          schema: { type: string }
+      responses:
+        "200":
+          description: The override is gone; the role default now applies
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistUserLimitResetResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/assist/admin/settings:
+    get:
+      operationId: assistGetSettings
+      tags: [staff-assist]
+      summary: Read the assistant configuration
+      description: >-
+        key_env_var is the NAME of the environment variable and key_present is
+        a boolean. No route in this module can return a character of the
+        credential itself.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The resolved settings plus the credential's presence flag
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistSettingsResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: assistPutSetting
+      tags: [staff-assist]
+      summary: Set one assistant configuration key
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssistSettingBody"
+      responses:
+        "200":
+          description: The stored key and value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistSettingResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- product: the faceted catalogue and the counter surface ---------------
+  /api/v1/products:
+    get:
+      operationId: productList
+      tags: [staff-product]
+      summary: List the catalogue under a faceted filter
+      description: >-
+        Public catalogue data in the ERP, registered with no guard by an
+        explicit decision in product.RegisterRoutes. The ERP route answers a
+        bare array of every match when no page is asked for and uses offset
+        paging with an X-Total-Count header when one is; this contract
+        replaces both with the cursor page, per the fragment conventions.
+      x-role: public
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: finish
+          in: query
+          required: false
+          schema: { type: string }
+        - name: color_family
+          in: query
+          required: false
+          schema: { type: string }
+        - name: application
+          in: query
+          required: false
+          schema: { type: string }
+        - name: color
+          in: query
+          required: false
+          schema: { type: string }
+        - name: manufacturer
+          in: query
+          required: false
+          schema: { type: string }
+        - name: collection
+          in: query
+          required: false
+          schema: { type: string }
+        - name: category_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: q
+          in: query
+          required: false
+          description: Text search over name, sku and description
+          schema: { type: string }
+        - name: active
+          in: query
+          required: false
+          description: When true, only active products
+          schema: { type: boolean }
+        - name: in_stock_only
+          in: query
+          required: false
+          description: When true, only products with on-hand in the stock ledger
+          schema: { type: boolean }
+        - name: branch_id
+          in: query
+          required: false
+          description: Scopes the in-stock read; omitted means any branch
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The page of products
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /api/v1/products/facets:
+    get:
+      operationId: productFacets
+      tags: [staff-product]
+      summary: Read per-facet distinct values with counts under the current filter
+      x-role: public
+      security: []
+      parameters:
+        - name: finish
+          in: query
+          required: false
+          schema: { type: string }
+        - name: color_family
+          in: query
+          required: false
+          schema: { type: string }
+        - name: application
+          in: query
+          required: false
+          schema: { type: string }
+        - name: color
+          in: query
+          required: false
+          schema: { type: string }
+        - name: manufacturer
+          in: query
+          required: false
+          schema: { type: string }
+        - name: collection
+          in: query
+          required: false
+          schema: { type: string }
+        - name: category_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+        - name: active
+          in: query
+          required: false
+          schema: { type: boolean }
+        - name: in_stock_only
+          in: query
+          required: false
+          schema: { type: boolean }
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: One facet per allowlisted field, in a fixed order
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ProductFacet" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /api/v1/products/{id}:
+    get:
+      operationId: productGet
+      tags: [staff-product]
+      summary: Read one catalogue product
+      x-role: public
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: productUpdate
+      tags: [staff-product]
+      summary: Edit a product's allowlisted attributes
+      description: >-
+        Only the columns in the editable allowlist are accepted; anything else
+        is a 400. Money never moves through this route.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductAttributeUpdate"
+      responses:
+        "200":
+          description: The product after the edit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/products/search:
+    get:
+      operationId: productSearch
+      tags: [staff-product]
+      summary: Fuzzy catalogue search for the staff quote builder
+      description: >-
+        Trigram similarity on name plus an escaped sku prefix. An empty query
+        returns no rows rather than the whole catalogue; limit is clamped by
+        the service.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The matching products
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductSearchResults"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/products/counter-search:
+    get:
+      operationId: productCounterSearch
+      tags: [staff-product]
+      summary: Ranked instant search for the POS counter
+      description: >-
+        Relevance is ordered, not scored: exact sku or barcode first, then sku
+        prefix, name prefix, name substring, description substring, synonym,
+        and trigram similarity last. A term shorter than two characters
+        answers an empty list, never an error.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+        - name: branch_id
+          in: query
+          required: false
+          description: Scopes the on-hand display; omitted returns every branch
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The ranked hits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductCounterSearchResults"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: The counter surface is not available on this catalogue store
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/products/scan:
+    get:
+      operationId: productScan
+      tags: [staff-product]
+      summary: Resolve one scanned or typed code to one product
+      description: >-
+        Barcode first, then sku, both exact. A code that resolves to nothing
+        is a 404, not an empty search result.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: code
+          in: query
+          required: true
+          schema: { type: string }
+        - name: branch_id
+          in: query
+          required: false
+          description: Scopes the on-hand display
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The one product this code resolves to
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductCounterHit"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          description: The counter surface is not available on this catalogue store
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/products/coverage:
+    get:
+      operationId: productCoverage
+      tags: [staff-product]
+      summary: Read the material calculator's basis rows
+      description: >-
+        One basis row per product: the coverage fact, the unit it sells in and
+        the conversions between them. A missing number is null, never zero. No
+        ids means every active product.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: ids
+          in: query
+          required: false
+          description: Comma-separated product ids to narrow the read
+          schema: { type: string }
+      responses:
+        "200":
+          description: The basis rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductCoverageResults"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/products/{id}/image:
+    get:
+      operationId: productGetImage
+      tags: [staff-product]
+      summary: Stream the product's catalogue thumbnail bytes
+      description: >-
+        Ungated by design: an <img src> cannot carry an Authorization header
+        and the catalogue reads are already public. The response is the raw
+        image bytes (not JSON), content-addressed by an ETag; a missing image
+        is a plain 404 the UI turns into its placeholder glyph. The image
+        metadata model is the skeleton's ProductImage (D11), whose swatch_hex
+        is a fallback attribute only.
+      x-role: public
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The thumbnail bytes
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          description: Image storage is not configured on this deployment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    put:
+      operationId: productPutImage
+      tags: [staff-product]
+      summary: Upload or replace the product's catalogue thumbnail
+      description: >-
+        Raw bytes with a Content-Type header, not base64 in JSON. The declared
+        type must be on the raster allowlist and the magic bytes must agree
+        with it. The image metadata model is the skeleton's ProductImage
+        (D11); this route moves only the bytes.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: alt
+          in: query
+          required: false
+          description: Alt text for the thumbnail
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema: { type: string, format: binary }
+          image/png:
+            schema: { type: string, format: binary }
+          image/webp:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: The stored image's size
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductImagePutResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413":
+          description: The image exceeds the thumbnail size cap
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415":
+          description: The content type is outside the raster allowlist, or the bytes disagree with it
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Image storage is not configured on this deployment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: productDeleteImage
+      tags: [staff-product]
+      summary: Remove the product's catalogue thumbnail (idempotent)
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The product has no image
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductImageDeleteResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: Image storage is not configured on this deployment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # --- tour: the guided demo walkthrough -------------------------------------
+  /api/v1/tour:
+    get:
+      operationId: tourGet
+      tags: [staff-tour]
+      summary: Read the whole walkthrough for the calling person
+      description: >-
+        Byte-absent when off: a deployment that is not a demo, or one whose
+        dealer switch is off, answers the two bytes {} rather than a populated
+        body the client is trusted to hide. This route has no error branch;
+        the read degrades downward by construction.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          description: The branch whose policy decides whether the walkthrough renders
+          schema: { type: string }
+      responses:
+        "200":
+          description: The walkthrough, or {} when it is off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TourView"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/tour/progress:
+    put:
+      operationId: tourPutProgress
+      tags: [staff-tour]
+      summary: Save the caller's own bookmark in a chapter
+      description: >-
+        The row written is the authenticated caller's, resolved server-side;
+        there is no user id field and there must never be one. A validation
+        refusal is a 422 whose message says which rule the edit broke.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TourProgressEdit"
+      responses:
+        "200":
+          description: The bookmark was saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TourSavedResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: The edit failed validation; the message says which rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/tour/progress/{chapter_key}:
+    delete:
+      operationId: tourRestartChapter
+      tags: [staff-tour]
+      summary: Restart one chapter for the calling person
+      description: >-
+        The chapter comes from the path and nothing comes from a body; the
+        caller is always the authenticated caller.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: chapter_key
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[a-z0-9][a-z0-9._-]{0,63}$" }
+      responses:
+        "200":
+          description: The chapter was restarted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TourRestartedResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: The chapter key failed validation; the message says which rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/platform/tour/steps:
+    put:
+      operationId: tourPutStepCopy
+      tags: [staff-tour]
+      summary: Edit one step's copy (platform tier)
+      description: >-
+        Staff at the door, platform administrator inside the service. Only the
+        copy fields are editable; position and advance are the walkthrough's
+        structure and are deliberately not here, and the keys are add-only
+        identifiers that are never rewritten.
+      x-role: requireStaff
+      x-guards: [requirePlatformAdmin]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TourStepEdit"
+      responses:
+        "200":
+          description: The copy edit was saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TourSavedResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: The edit failed validation; the message says which rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/platform/tour/policy:
+    put:
+      operationId: tourPutPolicy
+      tags: [staff-tour]
+      summary: Set the platform demo switch for a branch (platform tier)
+      description: >-
+        Staff at the door, platform administrator inside the service. Carries
+        demo_mode only: dealer_enabled belongs to the dealer's own gate and is
+        deliberately not on this route.
+      x-role: requireStaff
+      x-guards: [requirePlatformAdmin]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TourPolicyEdit"
+      responses:
+        "200":
+          description: The policy was saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TourSavedResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: The edit failed validation; the message says which rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # --- customer: staff account reads and the SMS consent record --------------
+  /api/v1/customers/search:
+    get:
+      operationId: customerSearch
+      tags: [staff-customer]
+      summary: Search customer accounts for the POS picker
+      description: >-
+        A bare JSON array of the account facts the picker renders; the walk-in
+        house account is excluded server-side. branch_id is fenced against the
+        caller's own grants.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          description: The branch the caller is acting for, fenced against their grants
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The matching accounts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CustomerSearchResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/customers:
+    post:
+      operationId: customerCreate
+      tags: [staff-customer]
+      summary: Create a customer account
+      description: >-
+        account_no and name are required; customer_type defaults to
+        CONTRACTOR. A supplied billing_address is validated and normalized
+        server-side (Canadian postal code and province) before insert, and an
+        account_no already in use is a 409.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerCreate"
+      responses:
+        "201":
+          description: The created account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerAccount"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/customers/{id}/billing-address:
+    put:
+      operationId: customerUpdateBillingAddress
+      tags: [staff-customer]
+      summary: Validate, normalize and store a customer's billing address
+      description: >-
+        Same Canadian postal and province enforcement as create. An empty
+        object clears the address.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerBillingAddress"
+      responses:
+        "200":
+          description: The account after the update
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerAccount"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/customers/{id}/sms-consent:
+    get:
+      operationId: customerGetSMSConsent
+      tags: [staff-customer]
+      summary: Read whether a customer may be texted
+      description: >-
+        A customer with no row answers 200 with consent:false and
+        recorded:false, not 404: nobody has ever asked this customer is an
+        answer. The cleartext number is never returned; phone_masked shows its
+        last two digits only.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The customer's texting permission
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerSMSConsent"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "501":
+          description: SMS consent is not available on this deployment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    put:
+      operationId: customerSetSMSConsent
+      tags: [staff-customer]
+      summary: Record a customer's SMS consent decision
+      description: >-
+        PUT because the request states the desired state of one fact and is
+        idempotent. The acting staff member is read from the guard-stamped
+        context, never from the body. Granting requires a number when none is
+        on file; revoking ignores the number, because you must remember the
+        number you may not text.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerSMSConsentUpdate"
+      responses:
+        "200":
+          description: The consent record after the write
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerSMSConsent"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501":
+          description: SMS consent is not available on this deployment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # --- printing: the receipt document and the print queue --------------------
+  /api/v1/pos/sales/{id}/receipt:
+    get:
+      operationId: printingGetReceipt
+      tags: [staff-printing]
+      summary: Render the print-CSS receipt document for a committed sale
+      description: >-
+        The receipt lives under the POS sale's path because that is the
+        resource it is a representation of; the printing module owns the
+        handler. The response is a rendered HTML document, not JSON, served
+        with Cache-Control no-store because the reprint counter on the page
+        must never be stale. Per-document branch authority is checked in the
+        service on top of the staff gate.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The receipt as an HTML document
+          content:
+            text/html:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/printing/jobs:
+    get:
+      operationId: printingListJobs
+      tags: [staff-printing]
+      summary: List one document's print history
+      description: >-
+        How many times this document has been printed, and by whom. An unknown
+        doc_type is refused at the service boundary with a 400 naming the
+        value.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: doc_type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [RECEIPT, LABEL_ZPL, DELIVERY_DOC]
+        - name: ref_id
+          in: query
+          required: true
+          description: The document's owner id (for example the sale id of a receipt)
+          schema: { type: string }
+      responses:
+        "200":
+          description: The print jobs for this document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrintingJobList"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- branches: the branch read surface -------------------------------------
+  /api/v1/branches:
+    get:
+      operationId: branchesList
+      tags: [staff-branches]
+      summary: List the branches the caller may reach
+      description: >-
+        A bare JSON array by contract: existing clients parse the top level as
+        an array outright. The list is fenced to the caller's own grants, and
+        exactly one row in a non-empty list carries is_default, computed per
+        caller; is_system_default is the dealer-wide fact, unfenced. Read-only:
+        this module never writes locations or system settings.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The caller's branches
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Branch" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503":
+          description: The branch lookup failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+components:
+  schemas:
+    # --- assist ---------------------------------------------------------------
+    AssistArgSpec:
+      type: object
+      required: [name, label, example, required]
+      properties:
+        name: { type: string }
+        label: { type: string }
+        example: { type: string }
+        required: { type: boolean }
+
+    AssistCommand:
+      type: object
+      description: One deterministic, read-only command the caller may run
+      required: [code, title, summary, max_tier, args]
+      properties:
+        code: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        max_tier:
+          type: integer
+          format: int32
+          description: The highest identity tier that may run it (lower tier numbers carry more authority)
+        args:
+          type: array
+          items: { $ref: "#/components/schemas/AssistArgSpec" }
+
+    AssistCommandList:
+      type: object
+      required: [commands, chat_enabled]
+      properties:
+        commands:
+          type: array
+          items: { $ref: "#/components/schemas/AssistCommand" }
+        chat_enabled: { type: boolean }
+
+    AssistCommandRequest:
+      type: object
+      required: [command, args]
+      properties:
+        command: { type: string }
+        args:
+          type: object
+          additionalProperties: { type: string }
+
+    AssistField:
+      type: object
+      description: One labelled, pre-formatted value on a result
+      required: [label, value]
+      properties:
+        label: { type: string }
+        value: { type: string }
+
+    AssistItem:
+      type: object
+      description: One record in an answer (a payment, an order, a branch's stock line)
+      required: [title, fields]
+      properties:
+        title: { type: string }
+        fields:
+          type: array
+          items: { $ref: "#/components/schemas/AssistField" }
+
+    AssistRef:
+      type: object
+      description: >-
+        The one record an answer is about, carried as data rather than as a
+        URL; the frontend turns it into a deep link through its own route
+        table.
+      required: [kind, id]
+      properties:
+        kind:
+          type: string
+          enum: [product, order, customer, quote]
+        id: { type: string, format: uuid }
+        label:
+          type: string
+          description: What to call the record on the link
+
+    AssistResult:
+      type: object
+      description: >-
+        What a command returns: a plain-English headline plus the records
+        behind it. Empty is a first-class state, not an error and not an
+        absence.
+      required: [command, headline, items, empty]
+      properties:
+        command: { type: string }
+        headline: { type: string }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AssistItem" }
+        empty: { type: boolean }
+        note:
+          type: string
+          description: An honest caveat when there is one (a truncated list, a narrowed scope)
+        ref: { $ref: "#/components/schemas/AssistRef" }
+
+    AssistInvocation:
+      type: object
+      description: One command that actually ran, with its arguments
+      required: [command, args]
+      properties:
+        command: { type: string }
+        args:
+          type: object
+          additionalProperties: { type: string }
+
+    AssistClarifyOption:
+      type: object
+      required: [label, value]
+      properties:
+        label: { type: string }
+        value: { type: string }
+        hint: { type: string }
+
+    AssistClarify:
+      type: object
+      description: >-
+        Present when the honest answer was a question: genuinely ambiguous
+        input, asked rather than guessed at.
+      required: [question, options, command, args, arg]
+      properties:
+        question: { type: string }
+        options:
+          type: array
+          items: { $ref: "#/components/schemas/AssistClarifyOption" }
+        command: { type: string }
+        args:
+          type: object
+          additionalProperties: { type: string }
+        arg:
+          type: string
+          description: The argument the chosen option completes
+
+    AssistMessage:
+      type: object
+      description: >-
+        One prior turn of the conversation. ran and clarify are the structured
+        half, echoed back by the client and treated as untrusted input.
+      required: [role, text]
+      properties:
+        role: { type: string }
+        text: { type: string }
+        tool_name: { type: string }
+        result: { $ref: "#/components/schemas/AssistResult" }
+        ran:
+          type: array
+          items: { $ref: "#/components/schemas/AssistInvocation" }
+        clarify: { $ref: "#/components/schemas/AssistClarify" }
+
+    AssistChatRequest:
+      type: object
+      required: [question]
+      properties:
+        question: { type: string }
+        history:
+          type: array
+          items: { $ref: "#/components/schemas/AssistMessage" }
+
+    AssistUsage:
+      type: object
+      description: What one exchange cost, reported only to callers who may see spend
+      required: [provider, model, tokens_in, tokens_out]
+      properties:
+        provider: { type: string }
+        model: { type: string }
+        tokens_in: { type: integer, format: int32 }
+        tokens_out: { type: integer, format: int32 }
+
+    AssistAnswer:
+      type: object
+      description: >-
+        One chat reply. limit_reached is an ordinary state with an ordinary
+        message, never an error. suggest carries command codes the surface
+        should offer as chips beneath a reply that could not answer.
+      required: [text, results, limit_reached, ran]
+      properties:
+        text: { type: string }
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/AssistResult" }
+        limit_reached: { type: boolean }
+        usage: { $ref: "#/components/schemas/AssistUsage" }
+        ran:
+          type: array
+          items: { $ref: "#/components/schemas/AssistInvocation" }
+        clarify: { $ref: "#/components/schemas/AssistClarify" }
+        carried:
+          type: array
+          description: What this answer took from earlier turns, in plain words
+          items: { type: string }
+        suggest:
+          type: array
+          items: { type: string }
+
+    AssistBudget:
+      type: object
+      description: A resolved allowance and where it came from
+      required: [tokens, source]
+      properties:
+        tokens: { type: integer, format: int32 }
+        source:
+          type: string
+          enum: [user, role, default]
+
+    AssistSpend:
+      type: object
+      description: What a person has used in a period, tokens both directions plus the exchange count
+      required: [exchanges, tokens_in, tokens_out]
+      properties:
+        exchanges: { type: integer, format: int32 }
+        tokens_in: { type: integer, format: int32 }
+        tokens_out: { type: integer, format: int32 }
+
+    AssistMe:
+      type: object
+      required: [budget, chat_enabled, provider, spend_visible, is_admin]
+      properties:
+        budget: { $ref: "#/components/schemas/AssistBudget" }
+        chat_enabled: { type: boolean }
+        provider: { type: string }
+        spend_visible: { type: boolean }
+        is_admin: { type: boolean }
+        spend:
+          $ref: "#/components/schemas/AssistSpend"
+        over_budget:
+          type: boolean
+          description: Present alongside spend, when spend is visible
+
+    AssistUserSpend:
+      type: object
+      description: One person's row on the admin spend surface
+      required: [user_id, display_name, email, role_code, exchanges, tokens_in, tokens_out, budget]
+      properties:
+        user_id: { type: string }
+        display_name: { type: string }
+        email: { type: string }
+        role_code: { type: string }
+        exchanges: { type: integer, format: int32 }
+        tokens_in: { type: integer, format: int32 }
+        tokens_out: { type: integer, format: int32 }
+        budget: { $ref: "#/components/schemas/AssistBudget" }
+
+    AssistSpendReport:
+      type: object
+      required: [month, users]
+      properties:
+        month:
+          type: string
+          description: The period the report covers, in year-month form
+        users:
+          type: array
+          items: { $ref: "#/components/schemas/AssistUserSpend" }
+
+    AssistLimitsView:
+      type: object
+      required: [role_budgets, user_overrides, default_budget]
+      properties:
+        role_budgets:
+          type: object
+          additionalProperties: { type: integer, format: int32 }
+        user_overrides:
+          type: object
+          additionalProperties: { type: integer, format: int32 }
+        default_budget:
+          type: integer
+          format: int32
+          description: The code default that applies when neither a role default nor an override exists
+
+    AssistBudgetBody:
+      type: object
+      required: [tokens]
+      properties:
+        tokens: { type: integer, format: int32 }
+
+    AssistRoleLimitResult:
+      type: object
+      required: [role_code, tokens]
+      properties:
+        role_code: { type: string }
+        tokens: { type: integer, format: int32 }
+
+    AssistUserLimitResult:
+      type: object
+      required: [user_id, tokens, source]
+      properties:
+        user_id: { type: string }
+        tokens: { type: integer, format: int32 }
+        source:
+          type: string
+          enum: [user]
+
+    AssistUserLimitResetResult:
+      type: object
+      required: [user_id, source]
+      properties:
+        user_id: { type: string }
+        source:
+          type: string
+          enum: [role]
+
+    AssistSettings:
+      type: object
+      required: [provider, model, chat_enabled, spend_visible_to_non_admin]
+      properties:
+        provider:
+          type: string
+          enum: [stub, anthropic]
+        model: { type: string }
+        chat_enabled: { type: boolean }
+        spend_visible_to_non_admin: { type: boolean }
+
+    AssistSettingsResponse:
+      type: object
+      required: [settings, key_env_var, key_present]
+      properties:
+        settings: { $ref: "#/components/schemas/AssistSettings" }
+        key_env_var:
+          type: string
+          description: The NAME of the environment variable holding the provider credential, never its value
+        key_present:
+          type: boolean
+          description: Whether the credential is present in the environment
+
+    AssistSettingBody:
+      type: object
+      required: [key, value]
+      properties:
+        key: { type: string }
+        value: { type: string }
+
+    AssistSettingResult:
+      type: object
+      required: [key, value]
+      properties:
+        key: { type: string }
+        value: { type: string }
+
+    # --- product --------------------------------------------------------------
+    Product:
+      type: object
+      description: >-
+        The catalogue view of a products row, promoted attributes included.
+        on_hand_by_branch and list_price_cents are enrichment read through
+        cross-module seams, present on the list read only; a product the
+        catalogue cannot price is still rendered.
+      required:
+        - id
+        - sku
+        - name
+        - description
+        - manufacturer
+        - collection
+        - color
+        - finish
+        - application
+        - color_family
+        - texture
+        - product_size
+        - sold_by
+        - base_uom
+        - dimensions_lwh
+        - is_featured
+        - is_special_order
+        - contractor_pricing_event_discount
+        - full_skid_quantity
+        - layer_quantity
+        - pallet_count
+        - minimum_order_qty
+        - is_active
+        - metadata
+      properties:
+        id: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        description: { type: string }
+        manufacturer: { type: string }
+        collection: { type: string }
+        color: { type: string }
+        finish: { type: string }
+        application: { type: string }
+        color_family: { type: string }
+        texture: { type: string }
+        product_size: { type: string }
+        sold_by: { type: string }
+        base_uom:
+          type: string
+          description: The stocking unit, the fallback sell unit when sold_by is unset
+        dimensions_lwh: { type: string }
+        is_featured: { type: boolean }
+        is_special_order: { type: boolean }
+        contractor_pricing_event_discount: { type: boolean }
+        full_skid_quantity: { type: [integer, "null"], format: int32 }
+        layer_quantity: { type: [integer, "null"], format: int32 }
+        pallet_count: { type: [integer, "null"], format: int32 }
+        minimum_order_qty:
+          type: [string, "null"]
+          description: A decimal carried as a string
+        is_active: { type: boolean }
+        metadata: { type: [object, "null"], additionalProperties: true }
+        on_hand_by_branch:
+          type: object
+          description: Branch id to on-hand in base units
+          additionalProperties: { type: number }
+        list_price_cents:
+          type: [integer, "null"]
+          format: int64
+          description: The retail anchor; absent when none is set, which is not the same as zero
+        list_price_uom:
+          type: string
+          description: The unit list_price_cents is denominated in, carried only with it
+
+    ProductPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Product" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    ProductFacetValue:
+      type: object
+      required: [value, count]
+      properties:
+        value: { type: string }
+        count: { type: integer, format: int32 }
+
+    ProductFacet:
+      type: object
+      description: One facet's distinct values with match counts under the current filter
+      required: [field, values]
+      properties:
+        field:
+          type: string
+          enum: [manufacturer, collection, color, finish, application, color_family, category]
+        values:
+          type: array
+          items: { $ref: "#/components/schemas/ProductFacetValue" }
+
+    ProductCatalogResult:
+      type: object
+      description: The compact search hit the staff picker consumes
+      required: [product_id, sku, name, category, base_uom]
+      properties:
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        category:
+          type: string
+          description: The product's category code
+        base_uom: { type: string }
+
+    ProductSearchResults:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ProductCatalogResult" }
+
+    ProductCounterHit:
+      type: object
+      description: >-
+        One counter search result: enough to render a tile and add a line.
+        list_price_cents is the retail anchor for display, never the sell
+        price. on_hand_branch is absent when there is no stock record, which
+        is not the same as zero on hand.
+      required: [product_id, sku, name, base_uom, has_image, match_reason]
+      properties:
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        description: { type: string }
+        collection: { type: string }
+        application: { type: string }
+        color_family: { type: string }
+        base_uom: { type: string }
+        sold_by: { type: string }
+        has_image: { type: boolean }
+        match_reason:
+          type: string
+          description: Which rank arm matched, shown so a cashier can tell why the row is listed
+          enum: [EXACT, SKU_PREFIX, NAME_PREFIX, NAME, DESCRIPTION, ALIAS, FUZZY]
+        on_hand_branch:
+          type: number
+          description: On-hand in base units at the requested branch
+        on_hand_by_branch:
+          type: object
+          additionalProperties: { type: number }
+        list_price_cents: { type: integer, format: int64 }
+
+    ProductCounterSearchResults:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ProductCounterHit" }
+
+    ProductCoverageBasis:
+      type: object
+      description: >-
+        One product's material calculator basis: the coverage fact, the unit
+        it sells in and the conversions between them. Every quantity is a
+        number in its named unit; a missing number is null, never zero.
+      required:
+        - product_id
+        - sku
+        - name
+        - category
+        - base_uom
+        - base_dimension
+        - sell_uom
+        - sell_dimension
+        - sell_uom_factor
+        - coverage_sf_per_unit
+        - coverage_source
+        - pallet_factor
+        - break_pallet_allowed
+        - waste_factor_pct
+        - density_t_per_cyd
+      properties:
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        category:
+          type: string
+          description: The category code, empty when uncategorised
+        base_uom:
+          type: string
+          description: The stocking unit coverage_sf_per_unit is denominated in
+        base_dimension:
+          type: string
+          description: The base unit's dimension (count, area, weight, volume or length)
+        sell_uom:
+          type: string
+          description: The unit a quote line carries
+        sell_dimension: { type: string }
+        sell_uom_factor:
+          type: [number, "null"]
+          description: How many base units one sell unit is; null when no conversion row exists
+        coverage_sf_per_unit:
+          type: [number, "null"]
+          description: The square footage one base unit covers; null means no coverage data
+        coverage_source:
+          type: string
+          description: Where the coverage number came from (column or uom), empty exactly when it is null
+        pallet_factor:
+          type: [number, "null"]
+          description: Base units on one pallet; null when the product has no pallet row
+        break_pallet_allowed: { type: boolean }
+        waste_factor_pct:
+          type: number
+          description: The product's own recommended waste, advice carried to the surface
+        density_t_per_cyd:
+          type: [number, "null"]
+          description: Tonnes per cubic yard for a product sold by weight; null when not recorded
+
+    ProductCoverageResults:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ProductCoverageBasis" }
+
+    ProductAttributeUpdate:
+      type: object
+      description: >-
+        The attribute edit body: a partial map over the editable allowlist
+        only. Any key outside this list is rejected with a 400.
+      additionalProperties: false
+      properties:
+        name: { type: string }
+        description: { type: string }
+        manufacturer: { type: string }
+        collection: { type: string }
+        color: { type: string }
+        finish: { type: string }
+        application: { type: string }
+        color_family: { type: string }
+        texture: { type: string }
+        product_size: { type: string }
+        sold_by: { type: string }
+        dimensions_lwh: { type: string }
+        is_featured: { type: boolean }
+        is_special_order: { type: boolean }
+        contractor_pricing_event_discount: { type: boolean }
+        full_skid_quantity: { type: integer, format: int32 }
+        layer_quantity: { type: integer, format: int32 }
+        pallet_count: { type: integer, format: int32 }
+        minimum_order_qty:
+          type: string
+          description: A decimal carried as a string
+        metadata: { type: object, additionalProperties: true }
+
+    ProductImagePutResult:
+      type: object
+      required: [product_id, byte_size]
+      properties:
+        product_id: { type: string, format: uuid }
+        byte_size: { type: integer, format: int32 }
+
+    ProductImageDeleteResult:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [DELETED]
+
+    # --- tour -----------------------------------------------------------------
+    TourStep:
+      type: object
+      description: >-
+        One bubble: where to be, what to point at, what it says and how the
+        person moves on. Every field is omitempty on the wire; a route that is
+        absent means the step speaks about wherever the person already is.
+      properties:
+        step_key: { type: string }
+        position: { type: integer, format: int32 }
+        route: { type: string }
+        anchor: { type: string }
+        line: { type: string }
+        advance:
+          type: string
+          enum: [NEXT, CLICK, ROUTE]
+
+    TourChapter:
+      type: object
+      description: >-
+        One chapter and its steps, in order. role is editorial, not an
+        authorization fence: the read does not filter chapters by the caller's
+        role.
+      properties:
+        chapter_key: { type: string }
+        position: { type: integer, format: int32 }
+        title: { type: string }
+        promise: { type: string }
+        role: { type: string }
+        route: { type: string }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/TourStep" }
+
+    TourMark:
+      type: object
+      description: >-
+        One bookmark: where this caller had got to in one chapter. A chapter
+        nobody started arrives as no mark at all. step_key is absent when the
+        chapter is DONE or DISMISSED.
+      properties:
+        chapter_key: { type: string }
+        step_key:
+          type: string
+          description: The step they are on, not the one they finished
+        state:
+          type: string
+          enum: [OPEN, DONE, DISMISSED]
+
+    TourView:
+      type: object
+      description: >-
+        The GET /api/v1/tour answer. Every field is omitempty, so the payload
+        can marshal as {} when the walkthrough is off; null never appears in
+        the off bytes. progress carries only chapters that are also in
+        chapters.
+      properties:
+        chapters:
+          type: array
+          items: { $ref: "#/components/schemas/TourChapter" }
+        progress:
+          type: array
+          items: { $ref: "#/components/schemas/TourMark" }
+        can_edit:
+          type: boolean
+          description: Whether the caller holds the platform-administrator authority
+
+    TourProgressEdit:
+      type: object
+      description: >-
+        The bookmark write. There is no user id field: the row written is the
+        authenticated caller's, resolved server-side. step_key is shape-checked
+        but not existence-checked, and is empty when the chapter is DONE or
+        DISMISSED.
+      required: [chapter_key, step_key, state]
+      properties:
+        chapter_key:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9._-]{0,63}$"
+        step_key:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9._-]{0,63}$"
+        state:
+          type: string
+          enum: [OPEN, DONE, DISMISSED]
+
+    TourStepEdit:
+      type: object
+      description: >-
+        The platform copy edit: which step, and the three fields a platform
+        administrator may change. line is at most 72 characters; route and
+        anchor may be empty strings.
+      required: [chapter_key, step_key, line, route, anchor]
+      properties:
+        chapter_key:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9._-]{0,63}$"
+        step_key:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9._-]{0,63}$"
+        line:
+          type: string
+          minLength: 1
+          maxLength: 72
+        route:
+          type: string
+          pattern: "^#[a-z-]+(/[a-z-]+)?$"
+          description: A screen this app has, spelled like #sales/pos; empty stays put
+        anchor:
+          type: string
+          pattern: "^(testid|tag):[A-Za-z0-9._:-]{1,64}$"
+          description: A published test id or a registered element, and nothing else
+
+    TourPolicyEdit:
+      type: object
+      description: >-
+        The platform demo switch, and only that switch: dealer_enabled is the
+        dealer's own knob and is deliberately not carried here.
+      required: [branch_id, demo_mode]
+      properties:
+        branch_id: { type: string }
+        demo_mode: { type: boolean }
+
+    TourSavedResult:
+      type: object
+      required: [saved]
+      properties:
+        saved: { type: boolean }
+
+    TourRestartedResult:
+      type: object
+      required: [restarted]
+      properties:
+        restarted: { type: boolean }
+
+    # --- customer ---------------------------------------------------------------
+    CustomerSearchResult:
+      type: object
+      description: >-
+        The counter-facing projection the POS picker renders: enough to
+        identify the account and show its credit posture.
+      required: [id, name, account_no, customer_type, payment_terms_days, credit_limit_cents, open_balance_cents]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        account_no: { type: string }
+        customer_type:
+          type: string
+          enum: [CONTRACTOR, RETAIL, BUILDER, GOVERNMENT, INTERNAL]
+        payment_terms_days: { type: integer, format: int32 }
+        credit_limit_cents: { type: integer, format: int64 }
+        open_balance_cents:
+          type: integer
+          format: int64
+          description: The account's current AR balance
+
+    CustomerAccount:
+      type: object
+      description: The resolved view of a customers row
+      required: [customer_id, account_no, name, customer_type, branch_id, payment_terms_days, credit_limit_cents, on_hold, tax_exempt, balance_cents, is_active]
+      properties:
+        customer_id: { type: string, format: uuid }
+        account_no: { type: string }
+        name: { type: string }
+        customer_type:
+          type: string
+          enum: [CONTRACTOR, RETAIL, BUILDER, GOVERNMENT, INTERNAL]
+        branch_id:
+          type: string
+          description: The home branch, empty when unset
+        payment_terms_days: { type: integer, format: int32 }
+        credit_limit_cents: { type: integer, format: int64 }
+        on_hold: { type: boolean }
+        tax_exempt: { type: boolean }
+        balance_cents:
+          type: integer
+          format: int64
+          description: The account's current AR balance, composed in by the billing read
+        is_active: { type: boolean }
+
+    CustomerCreate:
+      type: object
+      required: [account_no, name]
+      properties:
+        account_no: { type: string }
+        name: { type: string }
+        customer_type:
+          type: string
+          default: CONTRACTOR
+          enum: [CONTRACTOR, RETAIL, BUILDER, GOVERNMENT, INTERNAL]
+        home_branch_id: { type: string, format: uuid }
+        payment_terms_days: { type: integer, format: int32, minimum: 0 }
+        credit_limit_cents: { type: integer, format: int64, minimum: 0 }
+        tax_exempt: { type: boolean }
+        billing_address:
+          type: object
+          additionalProperties: true
+          description: Validated and normalized server-side before insert
+
+    CustomerBillingAddress:
+      type: object
+      description: >-
+        The billing address map, validated and normalized server-side
+        (Canadian postal code and province). An empty object clears the
+        address.
+      additionalProperties: true
+
+    CustomerSMSConsent:
+      type: object
+      description: >-
+        One customer's texting permission as the staff surface reports it.
+        consent is the single question every automation asks; recorded
+        distinguishes a refusal from nobody having asked. The cleartext number
+        is never returned.
+      required: [customer_id, consent, recorded]
+      properties:
+        customer_id: { type: string, format: uuid }
+        consent: { type: boolean }
+        recorded: { type: boolean }
+        phone_masked:
+          type: string
+          description: The number consent applies to, masked to its last two digits
+        opt_out_reason:
+          type: string
+          description: Why a recorded refusal stands (for example a STOP reply)
+
+    CustomerSMSConsentUpdate:
+      type: object
+      required: [consent, phone_e164]
+      properties:
+        consent:
+          type: boolean
+          description: The decision; false is a revocation, not a deletion
+        phone_e164:
+          type: string
+          description: Required to grant when no number is on file; ignored on a revocation
+
+    # --- printing ---------------------------------------------------------------
+    PrintingJob:
+      type: object
+      description: One row of the print queue
+      required: [id, doc_type, ref_id, branch_id, render_target, status, requested_at]
+      properties:
+        id: { type: string, format: uuid }
+        doc_type:
+          type: string
+          enum: [RECEIPT, LABEL_ZPL, DELIVERY_DOC]
+        ref_id: { type: string }
+        branch_id: { type: string, format: uuid }
+        render_target:
+          type: string
+          enum: [BROWSER, ZPL]
+        status:
+          type: string
+          enum: [QUEUED, PRINTED, FAILED]
+        requested_by: { type: string }
+        failure_reason: { type: string }
+        requested_at: { type: string, format: date-time }
+        printed_at: { type: string, format: date-time }
+
+    PrintingJobList:
+      type: object
+      required: [jobs]
+      properties:
+        jobs:
+          type: array
+          items: { $ref: "#/components/schemas/PrintingJob" }
+
+    # --- branches ---------------------------------------------------------------
+    BranchAddress:
+      type: object
+      description: The structured branch address; any absent key serializes as an empty string
+      required: [line1, city, province, postal, country]
+      properties:
+        line1: { type: string }
+        city: { type: string }
+        province: { type: string }
+        postal: { type: string }
+        country: { type: string }
+
+    Branch:
+      type: object
+      description: >-
+        The read view of one branch location. is_default is the caller-relative
+        landing branch (exactly one row in a non-empty list carries it);
+        is_system_default is the dealer-wide fact, unfenced and unchanged.
+      required: [id, code, name, address, is_default, is_system_default, is_active]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        address: { $ref: "#/components/schemas/BranchAddress" }
+        is_default: { type: boolean }
+        is_system_default: { type: boolean }
+        is_active: { type: boolean }

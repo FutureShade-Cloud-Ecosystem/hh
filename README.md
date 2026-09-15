@@ -1,2 +1,2 @@
 # hh
-monorepo product suite for HardScapeOS
+monorepo product suite for Hardscape House

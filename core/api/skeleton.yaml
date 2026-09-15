@@ -1,0 +1,1228 @@
+# hh core API contract: skeleton.
+#
+# This file carries everything that is not transcribed from a HardscapeOS ERP
+# module: the document header, shared components, the canonical contract
+# entities from analysis/DECISIONS.md (D6 to D12), the D4 operator surface,
+# and the sync surface from context section 4.5. Per-module path groups are
+# transcribed into core/api/fragments/ and merged in by core/api/tools/merge.mjs.
+#
+# House rules: no em or en dashes anywhere in this file; no dates, durations or
+# calendar references in prose. Field names such as valid_until or created_at
+# are schema vocabulary, not prose.
+
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: hh core API
+  version: "1"
+  description: >-
+    The contract for the hh core, authored before any Go code exists
+    (API first, per the HH migration path). Part one is the tenant API: the
+    contractor portal surface of the HardscapeOS ERP, renamed from
+    /api/portal/v1 to /api/v1/tenant, with schemas cross-checked against the
+    recorded live fixtures. Part two is the staff API: one path group per ERP
+    module, every list cursor-paginated, every operation carrying its gate in
+    x-role, org resolved from the X-Org header. Part three is the sync
+    surface: one pull and one push per offline scope the manifest declares.
+    Canonical entities follow analysis/DECISIONS.md D6 to D12; the OrderCard
+    schema carries the total state map from dealer order states to the
+    contractor vocabulary.
+
+security:
+  - StaffBearer: []
+
+servers:
+  - url: /
+    description: Served by the platform edge per environment per org; the contract pins no host.
+
+tags:
+  - { name: tenant-auth, description: "Tenant API: login, invite, token and password surfaces (pre-auth where noted)" }
+  - { name: tenant-team, description: "Tenant API: users and invites for the contractor account" }
+  - { name: tenant-dashboard, description: "Tenant API: account dashboard and billing summary" }
+  - { name: tenant-billing, description: "Tenant API: invoices (InvoiceView, D9)" }
+  - { name: tenant-orders, description: "Tenant API: orders, OrderCard projection (D6, D7), reorder and returns" }
+  - { name: tenant-quotes, description: "Tenant API: dealer quotes (D8)" }
+  - { name: tenant-payments, description: "Tenant API: stored payment methods and multi-invoice pay" }
+  - { name: tenant-procurement, description: "Tenant API: the planning board and RFQ submit" }
+  - { name: tenant-projects, description: "Tenant API: projects and jobs rollup" }
+  - { name: tenant-catalog, description: "Tenant API: catalog search and product pages" }
+  - { name: tenant-addresses, description: "Tenant API: address book" }
+  - { name: public, description: "Pre-auth surfaces: quote share acceptance, will-call confirm, warranty intake, billing open pixels" }
+  - { name: sync, description: "Offline sync pull and push per declared scope (context 4.5)" }
+  - { name: operator, description: "Org-scoped operator endpoints the launcher section consumes (D4)" }
+  - { name: staff-assist }
+  - { name: staff-audit }
+  - { name: staff-bankrec }
+  - { name: staff-billing }
+  - { name: staff-branches }
+  - { name: staff-bistrack }
+  - { name: staff-compliance }
+  - { name: staff-customer }
+  - { name: staff-dashboard }
+  - { name: staff-demo }
+  - { name: staff-dispatch }
+  - { name: staff-export }
+  - { name: staff-feedback }
+  - { name: staff-finstmt }
+  - { name: staff-gl }
+  - { name: staff-identity }
+  - { name: staff-invcount }
+  - { name: staff-inventory }
+  - { name: staff-landedcost }
+  - { name: staff-lien }
+  - { name: staff-messaging }
+  - { name: staff-order }
+  - { name: staff-payment }
+  - { name: staff-payments }
+  - { name: staff-pos }
+  - { name: staff-pricing }
+  - { name: staff-printing }
+  - { name: staff-product }
+  - { name: staff-purchasing }
+  - { name: staff-quote }
+  - { name: staff-quoteassist }
+  - { name: staff-reporting }
+  - { name: staff-settings }
+  - { name: staff-tasks }
+  - { name: staff-tax }
+  - { name: staff-till }
+  - { name: staff-tour }
+  - { name: staff-warranty }
+
+paths:
+  # --- Part three: the sync surface ----------------------------------------
+  # One pull and one push per scope declared by the manifest frontends (the
+  # union over every offline.scopes list in analysis/role-catalog.yaml).
+  # Both audiences reach it: staff with StaffBearer and X-Org, tenant shells
+  # with TenantBearer and no X-Org (the tenant rule applies to these routes).
+  # Protocol per context 4.5: pull by since=seq, push replays the outbox in
+  # order with client-generated ids as idempotency keys, the core assigns seq,
+  # conflicts return server state under the per-entity policy, deletes are
+  # tombstones.
+  /api/v1/sync/{scope}:
+    get:
+      operationId: syncPull
+      tags: [sync]
+      summary: Pull every change in a scope since a sequence number
+      x-role: scope-member
+      x-addition: "context 4.5 sync protocol; no ERP source route"
+      security:
+        - StaffBearer: []
+        - TenantBearer: []
+      parameters:
+        - $ref: "#/components/parameters/XOrgSync"
+        - $ref: "#/components/parameters/SyncScope"
+        - $ref: "#/components/parameters/Since"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of changes; empty when the client is current
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncPullResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: syncPush
+      tags: [sync]
+      summary: Replay the client outbox against a scope, in order
+      x-role: scope-member
+      x-addition: "context 4.5 sync protocol; no ERP source route"
+      security:
+        - StaffBearer: []
+        - TenantBearer: []
+      parameters:
+        - $ref: "#/components/parameters/XOrgSync"
+        - $ref: "#/components/parameters/SyncScope"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncPushRequest"
+      responses:
+        "200":
+          description: One result per pushed operation, in push order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncPushResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --- D10: the canonical attachment entity ---------------------------------
+  # Bytes live in Appwrite Storage; the core holds the record and the
+  # polymorphic link. Offline scopes carry attachments through
+  # attachments_queue as the offline framework defines.
+  /api/v1/attachments:
+    post:
+      operationId: createAttachment
+      tags: [staff-order]
+      summary: Register an attachment whose bytes already landed in Appwrite Storage
+      x-role: requireStaff
+      x-addition: "D10 canonical attachment entity; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttachmentCreate"
+      responses:
+        "201":
+          description: The registered attachment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Attachment"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/attachments/{id}:
+    get:
+      operationId: getAttachment
+      tags: [staff-order]
+      summary: Read one attachment record (never the bytes; bytes come from Appwrite Storage)
+      x-role: requireStaff
+      x-addition: "D10 canonical attachment entity; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The attachment record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Attachment"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/attachments/{id}/links:
+    post:
+      operationId: createAttachmentLink
+      tags: [staff-order]
+      summary: Attach one file to an owner without per-owner columns
+      x-role: requireStaff
+      x-addition: "D10 polymorphic attachment_link; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttachmentLink"
+      responses:
+        "201":
+          description: The created link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachmentLink"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- D12: tenant_brand, staff write side ----------------------------------
+  # The tenant read side is GET /api/v1/tenant/config, whose response embeds
+  # TenantBrand. Rendered inside the HH Pro frame on customer quotes and the
+  # public desk; the dealer's tokens never appear on a contractor's document.
+  /api/v1/tenants/{tenantId}/brand:
+    get:
+      operationId: getTenantBrand
+      tags: [staff-settings]
+      summary: Read a tenant's brand record
+      x-role: requireStaff
+      x-addition: "D12 tenant_brand; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/TenantId"
+      responses:
+        "200":
+          description: The tenant brand
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantBrand"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: putTenantBrand
+      tags: [staff-settings]
+      summary: Create or replace a tenant's brand record
+      x-role: requireAdmin
+      x-addition: "D12 tenant_brand; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/TenantId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantBrand"
+      responses:
+        "200":
+          description: The stored tenant brand
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantBrand"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- D4: the operator surface ---------------------------------------------
+  # Org-scoped staff endpoints the launcher's operator-console section
+  # consumes (D4). The credential route is write only: the credential is
+  # validated before it is stored and no route returns it.
+  /api/v1/operator/platform-keys:
+    get:
+      operationId: listPlatformKeys
+      tags: [operator]
+      summary: Read the platform key roster with each dealer override
+      x-role: requireStaff
+      x-addition: "D4 operator read for the launcher; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The roster page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformKeyRosterPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/operator/platform-keys/{key}:
+    put:
+      operationId: putPlatformKey
+      tags: [operator]
+      summary: Set a platform floor or clear a dealer override for one key
+      x-role: operator
+      x-addition: "D4 operator write for the launcher; the server marks the write; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/PlatformKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformKeyWrite"
+      responses:
+        "200":
+          description: The roster entry after the write
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformKeyRosterEntry"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/operator/dealer-credential:
+    put:
+      operationId: putDealerCredential
+      tags: [operator]
+      summary: Store the dealer's LLM credential (write only, validated before it is stored)
+      description: >-
+        The credential is validated against the provider before it is stored
+        and has no route back out: no GET exists on this path and no response
+        body anywhere in the document carries it. The only readback the
+        contract allows is the configured flag on the roster entry.
+      x-role: operator
+      x-addition: "D4 write-only dealer credential route; source hh_pro_dibbits/server/admin-store.ts (storeKey); no ERP route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DealerCredentialWrite"
+      responses:
+        "204":
+          description: Stored; nothing is returned, by design
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/operator/usage:
+    get:
+      operationId: getOperatorUsage
+      tags: [operator]
+      summary: Read the per-account usage counter for the org
+      x-role: operator
+      x-addition: "D4 operator read for the launcher; source hh_pro_dibbits/server/admin-store.ts (usage counter); no ERP route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The usage page, one row per contractor account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageCounterPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- Non-literal registrations --------------------------------------------
+  # These two modules register routes by concatenation or table, so the
+  # literal grep the parity check runs cannot see them. They are listed in
+  # drop-list.yaml under additions with their source files.
+  /api/v1/demo/session:
+    post:
+      operationId: demoCreateSession
+      tags: [staff-demo]
+      summary: Mint a demo staff session for one named flow
+      description: >-
+        A documented credential bypass, pre-auth by design, mounted only when
+        the deployment is a demo or dev deployment (config.DemoEnabled). The
+        module refuses to register at all unless both the session issuer and
+        the audit recorder are wired. The request carries a flow name and
+        nothing else, so there is nowhere to put an email or a role.
+      x-role: public
+      security: []
+      x-source: hardscapeos_dibbits/backend/internal/demo/handler.go (RouteSession)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DemoSessionRequest"
+      responses:
+        "200":
+          description: The demo session; user is field-for-field the staff login user block
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DemoSessionResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /api/v1/demo/flows:
+    get:
+      operationId: demoListFlows
+      tags: [staff-demo]
+      summary: List the demo flows a landing page can offer
+      description: >-
+        Pre-auth and minimal on purpose: each row carries the flow, the role
+        code and a label, never the persona's account name.
+      x-role: public
+      security: []
+      x-source: hardscapeos_dibbits/backend/internal/demo/handler.go (RouteFlows)
+      responses:
+        "200":
+          description: The flow listing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DemoFlowList"
+  /api/v1/bistrack/status:
+    get:
+      operationId: bistrackStatus
+      tags: [staff-bistrack]
+      summary: Read the BisTrack live-sync module status
+      description: >-
+        Phase 0 of the BisTrack replacement is schema-first and structurally
+        unable to sync; this read-only status is its whole surface.
+      x-role: requireStaff
+      x-source: hardscapeos_dibbits/backend/internal/bistrack/handler.go (route-descriptor table)
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The sync status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BistrackStatus"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+components:
+  securitySchemes:
+    StaffBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Staff identity: a platform-issued JWT verified against the platform
+        JWK Set. The org is resolved from the X-Org header and validated
+        against Team membership before any database is touched; the thirteen
+        staff roles live in app-role tables keyed by platform user id (D3).
+    TenantBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Tenant identity: a contractor-portal token. The org comes from the
+        Team, the tenant (the contractor account) comes from the token, and
+        branch sits beneath both (D3). Tenant routes never take X-Org.
+
+  parameters:
+    XOrg:
+      name: X-Org
+      in: header
+      required: true
+      description: >-
+        Org slug. Resolved and validated against Team membership before any
+        database is touched (context 4.4).
+      schema: { type: string }
+    XOrgSync:
+      name: X-Org
+      in: header
+      required: false
+      description: >-
+        Org slug for sync callers. Required with StaffBearer, resolved and
+        validated against Team membership before any database is touched.
+        Never sent with TenantBearer: the org comes from the Team and the
+        tenant from the token, per the rule that tenant routes never take
+        X-Org.
+      schema: { type: string }
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TenantId:
+      name: tenantId
+      in: path
+      required: true
+      description: The contractor account id (tenant scope sits beneath the org, D3)
+      schema: { type: string, format: uuid }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: >-
+        Opaque cursor from a previous page's next_cursor. Ordered streams use
+        a per-scope monotonic seq; pagination is by cursor, never offset
+        (context 4.4).
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, format: int32, minimum: 1, maximum: 200, default: 50 }
+    Since:
+      name: since
+      in: query
+      required: false
+      description: Return only changes with a seq greater than this value
+      schema: { type: integer, format: int64, minimum: 0, default: 0 }
+    SyncScope:
+      name: scope
+      in: path
+      required: true
+      description: >-
+        One offline scope. The enum is the union of every offline.scopes list
+        in analysis/role-catalog.yaml; hh/manifest.yaml declares the same set
+        per frontend and the two may not disagree.
+      schema:
+        $ref: "#/components/schemas/SyncScope"
+    PlatformKey:
+      name: key
+      in: path
+      required: true
+      description: One platform key from the roster
+      schema: { type: string }
+
+  responses:
+    BadRequest:
+      description: The request did not parse or failed validation
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Authenticated, but the gate in x-role refused
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: >-
+        Not found. Cross-tenant reads answer not-found, never forbidden, so
+        existence does not leak across tenants.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: >-
+        The write conflicted with server state. For sync pushes the body is
+        the conflict envelope; elsewhere it is the Error envelope.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      description: >-
+        The only error envelope, matching platform/httpx: one error string in
+        the client's own vocabulary, with module prefixes stripped on the way
+        out.
+      required: [error]
+      properties:
+        error: { type: string }
+      additionalProperties: true
+
+    # --- Sync surface schemas (context 4.5) --------------------------------
+
+    SyncScope:
+      type: string
+      description: The union of every offline scope the role catalog declares
+      enum:
+        - acks
+        - aging
+        - approvals
+        - attachments
+        - catalog
+        - channels
+        - customer_quotes
+        - customers
+        - cycle_counts
+        - delivery_instructions
+        - delivery_stops
+        - drivers
+        - inventory_lookup
+        - invoices
+        - loads
+        - messages
+        - notify_prefs
+        - orders
+        - parked_tickets
+        - payment_methods
+        - payments
+        - pick_tasks
+        - pickups
+        - pod
+        - price_matrix
+        - products
+        - projects
+        - purchase_orders
+        - quotes
+        - receiving
+        - runs
+        - scope_items
+        - shortages
+        - stops
+        - team
+        - tracking_events
+        - trucks
+        - vendors
+        - warranty_board
+        - warranty_claims
+        - weights
+        - widget_measures
+        - will_call
+
+    SyncEntity:
+      type: object
+      description: >-
+        One projected entity in a scope. data is the projection table row for
+        the scope; the shape per scope is the resource schema this document
+        defines for the scope's owning module.
+      required: [id, seq, data]
+      properties:
+        id: { type: string, format: uuid }
+        seq: { type: integer, format: int64 }
+        data: { type: object, additionalProperties: true }
+
+    SyncTombstone:
+      type: object
+      description: Deletes are tombstones; a tombstone carries the id and the seq of the delete
+      required: [id, seq]
+      properties:
+        id: { type: string, format: uuid }
+        seq: { type: integer, format: int64 }
+
+    SyncPullResponse:
+      type: object
+      required: [scope, items, tombstones, last_seq]
+      properties:
+        scope: { $ref: "#/components/schemas/SyncScope" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SyncEntity" }
+        tombstones:
+          type: array
+          items: { $ref: "#/components/schemas/SyncTombstone" }
+        last_seq:
+          type: integer
+          format: int64
+          description: The high-water mark the client stores as sync_state.last_seq
+        next_cursor:
+          type: [string, "null"]
+          description: Present when more pages follow
+
+    SyncPushOperation:
+      type: object
+      description: >-
+        One outbox row. client_id is client-generated and is the idempotency
+        key: a replayed push with the same client_id returns the first result
+        and never applies twice.
+      required: [client_id, op, payload]
+      properties:
+        client_id: { type: string, format: uuid }
+        op:
+          type: string
+          enum: [create, update, delete]
+        entity:
+          type: string
+          description: The entity name inside the scope (for example a pick_tasks line)
+        payload:
+          type: object
+          additionalProperties: true
+        base_seq:
+          type: integer
+          format: int64
+          description: The seq the client based this write on, for conflict detection
+
+    SyncPushRequest:
+      type: object
+      required: [ops]
+      properties:
+        ops:
+          type: array
+          description: The outbox replayed in order
+          items: { $ref: "#/components/schemas/SyncPushOperation" }
+
+    SyncConflict:
+      type: object
+      description: >-
+        The conflict envelope. The policy comes from the manifest per entity:
+        server_wins returns the server state; last_write_wins_by_field applies
+        the merge and reports it; manual surfaces a review card and applies
+        nothing.
+      required: [client_id, policy, server_state]
+      properties:
+        client_id: { type: string, format: uuid }
+        policy:
+          type: string
+          enum: [server_wins, last_write_wins_by_field, manual]
+        server_state:
+          type: object
+          additionalProperties: true
+        applied:
+          type: boolean
+          description: False for manual; the entity waits on a review card
+
+    SyncPushResult:
+      type: object
+      required: [client_id, status]
+      properties:
+        client_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [applied, conflict, rejected]
+        seq:
+          type: integer
+          format: int64
+          description: The seq the core assigned, when applied
+        conflict:
+          $ref: "#/components/schemas/SyncConflict"
+        error:
+          type: string
+          description: Present when status is rejected
+
+    SyncPushResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/SyncPushResult" }
+
+    # --- D10: attachment and attachment_link --------------------------------
+
+    Attachment:
+      type: object
+      description: >-
+        The canonical attachment entity (D10). Bytes live in Appwrite Storage;
+        this record is metadata only.
+      required: [id, org_id, kind, appwrite_file_id, bucket, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        tenant_id:
+          type: [string, "null"]
+          format: uuid
+          description: Nullable; set when the attachment belongs to a contractor account
+        kind:
+          type: string
+          enum: [photo, proof_of_delivery, document, signature, product_image]
+        appwrite_file_id: { type: string }
+        bucket: { type: string }
+        mime: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        checksum: { type: string }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        deleted_at:
+          type: [string, "null"]
+          format: date-time
+
+    AttachmentCreate:
+      type: object
+      required: [kind, appwrite_file_id, bucket]
+      properties:
+        kind:
+          type: string
+          enum: [photo, proof_of_delivery, document, signature, product_image]
+        appwrite_file_id: { type: string }
+        bucket: { type: string }
+        mime: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        checksum: { type: string }
+        tenant_id:
+          type: [string, "null"]
+          format: uuid
+
+    AttachmentLink:
+      type: object
+      description: >-
+        The polymorphic link (D10): one file attached to orders, plans, stops,
+        receiving and quotes without per-owner columns.
+      required: [attachment_id, owner_kind, owner_id, role]
+      properties:
+        attachment_id: { type: string, format: uuid }
+        owner_kind:
+          type: string
+          enum: [order, plan, stop, receiving, quote]
+        owner_id: { type: string, format: uuid }
+        role:
+          type: string
+          description: What the file is for the owner (for example pod, evidence, logo)
+
+    # --- D11: product_image -------------------------------------------------
+
+    ProductImage:
+      type: object
+      description: >-
+        One product image model (D11). An uploaded image is canonical whenever
+        it exists; swatch_hex is the measured fallback attribute, rendered only
+        when no real image exists, never as a substitute for one that does.
+      required: [id, product_id]
+      properties:
+        id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        attachment_id:
+          type: [string, "null"]
+          format: uuid
+          description: The uploaded image; null when only the swatch fallback exists
+        swatch_hex:
+          type: [string, "null"]
+          pattern: "^#[0-9A-Fa-f]{6}$"
+          description: The measured swatch, a fallback attribute only
+        is_primary: { type: boolean }
+        alt_text: { type: string }
+
+    # --- D12: tenant_brand --------------------------------------------------
+
+    TenantBrand:
+      type: object
+      description: >-
+        The contractor's brand record under tenant scope (D12): rendered
+        inside the HH Pro frame on customer quotes and the public desk. The
+        dealer's tokens never appear on a contractor's document.
+      required: [tenant_id, display_name]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        display_name: { type: string }
+        logo_attachment_id:
+          type: [string, "null"]
+          format: uuid
+        primary_color:
+          type: [string, "null"]
+          pattern: "^#[0-9A-Fa-f]{6}$"
+        footer_text: { type: string }
+
+    # --- D7: the canonical order read projection ----------------------------
+
+    OrderCard:
+      type: object
+      description: >-
+        The contractor's board card: a read projection of the one canonical
+        order aggregate (D7). No second entity, no second writer. id is the
+        canonical core id; every deep link fb://hh/order/<id> carries the
+        canonical id only (D6). legacy_contractor_id is the HH Pro board id,
+        kept readable for the mapping period and never a key. stage is the
+        contractor's board column; supplier_status is the tracking vocabulary.
+        Both derive from the dealer order state through x-state-map, which is
+        total in both directions: every dealer order state maps to a stage,
+        and every stage names its source.
+      required: [id, stage]
+      x-field-map:
+        id: order.id (canonical core id, D6)
+        legacy_contractor_id: order.legacy_contractor_id (alias column, readable for the mapping period, never a key, D6)
+        order_no: order.order_no
+        stage: state map below, from order.status (with dealer_quote and procurement project states for cards that have no order yet)
+        supplier_status: tracking map below, from order.status plus order.fulfillment plus the delivery stop state
+        fulfillment: order.fulfillment
+        requested_date: order.requested_date
+        total_cents: order.total_cents
+        line_count: count of order lines
+        project_id: the procurement project this order's card lives on
+      x-state-map:
+        sources:
+          dealer_order_check: "hardscapeos_dibbits migration 0008_quotes_orders.sql, CHECK on orders.status"
+          dealer_quote_check: "hardscapeos_dibbits migration 0008_quotes_orders.sql, CHECK on quotes.status"
+          project_check: "hardscapeos_dibbits migration 0031_procurement.sql, CHECK on procurement_projects.status"
+          stage_union: "hh_pro_dibbits/src/core/domain/stage.ts, OrderStage via STAGE_INDEX"
+          tracking_union: "hh_pro_dibbits/src/core/domain/supplier.ts, SalesOrderStatus"
+        dealer_order_to_stage:
+          DRAFT: plan
+          CONFIRMED: order
+          PICKING: order
+          READY: order
+          PARTIALLY_FULFILLED: order
+          FULFILLED: order
+          INVOICED: invoice
+          CLOSED: invoice
+          CANCELLED: plan
+        stage_sources:
+          plan:
+            - "procurement project PLANNING (no dealer order exists yet)"
+            - "dealer order DRAFT (staff composing; the card has not moved)"
+            - "dealer order CANCELLED (cancel returns the card to Plan; the cancelled order stays readable)"
+          quote:
+            - "dealer_quote DRAFT or SENT (at the quote desk; no dealer order exists)"
+          order:
+            - "dealer order CONFIRMED, PICKING, READY, PARTIALLY_FULFILLED or FULFILLED (a delivered but unbilled order stays in Order: invoicing is the supplier's move, stage.ts systemAdvanceToInvoice)"
+          invoice:
+            - "dealer order INVOICED or CLOSED"
+        tracking_map:
+          submitted: "dealer order received (DRAFT on the dealer side once the contractor submitted)"
+          confirmed: "dealer order CONFIRMED"
+          picking: "dealer order PICKING"
+          ready-willcall: "dealer order READY with fulfillment PICKUP or WILL_CALL"
+          out-for-delivery: "delivery stop EN_ROUTE on a DELIVERY fulfilment"
+          delivered: "delivery stop DELIVERED, or dealer order FULFILLED"
+          invoiced: "dealer order INVOICED or CLOSED"
+          cancelled: "dealer order CANCELLED"
+        notes:
+          - "CANCELLED appears in both maps on purpose: the board column returns to plan while the tracking vocabulary, which a contractor reads on an old card, says cancelled."
+      properties:
+        id: { type: string, format: uuid }
+        legacy_contractor_id:
+          type: [string, "null"]
+          description: The contractor-side id, an alias for the mapping period (D6)
+        order_no: { type: string }
+        stage:
+          type: string
+          enum: [plan, quote, order, invoice]
+        supplier_status:
+          type: [string, "null"]
+          enum: [submitted, confirmed, picking, ready-willcall, out-for-delivery, delivered, invoiced, cancelled, null]
+        fulfillment:
+          type: [string, "null"]
+          enum: [PICKUP, DELIVERY, WILL_CALL, null]
+        requested_date:
+          type: [string, "null"]
+          format: date-time
+        total_cents: { type: integer, format: int64 }
+        line_count: { type: integer, format: int32 }
+        project_id:
+          type: [string, "null"]
+          format: uuid
+
+    # --- D8: two quote resources ---------------------------------------------
+
+    QuoteLine:
+      type: object
+      description: >-
+        The one shape dealer_quote and customer_quote share (D8). Carries the
+        live product reference and, after document freeze, the snapshot of the
+        priced fields (D15); special-order lines are explicit booleans, never
+        a sku encoding (D16).
+      required: [product_id, quantity]
+      properties:
+        product_id:
+          type: string
+          format: uuid
+          description: The live reference; after freeze it is for navigation only (D15)
+        sku: { type: string }
+        description: { type: string }
+        quantity: { type: number }
+        uom: { type: string }
+        unit_price_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64 }
+        tax_code: { type: string }
+        price_snapshot:
+          type: [object, "null"]
+          description: The priced fields frozen at document freeze, with resolved_at for audit (D14, D15)
+          properties:
+            sku: { type: string }
+            description: { type: string }
+            unit: { type: string }
+            unit_price_cents: { type: integer, format: int64 }
+            tax_code: { type: string }
+            resolved_at: { type: string, format: date-time }
+        is_special_order: { type: boolean }
+        special_order_description: { type: string }
+        supplier_ref:
+          type: [string, "null"]
+
+    DealerQuote:
+      type: object
+      description: >-
+        Dealer to contractor, priced by the core under D1's resolution order
+        (contract price final; otherwise base price with a quantity break that
+        replaces the tier; promotions a separate, never-stacking level).
+        Carries valid_until: validity is document-level (D14) and the house
+        day rule applies to expiry. Shares QuoteLine with customer_quote and
+        nothing else; there is no kind field (D8).
+      required: [id, status, valid_until, lines]
+      properties:
+        id: { type: string, format: uuid }
+        quote_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [DRAFT, SENT, ACCEPTED, CONVERTED, EXPIRED, LOST]
+        valid_until:
+          type: string
+          description: Document-level validity (D14); the estimate label on a cached price band expires with it (D1)
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteLine" }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+
+    CustomerQuote:
+      type: object
+      description: >-
+        Contractor to homeowner (D8): carries the acceptance artifact and the
+        magic-link token. Rendered under HH Pro's brand with the contractor's
+        tenant_brand inside the frame (D2, D12); acceptance is a public
+        magic-link page with no install. Shares QuoteLine with dealer_quote
+        and nothing else; there is no kind field.
+      required: [id, tenant_id, status, lines]
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id:
+          type: string
+          format: uuid
+          description: The contractor account that issued the quote
+        customer_name: { type: string }
+        customer_contact: { type: string }
+        status:
+          type: string
+          enum: [draft, sent, accepted, declined, expired]
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteLine" }
+        total_cents: { type: integer, format: int64 }
+        magic_link_token:
+          type: string
+          description: The one-time link credential; present only in the send response, never in reads
+        acceptance_artifact:
+          type: [object, "null"]
+          description: The record of acceptance, present once accepted
+          properties:
+            accepted_at: { type: string, format: date-time }
+            accepted_by_name: { type: string }
+            signature_attachment_id:
+              type: [string, "null"]
+              format: uuid
+
+    # --- D9: the tenant-facing invoice view ----------------------------------
+
+    InvoiceViewLine:
+      type: object
+      properties:
+        description: { type: string }
+        quantity: { type: number }
+        uom: { type: string }
+        unit_price_cents: { type: integer, format: int64 }
+        tax_code: { type: string }
+        line_total_cents: { type: integer, format: int64 }
+
+    InvoicePayment:
+      type: object
+      description: One payment against the invoice, as the tenant sees it
+      properties:
+        id: { type: string, format: uuid }
+        amount_cents: { type: integer, format: int64 }
+        method: { type: string }
+        status:
+          type: string
+          enum: [RECEIVED, DEPOSITED, BOUNCED, REFUNDED, VOID, PENDING]
+        received_at: { type: string, format: date-time }
+
+    InvoiceView:
+      type: object
+      description: >-
+        The tenant-facing invoice (D9): lines, tax and holdback totals,
+        balance due and payment history. The ERP invoice is canonical; the
+        subledger internals (GL accounts, journal references, subledger ties)
+        never appear here. Payments post through the core and the card-fee
+        rule (D18) applies.
+      required: [id, status]
+      properties:
+        id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        order_id:
+          type: [string, "null"]
+          format: uuid
+        status:
+          type: string
+          enum: [DRAFT, FINALIZED, PARTIALLY_PAID, PAID, VOID]
+        issue_date: { type: string }
+        due_date: { type: string }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/InvoiceViewLine" }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        holdback_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        balance_cents:
+          type: integer
+          format: int64
+          description: Balance due
+        payment_history:
+          type: array
+          items: { $ref: "#/components/schemas/InvoicePayment" }
+
+    # --- D4: operator surface schemas ----------------------------------------
+
+    PlatformKeyRosterEntry:
+      type: object
+      description: >-
+        One roster row: the platform floor a dealer's override is overriding.
+        Reads are staff-wide; writes come only through the operator PUT and
+        the server marks them (audit).
+      required: [key]
+      properties:
+        key: { type: string }
+        platform_floor:
+          type: [object, "null"]
+          additionalProperties: true
+        dealer_override:
+          type: [object, "null"]
+          additionalProperties: true
+        credential_configured:
+          type: boolean
+          description: The only readback the write-only dealer credential route allows
+        updated_at: { type: string, format: date-time }
+        updated_by: { type: string }
+
+    PlatformKeyRosterPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PlatformKeyRosterEntry" }
+        next_cursor: { type: [string, "null"] }
+
+    PlatformKeyWrite:
+      type: object
+      properties:
+        platform_floor:
+          type: [object, "null"]
+          additionalProperties: true
+        dealer_override:
+          type: [object, "null"]
+          additionalProperties: true
+          description: Null clears the override and restores the floor
+
+    DealerCredentialWrite:
+      type: object
+      description: >-
+        Write only. The credential is validated against the provider before it
+        is stored; no route returns it. An absent credential means none is
+        configured; a stored credential that cannot be read is an error, never
+        treated as absent.
+      required: [credential]
+      properties:
+        credential:
+          type: string
+          writeOnly: true
+
+    UsageCounterEntry:
+      type: object
+      description: The per-account usage counter, one row per contractor account
+      required: [account_id, requests]
+      properties:
+        account_id: { type: string }
+        requests: { type: integer, format: int64 }
+
+    UsageCounterPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/UsageCounterEntry" }
+        next_cursor: { type: [string, "null"] }
+
+    # --- Non-literal registrations: demo and bistrack ------------------------
+
+    DemoSessionRequest:
+      type: object
+      description: One enum field and nothing else, by design
+      required: [flow]
+      properties:
+        flow: { type: string }
+
+    DemoSessionResponse:
+      type: object
+      description: >-
+        The user block is field-for-field the staff login user block, so the
+        client's session plumbing needs no second shape. chapter_key names the
+        walkthrough the flow opens and sits outside the user block on purpose.
+      properties:
+        token: { type: string }
+        user:
+          type: object
+          additionalProperties: true
+        flow: { type: string }
+        chapter_key: { type: string }
+
+    DemoFlow:
+      type: object
+      properties:
+        flow: { type: string }
+        role_code: { type: string }
+        label: { type: string }
+
+    DemoFlowList:
+      type: object
+      required: [flows]
+      properties:
+        flows:
+          type: array
+          items: { $ref: "#/components/schemas/DemoFlow" }
+
+    BistrackStatus:
+      type: object
+      description: Read-only status of the BisTrack live-sync module
+      required: [configured, discrepancies]
+      properties:
+        configured: { type: boolean }
+        last_sync:
+          type: [string, "null"]
+          format: date-time
+        discrepancies: { type: integer, format: int32 }

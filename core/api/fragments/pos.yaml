@@ -1,0 +1,2411 @@
+# Fragment: ERP modules pos + till (A-19 counter sales, A-03 cash drawer, A-05 AR
+# NSF/credit holds). Sources: hardscapeos_dibbits/backend/internal/pos and
+# .../internal/till (non-test Go files), guards resolved from the RegisterRoutes
+# call sites in cmd/server/main.go (both take RequireStaff, RequireManager,
+# RequireAdmin). The /api/v1/ar routes are registered by the till handler and are
+# tagged staff-till here.
+
+paths:
+  # ── POS: the sale ring ─────────────────────────────────────────────────────
+  /api/v1/pos/sales:
+    post:
+      operationId: posCreateSale
+      tags: [staff-pos]
+      summary: Ring a counter sale (idempotent on idempotency_key; 200 on a replay)
+      description: >-
+        One atomic sale: order, invoice and tender composed in a single
+        transaction. The price is never in the body; every line is resolved
+        server-side. tender is ignored when tenders carries a split settlement
+        (2 to 6 legs that must sum exactly to the sale total).
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosSaleInput"
+      responses:
+        "201":
+          description: The committed sale (200 with the same body on an idempotent replay)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosSale"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    get:
+      operationId: posLookupSales
+      tags: [staff-pos]
+      summary: Search past sales by branch, drawer session, text term or day bounds
+      description: >-
+        The counter's past-sale and till-session recall. q matches order number,
+        invoice number, customer name or account number. from and to are
+        inclusive civil-day bounds resolved in the dealer's own zone. A
+        branch-scoped caller must name a branch it can reach.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
+        - { name: till_session_id, in: query, required: false, schema: { type: string, format: uuid } }
+        - { name: q, in: query, required: false, schema: { type: string } }
+        - { name: from, in: query, required: false, schema: { type: string, format: date } }
+        - { name: to, in: query, required: false, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: The page of matching sales, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosSaleSummaryPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/sales/{id}:
+    get:
+      operationId: posGetSale
+      tags: [staff-pos]
+      summary: Reopen one committed sale with its resolved lines
+      description: >-
+        The operator-reopen read. Carries no evidence identifiers and no flow
+        log; the deep evidence view is an admin surface, not this route.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The sale view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosSaleView"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/pos/assess-relief:
+    post:
+      operationId: posAssessRelief
+      tags: [staff-pos]
+      summary: Assess per-transaction tax relief for the current ticket
+      description: >-
+        A per-transaction assessment only: it never references a permanent
+        customer exemption flag and carries no card-image or scan upload. The
+        answer is masked-only; the binding collected tax stays the flat
+        provisional rate while the outcome records the auditable why.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosReliefAssessInput"
+      responses:
+        "200":
+          description: The relief outcome, masked-only
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosReliefOutcome"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/signatures:
+    post:
+      operationId: posCaptureSignature
+      tags: [staff-pos]
+      summary: Capture a signature through the wired provider (legacy shape)
+      description: >-
+        The original capture shape (purpose, ref_type, ref_id). When the wired
+        provider is the typed-name provider this shape is refused: an
+        attestation needs a typed name and an explicit affirmation, which this
+        body cannot carry.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosSignatureCapture"
+      responses:
+        "200":
+          description: The opaque signature reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosSignatureRef"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/signatures/typed:
+    post:
+      operationId: posCaptureTypedSignature
+      tags: [staff-pos]
+      summary: Capture a typed-name attestation (typed name plus explicit affirmation)
+      description: >-
+        The electronic attestation: who typed their name, that they explicitly
+        affirmed, and what they affirmed it against. The payload is sealed
+        before it is stored; a blank name or a missing affirmation is refused
+        before anything is written.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosTypedAttestation"
+      responses:
+        "200":
+          description: The signature reference and the provider that captured it
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosTypedSignatureRef"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/stock-glance:
+    get:
+      operationId: posStockGlance
+      tags: [staff-pos]
+      summary: Read multi-branch on-hand availability for one product
+      description: >-
+        Display-only availability per branch, with the sell-unit conversion and
+        the branch low thresholds where reorder points are authored. Never
+        decrements or allocates; a product with no reorder point simply has no
+        low threshold for that branch.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - { name: product_id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The stock glance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosStockGlance"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/salespeople:
+    get:
+      operationId: posListSalespeople
+      tags: [staff-pos]
+      summary: List active staff for the counter's salesperson selector
+      description: Id and display name only; no email, no role.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of salespeople
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosSalespersonPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/margin-glance:
+    post:
+      operationId: posMarginGlance
+      tags: [staff-pos]
+      summary: Answer margin and estimated profit for the current ticket's lines
+      description: >-
+        Staff at the door, with the dealer's margin_visibility policy applied at
+        the marshal layer: a caller the policy does not allow receives an empty
+        object with every margin and profit field byte-absent. A line with no
+        cost on file answers empty, never a fake zero.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosMarginGlanceInput"
+      responses:
+        "200":
+          description: The margin answer, gated per the dealer's margin_visibility policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosMarginGlance"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/counter-prices:
+    post:
+      operationId: posCounterPrices
+      tags: [staff-pos]
+      summary: Read the customer-aware price picture for a screen of products
+      description: >-
+        Retail beside this account's price, the saving, and the nearest
+        unreached bulk threshold. The customer type comes from the account, not
+        from the wire; an empty customer_id is the walk-in case and returns
+        retail alone. Carries no cost, margin or floor field.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosCounterPriceInput"
+      responses:
+        "200":
+          description: The resolved price rows and the customer type they were priced for
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosCounterPrices"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/quick-picks:
+    get:
+      operationId: posQuickPicks
+      tags: [staff-pos]
+      summary: Read the counter's quick-pick tap grid
+      description: >-
+        The handful of products this yard sells all day, curated through the
+        shared settings kit and priced for the customer on the sale. Every
+        parameter is optional; an empty query is a walk-in at the default
+        branch. With no curation on file the set is derived from top sellers.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
+        - { name: customer_id, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The grid, its source, and the customer type the tiles were priced for
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosQuickPicks"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/hotkeys:
+    get:
+      operationId: posHotkeys
+      tags: [staff-pos]
+      summary: Read the counter's key roster
+      description: >-
+        Which key does what at this dealer's tills, resolved four levels deep
+        (user, dealer, platform, default), each level whole-or-absent. An
+        unreadable level ships the level below it, never a fault.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The resolved key roster and which level answered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosHotkeys"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/account-standing:
+    get:
+      operationId: posAccountStanding
+      tags: [staff-pos]
+      summary: Read one customer's past-due position for the counter
+      description: >-
+        A fact, not a gate: the past-due amount, the oldest aging bucket, and
+        the hold flag. The dealer's balance_visibility policy is applied at the
+        marshal layer; a walk-in, a current account, and a disallowed caller all
+        answer an empty object.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - { name: branch_id, in: query, required: true, schema: { type: string, format: uuid } }
+        - { name: customer_id, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The standing answer; empty when there is nothing to say
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosAccountStanding"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/addon-suggestions:
+    get:
+      operationId: posAddonSuggestions
+      tags: [staff-pos]
+      summary: Read suggested add-on tiles for the ticket's products
+      description: >-
+        product_ids is the ticket's product ids, comma-separated. An empty
+        ticket or an empty answer returns an empty list, never an error.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: product_ids
+          in: query
+          required: false
+          description: Comma-separated product ids already on the ticket
+          schema: { type: string }
+      responses:
+        "200":
+          description: The suggestion strip
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosAddonSuggestions"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # ── POS: policy, workspace ─────────────────────────────────────────────────
+  /api/v1/pos/policy:
+    get:
+      operationId: posGetPolicy
+      tags: [staff-pos]
+      summary: Read the effective POS policy for a branch
+      description: branch_id empty resolves the org-wide default row.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The effective policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosPolicy"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: posPutPolicy
+      tags: [staff-pos]
+      summary: Upsert the POS policy (org default or one branch)
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosPolicy"
+      responses:
+        "200":
+          description: The stored policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosPolicy"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/policy/history:
+    get:
+      operationId: posPolicyHistory
+      tags: [staff-pos]
+      summary: Read the counter settings change history, newest first
+      description: >-
+        One row per moved knob, reconstructed from the audit trail: who moved
+        which rule and what it was before. Admin, matching the policy write.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The page of policy changes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosPolicyChangePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/workspace:
+    get:
+      operationId: posGetWorkspace
+      tags: [staff-pos]
+      summary: Read the caller's own resolved workspace preferences
+      description: >-
+        The caller's own row when one exists (source user), else the dealer
+        defaults from the policy (source dealer). The override is
+        whole-or-absent; there is never a field merge.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The resolved workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosWorkspacePrefs"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: posPutWorkspace
+      tags: [staff-pos]
+      summary: Save the caller's own workspace (idempotent on idempotency_key)
+      description: >-
+        Self-service: one person saving their own ergonomics. A replay of the
+        last accepted key returns the stored row without a second write.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosWorkspaceSaveInput"
+      responses:
+        "200":
+          description: The stored workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosWorkspacePrefs"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      operationId: posResetWorkspace
+      tags: [staff-pos]
+      summary: Reset the caller's workspace back to the dealer defaults
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "204":
+          description: Reset; nothing is returned
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # ── POS: returns ───────────────────────────────────────────────────────────
+  /api/v1/pos/returns:
+    post:
+      operationId: posCreateReturn
+      tags: [staff-pos]
+      summary: Commit a return against an original sale (idempotent; 200 on a replay)
+      description: >-
+        One of order_id or order_no identifies the original sale. refund_method
+        CASH pays out of the open drawer named by till_session_id, CARD reverses
+        the original capture, ACCOUNT_CREDIT credits the customer's account.
+        fee_bps is honored only on the ACCOUNT_CREDIT rail.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosReturnInput"
+      responses:
+        "201":
+          description: The committed return (200 with the same body on an idempotent replay)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosReturn"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/pos/returns/lookup:
+    get:
+      operationId: posLookupReturn
+      tags: [staff-pos]
+      summary: Read an original sale's lines with what is still returnable
+      description: >-
+        The pre-return read the counter uses to build a return, with prior
+        returns netted per line. Read-only; the commit re-guards everything.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - { name: order_id, in: query, required: false, schema: { type: string, format: uuid } }
+        - { name: order_no, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: The original sale with returnable quantities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosReturnLookup"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/pos/returns/pickups:
+    get:
+      operationId: posListReturnPickups
+      tags: [staff-pos]
+      summary: List the logistics pickup queue for a branch
+      description: The REQUESTED and SCHEDULED returns waiting on a pickup.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - { name: branch_id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The page of pickups
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosReturnPickupPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/returns/{id}/pickup:
+    post:
+      operationId: posAdvanceReturnPickup
+      tags: [staff-pos]
+      summary: Advance a return's pickup one step (REQUESTED to SCHEDULED to DONE)
+      description: The queue only walks forward; any other transition is a conflict.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosPickupAdvance"
+      responses:
+        "200":
+          description: The pickup after the transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosReturnPickup"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/pos/return-requests:
+    get:
+      operationId: posListReturnRequests
+      tags: [staff-pos]
+      summary: List the portal return-request approval queue
+      description: Oldest PENDING first so the queue drains in arrival order.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [PENDING, APPROVED, REJECTED], default: PENDING }
+      responses:
+        "200":
+          description: The page of return requests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosReturnRequestPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/return-requests/{id}/approve:
+    post:
+      operationId: posApproveReturnRequest
+      tags: [staff-pos]
+      summary: Approve a pending return request, executing the return rail
+      description: >-
+        Executes the existing return rail as an ACCOUNT_CREDIT refund with
+        restock and the branch's restocking fee, attributed to the approver.
+        Decisions serialize on the request row; a decided request is a conflict.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The approved request with its linked return
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosReturnRequest"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/pos/return-requests/{id}/reject:
+    post:
+      operationId: posRejectReturnRequest
+      tags: [staff-pos]
+      summary: Reject a pending return request with a reason
+      description: >-
+        Records the decision and the reason; nothing else moves. If the approve
+        rail already committed money under this request, rejection is refused so
+        the request converges with the money that moved.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosReturnRequestReject"
+      responses:
+        "200":
+          description: The rejected request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosReturnRequest"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # ── POS: parked tickets ────────────────────────────────────────────────────
+  /api/v1/pos/parked:
+    post:
+      operationId: posParkTicket
+      tags: [staff-pos]
+      summary: Park the current ticket
+      description: >-
+        Saves the cart with no prices: prices re-derive from the engine on
+        resume, so a parked ticket never rings at a stale price. No stock
+        reservation.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosParkInput"
+      responses:
+        "201":
+          description: The parked ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosParkedTicket"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    get:
+      operationId: posListParked
+      tags: [staff-pos]
+      summary: List parked tickets for a branch
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The page of parked tickets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosParkedTicketPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/parked/{id}/resume:
+    post:
+      operationId: posResumeParked
+      tags: [staff-pos]
+      summary: Resume a parked ticket back onto the counter
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The resumed ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosParkedTicket"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/pos/parked/{id}:
+    delete:
+      operationId: posDiscardParked
+      tags: [staff-pos]
+      summary: Discard a parked ticket
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The discard acknowledgement
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosParkedDiscard"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ── POS: pricing orders (the printable price/compare document) ─────────────
+  /api/v1/pos/pricing-orders:
+    post:
+      operationId: posCreatePricingOrder
+      tags: [staff-pos]
+      summary: Create a printable pricing document
+      description: >-
+        Not a quote (no acceptance lifecycle) and not an order (no stock, no
+        AR): the client's printable price/compare document, priced by the engine
+        with the list price snapshotted beside each offered price.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosPricingOrderInput"
+      responses:
+        "201":
+          description: The committed document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosPricingOrder"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    get:
+      operationId: posListPricingOrders
+      tags: [staff-pos]
+      summary: List pricing documents for a branch
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - { name: branch_id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The page of pricing documents
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosPricingOrderPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/pos/pricing-orders/{id}:
+    get:
+      operationId: posGetPricingOrder
+      tags: [staff-pos]
+      summary: Read one pricing document
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The pricing document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosPricingOrder"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ── Till: drawer sessions ──────────────────────────────────────────────────
+  /api/v1/till/sessions:
+    post:
+      operationId: tillOpenSession
+      tags: [staff-till]
+      summary: Open a drawer session with its float
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TillOpenInput"
+      responses:
+        "201":
+          description: The opened session id and status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillOpenResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/till/sessions/open:
+    get:
+      operationId: tillLookupOpenSession
+      tags: [staff-till]
+      summary: Rediscover the open drawer at a branch and station
+      description: >-
+        The POS terminal calls this on mount. No open drawer is an ordinary
+        answer (open: false), never a not-found.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - { name: branch_id, in: query, required: true, schema: { type: string, format: uuid } }
+        - { name: station, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: The open-session lookup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillOpenLookup"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/till/sessions/{id}:
+    get:
+      operationId: tillGetSession
+      tags: [staff-till]
+      summary: Read one drawer session with its tenders and movements
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The session detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillSessionDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/till/sessions/{id}/movements:
+    post:
+      operationId: tillRecordMovement
+      tags: [staff-till]
+      summary: Record a paid-in, paid-out, drop or lodgement against the drawer
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TillMovementInput"
+      responses:
+        "201":
+          description: Recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillStatusResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/till/sessions/{id}/count:
+    post:
+      operationId: tillCountSession
+      tags: [staff-till]
+      summary: Record the blind per-tender count and optional close denominations
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TillCountInput"
+      responses:
+        "200":
+          description: Counted; the session moves to COUNTED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillStatusResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/till/sessions/{id}/zreport:
+    get:
+      operationId: tillZReport
+      tags: [staff-till]
+      summary: Read the Z report for a counted session
+      description: Expected versus actual per tender plus the cash reconciliation block, revealed after the count.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The Z report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillZReport"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/till/sessions/{id}/complete:
+    post:
+      operationId: tillCompleteSession
+      tags: [staff-till]
+      summary: Reconcile and close the drawer session
+      description: >-
+        Staff-gated at the route with a conditional in-service manager gate: an
+        over-threshold variance closed by a non-manager requires the manager
+        role and an override note.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TillCompleteInput"
+      responses:
+        "200":
+          description: Closed; the session moves to CLOSED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillStatusResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/till/policy:
+    get:
+      operationId: tillGetPolicy
+      tags: [staff-till]
+      summary: Read the effective till policy for a branch
+      description: branch_id empty resolves the org-wide default row.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The effective till policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillPolicy"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # ── Till: AR surface (NSF, credit holds, attribution reads) ───────────────
+  /api/v1/ar/bounced:
+    get:
+      operationId: tillListBouncedPayments
+      tags: [staff-till]
+      summary: List the bounced-payment queue
+      description: Manager-gated; the queue exposes customer financial-distress information.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - { name: gateway_ref, in: query, required: false, description: Exact processor-reference search, schema: { type: string } }
+      responses:
+        "200":
+          description: The page of bounced payments
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillBouncedPaymentPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/payments/{id}/nsf:
+    post:
+      operationId: tillMarkPaymentNSF
+      tags: [staff-till]
+      summary: Mark a payment bounced (reverse, reopen, fee, auto-hold, in one transaction)
+      description: >-
+        The fee and auto-hold resolve from the NSF policy at bounce time; the
+        caller never supplies money. A payment already marked BOUNCED is a
+        conflict.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TillNSFInput"
+      responses:
+        "200":
+          description: The NSF outcome
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillNSFResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ar/payments/{id}/history:
+    get:
+      operationId: tillPaymentHistory
+      tags: [staff-till]
+      summary: Read who took a payment and which invoices it was applied to
+      description: >-
+        The path key may be the payment's id or the human payment number
+        printed on the receipt. For a BOUNCED payment the historical
+        applications are reconstructed from the audit trail and flagged
+        reversed_by_nsf.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Payment id or human payment number
+          schema: { type: string }
+      responses:
+        "200":
+          description: The payment header with its application history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillPaymentHistory"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/invoices/{id}/payments:
+    get:
+      operationId: tillInvoicePayments
+      tags: [staff-till]
+      summary: Read which payments and credits settled an invoice, attributed
+      description: The path key may be the invoice's id or the human invoice number.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Invoice id or human invoice number
+          schema: { type: string }
+      responses:
+        "200":
+          description: The invoice settlement view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillInvoicePayments"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/credit-holds:
+    get:
+      operationId: tillListCreditHolds
+      tags: [staff-till]
+      summary: List credit holds
+      description: Manager-gated; the list exposes customer financial-distress information.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [ACTIVE, RELEASED] }
+      responses:
+        "200":
+          description: The page of credit holds
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillCreditHoldPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/credit-holds/{id}/release:
+    post:
+      operationId: tillReleaseCreditHold
+      tags: [staff-till]
+      summary: Release a credit hold (mandatory reason, audited)
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TillReleaseHoldInput"
+      responses:
+        "200":
+          description: Released
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillStatusResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/nsf-policy:
+    get:
+      operationId: tillGetNSFPolicy
+      tags: [staff-till]
+      summary: Read the effective NSF policy for a branch
+      description: branch_id empty resolves the org default.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The effective NSF policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillNSFPolicy"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: tillUpdateNSFPolicy
+      tags: [staff-till]
+      summary: Upsert the org-default NSF policy
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TillNSFPolicy"
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillStatusResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/payment-attempts:
+    post:
+      operationId: tillRecordPaymentAttempt
+      tags: [staff-till]
+      summary: Record one declined or errored gateway attempt
+      description: A successful capture is a payments row, never an attempt here.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TillPaymentAttempt"
+      responses:
+        "201":
+          description: Recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TillStatusResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+components:
+  schemas:
+    # ── POS: sale ring ───────────────────────────────────────────────────────
+    PosLineInput:
+      type: object
+      description: One cart line. The price is not in the body; it is resolved server-side.
+      required: [product_id, qty_entered, uom_entered, cost_cents]
+      properties:
+        product_id: { type: string, format: uuid }
+        qty_entered: { type: number }
+        uom_entered: { type: string }
+        cost_cents: { type: integer, format: int64 }
+    PosTenderLegInput:
+      type: object
+      description: >-
+        One leg of a split settlement. The legs (2 to 6) must sum exactly to the
+        sale total, with at most one ACCOUNT leg. Each card leg carries its own
+        token.
+      required: [method, amount_cents]
+      properties:
+        method: { type: string, enum: [ACCOUNT, CASH, CARD, CHEQUE] }
+        amount_cents: { type: integer, format: int64, exclusiveMinimum: 0 }
+        payment_token: { type: string, description: "CARD legs only: client-tokenized; never a PAN" }
+        card_type: { type: string, enum: [DEBIT, CREDIT, PREPAID, UNKNOWN] }
+    PosReliefDecision:
+      type: object
+      description: The per-transaction tax relief assessment recorded with the sale
+      required: [purchaser_type, declared_use, fulfilment, profile_id, reason_code]
+      properties:
+        purchaser_type: { type: string }
+        declared_use: { type: string }
+        fulfilment: { type: string }
+        profile_id: { type: string }
+        reason_code: { type: string }
+        evidence_doc_id: { type: string }
+        signature_ref: { type: string }
+    PosSaleInput:
+      type: object
+      description: >-
+        The idempotent ring body; the client mints idempotency_key. customer_id
+        empty resolves to the house walk-in. sale_type COD is a payment posture
+        (pay-as-you-go account), not a fulfilment mode: a COD ring takes its
+        fulfilment from fulfilment (default PICKUP) and is locked from
+        fulfilment until paid. deposit_cents is valid only on an unpaid-at-ring
+        sale (ACCOUNT tender or COD).
+      required: [idempotency_key, branch_id, till_session_id, customer_id, sale_type, cash_sale, tender, payment_token, signature_ref, requested_date, notes, offline, lines]
+      properties:
+        idempotency_key: { type: string, format: uuid, description: Client-minted replay key }
+        branch_id: { type: string, format: uuid }
+        till_session_id: { type: string, format: uuid }
+        customer_id: { type: string, description: Empty resolves to the house walk-in }
+        sale_type:
+          type: string
+          enum: [COLLECT_NOW, COLLECT_LATER, DELIVERED, COD]
+          default: COLLECT_NOW
+        fulfilment:
+          type: string
+          enum: [PICKUP, WILL_CALL, DELIVERY]
+          description: COD only; other sale types carry fulfilment in sale_type
+        cash_sale: { type: boolean }
+        tender: { type: string, enum: [ACCOUNT, CASH, CARD, CHEQUE] }
+        payment_token: { type: string, description: "CARD only: client-tokenized; never a PAN" }
+        card_type: { type: string, enum: [DEBIT, CREDIT, PREPAID, UNKNOWN] }
+        signature_ref: { type: string }
+        relief: { $ref: "#/components/schemas/PosReliefDecision" }
+        requested_date: { type: string, format: date }
+        notes: { type: string }
+        po_job_ref: { type: string, maxLength: 64, description: The customer's PO or job reference }
+        salesperson_id: { type: string, description: The staff member credited with the sale }
+        job_address: { type: string, maxLength: 200 }
+        job_reference: { type: string, maxLength: 64 }
+        cash_tendered_cents:
+          type: integer
+          format: int64
+          description: Cash-tendered quick entry on a plain fully-paid CASH ring; 0 means not entered
+        offline: { type: boolean }
+        deposit_cents:
+          type: integer
+          format: int64
+          description: Unpaid-at-ring sales only; greater than zero and less than the total
+        deposit_method:
+          type: string
+          enum: [CASH, CARD, CHEQUE]
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PosLineInput" }
+        tenders:
+          type: array
+          description: Split settlement legs; when set, tender is ignored and deposit_cents is refused
+          minItems: 2
+          maxItems: 6
+          items: { $ref: "#/components/schemas/PosTenderLegInput" }
+    PosTenderLegResult:
+      type: object
+      description: One settled leg on the sale, in submission order (what the receipt prints)
+      required: [seq, method, amount_cents]
+      properties:
+        seq: { type: integer, format: int32 }
+        method: { type: string, enum: [ACCOUNT, CASH, CARD, CHEQUE] }
+        amount_cents: { type: integer, format: int64 }
+        payment_id: { type: string, format: uuid, description: "Absent for the ACCOUNT leg, which captures nothing" }
+        gateway_ref: { type: string, description: CARD legs only }
+    PosSale:
+      type: object
+      description: The committed sale, returned verbatim on an idempotent replay
+      required: [order_id, order_no, invoice_id, invoice_no, tender, sale_type, subtotal_cents, tax_cents, total_cents, tax_reason_code, status, replayed]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        payment_id: { type: string, format: uuid }
+        gateway_ref: { type: string }
+        tender: { type: string, enum: [ACCOUNT, CASH, CARD, CHEQUE] }
+        sale_type: { type: string, enum: [COLLECT_NOW, COLLECT_LATER, DELIVERED, COD] }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64, description: The provisional flat rate; the tax engine owns the real value }
+        total_cents: { type: integer, format: int64 }
+        deposit_cents: { type: integer, format: int64, description: Taken at ring on an unpaid sale; the balance is total minus deposit }
+        tax_reason_code:
+          type: string
+          enum: [STD_ON_HST_13, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
+        status: { type: string, enum: [COMMITTED, VOIDED] }
+        replayed: { type: boolean }
+        po_job_ref: { type: string }
+        salesperson_id: { type: string }
+        salesperson_name: { type: string }
+        cash_tendered_cents: { type: integer, format: int64 }
+        change_due_cents: { type: integer, format: int64 }
+        job_address: { type: string }
+        job_reference: { type: string }
+        split_tender: { type: boolean }
+        tenders:
+          type: array
+          items: { $ref: "#/components/schemas/PosTenderLegResult" }
+    PosSaleView:
+      type: object
+      description: The operator-reopen read; no evidence identifiers, no granular flow log
+      required: [order_id, order_no, customer_id, branch_id, sale_type, tender, status, subtotal_cents, tax_cents, total_cents, tax_reason_code, invoice_id, invoice_no, lines]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        sale_type: { type: string, enum: [COLLECT_NOW, COLLECT_LATER, DELIVERED, COD] }
+        tender: { type: string, enum: [ACCOUNT, CASH, CARD, CHEQUE] }
+        status: { type: string, enum: [COMMITTED, VOIDED] }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        tax_reason_code:
+          type: string
+          enum: [STD_ON_HST_13, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        payment_id: { type: string, format: uuid }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PosSaleViewLine" }
+        split_tender: { type: boolean }
+        tenders:
+          type: array
+          items: { $ref: "#/components/schemas/PosTenderLegResult" }
+    PosSaleViewLine:
+      type: object
+      description: One reopened line with its resolved engine price
+      required: [line_no, product_id, description, qty_entered, uom_entered, unit_price_cents, price_uom, line_total_cents]
+      properties:
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string, format: uuid }
+        description: { type: string }
+        qty_entered: { type: number }
+        uom_entered: { type: string }
+        unit_price_cents: { type: integer, format: int64 }
+        price_uom: { type: string }
+        line_total_cents: { type: integer, format: int64 }
+    PosSaleSummary:
+      type: object
+      description: One row of the past-sale list; enough to recognise a sale, not enough to be a receipt
+      required: [sale_id, order_id, order_no, customer_id, customer_name, branch_id, sale_type, tender, split_tender, total_cents, status, created_at, line_count]
+      properties:
+        sale_id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        branch_id: { type: string, format: uuid }
+        till_session_id: { type: string, format: uuid }
+        sale_type: { type: string, enum: [COLLECT_NOW, COLLECT_LATER, DELIVERED, COD] }
+        tender: { type: string, enum: [ACCOUNT, CASH, CARD, CHEQUE] }
+        split_tender: { type: boolean }
+        total_cents: { type: integer, format: int64 }
+        status: { type: string, enum: [COMMITTED, VOIDED] }
+        created_at: { type: string, format: date-time }
+        line_count: { type: integer, format: int32 }
+    PosSaleSummaryPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PosSaleSummary" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    # ── POS: tax relief ──────────────────────────────────────────────────────
+    PosReliefAssessInput:
+      type: object
+      description: >-
+        The per-transaction assess-relief entry point. No permanent exemption
+        reference, no evidence image upload (data minimization). subtotal_cents
+        is the pre-tax basis for the displayed outcome.
+      required: [profile_id, order_id, purchaser_type, declared_use, fulfilment, subtotal_cents, evidence_attached, purpose_ack]
+      properties:
+        profile_id: { type: string, description: "Pre-populates from the eligibility profile, masked at the edge" }
+        order_id: { type: string, format: uuid, description: "When set, the assessment snapshot is recorded" }
+        purchaser_type:
+          type: string
+          enum: [INDIVIDUAL, SOLE_PROP, PARTNERSHIP, CORPORATION, BAND, BEE, TRUST_JV, OTHER]
+        declared_use: { type: string, enum: [personal, commercial, band, mixed, unknown] }
+        fulfilment: { type: string, enum: [pickup, dibbits_truck, dibbits_carrier, purchaser_carrier] }
+        subtotal_cents: { type: integer, format: int64 }
+        evidence_attached: { type: boolean, description: Proof-of-delivery or waybill present (the zero-rate hard gate) }
+        purpose_ack: { type: boolean, description: Purpose notice acknowledged before collection }
+    PosReliefOutcome:
+      type: object
+      description: Masked-only assessment answer with the displayed outcome and the snapshot fields
+      required: [purchaser_type, masked_identifier, outcome, reason_code, rate_bps, full_hst_cents, on_credit_cents, net_collected_cents, automated, requires_evidence, evidence_satisfied]
+      properties:
+        purchaser_type: { type: string }
+        masked_identifier: { type: string, description: The only identifier a cashier ever sees }
+        outcome: { type: string, enum: ["0%", "5%", "13%", REVIEW] }
+        reason_code: { type: string }
+        rate_bps: { type: integer, format: int32, description: The binding rate applied to the ring }
+        full_hst_cents: { type: integer, format: int64 }
+        on_credit_cents: { type: integer, format: int64 }
+        net_collected_cents: { type: integer, format: int64 }
+        automated: { type: boolean }
+        requires_evidence: { type: boolean }
+        evidence_satisfied: { type: boolean }
+
+    # ── POS: signatures ──────────────────────────────────────────────────────
+    PosSignatureCapture:
+      type: object
+      required: [purpose, ref_type, ref_id]
+      properties:
+        purpose: { type: string, enum: [TAX_ATTESTATION, PROOF_OF_DELIVERY, CARD_PRESENT, ORDER_SIGNOFF] }
+        ref_type: { type: string }
+        ref_id: { type: string }
+    PosSignatureRef:
+      type: object
+      required: [signature_ref]
+      properties:
+        signature_ref: { type: string }
+    PosTypedAttestation:
+      type: object
+      description: Who typed their name, that they explicitly affirmed, and what they affirmed it against
+      required: [purpose, ref_type, ref_id, typed_name, affirmed]
+      properties:
+        purpose: { type: string, enum: [TAX_ATTESTATION, PROOF_OF_DELIVERY, CARD_PRESENT, ORDER_SIGNOFF] }
+        ref_type: { type: string }
+        ref_id: { type: string }
+        typed_name: { type: string, maxLength: 200 }
+        affirmed: { type: boolean, description: "A required separate act, never implied by submitting the form" }
+    PosTypedSignatureRef:
+      type: object
+      required: [signature_ref, provider]
+      properties:
+        signature_ref: { type: string }
+        provider: { type: string, enum: [TYPED_NAME_V1] }
+
+    # ── POS: counter reads ───────────────────────────────────────────────────
+    PosStockGlance:
+      type: object
+      description: >-
+        Read-only multi-branch availability. sell_factor is base units per one
+        sell unit; 0 means no conversion on file and the client must not divide
+        by it. low_base keys are branch ids with an authored reorder point; an
+        absent branch has no threshold.
+      required: [product_id, on_hand]
+      properties:
+        product_id: { type: string, format: uuid }
+        on_hand:
+          type: object
+          description: Branch id to available quantity in base UOM (on hand minus reserved)
+          additionalProperties: { type: number }
+        base_uom: { type: string }
+        sell_uom: { type: string }
+        sell_factor: { type: number }
+        low_base:
+          type: object
+          description: Branch id to reorder point in base units
+          additionalProperties: { type: number }
+        weight_kg_per_base: { type: number, description: Unit weight per base unit; absent when no weight is on file }
+    PosSalesperson:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+    PosSalespersonPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PosSalesperson" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    PosMarginGlanceInput:
+      type: object
+      description: The current ticket's lines, sent exactly as the ring body sends them (never a client price)
+      required: [branch_id, customer_id, customer_type, lines]
+      properties:
+        branch_id: { type: string, format: uuid }
+        customer_id: { type: string }
+        customer_type: { type: string }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PosLineInput" }
+    PosMarginGlanceLine:
+      type: object
+      description: >-
+        One ticket line's margin answer, index-aligned with the input. A line
+        with no cost on file answers empty: absent, never a fake zero.
+      properties:
+        margin_bps: { type: [integer, "null"], format: int64 }
+        est_profit_cents: { type: [integer, "null"], format: int64 }
+    PosMarginGlance:
+      type: object
+      description: >-
+        Every field is omitempty; a caller the dealer's margin_visibility policy
+        does not allow receives an empty object. The footer pair covers only the
+        lines where both revenue and cost are known; partial says some lines
+        were excluded.
+      properties:
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PosMarginGlanceLine" }
+        margin_bps: { type: [integer, "null"], format: int64 }
+        est_profit_cents: { type: [integer, "null"], format: int64 }
+        partial: { type: boolean }
+    PosCounterPriceItem:
+      type: object
+      description: One product at one quantity; uom_entered empty resolves to the product's sell unit
+      required: [product_id, qty_entered, uom_entered]
+      properties:
+        product_id: { type: string, format: uuid }
+        qty_entered: { type: number }
+        uom_entered: { type: string }
+    PosCounterPriceInput:
+      type: object
+      required: [branch_id, customer_id, items]
+      properties:
+        branch_id: { type: string, format: uuid }
+        customer_id: { type: string, description: "Empty is the walk-in case: retail stands alone" }
+        items:
+          type: array
+          maxItems: 60
+          items: { $ref: "#/components/schemas/PosCounterPriceItem" }
+    PosCounterQuote:
+      type: object
+      description: >-
+        One product's price picture for one customer at one quantity
+        (transcribed from pricing.CounterQuote). saving_cents is set only when
+        the customer is genuinely better off than retail; a surcharge leaves it
+        zero. The next_break fields name the nearest unreached bulk threshold,
+        present only when one exists and beats the current price.
+      required: [product_id, price_uom, retail_cents, customer_cents]
+      properties:
+        product_id: { type: string, format: uuid }
+        price_uom: { type: string }
+        retail_cents: { type: integer, format: int64 }
+        customer_cents: { type: integer, format: int64 }
+        saving_cents: { type: integer, format: int64 }
+        saving_bps: { type: integer, format: int64 }
+        basis: { type: string, enum: [CONTRACT, ACCOUNT, PROMO, BULK] }
+        next_break_qty: { type: number }
+        next_break_uom: { type: string }
+        next_break_unit_cents: { type: integer, format: int64 }
+        next_break_save_cents: { type: integer, format: int64 }
+        unpriceable: { type: boolean, description: "The engine could not price this product; render no price, never a zero" }
+    PosCounterPrices:
+      type: object
+      required: [customer_type, prices]
+      properties:
+        customer_type: { type: string, description: "Whose prices these are, resolved from the account" }
+        prices:
+          type: array
+          items: { $ref: "#/components/schemas/PosCounterQuote" }
+    PosQuickPick:
+      type: object
+      description: One grid tile. price is absent when the engine could not price the product.
+      required: [product_id, sku, name, uom, has_image]
+      properties:
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        size_line: { type: string }
+        uom: { type: string, description: The sell unit a tap would add in }
+        has_image: { type: boolean }
+        category: { type: string }
+        subcategory: { type: string }
+        price: { $ref: "#/components/schemas/PosCounterQuote" }
+    PosQuickPicks:
+      type: object
+      required: [source, customer_type, items]
+      properties:
+        source: { type: string, enum: [user, dealer, derived] }
+        customer_type: { type: string }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PosQuickPick" }
+    PosHotkey:
+      type: object
+      description: One bound key. browser_owned marks a key mainstream browsers claim; it is a fact, not a refusal.
+      required: [action, key]
+      properties:
+        action: { type: string, enum: [step-next, step-back, pay, park, search] }
+        key: { type: string, description: "Canonical chord spelling, modifiers in shift-ctrl-alt order" }
+        browser_owned: { type: boolean }
+    PosHotkeys:
+      type: object
+      required: [source, keys]
+      properties:
+        source: { type: string, enum: [user, dealer, platform, default] }
+        keys:
+          type: array
+          maxItems: 8
+          items: { $ref: "#/components/schemas/PosHotkey" }
+    PosAccountStanding:
+      type: object
+      description: >-
+        One customer's past-due position, and no more of it than that. The zero
+        value marshals as an empty object: a walk-in, a current account, an
+        unreadable AR read and a disallowed caller all look identical.
+      properties:
+        past_due_cents: { type: integer, format: int64 }
+        oldest_bucket: { type: string, enum: ["30", "60", "90+"] }
+        on_hold: { type: boolean, description: "Mirrors the credit gate; enforcement happens at the ring, not here" }
+    PosAddonSuggestion:
+      type: object
+      description: >-
+        One suggestion tile. list_price_cents is display only; the add path
+        re-prices through the engine.
+      required: [product_id, sku, name, uom, default_qty, has_image]
+      properties:
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        size_line: { type: string }
+        uom: { type: string }
+        default_qty: { type: number }
+        list_price_cents: { type: [integer, "null"], format: int64 }
+        price_uom: { type: string }
+        has_image: { type: boolean }
+        application: { type: string }
+    PosAddonSuggestions:
+      type: object
+      required: [suggestions]
+      properties:
+        suggestions:
+          type: array
+          items: { $ref: "#/components/schemas/PosAddonSuggestion" }
+
+    # ── POS: policy and workspace ────────────────────────────────────────────
+    PosPolicy:
+      type: object
+      description: >-
+        The branch-overridable POS behavior policy; branch_id empty is the
+        org-wide default row. quick_chip_set empty on the wire means the service
+        derived nothing and the client falls back to the full chip row.
+      required: [branch_id, cod_enabled, restocking_fee_bps, notes, line_presentation, quick_chips_enabled, workspace_split_pct, workspace_arrangement, lookup_presentation, margin_visibility, balance_visibility]
+      properties:
+        branch_id: { type: string, description: Empty is the org-wide default row }
+        cod_enabled: { type: boolean }
+        restocking_fee_bps: { type: integer, format: int32, description: Fee on an approved portal return; 0 is none }
+        notes: { type: string }
+        line_presentation: { type: string, enum: [LINES, CARDS] }
+        quick_chips_enabled: { type: boolean }
+        workspace_split_pct: { type: integer, format: int32, minimum: 20, maximum: 80, description: The lookup panel's default share of the workspace width }
+        workspace_arrangement: { type: string, enum: [LOOKUP_LEFT, SALE_LEFT] }
+        lookup_presentation: { type: string, enum: [CARDS, ROWS] }
+        margin_visibility:
+          type: string
+          enum: [MANAGER_UP, ALL_STAFF, HIDDEN]
+          description: Who may receive margin and estimated-profit fields in POS payloads
+        balance_visibility:
+          type: string
+          enum: [ALL_STAFF, MANAGER_UP, HIDDEN]
+          description: Who may receive a customer's past-due balance on the customer step
+        quick_chip_set:
+          type: array
+          items: { type: string }
+    PosPolicyChange:
+      type: object
+      description: >-
+        One knob that moved. who is already a display name resolved server-side;
+        no user id is ever put on the wire. The wire shape matches the other
+        settings screens so one client component renders all of them.
+      required: [field, before, after]
+      properties:
+        field: { type: string }
+        before: { type: string }
+        after: { type: string }
+        who: { type: string }
+        when: { type: string, format: date-time }
+    PosPolicyChangePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PosPolicyChange" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    PosWorkspacePrefs:
+      type: object
+      description: The resolved workspace for the calling user (source user) or the dealer defaults (source dealer); whole-or-absent, never a field merge
+      required: [split_pct, arrangement, lookup_collapsed, sale_collapsed, lookup_presentation, margin_hidden, source]
+      properties:
+        split_pct: { type: integer, format: int32, minimum: 20, maximum: 80 }
+        arrangement: { type: string, enum: [LOOKUP_LEFT, SALE_LEFT] }
+        lookup_collapsed: { type: boolean }
+        sale_collapsed: { type: boolean }
+        lookup_presentation: { type: string, enum: [CARDS, ROWS] }
+        margin_hidden: { type: boolean, description: The margin quick-hide toggle }
+        source: { type: string, enum: [user, dealer] }
+        replayed: { type: boolean }
+    PosWorkspaceSaveInput:
+      type: object
+      description: One person saving their own workspace; idempotency_key is minted once per save and retried verbatim
+      required: [idempotency_key, split_pct, arrangement, lookup_collapsed, sale_collapsed, lookup_presentation, margin_hidden]
+      properties:
+        idempotency_key: { type: string, format: uuid }
+        split_pct: { type: integer, format: int32, minimum: 20, maximum: 80 }
+        arrangement: { type: string, enum: [LOOKUP_LEFT, SALE_LEFT] }
+        lookup_collapsed: { type: boolean }
+        sale_collapsed: { type: boolean }
+        lookup_presentation: { type: string, enum: [CARDS, ROWS] }
+        margin_hidden: { type: boolean }
+
+    # ── POS: returns ─────────────────────────────────────────────────────────
+    PosReturnLineInput:
+      type: object
+      description: One returned line, a fraction or all of one original order line
+      required: [order_line_id, qty_base, reason_code]
+      properties:
+        order_line_id: { type: string, format: uuid }
+        qty_base: { type: number }
+        reason_code: { type: string, enum: [DAMAGED, DEFECT, WRONG_ITEM, NO_LONGER_NEEDED, OTHER] }
+    PosPickupInput:
+      type: object
+      description: The optional logistics pickup block on a return
+      required: [required, site, requested_date]
+      properties:
+        required: { type: boolean }
+        site: { type: string }
+        requested_date: { type: string, format: date }
+    PosReturnInput:
+      type: object
+      description: >-
+        The idempotent return body. Idempotency keys with the reserved rreq:
+        prefix are internal to the return-request approval rail and are refused
+        on this public route.
+      required: [idempotency_key, order_id, order_no, lines, refund_method, reason, restock, till_session_id]
+      properties:
+        idempotency_key: { type: string, format: uuid }
+        order_id: { type: string, format: uuid, description: One of order_id or order_no identifies the original sale }
+        order_no: { type: string }
+        lines:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/PosReturnLineInput" }
+        refund_method: { type: string, enum: [CASH, CARD, ACCOUNT_CREDIT] }
+        reason: { type: string }
+        restock: { type: boolean }
+        till_session_id: { type: string, format: uuid, description: "CASH refunds: the open drawer" }
+        pickup: { $ref: "#/components/schemas/PosPickupInput" }
+        fee_bps:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 10000
+          description: Optional restocking fee, honored only on the ACCOUNT_CREDIT rail; 0 is no fee
+    PosReturn:
+      type: object
+      description: The committed return, returned verbatim on an idempotent replay
+      required: [return_id, return_no, order_id, invoice_id, refund_method, subtotal_cents, tax_cents, total_cents, pickup_status, status, replayed]
+      properties:
+        return_id: { type: string, format: uuid }
+        return_no: { type: string }
+        order_id: { type: string, format: uuid }
+        invoice_id: { type: string, format: uuid }
+        refund_method: { type: string, enum: [CASH, CARD, ACCOUNT_CREDIT] }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        fee_cents: { type: integer, format: int64, description: The restocking fee; the credited amount is total minus fee }
+        refund_payment_id: { type: string, format: uuid, description: The REFUNDED payments row (CASH and CARD rails) }
+        pickup_status: { type: string, enum: [NONE, REQUESTED, SCHEDULED, DONE] }
+        status: { type: string, enum: [COMMITTED] }
+        replayed: { type: boolean }
+    PosReturnableLine:
+      type: object
+      description: One original line with prior-return sums netted for display
+      required: [order_line_id, product_id, description, qty_sold, qty_returned, unit_price_cents, line_total_cents, tax_cents]
+      properties:
+        order_line_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        description: { type: string }
+        qty_sold: { type: number }
+        qty_returned: { type: number }
+        unit_price_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+    PosReturnLookup:
+      type: object
+      description: The pre-return read of the original sale
+      required: [order_id, order_no, branch_id, customer_id, invoice_id, sale_tender, card_refundable, lines]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        branch_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        invoice_id: { type: string, format: uuid }
+        sale_tender: { type: string, enum: [ACCOUNT, CASH, CARD, CHEQUE] }
+        card_refundable: { type: boolean, description: The original CARD capture carried a gateway reference }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PosReturnableLine" }
+    PosReturnPickup:
+      type: object
+      description: One row on the logistics pickup queue
+      required: [return_id, return_no, order_id, customer_id, branch_id, site, pickup_status, total_cents, created_at]
+      properties:
+        return_id: { type: string, format: uuid }
+        return_no: { type: string }
+        order_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        site: { type: string }
+        requested_date: { type: string, format: date }
+        pickup_status: { type: string, enum: [NONE, REQUESTED, SCHEDULED, DONE] }
+        total_cents: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+    PosReturnPickupPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PosReturnPickup" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    PosPickupAdvance:
+      type: object
+      description: The target pickup status; only REQUESTED to SCHEDULED and SCHEDULED to DONE are valid
+      required: [status]
+      properties:
+        status: { type: string, enum: [SCHEDULED, DONE] }
+    PosReturnRequestLine:
+      type: object
+      description: One requested line with its display facts joined from the original order line
+      required: [order_line_id, product_id, description, qty_base]
+      properties:
+        order_line_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        description: { type: string }
+        qty_base: { type: number }
+    PosReturnRequest:
+      type: object
+      description: >-
+        One portal-submitted return request. A PENDING request moves no money
+        and no stock; approval executes the return rail, rejection records only
+        the reason.
+      required: [id, request_no, order_id, order_no, customer_id, branch_id, status, reason_code, note, fee_cents, created_at, lines]
+      properties:
+        id: { type: string, format: uuid }
+        request_no: { type: string }
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        branch_id: { type: string, format: uuid }
+        status: { type: string, enum: [PENDING, APPROVED, REJECTED] }
+        reason_code: { type: string, enum: [DAMAGED, DEFECT, WRONG_ITEM, NO_LONGER_NEEDED, OTHER] }
+        note: { type: string, maxLength: 2000 }
+        requested_by: { type: string }
+        decided_by: { type: string }
+        decided_at: { type: string, format: date-time }
+        decision_reason: { type: string }
+        fee_cents: { type: integer, format: int64 }
+        return_id: { type: string, format: uuid }
+        return_no: { type: string }
+        created_at: { type: string, format: date-time }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PosReturnRequestLine" }
+    PosReturnRequestPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PosReturnRequest" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    PosReturnRequestReject:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, maxLength: 2000 }
+
+    # ── POS: parked tickets ──────────────────────────────────────────────────
+    PosParkedLineInput:
+      type: object
+      description: One saved-cart line; no price, prices re-derive from the engine on resume
+      required: [product_id, qty_entered, uom_entered]
+      properties:
+        product_id: { type: string, format: uuid }
+        qty_entered: { type: number }
+        uom_entered: { type: string }
+    PosParkInput:
+      type: object
+      required: [branch_id, customer_id, sale_type, notes, lines]
+      properties:
+        branch_id: { type: string, format: uuid }
+        customer_id: { type: string, description: Empty is a walk-in }
+        sale_type:
+          type: string
+          enum: [COLLECT_NOW, COLLECT_LATER, DELIVERED, COD]
+          default: COLLECT_NOW
+        notes: { type: string }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PosParkedLineInput" }
+    PosParkedTicket:
+      type: object
+      description: One saved ticket; no stock reservation
+      required: [id, ticket_no, branch_id, sale_type, notes, status, lines, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        ticket_no: { type: string }
+        branch_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        sale_type: { type: string, enum: [COLLECT_NOW, COLLECT_LATER, DELIVERED, COD] }
+        notes: { type: string }
+        status: { type: string, enum: [PARKED, RESUMED, DISCARDED] }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PosParkedLineInput" }
+        created_at: { type: string, format: date-time }
+    PosParkedTicketPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PosParkedTicket" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    PosParkedDiscard:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [DISCARDED] }
+
+    # ── POS: pricing orders ──────────────────────────────────────────────────
+    PosPricingOrderLineInput:
+      type: object
+      required: [product_id, qty_entered, uom_entered]
+      properties:
+        product_id: { type: string, format: uuid }
+        qty_entered: { type: number }
+        uom_entered: { type: string }
+    PosPricingOrderInput:
+      type: object
+      required: [branch_id, customer_id, customer_name, notes, valid_until, lines]
+      properties:
+        branch_id: { type: string, format: uuid }
+        customer_id: { type: string, description: Empty is a walk-in or prospect }
+        customer_name: { type: string, description: Printable name even for walk-ins }
+        notes: { type: string }
+        valid_until: { type: string, format: date, description: Empty applies the house default validity }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PosPricingOrderLineInput" }
+    PosPricingOrderLine:
+      type: object
+      description: One line with the engine price and the list price snapshotted for comparison
+      required: [line_no, product_id, sku, name, qty_entered, uom_entered, unit_price_cents, list_price_cents, line_total_cents]
+      properties:
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        qty_entered: { type: number }
+        uom_entered: { type: string }
+        unit_price_cents: { type: integer, format: int64 }
+        list_price_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64 }
+    PosPricingOrder:
+      type: object
+      description: The committed printable price/compare document
+      required: [id, doc_no, branch_id, customer_name, notes, subtotal_cents, tax_cents, total_cents, created_at, lines]
+      properties:
+        id: { type: string, format: uuid }
+        doc_no: { type: string }
+        branch_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        notes: { type: string }
+        valid_until: { type: string, format: date }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PosPricingOrderLine" }
+    PosPricingOrderPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PosPricingOrder" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    # ── Till: drawer sessions ────────────────────────────────────────────────
+    TillSession:
+      type: object
+      description: One drawer session
+      required: [id, branch_id, station, status, opened_by, float_cents, blind_close]
+      properties:
+        id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        station: { type: string }
+        status: { type: string, enum: [OPEN, COUNTED, CLOSED] }
+        opened_by: { type: string }
+        float_cents: { type: integer, format: int64 }
+        closing_float_cents: { type: integer, format: int64 }
+        blind_close: { type: boolean }
+        override_notes: { type: string }
+    TillTenderTotal:
+      type: object
+      description: Per-method expected, actual and lodged totals; variance is derived (actual minus expected)
+      required: [method, expected_cents, actual_cents, variance_cents, lodged_cents]
+      properties:
+        method: { type: string, enum: [CASH, CHEQUE, CARD, EFT, OTHER] }
+        expected_cents: { type: integer, format: int64 }
+        actual_cents: { type: integer, format: int64 }
+        variance_cents: { type: integer, format: int64 }
+        lodged_cents: { type: integer, format: int64 }
+    TillMovement:
+      type: object
+      description: A paid-in, paid-out, drop or lodgement
+      required: [id, movement_type, method, amount_cents, reason, reference]
+      properties:
+        id: { type: string, format: uuid }
+        movement_type: { type: string, enum: [PAID_IN, PAID_OUT, DROP, LODGEMENT] }
+        method: { type: string, enum: [CASH, CHEQUE, CARD, EFT, OTHER] }
+        amount_cents: { type: integer, format: int64, exclusiveMinimum: 0 }
+        reason: { type: string }
+        reference: { type: string }
+    TillDenominationCount:
+      type: object
+      description: One optional denomination tally row
+      required: [phase, denomination_cents, quantity]
+      properties:
+        phase: { type: string, enum: [OPEN, CLOSE] }
+        denomination_cents: { type: integer, format: int64, exclusiveMinimum: 0 }
+        quantity: { type: integer, format: int32, minimum: 0 }
+    TillSessionDetail:
+      type: object
+      description: "The operator reopen read: the session header plus its tenders and movements"
+      allOf:
+        - $ref: "#/components/schemas/TillSession"
+        - type: object
+          required: [tenders, movements]
+          properties:
+            tenders:
+              type: array
+              items: { $ref: "#/components/schemas/TillTenderTotal" }
+            movements:
+              type: array
+              items: { $ref: "#/components/schemas/TillMovement" }
+    TillPolicy:
+      type: object
+      description: The branch variance threshold and close grain
+      required: [branch_id, variance_threshold_cents, close_grain, require_blind_close]
+      properties:
+        branch_id: { type: string, description: Empty is the org-wide default row }
+        variance_threshold_cents: { type: integer, format: int64 }
+        close_grain: { type: string, enum: [SESSION, DAY] }
+        require_blind_close: { type: boolean }
+    TillCashSummary:
+      type: object
+      description: The derived cash reconciliation block
+      required: [opening_float_cents, expected_cents, counted_cents, over_short_cents]
+      properties:
+        opening_float_cents: { type: integer, format: int64 }
+        expected_cents: { type: integer, format: int64 }
+        counted_cents: { type: integer, format: int64 }
+        over_short_cents: { type: integer, format: int64 }
+    TillZReport:
+      type: object
+      description: Expected versus actual versus over/short, revealed after the count
+      required: [session_id, per_tender, cash, closing_float_cents]
+      properties:
+        session_id: { type: string, format: uuid }
+        per_tender:
+          type: array
+          items: { $ref: "#/components/schemas/TillTenderTotal" }
+        cash: { $ref: "#/components/schemas/TillCashSummary" }
+        closing_float_cents: { type: integer, format: int64 }
+    TillOpenInput:
+      type: object
+      description: Declares the opening float and optional opening denominations
+      required: [branch_id, station, float_cents, opening_denominations]
+      properties:
+        branch_id: { type: string, format: uuid }
+        station: { type: string }
+        float_cents: { type: integer, format: int64 }
+        opening_denominations:
+          type: array
+          items: { $ref: "#/components/schemas/TillDenominationCount" }
+    TillOpenResult:
+      type: object
+      required: [id, status]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [OPEN] }
+    TillOpenLookup:
+      type: object
+      description: The open-drawer rediscovery answer; open false is an ordinary state
+      required: [open]
+      properties:
+        open: { type: boolean }
+        id: { type: string, format: uuid }
+        opened_at: { type: string, format: date-time }
+    TillMovementInput:
+      type: object
+      required: [movement_type, method, amount_cents, reason, reference]
+      properties:
+        movement_type: { type: string, enum: [PAID_IN, PAID_OUT, DROP, LODGEMENT] }
+        method: { type: string, enum: [CASH, CHEQUE, CARD, EFT, OTHER] }
+        amount_cents: { type: integer, format: int64, exclusiveMinimum: 0 }
+        reason: { type: string }
+        reference: { type: string }
+    TillTenderActual:
+      type: object
+      description: One blind-counted method actual
+      required: [method, actual_cents]
+      properties:
+        method: { type: string, enum: [CASH, CHEQUE, CARD, EFT, OTHER] }
+        actual_cents: { type: integer, format: int64 }
+    TillCountInput:
+      type: object
+      description: The blind per-tender actuals plus optional close denominations
+      required: [tenders, closing_denominations, closing_float_cents]
+      properties:
+        tenders:
+          type: array
+          items: { $ref: "#/components/schemas/TillTenderActual" }
+        closing_denominations:
+          type: array
+          items: { $ref: "#/components/schemas/TillDenominationCount" }
+        closing_float_cents: { type: integer, format: int64 }
+    TillCompleteInput:
+      type: object
+      description: Reconcile and sign off; override_notes carries the manager's note on an over-threshold close
+      required: [override_notes]
+      properties:
+        override_notes: { type: string }
+    TillStatusResult:
+      type: object
+      description: The small status acknowledgement several till writes return
+      required: [status]
+      properties:
+        status: { type: string }
+
+    # ── Till: AR surface ─────────────────────────────────────────────────────
+    TillNSFPolicy:
+      type: object
+      description: The runtime-config NSF fee and auto-hold policy; a branch row overrides the org default
+      required: [branch_id, fee_cents, fee_taxable, fee_account_code, auto_hold, notes]
+      properties:
+        branch_id: { type: string, description: Empty is the org default }
+        fee_cents: { type: integer, format: int64 }
+        fee_taxable: { type: boolean }
+        fee_account_code: { type: string }
+        auto_hold: { type: boolean }
+        notes: { type: string }
+    TillNSFInput:
+      type: object
+      description: The bounced-payment request; fee and hold resolve from policy, never from the caller
+      required: [reason]
+      properties:
+        reason: { type: string }
+    TillNSFResult:
+      type: object
+      description: The outcome of an NSF mark
+      required: [payment_id, fee_cents, fee_taxable, reversed_cents, reopened_invoices, hold_placed, status]
+      properties:
+        payment_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        fee_cents: { type: integer, format: int64 }
+        fee_taxable: { type: boolean }
+        reversed_cents: { type: integer, format: int64 }
+        reopened_invoices: { type: integer, format: int32 }
+        hold_placed: { type: boolean }
+        status: { type: string, enum: [BOUNCED] }
+    TillBouncedPayment:
+      type: object
+      description: One row in the bounced queue, the payment joined to its NSF record
+      required: [payment_id, payment_no, branch_id, method, amount_cents, reason, fee_cents, fee_taxable, bounced_at]
+      properties:
+        payment_id: { type: string, format: uuid }
+        payment_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        method: { type: string, enum: [CASH, CHEQUE, CARD, EFT, OTHER] }
+        amount_cents: { type: integer, format: int64 }
+        gateway_ref: { type: string }
+        reason: { type: string }
+        fee_cents: { type: integer, format: int64 }
+        fee_taxable: { type: boolean }
+        bounced_at: { type: string, format: date-time }
+    TillBouncedPaymentPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TillBouncedPayment" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    TillCreditHold:
+      type: object
+      description: One credit hold
+      required: [id, customer_id, status, reason, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        source_payment_id: { type: string, format: uuid }
+        status: { type: string, enum: [ACTIVE, RELEASED] }
+        reason: { type: string }
+        release_reason: { type: string }
+        placed_by: { type: string }
+        released_by: { type: string }
+        created_at: { type: string, format: date-time }
+        released_at: { type: [string, "null"], format: date-time }
+    TillCreditHoldPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TillCreditHold" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    TillReleaseHoldInput:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string }
+    TillPaymentAttempt:
+      type: object
+      description: >-
+        One declined or errored gateway attempt. attempted_by is stamped
+        server-side from the authenticated caller and is never client-supplied.
+      required: [idempotency_key, customer_id, amount_cents, method, processor, result, detail, branch_id]
+      properties:
+        idempotency_key: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        amount_cents: { type: integer, format: int64, exclusiveMinimum: 0 }
+        method: { type: string, enum: [CASH, CHEQUE, CARD, EFT, OTHER] }
+        processor: { type: string }
+        result: { type: string, enum: [DECLINED, ERROR] }
+        detail: { type: string }
+        branch_id: { type: string, format: uuid }
+    TillAllocationRecord:
+      type: object
+      description: >-
+        One payment-to-invoice application with attribution. reversed_by_nsf
+        marks a historical allocation reconstructed from the audit trail after
+        an NSF reversal deleted the live rows; such records carry no
+        invoice_no.
+      required: [invoice_id, invoice_no, amount_cents, allocated_at]
+      properties:
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        allocated_by: { type: string, description: Empty for a portal or customer-initiated payment }
+        allocated_by_name: { type: string }
+        allocated_at: { type: string, format: date-time }
+        reversed_by_nsf: { type: boolean }
+    TillPaymentHistory:
+      type: object
+      description: One payment header (who took it, when, how) plus its application history
+      required: [payment_id, payment_no, branch_id, method, status, amount_cents, received_at, allocations]
+      properties:
+        payment_id: { type: string, format: uuid }
+        payment_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        method: { type: string, enum: [CASH, CHEQUE, CARD, EFT, OTHER] }
+        status: { type: string, enum: [RECEIVED, DEPOSITED, BOUNCED, REFUNDED, VOID, PENDING] }
+        amount_cents: { type: integer, format: int64 }
+        gateway_ref: { type: string }
+        received_at: { type: string, format: date-time }
+        received_by: { type: string }
+        received_by_name: { type: string }
+        reversed: { type: boolean, description: Set when the payment bounced and its live allocations were reversed }
+        allocations:
+          type: array
+          items: { $ref: "#/components/schemas/TillAllocationRecord" }
+    TillInvoicePaymentRecord:
+      type: object
+      description: One payment or credit applied to an invoice, with both attributions
+      required: [payment_id, payment_no, method, status, amount_cents, payment_amount_cents, allocated_at, received_at]
+      properties:
+        payment_id: { type: string, format: uuid }
+        payment_no: { type: string }
+        method: { type: string, enum: [CASH, CHEQUE, CARD, EFT, OTHER] }
+        status: { type: string, enum: [RECEIVED, DEPOSITED, BOUNCED, REFUNDED, VOID, PENDING] }
+        amount_cents: { type: integer, format: int64, description: The slice applied to this invoice }
+        payment_amount_cents: { type: integer, format: int64, description: The whole payment }
+        allocated_by: { type: string }
+        allocated_by_name: { type: string }
+        allocated_at: { type: string, format: date-time }
+        received_by: { type: string }
+        received_by_name: { type: string }
+        received_at: { type: string, format: date-time }
+    TillInvoicePayments:
+      type: object
+      description: "The per-invoice settlement view: every payment applied to it, attributed"
+      required: [invoice_id, invoice_no, branch_id, items]
+      properties:
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        branch_id: { type: string, format: uuid }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TillInvoicePaymentRecord" }
