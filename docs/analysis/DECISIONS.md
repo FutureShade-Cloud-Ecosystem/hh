@@ -1,5 +1,6 @@
 > Origin: `analysis/DECISIONS.md` in `futurebuildai/hh_pro_dibbits` at commit 829d387baec93556ffa0e9242f4091e9be9544ec (read only source).
 > Copied into `hh/docs/analysis/` by Session HH-2 lane HH-2.5; content below this header is unchanged.
+> This copy is the live decisions file from D20 onward; the copy in hh_pro_dibbits is frozen at the close of HH-1.
 
 # HH-1 decisions, as taken by Colton
 
@@ -91,6 +92,12 @@ Recorded exactly as handed over, each with the conflict it resolves. D7 to D12 a
 **D19 (resolves the question HH-10.6 raised: where the audience landing pages live).** The four audience landing pages live in the hh monorepo under the hh-public shell family and its bundle fence, published as a static pre-auth bundle; the Hardscape House marketing site links to them and holds no copy. The fence, the link check that fails a page referencing a recording the runner did not produce, and the recordings themselves therefore stay in one repository, and there is no second surface that can drift from the clips. The alternative, pages in the marketing site repository, is rejected because it splits the link check from the runner that produces what it checks.
 
 Touches: HH-10.6 (scope states the marketing site links in and owns no copy; acceptance gains that no landing page is published outside this repository).
+
+## HH-2: integration
+
+**D20 (resolves the conflict between the lane acceptance and what exists).** `fb check` does not exist and nothing between HH-2 and HH-12 builds it, so `scripts/check-shape.sh` in this repository is the App Shape gate until the platform CLI exists. Every exit test that says "fb check passes" reads "the shape check passes" instead. When `fb` lands, the script becomes a thin wrapper around it and the `docs/BLOCKERS.md` entries recording the substitution are deleted. Two lanes reached this substitution independently, which is what makes it the brief that needs amending rather than the lanes.
+
+**D21 (resolves where the repository lives).** The `hh` monorepo was transferred into the FutureShade org, `FutureShade-Cloud-Ecosystem`, under the `futurebuildai` GitHub account, which also holds the copies of the OSS cloud infrastructure the platform deploys across. The Go module path follows the new owner. HH-2's brief and context section 6 name the old account; both are amended by this decision rather than by an edit to the frozen analysis.
 
 ## Carried as verification, not decided
 
