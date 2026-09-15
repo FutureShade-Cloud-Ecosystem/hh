@@ -22,6 +22,7 @@ required=(
   core/db/migrations
   core/db/queries
   core/api
+  core/api/openapi.yaml
   web/package.json
   web/packages/design-system
   web/packages/api-client

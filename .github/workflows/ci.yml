@@ -28,6 +28,17 @@ jobs:
         run: |
           bun test
           bun scripts/generate-manifest.ts --check
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: OpenAPI contract checks (repo-local)
+        run: |
+          npm --prefix core/api/tools ci
+          node core/api/tools/merge.mjs
+          git diff --exit-code -- core/api/openapi.yaml
+          node core/api/tools/statemap.mjs
+          node core/api/tools/d8-isolation.mjs
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
