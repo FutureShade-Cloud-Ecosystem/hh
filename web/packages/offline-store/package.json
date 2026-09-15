@@ -1,0 +1,6 @@
+{
+  "name": "@hh/offline-store",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module"
+}

@@ -1,0 +1,10 @@
+# App Shape manifest for the hh monorepo (context/FUTURESHADE-CONTEXT.md section 4.3).
+# The frontends block is generated from the role catalog (docs/analysis/role-catalog.yaml,
+# copied in by lane HH-2.5) by the generator script under scripts/ (lane HH-2.2), so the
+# manifest and the catalog cannot disagree. Until that lane lands, this file carries only
+# the top-level shape fields.
+shape: 1
+app: hh
+name: Hardscape House
+runtimes: [core, web, tauri, agents]
+tenancy: multi-org
