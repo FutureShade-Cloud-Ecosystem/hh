@@ -128,6 +128,21 @@ Reason: a checkpoint that names someone who is not yet in the path is a checkpoi
 
 Touches: `DECISIONS.md` "Still open, by design" (Q8 and Q11 lose "with Grant"), the HH-6, HH-9 and HH-10 human-checkpoint lines, and any Produces line that assigns a design review.
 
+**D26 (resolves whether HH-3.5 is attended).** HH-3.5 is attended. It implements the per-entity conflict policy, and a wrong `server_wins` where `manual` was meant silently overwrites work a crew did in a yard with no signal, discovered by the crew rather than by a test. That is the same class of failure as a wrong schema, one step further out, so it takes the same control: the lane does not run while nobody is at the terminal, and where a policy cannot be read off the domain map it stops and asks rather than choosing and recording a blocker. Colton reads the policy entity by entity before the lane's routes are integrated.
+
+Phase C therefore carries HH-3.2, HH-3.4 and HH-3.6 only, HH-3.5 runs alone as Phase D, and the tracking lane becomes Phase E. Placing HH-3.5 after the other three rather than before costs one phase and buys two things: the sync lane writes against the final module set HH-3.6 lands, and Colton is free while Phase C runs. HH-3.4 is now the only HH-3 lane that is neither attended nor Claude-preferred under an all-Kimi routing, which is where the harness choice bites.
+
+Touches: `docs/sessions/HH-3.md` (the phases table, the HH-3.5 lane heading and acceptance, the integrator order, the human checkpoints, the harness note).
+
+**D27 (resolves what the freeze on `docs/analysis/` permits, and how a file records that its body changed).** The rule is: no body under `docs/analysis/` changes except where a recorded decision names the file live or names the edit an exception. Two files are live: `DECISIONS.md` from D20 and `role-catalog.yaml` from D23. Two body edits are recorded exceptions: D23's single `roles` line in the catalog, and D25's reassignment of the performer in the checkpoint, design-sync and design-review lines. Three corrections follow. The provenance line asserting that the content below it is unchanged is amended, on each file whose body a decision has changed, to name the decision that changed it. The frozen-tree sentence in `AGENTS.md` gains the same exception clause. And any later body edit under `docs/analysis/` carries a decision number or does not happen.
+
+Reason: the preflight left eight files asserting in their own headers that their bodies were unchanged in the same commit range that changed them, and an `AGENTS.md` sentence saying those bodies are never edited beside two files the same session edited. A freeze documented inaccurately is not a freeze, it is a claim, and the next lane to notice will either stop and ask or decide quietly. Both cost more than the clause does.
+
+Taken by the supervisor rather than by Colton, like D24, because it corrects the documentation of a rule rather than the rule itself, and because it is reversible.
+
+Touches: the second provenance line of `docs/analysis/role-catalog.yaml` and of the seven session files D25 reassigned, and the house rules in `AGENTS.md`.
+
+
 
 ## Carried as verification, not decided
 
