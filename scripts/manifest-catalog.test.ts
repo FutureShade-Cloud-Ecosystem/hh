@@ -11,6 +11,7 @@ import {
   catalogPath,
   loadCatalog,
   MANIFEST_PATH,
+  validateCatalog,
   type CatalogDoc,
   type MicroApp,
 } from "./generate-manifest";
@@ -111,7 +112,7 @@ describe("frontends and catalog cannot disagree", () => {
       const frontend = frontendById.get(app.id);
       expect(frontend, app.id).toBeDefined();
       expect(frontend!.offline.mode).toBe(app.offline.mode);
-      expect(frontend!.offline.scopes).toEqual(app.offline.scopes ?? []);
+      expect(frontend!.offline.scopes).toEqual(app.offline.scopes);
       expect(frontend!.offline.conflict_policy).toEqual(
         app.offline.conflict_policy ?? {},
       );
@@ -148,7 +149,7 @@ describe("pre-auth gating", () => {
     expect(manifestPreAuth).toEqual(catalogPreAuth);
   });
 
-  test("a missing roles key fails generation and names the entry", () => {
+  test("a missing roles key fails validation and names the entry and the key", () => {
     const broken = {
       catalog: 1,
       micro_apps: [
@@ -164,8 +165,34 @@ describe("pre-auth gating", () => {
         },
       ],
     } as unknown as CatalogDoc;
-    expect(() => buildManifest(broken)).toThrow(/roles-probe/);
-    expect(() => buildManifest(broken)).toThrow(/roles key is required/);
+    expect(() => validateCatalog(broken)).toThrow(/roles-probe/);
+    expect(() => validateCatalog(broken)).toThrow(/roles key is required/);
+  });
+
+  test("a missing offline.scopes or devices key fails validation, naming the entry and the key", () => {
+    const base = {
+      id: "shape-probe",
+      name: "Shape Probe",
+      audience: "internal",
+      roles: ["inside_sales"],
+      devices: ["desktop"],
+      kit: "list-detail",
+      shell: "hh-work",
+      brand: "fb-tokens",
+      offline: { mode: "read_cache_only", scopes: ["customers"], conflict_policy: {} },
+    };
+    const noScopes = {
+      catalog: 1,
+      micro_apps: [{ ...base, offline: { mode: "read_cache_only", conflict_policy: {} } }],
+    } as unknown as CatalogDoc;
+    expect(() => validateCatalog(noScopes)).toThrow(/shape-probe/);
+    expect(() => validateCatalog(noScopes)).toThrow(/offline\.scopes key is required/);
+    const noDevices = {
+      catalog: 1,
+      micro_apps: [{ ...base, devices: undefined }],
+    } as unknown as CatalogDoc;
+    expect(() => validateCatalog(noDevices)).toThrow(/shape-probe/);
+    expect(() => validateCatalog(noDevices)).toThrow(/devices key is required/);
   });
 });
 

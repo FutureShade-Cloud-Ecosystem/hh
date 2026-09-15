@@ -30,7 +30,7 @@ const skeleton = YAML.parse(await Bun.file(SKELETON_PATH).text()) as {
 
 const catalogScopes = new Set<string>();
 for (const app of catalog.micro_apps) {
-  for (const scope of app.offline.scopes ?? []) {
+  for (const scope of app.offline.scopes) {
     catalogScopes.add(scope);
   }
 }

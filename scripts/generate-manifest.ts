@@ -65,7 +65,36 @@ export async function loadCatalog(path: string): Promise<CatalogDoc> {
   if (!Array.isArray(doc.micro_apps)) {
     throw new Error(`${path}: no micro_apps list found`);
   }
+  validateCatalog(doc);
   return doc;
+}
+
+// validateCatalog enforces the catalog's shape once, at load, so no consumer
+// needs a default for a missing key: a present empty list is a statement, a
+// missing key is an error naming the entry and the key. launcher_sections is
+// deliberately unchecked: an absent section list is a different fact, not a
+// per-app key.
+export function validateCatalog(doc: CatalogDoc): void {
+  for (const app of doc.micro_apps) {
+    if (!app.offline || !app.offline.mode) {
+      throw new Error(`${app.id}: missing offline block or offline mode`);
+    }
+    if (!Array.isArray(app.roles)) {
+      throw new Error(
+        `${app.id}: the roles key is required; an empty list means pre-auth token gating, a missing key is an error`,
+      );
+    }
+    if (!Array.isArray(app.devices)) {
+      throw new Error(
+        `${app.id}: the devices key is required; an empty list declares no devices, a missing key is an error`,
+      );
+    }
+    if (!Array.isArray(app.offline.scopes)) {
+      throw new Error(
+        `${app.id}: the offline.scopes key is required; an empty list declares no offline scopes, a missing key is an error`,
+      );
+    }
+  }
 }
 
 function needsQuote(s: string): boolean {
@@ -92,14 +121,6 @@ export function buildManifest(doc: CatalogDoc): string {
   for (const app of doc.micro_apps) {
     if (seen.has(app.id)) throw new Error(`duplicate micro-app id ${app.id}`);
     seen.add(app.id);
-    if (!app.offline || !app.offline.mode) {
-      throw new Error(`${app.id}: missing offline block or offline mode`);
-    }
-    if (!Array.isArray(app.roles)) {
-      throw new Error(
-        `${app.id}: the roles key is required; an empty list means pre-auth token gating, a missing key is an error`,
-      );
-    }
   }
   for (const section of doc.launcher_sections ?? []) {
     if (seen.has(section.id)) {
@@ -177,7 +198,7 @@ export function buildManifest(doc: CatalogDoc): string {
       );
     }
     out.push(`    gate: ${gate}`);
-    out.push(`    devices: ${flowList(app.devices ?? [])}`);
+    out.push(`    devices: ${flowList(app.devices)}`);
     out.push(`    kit: ${scalar(app.kit)}`);
     out.push(`    shell: ${shellValue(app.shell)}`);
     out.push(`    brand: ${scalar(app.brand)}`);
@@ -186,7 +207,7 @@ export function buildManifest(doc: CatalogDoc): string {
     }
     out.push("    offline:");
     out.push(`      mode: ${scalar(app.offline.mode)}`);
-    out.push(`      scopes: ${flowList(app.offline.scopes ?? [])}`);
+    out.push(`      scopes: ${flowList(app.offline.scopes)}`);
     const entries = Object.entries(app.offline.conflict_policy ?? {});
     if (entries.length === 0) {
       out.push("      conflict_policy: {}");
