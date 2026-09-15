@@ -1,5 +1,5 @@
 > Origin: `analysis/sessions/HH-9-money-manager-messages-admin.md` in `futurebuildai/hh_pro_dibbits` at commit 829d387baec93556ffa0e9242f4091e9be9544ec (read only source).
-> Copied into `hh/docs/analysis/` by Session HH-2 lane HH-2.5; content below this header is unchanged.
+> Copied into `hh/docs/analysis/` by Session HH-2 lane HH-2.5; content below this header is unchanged except the human-checkpoints line, including its design sync, whose performer was reassigned by D25.
 > In-body `analysis/...` paths resolve to `docs/analysis/...` in this copy.
 
 # HH-9: Money Desk, Manager Home, House Messages, Dealer Admin
