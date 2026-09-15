@@ -37,6 +37,8 @@ jobs:
           npm --prefix core/api/tools ci
           node core/api/tools/merge.mjs
           git diff --exit-code -- core/api/openapi.yaml
+          node core/api/tools/parity.mjs
+          node core/api/tools/fixtures.mjs
           node core/api/tools/statemap.mjs
           node core/api/tools/d8-isolation.mjs
       - name: Set up Go

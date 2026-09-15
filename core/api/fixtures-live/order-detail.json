@@ -1,0 +1,28 @@
+{
+  "id": "86b744fc-c0bf-4b07-a3c7-91b860d428f4",
+  "order_no": "#SO-TRT-43",
+  "customer_id": "df000000-0000-4000-9000-000000000001",
+  "quote_id": "",
+  "status": "INVOICED",
+  "fulfillment": "PICKUP",
+  "requested_date": "0001-01-01T00:00:00Z",
+  "subtotal_cents": 90000,
+  "tax_cents": 11700,
+  "total_cents": 101700,
+  "created_at": "2026-08-20T12:19:09.053188Z",
+  "lines": [
+    {
+      "line_no": 1,
+      "product_id": "a7000000-0000-4000-9000-000000000022",
+      "description": "",
+      "qty_entered": "15.0000",
+      "uom_entered": "T",
+      "qty_base": "15.0000",
+      "allocated_base": "0.0000",
+      "fulfilled_base": "0.0000",
+      "unit_price_cents": 6000,
+      "line_total_cents": 90000
+    }
+  ],
+  "delivery_instructions": ""
+}

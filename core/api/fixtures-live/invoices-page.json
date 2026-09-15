@@ -1,0 +1,49 @@
+{
+  "items": [
+    {
+      "id": "0dd4ec29-9616-4754-9f5f-667da1722018",
+      "invoice_no": "#INV-30",
+      "customer_id": "df000000-0000-4000-9000-000000000001",
+      "order_id": "ae58d658-427f-40a1-b10e-e7603cb2a7ba",
+      "status": "PAID",
+      "issue_date": "2026-08-20T00:00:00Z",
+      "due_date": "2026-08-20T00:00:00Z",
+      "subtotal_cents": 90000,
+      "tax_cents": 11700,
+      "holdback_cents": 0,
+      "total_cents": 101700,
+      "balance_cents": 0
+    },
+    {
+      "id": "096f4f98-8a6d-4ed0-94a6-4f7061813a48",
+      "invoice_no": "#INV-31",
+      "customer_id": "df000000-0000-4000-9000-000000000001",
+      "order_id": "86b744fc-c0bf-4b07-a3c7-91b860d428f4",
+      "status": "PAID",
+      "issue_date": "2026-08-20T00:00:00Z",
+      "due_date": "2026-08-20T00:00:00Z",
+      "subtotal_cents": 90000,
+      "tax_cents": 11700,
+      "holdback_cents": 0,
+      "total_cents": 101700,
+      "balance_cents": 0
+    },
+    {
+      "id": "df000000-0000-4000-9000-0000000000e1",
+      "invoice_no": "INV-DEMO-CP03-Q",
+      "customer_id": "df000000-0000-4000-9000-000000000001",
+      "order_id": "df000000-0000-4000-9000-0000000000d1",
+      "status": "FINALIZED",
+      "issue_date": "2026-07-16T00:00:00Z",
+      "due_date": "2026-08-15T00:00:00Z",
+      "subtotal_cents": 20000,
+      "tax_cents": 0,
+      "holdback_cents": 0,
+      "total_cents": 20000,
+      "balance_cents": 20000
+    }
+  ],
+  "total": 4,
+  "limit": 3,
+  "offset": 0
+}

@@ -1,0 +1,84 @@
+{
+  "account": {
+    "customer_id": "df000000-0000-4000-9000-000000000001",
+    "account_no": "CUST-DEMO-CP03",
+    "name": "Dibbits Demo Contractor",
+    "customer_type": "CONTRACTOR",
+    "branch_id": "5d1b3f6e-0000-4000-9000-000000000001",
+    "payment_terms_days": 30,
+    "credit_limit_cents": 5000000,
+    "on_hold": false,
+    "tax_exempt": false,
+    "balance_cents": 70000,
+    "is_active": true
+  },
+  "open_balance_cents": 70000,
+  "available_credit_cents": 4930000,
+  "recent_orders": [
+    {
+      "id": "86b744fc-c0bf-4b07-a3c7-91b860d428f4",
+      "order_no": "#SO-TRT-43",
+      "customer_id": "df000000-0000-4000-9000-000000000001",
+      "quote_id": "",
+      "status": "INVOICED",
+      "fulfillment": "PICKUP",
+      "requested_date": "0001-01-01T00:00:00Z",
+      "subtotal_cents": 90000,
+      "tax_cents": 11700,
+      "total_cents": 101700,
+      "created_at": "2026-08-20T12:19:09.053188Z"
+    },
+    {
+      "id": "ae58d658-427f-40a1-b10e-e7603cb2a7ba",
+      "order_no": "#SO-TRT-42",
+      "customer_id": "df000000-0000-4000-9000-000000000001",
+      "quote_id": "",
+      "status": "INVOICED",
+      "fulfillment": "PICKUP",
+      "requested_date": "0001-01-01T00:00:00Z",
+      "subtotal_cents": 90000,
+      "tax_cents": 11700,
+      "total_cents": 101700,
+      "created_at": "2026-08-20T12:18:06.42263Z"
+    },
+    {
+      "id": "07de0000-0000-4000-9000-000000000059",
+      "order_no": "#SO-DEMO-HIST-0001",
+      "customer_id": "df000000-0000-4000-9000-000000000001",
+      "quote_id": "",
+      "status": "CLOSED",
+      "fulfillment": "DELIVERY",
+      "requested_date": "2026-07-16T00:00:00Z",
+      "subtotal_cents": 48000,
+      "tax_cents": 6240,
+      "total_cents": 54240,
+      "created_at": "2026-07-16T19:57:47.967071Z"
+    },
+    {
+      "id": "df000000-0000-4000-9000-0000000000d1",
+      "order_no": "#SO-DEMO-CP03-Q",
+      "customer_id": "df000000-0000-4000-9000-000000000001",
+      "quote_id": "df000000-0000-4000-9000-0000000000c1",
+      "status": "INVOICED",
+      "fulfillment": "PICKUP",
+      "requested_date": "2026-07-16T00:00:00Z",
+      "subtotal_cents": 20000,
+      "tax_cents": 0,
+      "total_cents": 20000,
+      "created_at": "2026-07-16T19:57:47.868809Z"
+    },
+    {
+      "id": "df000000-0000-4000-9000-0000000000d2",
+      "order_no": "#SO-DEMO-CP03-X",
+      "customer_id": "df000000-0000-4000-9000-000000000001",
+      "quote_id": "",
+      "status": "INVOICED",
+      "fulfillment": "PICKUP",
+      "requested_date": "2026-07-16T00:00:00Z",
+      "subtotal_cents": 50000,
+      "tax_cents": 0,
+      "total_cents": 50000,
+      "created_at": "2026-07-16T19:57:47.868809Z"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "id": "df000000-0000-4000-9000-0000000000a1",
+  "customer_id": "df000000-0000-4000-9000-000000000001",
+  "email": "portal.demo@dibbits.example",
+  "name": "Dibbits Demo (Owner)",
+  "role": "account_admin",
+  "status": "active",
+  "notification_prefs": {},
+  "created_at": "2026-07-16T19:57:47.868809Z",
+  "updated_at": "2026-07-16T19:57:47.868809Z",
+  "capabilities": {
+    "manage_users": true,
+    "view_billing": true,
+    "pay_invoices": true,
+    "manage_payment_methods": true,
+    "submit_rfq": true,
+    "create_orders": true,
+    "view_orders_deliveries": true,
+    "edit_delivery_instructions": true,
+    "manage_files": true
+  }
+}

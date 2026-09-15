@@ -2,6 +2,11 @@
 // The lane acceptance suite for core/api: assemble, then check parity,
 // fixtures, the state map, D8 quote isolation, and the house rules (no em
 // or en dashes in any core/api file). Each step fails the run.
+//
+// Parity and fixtures read the inputs vendored under D22
+// (core/api/erp-routes.txt and core/api/fixtures-live/), so the suite needs
+// no sibling checkout. HH_ERP_ROOT or HH_PRO_ROOT in the environment points
+// the matching step at a live sibling instead.
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -29,7 +34,7 @@ function scan(dir) {
     if (entry === "node_modules") continue;
     const p = join(dir, entry);
     if (statSync(p).isDirectory()) scan(p);
-    else if (/\.(yaml|yml|md|mjs|json)$/.test(entry)) {
+    else if (/\.(yaml|yml|md|mjs|json|txt)$/.test(entry)) {
       const text = readFileSync(p, "utf8");
       const lines = text.split("\n");
       lines.forEach((line, i) => {
