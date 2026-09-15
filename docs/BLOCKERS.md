@@ -35,14 +35,6 @@ it must be run against `manifest.yaml` and this note removed.
 
 ## HH-3 preflight
 
-- **The decisions input covers D22 to D25; no D26 exists.** The preflight
-  prompt names its input `decisions-d22-d26.md` and asks for D22 to D26 to be
-  recorded. The file in the preflight inputs is `decisions-d22-d25.md`, and
-  its marked block holds D22, D23, D24 and D25 only; the prompt's four
-  decision items are those four, and the live HH-3 brief names the preflight
-  as landing D22 to D25. The block was appended exactly as it stands and
-  nothing was written for a D26. The pull request keeps the title the prompt
-  gave. If a D26 was meant, it has not been handed over.
 - **The second provenance header line is now stale on eight frozen files.**
   "content below this header is unchanged" no longer holds for
   `docs/analysis/role-catalog.yaml` (the D23 roles line) or for seven files
@@ -50,15 +42,22 @@ it must be run against `manifest.yaml` and this note removed.
   HH-7, HH-8, HH-9 and HH-10). The preflight permitted only the D23 and D24
   sentences above those headers, so the line was left as it is. Amending it,
   as `DECISIONS.md` was amended at D20, is Colton's call.
-- **Where the D25 reassignment stopped, for Colton to overrule.** Item 4 was
-  scoped by function to human-checkpoint lines, design-sync lines and Produces
-  lines assigning a design review; unattributed approvals, sign-offs and
-  read-backs on those lines were attributed to Colton. Left unchanged: the two
-  HH-4 acceptance lines describing the kit harness as one "Grant can open" and
-  "Grant opens" (acceptance criteria, not a checkpoint, sync or Produces line);
-  the checkpoint actions of the dealer's and the delivery's own people (the
-  sales manager's difference report in HH-7, the finance controller's tie-out
-  in HH-9 and HH-11, the droplet operator's steps in HH-5, HH-11 and HH-12),
-  because each is that party's attestation or that party's environment; and
-  the outcomes "the yard roles are switched and observed" (HH-6) and "one real
-  contractor account is switched and observed" (HH-10).
+- **Where the D25 reassignment stopped: Colton's review outcome.**
+  - Accepted: unassigned approvals, sign-offs and read-backs on the checkpoint lines now name Colton.
+  - Accepted: dealer and delivery staff left alone; the sales manager, the finance controller and the droplet operator each give their own sign-off.
+  - Accepted: the "switched and observed" outcome lines in HH-6 and HH-10 left alone.
+  - Overruled: the HH-4 acceptance lines "Grant can open" and "Grant opens" now name Colton (addendum item 6).
+
+## HH-3 preflight addendum
+
+- **The brief input is the superseded brief, so `docs/sessions/HH-3.md` did
+  not change.** `hh3-pre-inputs/session-brief-hh-3.md` (sha256
+  `207aeb64b6e1e7dbe55e8d1a9aaf5e1b94354dc6616eb402b60384f8f1c2fa76`) is byte
+  for byte the file already committed: it names the preflight as landing D22
+  to D25, puts HH-3.5 in Phase C, and still asks whether HH-3.5 is attended.
+  The copy was made and `cmp` exits 0, so there is no diff to commit. D26 is
+  recorded in `DECISIONS.md`, but its Touches on `docs/sessions/HH-3.md` (the
+  phases table, the HH-3.5 lane heading and acceptance, the integrator order,
+  the human checkpoints, the harness note) are not applied, because the live
+  brief is an input and was not authored here. Until the D26 brief is handed
+  over, the live brief contradicts D26 on HH-3.5.
