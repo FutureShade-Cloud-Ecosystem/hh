@@ -1,0 +1,2328 @@
+paths:
+  # --- billing: the receivables register (DIB-510). Reads and per-invoice acts
+  # are staff; the collections campaign is manager; the dealer policy is admin.
+  # Mounted by finstmt/dib510_register_mount.go, which receives
+  # (RequireStaff, RequireManager, RequireAdmin) at the finstmt call site.
+  /api/v1/ar/register:
+    get:
+      operationId: billingListRegister
+      tags: [staff-billing]
+      summary: Read the invoice register, open documents first
+      description: >-
+        The staff-side invoice book. The account position column on each row is
+        gated by policy and is byte-absent for a caller the policy refuses.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: q
+          in: query
+          required: false
+          description: Search over invoice no, customer name, account no, order no, customer PO
+          schema: { type: string }
+        - name: chip
+          in: query
+          required: false
+          description: Filter to one derived register status
+          schema:
+            type: string
+            enum: [OPEN, DUE_SOON, OVERDUE, PARTIALLY_PAID, PAID, DISPUTED, CREDIT_HOLD, DRAFT, VOID, CREDIT]
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: customer_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: salesperson_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: show_credits
+          in: query
+          required: false
+          schema: { type: boolean }
+        - name: issued_from
+          in: query
+          required: false
+          schema: { type: string, format: date }
+        - name: issued_to
+          in: query
+          required: false
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: The register page with its chip counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingRegisterPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/register/policy:
+    get:
+      operationId: billingGetRegisterPolicy
+      tags: [staff-billing]
+      summary: Read the register policy for a branch
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The effective register policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingRegisterPolicy"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: billingPutRegisterPolicy
+      tags: [staff-billing]
+      summary: Write the register policy for a branch
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingRegisterPolicy"
+      responses:
+        "200":
+          description: Policy stored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [saved]
+                properties:
+                  saved: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/register/selection:
+    post:
+      operationId: billingRegisterSelection
+      tags: [staff-billing]
+      summary: Total the caller-owned selection of invoices for the bulk bar
+      description: >-
+        A POST because the selection is a list of ids the caller owns. It
+        changes nothing; it answers the count and the summed balance from the
+        same place the bulk actions read.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingRegisterSelectionRequest"
+      responses:
+        "200":
+          description: The selection count and summed balance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingRegisterSelectionResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/register/export:
+    get:
+      operationId: billingExportRegister
+      tags: [staff-billing]
+      summary: Download the current register view as CSV
+      description: >-
+        The same filter and the same figures as the register read. The body is
+        CSV text with a Content-Disposition attachment filename, not JSON; the
+        wire shape is raw text rather than a struct.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+        - name: chip
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [OPEN, DUE_SOON, OVERDUE, PARTIALLY_PAID, PAID, DISPUTED, CREDIT_HOLD, DRAFT, VOID, CREDIT]
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: customer_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: salesperson_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: show_credits
+          in: query
+          required: false
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: The register as a CSV download
+          content:
+            text/csv:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/register/invoices/{id}:
+    get:
+      operationId: billingGetRegisterInvoice
+      tags: [staff-billing]
+      summary: Read the full invoice detail panel in one call
+      description: >-
+        Lines, totals, customer block, delivery proof, the interleaved activity
+        timeline, the live promise and dispute, and the reminder tones the
+        caller may send. The account position is byte-absent for a caller the
+        policy refuses.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The invoice detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingInvoiceDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/register/invoices/{id}/document:
+    get:
+      operationId: billingGetRegisterInvoiceDocument
+      tags: [staff-billing]
+      summary: Render the printable invoice document
+      description: >-
+        The body is rendered HTML (Content-Type text/html, Cache-Control
+        no-store), not JSON. Rendering does not mark the invoice opened.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The printable invoice as HTML
+          content:
+            text/html:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/register/invoices/{id}/payments:
+    post:
+      operationId: billingRecordInvoicePayment
+      tags: [staff-billing]
+      summary: Record an off-gateway payment against one invoice
+      description: >-
+        Idempotent on idempotency_key: a replayed key returns the first result
+        with replayed true and posts nothing. balance_cents in the response is
+        read back from the ledger after the settle.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingReceiptInput"
+      responses:
+        "200":
+          description: The recorded receipt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingReceiptResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/register/invoices/{id}/send:
+    post:
+      operationId: billingSendInvoice
+      tags: [staff-billing]
+      summary: Send one invoice to its account
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingInvoiceSendRequest"
+      responses:
+        "200":
+          description: What the send did, including skipped documents and why
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingReminderResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/register/invoices/{id}/promise:
+    post:
+      operationId: billingAddPromise
+      tags: [staff-billing]
+      summary: Record a promise to pay against one invoice
+      description: >-
+        One live promise per invoice. When one already exists the route
+        answers 409 with the live promise attached beside the error string.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingPromiseInput"
+      responses:
+        "200":
+          description: The recorded promise
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingPromiseView"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ar/register/invoices/{id}/dispute:
+    post:
+      operationId: billingOpenDispute
+      tags: [staff-billing]
+      summary: Open a dispute on one invoice
+      description: >-
+        One open dispute per invoice. When one is already open the route
+        answers 409 with the open dispute attached beside the error string.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingDisputeInput"
+      responses:
+        "200":
+          description: The opened dispute
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingDisputeView"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ar/register/invoices/{id}/dispute/resolve:
+    post:
+      operationId: billingResolveDispute
+      tags: [staff-billing]
+      summary: Resolve the open dispute on one invoice
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingDisputeResolveRequest"
+      responses:
+        "200":
+          description: Whether a dispute was resolved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [resolved]
+                properties:
+                  resolved: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/register/reminders:
+    post:
+      operationId: billingSendRegisterReminders
+      tags: [staff-billing]
+      summary: Send a reminder run over a selection of invoices
+      description: >-
+        A deliberate collections campaign against the selected accounts, which
+        is why it is manager-gated while the per-invoice send is staff.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingReminderInput"
+      responses:
+        "200":
+          description: What the run sent, replayed, and skipped with reasons
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingReminderResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/register/statements:
+    post:
+      operationId: billingCreateRegisterStatements
+      tags: [staff-billing]
+      summary: Create one interim statement per distinct account in a selection
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingRegisterStatementsRequest"
+      responses:
+        "200":
+          description: What the batch produced, including skipped accounts and why
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingStatementBatch"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/public/v1/ar/invoice-opened/{deliveryID}:
+    get:
+      operationId: billingTrackInvoiceOpened
+      tags: [public]
+      summary: Record an invoice open from the recipient's mail client
+      description: >-
+        Pre-auth, credentialed by the unguessable delivery id in the path. It
+        accepts no input, appends one open record, and returns the same
+        single-pixel GIF on every outcome so it is not an existence oracle.
+      x-role: public
+      security: []
+      parameters:
+        - name: deliveryID
+          in: path
+          required: true
+          description: The delivery row id, the credential for this route
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: A single-pixel GIF, whatever happened
+          content:
+            image/gif:
+              schema: { type: string, format: binary }
+
+  # --- billing: the AR console (aging, credit holds, the auto-hold switch,
+  # the dispatch gate, statement runs). Manager for the reads and the acts,
+  # admin for hold override, hold release, the credit sweep, and the switch.
+  /api/v1/ar/aging:
+    get:
+      operationId: billingGetAging
+      tags: [staff-billing]
+      summary: Read the AR aging worklist
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: as_of
+          in: query
+          required: false
+          description: Backdate the aging to this calendar date
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: The aging page, one row per account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingAgingPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/holds:
+    get:
+      operationId: billingListHolds
+      tags: [staff-billing]
+      summary: List credit holds
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ACTIVE, RELEASED]
+      responses:
+        "200":
+          description: The holds page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingCreditHoldPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/holds/{id}/override:
+    post:
+      operationId: billingOverrideHold
+      tags: [staff-billing]
+      summary: Permit transacting against a hold that stays in place, until an explicit expiry
+      description: >-
+        Override is not release: the hold stays ACTIVE and the audit trail
+        names who allowed it. The reason is mandatory and the expiry is
+        bounded; a longer permit must go through release instead.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingHoldOverrideRequest"
+      responses:
+        "200":
+          description: The override as recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingHoldOverrideResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/holds/{id}/ar-release:
+    post:
+      operationId: billingReleaseHold
+      tags: [staff-billing]
+      summary: Release a credit hold placed by the AR gates, with a mandatory reason
+      description: >-
+        Refuses NSF holds: those carry a stricter release requirement that
+        lives on the till's own path, and this module does not lift them.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingHoldReleaseRequest"
+      responses:
+        "200":
+          description: The hold was released
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/credit-sweep:
+    post:
+      operationId: billingRunCreditSweep
+      tags: [staff-billing]
+      summary: Run the credit evaluation on demand
+      description: >-
+        The same evaluation the scheduled job runs. With the auto-hold switch
+        off it is a dry run: would_hold and customers report the blast radius
+        and nothing is placed.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: What the evaluation did or would have done
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingEvaluationResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/auto-hold:
+    get:
+      operationId: billingGetAutoHold
+      tags: [staff-billing]
+      summary: Read the auto-hold switch and the read-only thresholds behind it
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          description: Absent reads the org default
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The effective setting, with switch_wired naming whether the write seam exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingAutoHoldSetting"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: billingPutAutoHold
+      tags: [staff-billing]
+      summary: Flip the auto-hold master switch
+      description: >-
+        enabled is required and must be explicit: a body that omits it is a
+        bad request, never a silent false. Every flip is audited in both
+        directions. Re-asserting the current value is not an error.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingAutoHoldRequest"
+      responses:
+        "200":
+          description: The setting as it now stands
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingAutoHoldSetting"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/dispatch-gate/{orderID}:
+    get:
+      operationId: billingGetDispatchGate
+      tags: [staff-billing]
+      summary: Answer whether this order's goods may leave, with the reason when not
+      description: >-
+        The AR dispatch predicate exposed as a read. It fails closed: an
+        unknown order or an internal failure answers allowed false with a
+        reason that names the failure, never a 404.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: orderID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The gate answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingDispatchGateResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/statement-runs:
+    post:
+      operationId: billingCreateStatementRun
+      tags: [staff-billing]
+      summary: Generate a statement run
+      description: >-
+        MASS covers every account in scope; INTERIM covers one account and
+        requires customer_id. Statements are generated and the sendable ones
+        marked QUEUED; delivery happens only through a wired outbox.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingStatementRunRequest"
+      responses:
+        "201":
+          description: The run and its statements
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingStatementRunResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/statement-runs/{id}:
+    get:
+      operationId: billingGetStatementRun
+      tags: [staff-billing]
+      summary: Read one statement run with its statements
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The run and its statements
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingStatementRunResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/customers/{customerID}/statement:
+    get:
+      operationId: billingGetCustomerStatement
+      tags: [staff-billing]
+      summary: Read one account's most recent statement
+      description: >-
+        With format=html the response is the stored HTML artefact itself
+        (Content-Type text/html), the same bytes that were generated, never a
+        re-render.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customerID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [html]
+      responses:
+        "200":
+          description: The statement record, or the stored artefact when format=html
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingStatement"
+            text/html:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- billing: the AR landing (cards, escalation queue, engagement), the
+  # typed landing policy and its change history, the reminder send and its
+  # history, the paper-path flag list, and the AP contact. Manager for the
+  # reads and the acts, admin for the policy write and its history.
+  /api/v1/ar/landing:
+    get:
+      operationId: billingGetARLanding
+      tags: [staff-billing]
+      summary: Read the AR landing (aging cards, the escalation queue, the paper-path flags)
+      description: >-
+        The ar_advanced block (engagement signals and the computed next
+        action) is byte-absent for a caller without the ar.advanced
+        capability; capabilities names what the caller holds.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: as_of
+          in: query
+          required: false
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: The landing view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingARLanding"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/landing/policy:
+    get:
+      operationId: billingGetARLandingPolicy
+      tags: [staff-billing]
+      summary: Read the landing policy for a branch
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The effective landing policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingLandingPolicy"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: billingPutARLandingPolicy
+      tags: [staff-billing]
+      summary: Write the landing policy for a branch
+      description: >-
+        The write merges onto the current policy, so a body carrying one knob
+        does not reset the rest. Every changed knob lands in the policy
+        history as one row per change.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingLandingPolicy"
+      responses:
+        "200":
+          description: The stored policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingLandingPolicy"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/landing/policy/history:
+    get:
+      operationId: billingGetARLandingPolicyHistory
+      tags: [staff-billing]
+      summary: Read the landing policy change trail, newest first
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The change history page, one row per changed knob
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingPolicyChangePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/reminders:
+    post:
+      operationId: billingSendARReminder
+      tags: [staff-billing]
+      summary: Send one deliberate reminder to one recipient
+      description: >-
+        Gated on the ar.advanced capability as well as the identity gate: a
+        caller on the base tier is refused 403. The send goes to exactly one
+        recipient; with no tagged AP contact, confirm_fallback is required and
+        the fallback is recorded with its reason.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingSendReminderInput"
+      responses:
+        "201":
+          description: The send record, the durable fact of the reminder
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingReminderSend"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    get:
+      operationId: billingListARReminders
+      tags: [staff-billing]
+      summary: Read the reminder send history
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: customer_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The send history page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingReminderSendPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/paper-path:
+    get:
+      operationId: billingListPaperPath
+      tags: [staff-billing]
+      summary: List accounts flagged for the paper path
+      description: >-
+        The black-hole list: accounts whose delivered sends have never been
+        opened.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The open flag page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingPaperPathPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/paper-path/sweep:
+    post:
+      operationId: billingSweepPaperPath
+      tags: [staff-billing]
+      summary: Evaluate every account against the black-hole rule and raise flags
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: How many accounts were evaluated and how many flags were raised
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingPaperPathSweepResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/paper-path/{id}/resolve:
+    post:
+      operationId: billingResolvePaperPath
+      tags: [staff-billing]
+      summary: Resolve one paper-path flag
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingPaperPathResolveRequest"
+      responses:
+        "200":
+          description: The flag was resolved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/customers/{customerID}/ap-contact:
+    get:
+      operationId: billingGetAPContact
+      tags: [staff-billing]
+      summary: Read an account's tagged accounts-payable contact
+      description: >-
+        An untagged account answers 200 with tagged false, never 404: nobody
+        having tagged a contact is a true, ordinary answer.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customerID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The tag state, with the contact when tagged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingAPContactRead"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: billingPutAPContact
+      tags: [staff-billing]
+      summary: Tag an account's accounts-payable contact
+      description: >-
+        customer_id in the body is overwritten by the path. A contact needs an
+        email or a phone; one of the two is what makes it a contact.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customerID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingAPContact"
+      responses:
+        "200":
+          description: The stored contact
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingAPContactRead"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      operationId: billingDeleteAPContact
+      tags: [staff-billing]
+      summary: Untag an account's accounts-payable contact
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customerID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The tag state after the delete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingAPContactRead"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/public/v1/ar/track/{token}/open:
+    get:
+      operationId: billingTrackReminderOpen
+      tags: [public]
+      summary: Record a reminder open from the recipient's mail client
+      description: >-
+        Pre-auth, credentialed by the random token in the path. The response
+        is the same single-pixel GIF for a known and an unknown token, so the
+        route is not an enumeration oracle.
+      x-role: public
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: The per-send tracking token, the credential for this route
+          schema: { type: string }
+      responses:
+        "200":
+          description: A single-pixel GIF, whatever happened
+          content:
+            image/gif:
+              schema: { type: string, format: binary }
+  /api/public/v1/ar/track/{token}/click:
+    get:
+      operationId: billingTrackReminderClick
+      tags: [public]
+      summary: Record a reminder link click
+      description: >-
+        Pre-auth, credentialed by the random token in the path. It records the
+        click and answers 204 with no body; it deliberately does not redirect,
+        so it cannot be used as an open redirect.
+      x-role: public
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: The per-send tracking token, the credential for this route
+          schema: { type: string }
+      responses:
+        "204":
+          description: Recorded; no body
+
+  # --- payment: the processor config surface (the only HTTP run-pay owns).
+  # readGuard is RequireStaff and adminGuard is RequireAdmin at the main.go
+  # call site. There is no charge route; charging happens in-process.
+  /api/v1/payments/config:
+    get:
+      operationId: paymentGetConfig
+      tags: [staff-payment]
+      summary: Read the processor config status
+      description: >-
+        Reports whether a config exists, the merchant id, the processor, the
+        currency, and whether the card rail is in test mode. Credentials are
+        write-only and never appear in any response.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The config status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentConfigStatus"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: paymentPutConfig
+      tags: [staff-payment]
+      summary: Store the processor config
+      description: >-
+        Credentials are stored write-only and are never echoed back; the
+        response carries only the configured flag, the merchant id, and the
+        processor.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentConfigWrite"
+      responses:
+        "200":
+          description: The stored config, minus credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentConfigResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- payments: the staff-side payment undo (DIB-170). The manager gate is
+  # applied at the route and re-checked inside the service.
+  /api/v1/ar/payments/{id}/reverse:
+    post:
+      operationId: paymentsReversePayment
+      tags: [staff-payments]
+      summary: Post a reversing entry for a settled payment
+      description: >-
+        A payment may be reversed at most once; a second attempt answers 409.
+        Invoices the payment had settled are reopened onto the AR book.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentsReverseRequest"
+      responses:
+        "201":
+          description: The reversal as recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentsReversalResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+components:
+  schemas:
+    # --- the register (billing/register_model.go) -----------------------------
+    BillingRegisterPolicy:
+      type: object
+      description: >-
+        The ar_invoice_policy row for a branch: the knobs the server enforces
+        whatever the screen happens to show.
+      required:
+        - account_position_visibility
+        - due_soon_days
+        - reminder_tones
+        - reminder_cooldown_hours
+        - show_credits_default
+        - workspace_split_pct
+        - workspace_arrangement
+      properties:
+        branch_id: { type: string, format: uuid }
+        account_position_visibility:
+          type: string
+          description: Who may see the account position column; fail closed
+          enum: [MANAGER_UP, ALL_STAFF, HIDDEN]
+        due_soon_days: { type: integer, format: int32 }
+        reminder_tones:
+          type: array
+          description: The tones this dealer permits; a tone absent here is refused by the send
+          items:
+            type: string
+            enum: [FRIENDLY, FIRM, FINAL]
+        reminder_cooldown_hours: { type: integer, format: int32 }
+        show_credits_default: { type: boolean }
+        default_branch_scope: { type: string }
+        workspace_split_pct: { type: integer, format: int32 }
+        workspace_arrangement: { type: string }
+
+    BillingAccountPosition:
+      type: object
+      description: >-
+        The account-level financial picture, the gated half of a register
+        payload. Absent entirely for a caller the policy refuses.
+      required: [open_balance_cents, credit_limit_cents, available_credit_cents, overdue_cents]
+      properties:
+        open_balance_cents: { type: integer, format: int64 }
+        credit_limit_cents: { type: integer, format: int64 }
+        available_credit_cents: { type: integer, format: int64 }
+        overdue_cents: { type: integer, format: int64 }
+
+    BillingRegisterRow:
+      type: object
+      description: >-
+        One line of the invoice register. stored_status is the stored invoice
+        CHECK value; status is the derived pill state; days_overdue is the
+        server's arithmetic against the server's clock.
+      required:
+        - id
+        - invoice_no
+        - doc_type
+        - customer_id
+        - customer_name
+        - account_no
+        - branch_id
+        - issue_date
+        - due_date
+        - total_cents
+        - balance_cents
+        - stored_status
+        - status
+        - days_overdue
+        - account_status
+        - disputed
+      properties:
+        id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        doc_type:
+          type: string
+          enum: [INVOICE, CREDIT_MEMO]
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        account_no: { type: string }
+        branch_id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        customer_po: { type: string }
+        salesperson: { type: string }
+        issue_date: { type: string, format: date-time }
+        due_date: { type: string, format: date-time }
+        total_cents: { type: integer, format: int64 }
+        balance_cents: { type: integer, format: int64 }
+        holdback_cents: { type: integer, format: int64 }
+        stored_status:
+          type: string
+          description: The stored invoice state, unmodified
+          enum: [DRAFT, FINALIZED, PARTIALLY_PAID, PAID, VOID]
+        status:
+          type: string
+          description: The derived register pill state
+          enum: [OPEN, DUE_SOON, OVERDUE, PARTIALLY_PAID, PAID, DISPUTED, CREDIT_HOLD, DRAFT, VOID, CREDIT]
+        days_overdue:
+          type: integer
+          format: int32
+          description: Zero unless past due
+        account_status:
+          type: string
+          enum: [CURRENT, CREDIT_APPROVED, CREDIT_HOLD, UNDER_REVIEW]
+        disputed: { type: boolean }
+        promised_date:
+          type: [string, "null"]
+          format: date-time
+          description: The live promise against this document, when one exists
+        promised_cents: { type: integer, format: int64 }
+        last_sent_at:
+          type: [string, "null"]
+          format: date-time
+        opened:
+          type: [boolean, "null"]
+          description: >-
+            Null means the invoice was never emailed; false means it was sent
+            and not opened. The two answers are different and a bool would
+            collapse them.
+        account:
+          $ref: "#/components/schemas/BillingAccountPosition"
+
+    BillingRegisterCounts:
+      type: object
+      description: Counts of the same predicates the chip filters apply, computed over the same rows
+      required: [open, due_soon, overdue, disputed, paid, credits]
+      properties:
+        open: { type: integer, format: int32 }
+        due_soon: { type: integer, format: int32 }
+        overdue: { type: integer, format: int32 }
+        disputed: { type: integer, format: int32 }
+        paid: { type: integer, format: int32 }
+        credits: { type: integer, format: int32 }
+
+    BillingRegisterPage:
+      type: object
+      required: [items, counts, as_of]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BillingRegisterRow" }
+        counts: { $ref: "#/components/schemas/BillingRegisterCounts" }
+        as_of: { type: string, format: date-time }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    BillingDetailLine:
+      type: object
+      required: [line_no, description, qty_entered, uom_entered, unit_price_cents, line_total_cents]
+      properties:
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string }
+        sku: { type: string }
+        image_ref: { type: string }
+        description: { type: string }
+        qty_entered:
+          type: string
+          description: Decimal quantity rendered as a string to preserve scale
+        uom_entered: { type: string }
+        unit_price_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64 }
+
+    BillingTotals:
+      type: object
+      description: >-
+        The detail's totals card. applied_cents is the stored aggregate of
+        payment allocations, not total minus balance; payable_cents is balance
+        minus the retained holdback, floored at zero.
+      required: [subtotal_cents, tax_cents, total_cents, applied_cents, holdback_cents, balance_cents, payable_cents]
+      properties:
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        applied_cents: { type: integer, format: int64 }
+        holdback_cents: { type: integer, format: int64 }
+        balance_cents: { type: integer, format: int64 }
+        payable_cents: { type: integer, format: int64 }
+
+    BillingCustomerBlock:
+      type: object
+      required: [customer_id, name, account_no, terms_days, account_status]
+      properties:
+        customer_id: { type: string, format: uuid }
+        name: { type: string }
+        account_no: { type: string }
+        contact_name: { type: string }
+        contact_email: { type: string }
+        contact_phone: { type: string }
+        terms_days: { type: integer, format: int32 }
+        account_status:
+          type: string
+          enum: [CURRENT, CREDIT_APPROVED, CREDIT_HOLD, UNDER_REVIEW]
+        account:
+          $ref: "#/components/schemas/BillingAccountPosition"
+
+    BillingProofPhoto:
+      type: object
+      description: One delivery photograph's metadata; the bytes come from the dispatch byte route
+      required: [id, captured_at]
+      properties:
+        id: { type: string, format: uuid }
+        caption: { type: string }
+        captured_at: { type: string, format: date-time }
+
+    BillingProof:
+      type: object
+      description: Who signed for the delivery, the photographs, and the way through to the dispatch record
+      required: [delivered, photos]
+      properties:
+        stop_id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        delivered: { type: boolean }
+        signed_by: { type: string }
+        signed_at:
+          type: [string, "null"]
+          format: date-time
+        signature_ref: { type: string }
+        address: { type: string }
+        photos:
+          type: array
+          items: { $ref: "#/components/schemas/BillingProofPhoto" }
+
+    BillingActivityEntry:
+      type: object
+      description: One line of the detail timeline, interleaved from its sources at read time
+      required: [kind, at]
+      properties:
+        kind:
+          type: string
+          enum: [EMAILED, VIEWED, REMINDER, RECEIPT, STATEMENT, PAYMENT, DELIVERED, PROMISE, DISPUTE, ISSUED]
+        at: { type: string, format: date-time }
+        detail: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        actor: { type: string }
+
+    BillingPromiseView:
+      type: object
+      required: [id, promised_cents, promised_date, status, taken_at]
+      properties:
+        id: { type: string, format: uuid }
+        promised_cents: { type: integer, format: int64 }
+        promised_date: { type: string, format: date-time }
+        status:
+          type: string
+          enum: [OPEN, KEPT, BROKEN, CANCELLED]
+        promised_by: { type: string }
+        note: { type: string }
+        taken_by: { type: string }
+        taken_at: { type: string, format: date-time }
+        settled_at:
+          type: [string, "null"]
+          format: date-time
+
+    BillingDisputeView:
+      type: object
+      required: [id, status, reason, amount_cents, raised_at]
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [OPEN, RESOLVED]
+        reason:
+          type: string
+          enum: [SHORT_DELIVERY, DAMAGED, PRICING, NOT_ORDERED, OTHER]
+        note: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        raised_by: { type: string }
+        raised_at: { type: string, format: date-time }
+        outcome:
+          type: string
+          enum: [PAID, CREDITED, WRITTEN_OFF, WITHDRAWN]
+        resolved_at:
+          type: [string, "null"]
+          format: date-time
+
+    BillingInvoiceDetail:
+      type: object
+      description: The whole invoice detail panel in one read
+      required:
+        - id
+        - invoice_no
+        - doc_type
+        - stored_status
+        - status
+        - days_overdue
+        - issue_date
+        - due_date
+        - branch_id
+        - customer
+        - lines
+        - totals
+        - activity
+        - reminder_tones
+        - as_of
+      properties:
+        id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        doc_type:
+          type: string
+          enum: [INVOICE, CREDIT_MEMO]
+        stored_status:
+          type: string
+          enum: [DRAFT, FINALIZED, PARTIALLY_PAID, PAID, VOID]
+        status:
+          type: string
+          enum: [OPEN, DUE_SOON, OVERDUE, PARTIALLY_PAID, PAID, DISPUTED, CREDIT_HOLD, DRAFT, VOID, CREDIT]
+        days_overdue: { type: integer, format: int32 }
+        issue_date: { type: string, format: date-time }
+        due_date: { type: string, format: date-time }
+        branch_id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        customer_po: { type: string }
+        salesperson: { type: string }
+        customer: { $ref: "#/components/schemas/BillingCustomerBlock" }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/BillingDetailLine" }
+        totals: { $ref: "#/components/schemas/BillingTotals" }
+        proof: { $ref: "#/components/schemas/BillingProof" }
+        activity:
+          type: array
+          items: { $ref: "#/components/schemas/BillingActivityEntry" }
+        promise: { $ref: "#/components/schemas/BillingPromiseView" }
+        dispute: { $ref: "#/components/schemas/BillingDisputeView" }
+        reminder_tones:
+          type: array
+          description: The tones the caller may actually send, per policy
+          items:
+            type: string
+            enum: [FRIENDLY, FIRM, FINAL]
+        last_contact_at:
+          type: [string, "null"]
+          format: date-time
+          description: The most recent send to this account, the cooldown fact
+        as_of: { type: string, format: date-time }
+
+    # --- the register's writes --------------------------------------------------
+    BillingReceiptInput:
+      type: object
+      description: A payment taken off-gateway against one invoice
+      required: [method, amount_cents, reference, idempotency_key]
+      properties:
+        method:
+          type: string
+          enum: [CASH, CARD, CHEQUE, EFT]
+        amount_cents: { type: integer, format: int64 }
+        reference:
+          type: string
+          description: The instrument's own reference (cheque no, EFT trace); recorded, never invented
+        idempotency_key: { type: string }
+
+    BillingReceiptResult:
+      type: object
+      required: [payment_id, payment_no, amount_cents, balance_cents, status, replayed]
+      properties:
+        payment_id: { type: string, format: uuid }
+        payment_no: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        balance_cents:
+          type: integer
+          format: int64
+          description: The invoice balance after the settle, read back from the ledger
+        status:
+          type: string
+          enum: [RECEIVED, DEPOSITED, BOUNCED, REFUNDED, VOID, PENDING]
+        replayed:
+          type: boolean
+          description: True when the idempotency key was already honoured and this request posted nothing
+
+    BillingReminderInput:
+      type: object
+      description: One deliberate reminder run over a selection
+      required: [invoice_ids, tone, idempotency_key]
+      properties:
+        invoice_ids:
+          type: array
+          items: { type: string, format: uuid }
+        tone:
+          type: string
+          enum: [FRIENDLY, FIRM, FINAL]
+        idempotency_key: { type: string }
+
+    BillingReminderResult:
+      type: object
+      description: What a send actually did; skipped names what did not go, and why
+      required: [sent, replayed, tone]
+      properties:
+        sent: { type: integer, format: int32 }
+        replayed: { type: integer, format: int32 }
+        skipped:
+          type: object
+          additionalProperties: { type: string }
+        tone:
+          type: string
+          enum: [FRIENDLY, FIRM, FINAL]
+
+    BillingPromiseInput:
+      type: object
+      required: [promised_cents, promised_date, promised_by, note, idempotency_key]
+      properties:
+        promised_cents: { type: integer, format: int64 }
+        promised_date: { type: string, format: date }
+        promised_by: { type: string }
+        note: { type: string }
+        idempotency_key: { type: string }
+
+    BillingDisputeInput:
+      type: object
+      required: [reason, note, amount_cents, idempotency_key]
+      properties:
+        reason:
+          type: string
+          enum: [SHORT_DELIVERY, DAMAGED, PRICING, NOT_ORDERED, OTHER]
+        note: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        idempotency_key: { type: string }
+
+    BillingDisputeResolveRequest:
+      type: object
+      required: [outcome]
+      properties:
+        outcome:
+          type: string
+          enum: [PAID, CREDITED, WRITTEN_OFF, WITHDRAWN]
+
+    BillingInvoiceSendRequest:
+      type: object
+      required: [idempotency_key]
+      properties:
+        idempotency_key: { type: string }
+
+    BillingRegisterSelectionRequest:
+      type: object
+      required: [invoice_ids]
+      properties:
+        invoice_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    BillingRegisterSelectionResult:
+      type: object
+      required: [count, balance_cents]
+      properties:
+        count: { type: integer, format: int32 }
+        balance_cents: { type: integer, format: int64 }
+
+    BillingRegisterStatementsRequest:
+      type: object
+      required: [invoice_ids, idempotency_key]
+      properties:
+        invoice_ids:
+          type: array
+          items: { type: string, format: uuid }
+        idempotency_key: { type: string }
+
+    BillingStatementBatch:
+      type: object
+      description: What the bulk statement action produced, one statement per distinct account
+      required: [accounts, generated, run_ids]
+      properties:
+        accounts: { type: integer, format: int32 }
+        generated: { type: integer, format: int32 }
+        run_ids:
+          type: array
+          items: { type: string, format: uuid }
+        skipped:
+          type: object
+          additionalProperties: { type: string }
+
+    # --- the AR console: aging, holds, the sweep, the switch, statements --------
+    BillingAgingRow:
+      type: object
+      description: >-
+        One account's AR aging, the input to the auto-hold decision and the
+        console's aging view; one query serves both so they cannot disagree.
+      required:
+        - customer_id
+        - customer_name
+        - account_no
+        - branch_id
+        - payment_terms_days
+        - credit_limit_cents
+        - current_cents
+        - days_30_cents
+        - days_60_cents
+        - days_90_plus_cents
+        - total_cents
+        - past_bucket_cents
+        - on_hold
+      properties:
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        account_no: { type: string }
+        branch_id: { type: string, format: uuid }
+        payment_terms_days: { type: integer, format: int32 }
+        credit_limit_cents: { type: integer, format: int64 }
+        current_cents: { type: integer, format: int64 }
+        days_30_cents: { type: integer, format: int64 }
+        days_60_cents: { type: integer, format: int64 }
+        days_90_plus_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        past_bucket_cents:
+          type: integer
+          format: int64
+          description: Balance older than the policy's aging window
+        on_hold: { type: boolean }
+        hold_kind:
+          type: string
+          enum: [NSF, AR_AGING, CREDIT_LIMIT, COD, MANUAL]
+
+    BillingAgingPage:
+      type: object
+      required: [items, as_of]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BillingAgingRow" }
+        as_of: { type: string, format: date }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    BillingCreditHold:
+      type: object
+      required: [id, customer_id, status, hold_kind, auto_placed, reason, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        status:
+          type: string
+          enum: [ACTIVE, RELEASED]
+        hold_kind:
+          type: string
+          enum: [NSF, AR_AGING, CREDIT_LIMIT, COD, MANUAL]
+        auto_placed:
+          type: boolean
+          description: True when a machine placed the hold, false when a person did
+        reason: { type: string }
+        override_until:
+          type: [string, "null"]
+          format: date-time
+        override_reason: { type: string }
+        created_at: { type: string, format: date-time }
+
+    BillingCreditHoldPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BillingCreditHold" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    BillingHoldOverrideRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          description: Mandatory; an override without a reason is refused
+        hours:
+          type: integer
+          format: int32
+          default: 24
+          maximum: 720
+          description: How long the override lasts; there is no indefinite option
+
+    BillingHoldOverrideResult:
+      type: object
+      required: [ok, override_until, reason]
+      properties:
+        ok: { type: boolean }
+        override_until: { type: string, format: date-time }
+        reason: { type: string }
+
+    BillingHoldReleaseRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string }
+
+    BillingEvaluationResult:
+      type: object
+      description: What one credit evaluation did, or would have done on a dry run
+      required: [evaluated, placed, would_hold, dry_run]
+      properties:
+        evaluated: { type: integer, format: int32 }
+        placed: { type: integer, format: int32 }
+        would_hold: { type: integer, format: int32 }
+        dry_run: { type: boolean }
+        customers:
+          type: array
+          items: { type: string, format: uuid }
+
+    BillingAutoHoldSetting:
+      type: object
+      description: >-
+        The auto-hold switch plus the thresholds it would apply, read-only.
+        scope names which row answered, not which row was asked for.
+        thresholds_editable is always false and is on the wire so the client
+        renders the numbers as facts.
+      required:
+        - auto_hold_enabled
+        - scope
+        - aging_bucket_days
+        - aging_threshold_cents
+        - aging_hold_enabled
+        - limit_hold_enabled
+        - limit_tolerance_cents
+        - cod_enforced
+        - thresholds_editable
+        - switch_wired
+      properties:
+        auto_hold_enabled: { type: boolean }
+        scope:
+          type: string
+          enum: [ORG, BRANCH]
+        branch_id: { type: string, format: uuid }
+        aging_bucket_days: { type: integer, format: int32 }
+        aging_threshold_cents: { type: integer, format: int64 }
+        aging_hold_enabled: { type: boolean }
+        limit_hold_enabled: { type: boolean }
+        limit_tolerance_cents: { type: integer, format: int64 }
+        cod_enforced: { type: boolean }
+        thresholds_editable: { type: boolean }
+        switch_wired:
+          type: boolean
+          description: Whether the write seam is wired on this deployment
+
+    BillingAutoHoldRequest:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          description: Required and explicit; an absent field is a bad request, never a silent false
+        branch_id: { type: string, format: uuid }
+        reason: { type: string }
+
+    BillingDispatchGateResult:
+      type: object
+      required: [allowed, reason]
+      properties:
+        allowed: { type: boolean }
+        reason:
+          type: string
+          description: A human-readable sentence for a driver's screen; non-empty exactly when allowed is false
+
+    BillingStatementRunRequest:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [MASS, INTERIM]
+          default: MASS
+        branch_id:
+          type: string
+          format: uuid
+          description: Absent means all branches
+        customer_id:
+          type: string
+          format: uuid
+          description: Required for INTERIM
+        as_of:
+          type: string
+          format: date
+
+    BillingStatement:
+      type: object
+      description: >-
+        One stored statement: the rendered artefact and the aging figures as
+        they stood at as_of_date, never a re-derived query.
+      required:
+        - id
+        - run_id
+        - customer_id
+        - as_of_date
+        - current_cents
+        - days_30_cents
+        - days_60_cents
+        - days_90_plus_cents
+        - closing_balance_cents
+        - delivery_status
+        - created_at
+      properties:
+        id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        as_of_date: { type: string, format: date-time }
+        current_cents: { type: integer, format: int64 }
+        days_30_cents: { type: integer, format: int64 }
+        days_60_cents: { type: integer, format: int64 }
+        days_90_plus_cents: { type: integer, format: int64 }
+        closing_balance_cents: { type: integer, format: int64 }
+        html:
+          type: string
+          description: The stored rendered artefact
+        delivery_status:
+          type: string
+          enum: [NOT_QUEUED, QUEUED, SENT, FAILED]
+        created_at: { type: string, format: date-time }
+
+    BillingStatementRun:
+      type: object
+      required:
+        - id
+        - mode
+        - as_of_date
+        - status
+        - generated_count
+        - queued_count
+        - notices_enabled
+        - notice_queued_count
+        - notice_suppressed_count
+        - notice_accounting_recorded
+        - created_at
+      properties:
+        id: { type: string, format: uuid }
+        mode:
+          type: string
+          enum: [MASS, INTERIM]
+        branch_id: { type: string, format: uuid }
+        as_of_date: { type: string, format: date-time }
+        status:
+          type: string
+          enum: [RUNNING, COMPLETED, FAILED]
+        generated_count: { type: integer, format: int32 }
+        queued_count: { type: integer, format: int32 }
+        error: { type: string }
+        created_at: { type: string, format: date-time }
+        finished_at:
+          type: [string, "null"]
+          format: date-time
+        notices_enabled:
+          type: boolean
+          description: Whether the outbox was bound for this run, stamped at run time
+        notice_queued_count: { type: integer, format: int32 }
+        notice_suppressed_count:
+          type: integer
+          format: int32
+          description: Sendable statements that produced no notice because the outbox was unbound
+        notice_accounting_recorded:
+          type: boolean
+          description: False means the run predates the notice accounting; render a dash, not a zero
+
+    BillingStatementRunResult:
+      type: object
+      required: [run, statements]
+      properties:
+        run: { $ref: "#/components/schemas/BillingStatementRun" }
+        statements:
+          type: array
+          items: { $ref: "#/components/schemas/BillingStatement" }
+
+    # --- the AR landing, reminders, paper path, AP contact ---------------------
+    BillingLandingPolicy:
+      type: object
+      description: The typed, CHECK-constrained landing policy for a branch
+      required:
+        - aging_warn_days
+        - aging_escalate_days
+        - reminder_cadence_days
+        - reminder_max_per_cycle
+        - black_hole_window_days
+        - black_hole_min_sends
+        - reminder_email_enabled
+        - reminder_sms_enabled
+        - untagged_fallback
+        - ar_tier
+      properties:
+        branch_id: { type: string, format: uuid }
+        aging_warn_days:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 364
+        aging_escalate_days:
+          type: integer
+          format: int32
+          minimum: 2
+          maximum: 365
+          description: Must exceed aging_warn_days
+        reminder_cadence_days:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 90
+        reminder_max_per_cycle:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 20
+        black_hole_window_days:
+          type: integer
+          format: int32
+          minimum: 7
+          maximum: 365
+        black_hole_min_sends:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 20
+        reminder_email_enabled: { type: boolean }
+        reminder_sms_enabled: { type: boolean }
+        untagged_fallback:
+          type: string
+          description: The posture for a send with no tagged contact; there is no blast value
+          enum: [CONFIRM, REFUSE]
+        ar_tier:
+          type: string
+          enum: [BASE, PRO]
+
+    BillingLandingCard:
+      type: object
+      description: One aging card; account_ids is the set the card counted, so the register can filter to exactly it
+      required: [id, bucket, from_days, accounts, invoices, total_cents, account_ids]
+      properties:
+        id: { type: string }
+        bucket:
+          type: string
+          enum: [CURRENT, WARN, LATE, ESCALATION]
+        from_days: { type: integer, format: int32 }
+        to_days:
+          type: integer
+          format: int32
+          description: Absent means open-ended, the tail bucket
+        accounts: { type: integer, format: int32 }
+        invoices: { type: integer, format: int32 }
+        total_cents: { type: integer, format: int64 }
+        account_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    BillingEscalationEntry:
+      type: object
+      description: One account in the escalation work list, identity and exposure only
+      required: [customer_id, customer_name, account_no, oldest_days_past_due, invoices, balance_cents, on_hold]
+      properties:
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        account_no: { type: string }
+        oldest_days_past_due: { type: integer, format: int32 }
+        invoices: { type: integer, format: int32 }
+        balance_cents: { type: integer, format: int64 }
+        on_hold: { type: boolean }
+
+    BillingEngagementEntry:
+      type: object
+      description: The paid half of one queue row; the whole object is byte-absent for a base-tier caller
+      required: [customer_id, ap_contact_tagged, delivered_never_opened, paper_path_flagged, next_action]
+      properties:
+        customer_id: { type: string, format: uuid }
+        ap_contact_tagged: { type: boolean }
+        last_reminder_at:
+          type: [string, "null"]
+          format: date-time
+        last_open_at:
+          type: [string, "null"]
+          format: date-time
+        delivered_never_opened: { type: integer, format: int32 }
+        paper_path_flagged: { type: boolean }
+        next_action:
+          type: string
+          description: The work-list verb for this account, in at most three words
+
+    BillingARAdvanced:
+      type: object
+      description: The accelerated-AR payload, present only when the caller holds the ar.advanced capability
+      required: [engagement, reminders_enabled, cadence_days, email_enabled, sms_enabled]
+      properties:
+        engagement:
+          type: array
+          items: { $ref: "#/components/schemas/BillingEngagementEntry" }
+        reminders_enabled: { type: boolean }
+        cadence_days: { type: integer, format: int32 }
+        email_enabled: { type: boolean }
+        sms_enabled: { type: boolean }
+
+    BillingPaperPathEntry:
+      type: object
+      description: One flagged account, the black hole made visible
+      required: [flag_id, customer_id, customer_name, account_no, delivered_sends, window_days, raised_at]
+      properties:
+        flag_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        account_no: { type: string }
+        delivered_sends: { type: integer, format: int32 }
+        window_days: { type: integer, format: int32 }
+        raised_at: { type: string, format: date-time }
+
+    BillingPaperPathPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BillingPaperPathEntry" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    BillingARLanding:
+      type: object
+      description: The one read the AR landing opens on
+      required: [as_of, policy, cards, escalation_queue, paper_path, capabilities]
+      properties:
+        as_of: { type: string, format: date }
+        policy: { $ref: "#/components/schemas/BillingLandingPolicy" }
+        cards:
+          type: array
+          items: { $ref: "#/components/schemas/BillingLandingCard" }
+        escalation_queue:
+          type: array
+          items: { $ref: "#/components/schemas/BillingEscalationEntry" }
+        paper_path:
+          type: array
+          items: { $ref: "#/components/schemas/BillingPaperPathEntry" }
+        capabilities:
+          type: object
+          description: The capabilities the caller holds, keyed by name (ar.advanced)
+          additionalProperties: { type: boolean }
+        ar_advanced:
+          $ref: "#/components/schemas/BillingARAdvanced"
+
+    BillingPolicyChange:
+      type: object
+      description: One row of the landing policy change trail, one per changed knob
+      required: [field, before, after]
+      properties:
+        field: { type: string }
+        before: { type: string }
+        after: { type: string }
+        who: { type: string }
+        when: { type: string }
+
+    BillingPolicyChangePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BillingPolicyChange" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    BillingSendReminderInput:
+      type: object
+      description: One deliberate reminder, aimed at exactly one recipient
+      required: [customer_id, invoice_id, channel, resend, confirm_fallback, idempotency_key]
+      properties:
+        customer_id: { type: string, format: uuid }
+        invoice_id: { type: string, format: uuid }
+        channel:
+          type: string
+          enum: [EMAIL, SMS]
+        resend: { type: boolean }
+        confirm_fallback:
+          type: boolean
+          description: The operator's explicit choice to send to the account address when no AP contact is tagged
+        idempotency_key: { type: string }
+
+    BillingReminderSend:
+      type: object
+      description: >-
+        One ar_reminder_sends row, the durable record of a send and of whether
+        a human ever opened it. The idempotency key is never serialized
+        outward.
+      required:
+        - id
+        - customer_id
+        - channel
+        - recipient
+        - recipient_kind
+        - bucket
+        - resend
+        - status
+        - provider
+        - sent_at
+        - open_count
+        - click_count
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        invoice_id: { type: string, format: uuid }
+        channel:
+          type: string
+          enum: [EMAIL, SMS]
+        recipient: { type: string }
+        recipient_kind:
+          type: string
+          enum: [AP_CONTACT, FALLBACK]
+        fallback_reason: { type: string }
+        bucket:
+          type: string
+          enum: [CURRENT, WARN, LATE, ESCALATION]
+        resend: { type: boolean }
+        watermark: { type: string }
+        status:
+          type: string
+          enum: [QUEUED, DELIVERED, FAILED]
+        provider: { type: string }
+        sent_at: { type: string, format: date-time }
+        delivered_at:
+          type: [string, "null"]
+          format: date-time
+        first_open_at:
+          type: [string, "null"]
+          format: date-time
+        first_click_at:
+          type: [string, "null"]
+          format: date-time
+        open_count: { type: integer, format: int32 }
+        click_count: { type: integer, format: int32 }
+
+    BillingReminderSendPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BillingReminderSend" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    BillingAPContact:
+      type: object
+      description: An account's designated accounts-payable contact; needs an email or a phone
+      required: [customer_id, contact_name, email, phone]
+      properties:
+        customer_id: { type: string, format: uuid }
+        contact_name:
+          type: string
+          maxLength: 120
+        email:
+          type: string
+          maxLength: 254
+        phone:
+          type: string
+          maxLength: 32
+        updated_at: { type: string }
+
+    BillingAPContactRead:
+      type: object
+      description: The tag state for an account; tagged false with no contact is the ordinary untagged answer
+      required: [tagged]
+      properties:
+        tagged: { type: boolean }
+        contact: { $ref: "#/components/schemas/BillingAPContact" }
+
+    BillingPaperPathResolveRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [OPEN, MOVED_TO_PAPER, DISMISSED]
+        note: { type: string }
+
+    BillingPaperPathSweepResult:
+      type: object
+      required: [evaluated, raised]
+      properties:
+        evaluated: { type: integer, format: int32 }
+        raised: { type: integer, format: int32 }
+
+    # --- payment: the processor config -----------------------------------------
+    PaymentConfigStatus:
+      type: object
+      description: The processor config status; credentials never appear in any response
+      required: [configured, merchant_id, processor, currency, simulated]
+      properties:
+        configured: { type: boolean }
+        merchant_id: { type: string }
+        processor: { type: string }
+        currency: { type: string }
+        simulated:
+          type: boolean
+          description: True when the card rail is in test mode against a deterministic stub
+
+    PaymentConfigWrite:
+      type: object
+      required: [merchant_id]
+      properties:
+        processor: { type: string }
+        merchant_id: { type: string }
+        currency: { type: string }
+        base_url: { type: string }
+        mdr_bps:
+          type: integer
+          format: int64
+          description: The merchant discount rate in basis points
+        surcharge_enabled: { type: boolean }
+        credentials:
+          type: object
+          writeOnly: true
+          description: Stored write-only, never echoed by any route
+          additionalProperties: { type: string }
+
+    PaymentConfigResult:
+      type: object
+      description: The stored config, minus credentials
+      required: [configured, merchant_id, processor]
+      properties:
+        configured: { type: boolean }
+        merchant_id: { type: string }
+        processor: { type: string }
+
+    # --- payments: the reversal -------------------------------------------------
+    PaymentsReverseRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          description: Mandatory; a reversal without a reason is refused
+
+    PaymentsReversalResult:
+      type: object
+      required:
+        - label
+        - original_payment_id
+        - reversal_payment_id
+        - reversal_no
+        - amount_cents
+        - reason
+        - same_day
+        - reopened_invoices
+      properties:
+        label:
+          type: string
+          description: The operator-facing word, VOID when same_day is true, REVERSAL otherwise
+          enum: [VOID, REVERSAL]
+        original_payment_id: { type: string, format: uuid }
+        reversal_payment_id: { type: string, format: uuid }
+        reversal_no: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        reason: { type: string }
+        same_day: { type: boolean }
+        reopened_invoices:
+          type: array
+          description: The invoices the reversal put back onto the AR book
+          items: { type: string, format: uuid }

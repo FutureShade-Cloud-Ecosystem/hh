@@ -1,0 +1,14 @@
+{
+  "name": "hh-core-api-tools",
+  "private": true,
+  "type": "module",
+  "description": "Assembly and acceptance tooling for core/api/openapi.yaml",
+  "scripts": {
+    "merge": "node merge.mjs",
+    "check": "node check-all.mjs"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "yaml": "^2.5.0"
+  }
+}

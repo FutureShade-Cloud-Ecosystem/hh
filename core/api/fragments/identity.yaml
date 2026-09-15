@@ -1,0 +1,1253 @@
+# Fragment: identity + tax modules (lane HH-2.3).
+# Sources: hardscapeos_dibbits/backend/internal/identity and
+# hardscapeos_dibbits/backend/internal/tax. Guards: identity self-registers
+# (authn maps to requireStaff via RequireStaff, manager to requireManager,
+# admin to requireAdmin); tax receives RequireStaff, RequireManager and
+# RequireAdmin at the main.go call site. User states (users.status CHECK,
+# migration 0004): INVITED, ACTIVE, SUSPENDED, DEACTIVATED; only ACTIVE
+# authenticates.
+
+paths:
+  # --- identity: pre-auth surface ------------------------------------------
+  /api/v1/identity/ping:
+    get:
+      operationId: identityPing
+      tags: [staff-identity]
+      summary: Liveness probe for the identity module
+      x-role: public
+      security: []
+      responses:
+        "200":
+          description: The module liveness record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityPing"
+
+  /api/v1/auth/login:
+    post:
+      operationId: identityLogin
+      tags: [staff-identity]
+      summary: Mint a staff session from email and password
+      description: >-
+        Only a user in state ACTIVE authenticates; the user states are
+        INVITED, ACTIVE, SUSPENDED and DEACTIVATED. A wrong email, a wrong
+        password and a non-active account all return the same generic 401.
+      x-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityLoginRequest"
+      responses:
+        "200":
+          description: The bearer token and the caller's staff identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityLoginResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/auth/password-reset/confirm:
+    post:
+      operationId: identityConfirmPasswordReset
+      tags: [staff-identity]
+      summary: Consume an admin-generated reset token and set the new password
+      description: >-
+        Pre-auth route credentialed by the single-use reset token in the
+        body; an admin generated it out of band, so no session is required.
+        An invalid, spent or expired token returns a generic 401 without
+        revealing which check failed.
+      x-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityPasswordResetConfirmRequest"
+      responses:
+        "200":
+          description: The password was changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityStatusResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/auth/google/start:
+    get:
+      operationId: identityGoogleStart
+      tags: [staff-identity]
+      summary: Begin the Google Sign-In PKCE handshake
+      description: >-
+        Registered only when Google Sign-In is configured; otherwise the
+        route stays dark. Sets a short-lived signed HttpOnly handshake
+        cookie and redirects to Google's authorize URL, restricted to the
+        allowed Workspace domain. The response is a redirect, not JSON.
+      x-role: public
+      security: []
+      responses:
+        "302":
+          description: Redirect to the Google authorize URL
+
+  /api/v1/auth/google/callback:
+    get:
+      operationId: identityGoogleCallback
+      tags: [staff-identity]
+      summary: Complete the Google Sign-In handshake and mint a staff session
+      description: >-
+        Pre-auth route credentialed by the signed handshake cookie set by
+        the start route plus the OAuth state and code query parameters. On
+        success it redirects to the SPA with the staff token in the URL
+        fragment; on any failure it redirects to the SPA with a generic
+        auth_error flag. The response is a redirect, not JSON.
+      x-role: public
+      security: []
+      parameters:
+        - name: state
+          in: query
+          required: true
+          description: The OAuth state echoed back by Google
+          schema: { type: string }
+        - name: code
+          in: query
+          required: true
+          description: The authorization code to exchange
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to the SPA, token in the fragment on success
+
+  # --- identity: authenticated staff ----------------------------------------
+  /api/v1/auth/change-password:
+    post:
+      operationId: identityChangePassword
+      tags: [staff-identity]
+      summary: Rotate the signed-in user's own password
+      description: >-
+        The caller identity comes from the verified token, never the body,
+        so a user can only change their own password.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityChangePasswordRequest"
+      responses:
+        "200":
+          description: The password was changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityStatusResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/staff/roles:
+    get:
+      operationId: identityListRoles
+      tags: [staff-identity]
+      summary: List the staff role catalog
+      description: >-
+        The business role catalog across its tiers, plus the platform
+        administrator role on assignment surfaces. Scope is GLOBAL (reaches
+        every branch) or BRANCH (limited to granted branches).
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of role definitions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityRolePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/staff/policy/check:
+    post:
+      operationId: identityCheckPolicy
+      tags: [staff-identity]
+      summary: Evaluate the margin policy for a price and cost pair
+      description: >-
+        Consults the caller's approved overrides so the request, approve,
+        proceed loop closes. When the margin is below the floor and no
+        approved override exists, the response is 403 with an
+        IdentityActionBlocked object under the block key of the error
+        envelope. A branch_id outside the caller's grants is refused.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityPolicyCheckRequest"
+      responses:
+        "200":
+          description: The action is allowed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityPolicyCheckResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/staff:
+    get:
+      operationId: identityListStaff
+      tags: [staff-identity]
+      summary: List the staff roster
+      description: >-
+        The management view of every user with the assigned role and branch
+        grants. User states are INVITED, ACTIVE, SUSPENDED and DEACTIVATED
+        (users.status CHECK); only ACTIVE authenticates.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of staff members
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityStaffMemberPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: identityCreateStaff
+      tags: [staff-identity]
+      summary: Provision a new staff member with an initial password and role
+      description: >-
+        Keystone privileged action. Minting another platform administrator
+        is further restricted in the service to an existing platform
+        administrator.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityCreateStaffRequest"
+      responses:
+        "201":
+          description: The created staff member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityStaffMember"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/staff/{id}/role:
+    put:
+      operationId: identityAssignRole
+      tags: [staff-identity]
+      summary: Assign a role to a staff member
+      description: >-
+        Keystone privileged action. Assigning the platform administrator
+        role is further restricted in the service to an existing platform
+        administrator.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: The staff user id
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityAssignRoleRequest"
+      responses:
+        "200":
+          description: The assignment result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityAssignRoleResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/staff/{id}/password-reset:
+    post:
+      operationId: identityGeneratePasswordReset
+      tags: [staff-identity]
+      summary: Generate a single-use reset link for a staff member
+      description: >-
+        The raw token and a ready-to-share URL are returned to the admin in
+        the response body; there is no email path, the admin hands the link
+        to the user out of band. Only the token hash is persisted.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: The staff user id
+          schema: { type: string }
+      responses:
+        "200":
+          description: The reset token and shareable URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityPasswordResetLink"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/staff/approvals:
+    post:
+      operationId: identityCreateApproval
+      tags: [staff-identity]
+      summary: File an override approval request
+      description: >-
+        The requester is the authenticated caller, never a body field, so
+        override provenance cannot be forged. JE_OVER_THRESHOLD is a
+        system-only policy filed by the GL park bridge; a caller filing one
+        directly is refused.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityApprovalCreateRequest"
+      responses:
+        "201":
+          description: The filed approval request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityApproval"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    get:
+      operationId: identityListApprovals
+      tags: [staff-identity]
+      summary: List the approval requests the caller may see
+      description: >-
+        A GLOBAL caller sees every branch; a scoped caller sees only their
+        granted branches.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          description: Filter by approval status
+          schema:
+            $ref: "#/components/schemas/IdentityApprovalStatus"
+      responses:
+        "200":
+          description: The page of approval requests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityApprovalPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/staff/approvals/{id}/decide:
+    post:
+      operationId: identityDecideApproval
+      tags: [staff-identity]
+      summary: Approve or reject a pending approval request
+      description: >-
+        Decide authority is enforced in the service per policy: the rail
+        policies (MARGIN_BELOW_MINIMUM, JE_OVER_THRESHOLD,
+        FREIGHT_ABOVE_QUOTE) are decidable only by the ruled leadership role
+        set, credit policies by leadership tier. Separation of duties bars
+        the requester from deciding their own request. A decision on a JE or
+        freight subject bridges into the owning module inside the same
+        transaction. Deciding an already-decided request returns 409.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: The approval request id
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityApprovalDecideRequest"
+      responses:
+        "200":
+          description: The decision was recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityStatusResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --- tax: rates, profiles, config ------------------------------------------
+  /api/v1/tax/rates:
+    get:
+      operationId: taxListRates
+      tags: [staff-tax]
+      summary: List the effective-dated rate table
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of rate rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxRatePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: taxCreateRate
+      tags: [staff-tax]
+      summary: Add an effective-dated rate row
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaxRate"
+      responses:
+        "201":
+          description: The created rate row
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxRate"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tax/profiles:
+    get:
+      operationId: taxListProfiles
+      tags: [staff-tax]
+      summary: List the status-card exemption profiles
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of exemption profiles
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxStatusCardProfilePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: taxUpsertProfile
+      tags: [staff-tax]
+      summary: Create or update a status-card exemption profile
+      description: >-
+        Each profile forces its evidence requirements through the
+        requires_photo, requires_number and requires_attestation flags; the
+        forced-evidence gate is enforced in the service before any evidence
+        record is inserted.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaxStatusCardProfile"
+      responses:
+        "200":
+          description: The stored profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxStatusCardProfile"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tax/review-queue:
+    get:
+      operationId: taxReviewQueue
+      tags: [staff-tax]
+      summary: List the exemption profiles pending ratification
+      description: >-
+        The review queue: the profile list filtered to status PENDING, so
+        items carry every StatusCardProfile field.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of pending profiles
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxStatusCardProfilePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tax/config:
+    get:
+      operationId: taxGetConfig
+      tags: [staff-tax]
+      summary: Read the engine-wide tax config
+      description: >-
+        The org-default row has an empty branch_id; pass branch_id to read a
+        branch override.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          description: The branch to read config for; empty reads the org default
+          schema: { type: string }
+      responses:
+        "200":
+          description: The tax config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxConfig"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: taxUpdateConfig
+      tags: [staff-tax]
+      summary: Create or update the tax config
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaxConfig"
+      responses:
+        "200":
+          description: The stored tax config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxConfig"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- tax: evidence ----------------------------------------------------------
+  /api/v1/tax/evidence:
+    get:
+      operationId: taxListEvidence
+      tags: [staff-tax]
+      summary: List masked status-card evidence records
+      description: >-
+        Masked-only serialization: number_mask is the only identifier that
+        ever leaves the service. Evidence access is audit-stamped.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: order_id
+          in: query
+          required: false
+          description: Filter to evidence captured against one order
+          schema: { type: string }
+        - name: profile_id
+          in: query
+          required: false
+          description: Filter to evidence under one exemption profile
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of masked evidence records
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxEvidencePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: taxCaptureEvidence
+      tags: [staff-tax]
+      summary: Capture status-card evidence at the counter
+      description: >-
+        The raw card number is accepted, masked and discarded; it is never
+        persisted or echoed back. The profile's forced-evidence gate (photo,
+        number, attestation) is enforced before insert.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaxEvidenceCapture"
+      responses:
+        "201":
+          description: The captured evidence record, masked-only
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxEvidence"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tax/evidence/{id}:
+    get:
+      operationId: taxViewEvidence
+      tags: [staff-tax]
+      summary: Read one masked evidence record
+      description: Evidence access is audit-stamped.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: The evidence record id
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The masked evidence record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxEvidence"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/tax/evidence/{id}/download:
+    post:
+      operationId: taxDownloadEvidence
+      tags: [staff-tax]
+      summary: Download one evidence record
+      description: >-
+        Returns the masked evidence record with its photo reference (a
+        pointer to the encrypted image, never inline bytes). The download is
+        audit-stamped.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: The evidence record id
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The masked evidence record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxEvidence"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/tax/evidence/{id}/validate:
+    post:
+      operationId: taxValidateEvidence
+      tags: [staff-tax]
+      summary: Validate an evidence record for relief eligibility
+      description: >-
+        The eligibility gate for a relief rate: blocked with a reason when
+        the card is expired or a profile-forced field is missing.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: The evidence record id
+          schema: { type: string, format: uuid }
+        - name: as_of
+          in: query
+          required: false
+          description: The sale date the evidence is validated against
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: The relief eligibility result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxReliefEligibility"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- tax: recompute and reconciliation --------------------------------------
+  /api/v1/tax/recompute:
+    post:
+      operationId: taxRecompute
+      tags: [staff-tax]
+      summary: Recompute tax decision snapshots under the current engine
+      description: >-
+        Insert-only and idempotent: a re-run never rewrites a prior snapshot
+        row, it inserts a parallel audit-truth row and skips one that
+        already has its recompute. No retroactive GL correction.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaxRecomputeRequest"
+      responses:
+        "200":
+          description: The recompute run summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxRecomputeResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tax/recon:
+    get:
+      operationId: taxReconcile
+      tags: [staff-tax]
+      summary: Reconcile collected HST against the GL liability accounts
+      description: >-
+        Ties the sum of net-collected tax on the decision side to the GL
+        payable, federal and provincial account balances for the period;
+        variance zero means tied out.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: year
+          in: query
+          required: true
+          description: The reconciliation year
+          schema: { type: integer, format: int32 }
+        - name: month
+          in: query
+          required: false
+          description: The reconciliation month
+          schema: { type: integer, format: int32 }
+        - name: branch_id
+          in: query
+          required: false
+          description: Limit the reconciliation to one branch
+          schema: { type: string }
+      responses:
+        "200":
+          description: The reconciliation report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaxReconReport"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+components:
+  schemas:
+    # --- identity -------------------------------------------------------------
+    IdentityPing:
+      type: object
+      description: The identity module liveness record
+      required: [module, status]
+      properties:
+        module: { type: string }
+        status: { type: string }
+
+    IdentityLoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, format: password }
+
+    IdentityUser:
+      type: object
+      description: The non-secret staff identity returned on login
+      required: [user_id, email, display_name, role_code, role_name, tier, scope]
+      properties:
+        user_id: { type: string }
+        email: { type: string }
+        display_name: { type: string }
+        role_code: { type: string }
+        role_name: { type: string }
+        tier: { type: integer, format: int32 }
+        scope:
+          type: string
+          enum: [GLOBAL, BRANCH]
+
+    IdentityLoginResponse:
+      type: object
+      required: [token, user]
+      properties:
+        token:
+          type: string
+          description: The staff session bearer token
+        user:
+          $ref: "#/components/schemas/IdentityUser"
+
+    IdentityChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password: { type: string, format: password }
+        new_password: { type: string, format: password }
+
+    IdentityPasswordResetConfirmRequest:
+      type: object
+      required: [token, new_password]
+      properties:
+        token:
+          type: string
+          description: The single-use reset token the admin handed over out of band
+        new_password: { type: string, format: password }
+
+    IdentityStatusResponse:
+      type: object
+      description: The bare status acknowledgement the identity handlers return
+      required: [status]
+      properties:
+        status: { type: string }
+      additionalProperties: true
+
+    IdentityRole:
+      type: object
+      description: One staff role definition from the role catalog
+      required: [code, name, tier, scope]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        tier: { type: integer, format: int32 }
+        scope:
+          type: string
+          enum: [GLOBAL, BRANCH]
+
+    IdentityRolePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/IdentityRole" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    IdentityPolicyCheckRequest:
+      type: object
+      required: [price_cents, cost_cents, branch_id]
+      properties:
+        price_cents: { type: integer, format: int64 }
+        cost_cents: { type: integer, format: int64 }
+        branch_id: { type: string }
+
+    IdentityPolicyCheckResponse:
+      type: object
+      required: [allowed, margin_bps, override]
+      properties:
+        allowed: { type: boolean }
+        margin_bps:
+          type: integer
+          format: int64
+          description: The gross margin of the pair in basis points
+        override:
+          type: boolean
+          description: Whether an approved override exists for the caller, branch and policy
+
+    IdentityActionBlocked:
+      type: object
+      description: >-
+        The block object carried under the block key of the 403 error
+        envelope when a policy blocks an action.
+      required: [policy_type, detail]
+      properties:
+        policy_type:
+          $ref: "#/components/schemas/IdentityPolicyType"
+        branch_id: { type: string }
+        detail: { type: string }
+        data:
+          type: object
+          additionalProperties: { type: string }
+
+    IdentityStaffMember:
+      type: object
+      description: >-
+        One staff user with the assigned role and branch grants (the admin
+        roster view). role_code is empty when unassigned.
+      required: [user_id, email, display_name, role_code, role_name, tier, scope, branch_ids]
+      properties:
+        user_id: { type: string }
+        email: { type: string }
+        display_name: { type: string }
+        role_code: { type: string }
+        role_name: { type: string }
+        tier: { type: integer, format: int32 }
+        scope:
+          type: string
+          enum: [GLOBAL, BRANCH]
+        branch_ids:
+          type: array
+          items: { type: string }
+
+    IdentityStaffMemberPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/IdentityStaffMember" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    IdentityCreateStaffRequest:
+      type: object
+      required: [email, display_name, role_code, password, branch_ids]
+      properties:
+        email: { type: string, format: email }
+        display_name: { type: string }
+        role_code: { type: string }
+        password:
+          type: string
+          format: password
+          description: The initial password, handed to the user out of band
+        branch_ids:
+          type: array
+          items: { type: string }
+
+    IdentityAssignRoleRequest:
+      type: object
+      required: [role_code]
+      properties:
+        role_code: { type: string }
+
+    IdentityAssignRoleResponse:
+      type: object
+      required: [status, user_id, role_code]
+      properties:
+        status: { type: string }
+        user_id: { type: string }
+        role_code: { type: string }
+
+    IdentityPasswordResetLink:
+      type: object
+      description: >-
+        The admin-facing reset material: the raw token exists only in this
+        response, only its hash is persisted.
+      required: [reset_token, reset_url, expires_at]
+      properties:
+        reset_token: { type: string }
+        reset_url: { type: string }
+        expires_at: { type: string, format: date-time }
+
+    IdentityPolicyType:
+      type: string
+      description: The override approval policy vocabulary
+      enum:
+        - MARGIN_BELOW_MINIMUM
+        - CREDIT_LIMIT_EXCEEDED
+        - COD_CONSTRAINT
+        - JE_OVER_THRESHOLD
+        - FREIGHT_ABOVE_QUOTE
+
+    IdentityApprovalStatus:
+      type: string
+      enum: [PENDING, APPROVED, REJECTED]
+
+    IdentityApproval:
+      type: object
+      description: >-
+        One override approval request. amount_cents is the money magnitude a
+        rail card shows (a journal debit total) and is omitted for policies
+        that carry no money.
+      required: [id, requested_by, branch_id, policy_type, detail, status]
+      properties:
+        id: { type: string, format: uuid }
+        requested_by: { type: string }
+        branch_id: { type: string }
+        policy_type:
+          $ref: "#/components/schemas/IdentityPolicyType"
+        detail: { type: string }
+        subject_ref:
+          type: string
+          description: Optional binding to the subject document (a quote, order or journal)
+        amount_cents: { type: integer, format: int64 }
+        status:
+          $ref: "#/components/schemas/IdentityApprovalStatus"
+        decided_by: { type: string }
+
+    IdentityApprovalPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/IdentityApproval" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    IdentityApprovalCreateRequest:
+      type: object
+      required: [branch_id, policy_type, detail]
+      properties:
+        branch_id: { type: string }
+        policy_type:
+          $ref: "#/components/schemas/IdentityPolicyType"
+        detail: { type: string }
+        subject_ref:
+          type: string
+          description: Optional quote or order binding
+
+    IdentityApprovalDecideRequest:
+      type: object
+      required: [approve, reason]
+      properties:
+        approve: { type: boolean }
+        reason: { type: string }
+
+    # --- tax --------------------------------------------------------------------
+    TaxReasonCode:
+      type: string
+      description: The tax decision reason vocabulary (the tax_decision_snapshot CHECK)
+      enum:
+        - STD_ON_HST_13
+        - ON_FN_POS_8
+        - FED_S87_VENDOR_DELIVERY
+        - FNGST_5
+        - MANUAL_TAX_REVIEW
+
+    TaxRate:
+      type: object
+      description: One effective-dated rate row
+      required: [id, jurisdiction, reason_code, rate_bps, effective_from]
+      properties:
+        id: { type: string }
+        jurisdiction: { type: string }
+        reason_code:
+          $ref: "#/components/schemas/TaxReasonCode"
+        rate_bps:
+          type: integer
+          format: int32
+          description: The rate in basis points
+        effective_from: { type: string, format: date }
+        effective_to: { type: string, format: date }
+        notes: { type: string }
+
+    TaxRatePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TaxRate" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    TaxProfileStatus:
+      type: string
+      enum: [ACTIVE, PENDING, RETIRED]
+
+    TaxStatusCardProfile:
+      type: object
+      description: >-
+        One admin-editable exemption profile. The requires flags force
+        photo, number and attestation evidence before any relief binds.
+      required: [id, code, name, rate_bps, requires_photo, requires_number, requires_attestation, status]
+      properties:
+        id: { type: string }
+        code: { type: string }
+        name: { type: string }
+        rate_bps: { type: integer, format: int32 }
+        requires_photo: { type: boolean }
+        requires_number: { type: boolean }
+        requires_attestation: { type: boolean }
+        status:
+          $ref: "#/components/schemas/TaxProfileStatus"
+        notes: { type: string }
+
+    TaxStatusCardProfilePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TaxStatusCardProfile" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    TaxConfig:
+      type: object
+      description: The engine-wide tax config; the org-default row has an empty branch_id
+      required: [hst_registration_no, round_mode, avalara_enabled, postal_routing_enabled]
+      properties:
+        branch_id: { type: string }
+        hst_registration_no: { type: string }
+        round_mode:
+          type: string
+          enum: [INVOICE_TOTAL, PER_LINE]
+        avalara_enabled:
+          type: boolean
+          description: Dormant stub; kept for a later wave
+        postal_routing_enabled:
+          type: boolean
+          description: Dormant stub; kept for a later wave
+        notes: { type: string }
+
+    TaxEvidence:
+      type: object
+      description: >-
+        A status-card evidence record, masked-only: number_mask is the only
+        identifier serialized, and photo_ref is a pointer to the encrypted
+        image, never inline bytes.
+      required: [id, number_mask, attestation]
+      properties:
+        id: { type: string, format: uuid }
+        profile_id: { type: string }
+        card_profile_id: { type: string }
+        order_id: { type: string }
+        photo_ref: { type: string }
+        number_mask:
+          type: string
+          description: The masked card number, the only identifier that leaves the service
+        attestation: { type: boolean }
+        tcrd_expiry: { type: string, format: date }
+        captured_by: { type: string }
+        created_at: { type: string, format: date-time }
+        attestation_status:
+          type: string
+          description: A fixed banner value, not a stored column
+
+    TaxEvidencePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TaxEvidence" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    TaxEvidenceCapture:
+      type: object
+      description: The capture request for status-card evidence
+      required: [profile_id, card_profile_code, order_id, photo_ref, raw_number, attestation, tcrd_expiry]
+      properties:
+        profile_id: { type: string }
+        card_profile_code: { type: string }
+        order_id: { type: string }
+        photo_ref: { type: string }
+        raw_number:
+          type: string
+          writeOnly: true
+          description: Accepted, masked and discarded; never persisted or echoed back
+        attestation: { type: boolean }
+        tcrd_expiry: { type: string, format: date }
+
+    TaxReliefEligibility:
+      type: object
+      description: The result of validating an evidence record for relief
+      required: [eligible]
+      properties:
+        eligible: { type: boolean }
+        block_reason: { type: string }
+        number_mask: { type: string }
+
+    TaxRecomputeRequest:
+      type: object
+      required: [from_date, to_date]
+      properties:
+        from_date: { type: string, format: date }
+        to_date: { type: string, format: date }
+
+    TaxRecomputeResult:
+      type: object
+      description: The summary of one insert-only recompute run
+      required: [from_date, to_date, scanned, inserted, skipped_exists]
+      properties:
+        from_date: { type: string, format: date }
+        to_date: { type: string, format: date }
+        scanned: { type: integer, format: int32 }
+        inserted: { type: integer, format: int32 }
+        skipped_exists: { type: integer, format: int32 }
+
+    TaxReconReport:
+      type: object
+      description: >-
+        The HST reconciliation: collected tax on the decision side tied to
+        the GL liability account balances for the period.
+      required: [year, month, collected_cents, gl_payable_cents, gl_federal_cents, gl_ontario_cents, variance_cents, tied_out]
+      properties:
+        year: { type: integer, format: int32 }
+        month: { type: integer, format: int32 }
+        branch_id: { type: string }
+        collected_cents:
+          type: integer
+          format: int64
+          description: Sum of net-collected tax on the decision side
+        gl_payable_cents:
+          type: integer
+          format: int64
+          description: The GL payable account balance
+        gl_federal_cents:
+          type: integer
+          format: int64
+          description: The GL federal account balance
+        gl_ontario_cents:
+          type: integer
+          format: int64
+          description: The GL provincial account balance
+        variance_cents:
+          type: integer
+          format: int64
+          description: Payable balance minus collected; zero means tied out
+        tied_out: { type: boolean }

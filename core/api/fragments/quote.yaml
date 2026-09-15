@@ -1,0 +1,2282 @@
+paths:
+  # --- staff quote builder (internal/quote/edit_handler.go, RegisterStaffRoutes: RequireStaff) ---
+  # The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
+  /api/v1/quotes:
+    post:
+      operationId: quoteCreateQuote
+      tags: [staff-quote]
+      summary: Open a new DRAFT dealer quote for a customer at a branch
+      description: >-
+        The staff quote resource is the canonical dealer_quote (DECISIONS.md
+        D8). The quote number is minted by the database. An empty valid_until
+        means the quote never expires.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteCreateRequest"
+      responses:
+        "201":
+          description: The created quote, as the staff builder renders it
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteView"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    get:
+      operationId: quoteListQuotes
+      tags: [staff-quote]
+      summary: List dealer quotes the caller can reach, branch-scoped
+      description: >-
+        The staff quote resource is the canonical dealer_quote (DECISIONS.md
+        D8). The ERP's offset page is replaced by cursor pagination here.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          description: Restrict to one quote state; absent lists every state
+          schema:
+            type: string
+            enum: [DRAFT, SENT, ACCEPTED, CONVERTED, EXPIRED, LOST]
+      responses:
+        "200":
+          description: The page of quote summaries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteSummaryPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/quotes/{id}:
+    get:
+      operationId: quoteReadQuote
+      tags: [staff-quote]
+      summary: Read one dealer quote with its priced lines and the server-computed edit offer
+      description: >-
+        The staff quote resource is the canonical dealer_quote (DECISIONS.md
+        D8). The id parameter also accepts the visible quote number (for
+        example "#Q-4"), resolved branch-scoped.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      responses:
+        "200":
+          description: The quote as the staff builder renders it
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteView"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: quoteSetValidUntil
+      tags: [staff-quote]
+      summary: Move or clear a quote's valid_until
+      description: >-
+        An empty valid_until clears the expiry, after which the quote never
+        expires. Refused with 409 when the quote is frozen (accepted,
+        converted, or terminal) or already expired.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteValidUntilWrite"
+      responses:
+        "200":
+          description: The edit result with the quote's status as read under the row lock
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteEditResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/quotes/{id}/lines:
+    post:
+      operationId: quoteAddQuoteLine
+      tags: [staff-quote]
+      summary: Append a priced line to a dealer quote
+      description: >-
+        The line is priced at current rates through the shared pricing seam
+        and the quote's soft stock holds are re-derived in the same
+        transaction. Quantities are decimal strings, never floats.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteLineAddRequest"
+      responses:
+        "200":
+          description: The new line, the recomputed totals, and the quote status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteEditResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/quotes/{id}/lines/{lineNo}:
+    patch:
+      operationId: quoteEditQuoteLine
+      tags: [staff-quote]
+      summary: Change a quote line's quantity, or set its discount percent
+      description: >-
+        A body with qty_entered reprices the line at current rates. A body
+        carrying disc_pct without qty_entered is a discount-only write, gated
+        by the dealer's line_discounts_enabled policy knob.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+        - name: lineNo
+          in: path
+          required: true
+          description: The quote line number, a positive integer
+          schema: { type: integer, format: int32, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteLinePatchRequest"
+      responses:
+        "200":
+          description: The edited line, the recomputed totals, and the quote status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteEditResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      operationId: quoteRemoveQuoteLine
+      tags: [staff-quote]
+      summary: Remove a line from a dealer quote
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+        - name: lineNo
+          in: path
+          required: true
+          description: The quote line number, a positive integer
+          schema: { type: integer, format: int32, minimum: 1 }
+      responses:
+        "200":
+          description: The recomputed totals and the quote status (no line on a removal)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteEditResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/quotes/{id}/edits:
+    get:
+      operationId: quoteQuoteEditHistory
+      tags: [staff-quote]
+      summary: Read a quote's ordered, column-level change history
+      description: >-
+        The projection of the quote's QUOTE_CHANGED audit rows, sorted by the
+        audit sequence. Readable on an expired quote; expiry stops edits, not
+        the trail.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      responses:
+        "200":
+          description: The change history, oldest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteEditHistory"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/quotes/{id}/convert:
+    post:
+      operationId: quoteConvertQuote
+      tags: [staff-quote]
+      summary: Convert an ACCEPTED dealer quote into an order from the counter
+      description: >-
+        The counter door onto quote-to-order conversion. The body is optional:
+        a bare POST converts with no fulfilment choice. The credit and hold
+        gate runs inside the conversion transaction, and the selling-role
+        check runs in the service. A 409 names the refusal (credit policy,
+        repeat acceptance, or a state that cannot convert).
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteConvertRequest"
+      responses:
+        "201":
+          description: The new order's id and number
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteConvertResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/quotes/{id}/lines/{lineNo}/compare:
+    post:
+      operationId: quoteCompareQuoteLine
+      tags: [staff-quote]
+      summary: Score alternate products against one quote line, read-only
+      description: >-
+        A POST because the alternates are a request body, but the operation
+        writes nothing, including no pricing audit rows: scoring goes through
+        the read-only pricing preview.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+        - name: lineNo
+          in: path
+          required: true
+          description: The quote line number, a positive integer
+          schema: { type: integer, format: int32, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteLineCompareRequest"
+      responses:
+        "200":
+          description: The comparison, current line pinned first, cheapest scorable options next
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteLineComparison"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/quotes/{id}/related-documents:
+    get:
+      operationId: quoteQuoteRelatedDocuments
+      tags: [staff-quote]
+      summary: Read a quote's document family (orders and invoices) as normalized rows
+      description: >-
+        The lineage read over orders.quote_id, invoices.order_id and the
+        acceptance provenance table. Asking from the quote or from any of its
+        orders returns the same family.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      responses:
+        "200":
+          description: The document family
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteRelatedDocumentList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/orders/{id}/related-documents:
+    get:
+      operationId: quoteOrderRelatedDocuments
+      tags: [staff-quote]
+      summary: Read an order's document family, asked from the order end
+      description: >-
+        Registered by the quote module because the read model is the quote
+        family. An order with no quote behind it answers itself plus its
+        downstream documents.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id (uuid) or the visible order number
+          schema: { type: string }
+      responses:
+        "200":
+          description: The document family
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteRelatedDocumentList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/quotes/settings/acceptance:
+    get:
+      operationId: quoteGetAcceptanceSettings
+      tags: [staff-quote]
+      summary: Read the dealer's multi-acceptance switch
+      description: >-
+        The route guard is requireStaff; the admin (Tier-1 global) check runs
+        in the service, so a non-admin caller is refused with 403 naming the
+        role.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The effective switch and whether the write seam is wired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteAcceptanceSettings"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: quoteSetAcceptanceSettings
+      tags: [staff-quote]
+      summary: Flip the dealer's multi-acceptance switch
+      description: >-
+        Admin-gated in the service (Tier-1 global), audited in both
+        directions. allow_multi_accept is required: a body that omits it is
+        refused rather than read as false, because this one field decides
+        whether a duplicate order can be minted.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteAcceptanceSettingsWrite"
+      responses:
+        "200":
+          description: The setting as it now stands
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteAcceptanceSettings"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- quote work area: policy, terms, margin glance (internal/quote/builder_handler.go) ---
+  /api/v1/quotes/policy:
+    get:
+      operationId: quoteReadQuotePolicy
+      tags: [staff-quote]
+      summary: Read the effective quote-builder policy for a branch
+      description: >-
+        Resolved branch row over the dealer default (the NULL-branch row). The
+        cost data the cost_visibility knob governs is gated at the margin
+        glance, not here.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          description: Branch to resolve the policy for; absent resolves the dealer default
+          schema: { type: string }
+      responses:
+        "200":
+          description: The effective policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotePolicy"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: quotePutQuotePolicy
+      tags: [staff-quote]
+      summary: Write the dealer or branch quote-builder policy
+      description: >-
+        Admin-gated in the service (Tier-1 global), exactly like the
+        acceptance settings. Out-of-bounds knobs are refused in words with 422
+        before any database CHECK can fire; the 422 body is the shared Error
+        envelope.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuotePolicy"
+      responses:
+        "200":
+          description: The policy as it now stands
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotePolicy"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/quotes/{id}/terms:
+    get:
+      operationId: quoteReadQuoteTerms
+      tags: [staff-quote]
+      summary: Read a quote's terms strip and summary money
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      responses:
+        "200":
+          description: The terms and summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteTerms"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: quotePutQuoteTerms
+      tags: [staff-quote]
+      summary: Write a quote's terms strip
+      description: >-
+        Authorized on the edit matrix's header row (DRAFT and SENT only),
+        re-checked inside the transaction. The write also stamps the header
+        tax from the configured flat rate. Out-of-bounds fields are refused in
+        words with 422; the 422 body is the shared Error envelope.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteTermsInput"
+      responses:
+        "200":
+          description: The terms as they now stand
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteTerms"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/quotes/{id}/margin-glance:
+    get:
+      operationId: quoteMarginGlance
+      tags: [staff-quote]
+      summary: Read a quote's per-line cost and margin, gated by the dealer's cost_visibility policy
+      description: >-
+        Computed server-side; the client never computes a margin. A caller the
+        branch policy does not allow receives an empty object with every cost
+        field byte-absent, never a fabricated figure.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      responses:
+        "200":
+          description: The margin glance, or an empty object when the policy hides cost
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteMargin"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- share links, staff side (internal/quote/share_handler.go, RegisterShareRoutes: RequireStaff) ---
+  /api/v1/quotes/{id}/share-links:
+    post:
+      operationId: quoteMintShareLink
+      tags: [staff-quote]
+      summary: Mint a public share link for a dealer quote
+      description: >-
+        The raw token is returned exactly once, here, and is unrecoverable
+        afterwards (only its hash is stored). Minting moves a DRAFT quote to
+        SENT and starts its follow-up cadence. A 409 answers a quote that is
+        empty, frozen, or expired. The link's underlying states are ACTIVE,
+        CONFIRMED, REVOKED; the wire shape carries the computed live flag
+        instead.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteShareLinkMintRequest"
+      responses:
+        "201":
+          description: The minted link, with the raw token this one time
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteMintedShareLink"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    get:
+      operationId: quoteListShareLinks
+      tags: [staff-quote]
+      summary: List the share links issued for a quote
+      description: >-
+        No tokens: the raw value is unrecoverable by design and the stored
+        hash never crosses the wire. The link states are ACTIVE, CONFIRMED,
+        REVOKED; each row carries the computed live flag.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      responses:
+        "200":
+          description: Every link issued for the quote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteShareLinkList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/quotes/{id}/share-links/{linkId}:
+    delete:
+      operationId: quoteRevokeShareLink
+      tags: [staff-quote]
+      summary: Revoke one share link immediately
+      description: Subsequent use of the revoked link answers 410, not 404
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+        - name: linkId
+          in: path
+          required: true
+          description: The share link id
+          schema: { type: string }
+      responses:
+        "204":
+          description: Revoked
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- public share-link surface (RegisterPublicRoutes: registered bare, no auth) ---
+  /api/public/v1/quotes/{token}:
+    get:
+      operationId: quotePublicViewQuote
+      tags: [public]
+      summary: View a dealer quote through a share link
+      description: >-
+        Pre-auth: the opaque token in the path is the credential, and it grants read of exactly one quote. The
+        payload is a hand-built allowlist with no staff-only field (no cost,
+        margin, or branch internals). A token that never existed answers 404;
+        a link that died (revoked or past its expiry) answers 410 with the
+        Error envelope, so the holder learns the link died rather than being
+        told the quote never existed.
+      x-role: public
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: The share-link token; it is the credential
+          schema: { type: string }
+      responses:
+        "200":
+          description: The customer-facing quote view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotePublicView"
+        "404": { $ref: "#/components/responses/NotFound" }
+        "410":
+          description: The link existed and died (revoked or expired)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/public/v1/quotes/{token}/accept:
+    post:
+      operationId: quotePublicAcceptQuote
+      tags: [public]
+      summary: Accept a dealer quote through a share link
+      description: >-
+        Pre-auth: the opaque token in the path is the credential. Acceptance is a typed full name plus an explicit
+        affirmative, recorded as an electronic attestation. The status flip,
+        the acceptance record and the audit row land on one transaction under
+        the quote row lock. A 409 names why the quote is not awaiting
+        acceptance, including the order a first acceptance became when
+        multi-accept is off.
+      x-role: public
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: The share-link token; it is the credential
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuotePublicAcceptRequest"
+      responses:
+        "200":
+          description: The acceptance confirmation, restating the agreed totals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteAcceptanceResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "410":
+          description: The link existed and died (revoked or expired)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # --- quote automation: SMS delivery and follow-ups (followup_handler.go, RegisterAutomationRoutes: RequireStaff) ---
+  /api/v1/quotes/{id}/sms-share:
+    post:
+      operationId: quoteShareBySMS
+      tags: [staff-quote]
+      summary: Text a quote's share link to the customer
+      description: >-
+        Consent is checked before anything is minted; a customer without SMS
+        consent (or opted out) is a 409 in words. The answer is 202 because
+        the message is queued, not sent. No payment link is ever included; the
+        payload type has no field for one.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteSMSShareRequest"
+      responses:
+        "202":
+          description: The queued send (nothing has been delivered yet)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteSMSShareResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/quotes/{id}/followups:
+    get:
+      operationId: quoteFollowUpHistory
+      tags: [staff-quote]
+      summary: Read a quote's follow-up plan, sent steps, and upcoming steps
+      description: >-
+        The plan, what actually went out (including SKIPPED rows with their
+        reasons), and the steps still to come, computed from the plan rather
+        than stored.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      responses:
+        "200":
+          description: The follow-up history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteFollowUpHistory"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/quotes/{id}/followups/disable:
+    post:
+      operationId: quoteDisableFollowUps
+      tags: [staff-quote]
+      summary: Stop a quote's follow-up cadence
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      responses:
+        "200":
+          description: The follow-up history after the switch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteFollowUpHistory"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/quotes/{id}/followups/enable:
+    post:
+      operationId: quoteEnableFollowUps
+      tags: [staff-quote]
+      summary: Start or resume a quote's follow-up cadence
+      description: Enabling a quote that never had a plan creates one
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      responses:
+        "200":
+          description: The follow-up history after the switch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteFollowUpHistory"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- at-quote availability and soft holds (reserve_handler.go, RegisterAvailabilityRoutes: RequireStaff) ---
+  /api/v1/quotes/{id}/availability:
+    get:
+      operationId: quoteQuoteAvailability
+      tags: [staff-quote]
+      summary: Grade each quote line against the four-bucket stock view at the quote's branch
+      description: >-
+        The chip per line. An unwired availability seam grades every line
+        UNKNOWN rather than failing, and seam_wired says which answer the
+        client is looking at.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      responses:
+        "200":
+          description: One graded row per line, plus the seam flag
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteLineAvailabilityList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/quotes/{id}/holds:
+    get:
+      operationId: quoteListQuoteHolds
+      tags: [staff-quote]
+      summary: List a quote's active soft holds
+      description: >-
+        Soft holds are visible and they expire, but they do not reduce
+        available stock unless the branch policy grades quote holds HARD.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      responses:
+        "200":
+          description: The active holds, plus the seam flag
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteHoldList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/quotes/{id}/hold-expiry:
+    get:
+      operationId: quoteQuoteHoldExpiry
+      tags: [staff-quote]
+      summary: Report which of a quote's soft holds have lapsed
+      description: >-
+        The projection behind the expiry banner: ended holds filtered to what
+        is still news (deduplicated per line, superseded when the line is held
+        again, dropped when the line left the quote). An unbound seam answers
+        an empty status with seam_wired false.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      responses:
+        "200":
+          description: The hold-expiry status, plus the seam flag
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteHoldExpiryView"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/quotes/{id}/holds/resync:
+    post:
+      operationId: quoteResyncQuoteHolds
+      tags: [staff-quote]
+      summary: Re-derive a quote's soft holds from its current lines
+      description: >-
+        The explicit form of the sync every line write already runs: release
+        all, then reserve what the quote now has, under the quote row lock.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      responses:
+        "200":
+          description: How many holds were applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteHoldResyncResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/quotes/{id}/holds/release:
+    post:
+      operationId: quoteReleaseQuoteHolds
+      tags: [staff-quote]
+      summary: Close a quote's soft holds (lost or withdrawn)
+      description: >-
+        The only terminal status this endpoint writes is RELEASED; CONSUMED is
+        written by the conversion path and nowhere else.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Quote id (uuid) or the visible quote number
+          schema: { type: string }
+      responses:
+        "200":
+          description: How many holds were released
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteHoldReleaseResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/quote-availability/{productId}/branches:
+    get:
+      operationId: quoteAvailabilityBranches
+      tags: [staff-quote]
+      summary: Read one product's four-bucket stock at every branch
+      description: >-
+        The cross-branch peek behind a THIN or NONE chip. Every branch is
+        present even when it has none; a missing row would read as a bug
+        rather than as an answer.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: productId
+          in: path
+          required: true
+          description: The product id
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: One stock row per branch, plus the seam flag
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteBranchStockList"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- quote assist (internal/quoteassist/handler.go, RegisterRoutes: RequireStaff + RequireAdmin) ---
+  /api/v1/quote-assist/extract:
+    post:
+      operationId: quoteAssistExtract
+      tags: [staff-quoteassist]
+      summary: Read a pasted job description into proposed quote lines
+      description: >-
+        A POST with a body, but a read: nothing is written, no quote line, no
+        saved paste, and no ledger row unless the caller asked for the AI path
+        and the rails let it through. Proposals are confirmed one at a time
+        through the quote module's own line-add route; this surface cannot
+        write a quote line. The deterministic engine is the default; the AI
+        path only splits the text into phrases and never names a product.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteAssistExtractRequest"
+      responses:
+        "200":
+          description: "The extraction: proposals, unmatched phrases, and which path ran"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteAssistExtraction"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/quote-assist/scope-gaps:
+    get:
+      operationId: quoteAssistScopeGaps
+      tags: [staff-quoteassist]
+      summary: Evaluate one quote against the scope rules
+      description: >-
+        Deterministic completeness advice over the quote's lines and the
+        enabled scope rules; no AI. A gap is advice, not a fault. A
+        cross-branch or unknown quote is one flat 404, never an existence
+        oracle.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: quote_id
+          in: query
+          required: true
+          description: The quote to evaluate
+          schema: { type: string }
+      responses:
+        "200":
+          description: The findings for the quote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteAssistScopeGaps"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/quote-assist/scope-rules:
+    get:
+      operationId: quoteAssistListScopeRules
+      tags: [staff-quoteassist]
+      summary: List every scope rule, enabled and disabled
+      description: >-
+        The admin listing deliberately returns the disabled rules too; the
+        evaluator is the single place the enabled flag is honoured.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The rule listing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteAssistScopeRuleList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/quote-assist/scope-rules/{code}:
+    patch:
+      operationId: quoteAssistPatchScopeRule
+      tags: [staff-quoteassist]
+      summary: Switch one scope rule on or off
+      description: >-
+        enabled is required: a body that omits it is refused rather than read
+        as false, because silent, destructive defaults are the worst available
+        failure mode for a config surface.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: code
+          in: path
+          required: true
+          description: The rule code
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuoteAssistScopeRulePatch"
+      responses:
+        "200":
+          description: The rule as it now stands
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteAssistScopeRule"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  schemas:
+    # --- the staff dealer quote (canonical dealer_quote, DECISIONS.md D8) ---
+    QuoteSummary:
+      type: object
+      description: >-
+        One row of the staff quote list. The staff quote resource is the
+        canonical dealer_quote (DECISIONS.md D8).
+      required: [id, quote_no, customer_id, customer_name, branch_id, status, expired, subtotal_cents, tax_cents, total_cents, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        quote_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        branch_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [DRAFT, SENT, ACCEPTED, CONVERTED, EXPIRED, LOST]
+        valid_until:
+          type: string
+          format: date
+          description: Absent means the quote never expires; render as no expiry, never as expired
+        expired:
+          type: boolean
+          description: Computed from valid_until at read time, never stored
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time }
+    QuoteSummaryPage:
+      type: object
+      description: >-
+        One cursor page of the staff quote list. The staff quote resource is
+        the canonical dealer_quote (DECISIONS.md D8).
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteSummary" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    QuoteView:
+      type: object
+      description: >-
+        One quote as the staff builder renders it: the header, the lines, the
+        money, and the server-computed edit and convert offers. The staff
+        quote resource is the canonical dealer_quote (DECISIONS.md D8). An
+        absent editable_fields or a false can_convert means no; the client
+        evaluates nothing.
+      required: [id, quote_no, customer_id, customer_name, branch_id, status, expired, editable_fields, can_convert, lines, subtotal_cents, tax_cents, total_cents, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        quote_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        branch_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [DRAFT, SENT, ACCEPTED, CONVERTED, EXPIRED, LOST]
+        valid_until:
+          type: string
+          format: date
+          description: Absent means the quote never expires
+        expired: { type: boolean }
+        editable_fields:
+          type: array
+          description: Which edit commands this caller may apply right now, from the ratified edit matrix
+          items:
+            type: string
+            enum: [line_qty, line_add, line_remove, valid_until]
+        can_convert:
+          type: boolean
+          description: Whether this caller may convert this quote to an order right now
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteViewLine" }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time }
+    QuoteViewLine:
+      type: object
+      description: >-
+        One line as the staff quote surface renders it. The staff quote
+        resource is the canonical dealer_quote (DECISIONS.md D8); this line
+        view is the ERP wire shape, distinct from the skeleton QuoteLine that
+        dealer_quote and customer_quote share.
+      required: [line_no, product_id, description, qty_entered, uom_entered, qty_base, unit_price_cents, price_uom, line_total_cents]
+      properties:
+        line_no: { type: integer, format: int32 }
+        product_id:
+          type: string
+          description: The product id; empty on a free-text line
+        description: { type: string }
+        qty_entered:
+          type: string
+          description: The entered quantity, a decimal carried as a string (never a float)
+        uom_entered: { type: string }
+        qty_base:
+          type: string
+          description: The quantity in the stocking unit, a decimal carried as a string
+        unit_price_cents: { type: integer, format: int64 }
+        price_uom: { type: string }
+        line_total_cents: { type: integer, format: int64 }
+    QuoteCreateRequest:
+      type: object
+      description: >-
+        The staff create payload. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8).
+      required: [customer_id, branch_id]
+      properties:
+        customer_id: { type: string, format: uuid }
+        branch_id:
+          type: string
+          format: uuid
+          description: A branch the caller can reach; a quote is never born outside its author's reach
+        valid_until:
+          type: string
+          format: date
+          description: Empty or absent means the quote never expires
+    QuoteValidUntilWrite:
+      type: object
+      description: >-
+        The valid_until write. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8). An empty string clears the expiry.
+      properties:
+        valid_until:
+          type: string
+          format: date
+    QuoteLineAddRequest:
+      type: object
+      description: >-
+        The add-line payload. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8).
+      required: [product_id, qty_entered, uom_entered]
+      properties:
+        product_id: { type: string, format: uuid }
+        description:
+          type: string
+          description: Free-text line description, bounded server-side
+        qty_entered:
+          type: string
+          description: A positive decimal quantity, carried as a string
+        uom_entered: { type: string }
+    QuoteLinePatchRequest:
+      type: object
+      description: >-
+        The line edit payload. qty_entered reprices the line at current rates;
+        disc_pct without qty_entered is a discount-only write. The staff quote
+        resource is the canonical dealer_quote (DECISIONS.md D8).
+      properties:
+        qty_entered:
+          type: string
+          description: A positive decimal quantity, carried as a string; a zero or negative quantity is a removal, not an edit
+        disc_pct:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          description: Per-line discount as a whole percent; the server also accepts it as a quoted string
+    QuoteLineSnapshot:
+      type: object
+      description: >-
+        The post-image of one edited quote line (no JSON tags on the Go
+        struct, so the wire keys are the Go field names). The staff quote
+        resource is the canonical dealer_quote (DECISIONS.md D8).
+      required: [LineNo, ProductID, QtyEntered, QtyBase, UnitPriceCents, LineTotalCents]
+      properties:
+        LineNo: { type: integer, format: int32 }
+        ProductID: { type: string }
+        QtyEntered: { type: string }
+        QtyBase: { type: string }
+        UnitPriceCents: { type: integer, format: int64 }
+        LineTotalCents: { type: integer, format: int64 }
+    QuoteTotals:
+      type: object
+      description: >-
+        The recomputed quote money after an edit (no JSON tags on the Go
+        struct). The staff quote resource is the canonical dealer_quote
+        (DECISIONS.md D8). tax_cents is deliberately absent: a line edit never
+        writes tax.
+      required: [SubtotalCents, TotalCents]
+      properties:
+        SubtotalCents: { type: integer, format: int64 }
+        TotalCents: { type: integer, format: int64 }
+    QuoteEditResult:
+      type: object
+      description: >-
+        What a successful quote edit returns: the affected line (absent on a
+        removal or a date edit), the recomputed money, and the quote's status
+        as read under the row lock. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8).
+      required: [totals, status]
+      properties:
+        line:
+          $ref: "#/components/schemas/QuoteLineSnapshot"
+        totals:
+          $ref: "#/components/schemas/QuoteTotals"
+        status:
+          type: string
+          enum: [DRAFT, SENT, ACCEPTED, CONVERTED, EXPIRED, LOST]
+    QuoteFieldChange:
+      type: object
+      description: >-
+        One column-level change on a quote, as the history wire format carries
+        it. The staff quote resource is the canonical dealer_quote
+        (DECISIONS.md D8).
+      required: [field, line_no, occurred_at]
+      properties:
+        field:
+          type: string
+          description: The quotes or quote_lines column that moved
+        line_no:
+          type: integer
+          format: int32
+          description: The line it moved on; zero is a quote-header field
+        before:
+          type: string
+          description: The pre-image; absent on a creation
+        after:
+          type: string
+          description: The post-image; absent on a removal
+        actor_id: { type: string }
+        actor_name:
+          type: string
+          description: The staff display name when the actor is staff
+        request_id:
+          type: string
+          description: Groups the rows emitted by one edit
+        occurred_at: { type: string, format: date-time }
+    QuoteEditHistory:
+      type: object
+      description: >-
+        One quote's ordered change history, oldest first by audit sequence.
+        The staff quote resource is the canonical dealer_quote (DECISIONS.md
+        D8).
+      required: [quote_id, changes]
+      properties:
+        quote_id: { type: string, format: uuid }
+        changes:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteFieldChange" }
+    QuoteAlternate:
+      type: object
+      description: >-
+        One candidate product to score against a quote line. The staff quote
+        resource is the canonical dealer_quote (DECISIONS.md D8).
+      required: [product_id]
+      properties:
+        product_id: { type: string, format: uuid }
+        uom:
+          type: string
+          description: Optional; empty prices the candidate in the same unit the current line is entered in
+    QuoteLineCompareRequest:
+      type: object
+      description: >-
+        The comparison payload, bounded server-side. The staff quote resource
+        is the canonical dealer_quote (DECISIONS.md D8).
+      required: [alternates]
+      properties:
+        alternates:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteAlternate" }
+    QuoteComparisonRow:
+      type: object
+      description: >-
+        One scored option, the current line or an alternate. The staff quote
+        resource is the canonical dealer_quote (DECISIONS.md D8).
+      required: [product_id, is_current, qty_entered, uom_entered, unit_price_cents, price_uom, line_total_cents, list_price_cents, discount_bps, source, delta_cents, blocked]
+      properties:
+        product_id: { type: string, format: uuid }
+        is_current: { type: boolean }
+        qty_entered: { type: string }
+        uom_entered: { type: string }
+        unit_price_cents: { type: integer, format: int64 }
+        price_uom: { type: string }
+        line_total_cents: { type: integer, format: int64 }
+        list_price_cents:
+          type: integer
+          format: int64
+          description: The retail anchor the waterfall started from
+        discount_bps: { type: integer, format: int64 }
+        source: { type: string }
+        delta_cents:
+          type: integer
+          format: int64
+          description: This option's line total minus the current line's; negative is cheaper for the customer
+        blocked:
+          type: boolean
+          description: True when this option resolves below the margin floor; surfaced, never hidden
+        block_policy: { type: string }
+        unavailable:
+          type: string
+          description: Why the option could not be scored at all, when it could not
+    QuoteLineComparison:
+      type: object
+      description: >-
+        The comparison for one quote line. The staff quote resource is the
+        canonical dealer_quote (DECISIONS.md D8).
+      required: [quote_id, line_no, options]
+      properties:
+        quote_id: { type: string, format: uuid }
+        line_no: { type: integer, format: int32 }
+        options:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteComparisonRow" }
+    QuoteConvertRequest:
+      type: object
+      description: >-
+        The optional conversion body. The staff quote resource is the
+        canonical dealer_quote (DECISIONS.md D8). An absent or empty
+        fulfillment leaves the column out of the insert and the database
+        default applies; DELIVERY is refused in words because a delivery is
+        booked by scheduling a stop, not chosen at conversion.
+      properties:
+        fulfillment:
+          type: string
+          enum: [PICKUP, WILL_CALL]
+    QuoteConvertResult:
+      type: object
+      description: >-
+        What a conversion returns: the new order's id and number, so the
+        caller can redirect without the quote module importing the order
+        module. The staff quote resource is the canonical dealer_quote
+        (DECISIONS.md D8).
+      required: [order_id, order_no]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+    QuoteRelatedDocument:
+      type: object
+      description: >-
+        One normalized row of a quote's document family. The staff quote
+        resource is the canonical dealer_quote (DECISIONS.md D8).
+      required: [kind, id, number, status, date, total_cents, self]
+      properties:
+        kind:
+          type: string
+          enum: [QUOTE, ORDER, INVOICE]
+        id: { type: string, format: uuid }
+        number:
+          type: string
+          description: The human document number
+        status: { type: string }
+        date:
+          type: string
+          format: date-time
+          description: When the document came to exist
+        total_cents: { type: integer, format: int64 }
+        parent_id:
+          type: string
+          description: The lineage edge; absent on the family root
+        origin:
+          type: string
+          enum: [PORTAL, COUNTER]
+          description: Which door the conversion came through; absent on documents that predate provenance
+        accept_seq:
+          type: integer
+          format: int32
+          description: Which numbered acceptance minted this document; absent when none
+        self:
+          type: boolean
+          description: True on the document the caller asked from
+    QuoteRelatedDocumentList:
+      type: object
+      description: >-
+        A quote's document family as a flat, parent-annotated list. The staff
+        quote resource is the canonical dealer_quote (DECISIONS.md D8).
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteRelatedDocument" }
+    QuoteAcceptanceSettings:
+      type: object
+      description: >-
+        The dealer's acceptance settings. The staff quote resource is the
+        canonical dealer_quote (DECISIONS.md D8).
+      required: [allow_multi_accept, switch_wired]
+      properties:
+        allow_multi_accept:
+          type: boolean
+          description: Whether a quote may be accepted more than once; the shipped default is off
+        switch_wired:
+          type: boolean
+          description: Whether the write seam is wired, so the client can render read-only
+    QuoteAcceptanceSettingsWrite:
+      type: object
+      description: >-
+        The multi-accept write. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8).
+      required: [allow_multi_accept]
+      properties:
+        allow_multi_accept: { type: boolean }
+        reason:
+          type: string
+          description: Recorded on the audit row
+    QuotePolicy:
+      type: object
+      description: >-
+        The quote-builder dealer policy row, resolved branch over the
+        NULL-branch dealer default. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8).
+      required: [cost_visibility, default_validity_days, default_deposit_pct, line_discounts_enabled, send_email_enabled, send_sms_enabled, include_product_images, quick_chip_set, workspace_split_pct, workspace_arrangement]
+      properties:
+        branch_id:
+          type: string
+          description: Present on a branch override row; absent on the dealer default
+        cost_visibility:
+          type: string
+          enum: [MANAGER_UP, ALL_STAFF, HIDDEN]
+          description: Who the margin glance may show cost to; enforced at the marshal layer, fail closed
+        default_validity_days: { type: integer, format: int32, minimum: 1, maximum: 365 }
+        default_deposit_pct: { type: integer, format: int32, minimum: 0, maximum: 100 }
+        line_discounts_enabled: { type: boolean }
+        send_email_enabled: { type: boolean }
+        send_sms_enabled: { type: boolean }
+        include_product_images: { type: boolean }
+        quick_chip_set:
+          type: array
+          items: { type: string }
+        effective_chips:
+          type: array
+          description: What the chip row renders; read-only, never written
+          items: { type: string }
+        workspace_split_pct: { type: integer, format: int32 }
+        workspace_arrangement:
+          type: string
+          enum: [PRIMARY_LEFT, PRIMARY_RIGHT]
+    QuoteTerms:
+      type: object
+      description: >-
+        A quote's terms strip plus summary money and per-line builder extras.
+        The staff quote resource is the canonical dealer_quote (DECISIONS.md
+        D8).
+      required: [quote_id, deposit_required, deposit_pct, include_images, customer_notes, contact_name, project_job, customer_po, fulfillment, delivery_address, delivery_fee_cents, deposit_cents, subtotal_cents, tax_cents, total_cents, lines]
+      properties:
+        quote_id: { type: string, format: uuid }
+        deposit_required: { type: boolean }
+        deposit_pct: { type: integer, format: int32 }
+        include_images: { type: boolean }
+        customer_notes: { type: string }
+        contact_name: { type: string }
+        project_job: { type: string }
+        customer_po: { type: string }
+        salesperson_id: { type: string }
+        salesperson_name: { type: string }
+        fulfillment:
+          type: string
+          enum: [PICKUP, DELIVERY]
+        delivery_address: { type: string }
+        requested_date: { type: string, format: date }
+        delivery_fee_cents: { type: integer, format: int64 }
+        deposit_cents: { type: integer, format: int64 }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteTermsLine" }
+    QuoteTermsLine:
+      type: object
+      description: >-
+        One line's builder extras, keyed by line_no. The staff quote resource
+        is the canonical dealer_quote (DECISIONS.md D8).
+      required: [line_no, disc_pct, pre_discount_total_cents, has_image]
+      properties:
+        line_no: { type: integer, format: int32 }
+        disc_pct: { type: integer, format: int32 }
+        pre_discount_total_cents: { type: integer, format: int64 }
+        has_image: { type: boolean }
+        sku: { type: string }
+    QuoteTermsInput:
+      type: object
+      description: >-
+        The terms write payload; the work area always sends the whole strip.
+        The staff quote resource is the canonical dealer_quote (DECISIONS.md
+        D8). A PICKUP fulfillment clears the delivery facts server-side.
+      required: [deposit_required, deposit_pct, include_images, customer_notes, contact_name, project_job, customer_po, salesperson_id, fulfillment, delivery_address, requested_date, delivery_fee_cents]
+      properties:
+        deposit_required: { type: boolean }
+        deposit_pct: { type: integer, format: int32, minimum: 0, maximum: 100 }
+        include_images: { type: boolean }
+        customer_notes: { type: string }
+        contact_name: { type: string }
+        project_job: { type: string }
+        customer_po: { type: string }
+        salesperson_id:
+          type: string
+          description: A staff member's id, or empty
+        fulfillment:
+          type: string
+          enum: [PICKUP, DELIVERY]
+        delivery_address: { type: string }
+        requested_date:
+          type: string
+          description: The requested date in date form, or empty
+        delivery_fee_cents: { type: integer, format: int64, minimum: 0 }
+    QuoteMargin:
+      type: object
+      description: >-
+        The margin glance answer. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8). Every field is optional by design: a
+        caller the dealer's cost_visibility policy does not allow receives an
+        empty object with every cost field byte-absent, and an unanswerable
+        line contributes no cost fields rather than a fabricated figure.
+      properties:
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteMarginLine" }
+        margin_bps: { type: integer, format: int64 }
+        est_profit_cents: { type: integer, format: int64 }
+        partial:
+          type: boolean
+          description: True when at least one line had no cost on file
+    QuoteMarginLine:
+      type: object
+      description: >-
+        One line's cost answer. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8).
+      properties:
+        line_no: { type: integer, format: int32 }
+        cost_cents: { type: integer, format: int64 }
+        margin_bps: { type: integer, format: int64 }
+        est_profit_cents: { type: integer, format: int64 }
+
+    # --- share links and public acceptance ---
+    QuoteShareLink:
+      type: object
+      description: >-
+        One issued share link as staff see it; it deliberately carries no
+        token and no hash. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8). The link's underlying states are
+        ACTIVE, CONFIRMED, REVOKED; the wire carries the computed live flag.
+      required: [id, quote_id, expires_at, created_at, live]
+      properties:
+        id: { type: string, format: uuid }
+        quote_id: { type: string, format: uuid }
+        expires_at: { type: string, format: date-time }
+        revoked_at:
+          type: [string, "null"]
+          format: date-time
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        live:
+          type: boolean
+          description: Computed at read time, so a link is never wrong about itself
+    QuoteMintedShareLink:
+      type: object
+      description: >-
+        The mint response: a share link plus the raw token, present exactly
+        here and nowhere else, ever. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8).
+      required: [id, quote_id, expires_at, created_at, live, token]
+      properties:
+        id: { type: string, format: uuid }
+        quote_id: { type: string, format: uuid }
+        expires_at: { type: string, format: date-time }
+        revoked_at:
+          type: [string, "null"]
+          format: date-time
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        live: { type: boolean }
+        token:
+          type: string
+          description: The raw share token; unrecoverable after this response
+    QuoteShareLinkMintRequest:
+      type: object
+      description: >-
+        The optional mint body. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8). An absent body mints with the house
+        default link lifetime.
+      properties:
+        days:
+          type: integer
+          format: int32
+          description: Per-link lifetime override; the value is stored on the link, so changing the default later never touches a live link
+    QuoteShareLinkList:
+      type: object
+      description: >-
+        Every link issued for a quote. The staff quote resource is the
+        canonical dealer_quote (DECISIONS.md D8).
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteShareLink" }
+    QuotePublicView:
+      type: object
+      description: >-
+        What an anonymous share-link holder sees: a hand-built allowlist, not
+        a projection of the staff model, so no staff-only field can leak. The
+        staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
+      required: [quote_no, customer_name, status, expired, lines, subtotal_cents, tax_cents, total_cents, as_of, acceptable]
+      properties:
+        quote_no: { type: string }
+        customer_name: { type: string }
+        status:
+          type: string
+          enum: [DRAFT, SENT, ACCEPTED, CONVERTED, EXPIRED, LOST]
+        valid_until: { type: string, format: date }
+        expired: { type: boolean }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/QuotePublicLine" }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        as_of:
+          type: string
+          format: date-time
+          description: The quote's updated_at, so the page can say how current the numbers are
+        acceptable:
+          type: boolean
+          description: Whether this link may still be used to accept; drives whether the accept form renders
+        customer_notes: { type: string }
+        deposit_required: { type: boolean }
+        deposit_pct: { type: integer, format: int32 }
+        deposit_cents: { type: integer, format: int64 }
+        include_images: { type: boolean }
+        fulfillment: { type: string }
+        delivery_address: { type: string }
+        requested_date: { type: string, format: date }
+        delivery_fee_cents: { type: integer, format: int64 }
+    QuotePublicLine:
+      type: object
+      description: >-
+        The customer-visible shape of a quote line: no product id, no base
+        quantity, no pricing mechanics. The staff quote resource is the
+        canonical dealer_quote (DECISIONS.md D8).
+      required: [line_no, description, qty_entered, uom_entered, unit_price_cents, line_total_cents]
+      properties:
+        line_no: { type: integer, format: int32 }
+        description: { type: string }
+        qty_entered: { type: string }
+        uom_entered: { type: string }
+        unit_price_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64 }
+        disc_pct: { type: integer, format: int32 }
+        pre_discount_total_cents: { type: integer, format: int64 }
+        image_ref:
+          type: string
+          description: >-
+            Present only when the dealer's include-product-images choice is on
+            and the product has a primary image; it addresses the already
+            public product-image byte route, which an img tag can send no
+            Authorization header to
+    QuotePublicAcceptRequest:
+      type: object
+      description: >-
+        The acceptance payload: a typed full name plus an explicit
+        affirmative, two required acts. The staff quote resource is the
+        canonical dealer_quote (DECISIONS.md D8).
+      required: [typed_name, accepted]
+      properties:
+        typed_name:
+          type: string
+          description: The customer's full name, bounded server-side
+        accepted:
+          type: boolean
+          description: Must be true; the affirmative is a required separate act
+    QuoteAcceptanceResult:
+      type: object
+      description: >-
+        The acceptance confirmation; it echoes the agreed totals so the
+        customer's own record does not depend on a careful reading of the
+        page. The staff quote resource is the canonical dealer_quote
+        (DECISIONS.md D8).
+      required: [quote_no, typed_name, accepted_at, subtotal_cents, tax_cents, total_cents]
+      properties:
+        quote_no: { type: string }
+        typed_name: { type: string }
+        accepted_at: { type: string, format: date-time }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        repeat_acceptance:
+          type: boolean
+          description: True when this acceptance repeats one already recorded (multi-accept on)
+
+    # --- automation: SMS delivery and the follow-up cadence ---
+    QuoteSMSShareRequest:
+      type: object
+      description: >-
+        The optional SMS-share body. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8).
+      properties:
+        days:
+          type: integer
+          format: int32
+          description: Optional link lifetime override, as on the mint route
+    QuoteSMSShareResult:
+      type: object
+      description: >-
+        What the staff caller gets back from an SMS share. It carries no
+        token: the raw link went into the message, and echoing it would put a
+        live credential in a second place. The staff quote resource is the
+        canonical dealer_quote (DECISIONS.md D8).
+      required: [quote_id, quote_no, event_id, not_before, queued]
+      properties:
+        quote_id: { type: string, format: uuid }
+        quote_no: { type: string }
+        event_id: { type: string }
+        not_before: { type: string, format: date-time }
+        queued:
+          type: boolean
+          description: Always true on success; the message is queued, not sent
+    QuoteFollowUpPlan:
+      type: object
+      description: >-
+        One quote's cadence setting. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8).
+      required: [quote_id, enabled, channel, offsets_days, started_at]
+      properties:
+        quote_id: { type: string, format: uuid }
+        enabled: { type: boolean }
+        channel:
+          type: string
+          enum: [EMAIL, SMS, BOTH]
+        offsets_days:
+          type: array
+          items: { type: integer, format: int32 }
+        started_at: { type: string, format: date-time }
+        disabled_at:
+          type: [string, "null"]
+          format: date-time
+        disabled_why: { type: string }
+    QuoteFollowUpEvent:
+      type: object
+      description: >-
+        One recorded cadence step; a SKIPPED row with a reason is a deliberate
+        part of the history. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8).
+      required: [step_day, channel, status, scheduled_for, occurred_at]
+      properties:
+        step_day: { type: integer, format: int32 }
+        channel:
+          type: string
+          enum: [EMAIL, SMS, BOTH]
+        status:
+          type: string
+          enum: [SENT, SKIPPED, CANCELLED]
+        reason: { type: string }
+        event_id: { type: string }
+        scheduled_for: { type: string, format: date-time }
+        occurred_at: { type: string, format: date-time }
+    QuoteFollowUpStep:
+      type: object
+      description: >-
+        A cadence step that has not happened yet, computed from the plan
+        rather than stored. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8).
+      required: [step_day, channel, due_at, scheduled]
+      properties:
+        step_day: { type: integer, format: int32 }
+        channel:
+          type: string
+          enum: [EMAIL, SMS, BOTH]
+        due_at: { type: string, format: date-time }
+        scheduled:
+          type: boolean
+          description: Always true; present so the surface can render one list of past and future
+    QuoteFollowUpHistory:
+      type: object
+      description: >-
+        What the quote surface renders for one quote's cadence: the plan, what
+        happened, and what is coming. The staff quote resource is the
+        canonical dealer_quote (DECISIONS.md D8).
+      required: [quote_id, events, upcoming, automated]
+      properties:
+        quote_id: { type: string, format: uuid }
+        plan:
+          $ref: "#/components/schemas/QuoteFollowUpPlan"
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteFollowUpEvent" }
+        upcoming:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteFollowUpStep" }
+        automated:
+          type: boolean
+          description: True when a plan exists and is enabled
+
+    # --- at-quote availability and soft holds ---
+    QuoteHold:
+      type: object
+      description: >-
+        One active hold a quote owns, decorated for the surface. The staff
+        quote resource is the canonical dealer_quote (DECISIONS.md D8).
+      required: [reservation_id, product_id, product_name, branch_id, hold_mode, qty_base]
+      properties:
+        reservation_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        product_name: { type: string }
+        branch_id: { type: string, format: uuid }
+        hold_mode:
+          type: string
+          description: The branch policy's grading of quote holds (SOFT by default; a branch may grade them HARD or NONE)
+        qty_base: { type: number }
+        expires_at:
+          type: string
+          description: When the hold lapses; a hold expires with the quote, falling back to the branch policy lifetime when the quote never expires
+    QuoteHoldList:
+      type: object
+      description: >-
+        A quote's active holds plus the seam flag, so the client can tell not
+        reported from none held. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8).
+      required: [holds, seam_wired]
+      properties:
+        holds:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteHold" }
+        seam_wired: { type: boolean }
+    QuoteLineAvailability:
+      type: object
+      description: >-
+        One quote line graded against the four-bucket stock view at the
+        quote's branch. The staff quote resource is the canonical dealer_quote
+        (DECISIONS.md D8).
+      required: [line_no, product_id, qty_base, grade, branch]
+      properties:
+        line_no: { type: integer, format: int32 }
+        product_id:
+          type: string
+          description: The product id; empty on a free-text line
+        qty_base: { type: number }
+        grade:
+          type: string
+          enum: [GREEN, THIN, NONE, UNKNOWN]
+          description: >-
+            GREEN: available covers the line. THIN: some, not enough. NONE:
+            nothing available. UNKNOWN: no product to grade, or the seam is
+            unwired.
+        branch:
+          $ref: "#/components/schemas/QuoteBranchStock"
+    QuoteLineAvailabilityList:
+      type: object
+      description: >-
+        The per-line availability answer plus the seam flag, so a grey chip
+        (not reported) and a red chip (none in stock) never collapse into one.
+        The staff quote resource is the canonical dealer_quote (DECISIONS.md
+        D8).
+      required: [lines, seam_wired]
+      properties:
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteLineAvailability" }
+        seam_wired: { type: boolean }
+    QuoteBranchStock:
+      type: object
+      description: >-
+        The four-bucket view of one product at one branch. The staff quote
+        resource is the canonical dealer_quote (DECISIONS.md D8).
+      required: [product_id, branch_id, branch_code, branch_name, on_hand_base, reserved_base, in_transit_base, available_base, soft_held_base, avg_cost_cents]
+      properties:
+        product_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        branch_code: { type: string }
+        branch_name: { type: string }
+        on_hand_base: { type: number }
+        reserved_base: { type: number }
+        in_transit_base: { type: number }
+        available_base: { type: number }
+        soft_held_base:
+          type: number
+          description: Carried and rendered even though it does not gate, because soft interest is worth seeing
+        avg_cost_cents: { type: integer, format: int64 }
+    QuoteBranchStockList:
+      type: object
+      description: >-
+        One product's stock at every branch, plus the seam flag. The staff
+        quote resource is the canonical dealer_quote (DECISIONS.md D8).
+      required: [branches, seam_wired]
+      properties:
+        branches:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteBranchStock" }
+        seam_wired: { type: boolean }
+    QuoteExpiredHold:
+      type: object
+      description: >-
+        One line's worth of ended hold, carrying the product and the quantity
+        so the banner is a sentence a rep can act on. The staff quote resource
+        is the canonical dealer_quote (DECISIONS.md D8).
+      required: [reservation_id, product_id, product_name, sku, branch_id, qty_base, status]
+      properties:
+        reservation_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        product_name: { type: string }
+        sku: { type: string }
+        branch_id: { type: string, format: uuid }
+        qty_base: { type: number }
+        status:
+          type: string
+          enum: [EXPIRED, RELEASED]
+          description: EXPIRED is written by the sweep; RELEASED means something gave the hold back early. CONSUMED never appears here.
+        expires_at:
+          type: string
+          description: When the hold was due to lapse
+        ended_at:
+          type: string
+          description: When the hold actually ended
+    QuoteSoftHoldStatus:
+      type: object
+      description: >-
+        The hold-expiry answer for one quote, in the shape the banner renders.
+        The staff quote resource is the canonical dealer_quote (DECISIONS.md
+        D8).
+      required: [quote_id, active_count, expired, any_expired]
+      properties:
+        quote_id: { type: string, format: uuid }
+        active_count:
+          type: integer
+          format: int32
+          description: Holds still standing, so the banner can say how many lines are no longer held
+        expired:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteExpiredHold" }
+        any_expired:
+          type: boolean
+          description: The one boolean the banner branches on; derived from the filtered list
+    QuoteHoldExpiryView:
+      type: object
+      description: >-
+        The hold-expiry envelope: the status plus the seam flag, so an unbound
+        seam reads as not asked rather than as nothing expired. The staff
+        quote resource is the canonical dealer_quote (DECISIONS.md D8).
+      required: [expiry, seam_wired]
+      properties:
+        expiry:
+          $ref: "#/components/schemas/QuoteSoftHoldStatus"
+        seam_wired: { type: boolean }
+    QuoteHoldResyncResult:
+      type: object
+      description: >-
+        The resync answer. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8).
+      required: [holds_applied]
+      properties:
+        holds_applied: { type: integer, format: int32 }
+    QuoteHoldReleaseResult:
+      type: object
+      description: >-
+        The release answer. The staff quote resource is the canonical
+        dealer_quote (DECISIONS.md D8).
+      required: [holds_released]
+      properties:
+        holds_released: { type: integer, format: int32 }
+
+    # --- quote assist ---
+    QuoteAssistExtractRequest:
+      type: object
+      description: One paste of a job description
+      required: [text, branch_id, use_ai]
+      properties:
+        text: { type: string }
+        branch_id:
+          type: string
+          description: Scopes the on-hand figures each catalogue hit carries; it does not scope which products exist
+        use_ai:
+          type: boolean
+          description: Asks for the AI segmentation path; absent or false is the deterministic engine, which is the default and spends nothing
+    QuoteAssistAlternate:
+      type: object
+      description: A runner-up catalogue hit for a proposal
+      required: [product_id, sku, name, match_reason, sell_uom, base_uom]
+      properties:
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        match_reason:
+          type: string
+          description: The search's own rank arm for this hit, passed through untouched
+        sell_uom:
+          type: string
+          description: The counter's declared sell unit; empty when the catalogue has not said
+        base_uom:
+          type: string
+          description: The stocking unit
+    QuoteAssistProposal:
+      type: object
+      description: >-
+        One proposed line. It is not a line and nothing in the quoteassist
+        module can make it one: confirmation goes through the quote module's
+        own line-add route.
+      required: [ref, source_text, product_id, sku, name, sell_uom, base_uom, qty_entered, uom_entered, confidence, match_reason, why, needs_qty, needs_uom, alternates]
+      properties:
+        ref:
+          type: string
+          description: A stable, per-answer handle the surface keys its confirm and reject state on; not the product id
+        source_text:
+          type: string
+          description: The exact phrase this proposal came from, unedited
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        sell_uom: { type: string }
+        base_uom: { type: string }
+        qty_entered:
+          type: string
+          description: The quantity read from the text as a decimal string; empty when none was found, never a fabricated one
+        uom_entered:
+          type: string
+          description: The unit to quote in; empty when the text named a unit this product is not sold in
+        unit_note:
+          type: string
+          description: Explains an empty or substituted unit in one sentence; absent when there is nothing to explain
+        confidence:
+          type: string
+          enum: [HIGH, MEDIUM, LOW]
+        match_reason: { type: string }
+        why:
+          type: array
+          description: The evidence behind the confidence band, one clause per fact
+          items: { type: string }
+        needs_qty:
+          type: boolean
+          description: The rep must supply a quantity before this row can be confirmed
+        needs_uom:
+          type: boolean
+          description: The rep must supply a unit before this row can be confirmed
+        alternates:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteAssistAlternate" }
+    QuoteAssistUnmatched:
+      type: object
+      description: A phrase that produced no proposal, kept and shown rather than dropped
+      required: [source_text, reason]
+      properties:
+        source_text: { type: string }
+        reason:
+          type: string
+          description: What was missing, in plain words; never a code
+        query:
+          type: string
+          description: The search term that found nothing, when that is what happened
+    QuoteAssistUsage:
+      type: object
+      description: What an AI-assisted extraction cost, reported exactly as the provider reported it
+      required: [provider, model, tokens_in, tokens_out]
+      properties:
+        provider: { type: string }
+        model: { type: string }
+        tokens_in: { type: integer, format: int32 }
+        tokens_out: { type: integer, format: int32 }
+    QuoteAssistExtraction:
+      type: object
+      description: >-
+        The whole extraction answer. Empty is a first-class state: zero
+        proposals is not an error and must not be rendered as one.
+      required: [proposals, unmatched, source]
+      properties:
+        proposals:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteAssistProposal" }
+        unmatched:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteAssistUnmatched" }
+        source:
+          type: string
+          enum: [deterministic, ai-assisted]
+          description: Which path actually produced the phrases, not which one was requested
+        ai_note:
+          type: string
+          description: The one plain sentence explaining an AI path that was asked for and did not run; a notice, never an error
+        usage:
+          $ref: "#/components/schemas/QuoteAssistUsage"
+    QuoteAssistFindingLine:
+      type: object
+      description: One quote line that put a scope rule in play
+      required: [line_no, name]
+      properties:
+        line_no: { type: integer, format: int32 }
+        name: { type: string }
+    QuoteAssistFinding:
+      type: object
+      description: >-
+        One scope gap, ready to render. A gap is advice, not a fault: the rep
+        may know something the rule does not, and every finding is
+        dismissible.
+      required: [rule_code, title, advice, triggered_by, missing, suggest_query]
+      properties:
+        rule_code: { type: string }
+        title: { type: string }
+        advice: { type: string }
+        triggered_by:
+          type: array
+          description: The lines whose catalogue application matched the rule's trigger set
+          items: { $ref: "#/components/schemas/QuoteAssistFindingLine" }
+        missing:
+          type: array
+          description: The expected application set, upper-cased
+          items: { type: string }
+        suggest_query:
+          type: string
+          description: The term the one-click add searches for; empty means the rule offers no one-click add
+    QuoteAssistScopeGaps:
+      type: object
+      description: >-
+        The scope-gap answer for one quote. A quote with no gaps returns zero
+        findings; rules_evaluated tells nothing to suggest apart from no rules
+        switched on.
+      required: [quote_id, findings, lines_checked, rules_evaluated]
+      properties:
+        quote_id: { type: string, format: uuid }
+        findings:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteAssistFinding" }
+        lines_checked:
+          type: integer
+          format: int32
+          description: How many quote lines were evaluated; zero on an empty quote
+        rules_evaluated:
+          type: integer
+          format: int32
+          description: How many enabled rules ran; zero means an administrator has switched them all off
+    QuoteAssistScopeRule:
+      type: object
+      description: One row of the scope-rule table; the two application sets are its logic and the two strings are its voice
+      required: [code, title, advice, when_apps, expect_apps, suggest_query, enabled, sort_order]
+      properties:
+        code: { type: string }
+        title: { type: string }
+        advice: { type: string }
+        when_apps:
+          type: array
+          description: The rule applies when the quote has a line whose product application is any of these
+          items: { type: string }
+        expect_apps:
+          type: array
+          description: The quote must also have a line whose application is any of these; any one satisfies the rule
+          items: { type: string }
+        suggest_query:
+          type: string
+          description: The search term the one-click add drops into the product picker; allowed to match nothing
+        enabled: { type: boolean }
+        sort_order: { type: integer, format: int32 }
+    QuoteAssistScopeRuleList:
+      type: object
+      description: The admin rule listing, enabled and disabled rules both
+      required: [rules]
+      properties:
+        rules:
+          type: array
+          items: { $ref: "#/components/schemas/QuoteAssistScopeRule" }
+    QuoteAssistScopeRulePatch:
+      type: object
+      description: The rule switch payload; enabled is required
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }

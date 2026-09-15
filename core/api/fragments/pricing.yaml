@@ -1,0 +1,2926 @@
+# Fragment: pricing (HardscapeOS backend/internal/pricing).
+# 53 routes: the resolver, rules, category policies, customer overrides, the audit
+# log, the low-margin reports, quantity breaks, price batches and imports, the
+# change log, price files, promotions, clearance, rebates and UOM conversions.
+# Guards: readGuard = RequireStaff, writeGuard = RequireManager (cmd/server
+# main.go RegisterRoutes and RegisterW4Routes call sites). requirePathUUID is an
+# internal guard on every path-parameter route and is listed in x-guards.
+
+paths:
+  /api/v1/pricing/resolve:
+    post:
+      operationId: pricingResolve
+      tags: [staff-pricing]
+      summary: Resolve one line price through the precedence waterfall
+      description: >-
+        The read-only resolver: turns (customer, product, qty, uom) into a
+        deterministic pre-tax price. cost_cents is caller supplied and basis
+        agnostic, expressed per the product base UOM.
+        has_approved_override is a request for a below-floor price, decided
+        server side against the caller the guard resolved, never an assertion.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingResolveRequest"
+      responses:
+        "200":
+          description: The resolved breakdown, pre-tax
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingBreakdown"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: No UOM conversion factor, no retail anchor, or a bad reference
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/rules:
+    get:
+      operationId: pricingListRules
+      tags: [staff-pricing]
+      summary: List pricing rules
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: customer_type
+          in: query
+          required: false
+          schema: { type: string }
+        - name: category_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [CUSTOMER_PRODUCT, CUSTOMER_CATEGORY, TIER_CATEGORY, TIER_DEFAULT]
+      responses:
+        "200":
+          description: The page of rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingRulePage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: pricingCreateRule
+      tags: [staff-pricing]
+      summary: Create a pricing rule
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingRuleWrite"
+      responses:
+        "201":
+          description: The new rule id and its starting version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingCreatedRef"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/rules/{id}:
+    get:
+      operationId: pricingGetRule
+      tags: [staff-pricing]
+      summary: Read one pricing rule
+      x-role: requireStaff
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingRule"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: pricingUpdateRule
+      tags: [staff-pricing]
+      summary: Apply a sparse edit to a pricing rule under its optimistic version
+      description: >-
+        Pointer semantics: an absent field is left unchanged, a present field is
+        set (including priority 0 and is_active false). valid_from and valid_to
+        are tri-state: absent leaves the bound, an empty string clears it back
+        to null, a value sets it (RFC3339 or date only).
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingRulePatch"
+      responses:
+        "200":
+          description: The rule after the edit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingRule"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: pricingDeleteRule
+      tags: [staff-pricing]
+      summary: Soft-retire a pricing rule under its optimistic version
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: version
+          in: query
+          required: true
+          description: The version the caller saw; a stale retire conflicts
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: The rule was retired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingStatusResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/pricing/category-policies:
+    get:
+      operationId: pricingListCategoryPolicies
+      tags: [staff-pricing]
+      summary: List the category margin-policy grid
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of category policies
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingCategoryPolicyPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/pricing/category-policies/{categoryId}:
+    put:
+      operationId: pricingUpsertCategoryPolicy
+      tags: [staff-pricing]
+      summary: Create or replace the margin policy for one category
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: categoryId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingCategoryPolicyWrite"
+      responses:
+        "200":
+          description: The stored category policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingCategoryPolicy"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/customers/{customerId}/overrides:
+    get:
+      operationId: pricingListOverrides
+      tags: [staff-pricing]
+      summary: List the category overrides for one customer
+      x-role: requireStaff
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customerId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of overrides
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingOverridePage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: pricingCreateOverride
+      tags: [staff-pricing]
+      summary: Create a customer category override
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customerId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingOverrideWrite"
+      responses:
+        "201":
+          description: The new override id and its starting version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingCreatedRef"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/overrides/{id}:
+    put:
+      operationId: pricingUpdateOverride
+      tags: [staff-pricing]
+      summary: Update a customer override under its optimistic version
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingOverrideWrite"
+      responses:
+        "200":
+          description: The override after the edit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingOverride"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: pricingDeleteOverride
+      tags: [staff-pricing]
+      summary: Delete a customer override under its optimistic version
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: version
+          in: query
+          required: true
+          description: The version the caller saw; a stale delete conflicts
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: The override was deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingStatusResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/pricing/audit:
+    get:
+      operationId: pricingListAudit
+      tags: [staff-pricing]
+      summary: Read the pricing audit log, newest first
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: entity_type
+          in: query
+          required: false
+          schema: { type: string }
+        - name: entity_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: action
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [CREATE, UPDATE, DELETE, BYPASS]
+      responses:
+        "200":
+          description: The page of audit rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingAuditLogPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/pricing/reports/low-margin:
+    post:
+      operationId: pricingLowMarginReport
+      tags: [staff-pricing]
+      summary: Classify a caller-supplied batch of line contexts by margin
+      description: >-
+        Runs each supplied line through the resolver and returns only the
+        breaching lines, worst first. Lines that fail validation are surfaced
+        with invalid set, never silently dropped.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingLowMarginRequest"
+      responses:
+        "200":
+          description: The breaching and invalid lines, worst first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PricingLowMarginEntry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/reports/low-margin/scan:
+    get:
+      operationId: pricingLowMarginScan
+      tags: [staff-pricing]
+      summary: Grade committed sale lines against current cost in a window
+      description: >-
+        The auto-populated low-margin report over the live-sales feed: grades
+        the actual charged price of every committed sale line in the window
+        against current per-branch cost, returning breaching rows worst first
+        and cost-missing lines as invalid. from and to accept RFC3339 or date
+        only.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: from
+          in: query
+          required: false
+          description: Lower window bound, RFC3339 or date only
+          schema: { type: string }
+        - name: to
+          in: query
+          required: false
+          description: Upper window bound, RFC3339 or date only, inclusive of the named day
+          schema: { type: string }
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The page of graded rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingLowMarginScanPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/pricing/quantity-breaks:
+    get:
+      operationId: pricingListQuantityBreaks
+      tags: [staff-pricing]
+      summary: List quantity-break schedules with their tiers
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of quantity-break headers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingQuantityBreakPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: pricingCreateQuantityBreak
+      tags: [staff-pricing]
+      summary: Create a quantity-break schedule
+      description: >-
+        Scope is exactly one of product_id or category_id. A break is an
+        adjustment stacked on the tier-resolved base, never a competing base
+        price.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingQuantityBreakWrite"
+      responses:
+        "201":
+          description: The new schedule id and its starting version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingCreatedRef"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/quantity-breaks/{id}:
+    get:
+      operationId: pricingGetQuantityBreak
+      tags: [staff-pricing]
+      summary: Read one quantity-break schedule
+      x-role: requireStaff
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The schedule with its tiers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingQuantityBreakHeader"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: pricingUpdateQuantityBreak
+      tags: [staff-pricing]
+      summary: Replace a quantity-break schedule under its optimistic version
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingQuantityBreakWrite"
+      responses:
+        "200":
+          description: The schedule after the edit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingQuantityBreakHeader"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: pricingDeleteQuantityBreak
+      tags: [staff-pricing]
+      summary: Soft-retire a quantity-break schedule under its optimistic version
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: version
+          in: query
+          required: true
+          description: The version the caller saw; a stale retire conflicts
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: The schedule was retired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingStatusResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --- A-08 price batches, CSV imports, change log ----------------------------
+
+  /api/v1/pricing/batches:
+    get:
+      operationId: pricingListBatches
+      tags: [staff-pricing]
+      summary: List staged manufacturer price batches
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [DRAFT, STAGED, APPROVED, APPLIED, CANCELLED]
+        - name: vendor_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The page of batches
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingBatchPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: pricingCreateBatch
+      tags: [staff-pricing]
+      summary: Create a staged price batch
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingBatchCreate"
+      responses:
+        "201":
+          description: The created batch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingPriceBatch"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/batches/{id}:
+    get:
+      operationId: pricingGetBatch
+      tags: [staff-pricing]
+      summary: Read one price batch
+      x-role: requireStaff
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The batch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingPriceBatch"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/pricing/batches/{id}/lines:
+    get:
+      operationId: pricingListBatchLines
+      tags: [staff-pricing]
+      summary: List the derived change lines of one batch
+      x-role: requireStaff
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of change lines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingBatchLinePage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/pricing/batches/{id}/import:
+    post:
+      operationId: pricingImportBatch
+      tags: [staff-pricing]
+      summary: Import a raw CSV body into a batch and stage the derived lines
+      description: >-
+        The request body is the raw CSV (text/csv), not JSON; the filename rides
+        on the source_ref query parameter. The response carries the derived line
+        set with the preview, unmatched, estimated-freight and outlier subsets.
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: source_ref
+          in: query
+          required: false
+          description: The source filename recorded on the batch
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          text/csv:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: The import result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingBatchImportResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: No import profile on the batch, or the CSV has no importable rows
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/batches/{id}/approve:
+    post:
+      operationId: pricingApproveBatch
+      tags: [staff-pricing]
+      summary: Approve a staged batch (the approver must differ from the maker)
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The batch after approval
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingPriceBatch"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: Separation of duties refused the approval
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/batches/{id}/apply:
+    post:
+      operationId: pricingApplyBatch
+      tags: [staff-pricing]
+      summary: Apply an approved batch to the retail anchor
+      description: >-
+        Idempotent: a batch already APPLIED is a no-op returning its recorded
+        applied count.
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The batch and the count of prices written
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingBatchApplyResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: The batch is not yet effective or not in an applicable state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/batches/apply-due:
+    post:
+      operationId: pricingApplyDueBatches
+      tags: [staff-pricing]
+      summary: Apply every approved batch whose effective date has arrived
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The count of batches applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingApplyDueResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/pricing/import-profiles:
+    get:
+      operationId: pricingListImportProfiles
+      tags: [staff-pricing]
+      summary: List the manufacturer CSV column-mapping profiles
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of import profiles
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingImportProfilePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/pricing/import-profiles/{id}:
+    put:
+      operationId: pricingUpdateImportProfileMapping
+      tags: [staff-pricing]
+      summary: Replace the column mapping of one import profile
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingMappingWrite"
+      responses:
+        "200":
+          description: The profile after the edit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingImportProfile"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/change-log:
+    get:
+      operationId: pricingListChangeLog
+      tags: [staff-pricing]
+      summary: Read the append-only price change log, newest first
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: product_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: batch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The page of change-log rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingChangeLogPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- Price-file import (upload, map, preview, apply) ------------------------
+
+  /api/v1/pricing/price-file/vendors:
+    get:
+      operationId: pricingListPriceFileVendors
+      tags: [staff-pricing]
+      summary: List the manufacturers the price-file import can run for
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of vendors with their profile state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingPriceFileVendorPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/pricing/price-file/preview:
+    post:
+      operationId: pricingPreviewPriceFile
+      tags: [staff-pricing]
+      summary: Diff an uploaded price file against the retail anchor, writing nothing
+      description: >-
+        A read despite being a POST with an upload: the preview is a pure
+        function of (file, mapping, catalog, policy) and touches no table. The
+        body is multipart/form-data with the file, the vendor, an optional
+        column mapping and an optional effective date. Cost columns inside the
+        response are gated a second time per caller and are absent entirely for
+        a caller without cost visibility.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: limit
+          in: query
+          required: false
+          description: Cap on returned line rows; the counts still cover the whole file
+          schema: { type: integer, format: int32 }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/PricingPriceFileForm"
+      responses:
+        "200":
+          description: The preview, with a digest the apply must echo
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingPriceFilePreview"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/price-file/apply:
+    post:
+      operationId: pricingApplyPriceFile
+      tags: [staff-pricing]
+      summary: Stage the price file as a batch, bound to a preview digest
+      description: >-
+        The commit: re-derives the whole diff server side from the uploaded
+        file rather than trusting the client, and requires the caller to echo
+        the preview digest; a mismatched digest conflicts. Same multipart form
+        as the preview, with digest required.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/PricingPriceFileForm"
+      responses:
+        "201":
+          description: The staged batch, the run id and the diff counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingPriceFileApplyResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: The file moves no prices, or no manufacturer was picked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/price-file/runs:
+    get:
+      operationId: pricingListPriceFileRuns
+      tags: [staff-pricing]
+      summary: List the append-only price-import run history
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: vendor_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The page of import runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingPriceImportRunPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- W4: promotions, clearance, rebates, UOM conversions ---------------------
+
+  /api/v1/pricing/promotions:
+    get:
+      operationId: pricingListPromotions
+      tags: [staff-pricing]
+      summary: List promotions
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: include_inactive
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: The page of promotions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingPromotionPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: pricingCreatePromotion
+      tags: [staff-pricing]
+      summary: Create a promotion
+      description: >-
+        Scoped to a product or a category, not both. starts_at and ends_at are
+        required: an unbounded promotion is a price change, not a promotion.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingPromotionWrite"
+      responses:
+        "201":
+          description: The created promotion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingPromotion"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/promotions/{id}:
+    put:
+      operationId: pricingUpdatePromotion
+      tags: [staff-pricing]
+      summary: Update a promotion under its optimistic version
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingPromotionWrite"
+      responses:
+        "200":
+          description: The promotion after the edit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingPromotion"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: pricingDeletePromotion
+      tags: [staff-pricing]
+      summary: Retire a promotion under its optimistic version
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: version
+          in: query
+          required: true
+          description: The version the caller saw; a stale retire conflicts
+          schema: { type: integer, format: int64 }
+      responses:
+        "204":
+          description: The promotion was retired; nothing is returned
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/pricing/clearance:
+    get:
+      operationId: pricingListClearance
+      tags: [staff-pricing]
+      summary: List clearance flags and prices
+      description: >-
+        A counter read: clearance is the one piece of pricing config a sales
+        user needs to see, so the list is staff-readable while every mutation
+        is manager-only.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: include_inactive
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: The page of clearance items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingClearancePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/pricing/clearance/{productId}:
+    put:
+      operationId: pricingUpsertClearance
+      tags: [staff-pricing]
+      summary: Flag a product for clearance, optionally with a clearance price
+      description: >-
+        clearance_price_cents and price_uom must be set together. A flag with
+        no price is the badge-only case: the item shows as clearance and still
+        prices through the ordinary waterfall.
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingClearanceWrite"
+      responses:
+        "200":
+          description: The stored clearance item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingClearanceItem"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: pricingDeleteClearance
+      tags: [staff-pricing]
+      summary: Clear the clearance flag on a product
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: The flag was cleared; nothing is returned
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/pricing/rebates/programs:
+    get:
+      operationId: pricingListRebatePrograms
+      tags: [staff-pricing]
+      summary: List manufacturer rebate programs
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: vendor_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: include_inactive
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: The page of rebate programs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingRebateProgramPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: pricingCreateRebateProgram
+      tags: [staff-pricing]
+      summary: Create a rebate program
+      description: >-
+        Covers a product or a category, not both. vendor_id is required: a
+        rebate is a claim against someone.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingRebateProgramWrite"
+      responses:
+        "201":
+          description: The created program
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingRebateProgram"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/rebates/programs/{id}:
+    put:
+      operationId: pricingUpdateRebateProgram
+      tags: [staff-pricing]
+      summary: Update a rebate program under its optimistic version
+      description: >-
+        The vendor is immutable: changing it would silently re-attribute every
+        accrual the program has already written.
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingRebateProgramWrite"
+      responses:
+        "200":
+          description: The program after the edit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingRebateProgram"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: pricingDeleteRebateProgram
+      tags: [staff-pricing]
+      summary: Retire a rebate program under its optimistic version
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: version
+          in: query
+          required: true
+          description: The version the caller saw; a stale retire conflicts
+          schema: { type: integer, format: int64 }
+      responses:
+        "204":
+          description: The program was retired; nothing is returned
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/pricing/rebates/vendors/{vendorId}/ledger:
+    get:
+      operationId: pricingVendorRebateLedger
+      tags: [staff-pricing]
+      summary: Read one vendor's rebate accrual ledger with totals
+      x-role: requireStaff
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: from
+          in: query
+          required: false
+          description: Lower window bound, RFC3339
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          description: Upper window bound, RFC3339
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: The ledger rows plus the totals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingVendorRebateLedger"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/pricing/rebates/accrue:
+    post:
+      operationId: pricingAccrueRebates
+      tags: [staff-pricing]
+      summary: Offer one sale event for rebate accrual
+      description: >-
+        The manual and backfill door onto the accrual engine. Idempotent by
+        construction: a line already accrued for its (program, source, product)
+        key is counted as skipped, never failed. Negative quantities or amounts
+        are refused on a document source type; a clawback posts as an
+        ADJUSTMENT.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingRebateAccrueRequest"
+      responses:
+        "200":
+          description: What was written and what was deliberately skipped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingRebateAccrualResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/uom/plan:
+    post:
+      operationId: pricingPlanUOM
+      tags: [staff-pricing]
+      summary: Resolve a line-entry quantity into its pick and weight views
+      description: >-
+        A read despite being a POST: it computes and returns, writing nothing.
+        Walks the conversion edge graph (product scope beats category beats
+        global, per edge) and rounds the pick quantity up, never down, when the
+        winning edge flags the pick unit as indivisible. A missing chain is an
+        error, not a zero.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingUOMPlanInput"
+      responses:
+        "200":
+          description: The pick and weight plan with the steps taken
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingUOMPlan"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: No conversion chain exists for the requested unit pair
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/uom/conversions:
+    get:
+      operationId: pricingListUOMConversions
+      tags: [staff-pricing]
+      summary: List conversion edges
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: product_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: include_inactive
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: The page of conversion edges
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingUOMConversionPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: pricingUpsertUOMConversion
+      tags: [staff-pricing]
+      summary: Create or replace one conversion edge
+      description: >-
+        An edge is directed from_uom to to_uom and usable in reverse at the
+        reciprocal factor. Scope is a product or a category, not both.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingUOMConversion"
+      responses:
+        "200":
+          description: The stored conversion edge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingUOMConversion"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: Validation failed against the pricing vocabulary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/pricing/uom/conversions/{id}:
+    delete:
+      operationId: pricingDeleteUOMConversion
+      tags: [staff-pricing]
+      summary: Delete one conversion edge
+      x-role: requireManager
+      x-guards: [requirePathUUID]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: The edge was deleted; nothing is returned
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  schemas:
+    # --- the resolver ---------------------------------------------------------
+
+    PricingResolveRequest:
+      type: object
+      description: >-
+        The resolver request. cost_cents is caller supplied and basis agnostic,
+        expressed per the product base UOM. has_approved_override is the wire
+        name for the below-floor request flag; whether it is honoured is
+        decided server side. doc_ref_type and doc_ref_id optionally name the
+        quote or order being priced, so an audit row can drill through to it.
+      required: [customer_id, customer_type, product_id, category_id, branch_id, qty_entered, uom_entered, cost_cents, has_approved_override, doc_ref_type, doc_ref_id]
+      properties:
+        customer_id: { type: string, format: uuid }
+        customer_type: { type: string }
+        product_id: { type: string, format: uuid }
+        category_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        qty_entered: { type: number }
+        uom_entered: { type: string }
+        cost_cents:
+          type: integer
+          format: int64
+          description: Caller-chosen cost basis per the product base UOM
+        has_approved_override:
+          type: boolean
+          description: A request for a below-floor price, decided server side; not an assertion
+        doc_ref_type:
+          type: string
+          enum: [quote, order]
+          description: The document kind being priced; empty when not supplied
+        doc_ref_id:
+          type: string
+          format: uuid
+          description: The document id; empty when not supplied
+
+    PricingBreakdown:
+      type: object
+      description: >-
+        The resolver result: the pre-tax price trio plus the why. Never carries
+        tax. promo_code and promo_name are set only when a promotion actually
+        won base selection. clearance is the badge and is independent of
+        whether a clearance price was applied. bypass_reason is set when the
+        margin gate did not run or when a server-side authority cleared its
+        block. override_requested echoes that the caller asked; override_authority
+        names the server-side source that honoured it.
+      required: [original_cents, final_cents, discount_bps, source, detail, price_uom, qty_base, line_total_cents, margin_bps, floor_bps, blocked, clearance]
+      properties:
+        original_cents:
+          type: integer
+          format: int64
+          description: The retail anchor in the result price_uom
+        final_cents:
+          type: integer
+          format: int64
+          description: The resolved unit price per price_uom, pre-tax
+        discount_bps:
+          type: integer
+          format: int64
+          description: Off-anchor basis points; negative means a surcharge or uplift
+        source:
+          type: string
+          enum: [CUSTOMER_PRODUCT_RULE, QUANTITY_BREAK, CUSTOMER_CATEGORY_RULE, CUSTOMER_OVERRIDE, TIER_CATEGORY, TIER_DEFAULT, LIST, PROMOTION]
+        detail: { type: string }
+        price_uom: { type: string }
+        qty_base:
+          type: number
+          description: The entered quantity converted to the product base UOM
+        line_total_cents:
+          type: integer
+          format: int64
+          description: final_cents times the quantity in price_uom, pre-tax
+        margin_bps: { type: integer, format: int64 }
+        floor_bps: { type: integer, format: int64 }
+        blocked: { type: boolean }
+        block_policy:
+          type: string
+          enum: [MARGIN_BELOW_MINIMUM]
+        promo_code: { type: string }
+        promo_name: { type: string }
+        clearance: { type: boolean }
+        clearance_reason: { type: string }
+        bypass_reason:
+          type: string
+          enum: [PRODUCT_POLICY_DISABLED, CATEGORY_POLICY_DISABLED, APPROVED_OVERRIDE, MANAGER_SCOPE_OVERRIDE]
+        override_requested: { type: boolean }
+        override_authority:
+          type: string
+          enum: [APPROVAL, MANAGER_SCOPE]
+
+    # --- rules, policies, overrides -------------------------------------------
+
+    PricingRule:
+      type: object
+      description: One pricing_rules row; unset nullable scope dims are omitted
+      required: [id, scope, calc_type, price_uom, priority, detail_text, is_active, version]
+      properties:
+        id: { type: string, format: uuid }
+        scope:
+          type: string
+          enum: [CUSTOMER_PRODUCT, CUSTOMER_CATEGORY, TIER_CATEGORY, TIER_DEFAULT]
+        customer_id: { type: string, format: uuid }
+        customer_type: { type: string }
+        category_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        calc_type:
+          type: string
+          enum: [ABSOLUTE, PCT_OFF_LIST, MARKUP_ON_COST]
+        price_cents: { type: [integer, "null"], format: int64 }
+        discount_bps: { type: [integer, "null"], format: int64 }
+        markup_bps: { type: [integer, "null"], format: int64 }
+        price_uom: { type: string }
+        priority: { type: integer, format: int64 }
+        valid_from: { type: [string, "null"], format: date-time }
+        valid_to: { type: [string, "null"], format: date-time }
+        detail_text: { type: string }
+        is_active: { type: boolean }
+        version: { type: integer, format: int64 }
+
+    PricingRuleWrite:
+      type: object
+      description: The create body for a pricing rule
+      required: [scope, customer_id, customer_type, category_id, product_id, branch_id, calc_type, price_uom, priority, detail_text, version]
+      properties:
+        scope:
+          type: string
+          enum: [CUSTOMER_PRODUCT, CUSTOMER_CATEGORY, TIER_CATEGORY, TIER_DEFAULT]
+        customer_id:
+          type: string
+          format: uuid
+          description: Empty when the dimension is unset
+        customer_type: { type: string }
+        category_id:
+          type: string
+          format: uuid
+          description: Empty when the dimension is unset
+        product_id:
+          type: string
+          format: uuid
+          description: Empty when the dimension is unset
+        branch_id:
+          type: string
+          format: uuid
+          description: Empty when the dimension is unset
+        calc_type:
+          type: string
+          enum: [ABSOLUTE, PCT_OFF_LIST, MARKUP_ON_COST]
+        price_cents: { type: [integer, "null"], format: int64 }
+        discount_bps: { type: [integer, "null"], format: int64 }
+        markup_bps: { type: [integer, "null"], format: int64 }
+        price_uom: { type: string }
+        priority: { type: integer, format: int64 }
+        detail_text: { type: string }
+        version: { type: integer, format: int64 }
+
+    PricingRulePatch:
+      type: object
+      description: >-
+        A sparse edit: every field except version is optional; an absent field
+        is left unchanged and a present field is set. valid_from and valid_to
+        are tri-state: absent leaves the bound, an empty string clears it to
+        null, a value sets it (RFC3339 or date only; a date-only valid_to is
+        inclusive of the named day).
+      required: [version]
+      properties:
+        scope:
+          type: string
+          enum: [CUSTOMER_PRODUCT, CUSTOMER_CATEGORY, TIER_CATEGORY, TIER_DEFAULT]
+        customer_id:
+          type: string
+          format: uuid
+          description: An empty string clears the dimension
+        customer_type: { type: string }
+        category_id:
+          type: string
+          format: uuid
+          description: An empty string clears the dimension
+        product_id:
+          type: string
+          format: uuid
+          description: An empty string clears the dimension
+        branch_id:
+          type: string
+          format: uuid
+          description: An empty string clears the dimension
+        calc_type:
+          type: string
+          enum: [ABSOLUTE, PCT_OFF_LIST, MARKUP_ON_COST]
+        price_cents: { type: [integer, "null"], format: int64 }
+        discount_bps: { type: [integer, "null"], format: int64 }
+        markup_bps: { type: [integer, "null"], format: int64 }
+        price_uom: { type: string }
+        priority: { type: integer, format: int64 }
+        valid_from: { type: [string, "null"], format: date-time }
+        valid_to: { type: [string, "null"], format: date-time }
+        detail_text: { type: string }
+        is_active: { type: boolean }
+        version:
+          type: integer
+          format: int64
+          description: The optimistic-lock version the caller saw
+
+    PricingCreatedRef:
+      type: object
+      description: The create response for rules, overrides and quantity breaks
+      required: [id, version]
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer, format: int64 }
+
+    PricingStatusResult:
+      type: object
+      description: The retire and delete acknowledgement (status is retired or deleted)
+      required: [status]
+      properties:
+        status: { type: string }
+
+    PricingCategoryPolicy:
+      type: object
+      description: The pricing-owned margin policy for one category
+      required: [category_id, margin_target_bps, margin_floor_bps, margin_enforcement_disabled]
+      properties:
+        category_id: { type: string, format: uuid }
+        margin_target_bps: { type: integer, format: int64 }
+        margin_floor_bps: { type: integer, format: int64 }
+        margin_enforcement_disabled: { type: boolean }
+
+    PricingCategoryPolicyWrite:
+      type: object
+      required: [margin_target_bps, margin_floor_bps, margin_enforcement_disabled]
+      properties:
+        margin_target_bps: { type: integer, format: int64 }
+        margin_floor_bps: { type: integer, format: int64 }
+        margin_enforcement_disabled: { type: boolean }
+
+    PricingOverride:
+      type: object
+      description: One customer_category_overrides row; ABSOLUTE is forbidden by the store CHECK
+      required: [id, customer_id, category_id, calc_type, price_uom, notes, version]
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        category_id: { type: string, format: uuid }
+        calc_type:
+          type: string
+          enum: [PCT_OFF_LIST, MARKUP_ON_COST]
+        price_cents: { type: [integer, "null"], format: int64 }
+        discount_bps: { type: [integer, "null"], format: int64 }
+        markup_bps: { type: [integer, "null"], format: int64 }
+        price_uom: { type: string }
+        notes: { type: string }
+        version: { type: integer, format: int64 }
+
+    PricingOverrideWrite:
+      type: object
+      required: [category_id, calc_type, price_uom, notes, version]
+      properties:
+        category_id: { type: string, format: uuid }
+        calc_type:
+          type: string
+          enum: [PCT_OFF_LIST, MARKUP_ON_COST]
+        price_cents: { type: [integer, "null"], format: int64 }
+        discount_bps: { type: [integer, "null"], format: int64 }
+        markup_bps: { type: [integer, "null"], format: int64 }
+        price_uom: { type: string }
+        notes: { type: string }
+        version:
+          type: integer
+          format: int64
+          description: The optimistic-lock version; zero on create
+
+    # --- audit and low-margin reports ------------------------------------------
+
+    PricingAuditLogRow:
+      type: object
+      description: >-
+        One pricing_audit_log row for the read-only viewer. ref_entity_type and
+        ref_entity_id name the navigable drill-through target and are omitted
+        when no target is derivable. bypass_reason appears only on a BYPASS row.
+      required: [id, entity_type, entity_id, action, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        entity_type: { type: string }
+        entity_id: { type: string, format: uuid }
+        action:
+          type: string
+          enum: [CREATE, UPDATE, DELETE, BYPASS]
+        field_name: { type: string }
+        old_value: { type: string }
+        new_value: { type: string }
+        user_id: { type: string }
+        created_at: { type: string, format: date-time }
+        ref_entity_type:
+          type: string
+          enum: [product, customer, category, quote, order]
+        ref_entity_id: { type: string, format: uuid }
+        bypass_reason:
+          type: string
+          enum: [PRODUCT_POLICY_DISABLED, CATEGORY_POLICY_DISABLED, APPROVED_OVERRIDE, MANAGER_SCOPE_OVERRIDE]
+
+    PricingLowMarginRequest:
+      type: object
+      description: A batch of line contexts run through the resolver
+      required: [lines]
+      properties:
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PricingResolveRequest" }
+
+    PricingLowMarginEntry:
+      type: object
+      description: >-
+        One breaching line of the batch low-margin preview, or an invalid line
+        (invalid set, reason naming the cause) that could not be evaluated.
+        Clean lines are omitted from the report.
+      required: [product_id, final_cents, margin_bps, target_bps, floor_bps, level, source, price_uom]
+      properties:
+        product_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        category_id: { type: string, format: uuid }
+        final_cents: { type: integer, format: int64 }
+        margin_bps: { type: integer, format: int64 }
+        target_bps: { type: integer, format: int64 }
+        floor_bps: { type: integer, format: int64 }
+        level:
+          type: string
+          enum: [warn, critical]
+        source:
+          type: string
+          enum: [CUSTOMER_PRODUCT_RULE, QUANTITY_BREAK, CUSTOMER_CATEGORY_RULE, CUSTOMER_OVERRIDE, TIER_CATEGORY, TIER_DEFAULT, LIST, PROMOTION]
+        price_uom: { type: string }
+        invalid: { type: boolean }
+        reason: { type: string }
+
+    PricingLowMarginScanRow:
+      type: object
+      description: >-
+        One graded row of the live-sales low-margin scan: the actual sold price
+        graded against current per-branch cost. level is warn (below target, at
+        or above floor), critical (below floor) or invalid (cost unknown or a
+        non-positive charged price). Money is pre-tax.
+      required: [order_line_id, order_id, order_no, sold_at, branch_id, customer_type, product_id, sku, product_name, qty_entered, uom_entered, unit_price_cents, price_uom, cost_in_price_uom_cents, margin_bps, target_bps, floor_bps, level]
+      properties:
+        order_line_id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        sold_at: { type: string, format: date-time }
+        branch_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        customer_type: { type: string }
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        product_name: { type: string }
+        qty_entered: { type: number }
+        uom_entered: { type: string }
+        unit_price_cents:
+          type: integer
+          format: int64
+          description: The actual sold price per price_uom
+        price_uom: { type: string }
+        cost_in_price_uom_cents:
+          type: integer
+          format: int64
+          description: The weighted average cost converted into price_uom
+        margin_bps: { type: integer, format: int64 }
+        target_bps: { type: integer, format: int64 }
+        floor_bps: { type: integer, format: int64 }
+        level:
+          type: string
+          enum: [warn, critical, invalid]
+        reason:
+          type: string
+          description: Set only when level is invalid
+
+    # --- quantity breaks --------------------------------------------------------
+
+    PricingQuantityBreakItem:
+      type: object
+      description: >-
+        One tier of a schedule: a [from_qty, to_qty) band in the header's
+        threshold_uom with an adjustment of value_type. A null to_qty is the
+        open-ended top tier.
+      required: [from_qty, value_type, price_uom]
+      properties:
+        id: { type: string, format: uuid }
+        from_qty: { type: number }
+        to_qty: { type: [number, "null"] }
+        value_type:
+          type: string
+          enum: [PCT_OFF, ABS_OFF, SURCHARGE_PCT, SURCHARGE_ABS]
+        discount_bps:
+          type: [integer, "null"]
+          format: int64
+          description: Set for PCT_OFF
+        discount_cents:
+          type: [integer, "null"]
+          format: int64
+          description: Set for ABS_OFF
+        surcharge_bps:
+          type: [integer, "null"]
+          format: int64
+          description: Set for SURCHARGE_PCT
+        surcharge_cents:
+          type: [integer, "null"]
+          format: int64
+          description: Set for SURCHARGE_ABS
+        price_uom: { type: string }
+
+    PricingQuantityBreakHeader:
+      type: object
+      description: >-
+        One quantity-break schedule plus its tiers, under an optimistic
+        version. Scope is exactly one of product_id or category_id;
+        product-specific schedules win over category schedules at resolve time.
+      required: [id, code, name, threshold_uom, is_active, version, items]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        product_id: { type: string, format: uuid }
+        category_id: { type: string, format: uuid }
+        threshold_uom: { type: string }
+        is_active: { type: boolean }
+        version: { type: integer, format: int64 }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingQuantityBreakItem" }
+
+    PricingQuantityBreakWrite:
+      type: object
+      required: [code, name, product_id, category_id, threshold_uom, items, version]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        product_id:
+          type: string
+          format: uuid
+          description: Empty when the schedule is category-scoped
+        category_id:
+          type: string
+          format: uuid
+          description: Empty when the schedule is product-scoped
+        threshold_uom: { type: string }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingQuantityBreakItem" }
+        version:
+          type: integer
+          format: int64
+          description: The optimistic-lock version; zero on create
+
+    # --- price batches, imports, change log -------------------------------------
+
+    PricingPriceBatch:
+      type: object
+      description: >-
+        One price_batches row: a staged manufacturer update under a scheduled
+        effective_date with maker-checker approval. Vendor names surface on
+        staff screens only.
+      required: [id, batch_no, status, source_ref, line_count, outlier_count, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        batch_no: { type: string }
+        vendor_id: { type: string, format: uuid }
+        vendor_name:
+          type: string
+          description: Internal staff screens only
+        profile_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [DRAFT, STAGED, APPROVED, APPLIED, CANCELLED]
+        effective_date: { type: [string, "null"], format: date-time }
+        source_ref: { type: string }
+        line_count: { type: integer, format: int32 }
+        outlier_count: { type: integer, format: int32 }
+        created_by: { type: string }
+        approved_by: { type: string }
+        approved_at: { type: [string, "null"], format: date-time }
+        applied_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+
+    PricingBatchCreate:
+      type: object
+      required: [batch_no, vendor_id, profile_id, effective_date, source_ref]
+      properties:
+        batch_no: { type: string }
+        vendor_id:
+          type: string
+          format: uuid
+          description: Empty when unset
+        profile_id:
+          type: string
+          format: uuid
+          description: Empty when unset
+        effective_date:
+          type: string
+          format: date
+          description: Date only; empty means no scheduled date
+        source_ref: { type: string }
+
+    PricingPriceChangeLine:
+      type: object
+      description: >-
+        One price_change_lines row: before and after per product with the
+        outlier flag stamped at derivation. unmatched marks a SKU with no
+        catalog product; it is reported and skipped at apply, never silently
+        dropped. derived_from and freight_estimated are presentation metadata,
+        recomputable from source.
+      required: [batch_id, sku, is_outlier]
+      properties:
+        id: { type: string, format: uuid }
+        batch_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        before_cost_cents: { type: [integer, "null"], format: int64 }
+        after_cost_cents: { type: [integer, "null"], format: int64 }
+        before_retail_cents: { type: [integer, "null"], format: int64 }
+        after_retail_cents: { type: [integer, "null"], format: int64 }
+        variance_bps: { type: [integer, "null"], format: int64 }
+        is_outlier: { type: boolean }
+        derived_from:
+          type: string
+          enum: [TRADE_PLUS_FOB, COST_MARKUP, MFR_RETAIL, NONE]
+        freight_estimated: { type: boolean }
+        unmatched: { type: boolean }
+
+    PricingBatchImportResult:
+      type: object
+      description: >-
+        What an import returns: the batch plus the derived presentation aids
+        (a preview subset, the unmatched-SKU report, the estimated-freight
+        lines, the outlier lines) and the line totals.
+      required: [batch, preview, unmatched, estimated, outliers, total_lines, matched_lines]
+      properties:
+        batch: { $ref: "#/components/schemas/PricingPriceBatch" }
+        preview:
+          type: array
+          description: The first matched lines
+          items: { $ref: "#/components/schemas/PricingPriceChangeLine" }
+        unmatched:
+          type: array
+          description: SKUs with no catalog product
+          items: { $ref: "#/components/schemas/PricingPriceChangeLine" }
+        estimated:
+          type: array
+          description: Lines carrying an estimated FOB freight
+          items: { $ref: "#/components/schemas/PricingPriceChangeLine" }
+        outliers:
+          type: array
+          description: Lines whose variance passed the alert threshold
+          items: { $ref: "#/components/schemas/PricingPriceChangeLine" }
+        total_lines:
+          type: integer
+          format: int32
+          description: Rows parsed, matched plus unmatched
+        matched_lines:
+          type: integer
+          format: int32
+          description: Rows with a catalog product
+
+    PricingBatchApplyResult:
+      type: object
+      required: [batch, applied]
+      properties:
+        batch: { $ref: "#/components/schemas/PricingPriceBatch" }
+        applied:
+          type: integer
+          format: int32
+          description: The count of prices written; repeated on an idempotent re-apply
+
+    PricingApplyDueResult:
+      type: object
+      required: [applied]
+      properties:
+        applied:
+          type: integer
+          format: int32
+          description: The count of due batches applied
+
+    PricingImportProfile:
+      type: object
+      description: >-
+        One price_import_profiles row: the CSV column mapping for a
+        manufacturer. mapping keys include sku_col, cost_col, retail_col,
+        effective_col and the optional trade_col. Vendor names surface on staff
+        screens only.
+      required: [id, vendor_id, name, mapping, markup_bps, is_active]
+      properties:
+        id: { type: string, format: uuid }
+        vendor_id: { type: string, format: uuid }
+        vendor_name:
+          type: string
+          description: Internal staff screens only
+        name: { type: string }
+        mapping:
+          type: object
+          additionalProperties: { type: string }
+        markup_bps: { type: integer, format: int64 }
+        is_active: { type: boolean }
+
+    PricingMappingWrite:
+      type: object
+      required: [mapping]
+      properties:
+        mapping:
+          type: object
+          additionalProperties: { type: string }
+
+    PricingChangeLogRow:
+      type: object
+      description: One append-only price_change_log row (who, before, after)
+      required: [id, field, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        batch_id: { type: string, format: uuid }
+        field:
+          type: string
+          enum: [cost_cents, retail_cents]
+        before_cents: { type: [integer, "null"], format: int64 }
+        after_cents: { type: [integer, "null"], format: int64 }
+        effective_date: { type: [string, "null"], format: date-time }
+        changed_by: { type: string }
+        created_at: { type: string, format: date-time }
+
+    # --- the price-file import ---------------------------------------------------
+
+    PricingPriceFileForm:
+      type: object
+      description: >-
+        The shared multipart envelope for preview and apply. mapping is a
+        JSON-encoded object of column keys (sku_col, cost_col, retail_col,
+        trade_col) to header names; absent means use the stored profile or a
+        header guess. digest is required by apply and ignored by preview.
+      required: [vendor_id, file]
+      properties:
+        vendor_id: { type: string, format: uuid }
+        file:
+          type: string
+          format: binary
+          description: The CSV or XLSX price file
+        mapping:
+          type: string
+          description: JSON-encoded column mapping
+        digest:
+          type: string
+          description: The preview digest; apply refuses a mismatch
+        effective_date:
+          type: string
+          format: date
+          description: Date only; schedules the staged batch when supplied
+
+    PricingPriceFileVendor:
+      type: object
+      description: >-
+        One manufacturer the import screen can run for. origin is SEEDED for a
+        guessed mapping and FIRST_IMPORT for one a person authored against a
+        real file; empty when the vendor has no profile. Vendor names surface
+        on staff screens only.
+      required: [vendor_id, vendor_no, name]
+      properties:
+        vendor_id: { type: string, format: uuid }
+        vendor_no: { type: string }
+        name: { type: string }
+        profile_id: { type: string, format: uuid }
+        origin:
+          type: string
+          enum: [SEEDED, FIRST_IMPORT]
+        mapping:
+          type: object
+          additionalProperties: { type: string }
+        last_import_at: { type: [string, "null"], format: date-time }
+
+    PricingPriceFileCosts:
+      type: object
+      description: >-
+        Every cost number the price-file surface can produce. The whole struct
+        is absent (not null, not zeroed) for a caller without cost visibility;
+        the gate is per caller, asked once at the marshal layer.
+      properties:
+        file_cost_cents:
+          type: [integer, "null"]
+          format: int64
+          description: The manufacturer dealer-net column for the row
+        file_trade_cents:
+          type: [integer, "null"]
+          format: int64
+          description: The trade column, when the mapping names one
+        markup_bps:
+          type: [integer, "null"]
+          format: int64
+          description: The multiplier the derivation applied; gated because retail over markup is cost
+        fob_freight_cents:
+          type: [integer, "null"]
+          format: int64
+          description: The estimated freight the trade path added
+
+    PricingPriceFileLine:
+      type: object
+      description: >-
+        One row of the file, diffed against the retail anchor. product_id and
+        product_name are empty on an UNKNOWN row. costs is absent for a caller
+        without cost visibility.
+      required: [row, sku, outcome]
+      properties:
+        row:
+          type: integer
+          format: int32
+          description: One-based row in the source file
+        sku: { type: string }
+        outcome:
+          type: string
+          enum: [NEW, CHANGED, UNCHANGED, UNKNOWN]
+        product_id: { type: string, format: uuid }
+        product_name: { type: string }
+        current_retail_cents: { type: [integer, "null"], format: int64 }
+        new_retail_cents: { type: [integer, "null"], format: int64 }
+        variance_bps: { type: [integer, "null"], format: int64 }
+        is_outlier: { type: boolean }
+        derived_from:
+          type: string
+          enum: [TRADE_PLUS_FOB, COST_MARKUP, MFR_RETAIL, NONE]
+        freight_estimated: { type: boolean }
+        costs:
+          $ref: "#/components/schemas/PricingPriceFileCosts"
+
+    PricingPriceFileCounts:
+      type: object
+      description: >-
+        The diff over every row, not over the displayed page. unpriced is a
+        diagnostic, not a fifth outcome: it counts matched rows whose mapped
+        columns yield no derivable price, which is how a mis-mapped cost column
+        is told apart from a file that genuinely agrees.
+      required: [rows, new, changed, unchanged, unknown, outliers, unpriced]
+      properties:
+        rows: { type: integer, format: int32 }
+        new: { type: integer, format: int32 }
+        changed: { type: integer, format: int32 }
+        unchanged: { type: integer, format: int32 }
+        unknown: { type: integer, format: int32 }
+        outliers: { type: integer, format: int32 }
+        unpriced: { type: integer, format: int32 }
+
+    PricingPriceFilePreview:
+      type: object
+      description: >-
+        The whole answer to what this file would do; writes nothing. digest is
+        a SHA-256 over the parsed rows and the mapping, which the apply must
+        echo. catalog_checked false means the catalog seam could not answer and
+        every row reads UNKNOWN. costs_visible reports whether this caller was
+        admitted to cost.
+      required: [vendor_id, format, headers, mapping, mapping_source, counts, lines, truncated, catalog_checked, digest, costs_visible]
+      properties:
+        vendor_id: { type: string, format: uuid }
+        vendor_name:
+          type: string
+          description: Internal staff screens only
+        profile_id:
+          type: string
+          format: uuid
+          description: Empty when this vendor has no profile yet
+        format:
+          type: string
+          enum: [CSV, XLSX]
+        headers:
+          type: array
+          description: The file header row verbatim
+          items: { type: string }
+        mapping:
+          type: object
+          additionalProperties: { type: string }
+        mapping_source:
+          type: string
+          enum: [STORED, REQUESTED, GUESSED]
+        counts: { $ref: "#/components/schemas/PricingPriceFileCounts" }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PricingPriceFileLine" }
+        truncated:
+          type: boolean
+          description: True when counts.rows exceeds the returned lines
+        catalog_checked: { type: boolean }
+        digest: { type: string }
+        costs_visible: { type: boolean }
+
+    PricingPriceFileApplyResult:
+      type: object
+      description: What the commit produced
+      required: [run_id, batch, counts, staged, profile_created]
+      properties:
+        run_id: { type: string, format: uuid }
+        batch: { $ref: "#/components/schemas/PricingPriceBatch" }
+        counts: { $ref: "#/components/schemas/PricingPriceFileCounts" }
+        staged:
+          type: integer
+          format: int32
+          description: "Change lines written: the movers plus the unknown rows"
+        profile_created:
+          type: boolean
+          description: True when this first import turned the mapping into a profile
+
+    PricingPriceImportRun:
+      type: object
+      description: One append-only price_import_runs row
+      required: [id, source_name, source_format, source_bytes, content_digest, mapping_used, counts, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        vendor_id: { type: string, format: uuid }
+        vendor_name:
+          type: string
+          description: Internal staff screens only
+        batch_id: { type: string, format: uuid }
+        batch_no: { type: string }
+        source_name: { type: string }
+        source_format:
+          type: string
+          enum: [CSV, XLSX]
+        source_bytes: { type: integer, format: int64 }
+        content_digest: { type: string }
+        mapping_used:
+          type: object
+          additionalProperties: { type: string }
+        counts: { $ref: "#/components/schemas/PricingPriceFileCounts" }
+        imported_by: { type: string }
+        imported_by_name: { type: string }
+        created_at: { type: string, format: date-time }
+
+    # --- promotions and clearance ------------------------------------------------
+
+    PricingPromotion:
+      type: object
+      description: >-
+        One pricing_promotions row. The live window is half-open: starts_at is
+        in, ends_at is out. Unset nullable scope dims are omitted.
+      required: [id, code, name, starts_at, ends_at, calc_type, priority, detail_text, is_active, version]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        product_id: { type: string, format: uuid }
+        category_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        calc_type:
+          type: string
+          enum: [PCT_OFF, AMT_OFF, FIXED_PRICE]
+        discount_bps:
+          type: [integer, "null"]
+          format: int64
+          description: Set for PCT_OFF
+        discount_cents:
+          type: [integer, "null"]
+          format: int64
+          description: Set for AMT_OFF
+        price_cents:
+          type: [integer, "null"]
+          format: int64
+          description: Set for FIXED_PRICE
+        price_uom:
+          type: string
+          description: Required with FIXED_PRICE
+        priority: { type: integer, format: int64 }
+        detail_text: { type: string }
+        is_active: { type: boolean }
+        version: { type: integer, format: int64 }
+
+    PricingPromotionWrite:
+      type: object
+      description: >-
+        The create and update body for a promotion. starts_at and ends_at are
+        RFC3339 strings so a malformed value is a clean 400.
+      required: [code, name, product_id, category_id, branch_id, starts_at, ends_at, calc_type, price_uom, priority, detail_text, version]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        product_id:
+          type: string
+          format: uuid
+          description: Empty when the promotion is not product-scoped
+        category_id:
+          type: string
+          format: uuid
+          description: Empty when the promotion is not category-scoped
+        branch_id:
+          type: string
+          format: uuid
+          description: Empty when the promotion runs everywhere
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        calc_type:
+          type: string
+          enum: [PCT_OFF, AMT_OFF, FIXED_PRICE]
+        discount_bps: { type: [integer, "null"], format: int64 }
+        discount_cents: { type: [integer, "null"], format: int64 }
+        price_cents: { type: [integer, "null"], format: int64 }
+        price_uom: { type: string }
+        priority: { type: integer, format: int64 }
+        detail_text: { type: string }
+        is_active:
+          type: [boolean, "null"]
+          description: Absent or null means active on write
+        version:
+          type: integer
+          format: int64
+          description: The optimistic-lock version; zero on create
+
+    PricingClearanceItem:
+      type: object
+      description: >-
+        One pricing_clearance_items row. A null clearance_price_cents is the
+        badge-only case: the item shows as clearance and still prices through
+        the ordinary waterfall. An absent ends_at is open-ended.
+      required: [product_id, reason, started_at, is_active, version]
+      properties:
+        product_id: { type: string, format: uuid }
+        sku:
+          type: string
+          description: Projection-only, from the list read
+        name:
+          type: string
+          description: Projection-only, from the list read
+        reason: { type: string }
+        clearance_price_cents: { type: [integer, "null"], format: int64 }
+        price_uom: { type: string }
+        started_at: { type: string, format: date-time }
+        ends_at: { type: [string, "null"], format: date-time }
+        is_active: { type: boolean }
+        version: { type: integer, format: int64 }
+
+    PricingClearanceWrite:
+      type: object
+      description: >-
+        clearance_price_cents and price_uom must be set together (a price with
+        no unit is not a price). started_at and ends_at are RFC3339 strings.
+      required: [reason, price_uom, started_at, ends_at]
+      properties:
+        reason: { type: string }
+        clearance_price_cents: { type: [integer, "null"], format: int64 }
+        price_uom: { type: string }
+        started_at: { type: string, format: date-time }
+        ends_at:
+          type: string
+          format: date-time
+          description: Empty means open-ended
+        is_active:
+          type: [boolean, "null"]
+          description: Absent or null means active on write
+
+    # --- rebates ------------------------------------------------------------------
+
+    PricingRebateProgram:
+      type: object
+      description: >-
+        One rebate_programs row. An absent ends_at is open-ended; the coverage
+        window is half-open like a promotion's.
+      required: [id, code, name, vendor_id, basis, starts_at, notes, is_active, version]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        vendor_id: { type: string, format: uuid }
+        vendor_name:
+          type: string
+          description: Projection-only, from the list read; staff screens only
+        product_id: { type: string, format: uuid }
+        category_id: { type: string, format: uuid }
+        basis:
+          type: string
+          enum: [PCT_OF_SALE, PCT_OF_COST, AMT_PER_UNIT]
+        rate_bps:
+          type: [integer, "null"]
+          format: int64
+          description: Set for PCT_OF_SALE and PCT_OF_COST
+        rate_cents_per_unit:
+          type: [integer, "null"]
+          format: int64
+          description: Set for AMT_PER_UNIT, per the product base UOM
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: [string, "null"], format: date-time }
+        notes: { type: string }
+        is_active: { type: boolean }
+        version: { type: integer, format: int64 }
+
+    PricingRebateProgramWrite:
+      type: object
+      description: The create and update body for a rebate program; starts_at and ends_at are RFC3339 strings
+      required: [code, name, vendor_id, product_id, category_id, basis, starts_at, ends_at, notes, version]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        vendor_id:
+          type: string
+          format: uuid
+          description: Immutable after create
+        product_id:
+          type: string
+          format: uuid
+          description: Empty when the program is category- or vendor-scoped
+        category_id:
+          type: string
+          format: uuid
+          description: Empty when the program is product- or vendor-scoped
+        basis:
+          type: string
+          enum: [PCT_OF_SALE, PCT_OF_COST, AMT_PER_UNIT]
+        rate_bps: { type: [integer, "null"], format: int64 }
+        rate_cents_per_unit: { type: [integer, "null"], format: int64 }
+        starts_at: { type: string, format: date-time }
+        ends_at:
+          type: string
+          format: date-time
+          description: Empty means open-ended
+        notes: { type: string }
+        is_active:
+          type: [boolean, "null"]
+          description: Absent or null means active on write
+        version:
+          type: integer
+          format: int64
+          description: The optimistic-lock version; zero on create
+
+    PricingRebateSaleLine:
+      type: object
+      description: >-
+        One sold line offered to the accrual engine; the caller supplies the
+        facts, the engine reads no sales table. qty_base is in the product base
+        UOM; sale_cents and ext_cost_cents are extended amounts, pre-tax.
+      required: [product_id, category_id, qty_base, sale_cents, ext_cost_cents]
+      properties:
+        product_id: { type: string, format: uuid }
+        category_id: { type: string, format: uuid }
+        vendor_id:
+          type: string
+          format: uuid
+          description: "Optional filter: accrue only this vendor's programs"
+        qty_base: { type: number }
+        sale_cents:
+          type: integer
+          format: int64
+          description: The extended pre-tax sale for the line
+        ext_cost_cents:
+          type: integer
+          format: int64
+          description: The extended cost for the line
+        branch_id: { type: string, format: uuid }
+
+    PricingRebateAccrueRequest:
+      type: object
+      description: >-
+        One sale event offered for accrual. source_type and source_id are the
+        idempotency key together with the program and the product.
+      required: [source_type, source_id, occurred_at, lines]
+      properties:
+        source_type:
+          type: string
+          enum: [POS_SALE, ORDER, ADJUSTMENT]
+        source_id:
+          type: string
+          format: uuid
+          description: Required for POS_SALE and ORDER; empty only on ADJUSTMENT
+        occurred_at:
+          type: string
+          format: date-time
+          description: RFC3339; empty means the server clock decides
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PricingRebateSaleLine" }
+
+    PricingRebateAccrual:
+      type: object
+      description: One rebate_accruals row
+      required: [id, program_id, vendor_id, product_id, source_type, qty_base, basis_cents, accrual_cents, rate_note, accrued_at]
+      properties:
+        id: { type: string, format: uuid }
+        program_id: { type: string, format: uuid }
+        program_code:
+          type: string
+          description: Projection-only, from the ledger read
+        vendor_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        product_sku:
+          type: string
+          description: Projection-only
+        branch_id: { type: string, format: uuid }
+        source_type:
+          type: string
+          enum: [POS_SALE, ORDER, ADJUSTMENT]
+        source_id: { type: string }
+        qty_base: { type: number }
+        basis_cents: { type: integer, format: int64 }
+        accrual_cents: { type: integer, format: int64 }
+        rate_note: { type: string }
+        accrued_at: { type: string, format: date-time }
+
+    PricingRebateAccrualResult:
+      type: object
+      description: What an accrual run wrote, and what it deliberately did not
+      required: [accrued, skipped_count, total_cents]
+      properties:
+        accrued:
+          type: array
+          items: { $ref: "#/components/schemas/PricingRebateAccrual" }
+        skipped_count:
+          type: integer
+          format: int32
+          description: Already-accrued lines (a retry); not an error
+        total_cents: { type: integer, format: int64 }
+
+    PricingVendorRebateLedger:
+      type: object
+      description: "The per-vendor read: the accrual rows plus the totals"
+      required: [vendor_id, vendor_name, total_cents, accrual_count, rows]
+      properties:
+        vendor_id: { type: string, format: uuid }
+        vendor_name: { type: string }
+        from: { type: [string, "null"], format: date-time }
+        to: { type: [string, "null"], format: date-time }
+        total_cents: { type: integer, format: int64 }
+        accrual_count: { type: integer, format: int32 }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/PricingRebateAccrual" }
+
+    # --- UOM conversions ------------------------------------------------------------
+
+    PricingUOMConversion:
+      type: object
+      description: >-
+        One pricing_uom_conversions row: a directed edge from_uom to to_uom,
+        usable in reverse at the reciprocal factor. round_up_at_pick flags the
+        target unit as an indivisible handling unit.
+      required: [id, from_uom, to_uom, factor, round_up_at_pick, source, source_note, is_active, version]
+      properties:
+        id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        product_sku:
+          type: string
+          description: Projection-only, from the list read
+        category_id: { type: string, format: uuid }
+        from_uom: { type: string }
+        to_uom: { type: string }
+        factor: { type: number }
+        round_up_at_pick: { type: boolean }
+        source:
+          type: string
+          enum: [SEEDED_DEFAULT, CLIENT_CONFIRMED, VENDOR_SHEET, MEASURED]
+        source_note: { type: string }
+        is_active: { type: boolean }
+        version: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time }
+
+    PricingUOMStep:
+      type: object
+      description: One hop of a resolved conversion chain, with the factor provenance
+      required: [from_uom, to_uom, factor, source]
+      properties:
+        from_uom: { type: string }
+        to_uom: { type: string }
+        factor: { type: number }
+        source:
+          type: string
+          enum: [SEEDED_DEFAULT, CLIENT_CONFIRMED, VENDOR_SHEET, MEASURED]
+
+    PricingUOMPlanInput:
+      type: object
+      description: >-
+        A line-entry conversion request. pick_uom empty means use whatever edge
+        out of the entered unit is flagged round_up_at_pick. weight_uom empty
+        skips the weight leg.
+      required: [product_id, category_id, qty_entered, uom_entered]
+      properties:
+        product_id: { type: string, format: uuid }
+        category_id: { type: string, format: uuid }
+        qty_entered: { type: number }
+        uom_entered: { type: string }
+        pick_uom: { type: string }
+        weight_uom: { type: string }
+
+    PricingUOMPlan:
+      type: object
+      description: >-
+        What a line-entry surface renders: the exact pick quantity, the rounded
+        pick quantity and the overage, plus the weight view. unconfirmed is true
+        when any factor on any resolved chain is still a SEEDED_DEFAULT.
+      required: [product_id, qty_entered, uom_entered, pick_qty_exact, pick_qty, rounded_up, overage_qty, weight_qty, unconfirmed]
+      properties:
+        product_id: { type: string, format: uuid }
+        qty_entered: { type: number }
+        uom_entered: { type: string }
+        pick_uom: { type: string }
+        pick_qty_exact: { type: number }
+        pick_qty:
+          type: number
+          description: Rounded up when the winning edge flags the unit indivisible
+        rounded_up: { type: boolean }
+        overage_qty:
+          type: number
+          description: pick_qty minus pick_qty_exact, in pick_uom
+        pick_steps:
+          type: array
+          items: { $ref: "#/components/schemas/PricingUOMStep" }
+        weight_uom: { type: string }
+        weight_qty: { type: number }
+        weight_steps:
+          type: array
+          items: { $ref: "#/components/schemas/PricingUOMStep" }
+        unconfirmed: { type: boolean }
+        notes:
+          type: array
+          items: { type: string }
+
+    # --- cursor pages ---------------------------------------------------------------
+
+    PricingRulePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingRule" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PricingCategoryPolicyPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingCategoryPolicy" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PricingOverridePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingOverride" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PricingAuditLogPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingAuditLogRow" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PricingLowMarginScanPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingLowMarginScanRow" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PricingQuantityBreakPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingQuantityBreakHeader" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PricingBatchPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingPriceBatch" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PricingBatchLinePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingPriceChangeLine" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PricingImportProfilePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingImportProfile" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PricingChangeLogPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingChangeLogRow" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PricingPriceFileVendorPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingPriceFileVendor" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PricingPriceImportRunPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingPriceImportRun" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PricingPromotionPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingPromotion" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PricingClearancePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingClearanceItem" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PricingRebateProgramPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingRebateProgram" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PricingUOMConversionPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PricingUOMConversion" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }

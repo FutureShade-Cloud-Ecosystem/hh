@@ -1,0 +1,1964 @@
+# Fragment: purchasing + landedcost.
+# Source: hardscapeos_dibbits/backend/internal/purchasing and internal/landedcost
+# (non-test Go files). Guards resolve from the RegisterRoutes call sites in
+# backend/cmd/server/main.go: both modules receive identityHandler.RequireStaff,
+# RequireManager and RequireAdmin in parameter order, so the module-internal
+# requireStaff / requireManager / requireAdmin names map one to one.
+#
+# The cost gate (purchasing/cost_gate.go) is a marshal-layer gate, not a route
+# gate: money keys are ABSENT from read payloads for callers the branch
+# cost_visibility policy refuses, never zero and never null. Every gated money
+# property below is optional for that reason.
+
+paths:
+  /api/v1/purchasing/vendors:
+    get:
+      operationId: purchasingListVendors
+      tags: [staff-purchasing]
+      summary: List vendors from the vendor directory projection
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of vendors
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/purchasing/pos:
+    get:
+      operationId: purchasingListPOs
+      tags: [staff-purchasing]
+      summary: List purchase orders
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/PurchasingPOStatus"
+      responses:
+        "200":
+          description: The page of purchase orders
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPOPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: purchasingCreatePO
+      tags: [staff-purchasing]
+      summary: Create a draft purchase order
+      description: >-
+        The PO number is minted server-side and is never accepted from a
+        caller. A USD document requires a positive fx_rate; an omitted currency
+        means CAD at a rate of 1.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingCreatePORequest"
+      responses:
+        "201":
+          description: The created purchase order with its lines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPODetail"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/purchasing/pos/{id}:
+    get:
+      operationId: purchasingGetPO
+      tags: [staff-purchasing]
+      summary: Read one purchase order with its lines and receipts
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The purchase order detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPODetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/purchasing/pos/{id}/lines:
+    post:
+      operationId: purchasingAddLine
+      tags: [staff-purchasing]
+      summary: Add a line to a draft purchase order
+      description: >-
+        Lines may only be edited while the order is DRAFT: once a PO is
+        ORDERED its line set is frozen, because a purchase order is a contract
+        and editing one after placement is how a three-way match is quietly
+        defeated.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingAddLineRequest"
+      responses:
+        "200":
+          description: The purchase order after the line was added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPODetail"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/purchasing/pos/{id}/lines/{lineID}:
+    delete:
+      operationId: purchasingRemoveLine
+      tags: [staff-purchasing]
+      summary: Remove a line from a draft purchase order
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: lineID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The purchase order after the line was removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPODetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/purchasing/pos/{id}/transition:
+    post:
+      operationId: purchasingTransitionPO
+      tags: [staff-purchasing]
+      summary: Move a purchase order along its lifecycle
+      description: >-
+        Operator-driven moves only (place, close, cancel). The receipt-driven
+        moves to PARTIAL and RECEIVED are computed from what landed and are
+        never requested here.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingTransitionRequest"
+      responses:
+        "200":
+          description: The purchase order after the transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPODetail"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/purchasing/pos/{id}/receive:
+    post:
+      operationId: purchasingReceivePO
+      tags: [staff-purchasing]
+      summary: Record quantities landing against purchase-order lines
+      description: >-
+        Line-level receiving: each entry names one PO line and the quantity
+        landing now. Stock movement happens through the inventory seam; a
+        deployment with that seam unwired refuses rather than recording a
+        receipt that would move no stock.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingReceiveRequest"
+      responses:
+        "201":
+          description: The recorded receiving event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingReceipt"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/purchasing/pos/{id}/expected-date:
+    put:
+      operationId: purchasingSetExpectedDate
+      tags: [staff-purchasing]
+      summary: Set or clear the promised receiving date on a purchase order
+      description: >-
+        An empty expected_at clears the date: a withdrawn vendor promise
+        leaves no date, and a stale one left on the record is a screen that
+        lies to the person planning around it. Refused on a RECEIVED, CLOSED
+        or CANCELLED order.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingSetExpectedDateRequest"
+      responses:
+        "200":
+          description: The purchase order after the edit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPODetail"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/purchasing/pos/{id}/document:
+    get:
+      operationId: purchasingGetPODocumentHTML
+      tags: [staff-purchasing]
+      summary: Render the printable purchase-order document
+      description: >-
+        The body is a rendered HTML page and is not representable from the
+        module structs; it is delivered as text/html with Cache-Control
+        no-store because the page is rendered through a role gate and a cached
+        copy would leak the gated columns.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The purchase-order document as an HTML page
+          content:
+            text/html:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/purchasing/pos/{id}/document.csv:
+    get:
+      operationId: purchasingGetPODocumentCSV
+      tags: [staff-purchasing]
+      summary: Download the purchase-order document as CSV
+      description: >-
+        The same document as the HTML route, the other encoder. The body is a
+        CSV byte stream and is not representable from the module structs; the
+        download filename is the PO number.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The purchase-order document as CSV
+          content:
+            text/csv:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/purchasing/pos/{id}/costs:
+    get:
+      operationId: purchasingGetPOCosts
+      tags: [staff-purchasing]
+      summary: Read the gated money payload of one purchase order on its own
+      description: >-
+        A surface asks this before it draws a cost column, so "you may not see
+        cost" is an answer it receives rather than a conclusion it draws from
+        a missing key. For a refused caller the body is an empty object.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The header money the caller may see, or an empty object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPOCosts"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/purchasing/pos/{id}/sends:
+    get:
+      operationId: purchasingListPOSends
+      tags: [staff-purchasing]
+      summary: List the send history of one purchase order
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of send records
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPOSendPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/purchasing/pos/{id}/send:
+    post:
+      operationId: purchasingSendPO
+      tags: [staff-purchasing]
+      summary: Send a purchase order to the vendor's ordering desk
+      description: >-
+        The send goes to exactly one recipient: the tagged ordering contact,
+        or a deliberate, confirmed fallback to the vendor record address. A
+        DRAFT order is not sendable. The response is the send record even when
+        no transport delivered anything: status and detail carry the outcome,
+        a failed send of a well-formed request is still a 200. An
+        idempotency_key replays to the first send rather than sending twice.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingSendPORequest"
+      responses:
+        "200":
+          description: The send record, whatever the transport outcome
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPOSend"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/purchasing/incoming:
+    get:
+      operationId: purchasingListIncoming
+      tags: [staff-purchasing]
+      summary: List what is on order for one product, with the expected date
+      description: >-
+        Outstanding lines on DRAFT, ORDERED and PARTIAL purchase orders for
+        one product, within the caller's branch reach. branch_id narrows the
+        answer and is refused when it names a branch outside the reach; a
+        scoped caller with no grants receives an empty page, not a refusal.
+        The ERP source returned this list under a `lines` key; the contract
+        re-envelopes it as a cursor page like every other list.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: product_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of outstanding purchase-order lines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingIncomingLinePage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/purchasing/receiving:
+    get:
+      operationId: purchasingListReceivingWorklist
+      tags: [staff-purchasing]
+      summary: List placed purchase orders with something still outstanding
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The page of worklist rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingWorklistItemPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/purchasing/receipts/{id}:
+    get:
+      operationId: purchasingGetReceipt
+      tags: [staff-purchasing]
+      summary: Read one receiving event with its lines
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The receiving event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingReceipt"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/purchasing/receipts/{id}/landed-cost:
+    post:
+      operationId: purchasingAttachLandedCost
+      tags: [staff-purchasing]
+      summary: Attach a landed cost to one receipt, apportioned over its lines
+      description: >-
+        The freight, duty and handling invoice for one truckload, apportioned
+        over exactly the lines of this receipt. A receipt already carrying a
+        landed cost refuses with a conflict.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingAttachLandedCostRequest"
+      responses:
+        "200":
+          description: The receipt with the landed cost attached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingReceipt"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/purchasing/bills:
+    get:
+      operationId: purchasingListBills
+      tags: [staff-purchasing]
+      summary: List vendor bills
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/PurchasingBillStatus"
+        - name: match_state
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/PurchasingMatchState"
+      responses:
+        "200":
+          description: The page of vendor bills
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingBillPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: purchasingCreateBill
+      tags: [staff-purchasing]
+      summary: Enter a vendor bill against a purchase order
+      description: >-
+        Bill amounts are converted to CAD at entry, so the three-way match,
+        the journal legs and the AP balance never handle a foreign amount.
+        currency and fx_rate record what the vendor wrote and the rate it was
+        read at; they need not match the PO's, because a vendor may invoice a
+        USD order in CAD. Instalment amounts must sum to the bill total.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingCreateBillRequest"
+      responses:
+        "201":
+          description: The created bill with its lines and instalments
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingBillDetail"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/purchasing/bills/{id}:
+    get:
+      operationId: purchasingGetBill
+      tags: [staff-purchasing]
+      summary: Read one vendor bill with its match verdicts and instalments
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The bill detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingBillDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/purchasing/bills/{id}/post:
+    post:
+      operationId: purchasingPostBill
+      tags: [staff-purchasing]
+      summary: Post a vendor bill to the AP ledger
+      description: >-
+        A bill whose match verdict is VARIANCE needs the recorded, deliberate
+        acceptance in accept_variance; without it the post is refused with the
+        variance spelled out. An empty body is a legitimate "post it as it
+        is"; only a malformed body is a 400.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingPostBillRequest"
+      responses:
+        "200":
+          description: The posted bill
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingBillDetail"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/purchasing/tolerance:
+    get:
+      operationId: purchasingGetTolerance
+      tags: [staff-purchasing]
+      summary: Read the resolved three-way-match tolerance for a branch
+      description: >-
+        The branch row when one exists, else the org default; the response
+        says which through is_branch_override and resolved_from_default.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The resolved tolerance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingTolerance"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: purchasingSetTolerance
+      tags: [staff-purchasing]
+      summary: Set the three-way-match tolerance for a branch or the org default
+      description: An empty branch_id sets the org default.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingSetToleranceRequest"
+      responses:
+        "200":
+          description: The resolved tolerance after the write
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingTolerance"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/purchasing/policy:
+    get:
+      operationId: purchasingGetPolicy
+      tags: [staff-purchasing]
+      summary: Read the effective purchasing policy for a branch
+      description: >-
+        The branch row when one exists, else the dealer default. An unreadable
+        policy resolves to the restrictive default and never errors: this is a
+        read path and degrades downward.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The effective policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPolicy"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: purchasingSetPolicy
+      tags: [staff-purchasing]
+      summary: Set the purchasing policy for a branch or the dealer default
+      description: An empty branch_id sets the dealer default.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingSetPolicyRequest"
+      responses:
+        "200":
+          description: The effective policy after the write
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPolicy"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/purchasing/vendors/{vendorID}/contact:
+    get:
+      operationId: purchasingGetVendorContact
+      tags: [staff-purchasing]
+      summary: Read the vendor's tagged ordering desk
+      description: >-
+        An untagged vendor answers 200 with tagged:false, not 404: "nobody has
+        tagged a desk yet" is the ordinary state of every vendor, and a
+        surface that had to catch a 404 would treat the normal case as an
+        error.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The tagged contact, or tagged:false
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorContactResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: purchasingSetVendorContact
+      tags: [staff-purchasing]
+      summary: Tag or retag the vendor's ordering desk
+      description: >-
+        One row per vendor. A contact needs an email or a phone: one of the
+        two is what makes it a contact.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingVendorContactWrite"
+      responses:
+        "200":
+          description: The tagged contact after the write
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorContactResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: purchasingDeleteVendorContact
+      tags: [staff-purchasing]
+      summary: Untag the vendor's ordering desk
+      description: >-
+        Sends that already went out keep their stored recipient_kind; that is
+        the whole reason the column is stored.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: tagged:false with an empty contact
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorContactResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/purchasing/vendors/{vendorID}/skus:
+    get:
+      operationId: purchasingListVendorSKUs
+      tags: [staff-purchasing]
+      summary: List the vendor's own catalogue codes for our products
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of vendor SKU mappings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorSKUPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: purchasingSetVendorSKU
+      tags: [staff-purchasing]
+      summary: Record the vendor's own code and selling unit for one product
+      description: >-
+        vendor_uom and qty_per_vendor_uom are all-or-nothing: a unit with no
+        factor cannot be counted and a factor with no unit names nothing. An
+        empty mapping is the same as no mapping; remove it instead.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingVendorSKUWrite"
+      responses:
+        "200":
+          description: The mapping after the write
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorSKU"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/purchasing/vendors/{vendorID}/skus/{productID}:
+    delete:
+      operationId: purchasingDeleteVendorSKU
+      tags: [staff-purchasing]
+      summary: Remove one vendor SKU mapping
+      description: >-
+        The document then degrades to our SKU and our base unit and says so on
+        the line: an absent mapping is visible, never papered over.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: productID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: The mapping is gone
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/purchasing/vendor-ref:
+    get:
+      operationId: purchasingResolveVendorRef
+      tags: [staff-purchasing]
+      summary: Find the purchase order a vendor quoted back
+      description: >-
+        A query parameter rather than a path segment, because what an AP clerk
+        types is whatever the vendor wrote and half of those spellings are not
+        path-safe. Both sides of the comparison are normalised by one rule, so
+        the stored number and the echoed string fold to the same value.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: ref
+          in: query
+          required: true
+          description: The order number exactly as the vendor echoed it
+          schema: { type: string }
+      responses:
+        "200":
+          description: The purchase order the ref resolves to
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPO"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/landed-costs:
+    get:
+      operationId: landedCostList
+      tags: [staff-landedcost]
+      summary: List landed costs
+      description: >-
+        A scoped caller must name an accessible branch: omitting branch_id
+        without global scope is refused rather than enumerating every yard.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/LandedCostStatus"
+      responses:
+        "200":
+          description: The page of landed costs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LandedCostPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: landedCostCreate
+      tags: [staff-landedcost]
+      summary: Capture a freight, duty and handling invoice
+      description: >-
+        USD document amounts are converted to CAD at capture through the
+        manual fx rate, so the GL and inventory valuation only ever see the
+        cad figures. When retro_of_id is set the document is a late-freight
+        retro adjustment and on_hand carries the per-product still-on-hand
+        base used to split capitalize versus sold-through at retro time.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LandedCostCreateRequest"
+      responses:
+        "201":
+          description: The created landed cost id and its DRAFT status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LandedCostCreateResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/landed-costs/{id}:
+    get:
+      operationId: landedCostGet
+      tags: [staff-landedcost]
+      summary: Read one landed cost with its allocations
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The landed cost detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LandedCostDetail"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/landed-costs/{id}/preview:
+    get:
+      operationId: landedCostPreview
+      tags: [staff-landedcost]
+      summary: Preview the allocation under one basis, with no persistence
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: basis
+          in: query
+          required: false
+          description: The basis to preview under; the document's own basis when omitted
+          schema:
+            $ref: "#/components/schemas/LandedCostBasis"
+      responses:
+        "200":
+          description: The per-line allocation preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LandedCostAllocationPreview"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/landed-costs/{id}/apply:
+    post:
+      operationId: landedCostApply
+      tags: [staff-landedcost]
+      summary: Allocate the landed cost and capitalize it into inventory
+      description: >-
+        The GL journal posts first (idempotent on its key), then the
+        allocation rows, the weighted-average capitalization and the status
+        flip commit in one transaction. Applying a non-DRAFT document is an
+        idempotent no-op.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The status after the call (POSTED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LandedCostStatusResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/landed-costs/{id}/retro:
+    post:
+      operationId: landedCostRetro
+      tags: [staff-landedcost]
+      summary: Apply a late-freight retro adjustment
+      description: >-
+        The still-on-hand portion capitalizes into inventory; the sold-through
+        portion expenses straight to COGS, split on the on_hand base captured
+        at create. Retro on a non-DRAFT document is an idempotent no-op.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The status after the call (RETRO_ADJUSTED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LandedCostStatusResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/landed-costs/{id}/void:
+    post:
+      operationId: landedCostVoid
+      tags: [staff-landedcost]
+      summary: Void a landed cost, reversing its journals to net zero
+      description: >-
+        The void restores the exact weighted-average cost captured at apply,
+        so an apply and void round-trip reproduces the cost to the cent.
+        Voiding a DRAFT refuses with a conflict; voiding a VOIDED document is
+        an idempotent no-op.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The status after the call (VOIDED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LandedCostStatusResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+components:
+  schemas:
+    # --- vocabularies --------------------------------------------------------
+
+    PurchasingPOStatus:
+      type: string
+      description: The purchase-order lifecycle (migration 0120 CHECK)
+      enum: [DRAFT, ORDERED, PARTIAL, RECEIVED, CLOSED, CANCELLED]
+
+    PurchasingMatchState:
+      type: string
+      description: >-
+        The three-way-match verdict (migration 0121 CHECK). SHORT_BILLED is
+        not folded into VARIANCE: the vendor invoiced less than was received,
+        which is a different conversation from a price or quantity dispute.
+      enum: [UNMATCHED, MATCHED, VARIANCE, SHORT_BILLED]
+
+    PurchasingBillStatus:
+      type: string
+      description: The vendor bill document status
+      enum: [DRAFT, POSTED, VOID]
+
+    PurchasingCurrency:
+      type: string
+      description: The document currency; CAD documents never carry a manual fx rate
+      enum: [CAD, USD]
+
+    PurchasingCostVisibility:
+      type: string
+      description: Who may see purchase cost (the shared settings vocabulary)
+      enum: [MANAGER_UP, ALL_STAFF, HIDDEN]
+
+    PurchasingUntaggedFallback:
+      type: string
+      description: >-
+        The posture for a send with no tagged ordering contact. There is no
+        BLAST value: a purchase order can only ever go to one desk.
+      enum: [CONFIRM, REFUSE]
+
+    LandedCostStatus:
+      type: string
+      description: The landed-cost lifecycle (migration 0041 CHECK)
+      enum: [DRAFT, ALLOCATED, POSTED, VOIDED, RETRO_ADJUSTED]
+
+    LandedCostBasis:
+      type: string
+      description: The apportionment basis (migration 0041 CHECK)
+      enum: [WEIGHT, VALUE, QUANTITY]
+
+    # --- purchasing read shapes ----------------------------------------------
+
+    PurchasingVendor:
+      type: object
+      description: >-
+        The projection purchasing needs of a vendor, supplied by the vendor
+        directory seam; purchasing owns no vendor SQL.
+      required: [id, vendor_no, name, payment_terms_days, is_active]
+      properties:
+        id: { type: string, format: uuid }
+        vendor_no: { type: string }
+        name: { type: string }
+        payment_terms_days: { type: integer, format: int32 }
+        is_active: { type: boolean }
+
+    PurchasingPO:
+      type: object
+      description: >-
+        The purchase-order header projection. currency and fx_rate are the
+        document's, frozen when the PO was agreed; every unit cost on the
+        lines is expressed in this currency. subtotal_cents and
+        subtotal_cad_cents are gated money: present only for callers the
+        branch cost_visibility policy allows, absent otherwise (never zero,
+        never null).
+      required: [id, po_no, vendor_id, vendor_name, branch_id, status, notes, line_count, currency, fx_rate, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        po_no: { type: string }
+        vendor_id: { type: string, format: uuid }
+        vendor_name: { type: string }
+        branch_id: { type: string, format: uuid }
+        status:
+          $ref: "#/components/schemas/PurchasingPOStatus"
+        expected_at:
+          type: string
+          description: The promised receiving date; empty when no promise exists
+        ordered_at:
+          type: [string, "null"]
+          format: date-time
+        notes: { type: string }
+        line_count: { type: integer, format: int32 }
+        currency:
+          $ref: "#/components/schemas/PurchasingCurrency"
+        fx_rate:
+          type: number
+          description: The document rate; subtotal_cad_cents is subtotal_cents after conversion
+        subtotal_cents:
+          type: integer
+          format: int64
+          description: Gated document total in the document currency; absent for a refused caller
+        subtotal_cad_cents:
+          type: integer
+          format: int64
+          description: Gated document total in CAD, carried alongside so the rate can be checked
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PurchasingPOLine:
+      type: object
+      description: >-
+        One purchase-order line plus the derived outstanding quantity the
+        receiving worklist reads. The money keys are gated exactly as on the
+        header.
+      required: [id, line_no, product_id, sku, description, qty_ordered_base, qty_received_base, qty_billed_base, qty_outstanding_base, uom]
+      properties:
+        id: { type: string, format: uuid }
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        description: { type: string }
+        qty_ordered_base: { type: number }
+        qty_received_base: { type: number }
+        qty_billed_base: { type: number }
+        qty_outstanding_base: { type: number }
+        uom: { type: string }
+        unit_cost_cents:
+          type: integer
+          format: int64
+          description: Gated; in the document currency; absent for a refused caller
+        line_total_cents:
+          type: integer
+          format: int64
+          description: Gated; in the document currency; absent for a refused caller
+        billed_cents:
+          type: integer
+          format: int64
+          description: Gated; absent for a refused caller
+
+    PurchasingPODetail:
+      description: A purchase order with its lines and its receipts
+      allOf:
+        - $ref: "#/components/schemas/PurchasingPO"
+        - type: object
+          required: [lines, receipts]
+          properties:
+            lines:
+              type: array
+              items: { $ref: "#/components/schemas/PurchasingPOLine" }
+            receipts:
+              type: array
+              items: { $ref: "#/components/schemas/PurchasingReceipt" }
+
+    PurchasingReceipt:
+      type: object
+      description: >-
+        One receiving event. stock_doc_id is the inventory receiving document
+        the stock seam produced. value_cad_cents is gated money.
+      required: [id, po_id, po_no, seq, grn_no, stock_doc_id, received_at, notes]
+      properties:
+        id: { type: string, format: uuid }
+        po_id: { type: string, format: uuid }
+        po_no: { type: string }
+        seq: { type: integer, format: int32 }
+        grn_no: { type: string }
+        stock_doc_id: { type: string, format: uuid }
+        landed_cost_id:
+          type: string
+          format: uuid
+          description: The landed cost attached to this receipt, when one exists
+        value_cad_cents:
+          type: integer
+          format: int64
+          description: Gated; the CAD value of what landed; absent for a refused caller
+        received_by: { type: string }
+        received_at: { type: string, format: date-time }
+        notes: { type: string }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PurchasingReceiptLine" }
+
+    PurchasingReceiptLine:
+      type: object
+      required: [id, po_line_id, product_id, sku, qty_base]
+      properties:
+        id: { type: string, format: uuid }
+        po_line_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        qty_base: { type: number }
+        unit_cost_cents:
+          type: integer
+          format: int64
+          description: Gated; absent for a refused caller
+        value_cents:
+          type: integer
+          format: int64
+          description: Gated; absent for a refused caller
+
+    PurchasingWorklistItem:
+      type: object
+      description: "One row of the receiving worklist: a placed PO with something still outstanding"
+      required: [po_id, po_no, vendor_id, vendor_name, branch_id, status, open_lines, qty_outstanding_base]
+      properties:
+        po_id: { type: string, format: uuid }
+        po_no: { type: string }
+        vendor_id: { type: string, format: uuid }
+        vendor_name: { type: string }
+        branch_id: { type: string, format: uuid }
+        status:
+          $ref: "#/components/schemas/PurchasingPOStatus"
+        expected_at: { type: string }
+        open_lines: { type: integer, format: int32 }
+        qty_outstanding_base: { type: number }
+        value_open_cents:
+          type: integer
+          format: int64
+          description: Gated; absent for a refused caller
+
+    PurchasingIncomingLine:
+      type: object
+      description: >-
+        One outstanding purchase-order line for one product. Carries the
+        ordered and received quantities as well as the outstanding one,
+        because a partially received line is a different fact from a whole
+        one. expected_at is empty when the buyer raised the order without a
+        promised date; it is never filled in with a guess.
+      required: [po_id, po_no, po_line_id, status, vendor_id, vendor_name, branch_id, expected_at, qty_ordered_base, qty_received_base, qty_outstanding_base, uom]
+      properties:
+        po_id: { type: string, format: uuid }
+        po_no: { type: string }
+        po_line_id: { type: string, format: uuid }
+        status:
+          $ref: "#/components/schemas/PurchasingPOStatus"
+        vendor_id: { type: string, format: uuid }
+        vendor_name: { type: string }
+        branch_id: { type: string, format: uuid }
+        expected_at: { type: string }
+        qty_ordered_base: { type: number }
+        qty_received_base: { type: number }
+        qty_outstanding_base: { type: number }
+        uom: { type: string }
+        unit_cost_cents:
+          type: integer
+          format: int64
+          description: Gated; absent for a refused caller
+
+    PurchasingBill:
+      type: object
+      description: >-
+        A vendor bill header. subtotal_cents, tax_cents and total_cents are
+        CAD, always: the bill is converted at entry. currency and fx_rate
+        record what the vendor wrote and the rate it was read at, so an AP
+        clerk holding the paper invoice can agree it with the screen. The AP
+        bill surface is not behind the purchase-cost gate: a bill is what we
+        owe and the people who read it are the people whose job is to pay it.
+      required: [id, bill_no, vendor_id, vendor_name, branch_id, po_id, po_no, status, match_state, bill_date, subtotal_cents, tax_cents, total_cents, currency, fx_rate, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        bill_no:
+          type: string
+          description: The vendor's own invoice number
+        vendor_id: { type: string, format: uuid }
+        vendor_name: { type: string }
+        branch_id: { type: string, format: uuid }
+        po_id: { type: string, format: uuid }
+        po_no: { type: string }
+        status:
+          $ref: "#/components/schemas/PurchasingBillStatus"
+        match_state:
+          $ref: "#/components/schemas/PurchasingMatchState"
+        bill_date: { type: string }
+        due_date: { type: string }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        currency:
+          $ref: "#/components/schemas/PurchasingCurrency"
+        fx_rate: { type: number }
+        gl_journal_id: { type: string, format: uuid }
+        posted_at:
+          type: [string, "null"]
+          format: date-time
+        variance_accepted_note:
+          type: string
+          description: The recorded acceptance a VARIANCE bill needed to post
+        variance_accepted_by: { type: string }
+        created_at: { type: string, format: date-time }
+
+    PurchasingBillLine:
+      type: object
+      description: One bill line with its match verdict and the two signed variances
+      required: [id, line_no, description, qty_billed_base, qty_ordered_base, qty_received_base, unit_cost_cents, po_unit_cost_cents, line_total_cents, match_state, qty_variance_base, price_variance_cents]
+      properties:
+        id: { type: string, format: uuid }
+        line_no: { type: integer, format: int32 }
+        po_line_id:
+          type: string
+          format: uuid
+          description: Absent on a charge with no PO behind it
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        description: { type: string }
+        qty_billed_base: { type: number }
+        qty_ordered_base: { type: number }
+        qty_received_base: { type: number }
+        unit_cost_cents: { type: integer, format: int64 }
+        po_unit_cost_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64 }
+        match_state:
+          $ref: "#/components/schemas/PurchasingMatchState"
+        qty_variance_base: { type: number }
+        price_variance_cents: { type: integer, format: int64 }
+
+    PurchasingInstalment:
+      type: object
+      description: One scheduled payment against a bill
+      required: [id, seq, due_date, amount_cents, status, note]
+      properties:
+        id: { type: string, format: uuid }
+        seq: { type: integer, format: int32 }
+        due_date: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        status:
+          type: string
+          enum: [SCHEDULED, PAID, CANCELLED]
+        note: { type: string }
+
+    PurchasingBillDetail:
+      description: A bill with its lines and instalment schedule
+      allOf:
+        - $ref: "#/components/schemas/PurchasingBill"
+        - type: object
+          required: [lines, instalments]
+          properties:
+            lines:
+              type: array
+              items: { $ref: "#/components/schemas/PurchasingBillLine" }
+            instalments:
+              type: array
+              items: { $ref: "#/components/schemas/PurchasingInstalment" }
+
+    PurchasingTolerance:
+      type: object
+      description: The resolved three-way-match tolerance for a branch (the branch row, else the org default)
+      required: [qty_tolerance_pct, price_tolerance_pct, price_tolerance_abs_cents, is_branch_override, resolved_from_default]
+      properties:
+        branch_id:
+          type: string
+          format: uuid
+          description: Absent on the org default
+        qty_tolerance_pct: { type: number }
+        price_tolerance_pct: { type: number }
+        price_tolerance_abs_cents: { type: integer, format: int64 }
+        is_branch_override: { type: boolean }
+        resolved_from_default: { type: boolean }
+
+    PurchasingPolicy:
+      type: object
+      description: The resolved purchasing policy for a branch (the branch row, else the dealer default)
+      required: [cost_visibility, untagged_fallback, is_branch_override]
+      properties:
+        branch_id:
+          type: string
+          format: uuid
+          description: Absent on the dealer default
+        cost_visibility:
+          $ref: "#/components/schemas/PurchasingCostVisibility"
+        untagged_fallback:
+          $ref: "#/components/schemas/PurchasingUntaggedFallback"
+        is_branch_override: { type: boolean }
+
+    PurchasingVendorContact:
+      type: object
+      description: One vendor's designated ordering desk; one row per vendor
+      required: [vendor_id, contact_name, email, phone]
+      properties:
+        vendor_id: { type: string, format: uuid }
+        contact_name: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        updated_at: { type: string }
+
+    PurchasingVendorContactResult:
+      type: object
+      description: >-
+        The contact read shape. tagged:false with an empty contact is the
+        ordinary untagged answer, never a 404.
+      required: [tagged, contact]
+      properties:
+        tagged: { type: boolean }
+        contact:
+          $ref: "#/components/schemas/PurchasingVendorContact"
+
+    PurchasingVendorSKU:
+      type: object
+      description: >-
+        One (vendor, product) mapping. Every absence degrades to our own
+        catalogue in the open. sku and product_name are our catalogue's,
+        carried so the editing surface can name the row; they are read-only
+        here.
+      required: [vendor_id, product_id, vendor_sku]
+      properties:
+        vendor_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        sku: { type: string }
+        product_name: { type: string }
+        vendor_sku: { type: string }
+        vendor_uom: { type: string }
+        qty_per_vendor_uom: { type: number }
+        updated_at: { type: string }
+
+    PurchasingPOSend:
+      type: object
+      description: >-
+        One send record: what we decided, and what came back. No money on this
+        shape, deliberately; the order's value is on the order, behind the
+        gate.
+      required: [id, po_id, channel, recipient, recipient_kind, status, provider, document_bytes, sent_at]
+      properties:
+        id: { type: string, format: uuid }
+        po_id: { type: string, format: uuid }
+        channel:
+          type: string
+          enum: [EMAIL]
+        recipient: { type: string }
+        recipient_kind:
+          type: string
+          description: Stored on the row, never derived, so retagging a contact cannot rewrite the story of a send that already went out
+          enum: [VENDOR_CONTACT, FALLBACK]
+        fallback_reason: { type: string }
+        status:
+          type: string
+          enum: [QUEUED, DELIVERED, FAILED]
+        provider: { type: string }
+        provider_ref: { type: string }
+        detail: { type: string }
+        document_name: { type: string }
+        document_bytes: { type: integer, format: int32 }
+        sent_at: { type: string, format: date-time }
+
+    PurchasingPOCosts:
+      type: object
+      description: >-
+        The gated header money of one purchase order, on its own. Every field
+        is optional because the gate is absence: a refused caller receives an
+        empty object, not a zero and not a null.
+      properties:
+        subtotal_cents: { type: integer, format: int64 }
+        subtotal_cad_cents: { type: integer, format: int64 }
+
+    # --- purchasing request shapes -------------------------------------------
+
+    PurchasingCreatePORequest:
+      type: object
+      required: [vendor_id, branch_id]
+      properties:
+        vendor_id: { type: string, format: uuid }
+        branch_id: { type: string, format: uuid }
+        expected_at:
+          type: string
+          description: The promised receiving date; may be set or cleared later through the expected-date route
+        notes: { type: string }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/PurchasingAddLineRequest" }
+        currency:
+          $ref: "#/components/schemas/PurchasingCurrency"
+        fx_rate:
+          type: number
+          description: Required and positive when currency is USD; ignored for CAD
+
+    PurchasingAddLineRequest:
+      type: object
+      description: >-
+        One PO line on create or on the lines route. An empty uom means the
+        product's base unit, resolved at insert; it is not a missing field.
+      required: [product_id, qty_ordered_base]
+      properties:
+        product_id: { type: string, format: uuid }
+        description: { type: string }
+        qty_ordered_base: { type: number }
+        uom: { type: string }
+        unit_cost_cents: { type: integer, format: int64 }
+
+    PurchasingSetExpectedDateRequest:
+      type: object
+      required: [expected_at]
+      properties:
+        expected_at:
+          type: string
+          description: The promised receiving date; the empty string clears it
+
+    PurchasingTransitionRequest:
+      type: object
+      required: [to]
+      properties:
+        to:
+          type: string
+          description: >-
+            The operator-driven targets. PARTIAL and RECEIVED are computed
+            from receipts and are never valid targets here.
+          enum: [ORDERED, CLOSED, CANCELLED]
+
+    PurchasingReceiveRequest:
+      type: object
+      required: [lines]
+      properties:
+        lines:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/PurchasingReceiveLineRequest" }
+        notes: { type: string }
+
+    PurchasingReceiveLineRequest:
+      type: object
+      required: [po_line_id, qty_base]
+      properties:
+        po_line_id: { type: string, format: uuid }
+        qty_base: { type: number }
+
+    PurchasingAttachLandedCostRequest:
+      type: object
+      description: >-
+        The freight, duty and handling invoice for one truckload. At least one
+        of the three amounts must be positive, and none may be negative.
+      required: [allocation_basis]
+      properties:
+        currency:
+          $ref: "#/components/schemas/PurchasingCurrency"
+        fx_rate: { type: number }
+        freight_cents: { type: integer, format: int64 }
+        duty_cents: { type: integer, format: int64 }
+        handling_cents: { type: integer, format: int64 }
+        allocation_basis:
+          $ref: "#/components/schemas/LandedCostBasis"
+
+    PurchasingCreateBillRequest:
+      type: object
+      required: [bill_no, po_id, lines]
+      properties:
+        bill_no:
+          type: string
+          description: The vendor's own invoice number
+        po_id:
+          type: string
+          format: uuid
+          description: A bill with no purchase order cannot be matched
+        bill_date: { type: string }
+        due_date: { type: string }
+        tax_cents:
+          type: integer
+          format: int64
+          description: In the bill's currency, converted with the rest at entry
+        lines:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/PurchasingBillLineRequest" }
+        instalments:
+          type: array
+          description: When present, the amounts must sum to the bill total
+          items: { $ref: "#/components/schemas/PurchasingInstalmentRequest" }
+        currency:
+          $ref: "#/components/schemas/PurchasingCurrency"
+        fx_rate:
+          type: number
+          description: The rate the vendor used; need not match the PO's
+
+    PurchasingBillLineRequest:
+      type: object
+      required: [description, qty_billed_base, unit_cost_cents]
+      properties:
+        po_line_id:
+          type: string
+          format: uuid
+          description: May be empty on a charge with no PO behind it
+        description: { type: string }
+        qty_billed_base: { type: number }
+        unit_cost_cents: { type: integer, format: int64 }
+
+    PurchasingInstalmentRequest:
+      type: object
+      required: [due_date, amount_cents]
+      properties:
+        due_date: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        note: { type: string }
+
+    PurchasingPostBillRequest:
+      type: object
+      properties:
+        accept_variance:
+          type: boolean
+          description: The recorded, deliberate acceptance a VARIANCE bill needs to post
+        note: { type: string }
+
+    PurchasingSetToleranceRequest:
+      type: object
+      required: [qty_tolerance_pct, price_tolerance_pct, price_tolerance_abs_cents]
+      properties:
+        branch_id:
+          type: string
+          format: uuid
+          description: Empty sets the org default
+        qty_tolerance_pct: { type: number }
+        price_tolerance_pct: { type: number }
+        price_tolerance_abs_cents: { type: integer, format: int64 }
+
+    PurchasingSetPolicyRequest:
+      type: object
+      properties:
+        branch_id:
+          type: string
+          format: uuid
+          description: Empty sets the dealer default
+        cost_visibility:
+          $ref: "#/components/schemas/PurchasingCostVisibility"
+        untagged_fallback:
+          $ref: "#/components/schemas/PurchasingUntaggedFallback"
+
+    PurchasingSendPORequest:
+      type: object
+      properties:
+        confirm_fallback:
+          type: boolean
+          description: >-
+            The operator's explicit choice to send to an untagged address;
+            required under the CONFIRM posture and recorded on the row.
+        idempotency_key:
+          type: string
+          description: A replayed send with the same key returns the first record and never sends twice
+
+    PurchasingVendorContactWrite:
+      type: object
+      description: vendor_id comes from the path; at least one of email or phone must be present
+      properties:
+        contact_name: { type: string }
+        email: { type: string }
+        phone: { type: string }
+
+    PurchasingVendorSKUWrite:
+      type: object
+      description: vendor_id comes from the path; vendor_sku and vendor_uom may not both be empty
+      required: [product_id]
+      properties:
+        product_id: { type: string, format: uuid }
+        vendor_sku: { type: string }
+        vendor_uom: { type: string }
+        qty_per_vendor_uom: { type: number }
+
+    # --- purchasing pages ------------------------------------------------------
+
+    PurchasingVendorPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PurchasingVendor" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PurchasingPOPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PurchasingPO" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PurchasingWorklistItemPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PurchasingWorklistItem" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PurchasingIncomingLinePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PurchasingIncomingLine" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PurchasingPOSendPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PurchasingPOSend" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PurchasingBillPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PurchasingBill" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    PurchasingVendorSKUPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PurchasingVendorSKU" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    # --- landed cost -----------------------------------------------------------
+
+    LandedCost:
+      type: object
+      description: >-
+        The landed-cost header. All cad figures are CAD: the conversion of the
+        document currency happens at capture, so the GL and the inventory
+        valuation only ever see CAD.
+      required: [id, po_id, po_ref, branch_id, currency, fx_rate, freight_cents, duty_cents, handling_cents, freight_cad_cents, duty_cad_cents, handling_cad_cents, allocation_basis, exclude_special_buys, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        po_id: { type: string, format: uuid }
+        po_ref: { type: string }
+        branch_id: { type: string, format: uuid }
+        currency:
+          $ref: "#/components/schemas/PurchasingCurrency"
+        fx_rate: { type: number }
+        freight_cents: { type: integer, format: int64 }
+        duty_cents: { type: integer, format: int64 }
+        handling_cents: { type: integer, format: int64 }
+        freight_cad_cents: { type: integer, format: int64 }
+        duty_cad_cents: { type: integer, format: int64 }
+        handling_cad_cents: { type: integer, format: int64 }
+        allocation_basis:
+          $ref: "#/components/schemas/LandedCostBasis"
+        exclude_special_buys:
+          type: boolean
+          description: Special buys do not absorb landed cost under the default posture
+        status:
+          $ref: "#/components/schemas/LandedCostStatus"
+        retro_of_id:
+          type: string
+          format: uuid
+          description: Set on a late-freight retro adjustment, naming the document it adjusts
+        gl_journal_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+
+    LandedCostCreateRequest:
+      type: object
+      required: [branch_id]
+      properties:
+        po_id: { type: string, format: uuid }
+        po_ref: { type: string }
+        branch_id: { type: string, format: uuid }
+        currency:
+          $ref: "#/components/schemas/PurchasingCurrency"
+        fx_rate:
+          type: number
+          description: The manual document rate; forced to 1 for CAD
+        freight_cents: { type: integer, format: int64 }
+        duty_cents: { type: integer, format: int64 }
+        handling_cents: { type: integer, format: int64 }
+        allocation_basis:
+          $ref: "#/components/schemas/LandedCostBasis"
+        exclude_special_buys:
+          type: [boolean, "null"]
+          description: Absent means the default posture (exclude)
+        retro_of_id:
+          type: string
+          format: uuid
+          description: Set to make this document a late-freight retro adjustment of an earlier one
+        on_hand:
+          type: array
+          description: The per-product still-on-hand base a retro adjustment splits on
+          items: { $ref: "#/components/schemas/LandedCostOnHandLine" }
+
+    LandedCostOnHandLine:
+      type: object
+      description: The still-on-hand base for one received product at retro time
+      required: [product_id, po_line_id, on_hand_base]
+      properties:
+        product_id: { type: string, format: uuid }
+        po_line_id: { type: string, format: uuid }
+        on_hand_base: { type: number }
+
+    LandedCostAllocation:
+      type: object
+      description: One apportioned share of a landed cost
+      required: [po_line_id, product_id, basis_weight, allocated_cad_cents, sold_through_cad_cents]
+      properties:
+        po_line_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        basis_weight: { type: number }
+        allocated_cad_cents: { type: integer, format: int64 }
+        sold_through_cad_cents: { type: integer, format: int64 }
+        pre_apply_avg_unit_cost:
+          type: integer
+          format: int64
+          description: The per-unit weighted-average cost captured before this allocation capitalized into it; void restores it verbatim
+
+    LandedCostPreviewLine:
+      type: object
+      required: [product_id, po_line_id, basis_weight, allocated_cad_cents, is_special_buy]
+      properties:
+        product_id: { type: string, format: uuid }
+        po_line_id: { type: string, format: uuid }
+        basis_weight: { type: number }
+        allocated_cad_cents: { type: integer, format: int64 }
+        is_special_buy: { type: boolean }
+
+    LandedCostAllocationPreview:
+      type: object
+      description: The live per-basis preview the allocate screen renders; nothing is persisted
+      required: [basis, total_cad_cents, lines]
+      properties:
+        basis:
+          $ref: "#/components/schemas/LandedCostBasis"
+        total_cad_cents: { type: integer, format: int64 }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/LandedCostPreviewLine" }
+
+    LandedCostDetail:
+      description: A landed cost with its allocations
+      allOf:
+        - $ref: "#/components/schemas/LandedCost"
+        - type: object
+          required: [allocations]
+          properties:
+            allocations:
+              type: array
+              items: { $ref: "#/components/schemas/LandedCostAllocation" }
+
+    LandedCostCreateResult:
+      type: object
+      required: [id, status]
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          $ref: "#/components/schemas/LandedCostStatus"
+
+    LandedCostStatusResult:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: "#/components/schemas/LandedCostStatus"
+
+    LandedCostPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/LandedCost" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }

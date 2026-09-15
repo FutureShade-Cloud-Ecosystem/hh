@@ -1,0 +1,2702 @@
+# Fragment: order + tasks (staff-order, staff-tasks).
+# Source: hardscapeos_dibbits/backend/internal/order and .../internal/tasks.
+# Guards from cmd/server/main.go: orderHandler.Register*Routes receive
+# identityHandler.RequireStaff and identityHandler.RequireManager (lines 282,
+# 287, 403, 1403); the per-route split below mirrors the requireStaff /
+# requireManager wrappers at each mux.HandleFunc call site. tasks RegisterRoutes,
+# RegisterYardRoutes and RegisterWeightRoutes all receive RequireStaff only
+# (lines 580, 859, 1057).
+
+paths:
+  # --- order: lifecycle read and transitions --------------------------------
+  /api/v1/orders/{id}:
+    get:
+      operationId: orderRead
+      tags: [staff-order]
+      summary: Read one order with this caller's legal actions and editable fields
+      description: >-
+        The staff lifecycle read (OrderView): current status, the manual
+        actions this caller may take right now (legal_actions, computed from
+        the forward-only matrix), the fields this caller may edit, and the
+        order's lines and money. The id path segment also accepts the visible
+        order number, resolved within the caller's branch scope.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      responses:
+        "200":
+          description: The order view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderView"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: orderEditHeader
+      tags: [staff-order]
+      summary: Edit the order header (requested_date is the only editable field)
+      description: >-
+        Applies an order-header edit. requested_date is the only editable
+        field; an explicit empty string clears the date. The service
+        re-checks the edit matrix on the resolved caller.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderHeaderEditRequest"
+      responses:
+        "200":
+          description: The edit result with recomputed order money
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderEditResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/orders/{id}/confirm:
+    post:
+      operationId: orderConfirm
+      tags: [staff-order]
+      summary: Move a DRAFT order to CONFIRMED
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      responses:
+        "200":
+          description: The transition result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderTransitionResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/orders/{id}/picking:
+    post:
+      operationId: orderMarkPicking
+      tags: [staff-order]
+      summary: Move a CONFIRMED order to PICKING
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      responses:
+        "200":
+          description: The transition result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderTransitionResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/orders/{id}/ready:
+    post:
+      operationId: orderMarkReady
+      tags: [staff-order]
+      summary: Move a PICKING order to READY
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      responses:
+        "200":
+          description: The transition result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderTransitionResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/orders/{id}/cancel:
+    post:
+      operationId: orderCancel
+      tags: [staff-order]
+      summary: Cancel an open order (manager only, reason required)
+      description: >-
+        Applies the CANCELLED transition from DRAFT, CONFIRMED, PICKING or
+        READY. The service proves no finalized invoice or committed counter
+        sale is attached, under the order row lock; a money-attached order
+        answers 409 and belongs to the POS returns flow.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderCancelRequest"
+      responses:
+        "200":
+          description: The transition result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderTransitionResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --- order: line edits and the edits trail ---------------------------------
+  /api/v1/orders/{id}/lines:
+    post:
+      operationId: orderAddLine
+      tags: [staff-order]
+      summary: Add a line to an editable order (manager only)
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderLineAddRequest"
+      responses:
+        "200":
+          description: The edit result with the new line and recomputed money
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderEditResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/orders/{id}/lines/{lineNo}:
+    patch:
+      operationId: orderEditLineQty
+      tags: [staff-order]
+      summary: Change the entered quantity on one line (manager only)
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+        - name: lineNo
+          in: path
+          required: true
+          description: The order_lines line number, a positive integer within the order
+          schema: { type: integer, format: int32, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderLineQtyEditRequest"
+      responses:
+        "200":
+          description: The edit result with the repriced line and recomputed money
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderEditResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      operationId: orderRemoveLine
+      tags: [staff-order]
+      summary: Remove one line from an editable order (manager only)
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+        - name: lineNo
+          in: path
+          required: true
+          description: The order_lines line number, a positive integer within the order
+          schema: { type: integer, format: int32, minimum: 1 }
+      responses:
+        "200":
+          description: The edit result (no line) with recomputed money
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderEditResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/orders/{id}/edits:
+    get:
+      operationId: orderEditHistory
+      tags: [staff-order]
+      summary: Read the column-level edit trail for one order
+      description: >-
+        Reconstructed from the append-only audit trail (ORDER_CHANGED rows),
+        oldest first. request_id groups the rows one edit emitted.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      responses:
+        "200":
+          description: The ordered field-change history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderEditHistory"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- order: status history, activity, notes --------------------------------
+  /api/v1/orders/{id}/history:
+    get:
+      operationId: orderHistory
+      tags: [staff-order]
+      summary: Read the ordered status timeline for one order
+      description: >-
+        Reconstructed from the append-only audit trail (ORDER_STATUS_CHANGED
+        rows), oldest first, with actor display names resolved server-side.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      responses:
+        "200":
+          description: The ordered status timeline
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderHistory"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/orders/{id}/activity:
+    get:
+      operationId: orderGetActivity
+      tags: [staff-order]
+      summary: Read the merged activity stream for one order, newest first
+      description: >-
+        Merges the audit spine (status changes, edits, counter-sale
+        completions), the order's immediate documents (invoices raised,
+        payments applied) and the human notes into one normalized list.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      responses:
+        "200":
+          description: The merged activity, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderActivity"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/orders/{id}/notes:
+    post:
+      operationId: orderAddNote
+      tags: [staff-order]
+      summary: Record a human note on the order
+      description: >-
+        The author is the resolved session caller, never client-supplied.
+        idempotency_key is a one-time client key; a retried save returns the
+        note the first attempt wrote with replayed set, answered 200 instead
+        of 201.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderNoteCreateRequest"
+      responses:
+        "201":
+          description: The recorded note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderNote"
+        "200":
+          description: The note already existed under this idempotency key (replayed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderNote"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/orders/{id}/notes/{noteId}:
+    patch:
+      operationId: orderEditNote
+      tags: [staff-order]
+      summary: Correct a note's text (and optionally its channel)
+      description: >-
+        Stamps edited-by from the session caller and edited-at server-side.
+        Any active in-branch staff member may correct a note.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+        - name: noteId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderNoteEditRequest"
+      responses:
+        "200":
+          description: The corrected note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderNote"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- order: reservations ----------------------------------------------------
+  /api/v1/orders/{id}/reservations:
+    get:
+      operationId: orderGetReservations
+      tags: [staff-order]
+      summary: Read the active stock holds this order owns
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      responses:
+        "200":
+          description: The order's active holds with the summed held base quantity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderReservationsResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/orders/{id}/reservations/resync:
+    post:
+      operationId: orderResyncReservations
+      tags: [staff-order]
+      summary: Release this order's holds and re-reserve from its current lines (manager only)
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      responses:
+        "200":
+          description: The number of reservations applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResyncResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- order: change orders ---------------------------------------------------
+  /api/v1/orders/{id}/changes:
+    get:
+      operationId: orderListChanges
+      tags: [staff-order]
+      summary: List an order's change requests, newest first
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      responses:
+        "200":
+          description: The order's change requests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderChangesResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: orderRaiseChange
+      tags: [staff-order]
+      summary: Raise a post-pick change request against an order
+      description: >-
+        Only an order whose pick has started takes a change order; earlier
+        line work uses the line-edit endpoints. The delta is priced once, at
+        request time, through the server-side pricing seam. One open request
+        per order; a second raise answers 409.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderChangeRaiseRequest"
+      responses:
+        "201":
+          description: The raised change request, in PENDING_YARD
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderChange"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/order-changes/{changeId}:
+    get:
+      operationId: orderGetChange
+      tags: [staff-order]
+      summary: Read one change request with its priced delta
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: changeId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The change request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderChange"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/order-changes/{changeId}/yard-ack:
+    post:
+      operationId: orderChangeYardAck
+      tags: [staff-order]
+      summary: Record the yard's acknowledgement of a change request
+      description: >-
+        Open to any active in-branch staff member by design: the person
+        holding the goods answers whether the change is still doable. Moves
+        the request to APPROVED for an immaterial delta, PENDING_FINANCE for
+        a material one.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: changeId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderChangeNoteRequest"
+      responses:
+        "200":
+          description: The change request after the acknowledgement
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderChange"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/order-changes/{changeId}/finance-approve:
+    post:
+      operationId: orderChangeFinanceApprove
+      tags: [staff-order]
+      summary: Record the finance signature on a material change (manager plus named approver)
+      description: >-
+        Two gates: the manager identity gate, then the approvals substrate's
+        named-approver check for this branch (policy
+        ORDER_CHANGE_OVER_THRESHOLD), which can only narrow. An unconfigured
+        branch fails open: any manager may sign.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: changeId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderChangeNoteRequest"
+      responses:
+        "200":
+          description: The change request after the finance signature
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderChange"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/order-changes/{changeId}/reject:
+    post:
+      operationId: orderChangeReject
+      tags: [staff-order]
+      summary: Reject a live change request
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: changeId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderChangeNoteRequest"
+      responses:
+        "200":
+          description: The rejected change request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderChange"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/order-changes/{changeId}/cancel:
+    post:
+      operationId: orderChangeCancel
+      tags: [staff-order]
+      summary: Withdraw a live change request
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: changeId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderChangeNoteRequest"
+      responses:
+        "200":
+          description: The withdrawn change request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderChange"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/order-changes/{changeId}/apply:
+    post:
+      operationId: orderChangeApply
+      tags: [staff-order]
+      summary: Apply an APPROVED change onto the order (manager only)
+      description: >-
+        Atomic and re-entrant: one transaction writes the line mutations,
+        recomputes totals from the lines, releases and re-reserves the
+        order's holds, and flips the request to APPLIED. A second apply finds
+        the request no longer APPROVED and answers 409.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: changeId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The applied change request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderChange"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --- order: shipment groups (multi-ship) ------------------------------------
+  /api/v1/orders/{id}/shipments:
+    get:
+      operationId: orderGetShipmentPlan
+      tags: [staff-order]
+      summary: Read an order's multi-ship view (groups, coverage, invoicing readiness)
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      responses:
+        "200":
+          description: The shipment plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderShipmentPlan"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: orderPlanShipments
+      tags: [staff-order]
+      summary: Replace an order's shipment plan in one transaction
+      description: >-
+        A plan is a partition and is only meaningful whole: for every line,
+        the group quantities must sum to the line's qty_base. Groups already
+        DISPATCHED are preserved verbatim and may not be re-planned. An
+        incomplete partition answers 409 naming the offending lines.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderShipmentPlanRequest"
+      responses:
+        "200":
+          description: The stored shipment plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderShipmentPlan"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/orders/{id}/shipments/invoice-policy:
+    post:
+      operationId: orderSetInvoicePolicy
+      tags: [staff-order]
+      summary: Set the per-order multi-ship invoicing policy (manager only)
+      description: >-
+        Reversible while no invoice has been raised against the order and
+        frozen after; a frozen policy answers 409.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderInvoicePolicyRequest"
+      responses:
+        "200":
+          description: The shipment plan with the new policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderShipmentPlan"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/orders/{id}/shipments/invoice:
+    post:
+      operationId: orderInvoiceShipments
+      tags: [staff-order]
+      summary: Raise the invoice the readiness decision permits (manager only)
+      description: >-
+        Bills the COMPLETE and not-yet-invoiced groups under the order's
+        policy. When no invoice writer is bound the route answers 503 with
+        the readiness payload, so the surface shows what would be invoiced.
+        A not-ready decision answers 409 with the reason.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      responses:
+        "201":
+          description: The raised invoice id and number, with the readiness decision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderShipmentInvoiceResult"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503":
+          description: No invoice writer is bound; the body still carries the readiness decision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderShipmentInvoiceUnavailable"
+  /api/v1/shipment-groups/{groupId}/status:
+    post:
+      operationId: orderTransitionShipmentGroup
+      tags: [staff-order]
+      summary: Move one shipment group along its forward-only ladder
+      description: >-
+        Legal targets come from the group's current status (PLANNED, PICKING,
+        READY, DISPATCHED, COMPLETE, with CANCELLED reachable from any live
+        state). A group's status is independent of the order's.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderGroupStatusRequest"
+      responses:
+        "200":
+          description: The group after the transition, with its remaining legal actions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderShipmentGroup"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --- order: duplicate detection and creation --------------------------------
+  /api/v1/orders/{id}/duplicate-preview:
+    get:
+      operationId: orderDuplicatePreview
+      tags: [staff-order]
+      summary: Grade every line of the order for duplication (current price and availability)
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      responses:
+        "200":
+          description: The per-line duplication preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderDuplicatePreview"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/orders/{id}/duplicate:
+    post:
+      operationId: orderDuplicateCreate
+      tags: [staff-order]
+      summary: Create a DRAFT order from selected lines of this order
+      description: >-
+        idempotency_key is required and client-generated; a retried submit
+        returns the draft the first attempt created. Lines that cannot be
+        duplicated as selected answer 409 with per-line reasons.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderDuplicateRequest"
+      responses:
+        "201":
+          description: The created DRAFT order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderDuplicateResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/orders/{id}/duplicate-check:
+    get:
+      operationId: orderDuplicateCheck
+      tags: [staff-order]
+      summary: List recent orders that materially overlap this order's lines
+      description: >-
+        Candidates share at least half of this order's distinct catalogue
+        products. An empty candidates list is the ordinary outcome, not an
+        error. window_hours lets the client word the warning from the
+        server's actual setting.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          description: Order id, or the visible order number; resolved within the caller's branch scope
+          schema: { type: string }
+      responses:
+        "200":
+          description: The duplicate-check answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderDuplicateCheck"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- tasks: the operational task queue --------------------------------------
+  /api/v1/tasks:
+    post:
+      operationId: tasksCreate
+      tags: [staff-tasks]
+      summary: Create a task from an order (v1 always produces a PICK task at QUEUED)
+      description: >-
+        created_by is the resolved staff caller, never client-supplied. An
+        unknown order id answers 422.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskCreateRequest"
+      responses:
+        "201":
+          description: The created task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: The referenced order does not exist
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    get:
+      operationId: tasksList
+      tags: [staff-tasks]
+      summary: List the picking queue, filtered by status and branch
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          description: Filter to one lifecycle state; omitted lists every state
+          schema:
+            type: string
+            enum: [QUEUED, PUSHED, ACCEPTED, IN_PROGRESS, STAGED, DONE, CANCELLED]
+        - name: branch_id
+          in: query
+          required: false
+          description: Filter to one branch; omitted widens the filter
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of tasks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/tasks/{id}/claim:
+    post:
+      operationId: tasksClaim
+      tags: [staff-tasks]
+      summary: Claim a QUEUED or PUSHED task (moves it to ACCEPTED)
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The task after the claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/tasks/{id}/accept:
+    post:
+      operationId: tasksAccept
+      tags: [staff-tasks]
+      summary: Accept a claimed task (moves it to IN_PROGRESS)
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The task after the accept
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/tasks/{id}/done:
+    post:
+      operationId: tasksDone
+      tags: [staff-tasks]
+      summary: Complete a task (moves it to DONE)
+      description: >-
+        photo_url is optional completion proof. Completing a task does not
+        advance the underlying order's status unless the per-type advance
+        rule (GET /api/v1/yard/advance-rules/{taskType}) is enabled.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskDoneRequest"
+      responses:
+        "200":
+          description: The completed task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/tasks/{id}/cancel:
+    post:
+      operationId: tasksCancel
+      tags: [staff-tasks]
+      summary: Cancel a non-terminal task
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskCancelRequest"
+      responses:
+        "200":
+          description: The cancelled task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --- tasks: the yard surface -------------------------------------------------
+  /api/v1/yard/pick-queue:
+    get:
+      operationId: yardListPickQueue
+      tags: [staff-tasks]
+      summary: Read the yard board (tasks joined to their tickets and open shortages)
+      x-role: requireStaff
+      x-guards: [yardBranchFence]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          description: Filter to one lifecycle state; omitted lists every state
+          schema:
+            type: string
+            enum: [QUEUED, PUSHED, ACCEPTED, IN_PROGRESS, STAGED, DONE, CANCELLED]
+        - name: branch_id
+          in: query
+          required: false
+          description: >-
+            Filter to one branch. A branch-scoped caller must name a branch
+            they can reach; only a global caller may omit it.
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of yard board entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskPickQueuePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/yard/pending-tickets:
+    get:
+      operationId: yardListPendingTickets
+      tags: [staff-tasks]
+      summary: Read the raw pick-ticket feed not yet queued as tasks
+      x-role: requireStaff
+      x-guards: [yardBranchFence]
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: branch_id
+          in: query
+          required: false
+          description: >-
+            Filter to one branch. A branch-scoped caller must name a branch
+            they can reach; only a global caller may omit it.
+          schema: { type: string }
+      responses:
+        "200":
+          description: The page of pending tickets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskPendingTicketPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/yard/picks/{id}:
+    get:
+      operationId: yardGetPick
+      tags: [staff-tasks]
+      summary: Read one pick (task, ticket, full shortage history and recorded pick)
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The pick detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskPickQueueEntry"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/yard/picks/{id}/stage:
+    post:
+      operationId: yardStagePick
+      tags: [staff-tasks]
+      summary: Stage an in-progress pick (moves it to STAGED)
+      description: A blank ref is derived server-side; note may be blank.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskStageRequest"
+      responses:
+        "200":
+          description: The staged task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/yard/picks/{id}/lines:
+    put:
+      operationId: yardRecordPick
+      tags: [staff-tasks]
+      summary: Record what the yard actually pulled, per line (replaces the recorded pick)
+      description: >-
+        PUT replaces the whole recorded pick with what is sent; the schema
+        uniqueness on (task, order line) says the same thing in the database.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskRecordPickRequest"
+      responses:
+        "200":
+          description: The recorded pick lines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskRecordPickResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/yard/picks/{id}/shortages:
+    post:
+      operationId: yardReportShortage
+      tags: [staff-tasks]
+      summary: Report a shortage on a pick
+      description: reported_by is the resolved staff caller, never client-supplied.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskShortageRequest"
+      responses:
+        "201":
+          description: The recorded shortage
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskShortage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/yard/picks/{id}/shortages/{sid}/resolve:
+    post:
+      operationId: yardResolveShortage
+      tags: [staff-tasks]
+      summary: Resolve one shortage with a stated resolution
+      description: >-
+        The resolution text is required. Resolving an already-resolved
+        shortage answers 409.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: sid
+          in: path
+          required: true
+          description: The shortage id
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskShortageResolveRequest"
+      responses:
+        "200":
+          description: The resolved shortage
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskShortage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/yard/picks/{id}/weight:
+    post:
+      operationId: yardSubmitWeight
+      tags: [staff-tasks]
+      summary: Submit the measured weight for a NEED_WEIGHT task
+      description: >-
+        The weight is recorded even when the order line refuses it: the
+        refusal travels in the body (order_synced, order_error) and the route
+        still answers 200. A unit mismatch against the requested unit answers
+        400; a task that is not a weight request answers 409.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskWeightSubmitBody"
+      responses:
+        "200":
+          description: The recorded weight with the order-sync outcome
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskWeightResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/yard/weight-requests:
+    post:
+      operationId: yardRequestWeight
+      tags: [staff-tasks]
+      summary: Push a weight request for an order line to the yard
+      description: >-
+        Creates a NEED_WEIGHT task; requested_by is the resolved staff
+        caller. An unknown order id answers 422.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskWeightRequestBody"
+      responses:
+        "201":
+          description: The created NEED_WEIGHT task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: The referenced order does not exist
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/yard/advance-rules/{taskType}:
+    get:
+      operationId: yardGetAdvanceRule
+      tags: [staff-tasks]
+      summary: Read the order-advance ruling for one task type
+      description: >-
+        Read-only over HTTP on purpose: enabling a rule moves orders toward
+        invoicing and is a deliberate write against the database, not a
+        settings toggle.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: taskType
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [PICK, DISPATCH, NEED_WEIGHT, OTHER]
+      responses:
+        "200":
+          description: The advance rule for the task type
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskAdvanceRule"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+components:
+  schemas:
+    # --- order: resource and lifecycle ---------------------------------------
+    Order:
+      type: object
+      description: >-
+        The list/summary view of an orders row (the ERP field set; no tenant
+        alias columns on the staff resource).
+      required:
+        - id
+        - order_no
+        - customer_id
+        - quote_id
+        - status
+        - fulfillment
+        - requested_date
+        - subtotal_cents
+        - tax_cents
+        - total_cents
+        - created_at
+      properties:
+        id: { type: string, format: uuid }
+        order_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        quote_id:
+          type: string
+          description: Empty when the order is not quote-originated
+        status:
+          type: string
+          enum: [DRAFT, CONFIRMED, PICKING, READY, PARTIALLY_FULFILLED, FULFILLED, INVOICED, CLOSED, CANCELLED]
+        fulfillment:
+          type: string
+          enum: [PICKUP, DELIVERY, WILL_CALL]
+        requested_date: { type: string, format: date-time }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+
+    OrderLine:
+      type: object
+      description: >-
+        One order_lines row, including allocation and fulfillment progress.
+        Quantities are DECIMAL carried as strings.
+      required:
+        - line_no
+        - product_id
+        - description
+        - qty_entered
+        - uom_entered
+        - qty_base
+        - allocated_base
+        - fulfilled_base
+        - unit_price_cents
+        - line_total_cents
+      properties:
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string }
+        description: { type: string }
+        qty_entered:
+          type: string
+          description: DECIMAL as string
+        uom_entered: { type: string }
+        qty_base:
+          type: string
+          description: DECIMAL as string
+        allocated_base:
+          type: string
+          description: DECIMAL as string
+        fulfilled_base:
+          type: string
+          description: DECIMAL as string
+        unit_price_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64 }
+
+    OrderViewLine:
+      type: object
+      description: >-
+        One line as the staff order surface renders it: the quantity trio,
+        the money, and the allocated/fulfilled progress that decides whether
+        the line may still be cut or removed.
+      required:
+        - line_no
+        - product_id
+        - description
+        - qty_entered
+        - uom_entered
+        - qty_base
+        - allocated_base
+        - fulfilled_base
+        - unit_price_cents
+        - line_total_cents
+      properties:
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string }
+        description: { type: string }
+        qty_entered:
+          type: string
+          description: DECIMAL as string
+        uom_entered: { type: string }
+        qty_base:
+          type: string
+          description: DECIMAL as string
+        allocated_base:
+          type: string
+          description: DECIMAL as string
+        fulfilled_base:
+          type: string
+          description: DECIMAL as string
+        unit_price_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64 }
+
+    OrderView:
+      type: object
+      description: >-
+        The staff order read: current status plus the manual actions and
+        editable fields THIS caller has right now, computed server-side from
+        the same matrices the write path enforces, plus lines and money.
+      required:
+        - id
+        - status
+        - branch_id
+        - legal_actions
+        - editable_fields
+        - lines
+        - subtotal_cents
+        - tax_cents
+        - total_cents
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [DRAFT, CONFIRMED, PICKING, READY, PARTIALLY_FULFILLED, FULFILLED, INVOICED, CLOSED, CANCELLED]
+        branch_id: { type: string }
+        legal_actions:
+          type: array
+          description: The manual moves this caller may take now, named by their target status
+          items:
+            type: string
+            enum: [CONFIRMED, PICKING, READY, CANCELLED]
+        editable_fields:
+          type: array
+          description: The edit commands this caller may apply now
+          items:
+            type: string
+            enum: [line_qty, line_add, line_remove, requested_date]
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/OrderViewLine" }
+        subtotal_cents: { type: integer, format: int64 }
+        tax_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+
+    OrderTransitionResult:
+      type: object
+      required: [order_id, status]
+      properties:
+        order_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [DRAFT, CONFIRMED, PICKING, READY, PARTIALLY_FULFILLED, FULFILLED, INVOICED, CLOSED, CANCELLED]
+
+    OrderCancelRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          description: The cancellation reason; blank is refused
+
+    # --- order: header and line edits ----------------------------------------
+    OrderHeaderEditRequest:
+      type: object
+      description: requested_date is the only editable order field; an explicit empty string clears it
+      required: [requested_date]
+      properties:
+        requested_date: { type: string }
+
+    OrderLineQtyEditRequest:
+      type: object
+      required: [qty_entered]
+      properties:
+        qty_entered:
+          type: string
+          description: The new entered quantity, DECIMAL as string
+
+    OrderLineAddRequest:
+      type: object
+      required: [product_id, qty_entered, uom_entered]
+      properties:
+        product_id: { type: string, format: uuid }
+        qty_entered:
+          type: string
+          description: DECIMAL as string
+        uom_entered: { type: string }
+        description:
+          type: string
+          description: Optional free-text line description, bounded server-side
+
+    OrderEditResultLine:
+      type: object
+      required: [line_no, product_id, qty_entered, qty_base, unit_price_cents, line_total_cents]
+      properties:
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string }
+        qty_entered:
+          type: string
+          description: DECIMAL as string
+        qty_base:
+          type: string
+          description: DECIMAL as string
+        unit_price_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64 }
+
+    OrderEditResult:
+      type: object
+      description: >-
+        A successful edit: the resulting line (absent on a removal), the
+        recomputed order money and the order's status at the moment the write
+        landed, so the client re-renders from the server's arithmetic.
+      required: [order_id, status, subtotal_cents, total_cents]
+      properties:
+        order_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [DRAFT, CONFIRMED, PICKING, READY, PARTIALLY_FULFILLED, FULFILLED, INVOICED, CLOSED, CANCELLED]
+        subtotal_cents: { type: integer, format: int64 }
+        total_cents: { type: integer, format: int64 }
+        line:
+          $ref: "#/components/schemas/OrderEditResultLine"
+
+    # --- order: status history and edits trail --------------------------------
+    OrderStatusChange:
+      type: object
+      description: One status transition on an order, with attribution
+      required: [from_status, to_status, occurred_at]
+      properties:
+        from_status:
+          type: string
+          description: The status transitioned from; empty at the first transition
+        to_status: { type: string }
+        actor_id:
+          type: string
+          description: Empty for a system transition
+        actor_name:
+          type: string
+          description: Staff display name; empty for a portal or customer actor
+        reason:
+          type: string
+          description: Optional short reason recorded on the transition
+        occurred_at: { type: string, format: date-time }
+
+    OrderHistory:
+      type: object
+      description: One order's ordered status timeline, oldest first
+      required: [order_id, changes]
+      properties:
+        order_id: { type: string, format: uuid }
+        changes:
+          type: array
+          items: { $ref: "#/components/schemas/OrderStatusChange" }
+
+    OrderFieldChange:
+      type: object
+      description: One column-level edit on an order, with attribution
+      required: [field, line_no, occurred_at]
+      properties:
+        field:
+          type: string
+          description: The order or order_lines column that moved
+        line_no:
+          type: integer
+          format: int32
+          description: The line it moved on; zero for an order-header field
+        before:
+          type: string
+          description: Pre-image; empty for a creation
+        after:
+          type: string
+          description: Post-image; empty for a removal
+        actor_id: { type: string }
+        actor_name:
+          type: string
+          description: Staff display name when the actor is staff
+        request_id:
+          type: string
+          description: Groups the rows one edit emitted
+        occurred_at: { type: string, format: date-time }
+
+    OrderEditHistory:
+      type: object
+      description: One order's ordered column-level change history, oldest first
+      required: [order_id, changes]
+      properties:
+        order_id: { type: string, format: uuid }
+        changes:
+          type: array
+          items: { $ref: "#/components/schemas/OrderFieldChange" }
+
+    # --- order: activity and notes --------------------------------------------
+    OrderActivityRow:
+      type: object
+      description: >-
+        One normalized activity entry: when, who, and a short human summary.
+        Kind note rows additionally carry the note fields.
+      required: [id, kind, occurred_at, summary]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          enum: [event, note]
+        occurred_at: { type: string, format: date-time }
+        actor_id: { type: string }
+        actor_name:
+          type: string
+          description: Empty for a system or portal actor
+        summary: { type: string }
+        channel:
+          type: string
+          enum: [PHONE, EMAIL, IN_PERSON, OTHER]
+        body: { type: string }
+        edited_by_name: { type: string }
+        edited_at:
+          type: [string, "null"]
+          format: date-time
+
+    OrderActivity:
+      type: object
+      description: One order's merged activity, newest first
+      required: [order_id, rows]
+      properties:
+        order_id: { type: string, format: uuid }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/OrderActivityRow" }
+
+    OrderNote:
+      type: object
+      description: One persisted human note, with display names resolved
+      required: [id, order_id, channel, body, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        author_id: { type: string }
+        author_name: { type: string }
+        channel:
+          type: string
+          enum: [PHONE, EMAIL, IN_PERSON, OTHER]
+        body: { type: string }
+        edited_by: { type: string }
+        edited_by_name: { type: string }
+        edited_at:
+          type: [string, "null"]
+          format: date-time
+        created_at: { type: string, format: date-time }
+        replayed:
+          type: boolean
+          description: Set when an idempotent replay returned the existing note
+
+    OrderNoteCreateRequest:
+      type: object
+      required: [channel, body, idempotency_key]
+      properties:
+        channel:
+          type: string
+          description: >-
+            How the conversation happened; reasonable spellings fold onto the
+            vocabulary (phone, in-person and in_person all land on the enum)
+          enum: [PHONE, EMAIL, IN_PERSON, OTHER]
+        body: { type: string }
+        idempotency_key:
+          type: string
+          description: One-time client key; a retried save converges on the note already written
+
+    OrderNoteEditRequest:
+      type: object
+      required: [body]
+      properties:
+        channel:
+          type: string
+          enum: [PHONE, EMAIL, IN_PERSON, OTHER]
+        body: { type: string }
+
+    # --- order: reservations ---------------------------------------------------
+    OrderHold:
+      type: object
+      description: One active stock hold raised by this order
+      required:
+        - reservation_id
+        - product_id
+        - product_name
+        - sku
+        - branch_id
+        - hold_mode
+        - qty_base
+        - status
+        - created_at
+      properties:
+        reservation_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        product_name: { type: string }
+        sku: { type: string }
+        branch_id: { type: string }
+        hold_mode: { type: string }
+        qty_base: { type: number }
+        status: { type: string }
+        created_at: { type: string }
+
+    OrderReservationsResponse:
+      type: object
+      required: [order_id, status, seam_wired, reservations, held_base]
+      properties:
+        order_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [DRAFT, CONFIRMED, PICKING, READY, PARTIALLY_FULFILLED, FULFILLED, INVOICED, CLOSED, CANCELLED]
+        seam_wired:
+          type: boolean
+          description: Whether the stock reservation seam is bound on this server
+        reservations:
+          type: array
+          items: { $ref: "#/components/schemas/OrderHold" }
+        held_base:
+          type: number
+          description: The summed held base quantity across the active holds
+
+    OrderResyncResult:
+      type: object
+      required: [order_id, reservations_applied]
+      properties:
+        order_id: { type: string, format: uuid }
+        reservations_applied: { type: integer, format: int32 }
+
+    # --- order: change orders --------------------------------------------------
+    OrderChangeLineInput:
+      type: object
+      description: >-
+        One requested delta as the caller states it. line_no is required for
+        QTY and REMOVE; product_id, qty_entered and uom_entered are required
+        for ADD (enforced server-side).
+      required: [op]
+      properties:
+        op:
+          type: string
+          enum: [ADD, QTY, REMOVE]
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string, format: uuid }
+        qty_entered:
+          type: string
+          description: The target quantity for ADD and QTY, DECIMAL as string
+        uom_entered: { type: string }
+        description: { type: string }
+
+    OrderChangeRaiseRequest:
+      type: object
+      required: [lines]
+      properties:
+        reason: { type: string }
+        lines:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/OrderChangeLineInput" }
+
+    OrderChangeLine:
+      type: object
+      description: One persisted, priced delta row
+      required:
+        - seq
+        - op
+        - description
+        - qty_base_before
+        - qty_base_after
+        - qty_delta_base
+        - unit_price_cents
+        - line_delta_cents
+      properties:
+        seq: { type: integer, format: int32 }
+        op:
+          type: string
+          enum: [ADD, QTY, REMOVE]
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string }
+        product_name: { type: string }
+        description: { type: string }
+        qty_entered_new:
+          type: string
+          description: DECIMAL as string
+        uom_entered: { type: string }
+        qty_base_before: { type: number }
+        qty_base_after: { type: number }
+        qty_delta_base: { type: number }
+        unit_price_cents: { type: integer, format: int64 }
+        price_uom: { type: string }
+        line_delta_cents: { type: integer, format: int64 }
+
+    OrderChange:
+      type: object
+      description: >-
+        One post-pick change request with its priced delta. The ladder is
+        PENDING_YARD to PENDING_FINANCE (material deltas) to APPROVED to
+        APPLIED, with REJECTED and CANCELLED reachable from any live state.
+        next_actions is what this caller may do to the change right now,
+        computed server-side.
+      required:
+        - id
+        - order_id
+        - branch_id
+        - change_no
+        - status
+        - reason
+        - delta_cents
+        - finance_threshold_cents
+        - finance_required
+        - order_status_at_request
+        - pick_started_at_request
+        - requested_at
+        - lines
+        - next_actions
+      properties:
+        id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        branch_id: { type: string }
+        change_no: { type: string }
+        status:
+          type: string
+          enum: [PENDING_YARD, PENDING_FINANCE, APPROVED, APPLIED, REJECTED, CANCELLED]
+        reason: { type: string }
+        delta_cents: { type: integer, format: int64 }
+        finance_threshold_cents: { type: integer, format: int64 }
+        finance_required:
+          type: boolean
+          description: True when the absolute delta meets the threshold; removals grade the same as additions
+        order_status_at_request:
+          type: string
+          enum: [DRAFT, CONFIRMED, PICKING, READY, PARTIALLY_FULFILLED, FULFILLED, INVOICED, CLOSED, CANCELLED]
+        pick_started_at_request: { type: boolean }
+        requested_by: { type: string }
+        requested_at: { type: string }
+        yard_acked_by: { type: string }
+        yard_acked_at: { type: string }
+        yard_ack_note: { type: string }
+        yard_task_id: { type: string }
+        finance_approved_by: { type: string }
+        finance_approved_at: { type: string }
+        finance_note: { type: string }
+        decision_note: { type: string }
+        applied_at: { type: string }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/OrderChangeLine" }
+        next_actions:
+          type: array
+          items:
+            type: string
+            enum: [yard_ack, finance_approve, apply, reject, cancel]
+
+    OrderChangesResponse:
+      type: object
+      required: [changes]
+      properties:
+        changes:
+          type: array
+          items: { $ref: "#/components/schemas/OrderChange" }
+
+    OrderChangeNoteRequest:
+      type: object
+      description: The optional note every change-decision endpoint accepts
+      properties:
+        note: { type: string }
+
+    # --- order: shipment groups ------------------------------------------------
+    OrderShipmentGroupLineInput:
+      type: object
+      description: One line's share of a group in a submitted plan; qty_base must be positive
+      required: [line_no, qty_base]
+      properties:
+        line_no: { type: integer, format: int32 }
+        qty_base: { type: number }
+
+    OrderShipmentGroupInput:
+      type: object
+      required: [label, lines]
+      properties:
+        label: { type: string }
+        requested_date: { type: string }
+        lines:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/OrderShipmentGroupLineInput" }
+
+    OrderShipmentPlanRequest:
+      type: object
+      description: The whole replacement plan; every order line covered exactly once
+      required: [groups]
+      properties:
+        groups:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/OrderShipmentGroupInput" }
+
+    OrderShipmentGroupLine:
+      type: object
+      description: One persisted group line, decorated for the surface
+      required:
+        - line_no
+        - order_line_id
+        - product_id
+        - description
+        - qty_base
+        - order_qty_base
+        - fulfilled_base
+        - unit_price_cents
+        - share_cents
+      properties:
+        line_no: { type: integer, format: int32 }
+        order_line_id: { type: string, format: uuid }
+        product_id: { type: string }
+        description: { type: string }
+        qty_base: { type: number }
+        order_qty_base: { type: number }
+        fulfilled_base: { type: number }
+        unit_price_cents: { type: integer, format: int64 }
+        share_cents:
+          type: integer
+          format: int64
+          description: This group's pro-rated share of the line's money
+
+    OrderShipmentGroup:
+      type: object
+      description: >-
+        One shipment group with its lines. invoice_id/invoice_no record which
+        document billed the group; invoiced is the fact the readiness rules
+        turn on.
+      required:
+        - id
+        - order_id
+        - group_no
+        - label
+        - status
+        - lines
+        - subtotal_cents
+        - legal_actions
+        - invoiced
+      properties:
+        id: { type: string, format: uuid }
+        order_id: { type: string, format: uuid }
+        group_no: { type: integer, format: int32 }
+        label: { type: string }
+        status:
+          type: string
+          enum: [PLANNED, PICKING, READY, DISPATCHED, COMPLETE, CANCELLED]
+        requested_date: { type: string }
+        delivery_stop_id: { type: string }
+        dispatched_at: { type: string }
+        completed_at: { type: string }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/OrderShipmentGroupLine" }
+        subtotal_cents:
+          type: integer
+          format: int64
+          description: The sum of the group's line shares
+        legal_actions:
+          type: array
+          description: The ladder moves legal from the current status
+          items:
+            type: string
+            enum: [PICKING, READY, DISPATCHED, COMPLETE, CANCELLED]
+        invoice_id: { type: string }
+        invoice_no: { type: string }
+        invoiced: { type: boolean }
+
+    OrderShipmentCoverage:
+      type: object
+      description: One order line's coverage fact under the submitted plan
+      required: [line_no, order_qty_base, planned_base, covered]
+      properties:
+        line_no: { type: integer, format: int32 }
+        order_qty_base: { type: number }
+        planned_base: { type: number }
+        covered: { type: boolean }
+
+    OrderInvoiceReadiness:
+      type: object
+      description: The multi-ship invoicing decision, computed and published rather than acted on
+      required:
+        - policy
+        - groups_total
+        - groups_complete
+        - groups_invoiced
+        - invoiceable_cents
+        - ready
+        - writer_bound
+      properties:
+        policy:
+          type: string
+          enum: [ON_ALL_COMPLETE, ON_DEMAND_SUBSET]
+        groups_total:
+          type: integer
+          format: int32
+          description: Live groups; cancelled groups are not part of the plan
+        groups_complete: { type: integer, format: int32 }
+        groups_invoiced:
+          type: integer
+          format: int32
+          description: Live groups already carrying a document; a group is billed at most once
+        invoiceable_cents:
+          type: integer
+          format: int64
+          description: The complete, not-yet-billed money that may be invoiced right now
+        ready: { type: boolean }
+        reason:
+          type: string
+          description: A human sentence for the surface when ready is false
+        writer_bound:
+          type: boolean
+          description: Whether an invoice writer is actually available
+
+    OrderShipmentPlan:
+      type: object
+      description: The whole multi-ship view of one order
+      required: [order_id, order_no, invoice_policy, policy_frozen, groups, coverage, readiness]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        invoice_policy:
+          type: string
+          enum: [ON_ALL_COMPLETE, ON_DEMAND_SUBSET]
+        policy_frozen:
+          type: boolean
+          description: True once an invoice has been raised against the order
+        groups:
+          type: array
+          items: { $ref: "#/components/schemas/OrderShipmentGroup" }
+        coverage:
+          type: array
+          items: { $ref: "#/components/schemas/OrderShipmentCoverage" }
+        readiness:
+          $ref: "#/components/schemas/OrderInvoiceReadiness"
+
+    OrderInvoicePolicyRequest:
+      type: object
+      required: [policy]
+      properties:
+        policy:
+          type: string
+          enum: [ON_ALL_COMPLETE, ON_DEMAND_SUBSET]
+
+    OrderGroupStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [PLANNED, PICKING, READY, DISPATCHED, COMPLETE, CANCELLED]
+
+    OrderShipmentInvoiceResult:
+      type: object
+      required: [invoice_id, invoice_no, readiness]
+      properties:
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        readiness:
+          $ref: "#/components/schemas/OrderInvoiceReadiness"
+
+    OrderShipmentInvoiceUnavailable:
+      type: object
+      description: >-
+        The 503 body when no invoice writer is bound: the error plus the
+        readiness decision, so the surface shows what would be invoiced.
+      required: [error, readiness]
+      properties:
+        error: { type: string }
+        readiness:
+          $ref: "#/components/schemas/OrderInvoiceReadiness"
+
+    # --- order: duplicate detection and creation --------------------------------
+    OrderDuplicateSelection:
+      type: object
+      description: >-
+        One chosen source line: the source line number plus an optional
+        replacement quantity (absent keeps the source quantity)
+      required: [line_no]
+      properties:
+        line_no: { type: integer, format: int32 }
+        qty_entered:
+          type: string
+          description: DECIMAL as string
+
+    OrderDuplicateRequest:
+      type: object
+      required: [lines, idempotency_key]
+      properties:
+        lines:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/OrderDuplicateSelection" }
+        idempotency_key:
+          type: string
+          description: Client-generated; a retried submit returns the draft the first attempt created
+
+    OrderDuplicateLine:
+      type: object
+      description: >-
+        One source line graded for duplication. line_no is the SOURCE order
+        line number; price fields are zero when available is false.
+      required:
+        - line_no
+        - product_id
+        - description
+        - qty_entered
+        - uom_entered
+        - unit_price_cents
+        - price_uom
+        - line_total_cents
+        - available
+      properties:
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string }
+        description: { type: string }
+        qty_entered:
+          type: string
+          description: DECIMAL as string
+        uom_entered: { type: string }
+        unit_price_cents:
+          type: integer
+          format: int64
+          description: The currently resolved price, pre-tax
+        price_uom: { type: string }
+        line_total_cents: { type: integer, format: int64 }
+        available: { type: boolean }
+        reason:
+          type: string
+          description: Machine code when available is false
+
+    OrderDuplicatePreview:
+      type: object
+      required: [source_order_id, source_order_no, branch_id, lines]
+      properties:
+        source_order_id: { type: string, format: uuid }
+        source_order_no: { type: string }
+        branch_id: { type: string }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/OrderDuplicateLine" }
+
+    OrderDuplicateResult:
+      type: object
+      description: Identifies the created DRAFT order
+      required: [order_id, order_no, status]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        status:
+          type: string
+          enum: [DRAFT, CONFIRMED, PICKING, READY, PARTIALLY_FULFILLED, FULFILLED, INVOICED, CLOSED, CANCELLED]
+
+    OrderDuplicateCandidate:
+      type: object
+      description: One suspect order, carrying enough to name it, open it, and say why it matched
+      required: [order_id, order_no, status, created_at, shared_products]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        status:
+          type: string
+          enum: [DRAFT, CONFIRMED, PICKING, READY, PARTIALLY_FULFILLED, FULFILLED, INVOICED, CLOSED, CANCELLED]
+        created_at: { type: string, format: date-time }
+        shared_products: { type: integer, format: int32 }
+
+    OrderDuplicateCheck:
+      type: object
+      description: The duplicate-check answer; an empty candidates list is the ordinary outcome
+      required: [order_id, window_hours, draft_products, candidates]
+      properties:
+        order_id: { type: string, format: uuid }
+        window_hours:
+          type: integer
+          format: int32
+          description: The server's lookback setting, so the client words the warning from it
+        draft_products:
+          type: integer
+          format: int32
+          description: This order's distinct catalogue-product count, the overlap denominator
+        candidates:
+          type: array
+          items: { $ref: "#/components/schemas/OrderDuplicateCandidate" }
+
+    # --- tasks: the task resource and lifecycle ---------------------------------
+    Task:
+      type: object
+      description: >-
+        One operational task (a tasks row). Nullable columns surface absent.
+        weight_entered is a NUMERIC carried as a string, matching the order
+        module's DECIMAL-as-string convention. weight_synced_at records when
+        the weight reached the order line; weight_sync_error carries the
+        order module's refusal verbatim.
+      required:
+        - id
+        - task_type
+        - order_id
+        - priority
+        - status
+        - source
+        - open_shortages
+        - total_shortages
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string, format: uuid }
+        task_type:
+          type: string
+          enum: [PICK, DISPATCH, NEED_WEIGHT, OTHER]
+        order_id: { type: string, format: uuid }
+        order_line_no:
+          type: [integer, "null"]
+          format: int32
+        branch_id: { type: string }
+        priority:
+          type: string
+          enum: [LOW, NORMAL, HIGH, URGENT]
+        status:
+          type: string
+          enum: [QUEUED, PUSHED, ACCEPTED, IN_PROGRESS, STAGED, DONE, CANCELLED]
+        created_by:
+          type: string
+          description: Empty when system-created
+        assigned_to: { type: string }
+        claimed_by: { type: string }
+        claimed_at:
+          type: [string, "null"]
+          format: date-time
+        pushed_at:
+          type: [string, "null"]
+          format: date-time
+        accept_deadline_at:
+          type: [string, "null"]
+          format: date-time
+        done_at:
+          type: [string, "null"]
+          format: date-time
+        photo_url: { type: string }
+        weight_entered:
+          type: string
+          description: NUMERIC as string
+        weight_uom: { type: string }
+        source:
+          type: string
+          enum: [CHAT, SYSTEM, MANUAL]
+        source_message_id: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        staged_at:
+          type: [string, "null"]
+          format: date-time
+        stage_location:
+          type: string
+          description: The physical spot the load was parked in
+        stage_ref:
+          type: string
+          description: The short handle the counter reads out
+        open_shortages:
+          type: integer
+          format: int32
+          description: Unresolved shortage rows on this task
+        total_shortages:
+          type: integer
+          format: int32
+          description: Reported shortage rows, resolved or not
+        weight_synced_at:
+          type: [string, "null"]
+          format: date-time
+        weight_sync_error: { type: string }
+
+    TaskPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Task" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    TaskCreateRequest:
+      type: object
+      required: [order_id]
+      properties:
+        order_id: { type: string, format: uuid }
+        source:
+          type: string
+          description: Optional; defaults to CHAT
+          enum: [CHAT, SYSTEM, MANUAL]
+        source_message_id:
+          type: string
+          description: Optional; the chat message that spawned the task
+
+    TaskDoneRequest:
+      type: object
+      properties:
+        photo_url:
+          type: string
+          description: Optional completion proof
+
+    TaskCancelRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          description: Optional cancel reason, recorded on the task events row
+
+    # --- tasks: the yard surface ------------------------------------------------
+    TaskPickLine:
+      type: object
+      description: >-
+        One line a picker has to pull, in the line's own unit of measure
+        (never converted to base).
+      required: [line_no, description, qty_ordered, uom]
+      properties:
+        line_no: { type: integer, format: int32 }
+        product_id: { type: string }
+        sku: { type: string }
+        description: { type: string }
+        qty_ordered:
+          type: string
+          description: DECIMAL as string
+        uom: { type: string }
+        location:
+          type: string
+          description: Bin or yard hint; empty when the source has none
+
+    TaskPickTicket:
+      type: object
+      description: >-
+        Everything the yard needs to pull one order. reference is the feeding
+        system's own handle, shown verbatim. source names the implementation
+        that produced the ticket, so fixture-fed queues say so.
+      required: [order_id, lines, source]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_no: { type: string }
+        branch_id: { type: string }
+        customer_name: { type: string }
+        fulfillment:
+          type: string
+          enum: [PICKUP, DELIVERY, WILL_CALL]
+        mto_class:
+          type: string
+          description: STANDARD, MTO or MIXED; empty means the source did not classify
+        priority:
+          type: string
+          enum: [LOW, NORMAL, HIGH, URGENT]
+        reference: { type: string }
+        requested_at:
+          type: [string, "null"]
+          format: date-time
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/TaskPickLine" }
+        source: { type: string }
+
+    TaskShortage:
+      type: object
+      description: One reported shortage on a pick
+      required: [id, task_id, description, qty_short, uom, reported_at]
+      properties:
+        id: { type: string, format: uuid }
+        task_id: { type: string, format: uuid }
+        order_line_no:
+          type: [integer, "null"]
+          format: int32
+        product_id: { type: string }
+        sku: { type: string }
+        description: { type: string }
+        qty_short:
+          type: string
+          description: NUMERIC as string
+        uom: { type: string }
+        note: { type: string }
+        reported_by: { type: string }
+        reported_at: { type: string, format: date-time }
+        resolved_at:
+          type: [string, "null"]
+          format: date-time
+        resolved_by: { type: string }
+        resolution: { type: string }
+
+    TaskPickedLine:
+      type: object
+      description: What the yard actually pulled on one line; a qty_picked of zero is a real answer
+      required: [id, task_id, order_line_no, qty_ordered, qty_picked, uom, picked_at]
+      properties:
+        id: { type: string, format: uuid }
+        task_id: { type: string, format: uuid }
+        order_line_no: { type: integer, format: int32 }
+        product_id: { type: string }
+        sku: { type: string }
+        description: { type: string }
+        qty_ordered:
+          type: string
+          description: NUMERIC as string
+        qty_picked:
+          type: string
+          description: NUMERIC as string
+        uom: { type: string }
+        picked_by: { type: string }
+        picked_at: { type: string, format: date-time }
+
+    TaskPickQueueEntry:
+      type: object
+      description: >-
+        One row of the yard board: the task (the operational truth) joined in
+        memory to its pick ticket, shortage history and recorded pick.
+      required: [task]
+      properties:
+        task: { $ref: "#/components/schemas/Task" }
+        ticket: { $ref: "#/components/schemas/TaskPickTicket" }
+        shortages:
+          type: array
+          items: { $ref: "#/components/schemas/TaskShortage" }
+        picked:
+          type: array
+          items: { $ref: "#/components/schemas/TaskPickedLine" }
+
+    TaskPickQueuePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TaskPickQueueEntry" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    TaskPendingTicketPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TaskPickTicket" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    TaskRecordPickLine:
+      type: object
+      required: [order_line_no, product_id, sku, description, qty_ordered, qty_picked, uom]
+      properties:
+        order_line_no: { type: integer, format: int32 }
+        product_id: { type: string }
+        sku: { type: string }
+        description: { type: string }
+        qty_ordered:
+          type: string
+          description: DECIMAL as string
+        qty_picked:
+          type: string
+          description: DECIMAL as string
+        uom: { type: string }
+
+    TaskRecordPickRequest:
+      type: object
+      required: [lines]
+      properties:
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/TaskRecordPickLine" }
+
+    TaskRecordPickResult:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TaskPickedLine" }
+
+    TaskStageRequest:
+      type: object
+      required: [location]
+      properties:
+        location:
+          type: string
+          description: The physical spot the load is parked in
+        ref:
+          type: string
+          description: Optional short handle; derived server-side when blank
+        note:
+          type: string
+          description: Optional; recorded on the task events row
+
+    TaskShortageRequest:
+      type: object
+      required: [order_line_no, product_id, sku, description, qty_short, uom, note]
+      properties:
+        order_line_no:
+          type: [integer, "null"]
+          format: int32
+          description: The order line the shortage is on; null when it maps to none
+        product_id: { type: string }
+        sku: { type: string }
+        description: { type: string }
+        qty_short:
+          type: string
+          description: DECIMAL as string
+        uom: { type: string }
+        note: { type: string }
+
+    TaskShortageResolveRequest:
+      type: object
+      required: [resolution]
+      properties:
+        resolution:
+          type: string
+          description: How the shortage was cleared (substituted, back-ordered, credited); required text
+
+    TaskWeightRequestBody:
+      type: object
+      required: [order_id, order_line_no, uom, note]
+      properties:
+        order_id: { type: string, format: uuid }
+        order_line_no: { type: integer, format: int32 }
+        uom:
+          type: string
+          description: The unit the yard should answer in
+        note: { type: string }
+
+    TaskWeightSubmitBody:
+      type: object
+      required: [weight, uom, note]
+      properties:
+        weight:
+          type: string
+          description: The measured weight, NUMERIC as string
+        uom:
+          type: string
+          description: Must match the requested unit; a mismatch is a 400
+        note: { type: string }
+
+    TaskWeightResult:
+      type: object
+      description: >-
+        The recorded weight plus the order-sync outcome: order_synced false
+        with order_error set means the yard measured and the order refused;
+        the refusal is the order module's own words.
+      required: [task, order_synced]
+      properties:
+        task: { $ref: "#/components/schemas/Task" }
+        order_synced: { type: boolean }
+        order_error: { type: string }
+        order_line_no: { type: integer, format: int32 }
+        uom: { type: string }
+
+    TaskAdvanceRule:
+      type: object
+      description: >-
+        One task type's ruling on whether completing a task advances its
+        order's status. Off unless deliberately enabled; an enabled rule with
+        no target never fires.
+      required: [task_type, enabled]
+      properties:
+        task_type:
+          type: string
+          enum: [PICK, DISPATCH, NEED_WEIGHT, OTHER]
+        enabled: { type: boolean }
+        target_status:
+          type: string
+          enum: [DRAFT, CONFIRMED, PICKING, READY, PARTIALLY_FULFILLED, FULFILLED, INVOICED, CLOSED, CANCELLED]

@@ -1,0 +1,1991 @@
+# Fragment: gl, finstmt, bankrec (HardscapeOS W5 finance modules).
+# Sources: hardscapeos_dibbits/backend/internal/{gl,finstmt,bankrec}, guards
+# resolved from each module's RegisterRoutes and the cmd/server/main.go call
+# sites (all three receive RequireStaff, RequireManager, RequireAdmin in that
+# parameter order).
+#
+# GL note: the inventory's tie-out vocabulary OPEN/TIED/OUT_OF_TIE belongs to
+# invcount (migration 0040), not to this module. The GL tie-out projection is
+# gl.TieoutState with the in_tie boolean, transcribed as-is.
+
+paths:
+  # --- gl: chart of accounts ---------------------------------------------
+  /api/v1/gl/accounts:
+    get:
+      operationId: glListAccounts
+      tags: [staff-gl]
+      summary: List the chart of accounts
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of accounts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlAccountPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: glCreateAccount
+      tags: [staff-gl]
+      summary: Add a chart-of-accounts row
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GlAccountCreate"
+      responses:
+        "201":
+          description: The created account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlAccount"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/gl/accounts/{code}/deactivate:
+    post:
+      operationId: glDeactivateAccount
+      tags: [staff-gl]
+      summary: Deactivate one account by code
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The deactivated account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlAccount"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --- gl: journals (maker-checker lifecycle) ------------------------------
+  /api/v1/gl/journals:
+    get:
+      operationId: glListJournals
+      tags: [staff-gl]
+      summary: List journals, branch-fenced for scoped callers
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          description: PENDING_APPROVAL is the derived maker-checker label (a DRAFT at or over the policy threshold), never a stored status
+          schema:
+            type: string
+            enum: [DRAFT, POSTED, VOID, PENDING_APPROVAL]
+        - name: branch_id
+          in: query
+          required: false
+          description: Empty means every branch, which only a GLOBAL caller may ask for
+          schema: { type: string, format: uuid }
+        - name: source_ref_id
+          in: query
+          required: false
+          description: Filter journals by the upstream source ref (invoice, payment, order, return or session id)
+          schema: { type: string, format: uuid }
+        - name: date_from
+          in: query
+          required: false
+          description: Inclusive lower bound on posted_at
+          schema: { type: string, format: date }
+        - name: date_to
+          in: query
+          required: false
+          description: Inclusive upper bound on posted_at
+          schema: { type: string, format: date }
+      x-role: requireManager
+      responses:
+        "200":
+          description: The page of journals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlJournalPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: glCreateJournal
+      tags: [staff-gl]
+      summary: Create a balanced manual journal (posts below the policy threshold, parks as DRAFT at or over it)
+      description: >-
+        Maker-checker: a journal whose debit total is below the gl_policy
+        approval threshold posts immediately; at or over the threshold it is
+        parked as DRAFT (surfaced as derived_status PENDING_APPROVAL) and a
+        JE_OVER_THRESHOLD approval request is filed on the approvals rail. An
+        unbalanced body is refused with an unprocessable-entity error.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GlJournalCreate"
+      responses:
+        "201":
+          description: The created journal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlJournal"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: The journal is unbalanced (total debit differs from total credit)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/gl/journals/{id}:
+    get:
+      operationId: glGetJournal
+      tags: [staff-gl]
+      summary: Read one journal with its lines
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The journal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlJournal"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/gl/journals/{id}/approve:
+    post:
+      operationId: glApproveJournal
+      tags: [staff-gl]
+      summary: Approve and post a parked DRAFT (the checker half of maker-checker)
+      description: >-
+        Four-eyes: the approver must differ from the journal's creator; a
+        creator attempting to approve their own journal is refused as
+        forbidden. Approving a journal that is no longer DRAFT conflicts.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The approved (posted) journal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlJournal"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/gl/journals/{id}/void:
+    post:
+      operationId: glVoidJournal
+      tags: [staff-gl]
+      summary: Void a DRAFT journal
+      description: A POSTED journal is corrected with a reversing journal, never voided.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The voided journal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlJournal"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/gl/journals/{id}/reverse:
+    post:
+      operationId: glReverseJournal
+      tags: [staff-gl]
+      summary: Post a net-zero reversing journal for a POSTED journal
+      description: >-
+        Every leg's debit and credit are swapped, so the original plus the
+        reversal sum to zero on every account. The reversal links back via
+        reverses_journal_id; the original stays POSTED.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "201":
+          description: The reversing journal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlJournal"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --- gl: recurring templates ---------------------------------------------
+  /api/v1/gl/recurring:
+    get:
+      operationId: glListRecurring
+      tags: [staff-gl]
+      summary: List recurring journal templates
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of recurring templates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlRecurringTemplatePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/gl/recurring/{id}/run:
+    post:
+      operationId: glRunRecurring
+      tags: [staff-gl]
+      summary: Materialize a DRAFT journal from a recurring template
+      description: The materialized journal always lands as DRAFT so a machine-generated entry is reviewed before it posts.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "201":
+          description: The materialized DRAFT journal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlJournal"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --- gl: trial balance and tie-out ----------------------------------------
+  /api/v1/gl/trial-balance:
+    get:
+      operationId: glTrialBalance
+      tags: [staff-gl]
+      summary: Trial balance for a fiscal year (optionally one period and one branch)
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: year
+          in: query
+          required: false
+          description: Fiscal year; defaults to the service clock's year when omitted
+          schema: { type: integer, format: int32 }
+        - name: month
+          in: query
+          required: false
+          description: Fiscal period ordinal; omitted or zero means the whole year
+          schema: { type: integer, format: int32, minimum: 0, maximum: 12 }
+        - name: branch_id
+          in: query
+          required: false
+          description: Empty means consolidated, which only a GLOBAL caller may ask for
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The trial balance rows and totals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlTrialBalanceResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/gl/tie-out:
+    get:
+      operationId: glTieOut
+      tags: [staff-gl]
+      summary: Subledger to GL tie-out states
+      description: >-
+        One row per subledger/account pair with the persisted first-seen
+        discrepancy age (gl_tieout_state): out_of_tie_since and age_days
+        survive across checks.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: as_of
+          in: query
+          required: false
+          description: Balance as-of date; defaults to the service clock when omitted
+          schema: { type: string, format: date }
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The page of tie-out states
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlTieoutStatePage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/gl/tieout/bistrack:
+    get:
+      operationId: glBisTrackTieOut
+      tags: [staff-gl]
+      summary: Static BisTrack GL reconciliation report for one fiscal period
+      description: >-
+        Read-only reconciliation of the ERP books against the committed static
+        BisTrack snapshot. month is required (a closing balance reconciles at
+        one period end); the fixture path is fixed, never a caller input.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: year
+          in: query
+          required: false
+          description: Fiscal year; defaults to the service clock's year when omitted
+          schema: { type: integer, format: int32 }
+        - name: month
+          in: query
+          required: true
+          description: Fiscal period ordinal, 1 to 12
+          schema: { type: integer, format: int32, minimum: 1, maximum: 12 }
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: tolerance_cents
+          in: query
+          required: false
+          description: Per-account materiality tolerance; zero means exact
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: The full tie-out report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlBisTrackTieoutReport"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- gl: fiscal periods ----------------------------------------------------
+  /api/v1/gl/periods:
+    get:
+      operationId: glListPeriods
+      tags: [staff-gl]
+      summary: List fiscal periods
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of fiscal periods
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlPeriodPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/gl/periods/{id}/close:
+    post:
+      operationId: glClosePeriod
+      tags: [staff-gl]
+      summary: Seal a fiscal period (OPEN to CLOSED)
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GlReasonBody"
+      responses:
+        "200":
+          description: The closed period
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlPeriod"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/gl/periods/{id}/reopen:
+    post:
+      operationId: glReopenPeriod
+      tags: [staff-gl]
+      summary: Reopen a closed fiscal period
+      description: >-
+        Financial-Controller-only inside the service on top of the admin gate;
+        any other caller is refused as forbidden. A reason is required, and the
+        reopen is audit-stamped.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GlPeriodReopenBody"
+      responses:
+        "200":
+          description: The reopened period
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlPeriod"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: A reason is required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/gl/periods/close-year:
+    post:
+      operationId: glCloseYear
+      tags: [staff-gl]
+      summary: Post the year-end closing entry and seal the year's open periods
+      description: >-
+        Flattens every REVENUE and EXPENSE account for the fiscal year and
+        sweeps the net income (or loss) into the retained-earnings equity
+        account, then seals all of the year's OPEN periods.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GlCloseYearBody"
+      responses:
+        "200":
+          description: The year-close result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlYearCloseResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # --- gl: policy and parity export ------------------------------------------
+  /api/v1/gl/policy:
+    get:
+      operationId: glGetPolicy
+      tags: [staff-gl]
+      summary: Read the GL policy row (org default, or one branch)
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          description: Empty reads the org-default policy row
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The policy row
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlPolicy"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/gl/export:
+    post:
+      operationId: glExport
+      tags: [staff-gl]
+      summary: Run the GP-parity export for a fiscal period
+      description: >-
+        Produces the parity batch for the period. The shipped export is a
+        parity draft (extract artifacts pending cutover confirmation), which
+        is_draft carries on the result.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GlExportBody"
+      responses:
+        "200":
+          description: The export batch with its rendered content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlExportResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- finstmt: statement views (POSTED-filtered) -----------------------------
+  /api/v1/finstmt/income-statement:
+    get:
+      operationId: finstmtIncomeStatement
+      tags: [staff-finstmt]
+      summary: Income statement for a fiscal year (optionally one period and one branch)
+      description: >-
+        Built only from the POSTED-filtered views. With compare=1 the response
+        is the comparative row set (current versus prior period per account).
+        With format=csv or format=xlsx the response streams the export file
+        (text/csv, or a spreadsheet binary for xlsx; the legacy xls and excel
+        spellings are accepted and answer xlsx) instead of JSON.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: year
+          in: query
+          required: true
+          description: Four-digit fiscal year
+          schema: { type: integer, format: int32, minimum: 1900, maximum: 9999 }
+        - name: month
+          in: query
+          required: false
+          description: Fiscal period ordinal; omitted or zero means the full year
+          schema: { type: integer, format: int32, minimum: 0, maximum: 12 }
+        - name: branch_id
+          in: query
+          required: false
+          description: Empty means consolidated, fenced for scoped callers
+          schema: { type: string, format: uuid }
+        - name: branch_name
+          in: query
+          required: false
+          description: Display label for the export subtitle only; the scope is branch_id
+          schema: { type: string }
+        - name: compare
+          in: query
+          required: false
+          description: Set to 1 for the comparative row set
+          schema: { type: string, enum: ["1"] }
+        - name: format
+          in: query
+          required: false
+          description: Export format; when present the response is a file stream, not JSON
+          schema: { type: string, enum: [csv, xlsx] }
+      responses:
+        "200":
+          description: The income statement report, or the comparative rows when compare=1
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/FinStmtIncomeStatementReport"
+                  - $ref: "#/components/schemas/FinStmtComparativeRows"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/finstmt/balance-sheet:
+    get:
+      operationId: finstmtBalanceSheet
+      tags: [staff-finstmt]
+      summary: Balance sheet for a fiscal year (optionally one branch)
+      description: >-
+        With compare=1 the response is the comparative row set. With
+        format=csv or format=xlsx the response streams the export file instead
+        of JSON.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: year
+          in: query
+          required: true
+          description: Four-digit fiscal year
+          schema: { type: integer, format: int32, minimum: 1900, maximum: 9999 }
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: branch_name
+          in: query
+          required: false
+          description: Display label for the export subtitle only; the scope is branch_id
+          schema: { type: string }
+        - name: compare
+          in: query
+          required: false
+          description: Set to 1 for the comparative row set
+          schema: { type: string, enum: ["1"] }
+        - name: format
+          in: query
+          required: false
+          description: Export format; when present the response is a file stream, not JSON
+          schema: { type: string, enum: [csv, xlsx] }
+      responses:
+        "200":
+          description: The balance sheet report, or the comparative rows when compare=1
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/FinStmtBalanceSheetReport"
+                  - $ref: "#/components/schemas/FinStmtComparativeRows"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/finstmt/trial-balance:
+    get:
+      operationId: finstmtTrialBalance
+      tags: [staff-finstmt]
+      summary: Consolidated trial balance for a fiscal year
+      description: >-
+        Consolidated only; a scoped caller is refused. With format=csv or
+        format=xlsx the response streams the export file instead of JSON.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: year
+          in: query
+          required: true
+          description: Four-digit fiscal year
+          schema: { type: integer, format: int32, minimum: 1900, maximum: 9999 }
+        - name: format
+          in: query
+          required: false
+          description: Export format; when present the response is a file stream, not JSON
+          schema: { type: string, enum: [csv, xlsx] }
+      responses:
+        "200":
+          description: The trial balance report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinStmtTrialBalanceReport"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/finstmt/gl-detail:
+    get:
+      operationId: finstmtGLDetail
+      tags: [staff-finstmt]
+      summary: Posted journal-line drill-down behind a statement figure
+      description: >-
+        A statement figure ties exactly to the natural-orientation sum of the
+        detail rows behind its account; tie_cents carries that sum for the
+        requested account_type. With format=csv or format=xlsx the response
+        streams the export file instead of JSON.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: year
+          in: query
+          required: false
+          description: Fiscal year; omitted or zero means all years
+          schema: { type: integer, format: int32 }
+        - name: month
+          in: query
+          required: false
+          description: Fiscal period ordinal; omitted or zero means all periods
+          schema: { type: integer, format: int32, minimum: 0, maximum: 12 }
+        - name: account_code
+          in: query
+          required: false
+          schema: { type: string }
+        - name: account_type
+          in: query
+          required: false
+          description: Orients tie_cents (natural debit or credit)
+          schema:
+            type: string
+            enum: [ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE]
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: branch_name
+          in: query
+          required: false
+          description: Display label for the export subtitle only; the scope is branch_id
+          schema: { type: string }
+        - name: format
+          in: query
+          required: false
+          description: Export format; when present the response is a file stream, not JSON
+          schema: { type: string, enum: [csv, xlsx] }
+      responses:
+        "200":
+          description: The detail rows and the tie sum
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinStmtGLDetailResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/finstmt/ar-aging:
+    get:
+      operationId: finstmtARAging
+      tags: [staff-finstmt]
+      summary: AR aging summary, bucketed
+      description: >-
+        Invoice and non-invoice rows in age bands; grand_total_cents ties to
+        the AR subledger balance. With format=csv or format=xlsx the response
+        streams the export file instead of JSON.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: branch_name
+          in: query
+          required: false
+          description: Display label for the export subtitle only; the scope is branch_id
+          schema: { type: string }
+        - name: format
+          in: query
+          required: false
+          description: Export format; when present the response is a file stream, not JSON
+          schema: { type: string, enum: [csv, xlsx] }
+      responses:
+        "200":
+          description: The aging summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinStmtAgingSummary"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- finstmt: scheduled-report registry -------------------------------------
+  /api/v1/finstmt/schedules:
+    get:
+      operationId: finstmtListSchedules
+      tags: [staff-finstmt]
+      summary: List scheduled-report registry rows
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of schedules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinStmtSchedulePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: finstmtCreateSchedule
+      tags: [staff-finstmt]
+      summary: Register a scheduled report
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinStmtScheduleInput"
+      responses:
+        "201":
+          description: The created schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinStmtSchedule"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/finstmt/schedules/{id}:
+    put:
+      operationId: finstmtUpdateSchedule
+      tags: [staff-finstmt]
+      summary: Update a scheduled-report registry row
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinStmtScheduleInput"
+      responses:
+        "200":
+          description: The updated schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinStmtSchedule"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: finstmtDeleteSchedule
+      tags: [staff-finstmt]
+      summary: Delete a scheduled-report registry row
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Deleted; nothing is returned
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- bankrec: accounts, imports, lines --------------------------------------
+  /api/v1/bankrec/accounts:
+    get:
+      operationId: bankrecListAccounts
+      tags: [staff-bankrec]
+      summary: List bank and card accounts with unmatched-line counts
+      description: CREDIT_CARD accounts are tracking-only; no card spend is booked through this surface.
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of bank accounts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecAccountPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/bankrec/imports:
+    post:
+      operationId: bankrecCreateImport
+      tags: [staff-bankrec]
+      summary: Import a statement export for one bank account
+      description: >-
+        content carries the raw statement export text inside the JSON body.
+        Re-import is idempotent on the per-line dedupe hash (a replay inserts
+        nothing and reports duplicates). A FAILED import answers an error
+        status whose body is still the BankRecImportResult audit envelope.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BankRecImportInput"
+      responses:
+        "201":
+          description: The import summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecImportResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: The statement content failed to parse under the named profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/bankrec/lines:
+    get:
+      operationId: bankrecListLines
+      tags: [staff-bankrec]
+      summary: List statement lines
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: bank_account_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [UNMATCHED, MATCHED, EXCLUDED]
+      responses:
+        "200":
+          description: The page of statement lines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecStatementLinePage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- bankrec: matching -------------------------------------------------------
+  /api/v1/bankrec/match:
+    post:
+      operationId: bankrecMatch
+      tags: [staff-bankrec]
+      summary: Run auto-match over a window, or record one manual pairing
+      description: >-
+        mode auto (the default when mode is empty) runs the APPROVED rules
+        over the account's UNMATCHED credit lines in the from/to window,
+        posting each winner's clearing journal and flipping the paired card
+        payments to DEPOSITED; every step is idempotent. mode manual pairs one
+        statement line with one target; amount_cents defaults to the line
+        amount when omitted.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BankRecMatchInput"
+      responses:
+        "200":
+          description: The auto-match run summary (mode auto)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecMatchSummary"
+        "201":
+          description: The recorded match (mode manual)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecMatch"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/bankrec/unmatch:
+    post:
+      operationId: bankrecUnmatch
+      tags: [staff-bankrec]
+      summary: Unmatch a live match (history kept) and revert its line to UNMATCHED
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BankRecUnmatchInput"
+      responses:
+        "200":
+          description: The unmatch outcome
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecUnmatchResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/bankrec/matches:
+    get:
+      operationId: bankrecListMatches
+      tags: [staff-bankrec]
+      summary: List match history, optionally for one statement line
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: statement_line_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The page of matches (live and historical)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecMatchPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- bankrec: match rules ----------------------------------------------------
+  /api/v1/bankrec/rules:
+    get:
+      operationId: bankrecListRules
+      tags: [staff-bankrec]
+      summary: List match rules
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: live
+          in: query
+          required: false
+          description: When true, only the live (APPROVED) versions are returned
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: The page of match rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecMatchRulePage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: bankrecCreateRule
+      tags: [staff-bankrec]
+      summary: Propose and approve a new rule version for a code
+      description: >-
+        The new APPROVED version supersedes the current APPROVED version for
+        the code; a concurrent APPROVED version for the same code conflicts.
+        spec.kind must be one of the matcher kinds on BankRecRuleSpec.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BankRecRuleInput"
+      responses:
+        "201":
+          description: The approved rule version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecMatchRule"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: The spec failed validation (unknown kind)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # --- bankrec: reconciliation lifecycle ---------------------------------------
+  /api/v1/bankrec/reconciliations:
+    get:
+      operationId: bankrecListReconciliations
+      tags: [staff-bankrec]
+      summary: List reconciliations, optionally for one bank account
+      x-role: requireStaff
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: bank_account_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The page of reconciliations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecReconciliationPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: bankrecOpenReconciliation
+      tags: [staff-bankrec]
+      summary: Open (prepare) a per-account period reconciliation
+      description: Computes the GL balance and the variance against the statement balance. Opening over an already COMPLETED period conflicts.
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BankRecReconInput"
+      responses:
+        "201":
+          description: The opened reconciliation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecReconciliation"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/bankrec/reconciliations/{id}/complete:
+    post:
+      operationId: bankrecCompleteReconciliation
+      tags: [staff-bankrec]
+      summary: Sign off an open reconciliation
+      description: >-
+        Completion requires zero UNMATCHED lines for the period and a zero
+        variance; either shortfall is refused as unprocessable. Completing a
+        reconciliation that is not OPEN conflicts. On completion the
+        bank.recon.completed outbox topic is emitted for the GL posting
+        consumer.
+      x-role: requireAdmin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The completed reconciliation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankRecReconciliation"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: UNMATCHED lines remain or the variance is non-zero
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+components:
+  schemas:
+    # --- gl ------------------------------------------------------------------
+    GlAccount:
+      type: object
+      description: A chart-of-accounts row (gl_accounts)
+      required: [id, code, name, account_type, normal_balance, is_active]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        account_type:
+          type: string
+          enum: [ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE]
+        normal_balance:
+          type: string
+          enum: [DEBIT, CREDIT]
+        parent_id: { type: string, format: uuid }
+        is_active: { type: boolean }
+    GlAccountCreate:
+      type: object
+      required: [code, name, account_type, normal_balance, parent_id]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        account_type:
+          type: string
+          enum: [ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE]
+        normal_balance:
+          type: string
+          enum: [DEBIT, CREDIT]
+        parent_id: { type: string, format: uuid }
+    GlAccountPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/GlAccount" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    GlJournalLine:
+      type: object
+      description: One leg of a journal, addressed by account code
+      required: [line_no, account_code, debit_cents, credit_cents]
+      properties:
+        line_no: { type: integer, format: int32 }
+        account_code: { type: string }
+        account_name: { type: string }
+        debit_cents: { type: integer, format: int64 }
+        credit_cents: { type: integer, format: int64 }
+        memo: { type: string }
+    GlJournal:
+      type: object
+      description: >-
+        A journal header plus its lines. status is the stored lifecycle;
+        derived_status adds the maker-checker label PENDING_APPROVAL (a DRAFT
+        at or over the gl_policy threshold with no approver yet), which is
+        never written to the journal row.
+      required: [id, fiscal_year, entry_no, period_id, source, memo, status, derived_status, created_at, lines]
+      properties:
+        id: { type: string, format: uuid }
+        fiscal_year: { type: integer, format: int32 }
+        entry_no: { type: integer, format: int32 }
+        period_id: { type: string, format: uuid }
+        source:
+          type: string
+          enum: [MANUAL, INVOICE, PAYMENT, FULFILLMENT, PO_RECEIPT, ADJUSTMENT, CLOSING]
+        source_ref_id: { type: string, format: uuid }
+        memo: { type: string }
+        status:
+          type: string
+          enum: [DRAFT, POSTED, VOID]
+        derived_status:
+          type: string
+          enum: [DRAFT, POSTED, VOID, PENDING_APPROVAL]
+        posted_at:
+          type: [string, "null"]
+          format: date-time
+        branch_id: { type: string, format: uuid }
+        approved_by: { type: string }
+        reverses_journal_id: { type: string, format: uuid }
+        idempotency_key: { type: string }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/GlJournalLine" }
+    GlJournalLineInput:
+      type: object
+      description: One leg of a manual or recurring journal; exactly one of debit_cents or credit_cents is greater than zero
+      required: [account_code, debit_cents, credit_cents, memo]
+      properties:
+        account_code: { type: string }
+        debit_cents: { type: integer, format: int64 }
+        credit_cents: { type: integer, format: int64 }
+        memo: { type: string }
+    GlJournalCreate:
+      type: object
+      description: Builds a manual journal; at least two lines and a balanced body are required
+      required: [branch_id, memo, source, lines]
+      properties:
+        branch_id: { type: string, format: uuid }
+        memo: { type: string }
+        source:
+          type: string
+          description: Empty defaults to MANUAL
+          enum: [MANUAL, INVOICE, PAYMENT, FULFILLMENT, PO_RECEIPT, ADJUSTMENT, CLOSING]
+        lines:
+          type: array
+          minItems: 2
+          items: { $ref: "#/components/schemas/GlJournalLineInput" }
+    GlJournalPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/GlJournal" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    GlRecurringTemplate:
+      type: object
+      description: A recurring journal template; running it materializes a DRAFT journal
+      required: [id, name, memo, schedule, is_active, lines]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        memo: { type: string }
+        schedule: { type: string }
+        next_run: { type: string, format: date }
+        is_active: { type: boolean }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/GlJournalLineInput" }
+    GlRecurringTemplatePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/GlRecurringTemplate" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    GlTrialBalanceRow:
+      type: object
+      required: [account_code, account_name, account_type, normal_balance, debit_cents, credit_cents, balance_cents]
+      properties:
+        account_code: { type: string }
+        account_name: { type: string }
+        account_type:
+          type: string
+          enum: [ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE]
+        normal_balance:
+          type: string
+          enum: [DEBIT, CREDIT]
+        debit_cents: { type: integer, format: int64 }
+        credit_cents: { type: integer, format: int64 }
+        balance_cents:
+          type: integer
+          format: int64
+          description: Net debit (total debit minus total credit)
+    GlTrialBalanceResult:
+      type: object
+      required: [fiscal_year, rows, total_debit_cents, total_credit_cents, balance_cents]
+      properties:
+        fiscal_year: { type: integer, format: int32 }
+        month: { type: integer, format: int32 }
+        branch_id: { type: string, format: uuid }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/GlTrialBalanceRow" }
+        total_debit_cents: { type: integer, format: int64 }
+        total_credit_cents: { type: integer, format: int64 }
+        balance_cents:
+          type: integer
+          format: int64
+          description: Net debit over all rows; zero means in balance
+    GlTieoutState:
+      type: object
+      description: One subledger to GL tie-out result with the persisted first-seen discrepancy age
+      required: [subledger, account_code, subledger_cents, gl_cents, delta_cents, in_tie, age_days, last_checked_at]
+      properties:
+        subledger: { type: string }
+        account_code: { type: string }
+        branch_id: { type: string, format: uuid }
+        subledger_cents: { type: integer, format: int64 }
+        gl_cents: { type: integer, format: int64 }
+        delta_cents: { type: integer, format: int64 }
+        in_tie: { type: boolean }
+        out_of_tie_since:
+          type: [string, "null"]
+          format: date-time
+        age_days: { type: integer, format: int32 }
+        last_checked_at: { type: string, format: date-time }
+    GlTieoutStatePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/GlTieoutState" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    GlBisTrackTieoutLine:
+      type: object
+      description: One account's reconciliation on natural orientation; delta_cents is erp_cents minus bistrack_cents
+      required: [account_code, account_name, normal_balance, erp_cents, bistrack_cents, delta_cents, source]
+      properties:
+        account_code: { type: string }
+        account_name: { type: string }
+        normal_balance:
+          type: string
+          enum: [DEBIT, CREDIT]
+        erp_cents: { type: integer, format: int64 }
+        bistrack_cents: { type: integer, format: int64 }
+        delta_cents: { type: integer, format: int64 }
+        source:
+          type: string
+          enum: [BOTH, ERP_ONLY, BISTRACK_ONLY]
+        bistrack_ref: { type: string }
+    GlBisTrackTieoutReport:
+      type: object
+      description: >-
+        The per-period reconciliation of the ERP books against the static
+        BisTrack snapshot. The grand totals are on the net-debit basis while
+        each line's delta is on the account's natural orientation, so the line
+        deltas do not cross-foot to grand_delta_cents.
+      required: [fiscal_year, month, source, is_synthetic, tolerance_cents, lines, discrepancies, total_erp_cents, total_bistrack_cents, grand_delta_cents, ties_within_tolerance]
+      properties:
+        fiscal_year: { type: integer, format: int32 }
+        month: { type: integer, format: int32 }
+        branch_id: { type: string, format: uuid }
+        source: { type: string }
+        is_synthetic: { type: boolean }
+        tolerance_cents: { type: integer, format: int64 }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/GlBisTrackTieoutLine" }
+        discrepancies:
+          type: array
+          description: The lines whose absolute delta exceeds the tolerance
+          items: { $ref: "#/components/schemas/GlBisTrackTieoutLine" }
+        total_erp_cents: { type: integer, format: int64 }
+        total_bistrack_cents: { type: integer, format: int64 }
+        grand_delta_cents: { type: integer, format: int64 }
+        ties_within_tolerance: { type: boolean }
+    GlPeriod:
+      type: object
+      description: A fiscal period
+      required: [id, year, month, status]
+      properties:
+        id: { type: string, format: uuid }
+        year: { type: integer, format: int32 }
+        month: { type: integer, format: int32 }
+        status:
+          type: string
+          enum: [OPEN, CLOSED]
+        closed_at:
+          type: [string, "null"]
+          format: date-time
+    GlPeriodPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/GlPeriod" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    GlReasonBody:
+      type: object
+      properties:
+        reason: { type: string }
+    GlPeriodReopenBody:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string }
+    GlCloseYearBody:
+      type: object
+      required: [year, reason]
+      properties:
+        year: { type: integer, format: int32 }
+        reason: { type: string }
+    GlYearCloseResult:
+      type: object
+      required: [fiscal_year, net_income_cents, periods_closed]
+      properties:
+        fiscal_year: { type: integer, format: int32 }
+        closing_journal_id: { type: string, format: uuid }
+        net_income_cents: { type: integer, format: int64 }
+        periods_closed: { type: boolean }
+    GlPolicy:
+      type: object
+      description: The GL policy row; an absent branch_id is the org-default row
+      required: [je_approval_threshold_cents, fiscal_year_start_month, cost_basis_strategy, exclude_special_buys, notes]
+      properties:
+        branch_id: { type: string, format: uuid }
+        je_approval_threshold_cents:
+          type: integer
+          format: int64
+          description: The maker-checker threshold for manual journals
+        fiscal_year_start_month: { type: integer, format: int32, minimum: 1, maximum: 12 }
+        cost_basis_strategy:
+          type: string
+          enum: [WEIGHTED_AVG, STANDARD_BUY]
+        exclude_special_buys: { type: boolean }
+        notes: { type: string }
+    GlExportBody:
+      type: object
+      required: [year, month, branch_id]
+      properties:
+        year: { type: integer, format: int32 }
+        month: { type: integer, format: int32, minimum: 1, maximum: 12 }
+        branch_id:
+          type: string
+          format: uuid
+          description: Empty means all branches
+    GlExportResult:
+      type: object
+      required: [batch_id, format, row_count, is_draft, content]
+      properties:
+        batch_id: { type: string }
+        format: { type: string }
+        row_count: { type: integer, format: int32 }
+        is_draft:
+          type: boolean
+          description: True while the export ships as a parity draft pending cutover confirmation
+        content: { type: string }
+
+    # --- finstmt ---------------------------------------------------------------
+    FinStmtStatementRow:
+      type: object
+      description: One account-level line of a rendered statement
+      required: [account_code, account_name, account_type, amount_cents]
+      properties:
+        account_code: { type: string }
+        account_name: { type: string }
+        account_type:
+          type: string
+          enum: [ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE]
+        amount_cents: { type: integer, format: int64 }
+    FinStmtIncomeStatementReport:
+      type: object
+      required: [year, month, branch_id, revenue, expenses, revenue_cents, expense_cents, net_income_cents]
+      properties:
+        year: { type: integer, format: int32 }
+        month:
+          type: integer
+          format: int32
+          description: Zero means the full year
+        branch_id: { type: string, format: uuid }
+        revenue:
+          type: array
+          items: { $ref: "#/components/schemas/FinStmtStatementRow" }
+        expenses:
+          type: array
+          items: { $ref: "#/components/schemas/FinStmtStatementRow" }
+        revenue_cents: { type: integer, format: int64 }
+        expense_cents: { type: integer, format: int64 }
+        net_income_cents: { type: integer, format: int64 }
+    FinStmtBalanceSheetReport:
+      type: object
+      description: The balance invariant is asserted in balanced (assets equal liabilities plus equity plus net income)
+      required: [year, branch_id, assets, liabilities, equity, total_assets_cents, total_liabilities_cents, total_equity_cents, net_income_cents, balanced]
+      properties:
+        year: { type: integer, format: int32 }
+        branch_id: { type: string, format: uuid }
+        assets:
+          type: array
+          items: { $ref: "#/components/schemas/FinStmtStatementRow" }
+        liabilities:
+          type: array
+          items: { $ref: "#/components/schemas/FinStmtStatementRow" }
+        equity:
+          type: array
+          items: { $ref: "#/components/schemas/FinStmtStatementRow" }
+        total_assets_cents: { type: integer, format: int64 }
+        total_liabilities_cents: { type: integer, format: int64 }
+        total_equity_cents: { type: integer, format: int64 }
+        net_income_cents: { type: integer, format: int64 }
+        balanced: { type: boolean }
+    FinStmtTrialBalanceRow:
+      type: object
+      required: [account_code, account_name, account_type, normal_balance, total_debit_cents, total_credit_cents, balance_cents]
+      properties:
+        account_code: { type: string }
+        account_name: { type: string }
+        account_type:
+          type: string
+          enum: [ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE]
+        normal_balance:
+          type: string
+          enum: [DEBIT, CREDIT]
+        total_debit_cents: { type: integer, format: int64 }
+        total_credit_cents: { type: integer, format: int64 }
+        balance_cents:
+          type: integer
+          format: int64
+          description: Total debit minus total credit (positive is debit-heavy)
+    FinStmtTrialBalanceReport:
+      type: object
+      description: The double-entry tie is asserted in in_balance
+      required: [year, rows, total_debit_cents, total_credit_cents, in_balance]
+      properties:
+        year: { type: integer, format: int32 }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/FinStmtTrialBalanceRow" }
+        total_debit_cents: { type: integer, format: int64 }
+        total_credit_cents: { type: integer, format: int64 }
+        in_balance: { type: boolean }
+    FinStmtComparativeRow:
+      type: object
+      description: Pairs a current-period amount with the prior-period amount for the same account; prior_cents is zero when history is empty
+      required: [account_code, account_name, account_type, current_cents, prior_cents, delta_cents]
+      properties:
+        account_code: { type: string }
+        account_name: { type: string }
+        account_type:
+          type: string
+          enum: [ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE]
+        current_cents: { type: integer, format: int64 }
+        prior_cents: { type: integer, format: int64 }
+        delta_cents: { type: integer, format: int64 }
+    FinStmtComparativeRows:
+      type: object
+      required: [rows]
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/FinStmtComparativeRow" }
+    FinStmtGLDetailRow:
+      type: object
+      description: One POSTED journal line, the drill-down target behind a statement figure
+      required: [line_id, journal_id, entry_no, source, period_year, period_month, account_code, account_name, account_type, branch_id, debit_cents, credit_cents, memo, posted_at]
+      properties:
+        line_id: { type: string, format: uuid }
+        journal_id: { type: string, format: uuid }
+        entry_no: { type: integer, format: int32 }
+        source:
+          type: string
+          enum: [MANUAL, INVOICE, PAYMENT, FULFILLMENT, PO_RECEIPT, ADJUSTMENT, CLOSING]
+        period_year: { type: integer, format: int32 }
+        period_month: { type: integer, format: int32 }
+        account_code: { type: string }
+        account_name: { type: string }
+        account_type:
+          type: string
+          enum: [ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE]
+        branch_id: { type: string, format: uuid }
+        debit_cents: { type: integer, format: int64 }
+        credit_cents: { type: integer, format: int64 }
+        memo: { type: string }
+        posted_at: { type: string, format: date-time }
+    FinStmtGLDetailResponse:
+      type: object
+      required: [rows, tie_cents]
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/FinStmtGLDetailRow" }
+        tie_cents:
+          type: integer
+          format: int64
+          description: The natural-orientation sum of the rows for the requested account_type
+    FinStmtAgingBucket:
+      type: object
+      required: [bucket, cents]
+      properties:
+        bucket:
+          type: string
+          enum: [CURRENT, 1_30, 31_60, 61_90, 90_PLUS]
+        cents: { type: integer, format: int64 }
+    FinStmtAgingRow:
+      type: object
+      description: One AR aging entry (invoice or non-invoice customer transaction)
+      required: [customer_id, customer_name, source_type, source_ref_id, branch_id, amount_cents, age_days, bucket]
+      properties:
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        source_type: { type: string }
+        source_ref_id: { type: string }
+        branch_id: { type: string, format: uuid }
+        amount_cents: { type: integer, format: int64 }
+        age_days: { type: integer, format: int32 }
+        bucket:
+          type: string
+          enum: [CURRENT, 1_30, 31_60, 61_90, 90_PLUS]
+    FinStmtAgingSummary:
+      type: object
+      description: The bucketed roll-up whose grand_total_cents ties to the AR subledger balance
+      required: [branch_id, buckets, rows, grand_total_cents]
+      properties:
+        branch_id: { type: string, format: uuid }
+        buckets:
+          type: array
+          items: { $ref: "#/components/schemas/FinStmtAgingBucket" }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/FinStmtAgingRow" }
+        grand_total_cents: { type: integer, format: int64 }
+    FinStmtSchedule:
+      type: object
+      description: A scheduled-report registry row
+      required: [id, report, recipients, cadence, branch_id, is_active]
+      properties:
+        id: { type: string, format: uuid }
+        report:
+          type: string
+          enum: [INCOME_STATEMENT, BALANCE_SHEET, TRIAL_BALANCE, GL_DETAIL, AR_AGING]
+        recipients: { type: string }
+        cadence:
+          type: string
+          enum: [DAILY, WEEKLY, MONTHLY]
+        branch_id: { type: string, format: uuid }
+        is_active: { type: boolean }
+    FinStmtScheduleInput:
+      type: object
+      required: [report, recipients, cadence, branch_id, is_active]
+      properties:
+        report:
+          type: string
+          enum: [INCOME_STATEMENT, BALANCE_SHEET, TRIAL_BALANCE, GL_DETAIL, AR_AGING]
+        recipients: { type: string }
+        cadence:
+          type: string
+          enum: [DAILY, WEEKLY, MONTHLY]
+        branch_id: { type: string, format: uuid }
+        is_active: { type: boolean }
+    FinStmtSchedulePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FinStmtSchedule" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+
+    # --- bankrec ---------------------------------------------------------------
+    BankRecAccount:
+      type: object
+      description: A real bank or card account bound to its GL code
+      required: [id, name, account_type, gl_account_code, institution, last4, is_active, tracking_only, unmatched_lines]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        account_type:
+          type: string
+          enum: [BANK, CREDIT_CARD]
+        gl_account_code: { type: string }
+        institution: { type: string }
+        last4: { type: string }
+        is_active: { type: boolean }
+        tracking_only:
+          type: boolean
+          description: True for CREDIT_CARD accounts (no spend is booked)
+        unmatched_lines: { type: integer, format: int32 }
+    BankRecAccountPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BankRecAccount" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    BankRecStatementLine:
+      type: object
+      description: One parsed bank line; amount_cents is signed (positive credit, negative debit)
+      required: [id, bank_account_id, txn_date, description, reference, amount_cents, dedupe_hash, status]
+      properties:
+        id: { type: string, format: uuid }
+        bank_account_id: { type: string, format: uuid }
+        import_id: { type: string, format: uuid }
+        txn_date: { type: string, format: date-time }
+        description: { type: string }
+        reference: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        dedupe_hash: { type: string }
+        status:
+          type: string
+          enum: [UNMATCHED, MATCHED, EXCLUDED]
+    BankRecStatementLinePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BankRecStatementLine" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    BankRecImportInput:
+      type: object
+      required: [bank_account_id, profile_code, filename, content]
+      properties:
+        bank_account_id: { type: string, format: uuid }
+        profile_code:
+          type: string
+          description: The import profile whose column mapping the parser runs under
+        filename: { type: string }
+        content:
+          type: string
+          description: The raw statement export text carried inside the JSON body
+    BankRecImportResult:
+      type: object
+      description: The import run summary; an idempotent re-import inserts nothing and reports duplicates
+      required: [import_id, status, parsed, inserted, duplicates]
+      properties:
+        import_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [IMPORTED, FAILED]
+        parsed: { type: integer, format: int32 }
+        inserted: { type: integer, format: int32 }
+        duplicates: { type: integer, format: int32 }
+        error: { type: string }
+    BankRecMatch:
+      type: object
+      description: One match row, live or historical
+      required: [id, statement_line_id, target_type, method, amount_cents, matched_at]
+      properties:
+        id: { type: string, format: uuid }
+        statement_line_id: { type: string, format: uuid }
+        target_type:
+          type: string
+          enum: [PAYMENT, LODGEMENT, JOURNAL, GROUP]
+        target_ref_id: { type: string }
+        method:
+          type: string
+          enum: [AUTO, MANUAL]
+        rule_id: { type: string, format: uuid }
+        journal_id: { type: string, format: uuid }
+        amount_cents: { type: integer, format: int64 }
+        matched_by: { type: string }
+        matched_at: { type: string, format: date-time }
+        unmatched_at:
+          type: [string, "null"]
+          format: date-time
+    BankRecMatchSummary:
+      type: object
+      description: The outcome of an auto-match run
+      required: [matched, unmatched, matches]
+      properties:
+        matched: { type: integer, format: int32 }
+        unmatched: { type: integer, format: int32 }
+        matches:
+          type: array
+          items: { $ref: "#/components/schemas/BankRecMatch" }
+    BankRecMatchPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BankRecMatch" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    BankRecMatchInput:
+      type: object
+      description: >-
+        mode auto (or empty) runs the matcher over a window and uses
+        bank_account_id, from and to; mode manual pairs one line with one
+        target and uses statement_line_id, target_type, target_ref_id and
+        optionally amount_cents.
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [auto, manual]
+        bank_account_id: { type: string, format: uuid }
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        statement_line_id: { type: string, format: uuid }
+        target_type:
+          type: string
+          enum: [PAYMENT, LODGEMENT, JOURNAL, GROUP]
+        target_ref_id: { type: string }
+        amount_cents:
+          type: integer
+          format: int64
+          description: Manual only; defaults to the line amount when omitted
+    BankRecUnmatchInput:
+      type: object
+      required: [match_id]
+      properties:
+        match_id: { type: string, format: uuid }
+    BankRecUnmatchResult:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [unmatched]
+    BankRecRuleSpec:
+      type: object
+      description: >-
+        The rule spec payload. kind picks the matcher: gateway_ref_exact (card
+        settlement, payment gateway ref equals line reference),
+        lodgement_ref_exact (cash or cheque lodgement, reference exact with
+        zero tolerance), descriptor_fuzzy (settlement descriptor match with a
+        fee split allowance).
+      additionalProperties: true
+      properties:
+        kind:
+          type: string
+          enum: [gateway_ref_exact, lodgement_ref_exact, descriptor_fuzzy]
+    BankRecMatchRule:
+      type: object
+      description: A match rule row plus its decoded spec
+      required: [id, code, name, priority, version, status, spec]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        priority: { type: integer, format: int32 }
+        version: { type: integer, format: int32 }
+        status:
+          type: string
+          enum: [DRAFT, APPROVED, RETIRED]
+        spec: { $ref: "#/components/schemas/BankRecRuleSpec" }
+        supersedes_rule_id: { type: string, format: uuid }
+    BankRecRuleInput:
+      type: object
+      description: Proposes a new APPROVED rule version (supersedes the current APPROVED version for the code)
+      required: [code, name, spec, priority]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        spec: { $ref: "#/components/schemas/BankRecRuleSpec" }
+        priority: { type: integer, format: int32 }
+    BankRecMatchRulePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BankRecMatchRule" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    BankRecReconciliation:
+      type: object
+      description: One per-account period reconciliation
+      required: [id, bank_account_id, year, month, statement_balance_cents, gl_balance_cents, variance_cents, status]
+      properties:
+        id: { type: string, format: uuid }
+        bank_account_id: { type: string, format: uuid }
+        year: { type: integer, format: int32 }
+        month: { type: integer, format: int32 }
+        statement_balance_cents: { type: integer, format: int64 }
+        gl_balance_cents: { type: integer, format: int64 }
+        variance_cents: { type: integer, format: int64 }
+        status:
+          type: string
+          enum: [OPEN, COMPLETED]
+        completed_at:
+          type: [string, "null"]
+          format: date-time
+    BankRecReconInput:
+      type: object
+      description: Opens a reconciliation by computing the GL balance and the variance against the statement balance
+      required: [bank_account_id, year, month, statement_balance_cents]
+      properties:
+        bank_account_id: { type: string, format: uuid }
+        year: { type: integer, format: int32 }
+        month: { type: integer, format: int32, minimum: 1, maximum: 12 }
+        statement_balance_cents: { type: integer, format: int64 }
+    BankRecReconciliationPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BankRecReconciliation" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
