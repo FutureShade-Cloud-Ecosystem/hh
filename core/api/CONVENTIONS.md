@@ -105,6 +105,14 @@ Every list endpoint uses cursor pagination, replacing the ERP's offset pages:
   `limit` (`type: integer, format: int32`). Never `offset`, never `total`:
   cursor pagination replaces offset on every list.
 
+One deliberate difference is recorded here rather than transcribed: the ERP
+handler for `GET /api/v1/audit/transaction/{entityType}/{entityId}`
+(`audit/handler.go`, the `reopen` read path) returns the trail as a bare
+JSON array with no envelope. The contract serves it as `AuditEntryPage`
+with `cursor` and `limit` like every other list, because an unbounded array
+breaks the pagination rule and gives the client no resume token; the
+trail's causal sort key is `seq`, so a cursor over it is well defined.
+
 ## Naming
 
 - Schema names are PascalCase and carry the fragment's assigned prefix

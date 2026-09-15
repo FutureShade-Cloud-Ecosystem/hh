@@ -622,6 +622,8 @@ paths:
         Admin-only deep fields (identifiers, override reasons, raw payloads)
         are stripped server-side before the response leaves, so a frontline
         client never receives them. seq is the causal sort key for the trail.
+        The ERP handler returns the trail as a bare array; the contract
+        serves it as the standard cursor page (CONVENTIONS.md).
       x-role: requireStaff
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -634,6 +636,8 @@ paths:
           required: true
           description: Malformed values are refused with 400
           schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
       responses:
         "200":
           description: The entity's trail, masked for the operator
