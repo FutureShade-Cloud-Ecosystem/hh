@@ -1,6 +1,7 @@
 > Origin: `analysis/DECISIONS.md` in `futurebuildai/hh_pro_dibbits` at commit 829d387baec93556ffa0e9242f4091e9be9544ec (read only source).
 > Copied into `hh/docs/analysis/` by Session HH-2 lane HH-2.5; the content below this header was unchanged at the time of the copy.
 > This copy is the live decisions file from D20 onward; the copy in hh_pro_dibbits is frozen at the close of HH-1.
+> In-body `analysis/...` paths resolve to `docs/analysis/...` in this copy.
 
 # HH-1 decisions, as taken by Colton
 

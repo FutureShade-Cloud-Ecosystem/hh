@@ -1,6 +1,7 @@
 # Origin: `analysis/role-catalog.yaml` in `futurebuildai/hh_pro_dibbits` at commit 829d387baec93556ffa0e9242f4091e9be9544ec (read only source).
 # Copied into `hh/docs/analysis/` by Session HH-2 lane HH-2.5; content below this header is unchanged.
 # This copy is the live role catalog from D23 onward; the copy in hh_pro_dibbits is frozen at the close of HH-1.
+# In-body `analysis/...` paths resolve to `docs/analysis/...` in this copy.
 
 # Role and micro-app catalog for the unified Hardscape House app (HH-1, lane L4).
 #

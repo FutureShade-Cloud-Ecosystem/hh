@@ -31,6 +31,10 @@ entry per micro-app), `tauri/` (one shell per audience: `hh-work`, `hh-field`,
 - Secrets arrive as environment variables at spawn. Never read a vault, never
   print a secret, never commit one.
 - Blockers go in `docs/BLOCKERS.md`; record and continue rather than stop.
+- `docs/analysis/` is frozen history copied from hh_pro_dibbits and its bodies
+  are never edited. `docs/sessions/` holds the live brief a Session works
+  against, and where a live brief and its frozen origin disagree the live one
+  wins.
 - Statecharts and the OpenAPI document are the spec; tests generated from
   them are the acceptance criteria.
 
