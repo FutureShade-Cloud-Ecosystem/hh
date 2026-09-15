@@ -142,8 +142,6 @@ Taken by the supervisor rather than by Colton, like D24, because it corrects the
 
 Touches: the second provenance line of `docs/analysis/role-catalog.yaml` and of the seven session files D25 reassigned, and the house rules in `AGENTS.md`.
 
-
-
 ## Carried as verification, not decided
 
 Whether Appwrite Team memberships surface as OIDC claims stays a S2 check. D3 stands either way: if claims are absent, a Function enriches userinfo and the engine resolves the coarse gate from Team membership by lookup.
