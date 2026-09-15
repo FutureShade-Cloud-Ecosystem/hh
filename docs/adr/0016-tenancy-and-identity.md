@@ -36,11 +36,11 @@ Rejected. HH Pro's default exists "so that an embed of the core without the crew
 
 ### Driver as a separate identity
 
-Rejected (`role-catalog.yaml` open question 6). The shipped rule is that the driver app asks the server rather than reading a role code; driver is a role plus a profile row carrying vehicle and licence on the same identity, so one person can be yard staff and a driver.
+Rejected (`role-catalog.yaml` open question 6). The shipped rule is that the driver app asks the server rather than reading a role code; driver is a role plus a profile row carrying vehicle and licence on the same identity, so one person can be yard staff and a driver. What a separate identity loses: exactly that one-person case. A yard hand who also drives would hold two accounts, two role sets and two audit actors, and the vehicle and licence profile would sit on an identity that knows nothing of the person's staff roles.
 
 ### Branch above tenant, or tenant above org
 
-Rejected. C33's order stands: org from the Team (validated against Team membership before a database is touched, context section 4.4), tenant from the token, branch beneath both. The ERP's branch discipline (`branch_id NOT NULL` on every operational table, "no query without a branch predicate on branch-scoped tables", `domain-map.md` section 3.8) carries unchanged as the level below tenant. Neither repository has an `org_id` or `tenant_id` column at present ("no `org_id` or `tenant_id` column exists in any of the 196 migrations", `domain-map.md` section 3.8), so both columns are additive work.
+Rejected. C33's order stands: org from the Team (validated against Team membership before a database is touched, context section 4.4), tenant from the token, branch beneath both. What the inverted orders lose: branch above tenant splits the contractor account per branch, where the portal's isolation today predicates on the tenant alone ("tenant isolation by `customer_id` with cross-tenant not-found", `domain-map.md` section 3.8, quoting `docs/contractor-portal-plan.md`); tenant above org lets one contractor account span dealers, against the platform's one database per org per app (context section 4.1). The ERP's branch discipline (`branch_id NOT NULL` on every operational table, "no query without a branch predicate on branch-scoped tables", `domain-map.md` section 3.8) carries unchanged as the level below tenant. Neither repository has an `org_id` or `tenant_id` column at present ("no `org_id` or `tenant_id` column exists in any of the 196 migrations", `domain-map.md` section 2), so both columns are additive work.
 
 ## Carried as verification, not decided
 

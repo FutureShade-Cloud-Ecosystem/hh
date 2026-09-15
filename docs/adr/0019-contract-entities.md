@@ -31,7 +31,7 @@ Decision: `attachment` in `core`: id, `org_id`, nullable `tenant_id`, `kind` (ph
 
 Options rejected, and what each loses:
 
-- **Per-owner references (the ERP's shape at present).** "a photo reference on a task (`0073`), dispatch proof-of-delivery photos (`0091`), invoice documents (`0146`), masked evidence references in `tax_evidence` (`0042`)" (`domain-map.md` section 3.8). What it loses: the single entity the offline framework presupposes, since "the context file's section 4.5 names an `attachments_queue` in the offline store, which presupposes one entity" (`domain-map.md` section 5.5), and one retention, tombstone and audit story per kind.
+- **Per-owner references (the ERP's shape at present).** "a photo reference on a task (`0073`), dispatch proof-of-delivery photos (`0091`), invoice documents (`0146`), masked evidence references (`0042`)" (`domain-map.md` section 3.8); the masked evidence references live in `tax_evidence` (`domain-map.md` section 2). What it loses: the single entity the offline framework presupposes, since "the context file's section 4.5 names an `attachments_queue` in the offline store, which presupposes one entity" (`domain-map.md` section 5.5), and one retention, tombstone and audit story per kind.
 - **Bytes embedded in domain records (HH Pro's signature data URL).** What it loses: bytes out of the database, a storage reference the sync protocol can queue, and a checksum the client can verify. The drawn signature survives as `kind = signature`.
 
 ## D11: One product_image model, swatch_hex as fallback (resolves C8)

@@ -27,9 +27,9 @@ From `analysis/domain-map.md`: C45 (contract finality, the ERP's rule), C43 (rep
 
 ### A quantity break stacks on the resolved base (the ERP's `0026` model)
 
-Rejected in favour of replacement. The ERP's own header records its change in the other direction: "a quantity break no longer COMPETES at a precedence level (it used to REPLACE the customer's tier/category discount)", and its resolver comment gives the stacking arithmetic: an eighteen percent base then a five percent full-skid break yields retail times 0.82 times 0.95 (`domain-map.md` section 4b, quoting `backend/internal/pricing/service.go`).
+Rejected in favour of replacement. The ERP's own header records its change in the other direction: "a quantity break no longer COMPETES at a precedence level (it used to REPLACE the customer's tier/category discount)", and its resolver comment gives the stacking arithmetic: an eighteen percent base then a five percent full-skid break yields retail times 0.82 times 0.95 (`domain-map.md` C43, quoting migration `0026`'s header and the resolver comment).
 
-What rejecting stacking loses, stated plainly because this is the side the decision reverses: "Contractors lose, under the ERP model: nothing in most cases, and they gain the bigger discount (stacking is cheaper than replacing whenever the base already beat the break)" (`domain-map.md` C43). Under the decided replace model the customer gets the best single price, which can be higher than the stacked result in exactly those cases. The counter also loses "the partial-skid surcharge, which has no meaning at all in a best-of model (an uplift can never win a 'cheapest wins' contest)" (`domain-map.md` C43).
+What rejecting stacking loses, stated plainly because this is the side the decision reverses: "Contractors lose, under the ERP model: nothing in most cases, and they gain the bigger discount (stacking is cheaper than replacing whenever the base already beat the break)" (`domain-map.md` C43). Under the decided replace model the customer gets the best single price, which can be higher than the stacked result in exactly those cases. The counter loses the other side of the same conflict, quoted in full: "the fix `0026` exists to hold, namely a bulk break wiping a contractor's negotiated tier discount, and the partial-skid surcharge, which has no meaning at all in a best-of model (an uplift can never win a 'cheapest wins' contest)" (`domain-map.md` C43).
 
 What rejecting stacking protects: the replace rule is the one HH Pro's contractor-facing hints are built on, and the decision keeps them honest: "a portal that migrates without re-deriving that hint will advertise a break that is not the price the ERP would charge" (`domain-map.md` C43) is the failure the core-computed hint (C53 below) exists to prevent.
 
@@ -51,7 +51,7 @@ Rejected. What it loses: "the entire seasonal and clearance apparatus (`0111`, `
 
 ### The browser computes the authoritative price (HH Pro's model)
 
-Rejected in favour of core-computed authority. What contractors lose under the decision: "a price on a catalogue row without a network round trip" (`domain-map.md` C55), which the cached price band (labelled an estimate until sync confirms) is the deliberate mitigation for. What rejecting browser authority protects: "the margin gate, because a price computed in a browser cannot be blocked by a floor the browser must not know, and the zero-trust posture that keeps the dealer's cost off the wire" (`domain-map.md` C55).
+Rejected in favour of core-computed authority. What contractors lose under the decision: "a price on a catalogue row without a network round trip, and (until a cost source exists) an authoritative price at all on the request-for-quote path" (`domain-map.md` C55); the cached price band (labelled an estimate until sync confirms) is the deliberate mitigation for the first of the two. What rejecting browser authority protects: "the margin gate, because a price computed in a browser cannot be blocked by a floor the browser must not know, and the zero-trust posture that keeps the dealer's cost off the wire" (`domain-map.md` C55).
 
 Offline consequence, from `domain-map.md` section 6: the honest cached artifact is the resolved output per product and quantity band, never the rule inputs, because "caching the rules lets a client resolve a price the margin gate never saw."
 
@@ -59,7 +59,7 @@ Offline consequence, from `domain-map.md` section 6: the honest cached artifact 
 
 - C46: the margin gate, the floor and the override authority apply inside the core's order flow, with a bypass row for every skipped or cleared gate, because only the server side can answer "how many below-floor prices went out and on whose authority" (`domain-map.md` C46).
 - C52: validity is a property of the confirmed price, so the band's estimate label expires with it. The validity grain itself (document-level `dealer_quote.valid_until`, per-line `price_snapshot` for audit) is D14, resolved in the schema session.
-- C53: the next-break hint is computed by the core under the replace rule, and keeps both sides' shared honesty rule: "present only when one exists AND it actually beats the price they are getting now" (`domain-map.md` C53, quoting `backend/internal/pricing/counter.go`).
+- C53: the next-break hint is computed by the core under the replace rule, and keeps both sides' shared honesty rule: "present only when one exists AND it actually beats the price they are getting now" (`domain-map.md` section 4a, quoting `backend/internal/pricing/counter.go`).
 
 ## Sessions gated
 
