@@ -612,6 +612,7 @@ components:
         - warranty_claims
         - weights
         - widget_measures
+        - will_call
 
     SyncEntity:
       type: object

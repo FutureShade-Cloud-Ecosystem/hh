@@ -21426,6 +21426,7 @@ components:
         - warranty_claims
         - weights
         - widget_measures
+        - will_call
     SyncEntity:
       type: object
       description: One projected entity in a scope. data is the projection table row for the scope; the shape per scope is the resource schema this document defines for the scope's owning module.
