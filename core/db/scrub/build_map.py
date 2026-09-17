@@ -176,16 +176,36 @@ def enumerate_candidates(texts, cfg):
 
 
 def generate_placeholders(candidates, texts, corpus):
-    """Assign a collision-free patterned placeholder to each candidate."""
+    """Assign a collision-free patterned placeholder to each candidate.
+
+    Occurrences are counted on a working text with replacements applied in
+    the same order prove.py applies them (longest original first), so an
+    occurrence inside a longer mapped original is consumed by that original
+    and never double counted.
+    """
+    entries_unordered = [
+        (klass, literal, match) for klass, literal, match in candidates
+    ]
+    ordered = sorted(
+        entries_unordered, key=lambda e: (-len(e[1]), e[0])
+    )
+    working = {name: text for name, text in texts}
+    occurrence_map = {}
+    for klass, literal, match in ordered:
+        count = sum(
+            count_occurrences(text, literal, match) for text in working.values()
+        )
+        occurrence_map[(klass, literal)] = count
+        for name, text in working.items():
+            working[name] = replace_occurrences(text, literal, " ", match)
+
     counters = Counter()
     taken = set()
     collisions = 0
     dropped = Counter()
     entries = []
-    for klass, literal, match in candidates:
-        occurrences = sum(
-            count_occurrences(text, literal, match) for _n, text in texts
-        )
+    for klass, literal, match in entries_unordered:
+        occurrences = occurrence_map[(klass, literal)]
         if occurrences == 0:
             dropped["no_occurrence:" + klass] += 1
             continue

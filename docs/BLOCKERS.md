@@ -85,6 +85,12 @@ it must be run against `manifest.yaml` and this note removed.
     comments as well as values and predicates.
   - Unblocked by: Colton recording D32 (scrub fixture values in the carried
     baseline, or carry verbatim).
+  - Closed: D32 is recorded and the scrub ran under it. The carried baseline
+    applies from zero, the ERP's own gate suite passes against the scrubbed
+    seeded database, and the search for every mapped original returns zero.
+    Sixty files carry the scrub, recorded with ERP blob hashes in
+    core/db/PORTED.md. The replacement map was workstation-local, is not
+    committed, and is discarded.
 - **Open: additive migrations against a restored dump (Phase B precondition).**
   Phase A's fixture is the migrations applied from zero plus the ERP's own
   seed. The check that the additive set applies cleanly on top of a restored

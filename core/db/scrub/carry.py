@@ -68,14 +68,28 @@ def main(argv=None) -> int:
                         help="expected highest migration number")
     args = parser.parse_args(argv)
 
-    head = pinned_head(args.repo)
-    if head != args.commit:
+    # The carry reads from the pinned commit object, never the working tree:
+    # the reference checkout may sit on any branch, and D33's baseline is the
+    # commit, not whatever happens to be checked out.
+    if subprocess.run(
+        ["git", "-C", args.repo, "cat-file", "-e", args.commit + "^{commit}"],
+        capture_output=True,
+    ).returncode != 0:
         raise SystemExit(
-            "carry: checkout is at %s, expected pinned commit %s" % (head, args.commit)
+            "carry: pinned commit %s does not exist in %s" % (args.commit, args.repo)
         )
-
-    srcdir = os.path.join(args.repo, args.source_subdir)
-    entries = list_migrations(srcdir)
+    listing = subprocess.run(
+        ["git", "-C", args.repo, "ls-tree", "--name-only", args.commit,
+         args.source_subdir.rstrip("/") + "/"],
+        capture_output=True, text=True, check=True,
+    ).stdout.splitlines()
+    entries = []
+    for rel in listing:
+        name = os.path.basename(rel)
+        match = MIGRATION_RE.match(name)
+        if match:
+            entries.append((int(match.group(1)), name))
+    entries.sort()
     if len(entries) != args.expect_count:
         raise SystemExit(
             "carry: found %d migrations, expected %d" % (len(entries), args.expect_count)
@@ -88,19 +102,20 @@ def main(argv=None) -> int:
 
     os.makedirs(args.dest, exist_ok=True)
     for _number, name in entries:
-        src = os.path.join(srcdir, name)
+        blob = subprocess.run(
+            ["git", "-C", args.repo, "show", "%s:%s" % (args.commit,
+             os.path.join(args.source_subdir, name))],
+            capture_output=True, check=True,
+        ).stdout
         dst = os.path.join(args.dest, name)
-        with open(src, "rb") as fh:
-            data = fh.read()
         with open(dst, "wb") as fh:
-            fh.write(data)
+            fh.write(blob)
         with open(dst, "rb") as fh:
-            verify = fh.read()
-        if verify != data:
-            raise SystemExit("carry: byte verification failed for %s" % name)
-        print("%s %s" % (name, git_blob_id(data)))
+            if fh.read() != blob:
+                raise SystemExit("carry: byte verification failed for %s" % name)
+        print("%s %s" % (name, git_blob_id(blob)))
     print(
-        "carried %d files, max %04d, commit %s" % (len(entries), top, head),
+        "carried %d files, max %04d, commit %s" % (len(entries), top, args.commit),
         file=sys.stderr,
     )
     return 0

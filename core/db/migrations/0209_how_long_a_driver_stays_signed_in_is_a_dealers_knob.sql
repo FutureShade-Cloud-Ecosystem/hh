@@ -1,0 +1,75 @@
+-- 0209 — how long a driver stays signed in stops being a constant in a Go file.
+--
+-- APPROVED by the commander, 2 Sep 2026 (max(branch) 0208 + 1, confirmed by `ls backend/migrations
+-- | tail -1` at the moment of writing, which answered 0208_widget_gallery.sql).
+--
+-- ── WHAT THIS CLOSES ────────────────────────────────────────────────────────────────────────────
+--
+-- identity/auth.go:17 says `const staffJWTTTL = 12 * time.Hour`, and that one line decides two
+-- different things for two different kinds of person. For an inside-sales clerk at a desk it is a
+-- security backstop and twelve hours is generous. For a DRIVER it is the length of a shift plus the
+-- drive home, and it is measured against a phone that has been in a cab all day with no signal at
+-- the third stop. The driver surface (0141's takeover row, 0204's column comment: "TRUE only where
+-- the shape has no Home worth landing on — driver, whose surface is the run sheet") is the ONE
+-- surface in this product a person uses standing up, outdoors, one-handed, and it is the one where
+-- being signed out is not an inconvenience but a delivery that cannot be signed for.
+--
+-- A dealer running two nine-hour shifts wants ten. A dealer whose drivers take a truck home over a
+-- long weekend wants seventy-two. Neither number is a fact about the software, so neither belongs
+-- in the software — which is the D-105 test 0184 §1 states in full and this column passes: it gates
+-- PERMISSION (how long a credential is honoured), so it is a TYPED, CHECK-CONSTRAINED policy column
+-- and not a curation row in the 0172 substrate.
+--
+-- ── WHY dispatch_policy AND NOT A NEW TABLE ─────────────────────────────────────────────────────
+--
+-- Because a second table would be a second idiom for the same thing. dispatch_policy already IS the
+-- dealer's answer to "how do we run deliveries" — the reopen authority, the commit prompt, who sees
+-- a load's value, how far the working view reaches. "How long is a driver's session" is a sentence
+-- from the same paragraph, asked by the same person on the same settings screen, read through the
+-- same shared settings kit and audited by the same one-row-per-changed-knob loop
+-- (service_loadboard.go SavePolicy). Putting it in a new `session_policy` table would buy a second
+-- ReadPolicy, a second UpsertPolicy, a second fail-closed default, a second validator and a second
+-- place for the audit trail to be forgotten — for one integer.
+--
+-- ── THE BOUNDS, AND WHY THEY ARE 1 AND 168 ──────────────────────────────────────────────────────
+--
+-- 1 hour is the floor because a session shorter than a delivery is a session that expires between
+-- arriving and getting a signature, and a dealer who wants that does not want a session at all.
+-- 168 hours is one week, and it is a CEILING RATHER THAN AN AMBITION: it is the largest number
+-- somebody could plausibly mean by "keep them signed in for the trip", and it is the number the Go
+-- verifier hard-codes as the outer bound it will honour on a token asserting the driver role
+-- (identity.MaxDriverSessionTTL, pinned against this CHECK by a test in the dispatch package). The
+-- two must move together or one of them is decorative, which is why the test exists and why this
+-- paragraph names it.
+--
+-- DEFAULT 12 IS NOT A NEW POLICY. It is today's constant, written down where it can be read. A
+-- dealer who never opens the settings screen gets exactly the session they have now, and an
+-- unwired deployment — one where the composition root never attaches the resolver — gets exactly
+-- the same, because identity falls back to its own constant when nobody answers. That is stated
+-- here so the next reader knows this file changes nobody's behaviour until somebody asks it to.
+--
+-- ── WHY THERE IS NO BRANCH DIMENSION WORTH USING, EVEN THOUGH THE TABLE HAS ONE ─────────────────
+--
+-- dispatch_policy is branch-scoped by the 0043/0173 idiom: a NULL branch_id row is the dealer
+-- default and a branch row overrides it. This column inherits that shape because it lives on this
+-- table, and a branch row may carry a value — but THE TOKEN ISSUER READS THE DEALER-DEFAULT ROW AND
+-- ONLY THE DEALER-DEFAULT ROW.
+--
+-- That is deliberate and it is not a shortcut. A session is minted at LOGIN, before anybody has
+-- named a branch, for a person whose branch grants may be several and whose scope may be GLOBAL.
+-- Resolving the TTL per branch would mean choosing one — the first grant, the largest value, the
+-- caller's "home" — and every one of those choices makes a person's session length depend on data
+-- they cannot see and did not pick. "Why was I signed out at noon yesterday and 8pm today" is not a
+-- question a support call should ever have to answer with a JOIN.
+--
+-- So: a branch override on this column is INERT for token issuance. It is not refused, because
+-- refusing it would need a CHECK that knows which row is the default and would fire on a perfectly
+-- ordinary branch save; it is simply not read. The seam in identity carries no branch parameter AT
+-- ALL, which is the strongest form of documenting this — there is no argument to pass.
+
+ALTER TABLE dispatch_policy
+  ADD COLUMN driver_session_hours INTEGER NOT NULL DEFAULT 12
+    CHECK (driver_session_hours BETWEEN 1 AND 168);
+
+COMMENT ON COLUMN dispatch_policy.driver_session_hours IS
+  'How long a DRIVER-role staff session is honoured, in hours (1-168, default 12 = today''s hardcoded staffJWTTTL). Read at token issue from the DEALER-DEFAULT row (branch_id IS NULL) ONLY — a branch override is inert here, because a person''s session length must not depend on which branch they were read against. Every other role keeps the 12h ceiling regardless of this value.';
