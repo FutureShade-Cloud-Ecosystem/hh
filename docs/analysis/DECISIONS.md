@@ -180,6 +180,14 @@ This overrides the live brief's instruction to carry the baseline unedited. That
 
 Touches: `core/db/migrations`, `core/db/PORTED.md`, `core/db/README.md`, `docs/BLOCKERS.md` (the pending entry is closed by this decision).
 
+**D33 (resolves which line of the ERP is HH's baseline and its tracking target).** `master`. The baseline HH-3.1 carries is `hardscapeos_dibbits` at `6eaea3ec`, the head of `master` and of `origin/master`, holding 196 migrations spanning 0001 to 0212. The `Demo` branch runs ahead of it carrying demo-tenant rebrand, relocation, branch-code, reference-number and portal-customer migrations plus widget and Home shape work, none of which the unified core carries. HH-3.7 tracks `master`, and a change that exists only on `Demo` is not a port decision until it reaches `master`.
+
+A consequence to correct, recorded here rather than fixed here: the commit the preflight named as the ERP head, and from which `core/api/erp-routes.txt` was vendored under D22, is a `Demo` commit sixteen ahead of `master` rather than `master`'s head. The parity gate in `ci` has therefore been proving the contract against a `Demo` snapshot. Refreshing that file from `master` with `refresh-erp-routes.mjs` is HH-3.7's first entry, and the route difference that refresh reports is the measure of how far the snapshot was off. It is not fixed in this lane, because `core/api/` is outside HH-3.1's scope and the tracking lane owns that tool by D22.
+
+Reason: the preflight's prompt named a checkout and not a branch, and that checkout was sitting on `Demo`. Naming the line rather than the directory is what makes the tracking lane's question answerable at all, because "has the ERP moved" has no meaning until "which ERP" is fixed.
+
+Touches: `core/db/README.md`, `core/db/PORTED.md`, `docs/BLOCKERS.md`, and HH-3.7's first port entry.
+
 ## Carried as verification, not decided
 
 Whether Appwrite Team memberships surface as OIDC claims stays a S2 check. D3 stands either way: if claims are absent, a Function enriches userinfo and the engine resolves the coarse gate from Team membership by lookup.

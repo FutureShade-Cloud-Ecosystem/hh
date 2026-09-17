@@ -85,3 +85,27 @@ it must be run against `manifest.yaml` and this note removed.
     comments as well as values and predicates.
   - Unblocked by: Colton recording D32 (scrub fixture values in the carried
     baseline, or carry verbatim).
+- **Open: additive migrations against a restored dump (Phase B precondition).**
+  Phase A's fixture is the migrations applied from zero plus the ERP's own
+  seed. The check that the additive set applies cleanly on top of a restored
+  HardscapeOS dump has not been run. D31 records it as open and a
+  precondition of Phase B, which does not start until it has been run
+  against a restored dump and reported.
+- **Open: special-order migration against the dump's synthetic skus (Phase B
+  precondition).** D16 requires the special-order migration to parse every
+  synthetic sku in a restored HardscapeOS dump. With no restored dump
+  available this check cannot run in Phase A. D31 records it as open and a
+  precondition of Phase B, which does not start until it has been run
+  against a restored dump and reported.
+
+## HH-3.7 (tracking)
+
+- **Open: `erp-routes.txt` vendored from a `Demo` commit, not `master`.**
+  D33 records that the commit from which `core/api/erp-routes.txt` was
+  vendored under D22 is a `Demo` commit sixteen ahead of `master`, not
+  `master`'s head (`6eaea3ec`), so the parity gate in `ci` has been proving
+  the contract against a `Demo` snapshot. Refreshing the file from `master`
+  with `refresh-erp-routes.mjs` is HH-3.7's first entry; the route
+  difference the refresh reports is the measure of how far the snapshot was
+  off. Not fixed in HH-3.1: `core/api/` is outside its scope and the
+  tracking lane owns the tool by D22.
