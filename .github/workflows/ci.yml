@@ -53,11 +53,21 @@ jobs:
           elif [ -n "$push_before" ] && [ "$push_before" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$push_before^{commit}" 2>/dev/null; then
             ledger_base="$(git merge-base "$push_before" HEAD)"
           fi
-          ledger_changed="$(git diff --name-only "$ledger_base"..HEAD -- core/db/PORTED.md)"
-          if [ -n "$ledger_changed" ]; then
-            entry="$(git diff "$ledger_base"..HEAD -- core/db/PORTED.md | grep '^+' | grep -v '^+++' | sed 's/^+//' || true)"
-            echo "Changes under core/db/migrations/ since freeze commit $freeze_commit are permitted by the core/db/PORTED.md ledger entry carried in the same change:"
-            echo "$entry"
+          # The escape hatch is coverage, not co-occurrence: the change's own
+          # PORTED.md diff must NAME every changed migration file, so a pull
+          # request that merely introduces or reformats the ledger cannot
+          # smuggle an unrelated migration past the freeze.
+          ledger_adds="$(git diff "$ledger_base"..HEAD -- core/db/PORTED.md | grep '^+' | grep -v '^+++' | sed 's/^+//' || true)"
+          uncovered=""
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            if ! printf '%s\n' "$ledger_adds" | grep -qF "$(basename "$f")"; then
+              uncovered="$uncovered $f"
+            fi
+          done <<< "$changed"
+          if [ -z "$uncovered" ]; then
+            echo "Changes under core/db/migrations/ since freeze commit $freeze_commit are covered by core/db/PORTED.md ledger entries carried in the same change:"
+            printf '%s\n' "$ledger_adds"
             exit 0
           fi
           echo "Schema freeze violated: files changed under core/db/migrations/ after freeze commit $freeze_commit:" >&2
