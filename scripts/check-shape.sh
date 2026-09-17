@@ -66,7 +66,15 @@ dash_probe="$(printf 'a\xe2\x80\x93b\xe2\x80\x94c')"
 printf '%s\n' "$dash_probe" | grep -qP '[\x{2013}\x{2014}]' \
   || fail "dash self-test failed: pattern did not match a known dash string"
 
-if git ls-files -z | xargs -0 -r grep -IlP '[\x{2013}\x{2014}]' | grep .; then
+# The dash rule holds for everything this repository writes. The carried ERP
+# baseline is excepted by range: D32 carries 0001 through 0212 byte-verbatim
+# from a source written before the house rule existed, and editing it would
+# break the verbatim-carry proof. Additive migrations from 0213 on, and every
+# other file, stay under the rule.
+carried_baseline='^core/db/migrations/(0[01][0-9]{2}|020[0-9]|021[0-2])_'
+
+if git ls-files -z | xargs -0 -r grep -IlP '[\x{2013}\x{2014}]' \
+  | grep -Ev "$carried_baseline" | grep .; then
   fail "em or en dash found in the files listed above"
 fi
 
