@@ -18,6 +18,52 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Schema freeze check
+        run: |
+          set -euo pipefail
+          marker=core/db/SCHEMA-FROZEN
+          if [ ! -f "$marker" ]; then
+            echo "Schema freeze marker $marker is absent: the freeze is not in effect, passing."
+            exit 0
+          fi
+          freeze_commit="$(tr -d '[:space:]' < "$marker")"
+          if [ -z "$freeze_commit" ]; then
+            echo "Schema freeze marker $marker is present but empty; it must hold the freeze commit id." >&2
+            exit 1
+          fi
+          if ! git cat-file -e "$freeze_commit^{commit}" 2>/dev/null; then
+            echo "Schema freeze marker names commit $freeze_commit, which is not in this checkout. The job fetches with fetch-depth: 0, so the marker content is wrong." >&2
+            exit 1
+          fi
+          changed="$(git diff --name-only "$freeze_commit"..HEAD -- core/db/migrations/)"
+          if [ -z "$changed" ]; then
+            echo "No changes under core/db/migrations/ since freeze commit $freeze_commit: passing."
+            exit 0
+          fi
+          # The escape hatch is scoped to this change's own diff: a PORTED.md
+          # edit made earlier (a merged port, or a ledger note) must never
+          # open the hatch for an unrelated later migration change.
+          pr_base="${{ github.event.pull_request.base.sha }}"
+          push_before="${{ github.event.before }}"
+          ledger_base="$freeze_commit"
+          if [ -n "$pr_base" ] && git cat-file -e "$pr_base^{commit}" 2>/dev/null; then
+            ledger_base="$(git merge-base "$pr_base" HEAD)"
+          elif [ -n "$push_before" ] && [ "$push_before" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$push_before^{commit}" 2>/dev/null; then
+            ledger_base="$(git merge-base "$push_before" HEAD)"
+          fi
+          ledger_changed="$(git diff --name-only "$ledger_base"..HEAD -- core/db/PORTED.md)"
+          if [ -n "$ledger_changed" ]; then
+            entry="$(git diff "$ledger_base"..HEAD -- core/db/PORTED.md | grep '^+' | grep -v '^+++' | sed 's/^+//' || true)"
+            echo "Changes under core/db/migrations/ since freeze commit $freeze_commit are permitted by the core/db/PORTED.md ledger entry carried in the same change:"
+            echo "$entry"
+            exit 0
+          fi
+          echo "Schema freeze violated: files changed under core/db/migrations/ after freeze commit $freeze_commit:" >&2
+          echo "$changed" >&2
+          echo "Only an HH-3.7 port may change core/db/migrations/ after the freeze, and only in a pull request also carrying a core/db/PORTED.md ledger entry." >&2
+          exit 1
       - name: App Shape check
         run: bash scripts/check-shape.sh
       - name: Set up Bun
