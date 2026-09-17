@@ -70,9 +70,9 @@ jobs:
             printf '%s\n' "$ledger_adds"
             exit 0
           fi
-          echo "Schema freeze violated: files changed under core/db/migrations/ after freeze commit $freeze_commit:" >&2
-          echo "$changed" >&2
-          echo "Only an HH-3.7 port may change core/db/migrations/ after the freeze, and only in a pull request also carrying a core/db/PORTED.md ledger entry." >&2
+          echo "Schema freeze violated: files changed under core/db/migrations/ after freeze commit $freeze_commit with no PORTED.md coverage:" >&2
+          echo "$uncovered" >&2
+          echo "Only an HH-3.7 port may change core/db/migrations/ after the freeze, and only in a pull request whose PORTED.md ledger diff names every changed file." >&2
           exit 1
       - name: App Shape check
         run: bash scripts/check-shape.sh
