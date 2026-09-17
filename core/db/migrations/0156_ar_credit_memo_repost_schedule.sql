@@ -1,0 +1,69 @@
+-- 0156_ar_credit_memo_repost_schedule.sql — DIB-474: the schedule row DIB-429 was missing.
+--
+-- WHAT WAS WRONG. internal/billing's nightly credit-memo repost sweep is built, unit- and
+-- integration-tested, and registered in the composition root's jobs chain
+-- (cmd/server/main.go, `Register(billing.CreditMemoRepostJobName, creditMemoRepost)`). It has
+-- never fired once, because job_schedules (0096) had no row named 'ar.credit_memo_repost'. The
+-- runner says so at every boot and then carries on:
+--
+--   WARN jobs: registered function has no schedule row — it will never fire  job=ar.credit_memo_repost
+--
+-- That warning is the runner's CheckWiring doing exactly its job — "code deployed without its
+-- row" — and neither direction of mismatch is fatal, so the omission survived a deploy. This
+-- migration is the row. There is NO Go change in this ticket: the function, its wiring and its
+-- tests all already exist and are untouched.
+--
+-- WHAT THE JOB DOES, in one line, so the row is readable without opening the package: it
+-- anti-joins credit memos against gl_journals on the DERIVED idempotency key
+-- ('ar.credit_memo.issued:<memo id>') and re-posts the reversing journal for any memo whose
+-- inline post refused — the memo's own date, the same poster seam, the same key, so it can
+-- never write a second journal for a memo that did post.
+--
+-- ── WHY 08:30 UTC (nightly_minute 510) ───────────────────────────────────────────────────────
+-- NIGHTLY, off-hours, and AFTER 'ar.credit_hold_sweep' (0104, 480 = 08:00 UTC ≈ 04:00 Eastern) —
+-- the cadence DIB-429's own hand-off recorded (NOTES-TAIL-T1.md, PARK 4). 510 is 08:30 UTC ≈
+-- 04:30 Eastern:
+--
+--   * Off-hours in Ontario either side of the DST shift. 0096 evaluates schedules in UTC and has
+--     no timezone column, so a nightly job drifts an hour against local wall-clock twice a year;
+--     04:30 Eastern absorbs that drift without ever landing near a counter opening.
+--   * After the AR credit-hold sweep, and before 'yard.stale_pick_sweep' (540 = 09:00 UTC,
+--     chosen in 0096 as "before the yard opens"). The gap either side is 30 minutes, so the three
+--     nightly sweeps do not contend for the runner's one-at-a-time claim loop in a single tick.
+--   * The ordering against the hold sweep is a PREFERENCE, not a dependency, and it is worth
+--     saying which: the hold sweep evaluates open AR out of invoices.balance_cents, and a credit
+--     memo books its AR row in the SAME transaction that raises the memo. So a missing journal
+--     never moved an AR balance and could never have changed a hold decision. What this sweep
+--     repairs is the GENERAL LEDGER side only. Running it second is simply the more useful order
+--     for an operator reading job_runs in the morning: holds first, then the ledger repair.
+--   * Late enough in the night that a memo raised by the previous evening's work is swept before
+--     anyone opens the books the next day.
+--
+-- ── WHY enabled = TRUE ───────────────────────────────────────────────────────────────────────
+-- The two rows in 0110 ship enabled = FALSE because they SPEAK to customers, and an automation
+-- that starts texting on deploy is an apology waiting to happen. This one is the opposite kind of
+-- job: it is a repair for a state that is already wrong, it contacts nobody, and its own safety
+-- is structural rather than procedural —
+--
+--   * it posts under the SAME derived idempotency key the inline path uses, and gl.PostExternal is
+--     idempotent on that key, so a double start (the runner has no lease — see 0096) cannot write
+--     a second journal;
+--   * a memo whose journal posted is not in its result set at all;
+--   * it is bounded to a 200-memo batch per night and converges over nights rather than holding a
+--     connection for one enormous pass;
+--   * with no poster wired, or with nothing to repair, the run is recorded SKIPPED rather than
+--     SUCCEEDED — so a wall of SKIPPED in job_runs is the HEALTHY state, and a SUCCEEDED row means
+--     the ledger genuinely had a hole in it that night.
+--
+-- Shipping it disabled would reproduce the exact defect this ticket exists to close: a registered
+-- function that never fires. An operator who wants it off has one UPDATE.
+--
+-- Rollback: DELETE FROM job_schedules WHERE name = 'ar.credit_memo_repost'; — the sweep stops
+-- firing and the boot warning returns. Nothing else in the system depends on the row.
+--
+-- ON CONFLICT DO NOTHING (following 0110) because an operator may already have inserted this row
+-- by hand as the stop-gap; a migration must not fail on the environment that worked around it.
+
+INSERT INTO job_schedules (name, kind, nightly_minute, enabled)
+VALUES ('ar.credit_memo_repost', 'NIGHTLY', 510, TRUE)
+ON CONFLICT (name) DO NOTHING;
