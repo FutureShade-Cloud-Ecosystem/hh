@@ -84,3 +84,72 @@ Rejected. What it loses: the directory oracle. A caller with a valid token could
 - HH-3.3: the B2 middleware implements the ordering and statuses above; the B3 guard re-expression keeps x-role refusals distinct at 403; the B5 sweeps assert both halves of every conditional rule with zero repository reach on refusals.
 - HH-3.5: the sync routes inherit the bearer-conditioned rule unchanged and own only their route half.
 - HH-5: per-org databases and per-org edges compose with this decision as stated; convergence changes where requests are served, never how the org is resolved.
+
+## Addendum: the Phase B enforcement vocabulary, pinned in the B2 review
+
+This section pins the mechanism choices the enforcement semantics above
+required but did not name. Nothing reopens the decision; each item states
+what it pins.
+
+The bearer class is carried by the standard `aud` claim. D3 already
+records the coarse gate as "org membership and audience (staff,
+contractor, customer)" (docs/analysis/DECISIONS.md, D3 first sentence),
+and `aud` is that audience axis in its standard carrier. Two
+deployment-configured values exist in Phase B, the staff audience and the
+tenant audience, both required at construction and required to differ.
+Classification reads verified claims only. A token claiming both values
+is refused. A token claiming neither, including a token for the customer
+audience once that audience exists, is nobody for this API until
+customer-carrying routes exist and a third value is configured.
+
+The tenant contractor-account linkage is carried by a `tenant` claim (the
+contractor account UUID), required on tenant-class tokens and read on no
+other class. The org of a tenant request is never read from any claim:
+it is resolved from the Team behind the token per request through the
+same membership source as the staff leg (D28), which is what leg 4's
+"the org comes from the Team" means mechanically. The S2 check (real
+Appwrite tokens, an HH-5 precondition) may rename either vocabulary
+item; the change is confined to the claims parse, the configuration, and
+the minter.
+
+The token vocabulary the verifier reads: `iss` equal to the configured
+issuer, `sub` required, `aud` as above, `exp` required with no grace,
+`iat` required (the carried driver session ceiling is judged against it,
+so a token without it cannot support that check), `nbf` honored when
+present, `tenant` as above, NumericDate claims as integral seconds.
+Staff-class tokens carry no authority claims and none are read: role,
+tier and branch authority resolve from the app-role tables per request
+(D3).
+
+Operational inability answers 503 with one static body. When the
+middleware cannot run its checks (the membership source errors, the org
+anchor read errors, the JWK Set cannot be fetched), the request is
+refused 503: 401 would report an outage as a credential defect, 403 as a
+policy refusal. No operational error admits, and no operational error is
+cached (D28's cache stores answers, never errors).
+
+The server enforces one slug shape ahead of any platform or database
+call: lowercase letters, digits, dot, underscore and hyphen, starting
+lowercase alphanumeric, at most 64 characters, sent exactly once. A
+header failing that shape answers 400 in the shape family, as does a
+repeated header and an empty-valued header on tenant routes. The
+contract's XOrg parameter is a bare string (core/api/skeleton.yaml,
+parameters.XOrg); this shape is a server-side pin of the vocabulary the
+platform's `org:<slug>` team names carry, and the concrete resolver
+normalizes to the lowercase form the platform guarantees (the anchor
+slug column is CITEXT).
+
+The zero-statement property is bounded: it binds every pre-membership
+refusal and the four pinned legs, which execute no core-database
+statement because the org anchor read is reachable only after membership
+passes. The one refusal that reaches the anchor is the provisioning gap
+(membership passed, anchor row missing); it performs exactly one anchor
+read and refuses 403 with the shared body.
+
+Refusal bodies are pinned: every 401 carries the contract's Unauthorized
+description as the error string; every 403 one constant; every 503 one
+constant; the 400 bodies name the header defect without echoing any
+value; all conform to the Error envelope. Expiry gets no grace; the
+clock tolerance applies to issued-at and not-before only. An expired JWK
+Set cache is never served stale, and an unknown key id triggers at most
+one refetch per configured floor.
