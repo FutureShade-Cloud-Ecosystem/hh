@@ -177,3 +177,43 @@ next request and a driver promoted to another role has the long
 session cut at the next request: lifetime follows the resolved role,
 never a claim (D3), which is the one honest limit this vocabulary can
 express.
+
+Population writes a staff_role_grant only through a linked live users
+row (email-exact linkage, never guessed, C31), so on populated data
+every grant has one by construction and the resolver's unlinked-grant
+arm exists for hand-minted rows only. VerifyPopulation counts live
+grants whose subject has no live users row (StaffGrantsUnlinked) with
+expectation zero; a nonzero count names hand-minted or
+post-hoc-unlinked rows, never a population output.
+
+portal_users.tenant_id equals the row's own customer_id: the customer
+is the contractor account, the tenant claim carries the contractor
+account UUID, and 0213 added tenant_id additive beside customer_id
+precisely so this equality could be stamped by population rather than
+allocated by a new authority.
+
+An HH Pro estimator-origin person enters under buyer_no_pay, the
+least-privilege canonical role containing submit_rfq (the capability
+the estimator job reconciles to per D3's extras-become-capabilities
+rule and 0215's NULL mapping), with the CapabilityFallback marker on
+the mapping result. The marker is in-memory; the S2/HH-5 importer must
+persist the estimator distinction as capability data when a capability
+surface exists, and must never import an estimator-origin person as a
+plain buyer_no_pay row without that data. This ruling never fires on
+ERP-origin rows, which are already canonical.
+
+A branch-scoped role holder with zero live branch grants receives no
+grant at population time, counted in SkippedBranchless, never inserted
+with a NULL branch_id and never granted invented breadth (C31); this
+is deliberately stricter than the ERP, which authenticates such a user
+with empty branch breadth, and the read path reproduces the ERP's
+fence for post-population drift because branch breadth resolves live
+from user_branch_grants, never from the grant row.
+
+Population is the carry act itself: the ERP-side equivalent of this
+program is migration SQL and carry scripts, not a module repository on
+a request path. The fence exists to keep request-time modules from
+reaching into each other's tables; a one-shot, operator-run
+provisioning program whose whole purpose is to write the scope columns
+the fence protects is the recorded exception, and request-path code
+gets none.
