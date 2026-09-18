@@ -97,12 +97,30 @@ it must be run against `manifest.yaml` and this note removed.
   HardscapeOS dump has not been run. D31 records it as open and a
   precondition of Phase B, which does not start until it has been run
   against a restored dump and reported.
+  - Closed: ran against a restored dump, the staging droplet's pre-migrate
+    deploy backup at the pinned baseline (migration head 0212; the live
+    staging database and `origin/master` have both advanced past the pin,
+    recorded under HH-3.3 below). Restore into a fresh scratch database:
+    261 public tables, 0 restore error classes, and the dump's shape exactly
+    the carried baseline's (verified column by column before anything was
+    applied, by the session checker at `tools/d31-check/run.sh`). Additive
+    apply: 0 files with errors, 12 of 12 additive tables present after the
+    apply. Precondition met.
 - **Open: special-order migration against the dump's synthetic skus (Phase B
   precondition).** D16 requires the special-order migration to parse every
   synthetic sku in a restored HardscapeOS dump. With no restored dump
   available this check cannot run in Phase A. D31 records it as open and a
   precondition of Phase B, which does not start until it has been run
   against a restored dump and reported.
+  - Closed: ran over the same restored dump. Special-order products: 0;
+    flagged lines: 0; lines on special-order products without the flag: 0.
+    Synthetic skus (the `SO-` prefix HH Pro documents at
+    `isSpecialOrderSku`): 0 present across every sku-bearing column in the
+    dump (products, price_change_lines, pricing_order_lines, task_pick_lines,
+    task_shortages, commission_run_lines, purchasing_vendor_skus); 0 parsed,
+    0 left unparsed. The staging snapshot carries no special-order traffic,
+    so D16's parse holds with none left; the absence is recorded as what it
+    is rather than counted as coverage of live special-order volume.
 
 ## HH-3.7 (tracking)
 
@@ -115,3 +133,19 @@ it must be run against `manifest.yaml` and this note removed.
   difference the refresh reports is the measure of how far the snapshot was
   off. Not fixed in HH-3.1: `core/api/` is outside its scope and the
   tracking lane owns the tool by D22.
+
+## HH-3.3 (identity)
+
+- **Open, routed to HH-3.7: ERP `master` advanced past the D33 pin and
+  collides with the additive numbering.** While producing the D31 dump: the
+  live staging database sits at ERP migration head 0219, and `origin/master`
+  carries migrations 0213 through 0219 past the pinned baseline `6eaea3ec`
+  (0001 through 0212). The ERP's own 0213 through 0215 are unrelated
+  migrations holding the same numbers as this repository's frozen additive
+  set (0213 org and tenant, 0214 entities and pricing, 0215 identity and
+  audit), and the carried rule is that migrations are numbered, never edited
+  after commit and never renumbered, so reconciling the collision is a port
+  decision for HH-3.7 with Colton; D33 already notes the ERP delivery is in
+  flight and lands migrations. The two D31 closures above are unaffected:
+  they ran against the pin-era pre-migrate backup, the baseline the additive
+  set was designed for. Nothing in HH-3.3 touches `core/db/migrations/`.
