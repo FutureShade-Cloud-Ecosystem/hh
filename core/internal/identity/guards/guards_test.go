@@ -559,6 +559,98 @@ func TestRequireTenantLegs(t *testing.T) {
 	}
 }
 
+// The portal row status on plain tenant routes, both directions (the
+// ADR-0020 addendum carve-out, QA B5 finding F-1): an active row admits,
+// and a row that is not active (inactive or pending: the resolver reports
+// both statuses through the one sentinel) answers 401 with the shared
+// unauthorized body on every plain tenant route, handler unreached, while
+// an unreadable row answers the 503 family. The no-row leg records the
+// one boundary no pin rules: admission today, changed only by a ruling.
+func TestRequireTenantPortalStatus(t *testing.T) {
+	f := newFixture(t)
+	reached := 0
+	h := f.g.RequireTenant(func(w http.ResponseWriter, r *http.Request, scope authz.TenantScope) {
+		reached++
+		w.WriteHeader(http.StatusOK)
+	})
+
+	f.portal.ok = true
+	f.portal.role = identity.PortalRoleBuyer
+	if code, body := call(t, h, http.MethodGet, "/api/v1/tenant/me", f.tenantToken(t), nil); code != http.StatusOK {
+		t.Fatalf("active portal row: %d %s", code, body)
+	}
+
+	for _, status := range []string{"inactive", "pending"} {
+		f.portal.err = fmt.Errorf("%w: portal_users row status %q", identity.ErrPortalUserInactive, status)
+		code, body := call(t, h, http.MethodGet, "/api/v1/tenant/me", f.tenantToken(t), nil)
+		if code != http.StatusUnauthorized || body != string(authz.BodyUnauthorized) {
+			t.Fatalf("%s portal row: %d %s", status, code, body)
+		}
+		code, body = call(t, h, http.MethodPatch, "/api/v1/tenant/me", f.tenantToken(t), nil)
+		if code != http.StatusUnauthorized || body != string(authz.BodyUnauthorized) {
+			t.Fatalf("%s portal row update: %d %s", status, code, body)
+		}
+		code, body = call(t, h, http.MethodPost, "/api/v1/tenant/token/refresh", f.tenantToken(t), nil)
+		if code != http.StatusUnauthorized || body != string(authz.BodyUnauthorized) {
+			t.Fatalf("%s portal row refresh: %d %s", status, code, body)
+		}
+	}
+
+	f.portal.err = errors.New("portal read failed")
+	if code, body := call(t, h, http.MethodGet, "/api/v1/tenant/me", f.tenantToken(t), nil); code != http.StatusServiceUnavailable || body != string(authz.BodyUnavailable) {
+		t.Fatalf("portal operational error: %d %s", code, body)
+	}
+
+	f.portal.err = nil
+	f.portal.ok = false
+	if code, body := call(t, h, http.MethodGet, "/api/v1/tenant/me", f.tenantToken(t), nil); code != http.StatusOK {
+		t.Fatalf("no portal row (unpinned boundary, admitted): %d %s", code, body)
+	}
+	f.portal.ok = true
+
+	if reached != 2 {
+		t.Fatalf("handler reached %d times, want the active and no-row admissions", reached)
+	}
+}
+
+// The sync surface's tenant leg is a tenant route and enforces the same
+// portal row status rule; its staff leg never consults the portal source,
+// so a portal outage cannot refuse a staff sync call.
+func TestRequireSyncTenantPortalStatus(t *testing.T) {
+	f := newFixture(t)
+	staffReached, tenantReached := 0, 0
+	h := f.g.RequireSync(func(w http.ResponseWriter, r *http.Request, caller SyncCaller) {
+		if caller.Staff != nil {
+			staffReached++
+		}
+		if caller.Tenant != nil {
+			tenantReached++
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	f.portal.err = identity.ErrPortalUserInactive
+	if code, body := call(t, h, http.MethodPost, "/api/v1/sync/orders", f.tenantToken(t), nil); code != http.StatusUnauthorized || body != string(authz.BodyUnauthorized) {
+		t.Fatalf("sync tenant inactive portal: %d %s", code, body)
+	}
+	if code, body := call(t, h, http.MethodGet, "/api/v1/sync/orders", f.staffToken(t, 10*time.Minute), map[string]string{authz.HeaderXOrg: fxOrgSlug}); code != http.StatusOK {
+		t.Fatalf("sync staff under portal outage: %d %s", code, body)
+	}
+
+	f.portal.err = errors.New("portal read failed")
+	if code, body := call(t, h, http.MethodPost, "/api/v1/sync/orders", f.tenantToken(t), nil); code != http.StatusServiceUnavailable || body != string(authz.BodyUnavailable) {
+		t.Fatalf("sync tenant portal operational error: %d %s", code, body)
+	}
+
+	f.portal.err = nil
+	if code, body := call(t, h, http.MethodPost, "/api/v1/sync/orders", f.tenantToken(t), nil); code != http.StatusOK {
+		t.Fatalf("sync tenant active portal: %d %s", code, body)
+	}
+	if staffReached != 1 || tenantReached != 1 {
+		t.Fatalf("reached staff=%d tenant=%d, want one admitted leg each", staffReached, tenantReached)
+	}
+}
+
 // The sync guard hands the staff caller under the staff bearer and the
 // tenant scope under the tenant bearer, and refuses a scopeless handler
 // state fail closed.

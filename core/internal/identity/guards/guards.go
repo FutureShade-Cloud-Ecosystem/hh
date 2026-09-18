@@ -171,10 +171,23 @@ func (g *Guards) RequireStaffPredicate(pred func(identity.StaffAuthority) bool, 
 }
 
 // RequireTenant guards a tenant operation: the tenant leg of the Gate
-// (X-Org rejected, org from the Team, tenant from the token) with the
-// scope handed to the handler. It is the contract's x-role tenant.
+// (X-Org rejected, org from the Team, tenant from the token), then the
+// caller's portal row status, with the scope handed to the handler. It is
+// the contract's x-role tenant. The status check is the ADR-0020 addendum
+// carve-out on every tenant route, not only capability routes: a tenant
+// bearer whose portal_users row is not active answers 401 with the shared
+// unauthorized body (identity.ErrPortalUserInactive: an account-lifetime
+// fact, the same mapping RequireCapability already carries), and an
+// unreadable row answers the 503 family, fail closed. A tenant bearer with
+// no portal_users row in the token's tenant is ruled by no pin: the guard
+// keeps admitting it here while capability routes refuse it the RBAC-403
+// for lacking authority, and closing that leg is a ruling to record, never
+// a silent choice.
 func (g *Guards) RequireTenant(next TenantHandler) http.Handler {
 	return g.gate.TenantScoped(func(w http.ResponseWriter, r *http.Request, scope authz.TenantScope) {
+		if !g.requireActivePortal(w, r, scope) {
+			return
+		}
 		next(w, r, scope)
 	})
 }
@@ -210,11 +223,36 @@ func (g *Guards) RequireCapability(cap identity.Capability, next TenantHandler) 
 	})
 }
 
+// requireActivePortal enforces the portal row status on a tenant route
+// that asks no capability (the plain tenant class and the tenant leg of
+// the sync surface). It resolves through the same PortalRoleSource seam
+// RequireCapability reads, so the status decision is the resolver's, never
+// the token's: identity.ErrPortalUserInactive answers the 401 family with
+// the shared body (ADR-0020 addendum: a tenant bearer whose portal_users
+// row is not active is an authentication-lifetime refusal on every tenant
+// route), every other error answers the 503 family, fail closed, and ok
+// false with no error (no portal_users row in this tenant) proceeds
+// because no pin rules that leg: refusing it here would invent policy the
+// capability routes deliberately leave to the no-authority RBAC-403.
+func (g *Guards) requireActivePortal(w http.ResponseWriter, r *http.Request, scope authz.TenantScope) bool {
+	_, _, err := g.portal.PortalRole(r.Context(), scope.PlatformUserID, scope.TenantID)
+	if err != nil {
+		if errors.Is(err, identity.ErrPortalUserInactive) {
+			authz.RefuseUnauthorized(w)
+			return false
+		}
+		authz.RefuseUnavailable(w)
+		return false
+	}
+	return true
+}
+
 // RequireSync guards a dual-bearer sync operation (the contract's two
 // /api/v1/sync/{scope} operations, x-role scope-member): the G4 rule runs
 // bearer-conditioned in the Gate's Sync, and whichever leg stamped its
 // scope decides what the handler receives. The staff leg resolves
 // authority and the ceiling exactly like any staff guard; the tenant leg
+// enforces the portal row status exactly like every tenant route, then
 // carries the stamped scope. The route half of the sync surface is
 // HH-3.5's acceptance; this constructor is the middleware half this lane
 // proves (QA finding F7).
@@ -229,6 +267,9 @@ func (g *Guards) RequireSync(next SyncHandler) http.Handler {
 			return
 		}
 		if tenantScope, ok := authz.TenantScopeFrom(r.Context()); ok {
+			if !g.requireActivePortal(w, r, tenantScope) {
+				return
+			}
 			next(w, r, SyncCaller{Tenant: &tenantScope})
 			return
 		}

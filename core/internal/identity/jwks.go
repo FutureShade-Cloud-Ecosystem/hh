@@ -51,7 +51,15 @@ func NewRemoteJWKS(jwksURL string, ttl, refreshFloor time.Duration, client *http
 	if ttl <= 0 {
 		ttl = defaultKeyCacheTTL
 	}
-	if refreshFloor < 0 {
+	// The floor defaults on zero and on negative alike: Config.RefreshFloor
+	// documents that zero selects the package default, and a negative value
+	// is invalid exactly the same way (the serve configuration refuses one
+	// outright). No construction path may install a zero floor, because a
+	// zero floor never throttles: every unknown-kid lookup inside a live
+	// cache would fetch the JWK Set under the cache mutex, hammering the
+	// platform endpoint from an unauthenticated trigger (ADR-0020 addendum:
+	// an unknown key id triggers at most one refetch per configured floor).
+	if refreshFloor <= 0 {
 		refreshFloor = defaultRefreshFloor
 	}
 	if client == nil {

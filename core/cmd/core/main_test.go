@@ -1,9 +1,18 @@
 package main
 
 import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 )
 
 func fullEnv() map[string]string {
@@ -80,5 +89,70 @@ func TestLoadServeConfigTimingKnobs(t *testing.T) {
 	}
 	if cfg.jwksCacheTTL != 9*time.Minute || cfg.refreshFloor != 45*time.Second || cfg.clockSkew != 2*time.Minute {
 		t.Fatalf("knobs = %+v", cfg)
+	}
+}
+
+// garbageKidToken builds a compact JWS naming a kid the served set never
+// carried. Verification stops at the key lookup, so the payload needs no
+// valid signature: the token exists to trigger KeyByID, never to pass it.
+func garbageKidToken(kid string) string {
+	b64 := func(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+	header, _ := json.Marshal(map[string]any{"alg": "RS256", "kid": kid, "typ": "JWT"})
+	claims, _ := json.Marshal(map[string]any{
+		"iss": "https://platform.example.test", "sub": "attacker", "aud": "hh-staff",
+		"iat": time.Now().Add(-time.Minute).Unix(), "exp": time.Now().Add(time.Hour).Unix(),
+	})
+	return b64(header) + "." + b64(claims) + "." + b64([]byte("not-a-signature"))
+}
+
+// The refresh floor default applies through the serve configuration path:
+// with CORE_JWKS_REFRESH_FLOOR unset, loadServeConfig leaves the zero
+// value, and the Config serve builds from it throttles unknown-kid
+// refetches to the identity package default. An unthrottled default would
+// let every unauthenticated garbage-kid request fetch the JWK Set, so the
+// fetch count here is the availability claim, measured not asserted.
+func TestServeRefreshFloorDefaultApplies(t *testing.T) {
+	var mu sync.Mutex
+	fetches := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		fetches++
+		mu.Unlock()
+		fmt.Fprint(w, `{"keys":[]}`)
+	}))
+	defer srv.Close()
+
+	env := fullEnv()
+	env["CORE_JWKS_URL"] = srv.URL
+	cfg, err := loadServeConfig(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatalf("loadServeConfig: %v", err)
+	}
+	if cfg.refreshFloor != 0 {
+		t.Fatalf("unset CORE_JWKS_REFRESH_FLOOR must leave the zero value, got %v", cfg.refreshFloor)
+	}
+	verifier, err := identity.NewVerifier(identity.Config{
+		JWKSURL:        cfg.jwksURL,
+		Issuer:         cfg.issuer,
+		StaffAudience:  cfg.staffAudience,
+		TenantAudience: cfg.tenantAudience,
+		KeyCacheTTL:    cfg.jwksCacheTTL,
+		RefreshFloor:   cfg.refreshFloor,
+		ClockSkew:      cfg.clockSkew,
+		HTTPClient:     srv.Client(),
+	})
+	if err != nil {
+		t.Fatalf("NewVerifier: %v", err)
+	}
+	ctx := context.Background()
+	for i := 0; i < 6; i++ {
+		if _, err := verifier.Verify(ctx, garbageKidToken(fmt.Sprintf("garbage-kid-%d", i))); err == nil {
+			t.Fatalf("garbage kid %d verified", i)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if fetches != 1 {
+		t.Fatalf("unset floor through the serve path: %d fetches for 6 garbage-kid tokens, want 1 (the default floor must throttle)", fetches)
 	}
 }

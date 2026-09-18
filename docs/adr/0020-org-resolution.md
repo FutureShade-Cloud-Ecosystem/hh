@@ -160,7 +160,12 @@ constant; the 400 bodies name the header defect without echoing any
 value; all conform to the Error envelope. Expiry gets no grace; the
 clock tolerance applies to issued-at and not-before only. An expired JWK
 Set cache is never served stale, and an unknown key id triggers at most
-one refetch per configured floor.
+one refetch per configured floor. A key retired from the platform's live
+set continues to verify until the cached set that still carries it
+reaches its TTL: the retire-staleness window is bounded by KeyCacheTTL,
+the same bound that governs the never-served-stale rule, and once the
+TTL passes and the set is refetched the retired key id answers 401 with
+the shared body.
 
 The sweeps carve out the authentication-lifetime refusals from the
 no-authenticated-call-answers-401 expectation, each answering 401 with
@@ -169,6 +174,14 @@ credential, not about the gate: a staff token whose self-declared window
 exceeds the ceiling resolved for its role; a staff bearer whose linked
 users row is not ACTIVE; and a tenant bearer whose portal_users row is
 not active. Every other authenticated call remains expected non-401.
+
+A tenant bearer with no portal_users row in the token's tenant is
+admitted on the plain tenant routes and the sync tenant leg: the
+carve-out above is a row that exists and is not active, an
+account-lifetime fact, while a missing row is an authority fact the
+capability routes already answer with the RBAC-403; what the plain routes
+should answer is a Phase C tenant-module ruling to record before those
+handlers land, never a silent choice here.
 
 The session ceiling is judged against the role resolved per request
 from staff_role_grant and reads the dealer knob at enforcement time,

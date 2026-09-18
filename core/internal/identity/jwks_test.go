@@ -89,13 +89,16 @@ func TestRemoteJWKSRotationPickup(t *testing.T) {
 	}
 
 	// Rotate: the endpoint now serves a different active key under the
-	// same kid slot naming a new kid.
+	// same kid slot naming a new kid. The zero floor selects the package
+	// default, so the gated refetch needs the clock past that floor while
+	// the cache is still live.
 	kid2 := "test-rsa-next"
 	current = fmt.Sprintf(`{"keys":[{"kty":"RSA","kid":%q,"use":"sig","n":%q,"e":%q}]}`,
 		kid2,
 		b64url(k.rsaActive.N.Bytes()),
 		b64url([]byte{1, 0, 1}),
 	)
+	clk.advance(defaultRefreshFloor + time.Second)
 
 	key, ok, err := src.KeyByID(ctx, kid2)
 	if err != nil || !ok {
@@ -148,6 +151,75 @@ func TestRemoteJWKSRefreshFloor(t *testing.T) {
 	}
 	if hits := srv.count(); hits != 2 {
 		t.Fatalf("expected refetch after floor, hits=%d", hits)
+	}
+}
+
+// The zero floor selects the documented package default, so the
+// zero-config form (the shape serve builds when CORE_JWKS_REFRESH_FLOOR is
+// unset) throttles garbage-kid refetches: no refetch inside the default
+// window, exactly one once it passes. A negative floor stays invalid
+// exactly as before the default was widened: it selects the default too,
+// never an unthrottled zero.
+func TestRemoteJWKSRefreshFloorZeroSelectsDefault(t *testing.T) {
+	k := generateTestKeys(t)
+	clk := newClock()
+	srv := serveJWKS(t, func() (int, string) { return http.StatusOK, k.jwksJSON() })
+	src, err := NewRemoteJWKS(srv.srv.URL, time.Hour, 0, srv.srv.Client(), clk.Now)
+	if err != nil {
+		t.Fatalf("NewRemoteJWKS: %v", err)
+	}
+	ctx := context.Background()
+
+	if _, ok, err := src.KeyByID(ctx, testKeyID); err != nil || !ok {
+		t.Fatalf("first lookup: ok=%v err=%v", ok, err)
+	}
+	if hits := srv.count(); hits != 1 {
+		t.Fatalf("hits=%d", hits)
+	}
+	for i := 0; i < 5; i++ {
+		if _, ok, _ := src.KeyByID(ctx, fmt.Sprintf("garbage-kid-%d", i)); ok {
+			t.Fatalf("garbage kid %d resolved", i)
+		}
+	}
+	if hits := srv.count(); hits != 1 {
+		t.Fatalf("zero floor did not select the default: %d fetches for 5 garbage-kid lookups, want 1", hits)
+	}
+
+	// A moment before the default floor passes: still throttled.
+	clk.advance(defaultRefreshFloor - time.Second)
+	if _, ok, _ := src.KeyByID(ctx, "garbage-kid-edge"); ok {
+		t.Fatalf("garbage kid resolved")
+	}
+	if hits := srv.count(); hits != 1 {
+		t.Fatalf("floor edge throttled late: hits=%d", hits)
+	}
+	// Past the default floor: exactly one gated refetch.
+	clk.advance(2 * time.Second)
+	if _, ok, _ := src.KeyByID(ctx, "garbage-kid-after"); ok {
+		t.Fatalf("garbage kid resolved after refresh")
+	}
+	if hits := srv.count(); hits != 2 {
+		t.Fatalf("expected exactly one refetch after the default floor, hits=%d", hits)
+	}
+
+	neg, err := NewRemoteJWKS(srv.srv.URL, time.Hour, -time.Second, srv.srv.Client(), clk.Now)
+	if err != nil {
+		t.Fatalf("NewRemoteJWKS negative floor: %v", err)
+	}
+	clk.advance(time.Hour)
+	if _, ok, err := neg.KeyByID(ctx, testKeyID); err != nil || !ok {
+		t.Fatalf("negative floor first lookup: ok=%v err=%v", ok, err)
+	}
+	if hits := srv.count(); hits != 3 {
+		t.Fatalf("hits=%d", hits)
+	}
+	for i := 0; i < 5; i++ {
+		if _, ok, _ := neg.KeyByID(ctx, fmt.Sprintf("negative-garbage-%d", i)); ok {
+			t.Fatalf("negative garbage kid %d resolved", i)
+		}
+	}
+	if hits := srv.count(); hits != 3 {
+		t.Fatalf("negative floor escaped the default: %d fetches for 5 garbage-kid lookups, want 0", hits-3)
 	}
 }
 
