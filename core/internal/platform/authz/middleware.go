@@ -36,18 +36,40 @@ var orgSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 // Refusal bodies. One body per family and byte-identical across every leg
 // of that family, which is what kills the oracle: no response may reveal
 // whether a slug exists, whether a membership exists, or which check
-// failed. The strings are unpinned by any decision and are constants in
-// one place for the Tech Lead to rule on; none carries request content.
+// failed. The three family bodies are exported because the guard layer
+// (core/internal/identity/guards) must answer byte-identical refusals: it
+// writes these bytes through the Refuse helpers below, never its own, so
+// the sweeps assert one constant per family across middleware and guards
+// alike. The strings are unpinned by any decision and are constants in one
+// place for the Tech Lead to rule on; none carries request content.
 var (
-	bodyUnauthorized = []byte(`{"error":"Missing or invalid credentials"}`)
-	bodyForbidden    = []byte(`{"error":"Forbidden"}`)
-	bodyUnavailable  = []byte(`{"error":"authorization dependencies unavailable"}`)
+	BodyUnauthorized = []byte(`{"error":"Missing or invalid credentials"}`)
+	BodyForbidden    = []byte(`{"error":"Forbidden"}`)
+	BodyUnavailable  = []byte(`{"error":"authorization dependencies unavailable"}`)
 
 	bodyMissingOrgHeader    = []byte(`{"error":"missing required header X-Org"}`)
 	bodyRepeatedOrgHeader   = []byte(`{"error":"header X-Org must appear exactly once"}`)
 	bodyMalformedOrgHeader  = []byte(`{"error":"header X-Org is not a valid org slug"}`)
 	bodyOrgHeaderNotAllowed = []byte(`{"error":"header X-Org is not accepted on this route"}`)
 )
+
+// RefuseUnauthorized, RefuseForbidden and RefuseUnavailable write the shared
+// refusal of one family, exported for the guard layer so its refusals are
+// byte-identical to the middleware's by construction.
+func RefuseUnauthorized(w http.ResponseWriter) {
+	refuse(w, http.StatusUnauthorized, BodyUnauthorized)
+}
+
+// RefuseForbidden writes the RBAC-403: authenticated, the gate refused.
+func RefuseForbidden(w http.ResponseWriter) {
+	refuse(w, http.StatusForbidden, BodyForbidden)
+}
+
+// RefuseUnavailable writes the 503-family operational refusal: a check that
+// could not run, never a verdict on the caller and never an admission.
+func RefuseUnavailable(w http.ResponseWriter) {
+	refuse(w, http.StatusServiceUnavailable, BodyUnavailable)
+}
 
 // Gate is the middleware core. It holds the verifier, the membership
 // source and the org resolver, all injected: the gate itself never
@@ -92,7 +114,7 @@ func (g *Gate) Staff(next http.Handler) http.Handler {
 			return
 		}
 		if token.Class != identity.ClassStaff {
-			refuse(w, http.StatusForbidden, bodyForbidden)
+			refuse(w, http.StatusForbidden, BodyForbidden)
 			return
 		}
 		g.serveStaff(w, r, token, next)
@@ -109,7 +131,7 @@ func (g *Gate) Tenant(next http.Handler) http.Handler {
 			return
 		}
 		if token.Class != identity.ClassTenant {
-			refuse(w, http.StatusForbidden, bodyForbidden)
+			refuse(w, http.StatusForbidden, BodyForbidden)
 			return
 		}
 		g.serveTenant(w, r, token, next)
@@ -134,7 +156,7 @@ func (g *Gate) Sync(next http.Handler) http.Handler {
 			g.serveTenant(w, r, token, next)
 		default:
 			// Unreachable: verification refuses unclassifiable tokens.
-			refuse(w, http.StatusForbidden, bodyForbidden)
+			refuse(w, http.StatusForbidden, BodyForbidden)
 		}
 	})
 }
@@ -147,7 +169,7 @@ func (g *Gate) StaffScoped(next func(http.ResponseWriter, *http.Request, StaffSc
 		if !ok {
 			// Unreachable through Staff, which stamps before calling;
 			// fail closed regardless, never proceed scopeless.
-			refuse(w, http.StatusForbidden, bodyForbidden)
+			refuse(w, http.StatusForbidden, BodyForbidden)
 			return
 		}
 		next(w, r, scope)
@@ -160,7 +182,7 @@ func (g *Gate) TenantScoped(next func(http.ResponseWriter, *http.Request, Tenant
 	return g.Tenant(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		scope, ok := TenantScopeFrom(r.Context())
 		if !ok {
-			refuse(w, http.StatusForbidden, bodyForbidden)
+			refuse(w, http.StatusForbidden, BodyForbidden)
 			return
 		}
 		next(w, r, scope)
@@ -175,23 +197,23 @@ func (g *Gate) serveStaff(w http.ResponseWriter, r *http.Request, token identity
 	}
 	member, err := g.members.OrgMember(r.Context(), token.Subject, slug)
 	if err != nil {
-		refuse(w, http.StatusServiceUnavailable, bodyUnavailable)
+		refuse(w, http.StatusServiceUnavailable, BodyUnavailable)
 		return
 	}
 	if !member {
-		refuse(w, http.StatusForbidden, bodyForbidden)
+		refuse(w, http.StatusForbidden, BodyForbidden)
 		return
 	}
 	orgID, ok, err := g.orgs.ResolveSlug(r.Context(), slug)
 	if err != nil {
-		refuse(w, http.StatusServiceUnavailable, bodyUnavailable)
+		refuse(w, http.StatusServiceUnavailable, BodyUnavailable)
 		return
 	}
 	if !ok {
 		// Same body as the no-membership leg: distinguishing a known slug
 		// without an anchor row from an absent membership would reopen the
 		// directory oracle the 403 body rule closes.
-		refuse(w, http.StatusForbidden, bodyForbidden)
+		refuse(w, http.StatusForbidden, BodyForbidden)
 		return
 	}
 	scope := StaffScope{
@@ -216,23 +238,23 @@ func (g *Gate) serveTenant(w http.ResponseWriter, r *http.Request, token identit
 	}
 	orgs, err := g.members.TenantOrgs(r.Context(), token.Subject)
 	if err != nil {
-		refuse(w, http.StatusServiceUnavailable, bodyUnavailable)
+		refuse(w, http.StatusServiceUnavailable, BodyUnavailable)
 		return
 	}
 	if len(orgs) != 1 {
 		// No tenant team, or tenant teams across more than one org: both
 		// fail closed, one org per tenant account (ADR-0016 rejected
 		// tenant above org), same body, no enumeration.
-		refuse(w, http.StatusForbidden, bodyForbidden)
+		refuse(w, http.StatusForbidden, BodyForbidden)
 		return
 	}
 	orgID, ok, err := g.orgs.ResolveSlug(r.Context(), orgs[0])
 	if err != nil {
-		refuse(w, http.StatusServiceUnavailable, bodyUnavailable)
+		refuse(w, http.StatusServiceUnavailable, BodyUnavailable)
 		return
 	}
 	if !ok {
-		refuse(w, http.StatusForbidden, bodyForbidden)
+		refuse(w, http.StatusForbidden, BodyForbidden)
 		return
 	}
 	scope := TenantScope{
@@ -278,22 +300,22 @@ func (g *Gate) staffOrgSelection(w http.ResponseWriter, r *http.Request) (string
 func (g *Gate) verifyBearer(w http.ResponseWriter, r *http.Request) (identity.Token, bool) {
 	raw := r.Header.Get("Authorization")
 	if raw == "" {
-		refuse(w, http.StatusUnauthorized, bodyUnauthorized)
+		refuse(w, http.StatusUnauthorized, BodyUnauthorized)
 		return identity.Token{}, false
 	}
 	token, ok := bearerToken(raw)
 	if !ok {
-		refuse(w, http.StatusUnauthorized, bodyUnauthorized)
+		refuse(w, http.StatusUnauthorized, BodyUnauthorized)
 		return identity.Token{}, false
 	}
 	verified, err := g.verify.Verify(r.Context(), token)
 	if err != nil {
 		var verr *identity.VerifyError
 		if errors.As(err, &verr) && verr.Class() == identity.ClassOperational {
-			refuse(w, http.StatusServiceUnavailable, bodyUnavailable)
+			refuse(w, http.StatusServiceUnavailable, BodyUnavailable)
 			return identity.Token{}, false
 		}
-		refuse(w, http.StatusUnauthorized, bodyUnauthorized)
+		refuse(w, http.StatusUnauthorized, BodyUnauthorized)
 		return identity.Token{}, false
 	}
 	return verified, true

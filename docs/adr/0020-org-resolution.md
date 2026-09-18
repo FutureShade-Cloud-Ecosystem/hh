@@ -146,6 +146,14 @@ passes. The one refusal that reaches the anchor is the provisioning gap
 (membership passed, anchor row missing); it performs exactly one anchor
 read and refuses 403 with the shared body.
 
+The branch-id rule of migration 0215 (a branch-scoped role's grant
+requires a non-NULL branch_id; a global role's grant carries NULL) is
+enforced as a data defect rather than a policy outcome: the identity
+layer checks every active grant row it reads, answers the 503 family
+with the shared body on violation, and never lets a malformed row
+hide behind a higher-tier grant, so a provisioning defect is loud in
+monitoring rather than silent inside a 403.
+
 Refusal bodies are pinned: every 401 carries the contract's Unauthorized
 description as the error string; every 403 one constant; every 503 one
 constant; the 400 bodies name the header defect without echoing any
@@ -153,3 +161,19 @@ value; all conform to the Error envelope. Expiry gets no grace; the
 clock tolerance applies to issued-at and not-before only. An expired JWK
 Set cache is never served stale, and an unknown key id triggers at most
 one refetch per configured floor.
+
+The sweeps carve out the authentication-lifetime refusals from the
+no-authenticated-call-answers-401 expectation, each answering 401 with
+the shared unauthorized body because it is a decision about the
+credential, not about the gate: a staff token whose self-declared window
+exceeds the ceiling resolved for its role; a staff bearer whose linked
+users row is not ACTIVE; and a tenant bearer whose portal_users row is
+not active. Every other authenticated call remains expected non-401.
+
+The session ceiling is judged against the role resolved per request
+from staff_role_grant and reads the dealer knob at enforcement time,
+so lowering the knob refuses an existing over-knob session at its
+next request and a driver promoted to another role has the long
+session cut at the next request: lifetime follows the resolved role,
+never a claim (D3), which is the one honest limit this vocabulary can
+express.

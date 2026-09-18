@@ -116,7 +116,7 @@ func TestStaffIdentityFailuresIdentical(t *testing.T) {
 		if resp.status != http.StatusUnauthorized {
 			t.Fatalf("%s: status %d, want 401", v.name, resp.status)
 		}
-		if resp.body != string(bodyUnauthorized) {
+		if resp.body != string(BodyUnauthorized) {
 			t.Fatalf("%s: body = %s", v.name, resp.body)
 		}
 		if strings.Contains(resp.body, good) {
@@ -313,7 +313,7 @@ func TestStaffOrgRefusalBodiesIdentical(t *testing.T) {
 	if wrongOrg.body != unknownSlug.body || wrongOrg.body != revoked.body {
 		t.Fatalf("403 bodies differ across legs: %q %q %q", wrongOrg.body, unknownSlug.body, revoked.body)
 	}
-	if !bytes.Equal([]byte(wrongOrg.body), bodyForbidden) {
+	if !bytes.Equal([]byte(wrongOrg.body), BodyForbidden) {
 		t.Fatalf("403 body is not the pinned body: %s", wrongOrg.body)
 	}
 	if reached, _, _ := rec.result(); reached != 1 {
@@ -359,7 +359,7 @@ func TestStaffRevokedMembershipWindow(t *testing.T) {
 	if past.status != http.StatusForbidden {
 		t.Fatalf("past window: status %d, want refusal", past.status)
 	}
-	if past.body != string(bodyForbidden) {
+	if past.body != string(BodyForbidden) {
 		t.Fatalf("past-window body = %s", past.body)
 	}
 	if f.orgs.count() != beforeRefusal {
@@ -491,19 +491,19 @@ func TestTenantOrgFailuresClosed(t *testing.T) {
 
 	f.orgList = nil
 	noTeam := capture(h, map[string]string{"Authorization": auth})
-	if noTeam.status != http.StatusForbidden || noTeam.body != string(bodyForbidden) {
+	if noTeam.status != http.StatusForbidden || noTeam.body != string(BodyForbidden) {
 		t.Fatalf("no team: status %d body %s", noTeam.status, noTeam.body)
 	}
 
 	f.orgList = []string{fixtureOrgSlug, fixtureOtherSlug}
 	twoOrgs := capture(h, map[string]string{"Authorization": auth})
-	if twoOrgs.status != http.StatusForbidden || twoOrgs.body != string(bodyForbidden) {
+	if twoOrgs.status != http.StatusForbidden || twoOrgs.body != string(BodyForbidden) {
 		t.Fatalf("two orgs: status %d body %s", twoOrgs.status, twoOrgs.body)
 	}
 
 	f.orgList = []string{"ghostorg"}
 	ghost := capture(h, map[string]string{"Authorization": auth})
-	if ghost.status != http.StatusForbidden || ghost.body != string(bodyForbidden) {
+	if ghost.status != http.StatusForbidden || ghost.body != string(BodyForbidden) {
 		t.Fatalf("ghost org: status %d body %s", ghost.status, ghost.body)
 	}
 	if reached, _, _ := rec.result(); reached != 0 {
@@ -532,7 +532,7 @@ func TestCrossBearerRefused(t *testing.T) {
 	if resp.status != http.StatusForbidden {
 		t.Fatalf("tenant on staff route: status %d", resp.status)
 	}
-	if resp.body != string(bodyForbidden) {
+	if resp.body != string(BodyForbidden) {
 		t.Fatalf("cross-bearer body = %s", resp.body)
 	}
 
