@@ -205,7 +205,7 @@ paths:
                 $ref: "#/components/schemas/IdentityPolicyCheckResponse"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "403": { $ref: "#/components/responses/Forbidden" }
+        "403": { $ref: "#/components/responses/IdentityPolicyBlocked" }
 
   /api/v1/staff:
     get:
@@ -796,6 +796,21 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
 
 components:
+  responses:
+    IdentityPolicyBlocked:
+      description: >-
+        Authenticated, but the policy gate refused: the Error envelope with
+        the IdentityActionBlocked object under the block key, exactly as the
+        policy check route promises.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Error"
+              - type: object
+                required: [block]
+                properties:
+                  block: { $ref: "#/components/schemas/IdentityActionBlocked" }
   schemas:
     # --- identity -------------------------------------------------------------
     IdentityPing:
