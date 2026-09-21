@@ -50,6 +50,7 @@ tags:
   - name: staff-bistrack
   - name: staff-compliance
   - name: staff-customer
+  - name: staff-customer-quote
   - name: staff-dashboard
   - name: staff-demo
   - name: staff-dispatch
@@ -235,6 +236,7 @@ paths:
       tags:
         - staff-settings
       summary: Read a tenant's brand record
+      description: Gap-held pending a schema ruling (queue card 20260921-210000-tenantbrand-gap); no backing store exists, so this operation is a recorded read, not an implementable one.
       x-role: requireStaff
       x-addition: D12 tenant_brand; no ERP source route
       parameters:
@@ -258,6 +260,7 @@ paths:
       tags:
         - staff-settings
       summary: Create or replace a tenant's brand record
+      description: Gap-held pending a schema ruling (queue card 20260921-210000-tenantbrand-gap); no backing store exists, so this operation is a recorded write, not an implementable one.
       x-role: requireAdmin
       x-addition: D12 tenant_brand; no ERP source route
       parameters:
@@ -284,6 +287,107 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/customer-quotes/{id}/send:
+    post:
+      operationId: customerQuoteSend
+      tags:
+        - staff-customer-quote
+      summary: Send a customer quote to the homeowner by magic link
+      description: "The customer-quote surface (D8): contractor to homeowner, with the issuing contractor recorded on the entity (tenant_id) and the send itself a dealer desk action. Sending mints the one-time magic-link token, stores only its hash, moves the quote from draft to sent, and returns the raw token here and nowhere else, exactly as the dealer share-link mint does. A later send of a revised quote rotates the token and kills the previous link with 410."
+      x-role: requireStaff
+      x-addition: G1 customer-quote send (D8); no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The sent quote, carrying the raw magic-link token this one time
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerQuote"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/public/v1/customer-quotes/{token}:
+    get:
+      operationId: customerQuotePublicView
+      tags:
+        - public
+      summary: View a customer quote through its magic link
+      description: "Pre-auth: the opaque token in the path is the credential, and it grants read of exactly one customer quote (D8), rendered under HH Pro's brand with the contractor's tenant_brand inside the frame (D2, D12). The payload is an allowlist with no token, no tenant internals and no staff-only field. A token that never existed answers 404; a link that died (expired, revoked, or rotated by a later send) answers 410 with the Error envelope, so the holder learns the link died rather than being told the quote never existed."
+      x-role: public
+      security: []
+      x-addition: G1 customer-quote public view (D8, D10, D12); no ERP source route
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: The magic-link token; it is the credential
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The homeowner-facing quote view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerQuotePublicView"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          description: The link existed and died (expired, revoked, or rotated by a later send)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/public/v1/customer-quotes/{token}/accept:
+    post:
+      operationId: customerQuotePublicAccept
+      tags:
+        - public
+      summary: Accept a customer quote through its magic link
+      description: "Pre-auth: the opaque token in the path is the credential. Acceptance is a typed full name plus an explicit affirmative, two required acts, recorded as the acceptance artifact (D8): accepted_at, accepted_by_name and, when the homeowner draws a signature, a signature attachment in the D10 attachment store referenced by signature_attachment_id. A 409 names why the quote is not awaiting acceptance; a dead or rotated link answers 410."
+      x-role: public
+      security: []
+      x-addition: G1 customer-quote public acceptance (D8, D10, D12); no ERP source route
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: The magic-link token; it is the credential
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerQuoteAcceptanceRequest"
+      responses:
+        "200":
+          description: The acceptance confirmation, restating the agreed total
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerQuoteAcceptanceResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          description: The link existed and died (expired, revoked, or rotated by a later send)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/operator/platform-keys:
     get:
       operationId: listPlatformKeys
@@ -7377,7 +7481,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          $ref: "#/components/responses/IdentityPolicyBlocked"
   /api/v1/staff:
     get:
       operationId: identityListStaff
@@ -18523,15 +18627,16 @@ paths:
       tags:
         - tenant-auth
       summary: Read the dealer branding config the portal chrome renders
+      description: "Public and parameterless by design: the one consumer that needs it is the pre-login portal chrome, which cannot authenticate first. The payload is dealer fields only, with no tenant-scoped data and no way to name a tenant; the contractor's own brand reaches the contractor through the authenticated login and refresh payloads (ADR 0021). The ERP antecedent served the same dealer-only stub on this route."
       x-role: public
       security: []
       responses:
         "200":
-          description: The tenant-facing dealer config
+          description: The tenant-facing dealer config, dealer fields only
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TenantConfig"
+                $ref: "#/components/schemas/TenantPublicConfig"
   /api/v1/tenant/password-reset/request:
     post:
       operationId: tenantRequestPasswordReset
@@ -21385,6 +21490,19 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    IdentityPolicyBlocked:
+      description: "Authenticated, but the policy gate refused: the Error envelope with the IdentityActionBlocked object under the block key, exactly as the policy check route promises."
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Error"
+              - type: object
+                required:
+                  - block
+                properties:
+                  block:
+                    $ref: "#/components/schemas/IdentityActionBlocked"
   schemas:
     Error:
       type: object
@@ -21989,9 +22107,12 @@ components:
           type: string
         status:
           type: string
+          description: "The customer_quote status CHECK set, verbatim: viewed is written on the first view of a sent link and changes-requested on the homeowner's public change request, so the contract carries the lifecycle the frozen schema pins."
           enum:
             - draft
             - sent
+            - viewed
+            - changes-requested
             - accepted
             - declined
             - expired
@@ -22021,6 +22142,98 @@ components:
                 - string
                 - "null"
               format: uuid
+    CustomerQuotePublicView:
+      type: object
+      description: "What a magic-link holder sees: an allowlist over CustomerQuote (D8), not a projection of the full entity, so the token, the tenant facts and the issuing-contractor internals cannot leak. Rendered under HH Pro's brand with the contractor's tenant_brand inside the frame (D2, D12)."
+      required:
+        - id
+        - status
+        - lines
+        - total_cents
+      properties:
+        id:
+          type: string
+          format: uuid
+        customer_name:
+          type: string
+        status:
+          type: string
+          description: The customer_quote status CHECK set, verbatim
+          enum:
+            - draft
+            - sent
+            - viewed
+            - changes-requested
+            - accepted
+            - declined
+            - expired
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/CustomerQuotePublicLine"
+        total_cents:
+          type: integer
+          format: int64
+        acceptable:
+          type: boolean
+          description: Whether this link may still be used to accept; drives whether the accept form renders
+    CustomerQuotePublicLine:
+      type: object
+      description: "The homeowner-visible shape of a quote line: description, quantity and the money. Prices are absent when the quote hides line prices, never fabricated as zero."
+      required:
+        - description
+        - quantity
+      properties:
+        description:
+          type: string
+        quantity:
+          type: number
+        uom:
+          type: string
+        unit_price_cents:
+          type: integer
+          format: int64
+        line_total_cents:
+          type: integer
+          format: int64
+    CustomerQuoteAcceptanceRequest:
+      type: object
+      description: "The acceptance payload: a typed full name plus an explicit affirmative, two required acts (D8)."
+      required:
+        - typed_name
+        - accepted
+      properties:
+        typed_name:
+          type: string
+          description: The homeowner's full name, bounded server-side
+        accepted:
+          type: boolean
+          description: Must be true; the affirmative is a required separate act
+    CustomerQuoteAcceptanceResult:
+      type: object
+      description: "The acceptance confirmation (D8): it echoes the agreed total so the homeowner's own record does not depend on a careful reading of the page. The signature, when one was drawn, lands as a D10 attachment referenced from the acceptance artifact."
+      required:
+        - id
+        - status
+        - accepted_by_name
+        - accepted_at
+        - total_cents
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - accepted
+        accepted_by_name:
+          type: string
+        accepted_at:
+          type: string
+          format: date-time
+        total_cents:
+          type: integer
+          format: int64
     InvoiceViewLine:
       type: object
       properties:
@@ -32365,9 +32578,10 @@ components:
         body:
           type: string
         ref:
-          type: object
-          additionalProperties: true
-          description: MessagingEventRef or MessagingApprovalRef by kind
+          oneOf:
+            - $ref: "#/components/schemas/MessagingEventRef"
+            - $ref: "#/components/schemas/MessagingApprovalRef"
+          description: "The structured ref by kind: MessagingEventRef on an EVENT message, MessagingApprovalRef on an APPROVAL card; absent on TEXT."
         thread_root_id:
           type: string
           format: uuid
@@ -33051,108 +33265,6 @@ components:
         issue_id:
           type: string
           description: The tracker issue id the submission became
-    Order:
-      type: object
-      description: The list/summary view of an orders row (the ERP field set; no tenant alias columns on the staff resource).
-      required:
-        - id
-        - order_no
-        - customer_id
-        - quote_id
-        - status
-        - fulfillment
-        - requested_date
-        - subtotal_cents
-        - tax_cents
-        - total_cents
-        - created_at
-      properties:
-        id:
-          type: string
-          format: uuid
-        order_no:
-          type: string
-        customer_id:
-          type: string
-          format: uuid
-        quote_id:
-          type: string
-          description: Empty when the order is not quote-originated
-        status:
-          type: string
-          enum:
-            - DRAFT
-            - CONFIRMED
-            - PICKING
-            - READY
-            - PARTIALLY_FULFILLED
-            - FULFILLED
-            - INVOICED
-            - CLOSED
-            - CANCELLED
-        fulfillment:
-          type: string
-          enum:
-            - PICKUP
-            - DELIVERY
-            - WILL_CALL
-        requested_date:
-          type: string
-          format: date-time
-        subtotal_cents:
-          type: integer
-          format: int64
-        tax_cents:
-          type: integer
-          format: int64
-        total_cents:
-          type: integer
-          format: int64
-        created_at:
-          type: string
-          format: date-time
-    OrderLine:
-      type: object
-      description: One order_lines row, including allocation and fulfillment progress. Quantities are DECIMAL carried as strings.
-      required:
-        - line_no
-        - product_id
-        - description
-        - qty_entered
-        - uom_entered
-        - qty_base
-        - allocated_base
-        - fulfilled_base
-        - unit_price_cents
-        - line_total_cents
-      properties:
-        line_no:
-          type: integer
-          format: int32
-        product_id:
-          type: string
-        description:
-          type: string
-        qty_entered:
-          type: string
-          description: DECIMAL as string
-        uom_entered:
-          type: string
-        qty_base:
-          type: string
-          description: DECIMAL as string
-        allocated_base:
-          type: string
-          description: DECIMAL as string
-        fulfilled_base:
-          type: string
-          description: DECIMAL as string
-        unit_price_cents:
-          type: integer
-          format: int64
-        line_total_cents:
-          type: integer
-          format: int64
     OrderViewLine:
       type: object
       description: "One line as the staff order surface renders it: the quantity trio, the money, and the allocated/fulfilled progress that decides whether the line may still be cut or removed."
@@ -43761,7 +43873,7 @@ components:
           format: date-time
     TenantConfig:
       type: object
-      description: The dealer branding payload the portal chrome renders (transcribed from the portal config struct), extended by the contractor's own brand record under tenant scope (D12), present when one is on file.
+      description: The dealer branding payload the portal chrome renders (transcribed from the portal config struct), extended by the contractor's own brand record under tenant scope (D12), present when one is on file. Served on the authenticated login and refresh payloads only; the public config route serves the narrowed TenantPublicConfig (ADR 0021).
       required:
         - id
         - dealer_name
@@ -43785,6 +43897,30 @@ components:
           type: string
         brand:
           $ref: "#/components/schemas/TenantBrand"
+    TenantPublicConfig:
+      type: object
+      description: "The dealer-only branding payload the public config route serves: the portal chrome fields with no tenant-scoped data and no brand property (ADR 0021). The contractor's own brand record (TenantBrand) rides the authenticated carriers instead: TenantLoginResponse and TenantRefreshResponse, whose config is TenantConfig."
+      required:
+        - id
+        - dealer_name
+        - logo_url
+        - primary_color
+        - support_email
+        - support_phone
+      properties:
+        id:
+          type: string
+          description: The dealer config key
+        dealer_name:
+          type: string
+        logo_url:
+          type: string
+        primary_color:
+          type: string
+        support_email:
+          type: string
+        support_phone:
+          type: string
     TenantLoginRequest:
       type: object
       required:

@@ -78,15 +78,22 @@ paths:
       operationId: tenantGetConfig
       tags: [tenant-auth]
       summary: Read the dealer branding config the portal chrome renders
+      description: >-
+        Public and parameterless by design: the one consumer that needs it is
+        the pre-login portal chrome, which cannot authenticate first. The
+        payload is dealer fields only, with no tenant-scoped data and no way
+        to name a tenant; the contractor's own brand reaches the contractor
+        through the authenticated login and refresh payloads (ADR 0021). The
+        ERP antecedent served the same dealer-only stub on this route.
       x-role: public
       security: []
       responses:
         "200":
-          description: The tenant-facing dealer config
+          description: The tenant-facing dealer config, dealer fields only
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TenantConfig"
+                $ref: "#/components/schemas/TenantPublicConfig"
 
   /api/v1/tenant/password-reset/request:
     post:
@@ -1422,6 +1429,8 @@ components:
         The dealer branding payload the portal chrome renders (transcribed
         from the portal config struct), extended by the contractor's own
         brand record under tenant scope (D12), present when one is on file.
+        Served on the authenticated login and refresh payloads only; the
+        public config route serves the narrowed TenantPublicConfig (ADR 0021).
       required: [id, dealer_name, logo_url, primary_color, support_email, support_phone]
       properties:
         id: { type: string, description: The dealer config key }
@@ -1432,6 +1441,23 @@ components:
         support_phone: { type: string }
         brand:
           $ref: "#/components/schemas/TenantBrand"
+
+    TenantPublicConfig:
+      type: object
+      description: >-
+        The dealer-only branding payload the public config route serves: the
+        portal chrome fields with no tenant-scoped data and no brand property
+        (ADR 0021). The contractor's own brand record (TenantBrand) rides the
+        authenticated carriers instead: TenantLoginResponse and
+        TenantRefreshResponse, whose config is TenantConfig.
+      required: [id, dealer_name, logo_url, primary_color, support_email, support_phone]
+      properties:
+        id: { type: string, description: The dealer config key }
+        dealer_name: { type: string }
+        logo_url: { type: string }
+        primary_color: { type: string }
+        support_email: { type: string }
+        support_phone: { type: string }
 
     TenantLoginRequest:
       type: object

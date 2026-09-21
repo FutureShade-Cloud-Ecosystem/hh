@@ -145,6 +145,7 @@ reason instead).
 | `GET /api/public/v1/ar/invoice-opened/{deliveryID}` | hardscapeos_dibbits/backend/internal/billing/register_handler.go:95 |
 | `GET /api/public/v1/ar/track/{token}/click` | hardscapeos_dibbits/backend/internal/billing/ar_landing_handler.go:72 |
 | `GET /api/public/v1/ar/track/{token}/open` | hardscapeos_dibbits/backend/internal/billing/ar_landing_handler.go:71 |
+| `GET /api/public/v1/customer-quotes/{token}` | (addition) G1 customer-quote public view, modelled on the dealer public quote pair; the D10 and D12 token ruling lands here; no ERP source route. |
 | `GET /api/public/v1/quotes/{token}` | hardscapeos_dibbits/backend/internal/quote/share_handler.go:35 |
 | `GET /api/public/v1/will-call/{token}` | hardscapeos_dibbits/backend/internal/dispatch/module.go:287 |
 | `GET /api/v1/ar/aging` | hardscapeos_dibbits/backend/internal/billing/monthend_handler.go:46 |
@@ -472,6 +473,7 @@ reason instead).
 | `PATCH /api/v1/quote-assist/scope-rules/{code}` | hardscapeos_dibbits/backend/internal/quoteassist/handler.go:58 |
 | `PATCH /api/v1/quotes/{id}` | hardscapeos_dibbits/backend/internal/quote/edit_handler.go:37 |
 | `PATCH /api/v1/quotes/{id}/lines/{lineNo}` | hardscapeos_dibbits/backend/internal/quote/edit_handler.go:39 |
+| `POST /api/public/v1/customer-quotes/{token}/accept` | (addition) G1 customer-quote public acceptance (D8, D10, D12): typed-name attestation with the 404, 410 and 409 semantics; no ERP source route. |
 | `POST /api/public/v1/quotes/{token}/accept` | hardscapeos_dibbits/backend/internal/quote/share_handler.go:36 |
 | `POST /api/public/v1/warranty/intake` | hardscapeos_dibbits/backend/internal/warranty/handler_w5b.go:56 |
 | `POST /api/public/v1/will-call/{token}/confirm` | hardscapeos_dibbits/backend/internal/dispatch/module.go:288 |
@@ -513,6 +515,7 @@ reason instead).
 | `POST /api/v1/counts/sheets/{id}/counts` | hardscapeos_dibbits/backend/internal/invcount/module.go:160 |
 | `POST /api/v1/counts/sheets/{id}/freeze` | hardscapeos_dibbits/backend/internal/invcount/module.go:159 |
 | `POST /api/v1/counts/sheets/{id}/post` | hardscapeos_dibbits/backend/internal/invcount/module.go:162 |
+| `POST /api/v1/customer-quotes/{id}/send` | (addition) G1 customer-quote send (D8): the dealer-side mint of the homeowner magic link; the raw token appears in this response only; no ERP source route. |
 | `POST /api/v1/customers` | hardscapeos_dibbits/backend/internal/customer/handler.go:43 |
 | `POST /api/v1/demo/session` | (addition) Registered via string concatenation (demo/handler.go RouteSession constant), so the literal grep cannot see it; source hardscapeos_dibbits/backend/internal/demo/handler.go. |
 | `POST /api/v1/dispatch/auto-assign` | hardscapeos_dibbits/backend/internal/dispatch/module.go:270 |
