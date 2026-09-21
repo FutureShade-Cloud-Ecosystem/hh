@@ -3,6 +3,7 @@ module github.com/FutureShade-Cloud-Ecosystem/hh/core
 go 1.26
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/trace v1.43.0
