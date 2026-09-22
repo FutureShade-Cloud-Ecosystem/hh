@@ -14,10 +14,10 @@ import (
 // Card/ACH data is captured only in Run hosted fields, these routes only ever see an
 // opaque nonce/token, never a PAN (PCI SAQ A, §4.2).
 func (h *Handler) registerPaymentMethodRoutes(r httpx.Registrar, g *guards.Guards) {
-	r.Handle("GET /api/portal/v1/payment-methods", g.RequireCapability(identity.CapManagePaymentMethods, h.tenant(h.listPaymentMethods)))
-	r.Handle("POST /api/portal/v1/payment-methods", g.RequireCapability(identity.CapManagePaymentMethods, h.tenant(h.addPaymentMethod)))
-	r.Handle("DELETE /api/portal/v1/payment-methods/{id}", g.RequireCapability(identity.CapManagePaymentMethods, h.tenant(h.removePaymentMethod)))
-	r.Handle("PUT /api/portal/v1/payment-methods/{id}/default", g.RequireCapability(identity.CapManagePaymentMethods, h.tenant(h.setDefaultPaymentMethod)))
+	r.Handle("GET /api/v1/tenant/payment-methods", g.RequireCapability(identity.CapManagePaymentMethods, h.tenant(h.listPaymentMethods)))
+	r.Handle("POST /api/v1/tenant/payment-methods", g.RequireCapability(identity.CapManagePaymentMethods, h.tenant(h.addPaymentMethod)))
+	r.Handle("DELETE /api/v1/tenant/payment-methods/{id}", g.RequireCapability(identity.CapManagePaymentMethods, h.tenant(h.removePaymentMethod)))
+	r.Handle("PUT /api/v1/tenant/payment-methods/{id}/default", g.RequireCapability(identity.CapManagePaymentMethods, h.tenant(h.setDefaultPaymentMethod)))
 }
 
 // listPaymentMethods returns the tenant's active stored methods (display metadata only).

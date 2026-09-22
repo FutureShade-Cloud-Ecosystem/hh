@@ -18,8 +18,8 @@ const passwordResetTTL = 1 * time.Hour
 // reusing the invite token primitives (newInviteToken/hashToken in auth.go) over the new
 // portal_password_resets table (0027). A successful reset must revoke existing sessions.
 func (h *Handler) registerPasswordResetRoutes(r httpx.Registrar) {
-	r.Handle("POST /api/portal/v1/password-reset/request", http.HandlerFunc(h.requestPasswordReset))
-	r.Handle("POST /api/portal/v1/password-reset/confirm", http.HandlerFunc(h.confirmPasswordReset))
+	r.Handle("POST /api/v1/tenant/password-reset/request", http.HandlerFunc(h.requestPasswordReset))
+	r.Handle("POST /api/v1/tenant/password-reset/confirm", http.HandlerFunc(h.confirmPasswordReset))
 }
 
 // requestPasswordReset issues a reset token for the given email. It ALWAYS answers 202 with

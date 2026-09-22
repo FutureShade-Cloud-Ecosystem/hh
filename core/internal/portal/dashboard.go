@@ -37,8 +37,8 @@ type BillingSummaryResponse struct {
 // registerDashboardRoutes wires the account home + the AR billing summary. Both require
 // ViewBilling, so field_crew is shut out (403) while Owner/Buyer pass.
 func (h *Handler) registerDashboardRoutes(r httpx.Registrar, g *guards.Guards) {
-	r.Handle("GET /api/portal/v1/dashboard", g.RequireCapability(identity.CapViewBilling, h.tenant(h.dashboard)))
-	r.Handle("GET /api/portal/v1/billing/summary", g.RequireCapability(identity.CapViewBilling, h.tenant(h.billingSummary)))
+	r.Handle("GET /api/v1/tenant/dashboard", g.RequireCapability(identity.CapViewBilling, h.tenant(h.dashboard)))
+	r.Handle("GET /api/v1/tenant/billing/summary", g.RequireCapability(identity.CapViewBilling, h.tenant(h.billingSummary)))
 }
 
 // dashboard returns the account-home KPIs: balance, credit limit, available credit

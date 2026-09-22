@@ -28,8 +28,10 @@ const callerKey ctxKey = iota
 // unbounded payload into the JSON decoder (M-4).
 const maxBodyBytes = 1 << 20 // 1 MiB
 
-// Handler exposes the contractor portal surface at /api/portal/v1/*, auth/team plus
-// the BFF feature handlers (dashboard, invoices, orders, quotes, payments, settings).
+// Handler exposes the contractor portal surface at /api/v1/tenant/* (the
+// document's spellings, ADR 0021: the pin's /api/portal/v1/* prefixes
+// re-homed onto the contract paths), auth/team plus the BFF feature handlers
+// (dashboard, invoices, orders, quotes, payments, settings).
 // As a BFF it composes other domain services in-process; every feature read is
 // tenant-scoped by the customer_id on the verified JWT, and every route is gated on a
 // capability, never a raw role.
@@ -99,19 +101,27 @@ func (h *Handler) WithProjects(s *ProjectsService) *Handler { h.projectsSvc = s;
 // was (the Google-SSO-precedent leave-behind, folded into the D38
 // sign-in-methods item traveling to HH-4.2). Their handlers and register
 // helpers carry; no served mux registers them.
+//
+// RE-HOMING NOTE (the Phase C integration): every registration below uses
+// the document's /api/v1/tenant/* spelling, method and path parameters
+// exactly as the generated census carries them
+// (core/internal/platform/apigen/routes.gen.go); the composition point's
+// parity test refuses any other spelling. The pin's /api/portal/v1/config
+// registration UNREGISTERED with the re-homing: the document's
+// tenantGetConfig operation is served by the identity composition point
+// (the narrowed TenantPublicConfig leg in core/cmd/core/main.go), and a
+// second registration of one documented operation is exactly what the
+// ServeMux duplicate panic exists to refuse.
 func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	if g == nil {
 		panic("portal.RegisterRoutes: guards are required (the bearer legs are tenant-gated)")
 	}
-	// Public
-	r.Handle("GET /api/portal/v1/config", http.HandlerFunc(h.config))
-
 	// Account-admin only (ManageUsers capability)
-	r.Handle("GET /api/portal/v1/users", g.RequireCapability(identity.CapManageUsers, h.tenant(h.listUsers)))
-	r.Handle("GET /api/portal/v1/invites", g.RequireCapability(identity.CapManageUsers, h.tenant(h.listInvites)))
-	r.Handle("POST /api/portal/v1/invites", g.RequireCapability(identity.CapManageUsers, h.tenant(h.createInvite)))
-	r.Handle("PUT /api/portal/v1/users/{id}/role", g.RequireCapability(identity.CapManageUsers, h.tenant(h.updateRole)))
-	r.Handle("PUT /api/portal/v1/users/{id}/status", g.RequireCapability(identity.CapManageUsers, h.tenant(h.updateStatus)))
+	r.Handle("GET /api/v1/tenant/users", g.RequireCapability(identity.CapManageUsers, h.tenant(h.listUsers)))
+	r.Handle("GET /api/v1/tenant/invites", g.RequireCapability(identity.CapManageUsers, h.tenant(h.listInvites)))
+	r.Handle("POST /api/v1/tenant/invites", g.RequireCapability(identity.CapManageUsers, h.tenant(h.createInvite)))
+	r.Handle("PUT /api/v1/tenant/users/{id}/role", g.RequireCapability(identity.CapManageUsers, h.tenant(h.updateRole)))
+	r.Handle("PUT /api/v1/tenant/users/{id}/status", g.RequireCapability(identity.CapManageUsers, h.tenant(h.updateStatus)))
 
 	// BFF feature surfaces, each self-registers from its own file so swarm edits stay
 	// disjoint. The billing/summary path is now served by the dashboard handler.

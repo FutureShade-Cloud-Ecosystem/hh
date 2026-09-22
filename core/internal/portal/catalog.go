@@ -23,8 +23,8 @@ type CatalogSearchResponse struct {
 // DIB-479 adds the detail read behind the picker's click-through, on the SAME gate for the same
 // reason: it is the second half of one act (find the thing, then look at the thing).
 func (h *Handler) registerCatalogRoutes(r httpx.Registrar, g *guards.Guards) {
-	r.Handle("GET /api/portal/v1/catalog/search", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.searchCatalog)))
-	r.Handle("GET /api/portal/v1/catalog/products/{id}", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.getCatalogProduct)))
+	r.Handle("GET /api/v1/tenant/catalog/search", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.searchCatalog)))
+	r.Handle("GET /api/v1/tenant/catalog/products/{id}", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.getCatalogProduct)))
 }
 
 // searchCatalog runs a fuzzy (pg_trgm) name + by-SKU search. Query is `q`; `limit` is optional

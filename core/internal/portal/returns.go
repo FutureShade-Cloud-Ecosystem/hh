@@ -68,9 +68,9 @@ func toPortalReturnRequest(rr pos.ReturnRequest) portalReturnRequest {
 // ViewOrdersDeliveries (they are order reads); submitting a request rides CreateOrders, it commits the
 // account to a money-moving decision once staff approve, which is exactly the Buyer/Owner power.
 func (h *Handler) registerReturnRoutes(r httpx.Registrar, g *guards.Guards) {
-	r.Handle("GET /api/portal/v1/orders/{id}/return-eligibility", g.RequireCapability(identity.CapViewOrdersDeliveries, h.tenant(h.returnEligibility)))
-	r.Handle("POST /api/portal/v1/orders/{id}/return-requests", g.RequireCapability(identity.CapCreateOrders, h.tenant(h.createReturnRequest)))
-	r.Handle("GET /api/portal/v1/return-requests", g.RequireCapability(identity.CapViewOrdersDeliveries, h.tenant(h.listReturnRequests)))
+	r.Handle("GET /api/v1/tenant/orders/{id}/return-eligibility", g.RequireCapability(identity.CapViewOrdersDeliveries, h.tenant(h.returnEligibility)))
+	r.Handle("POST /api/v1/tenant/orders/{id}/return-requests", g.RequireCapability(identity.CapCreateOrders, h.tenant(h.createReturnRequest)))
+	r.Handle("GET /api/v1/tenant/return-requests", g.RequireCapability(identity.CapViewOrdersDeliveries, h.tenant(h.listReturnRequests)))
 }
 
 // returnEligibility returns the order's returnable lines (qty sold − prior returns, via the POS rail's

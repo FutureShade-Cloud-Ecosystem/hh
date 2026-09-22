@@ -149,3 +149,31 @@ it must be run against `manifest.yaml` and this note removed.
   flight and lands migrations. The two D31 closures above are unaffected:
   they ran against the pin-era pre-migrate backup, the baseline the additive
   set was designed for. Nothing in HH-3.3 touches `core/db/migrations/`.
+
+## HH-3.7 erp-routes refresh held for Phase C (open)
+
+The first assigned port entry, refreshing core/api/erp-routes.txt from
+master per the D33 finding, is HELD until Phase C integrates. Reason:
+HH-3.4's parity test runs against the vendored list exactly as it stands
+and must not re-vendor it; a refresh landing mid-lane moves the baseline
+under that test, which either breaks it or passes it against a list
+nobody approved (gate G2 of the Phase C dispatch ruling, verified
+delivered artifact at context/phase-c-dispatch-ruling-r1.md in the
+session workspace, sha256 5f88eb29015fa966077b4c0b3710a77a7d42a160aa13
+cef96916b9db53c5dfdc). The tracking lane stays open for everything
+else. Release condition: Phase C integrated and merged; then the refresh
+runs as the lane's first port entry, and ERP migrations 0213 onward
+follow through the same door per D39.
+
+## The migration door rule: ports versus greenfield schema (open)
+
+HH-3.7's door (D39) is the PORT door: ERP migrations 0213 onward port
+through it with a core/db/PORTED.md entry. It is not the door for new
+core schema the ERP never had. Greenfield schema lands in HH-5, whose
+job is migrations. Recorded so no lane re-routes a schema gap into the
+port door: three Phase C findings (the tenant_brand table, the
+customer_quote.share_token_hash index, the quote number column) were
+initially routed to HH-3.7 and re-ruled to HH-5 by the Lane C checkpoint
+ruling; they are ticketed in the Plane Records module as HH-5 items
+(#157, #158, #159). D12 is not reopened. The gap-held annotations on the
+tenant_brand contract operations stand until HH-5 lands the table.

@@ -1,6 +1,7 @@
 // Package portal owns contractor portal auth: per-person logins, three roles, and
 // the invite/accept flow (CP-07, W2). It serves the contractor portal (Lit, app/src/portal/)
-// (dibbits/portal/app) at /api/portal/v1/*. Module boundary: portal owns
+// (dibbits/portal/app) at /api/v1/tenant/* (the pin's /api/portal/v1/* spellings
+// re-homed onto the document's). Module boundary: portal owns
 // portal_users + portal_invites; it writes the crm.NewPortalContact signal to the
 // shared events outbox (the sanctioned cross-module write seam).
 package portal

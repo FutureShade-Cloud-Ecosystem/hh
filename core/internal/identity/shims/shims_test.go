@@ -268,25 +268,28 @@ func TestRecorderBounded(t *testing.T) {
 }
 
 // TestRegisterRoutes_ServedSetExcludesSuperseded pins the S-3 removal: the
-// served registrar answers none of the operationIds the money-spine
-// modules registered (the five order lifecycle routes and the public
-// quote view). A re-added entry would collide with the real module's
-// pattern on the serve mux and panic at boot; this test catches it in the
-// suite instead, naming the operation.
+// served registrar answers none of the operationIds the real modules
+// registered (the five order lifecycle routes and the public quote view
+// from the money-spine batch; the tenant me pair and the invoices read
+// from the portal re-homing). A re-added entry would collide with the real
+// module's pattern on the serve mux and panic at boot; this test catches
+// it in the suite instead, naming the operation.
 func TestRegisterRoutes_ServedSetExcludesSuperseded(t *testing.T) {
 	f := newShimFixture(t, identity.TierFrontline, "inside_sales", identity.ScopeBranch)
 	staff := f.token(t, fxStaffAud)
 	xorg := map[string]string{authz.HeaderXOrg: fxOrgSlug}
+	tenant := f.token(t, fxTenaAud)
 	served := http.NewServeMux()
 	RegisterRoutes(served, f.g, f.rec)
-	for _, c := range []struct{ method, path, op string }{
+	staffCases := []struct{ method, path, op string }{
 		{http.MethodGet, "/api/v1/orders/b3-order-1", "orderRead"},
 		{http.MethodPost, "/api/v1/orders/b3-order-1/confirm", "orderConfirm"},
 		{http.MethodPost, "/api/v1/orders/b3-order-1/picking", "orderMarkPicking"},
 		{http.MethodPost, "/api/v1/orders/b3-order-1/ready", "orderMarkReady"},
 		{http.MethodPost, "/api/v1/orders/b3-order-1/cancel", "orderCancel"},
 		{http.MethodGet, "/api/public/v1/quotes/fx-quote-token", "quotePublicViewQuote"},
-	} {
+	}
+	for _, c := range staffCases {
 		req := httptest.NewRequest(c.method, c.path, nil)
 		req.Header.Set("Authorization", "Bearer "+staff)
 		for k, v := range xorg {
@@ -296,6 +299,19 @@ func TestRegisterRoutes_ServedSetExcludesSuperseded(t *testing.T) {
 		served.ServeHTTP(rec, req)
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("%s: served shim set still answers %d, want 404 (the real module owns the pattern)", c.op, rec.Code)
+		}
+	}
+	for _, c := range []struct{ method, path, op string }{
+		{http.MethodGet, "/api/v1/tenant/me", "tenantGetMe"},
+		{http.MethodPut, "/api/v1/tenant/me", "tenantUpdateMe"},
+		{http.MethodGet, "/api/v1/tenant/invoices", "tenantListInvoices"},
+	} {
+		req := httptest.NewRequest(c.method, c.path, nil)
+		req.Header.Set("Authorization", "Bearer "+tenant)
+		rec := httptest.NewRecorder()
+		served.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: served shim set still answers %d, want 404 (the portal module owns the pattern)", c.op, rec.Code)
 		}
 	}
 }

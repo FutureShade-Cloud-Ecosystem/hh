@@ -1,6 +1,6 @@
 package portal
 
-// catalog_product.go, GET /api/portal/v1/catalog/products/{id} (DIB-479, spec §2.2 gap 3).
+// catalog_product.go, GET /api/v1/tenant/catalog/products/{id} (DIB-479, spec §2.2 gap 3).
 //
 // THIS FILE IS A COUNTER. Everything the ERP knows about a product is on one side of it; what a
 // contractor may see is on the other, and the only way across is a field explicitly written out

@@ -181,7 +181,7 @@ func TestAddressRoutes_AreGatedOnViewOrdersDeliveries(t *testing.T) {
 
 	// A resolved, active user of the tenant reaches the surface.
 	userStore.addUser(User{ID: "user0", CustomerID: tenantA, Email: "user0@x.test", Role: string(RoleFieldCrew), Status: "active"})
-	r := httptest.NewRequest("GET", "/api/portal/v1/addresses", nil)
+	r := httptest.NewRequest("GET", "/api/v1/tenant/addresses", nil)
 	r.Header.Set("Authorization", "Bearer "+bearer)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
@@ -190,7 +190,7 @@ func TestAddressRoutes_AreGatedOnViewOrdersDeliveries(t *testing.T) {
 	}
 
 	// And no bearer at all is the guard's refusal, not an open route.
-	r = httptest.NewRequest("GET", "/api/portal/v1/addresses", nil)
+	r = httptest.NewRequest("GET", "/api/v1/tenant/addresses", nil)
 	w = httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 	if w.Code == http.StatusOK {

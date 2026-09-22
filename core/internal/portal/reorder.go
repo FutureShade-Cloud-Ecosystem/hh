@@ -35,8 +35,8 @@ type ReorderRequest struct {
 // (same gate as the order detail it decorates); the POST creates an order → CreateOrders,
 // so field_crew can see the preview but never lands a draft.
 func (h *Handler) registerReorderRoutes(r httpx.Registrar, g *guards.Guards) {
-	r.Handle("GET /api/portal/v1/orders/{id}/reorder-preview", g.RequireCapability(identity.CapViewOrdersDeliveries, h.tenant(h.reorderPreview)))
-	r.Handle("POST /api/portal/v1/orders/{id}/reorder", g.RequireCapability(identity.CapCreateOrders, h.tenant(h.createReorder)))
+	r.Handle("GET /api/v1/tenant/orders/{id}/reorder-preview", g.RequireCapability(identity.CapViewOrdersDeliveries, h.tenant(h.reorderPreview)))
+	r.Handle("POST /api/v1/tenant/orders/{id}/reorder", g.RequireCapability(identity.CapCreateOrders, h.tenant(h.createReorder)))
 }
 
 // reorderPreview returns every source line priced at today's rates with availability

@@ -12,8 +12,8 @@ import (
 
 // registerInvoiceRoutes wires invoice list + detail. Both require ViewBilling.
 func (h *Handler) registerInvoiceRoutes(r httpx.Registrar, g *guards.Guards) {
-	r.Handle("GET /api/portal/v1/invoices", g.RequireCapability(identity.CapViewBilling, h.tenant(h.listInvoices)))
-	r.Handle("GET /api/portal/v1/invoices/{id}", g.RequireCapability(identity.CapViewBilling, h.tenant(h.getInvoice)))
+	r.Handle("GET /api/v1/tenant/invoices", g.RequireCapability(identity.CapViewBilling, h.tenant(h.listInvoices)))
+	r.Handle("GET /api/v1/tenant/invoices/{id}", g.RequireCapability(identity.CapViewBilling, h.tenant(h.getInvoice)))
 }
 
 // listInvoices returns a paginated, optionally status-filtered page of the tenant's

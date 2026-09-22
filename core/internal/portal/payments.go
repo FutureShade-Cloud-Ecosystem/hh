@@ -53,8 +53,8 @@ func toPortalPayment(p payments.Payment) portalPayment {
 // multi-invoice pay action (PayInvoices). The summed amount and Run customer are derived
 // server-side from the session, never trusted from the client (§4.2).
 func (h *Handler) registerPaymentRoutes(r httpx.Registrar, g *guards.Guards) {
-	r.Handle("GET /api/portal/v1/payments", g.RequireCapability(identity.CapViewBilling, h.tenant(h.listPayments)))
-	r.Handle("POST /api/portal/v1/payments", g.RequireCapability(identity.CapPayInvoices, h.tenant(h.createPayment)))
+	r.Handle("GET /api/v1/tenant/payments", g.RequireCapability(identity.CapViewBilling, h.tenant(h.listPayments)))
+	r.Handle("POST /api/v1/tenant/payments", g.RequireCapability(identity.CapPayInvoices, h.tenant(h.createPayment)))
 }
 
 // listPayments returns the tenant's payment history with allocations, projected to the portal-safe

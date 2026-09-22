@@ -71,7 +71,7 @@ func TestServeSetRegistration_NoDuplicatePatterns(t *testing.T) {
 	if rr := muxHandler(mux, http.MethodGet, "/api/v1/ar/landing"); rr.Code != http.StatusUnauthorized && rr.Code != http.StatusForbidden {
 		t.Fatalf("AR landing route = %d for an anonymous caller, want the gate's refusal", rr.Code)
 	}
-	if rr := muxHandler(mux, http.MethodGet, "/api/portal/v1/addresses"); rr.Code != http.StatusUnauthorized && rr.Code != http.StatusForbidden {
+	if rr := muxHandler(mux, http.MethodGet, "/api/v1/tenant/addresses"); rr.Code != http.StatusUnauthorized && rr.Code != http.StatusForbidden {
 		t.Fatalf("portal address route = %d for an anonymous caller, want the tenant gate's refusal", rr.Code)
 	}
 }

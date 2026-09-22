@@ -16,11 +16,11 @@ import (
 // prices (financial), so view/accept/reject sit behind SubmitRFQ (Owner/Buyer, not
 // field_crew); convert additionally commits an order, so it requires CreateOrders.
 func (h *Handler) registerQuoteRoutes(r httpx.Registrar, g *guards.Guards) {
-	r.Handle("GET /api/portal/v1/quotes", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.listQuotes)))
-	r.Handle("GET /api/portal/v1/quotes/{id}", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.getQuote)))
-	r.Handle("POST /api/portal/v1/quotes/{id}/accept", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.acceptQuote)))
-	r.Handle("POST /api/portal/v1/quotes/{id}/reject", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.rejectQuote)))
-	r.Handle("POST /api/portal/v1/quotes/{id}/convert", g.RequireCapability(identity.CapCreateOrders, h.tenant(h.convertQuote)))
+	r.Handle("GET /api/v1/tenant/quotes", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.listQuotes)))
+	r.Handle("GET /api/v1/tenant/quotes/{id}", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.getQuote)))
+	r.Handle("POST /api/v1/tenant/quotes/{id}/accept", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.acceptQuote)))
+	r.Handle("POST /api/v1/tenant/quotes/{id}/reject", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.rejectQuote)))
+	r.Handle("POST /api/v1/tenant/quotes/{id}/convert", g.RequireCapability(identity.CapCreateOrders, h.tenant(h.convertQuote)))
 }
 
 // listQuotes returns a paginated, optionally status-filtered page of the tenant's quotes.

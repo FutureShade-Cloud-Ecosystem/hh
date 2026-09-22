@@ -1,198 +1,121 @@
 package main
 
-// The x-role equality assertions (B-assert, security-critical): for every
-// route the core registers, the gate the handler actually runs must equal
-// the x-role the document declares for that operation, and the bearer class
-// the gate actually requires must equal the document's security scheme.
-// The single source of both document facts is the generated census table
-// (core/internal/platform/apigen/routes.gen.go, Route.XRole and
-// Route.Bearer, regenerated from core/api/openapi.yaml), and the binding
-// from operationId to registration path is the parity test's own
-// machinery: registerRoutes over a recordingRegistrar, patterns matched
-// against the census. No route is named by a literal here. A new
-// registration is asserted the moment it lands; a removed one stops being
-// asserted; a census edit or a guard swap without the other fails below.
+// The x-role equality assertions (B-assert, security-critical), migrated
+// at the Phase C integration: for every route the core registers, the
+// gate the handler actually runs must equal the x-role the document
+// declares for that operation, and the bearer class the gate actually
+// requires must equal the document's security scheme. The fixture is the
+// fold's registerRoutes(r, getenv) itself, driven over the identity
+// environment map and the gate database (compfixture_test.go), so the
+// assertion surface is the FULL served surface and every guard resolves
+// through the real collaborators: JWKS verification against the kit's
+// served key set, Team membership against the Appwrite double, org
+// anchoring, staff authority and portal roles against the fixture
+// database's synthetic rows. The single source of both document facts is
+// the generated census table (core/internal/platform/apigen/
+// routes.gen.go, Route.XRole and Route.Bearer, regenerated from
+// core/api/openapi.yaml), and the binding from operationId to
+// registration path is the parity test's own machinery: registerRoutes
+// over a recordingRegistrar, patterns matched against the census. No
+// route is named by a literal here except the customer-quote public pair,
+// whose classification cells the C5 recipe orders into the table by name.
+// A new registration is asserted the moment it lands; a removed one stops
+// being asserted; a census edit or a guard swap without the other fails
+// below.
 //
 // The gate class is observed, not asked: each constructor family
 // (core/internal/identity/guards/guards.go) refuses and admits on a fixed
 // skeleton of probe legs, with statuses and bodies pinned by ADR-0020
 // (docs/adr/0020-org-resolution.md, enforcement semantics and refusal
 // statuses) and bodies that are the authz constants
-// (core/internal/platform/authz/middleware.go). Expected values were
-// cross-checked against the Integrations census column
-// (tools/org/outbox/integrations/b1-inventory/guard-surface.txt section 3)
-// per the Tech Lead's B1 and B3 review notes.
+// (core/internal/platform/authz/middleware.go). The probe skeleton was
+// widened at this integration per the B4 review obligation: the portal
+// registers multiple capability routes now, and over the carried role
+// lattice the two-role skeleton left the eight capability names in two
+// behavioral classes; the buyer, buyer_no_pay and ap_finance legs (their
+// rows derived from identity.CapabilitiesFor, the same model the guard
+// reads) split view_billing from the pay pair and view_orders_deliveries
+// from edit_delivery_instructions. The residual pairs no skeleton can
+// split (pay_invoices versus manage_payment_methods, submit_rfq versus
+// create_orders: no canonical role holds one and not the other,
+// core/internal/identity/portal.go) are behavioral equivalence under the
+// carried lattice, recorded here so nobody mistakes the limit for a gap.
+//
+// The admitted legs observe the handler's own answer (the C5 recipe's
+// admitted-body awareness): the served set is the full module family, the
+// admitted probes reach real handlers, and the assertion is that the GATE
+// PASSED, observed as the answer wearing none of the three authz family
+// refusal bodies (the gate's refusals are byte-pinned constants; a
+// handler's own 403 wears a different body). The customer-quote send's
+// staff legs therefore reach StaffSend over the gate database, and the
+// public pair's cells pin the module's own classification (404 absent,
+// 410 dead, 200 live) exactly as the C5 review specified.
 
 import (
+	"bytes"
 	"context"
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/shims"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/tenantconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
-const (
-	xrIssuer    = "xrole-issuer"
-	xrStaffAud  = "xrole-staff"
-	xrTenantAud = "xrole-tenant"
-	xrKeyID     = "b4-xrole-rsa"
-	xrSubject   = "b4-xrole-platform-user"
-	xrTenantID  = "99999999-9999-4999-8999-999999999999"
-	xrOrgSlug   = "xroleprobe"
-	xrOrgID     = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-)
+// xrOrgSlug is the probe org (the fixture's north anchor) and xrXOrg the
+// staff legs' org selection header value.
+const xrXOrg = testkit.OrgNorthSlug
 
-// xrMembers admits the one anchored slug on both legs: staff membership for
-// the probe slug, and exactly one tenant org.
-type xrMembers struct{ slug string }
+// xrProbeDeadline bounds every probe. Every handler answers in
+// milliseconds except the one SSE stream route, whose admitted legs hold
+// the connection until the request context ends; the deadline ends it, and
+// the recorded answer (the stream's ready event) is the handler's own.
+const xrProbeDeadline = 1500 * time.Millisecond
 
-func (m xrMembers) OrgMember(_ context.Context, _, slug string) (bool, error) {
-	return slug == m.slug, nil
-}
+// xrProbeBody is the JSON body every mutating probe carries: the public
+// accept pair's typed-name-and-affirmative shape, which both acceptance
+// surfaces (the dealer pair's and the customer-quote pair's) read. A
+// guarded write route's own body validation answers what it answers; the
+// gate layer this suite asserts never reads a body.
+var xrProbeBody = []byte(`{"typed_name":"Fixture Homeowner","accepted":true}`)
 
-func (m xrMembers) TenantOrgs(context.Context, string) ([]string, error) {
-	return []string{m.slug}, nil
-}
-
-// xrOrgs anchors the probe slug.
-type xrOrgs struct{ slug, id string }
-
-func (o xrOrgs) ResolveSlug(_ context.Context, slug string) (string, bool, error) {
-	if slug == o.slug {
-		return o.id, true, nil
-	}
-	return "", false, nil
-}
-
-// xrStaffSrc is the mutable authority double: the tier legs flip it per leg.
-type xrStaffSrc struct{ auth identity.StaffAuthority }
-
-func (s *xrStaffSrc) ResolveStaff(context.Context, string, string) (identity.StaffAuthority, bool, error) {
-	return s.auth, true, nil
-}
-
-// xrPortalSrc is the mutable portal role double: the capability and no-row
-// legs flip it per leg.
-type xrPortalSrc struct {
-	role string
-	ok   bool
-}
-
-func (p *xrPortalSrc) PortalRole(context.Context, string, string) (string, bool, error) {
-	return p.role, p.ok, nil
-}
+// xrUUIDParam substitutes a well-formed, never-planted uuid for every {id}
+// parameter: a well-formed absent resource answers the module's not-found
+// family, never a parse refusal, so the admitted legs observe the
+// handler's answer rather than its input validation.
+const xrUUIDParam = "3ef10000-0000-4000-8000-0f0000000001"
 
 // xrFixture is the registered surface under probe: the same registerRoutes
-// the binary serves, driven through the parity test's recordingRegistrar so
-// the registered patterns are enumerable, over real guards wired on
-// runtime-generated keys and the mutable doubles. All roles used below are
-// non-driver, so the nil knob source never refuses the ceiling leg.
+// the binary serves, over the identity environment map and the gate
+// database, with the customer-quote classification tokens planted through
+// the module's own seams.
 type xrFixture struct {
-	keys       *rsa.PrivateKey
+	env        *compEnv
 	reg        *recordingRegistrar
-	staff      *xrStaffSrc
-	portal     *xrPortalSrc
 	registered []string
+	tokens     *cqClassificationTokens
 }
 
 func newXRoleFixture(t *testing.T) *xrFixture {
 	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-	verifier, err := identity.NewVerifier(identity.Config{
-		KeySource:      identity.NewStaticKeySource(map[string]crypto.PublicKey{xrKeyID: &key.PublicKey}),
-		Issuer:         xrIssuer,
-		StaffAudience:  xrStaffAud,
-		TenantAudience: xrTenantAud,
-	})
-	if err != nil {
-		t.Fatalf("NewVerifier: %v", err)
-	}
-	gate, err := authz.NewGate(verifier, xrMembers{slug: xrOrgSlug}, xrOrgs{slug: xrOrgSlug, id: xrOrgID})
-	if err != nil {
-		t.Fatalf("NewGate: %v", err)
-	}
-	fx := &xrFixture{
-		keys:   key,
-		staff:  &xrStaffSrc{auth: identity.StaffAuthority{RoleID: "inside_sales", Tier: identity.TierFrontline, Scope: identity.ScopeBranch}},
-		portal: &xrPortalSrc{ok: true, role: identity.PortalRoleAccountAdmin},
-	}
-	g, err := guards.NewGuards(gate, fx.staff, fx.portal, nil)
-	if err != nil {
-		t.Fatalf("NewGuards: %v", err)
-	}
-	fx.reg = &recordingRegistrar{inner: http.NewServeMux()}
-	registerRoutes(fx.reg, g, shims.NewRecorder(256), tenantconfig.Default())
-	fx.registered = fx.reg.patterns
-	return fx
+	env := newCompEnv(t)
+	reg, graph := registeredSurface(t, env)
+	tokens := plantClassificationTokens(t, env, graph.pool)
+	return &xrFixture{env: env, reg: reg, registered: reg.patterns, tokens: tokens}
 }
 
-// staffToken mints a staff-class token with a short, in-ceiling window.
-func (fx *xrFixture) staffToken(t *testing.T) string {
-	t.Helper()
-	return fx.mint(t, map[string]any{
-		"iss": xrIssuer, "sub": xrSubject, "aud": xrStaffAud,
-		"iat": time.Now().Add(-time.Minute).Unix(),
-		"exp": time.Now().Add(10 * time.Minute).Unix(),
-	})
-}
-
-// tenantToken mints a tenant-class token for the probe tenant.
-func (fx *xrFixture) tenantToken(t *testing.T) string {
-	t.Helper()
-	return fx.mint(t, map[string]any{
-		"iss": xrIssuer, "sub": xrSubject, "aud": xrTenantAud,
-		"iat":    time.Now().Add(-time.Minute).Unix(),
-		"exp":    time.Now().Add(10 * time.Minute).Unix(),
-		"tenant": xrTenantID,
-	})
-}
-
-func (fx *xrFixture) mint(t *testing.T, claims map[string]any) string {
-	t.Helper()
-	header := map[string]any{"alg": "RS256", "kid": xrKeyID, "typ": "JWT"}
-	hb, err := json.Marshal(header)
-	if err != nil {
-		t.Fatalf("marshal header: %v", err)
-	}
-	cb, err := json.Marshal(claims)
-	if err != nil {
-		t.Fatalf("marshal claims: %v", err)
-	}
-	b64 := func(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
-	signed := b64(hb) + "." + b64(cb)
-	digest := sha256.Sum256([]byte(signed))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, fx.keys, crypto.SHA256, digest[:])
-	if err != nil {
-		t.Fatalf("sign: %v", err)
-	}
-	return signed + "." + b64(sig)
-}
-
-// xrPathParam substitutes a fixed non-empty segment for every path
-// parameter in a documented template, so the probe request matches the
-// registered pattern without naming any resource.
-var xrPathParam = regexp.MustCompile(`\{[^/}]+\}`)
-
-// xrLeg is one probe: it sets the doubled authority and portal state and
-// returns the complete request headers, Authorization included.
+// xrLeg is one probe: it mints the leg's credential through the kit and
+// returns the complete request headers, Authorization included. The staff
+// and portal subjects are the fixture database's synthetic principals, so
+// the guards resolve real authority rows: the three staff tiers, and the
+// five canonical contractor roles across their tenants.
 type xrLeg struct {
 	name  string
 	apply func(t *testing.T, fx *xrFixture) map[string]string
@@ -207,36 +130,49 @@ var xrLegs = []xrLeg{
 		return map[string]string{"Authorization": "Bearer not-a-token"}
 	}},
 	{"staff bearer without X-Org", func(t *testing.T, fx *xrFixture) map[string]string {
-		fx.staff.auth = identity.StaffAuthority{RoleID: "inside_sales", Tier: identity.TierFrontline, Scope: identity.ScopeBranch}
-		return map[string]string{"Authorization": "Bearer " + fx.staffToken(t)}
+		return map[string]string{"Authorization": "Bearer " + fx.env.minter.StaffToken(t, testkit.SubInsideSales)}
 	}},
 	{"staff tier 3 branch", func(t *testing.T, fx *xrFixture) map[string]string {
-		fx.staff.auth = identity.StaffAuthority{RoleID: "inside_sales", Tier: identity.TierFrontline, Scope: identity.ScopeBranch}
-		return map[string]string{"Authorization": "Bearer " + fx.staffToken(t), authz.HeaderXOrg: xrOrgSlug}
+		return map[string]string{
+			"Authorization":  "Bearer " + fx.env.minter.StaffToken(t, testkit.SubInsideSales),
+			authz.HeaderXOrg: xrXOrg,
+		}
 	}},
 	{"staff tier 2 branch", func(t *testing.T, fx *xrFixture) map[string]string {
-		fx.staff.auth = identity.StaffAuthority{RoleID: "branch_manager", Tier: identity.TierManager, Scope: identity.ScopeBranch}
-		return map[string]string{"Authorization": "Bearer " + fx.staffToken(t), authz.HeaderXOrg: xrOrgSlug}
+		return map[string]string{
+			"Authorization":  "Bearer " + fx.env.minter.StaffToken(t, testkit.SubSalesManager),
+			authz.HeaderXOrg: xrXOrg,
+		}
 	}},
 	{"staff tier 1 global", func(t *testing.T, fx *xrFixture) map[string]string {
-		fx.staff.auth = identity.StaffAuthority{RoleID: "general_manager", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}
-		return map[string]string{"Authorization": "Bearer " + fx.staffToken(t), authz.HeaderXOrg: xrOrgSlug}
+		return map[string]string{
+			"Authorization":  "Bearer " + fx.env.minter.StaffToken(t, testkit.SubGeneralMgr),
+			authz.HeaderXOrg: xrXOrg,
+		}
 	}},
 	{"tenant account admin", func(t *testing.T, fx *xrFixture) map[string]string {
-		fx.portal.ok, fx.portal.role = true, identity.PortalRoleAccountAdmin
-		return map[string]string{"Authorization": "Bearer " + fx.tenantToken(t)}
+		return map[string]string{"Authorization": "Bearer " + fx.env.minter.TenantToken(t, testkit.SubPortalAdminAlpha, testkit.TenantAlphaID)}
 	}},
 	{"tenant field crew", func(t *testing.T, fx *xrFixture) map[string]string {
-		fx.portal.ok, fx.portal.role = true, identity.PortalRoleFieldCrew
-		return map[string]string{"Authorization": "Bearer " + fx.tenantToken(t)}
+		return map[string]string{"Authorization": "Bearer " + fx.env.minter.TenantToken(t, testkit.SubPortalCrewAlpha, testkit.TenantAlphaID)}
+	}},
+	{"tenant buyer", func(t *testing.T, fx *xrFixture) map[string]string {
+		return map[string]string{"Authorization": "Bearer " + fx.env.minter.TenantToken(t, testkit.SubPortalBuyerBeta, testkit.TenantBetaID)}
+	}},
+	{"tenant buyer no pay", func(t *testing.T, fx *xrFixture) map[string]string {
+		return map[string]string{"Authorization": "Bearer " + fx.env.minter.TenantToken(t, testkit.SubPortalBuyerNoPayAlpha, testkit.TenantAlphaID)}
+	}},
+	{"tenant ap finance", func(t *testing.T, fx *xrFixture) map[string]string {
+		return map[string]string{"Authorization": "Bearer " + fx.env.minter.TenantToken(t, testkit.SubPortalApGamma, testkit.TenantGammaID)}
 	}},
 	{"tenant no portal row", func(t *testing.T, fx *xrFixture) map[string]string {
-		fx.portal.ok, fx.portal.role = false, ""
-		return map[string]string{"Authorization": "Bearer " + fx.tenantToken(t)}
+		return map[string]string{"Authorization": "Bearer " + fx.env.minter.TenantToken(t, xrNoPortalRowSub, testkit.TenantAlphaID)}
 	}},
 	{"tenant bearer carrying X-Org", func(t *testing.T, fx *xrFixture) map[string]string {
-		fx.portal.ok, fx.portal.role = true, identity.PortalRoleAccountAdmin
-		return map[string]string{"Authorization": "Bearer " + fx.tenantToken(t), authz.HeaderXOrg: xrOrgSlug}
+		return map[string]string{
+			"Authorization":  "Bearer " + fx.env.minter.TenantToken(t, testkit.SubPortalAdminAlpha, testkit.TenantAlphaID),
+			authz.HeaderXOrg: xrXOrg,
+		}
 	}},
 }
 
@@ -254,23 +190,30 @@ func xrLegByName(t *testing.T, name string) xrLeg {
 }
 
 // xrWant is the pinned expectation for one leg under one family. Exactly
-// one of the four shapes of pin holds: status alone (an admitted leg); body
-// non-nil (a byte-identical family refusal); shape (a 400 X-Org shape
-// refusal: the 400 bodies are package-private in authz by the landed B2
-// review, so the pin is the status plus two properties from the ADR-0020
-// addendum, never a family body and never an echo of a sent value);
-// anonBody (admitted with the byte-identical anonymous answer, the public
-// leg's zero-effect rule).
+// one of the five shapes of pin holds: status alone with a nil body (a
+// gate refusal whose status the table names); body non-nil (a
+// byte-identical family refusal); shape (a 400 X-Org shape refusal: the
+// 400 bodies are package-private in authz by the landed B2 review, so the
+// pin is the status plus two properties from the ADR-0020 addendum, never
+// a family body and never an echo of a sent value); anonBody (admitted
+// with the byte-identical anonymous answer, the public leg's zero-effect
+// rule, the status observed rather than pinned because the served public
+// routes answer their own families: the config leg 200, the tracking
+// pixels 200 and 204, the intake's content-type refusal, the token
+// classifiers 404); handler (admitted: the gate passed, observed as the
+// answer wearing none of the three authz family refusal bodies, the
+// handler's own answer being each module's suite to pin).
 type xrWant struct {
 	status   int
 	body     []byte
 	shape    bool
 	anonBody bool
+	handler  bool
 }
 
-func xrAdmitted() xrWant { return xrWant{status: http.StatusOK} }
+func xrAdmitted() xrWant { return xrWant{handler: true} }
 
-func xrAnonIdentical() xrWant { return xrWant{status: http.StatusOK, anonBody: true} }
+func xrAnonIdentical() xrWant { return xrWant{anonBody: true} }
 
 func xrRefuse(status int, body []byte) xrWant { return xrWant{status: status, body: body} }
 
@@ -287,7 +230,8 @@ func xrFamilyFor(xrole string) (map[string]xrWant, string, bool) {
 	switch {
 	case xrole == "public":
 		// The unguarded public leg (ADR-0020 leg 2): no credential, no
-		// header, no bearer class has any effect on the answer.
+		// header, no bearer class has any effect on the answer, so every
+		// leg must return the anonymous answer byte for byte.
 		wants := make(map[string]xrWant, len(xrLegs))
 		for _, leg := range xrLegs {
 			wants[leg.name] = xrAnonIdentical()
@@ -298,21 +242,24 @@ func xrFamilyFor(xrole string) (map[string]xrWant, string, bool) {
 			"anonymous": u, "malformed bearer": u,
 			"staff bearer without X-Org": shape,
 			"staff tier 3 branch":        xrAdmitted(), "staff tier 2 branch": xrAdmitted(), "staff tier 1 global": xrAdmitted(),
-			"tenant account admin": f, "tenant field crew": f, "tenant no portal row": f, "tenant bearer carrying X-Org": f,
+			"tenant account admin": f, "tenant field crew": f, "tenant buyer": f, "tenant buyer no pay": f,
+			"tenant ap finance": f, "tenant no portal row": f, "tenant bearer carrying X-Org": f,
 		}, "RequireStaff (any active grant)", true
 	case xrole == "requireManager":
 		return map[string]xrWant{
 			"anonymous": u, "malformed bearer": u,
 			"staff bearer without X-Org": shape,
 			"staff tier 3 branch":        f, "staff tier 2 branch": xrAdmitted(), "staff tier 1 global": xrAdmitted(),
-			"tenant account admin": f, "tenant field crew": f, "tenant no portal row": f, "tenant bearer carrying X-Org": f,
+			"tenant account admin": f, "tenant field crew": f, "tenant buyer": f, "tenant buyer no pay": f,
+			"tenant ap finance": f, "tenant no portal row": f, "tenant bearer carrying X-Org": f,
 		}, "RequireManager (tier 1 or 2)", true
 	case xrole == "requireAdmin":
 		return map[string]xrWant{
 			"anonymous": u, "malformed bearer": u,
 			"staff bearer without X-Org": shape,
 			"staff tier 3 branch":        f, "staff tier 2 branch": f, "staff tier 1 global": xrAdmitted(),
-			"tenant account admin": f, "tenant field crew": f, "tenant no portal row": f, "tenant bearer carrying X-Org": f,
+			"tenant account admin": f, "tenant field crew": f, "tenant buyer": f, "tenant buyer no pay": f,
+			"tenant ap finance": f, "tenant no portal row": f, "tenant bearer carrying X-Org": f,
 		}, "RequireAdmin (tier 1 global)", true
 	case xrole == "tenant":
 		return map[string]xrWant{
@@ -321,7 +268,8 @@ func xrFamilyFor(xrole string) (map[string]xrWant, string, bool) {
 			// No capability is consulted: a role that holds nothing is still
 			// admitted, and the no-row boundary is the unpinned leg guards.go
 			// records as admitted.
-			"tenant account admin": xrAdmitted(), "tenant field crew": xrAdmitted(), "tenant no portal row": xrAdmitted(),
+			"tenant account admin": xrAdmitted(), "tenant field crew": xrAdmitted(), "tenant buyer": xrAdmitted(),
+			"tenant buyer no pay": xrAdmitted(), "tenant ap finance": xrAdmitted(), "tenant no portal row": xrAdmitted(),
 			"tenant bearer carrying X-Org": shape,
 		}, "RequireTenant (tenant bearer, portal row status)", true
 	case xrole == "scope-member":
@@ -329,7 +277,8 @@ func xrFamilyFor(xrole string) (map[string]xrWant, string, bool) {
 			"anonymous": u, "malformed bearer": u,
 			"staff bearer without X-Org": shape,
 			"staff tier 3 branch":        xrAdmitted(), "staff tier 2 branch": xrAdmitted(), "staff tier 1 global": xrAdmitted(),
-			"tenant account admin": xrAdmitted(), "tenant field crew": xrAdmitted(), "tenant no portal row": xrAdmitted(),
+			"tenant account admin": xrAdmitted(), "tenant field crew": xrAdmitted(), "tenant buyer": xrAdmitted(),
+			"tenant buyer no pay": xrAdmitted(), "tenant ap finance": xrAdmitted(), "tenant no portal row": xrAdmitted(),
 			"tenant bearer carrying X-Org": shape,
 		}, "RequireSync (either bearer, G4 bearer-conditioned)", true
 	case strings.HasPrefix(xrole, "capability:"):
@@ -339,7 +288,12 @@ func xrFamilyFor(xrole string) (map[string]xrWant, string, bool) {
 		// guards_test.go), so the table stays correct for every capability
 		// name without literals: a role that holds the named capability is
 		// admitted, one that lacks it answers the RBAC-403, and no linked
-		// portal user is no authority and answers the RBAC-403.
+		// portal user is no authority and answers the RBAC-403. The five
+		// canonical roles are probed (the B4 widening), which splits
+		// view_billing from the pay pair and view_orders_deliveries from
+		// edit_delivery_instructions; the residual equivalence pairs
+		// (pay_invoices versus manage_payment_methods, submit_rfq versus
+		// create_orders) no canonical role splits under the carried lattice.
 		capName := identity.Capability(strings.TrimPrefix(xrole, "capability:"))
 		wants := map[string]xrWant{
 			"anonymous": u, "malformed bearer": u,
@@ -350,6 +304,9 @@ func xrFamilyFor(xrole string) (map[string]xrWant, string, bool) {
 		for role, legName := range map[string]string{
 			identity.PortalRoleAccountAdmin: "tenant account admin",
 			identity.PortalRoleFieldCrew:    "tenant field crew",
+			identity.PortalRoleBuyer:        "tenant buyer",
+			identity.PortalRoleBuyerNoPay:   "tenant buyer no pay",
+			identity.PortalRoleAPFinance:    "tenant ap finance",
 		} {
 			if identity.CapabilitiesFor(role).Has(capName) {
 				wants[legName] = xrAdmitted()
@@ -379,10 +336,54 @@ func xrCensusByPattern(t *testing.T) map[string]apigen.Route {
 	return byPattern
 }
 
-// probe issues one request through the registered surface.
+// xrPathParam substitutes a fixed non-empty segment for every path
+// parameter in a documented template, so the probe request matches the
+// registered pattern without naming any resource.
+var xrPathParam = regexp.MustCompile(`\{[^/}]+\}`)
+
+// xrProbePath substitutes the probe segments for one documented template:
+// the uuid-shaped absent id for {id}, the absent token for {token} (the
+// classification cells below substitute the planted tokens), and a fixed
+// non-empty segment for every other parameter name.
+func xrProbePath(path string) string {
+	return xrPathParam.ReplaceAllStringFunc(path, func(param string) string {
+		switch param {
+		case "{id}":
+			return xrUUIDParam
+		case "{token}":
+			return xrAbsentToken
+		default:
+			return "probe"
+		}
+	})
+}
+
+// xrTokenPath substitutes one raw token for the {token} parameter of a
+// documented template (the classification cells' probe paths).
+func xrTokenPath(path, raw string) string {
+	return xrPathParam.ReplaceAllStringFunc(path, func(param string) string {
+		if param == "{token}" {
+			return raw
+		}
+		return xrProbePath("x/{" + strings.Trim(param, "{}") + "}")
+	})
+}
+
+// probe issues one request through the registered surface. Every mutating
+// probe carries the JSON body and every probe carries a bounded context
+// (the SSE stream route's admitted legs hold until it ends).
 func (fx *xrFixture) probe(t *testing.T, method, path string, header map[string]string) (int, string) {
 	t.Helper()
-	req := httptest.NewRequest(method, path, nil)
+	var body *bytes.Reader
+	if method != http.MethodGet && method != http.MethodHead && method != http.MethodDelete {
+		body = bytes.NewReader(xrProbeBody)
+	} else {
+		body = bytes.NewReader(nil)
+	}
+	req := httptest.NewRequest(method, path, body)
+	ctx, cancel := context.WithTimeout(context.Background(), xrProbeDeadline)
+	defer cancel()
+	req = req.WithContext(ctx)
 	for k, v := range header {
 		req.Header.Set(k, v)
 	}
@@ -394,7 +395,7 @@ func (fx *xrFixture) probe(t *testing.T, method, path string, header map[string]
 // probeLeg runs one probe leg against one census route.
 func (fx *xrFixture) probeLeg(t *testing.T, route apigen.Route, leg xrLeg) (int, string) {
 	t.Helper()
-	return fx.probe(t, route.Method, xrPathParam.ReplaceAllString(route.Path, "probe"), leg.apply(t, fx))
+	return fx.probe(t, route.Method, xrProbePath(route.Path), leg.apply(t, fx))
 }
 
 // TestRegisteredRouteGateMatchesDocumentXRole is the x-role equality
@@ -428,7 +429,7 @@ func TestRegisteredRouteGateMatchesDocumentXRole(t *testing.T) {
 					t.Fatalf("leg %q has no expectation under x-role %q; the table must be total over the probe skeleton", leg.name, route.XRole)
 				}
 				code, body := fx.probeLeg(t, route, leg)
-				if code != want.status {
+				if want.status != 0 && code != want.status {
 					t.Fatalf("leg %q: status %d, want %d under document x-role %q (%s); the registered gate does not equal the document",
 						leg.name, code, want.status, route.XRole, family)
 				}
@@ -441,8 +442,16 @@ func TestRegisteredRouteGateMatchesDocumentXRole(t *testing.T) {
 							t.Fatalf("leg %q: the 400 shape refusal wears a family body %q", leg.name, body)
 						}
 					}
-					if strings.Contains(body, xrOrgSlug) || strings.Contains(body, xrSubject) || strings.Contains(body, xrTenantID) {
+					if strings.Contains(body, xrXOrg) || strings.Contains(body, testkit.TenantAlphaID) {
 						t.Fatalf("leg %q: the 400 shape refusal echoes a sent value: %q", leg.name, body)
+					}
+				}
+				if want.handler {
+					for _, familyBody := range [][]byte{authz.BodyUnauthorized, authz.BodyForbidden, authz.BodyUnavailable} {
+						if body == string(familyBody) {
+							t.Fatalf("leg %q: admitted under document x-role %q (%s) but the answer wears the gate's refusal body %q: the registered gate does not equal the document",
+								leg.name, route.XRole, family, body)
+						}
 					}
 				}
 				if want.anonBody && (code != anonCode || body != anonBody) {
@@ -450,9 +459,46 @@ func TestRegisteredRouteGateMatchesDocumentXRole(t *testing.T) {
 						leg.name, code, body, anonCode, anonBody)
 				}
 			}
+			// The customer-quote public pair's classification cells (the C5
+			// recipe): 404 absent, 410 dead, 200 live, the module's own
+			// token classification, asserted once per route beside the
+			// leg-identity loop.
+			if strings.HasPrefix(route.OperationID, "customerQuotePublic") {
+				fx.assertClassificationCells(t, route)
+			}
 		})
 	}
 	t.Logf("x-role equality asserted for %d registered operations against the census families", len(fx.registered))
+}
+
+// assertClassificationCells pins the customer-quote public pair's own
+// classification (ADR 0022 decision 1): a well-formed never-minted token
+// answers 404 with the never-existed sentence, a retired token answers 410
+// with the dead-link sentence, and a live token serves the operation (the
+// view 200; the accept 200 once, on its own fresh quote, because the
+// acceptance flips the quote's state). The leg-identity loop above proved
+// no credential changes any of these answers.
+func (fx *xrFixture) assertClassificationCells(t *testing.T, route apigen.Route) {
+	t.Helper()
+	wantAbsent := `{"error":` + strconv.Quote(customerquote.MsgLinkNotExist) + `}`
+	wantDead := `{"error":` + strconv.Quote(customerquote.SentenceLinkNoLongerValid) + `}`
+	cell := func(name, raw string, wantStatus int, wantBody string) {
+		t.Helper()
+		code, body := fx.probe(t, route.Method, xrTokenPath(route.Path, raw), nil)
+		if code != wantStatus {
+			t.Fatalf("%s classification cell %s: status %d body %s, want %d", route.OperationID, name, code, body, wantStatus)
+		}
+		if wantBody != "" && strings.TrimSpace(body) != wantBody {
+			t.Fatalf("%s classification cell %s: body %q, want %q", route.OperationID, name, body, wantBody)
+		}
+	}
+	cell("absent token", fx.tokens.absent, http.StatusNotFound, wantAbsent)
+	cell("dead token", fx.tokens.dead, http.StatusGone, wantDead)
+	if route.Method == http.MethodGet {
+		cell("live token", fx.tokens.liveView, http.StatusOK, "")
+		return
+	}
+	cell("live token", fx.tokens.liveAccept, http.StatusOK, "")
 }
 
 // TestRegisteredRouteBearerMatchesCensus asserts the census Bearer column
@@ -465,7 +511,9 @@ func TestRegisteredRouteGateMatchesDocumentXRole(t *testing.T) {
 // global leg, the one staff caller every staff-family constructor admits,
 // so the observation isolates the credential class from the x-role tier
 // gates (a tier 3 caller on a manager route is refused by the gate, not by
-// the bearer class, and would conflate the two assertions).
+// the bearer class, and would conflate the two assertions). Admitted here
+// means the gate passed (the handler's own answer, never a family
+// refusal), because the served handlers are DB-backed modules.
 func TestRegisteredRouteBearerMatchesCensus(t *testing.T) {
 	fx := newXRoleFixture(t)
 	census := xrCensusByPattern(t)
@@ -475,29 +523,38 @@ func TestRegisteredRouteBearerMatchesCensus(t *testing.T) {
 			t.Fatalf("registered route %s is not in the document; the parity test owns this direction", pattern)
 		}
 		t.Run(route.OperationID, func(t *testing.T) {
-			assert := func(legName string, want xrWant) {
+			admitted := func(legName string) {
 				t.Helper()
 				code, body := fx.probeLeg(t, route, xrLegByName(t, legName))
-				if code != want.status {
-					t.Fatalf("bearer class %q: leg %q status %d, want %d; the gate's bearer requirement does not equal the census",
-						route.Bearer, legName, code, want.status)
+				for _, familyBody := range [][]byte{authz.BodyUnauthorized, authz.BodyForbidden, authz.BodyUnavailable} {
+					if code == http.StatusServiceUnavailable && body == string(authz.BodyUnavailable) {
+						t.Fatalf("bearer class %q: leg %q answered the gate's operational refusal: %s", route.Bearer, legName, body)
+					}
+					if body == string(familyBody) {
+						t.Fatalf("bearer class %q: leg %q refused (%d %q); the gate's bearer requirement does not equal the census",
+							route.Bearer, legName, code, body)
+					}
 				}
-				if want.body != nil && body != string(want.body) {
-					t.Fatalf("bearer class %q: leg %q refusal body %q, want %q", route.Bearer, legName, body, want.body)
+			}
+			refused := func(legName string) {
+				t.Helper()
+				code, body := fx.probeLeg(t, route, xrLegByName(t, legName))
+				if code != http.StatusForbidden || body != string(authz.BodyForbidden) {
+					t.Fatalf("bearer class %q: leg %q answered %d %q, want the RBAC-403 family refusal", route.Bearer, legName, code, body)
 				}
 			}
 			switch route.Bearer {
 			case "staff":
-				assert("staff tier 1 global", xrAdmitted())
-				assert("tenant account admin", xrRefuse(http.StatusForbidden, authz.BodyForbidden))
+				admitted("staff tier 1 global")
+				refused("tenant account admin")
 			case "tenant":
-				assert("tenant account admin", xrAdmitted())
-				assert("staff tier 1 global", xrRefuse(http.StatusForbidden, authz.BodyForbidden))
+				admitted("tenant account admin")
+				refused("staff tier 1 global")
 			case "staff-or-tenant":
-				assert("staff tier 1 global", xrAdmitted())
-				assert("tenant account admin", xrAdmitted())
+				admitted("staff tier 1 global")
+				admitted("tenant account admin")
 			case "public":
-				assert("anonymous", xrAdmitted())
+				admitted("anonymous")
 			default:
 				t.Fatalf("census Bearer %q names no bearer class the guard constructors define", route.Bearer)
 			}

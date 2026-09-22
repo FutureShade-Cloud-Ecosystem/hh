@@ -14,9 +14,9 @@ import (
 // user may reach these (h.authn, token required, no capability), since they act only on
 // the caller's own record.
 func (h *Handler) registerSettingsRoutes(r httpx.Registrar, g *guards.Guards) {
-	r.Handle("GET /api/portal/v1/me", g.RequireTenant(h.tenant(h.getMe)))
-	r.Handle("PUT /api/portal/v1/me", g.RequireTenant(h.tenant(h.updateMe)))
-	r.Handle("POST /api/portal/v1/me/password", g.RequireTenant(h.tenant(h.changePassword)))
+	r.Handle("GET /api/v1/tenant/me", g.RequireTenant(h.tenant(h.getMe)))
+	r.Handle("PUT /api/v1/tenant/me", g.RequireTenant(h.tenant(h.updateMe)))
+	r.Handle("POST /api/v1/tenant/me/password", g.RequireTenant(h.tenant(h.changePassword)))
 }
 
 // MeResponse is the self-profile payload: the user record with the caller's RESOLVED CAPABILITIES

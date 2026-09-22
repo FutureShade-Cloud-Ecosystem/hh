@@ -1,10 +1,6 @@
 package main
 
 import (
-	"context"
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,20 +8,24 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/shims"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/tenantconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 )
 
-// The registration parity test (B-parity): the core's registered surface
-// and the contract are asserted equal in both directions, from the one
-// composition point the binary itself wires (registerRoutes), against the
-// route table generated from the assembled document
-// (core/internal/platform/apigen). The vendored ERP-side baseline is the
-// document's own parity ledger (core/api/drop-list.yaml), checked by
+// The registration parity test (B-parity, migrated at the Phase C
+// integration per the A6 review's assembly steps): the core's registered
+// surface and the contract are asserted equal in both directions, from the
+// one composition point the binary itself wires (registerRoutes over the
+// fold's environment-driven signature, so the census covers the FULL
+// served surface: the shims, the public tenant config, the portal
+// re-homing's tenant operations, the customer-quote trio, the money spine,
+// the operations cluster and the tops), against the route table generated
+// from the assembled document (core/internal/platform/apigen). The
+// construction runs over the gate database and the identity environment
+// map (compfixture_test.go); the census is DB-gated, and absent the gate
+// variable this suite skips politely. The vendored ERP-side baseline is
+// the document's own parity ledger (core/api/drop-list.yaml), checked by
 // core/api/tools/parity.mjs inside check-all; this test is the CORE side
 // of the same discipline: every registered route must be documented, and
 // every documented route must be registered or explicitly accounted in
@@ -34,7 +34,7 @@ import (
 // recordingRegistrar enumerates the registered surface: it records every
 // pattern handed to Handle, in registration order, then delegates to a
 // real ServeMux. The standard library exposes no enumeration of a mux, so
-// the recording happens at the registration seam (shims.Registrar) the
+// the recording happens at the registration seam (httpx.Registrar) the
 // wiring already uses.
 type recordingRegistrar struct {
 	inner    *http.ServeMux
@@ -46,59 +46,9 @@ func (r *recordingRegistrar) Handle(pattern string, h http.Handler) {
 	r.inner.Handle(pattern, h)
 }
 
-// parityDoubles are the minimal guards collaborators: the parity test
-// never issues a guarded request through them, so every answer refuses,
-// which nothing here depends on.
-type parityMembers struct{}
-
-func (parityMembers) OrgMember(context.Context, string, string) (bool, error) { return false, nil }
-func (parityMembers) TenantOrgs(context.Context, string) ([]string, error)    { return nil, nil }
-
-type parityOrgs struct{}
-
-func (parityOrgs) ResolveSlug(context.Context, string) (string, bool, error) { return "", false, nil }
-
-type parityStaff struct{}
-
-func (parityStaff) ResolveStaff(context.Context, string, string) (identity.StaffAuthority, bool, error) {
-	return identity.StaffAuthority{}, false, nil
-}
-
-type parityPortal struct{}
-
-func (parityPortal) PortalRole(context.Context, string, string) (string, bool, error) {
-	return "", false, nil
-}
-
-func parityGuards(t *testing.T) *guards.Guards {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-	verifier, err := identity.NewVerifier(identity.Config{
-		KeySource:      identity.NewStaticKeySource(map[string]crypto.PublicKey{"parity": &key.PublicKey}),
-		Issuer:         "parity-issuer",
-		StaffAudience:  "parity-staff",
-		TenantAudience: "parity-tenant",
-	})
-	if err != nil {
-		t.Fatalf("NewVerifier: %v", err)
-	}
-	gate, err := authz.NewGate(verifier, parityMembers{}, parityOrgs{})
-	if err != nil {
-		t.Fatalf("NewGate: %v", err)
-	}
-	g, err := guards.NewGuards(gate, parityStaff{}, parityPortal{}, nil)
-	if err != nil {
-		t.Fatalf("NewGuards: %v", err)
-	}
-	return g
-}
-
 func TestRegistrationParityBothDirections(t *testing.T) {
-	rec := &recordingRegistrar{inner: http.NewServeMux()}
-	registerRoutes(rec, parityGuards(t), shims.NewRecorder(16), tenantconfig.Default())
+	env := newCompEnv(t)
+	rec, _ := registeredSurface(t, env)
 
 	// The document side, indexed two ways, with uniqueness asserted so a
 	// generator fault cannot paper over a duplicate.
@@ -170,14 +120,16 @@ func TestRegistrationParityBothDirections(t *testing.T) {
 }
 
 // The public config route rides the public leg through the real wiring
-// (registerRoutes over a real ServeMux): no verification, no org
-// resolution, and neither an Authorization header nor an X-Org header has
-// any effect on the answer (ADR-0020 leg 2: X-Org on a public request is
-// an undeclared header with zero effect). The body is the narrowed
-// TenantPublicConfig: six dealer fields, no brand property.
+// (registerRoutes over a real ServeMux, the identity environment map and
+// the gate database): no verification, no org resolution, and neither an
+// Authorization header nor an X-Org header has any effect on the answer
+// (ADR-0020 leg 2: X-Org on a public request is an undeclared header with
+// zero effect). The body is the narrowed TenantPublicConfig: six dealer
+// fields, no brand property.
 func TestPublicConfigRoutePublicLeg(t *testing.T) {
-	mux := http.NewServeMux()
-	registerRoutes(mux, parityGuards(t), shims.NewRecorder(16), tenantconfig.Default())
+	env := newCompEnv(t)
+	rec, _ := registeredSurface(t, env)
+	mux := rec.inner
 
 	get := func(name string, header map[string]string) *httptest.ResponseRecorder {
 		t.Helper()

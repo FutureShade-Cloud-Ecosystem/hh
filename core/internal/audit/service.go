@@ -348,6 +348,21 @@ var allowedExtraKeys = map[string]bool{
 	"line_no":    true, // which line it changed on (an int; absent/0 for an order-header field)
 	"before":     true, // the pre-image value  (int64 for cents, string for qty/date)
 	"after":      true, // the post-image value (same shape as before)
+	// The customer-quote acceptance artifact (HH-3.6, ADR 0022): the signed
+	// acceptance's audit row joins the allowlist openly at the integration
+	// re-point, per the seam contract's own pin (core/internal/customerquote/
+	// audit.go: the first six Extra keys join the deny-by-default allowlist
+	// openly). ref_type and amount_cents were already allowlisted. The three
+	// hex-valued keys ride separator-encoded (groups of six hex characters
+	// joined by colons) so no stored value can carry the seven-digit run the
+	// chokepoint redacts on; the encoding is the seam's contract, the
+	// decoding the module's. alg and key_id are code-shaped values bounded
+	// by the module's own key-id shape rule (no seven-digit run).
+	"artifact_hash": true, // separator-encoded sha256 of the acceptance artifact
+	"artifact_sig":  true, // separator-encoded HMAC of the acceptance artifact
+	"alg":           true, // the artifact signature algorithm constant
+	"key_id":        true, // the acceptance signing key id (shape-bounded)
+	"token_hash":    true, // separator-encoded sha256 of the share token
 }
 
 // redactCleartext returns the value with cleartext-looking identifiers stripped. A value is treated as

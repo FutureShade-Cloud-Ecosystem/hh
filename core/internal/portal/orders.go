@@ -21,9 +21,9 @@ const maxDeliveryInstructionsLen = 2000
 // instructions write (EditDeliveryInstructions). field_crew holds both caps, so the crew
 // can read orders and annotate a delivery, but never reaches financials.
 func (h *Handler) registerOrderRoutes(r httpx.Registrar, g *guards.Guards) {
-	r.Handle("GET /api/portal/v1/orders", g.RequireCapability(identity.CapViewOrdersDeliveries, h.tenant(h.listOrders)))
-	r.Handle("GET /api/portal/v1/orders/{id}", g.RequireCapability(identity.CapViewOrdersDeliveries, h.tenant(h.getOrder)))
-	r.Handle("PUT /api/portal/v1/orders/{id}/delivery-instructions", g.RequireCapability(identity.CapEditDeliveryInstructions, h.tenant(h.setDeliveryInstructions)))
+	r.Handle("GET /api/v1/tenant/orders", g.RequireCapability(identity.CapViewOrdersDeliveries, h.tenant(h.listOrders)))
+	r.Handle("GET /api/v1/tenant/orders/{id}", g.RequireCapability(identity.CapViewOrdersDeliveries, h.tenant(h.getOrder)))
+	r.Handle("PUT /api/v1/tenant/orders/{id}/delivery-instructions", g.RequireCapability(identity.CapEditDeliveryInstructions, h.tenant(h.setDeliveryInstructions)))
 }
 
 // listOrders returns a paginated, optionally status-filtered page of the tenant's orders.

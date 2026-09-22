@@ -35,8 +35,8 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/config"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/shims"
@@ -271,19 +271,12 @@ func registerRoutes(r httpx.Registrar, getenv func(string) string) (*appGraph, e
 	// capture.
 	r.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(tenantconfig.Default())))
 
-	// The customer-quote surface (HH-3.6 C5). The service needs the
-	// concrete audit seam (ADR 0022: the acceptance audit write is
-	// mandatory); the re-point lands at THIS construction site. Until the
-	// integration re-point builds the service (store over the pool,
-	// customerquote.LoadSigningKeys over the environment, the concrete
-	// audit seam), the absence is named at spawn, never silent, and no
-	// default seam exists to degrade with.
-	var customerQuotes *customerquote.Service
-	if customerQuotes == nil {
-		fmt.Println("core: serve: customer-quote routes not served: the audit seam re-point is pending (ADR 0022: the acceptance audit write is mandatory)")
-	} else {
-		customerquote.RegisterRoutes(r, g, customerQuotes)
-	}
+	// The customer-quote surface (HH-3.6 C5, the integration audit
+	// re-point): the service is constructed AFTER the spines below, because
+	// the concrete audit seam rides the carried audit service wireMoney
+	// builds (one audit service instance serves every consumer; a second
+	// construction would strand the seam on an instance nobody reads). The
+	// construction sits beside the spine wiring with its own marked block.
 
 	// The SMS belt precedes the operations wiring: the yard repository's
 	// stage transaction enqueues through its outbox. Its contact source
@@ -294,6 +287,33 @@ func registerRoutes(r httpx.Registrar, getenv func(string) string) (*appGraph, e
 	money := wireMoney(r, pool, g, log, cfg.StaffBaseURL)
 	ops := wireOperations(r, pool, g, log, money, os.Getenv("CORE_STREAM_TICKET_KEY"), belt.outbox)
 	tops := wireTops(r, pool, g, log, money, ops, cfg, belt)
+
+	// The customer-quote surface (HH-3.6 C5, THE AUDIT RE-POINT SITE): the
+	// store over the shared pool, the signing keys over the environment
+	// (the HH_ACCEPTANCE_SIGN_* placeholder names, ADR 0022's key schedule:
+	// no value exists in any file, and the secret store path is Colton's
+	// to name at deploy), and the concrete audit seam over the carried
+	// audit service (cq_adapters.go), so the acceptance audit write is
+	// real: NewService refuses a nil seam by construction, a missing or
+	// malformed signing key fails the spawn loudly, and no nil-service
+	// absence remains to print. registerRoutes gains nothing else: the
+	// registration is the module's own three documented operations.
+	cqKeys, err := customerquote.LoadSigningKeys(getenv)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("customer-quote signing keys: %w", err)
+	}
+	cqStore, err := customerquote.NewStore(pool)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	cqService, err := customerquote.NewService(cqStore, cqAuditSeam{svc: money.auditSvc}, cqKeys, customerquote.Config{})
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	customerquote.RegisterRoutes(r, g, cqService)
 
 	return &appGraph{
 		cfg: cfg, log: log, pool: pool, verify: verifier, link: linkedUserID(pool), g: g,

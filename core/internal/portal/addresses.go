@@ -1,6 +1,6 @@
 package portal
 
-// addresses.go, GET /api/portal/v1/addresses[/{id}] (DIB-479, spec §2.2 gap 4).
+// addresses.go, GET /api/v1/tenant/addresses[/{id}] (DIB-479, spec §2.2 gap 4).
 //
 // WHAT A "DELIVERY SITE" IS IN THIS ERP. There is no customer_addresses table, and this ticket does
 // not invent one: a Stage-1 read-only gap is the wrong moment to add a master-data table that
@@ -137,8 +137,8 @@ func (s *ProjectsService) GetAddress(ctx context.Context, customerID, addressID 
 // and is explicit. (h.authn would have been laxer and h.billing would have locked the crew out of
 // the one thing they need.)
 func (h *Handler) registerAddressRoutes(r httpx.Registrar, g *guards.Guards) {
-	r.Handle("GET /api/portal/v1/addresses", g.RequireCapability(identity.CapViewOrdersDeliveries, h.tenant(h.listAddresses)))
-	r.Handle("GET /api/portal/v1/addresses/{id}", g.RequireCapability(identity.CapViewOrdersDeliveries, h.tenant(h.getAddress)))
+	r.Handle("GET /api/v1/tenant/addresses", g.RequireCapability(identity.CapViewOrdersDeliveries, h.tenant(h.listAddresses)))
+	r.Handle("GET /api/v1/tenant/addresses/{id}", g.RequireCapability(identity.CapViewOrdersDeliveries, h.tenant(h.getAddress)))
 }
 
 // AddressListResponse is the list envelope ({"addresses": [...]}), matching the shape the other

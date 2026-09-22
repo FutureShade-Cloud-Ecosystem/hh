@@ -98,7 +98,9 @@ func writeResult(w http.ResponseWriter, out any, err error, successStatus int) {
 }
 
 func writeError(w http.ResponseWriter, e *Error) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(e.Status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": e.Message})
+	// The one door (httpx.Error), so the module's refusal sentences take
+	// the counter-message treatment like every other envelope in the tree;
+	// none of the pinned sentences carries a module prefix, so the bytes
+	// the module's tests pin are unchanged.
+	httpx.Error(w, e.Status, e.Message)
 }

@@ -22,15 +22,15 @@ type ProjectsResponse struct {
 // (Owner/Buyer, not field_crew). Each handler is tenant-scoped by caller.CustomerID; a
 // cross-tenant id resolves to 404 (IDOR-safe) in the procurement module.
 func (h *Handler) registerProcurementRoutes(r httpx.Registrar, g *guards.Guards) {
-	r.Handle("GET /api/portal/v1/procurement/projects", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.listProjects)))
-	r.Handle("POST /api/portal/v1/procurement/projects", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.createProject)))
-	r.Handle("GET /api/portal/v1/procurement/projects/{id}", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.getProject)))
-	r.Handle("PUT /api/portal/v1/procurement/projects/{id}", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.updateProject)))
-	r.Handle("DELETE /api/portal/v1/procurement/projects/{id}", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.deleteProject)))
-	r.Handle("POST /api/portal/v1/procurement/projects/{id}/lines", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.addProjectLine)))
-	r.Handle("PUT /api/portal/v1/procurement/projects/{id}/lines/{lineId}", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.updateProjectLine)))
-	r.Handle("DELETE /api/portal/v1/procurement/projects/{id}/lines/{lineId}", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.removeProjectLine)))
-	r.Handle("POST /api/portal/v1/procurement/projects/{id}/submit-rfq", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.submitProjectRFQ)))
+	r.Handle("GET /api/v1/tenant/procurement/projects", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.listProjects)))
+	r.Handle("POST /api/v1/tenant/procurement/projects", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.createProject)))
+	r.Handle("GET /api/v1/tenant/procurement/projects/{id}", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.getProject)))
+	r.Handle("PUT /api/v1/tenant/procurement/projects/{id}", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.updateProject)))
+	r.Handle("DELETE /api/v1/tenant/procurement/projects/{id}", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.deleteProject)))
+	r.Handle("POST /api/v1/tenant/procurement/projects/{id}/lines", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.addProjectLine)))
+	r.Handle("PUT /api/v1/tenant/procurement/projects/{id}/lines/{lineId}", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.updateProjectLine)))
+	r.Handle("DELETE /api/v1/tenant/procurement/projects/{id}/lines/{lineId}", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.removeProjectLine)))
+	r.Handle("POST /api/v1/tenant/procurement/projects/{id}/submit-rfq", g.RequireCapability(identity.CapSubmitRFQ, h.tenant(h.submitProjectRFQ)))
 }
 
 // listProjects returns the tenant's non-terminal projects for the board.

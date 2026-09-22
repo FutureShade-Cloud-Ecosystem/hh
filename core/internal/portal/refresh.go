@@ -1,6 +1,6 @@
 package portal
 
-// refresh.go, POST /api/portal/v1/token/refresh (DIB-479, spec §1.2 / OR-3).
+// refresh.go, POST /api/v1/tenant/token/refresh (DIB-479, spec §1.2 / OR-3).
 //
 // THE PROBLEM. The portal JWT is a 12-hour token with no way to renew it. A contractor who opens
 // the board at 6am is signed out at 6pm, mid-delivery, possibly mid-payment, and HH Pro's whole
@@ -105,7 +105,7 @@ func (s *Service) Refresh(ctx context.Context, token string) (RefreshResponse, e
 func (h *Handler) registerRefreshRoutes(r httpx.Registrar) {
 	// Unregistered mint surface (the bearer split, HH-3.2 fold): the helper
 	// stays compilable against the Registrar seam; no served mux calls it.
-	r.Handle("POST /api/portal/v1/token/refresh", http.HandlerFunc(h.authn(h.refreshToken)))
+	r.Handle("POST /api/v1/tenant/token/refresh", http.HandlerFunc(h.authn(h.refreshToken)))
 }
 
 // refreshToken re-reads the Bearer token off the request. The guard already verified it, this

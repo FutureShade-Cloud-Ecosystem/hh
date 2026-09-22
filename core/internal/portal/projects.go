@@ -361,8 +361,8 @@ func (r *projectRepository) GetProjectDashboard(ctx context.Context, customerID,
 // registerProjectRoutes wires the CP-03 rollup reads. Both require ViewBilling (per-project
 // SPEND is financial and follows the dashboard's role gate, FEATURE_BRIEF A5).
 func (h *Handler) registerProjectRoutes(r httpx.Registrar, g *guards.Guards) {
-	r.Handle("GET /api/portal/v1/projects", g.RequireCapability(identity.CapViewBilling, h.tenant(h.listProjectRollup)))
-	r.Handle("GET /api/portal/v1/projects/{id}", g.RequireCapability(identity.CapViewBilling, h.tenant(h.getProjectRollup)))
+	r.Handle("GET /api/v1/tenant/projects", g.RequireCapability(identity.CapViewBilling, h.tenant(h.listProjectRollup)))
+	r.Handle("GET /api/v1/tenant/projects/{id}", g.RequireCapability(identity.CapViewBilling, h.tenant(h.getProjectRollup)))
 }
 
 // listProjectRollup returns the tenant's projects with their spend rollup.
