@@ -80,26 +80,41 @@ func (rec *Recorder) Entries() []Reached {
 	return append([]Reached(nil), rec.entries...)
 }
 
-// RegisterRoutes registers the shim surface on mux through the settled
-// Guards signature. This is the whole proof surface: the five order
-// lifecycle routes (orderCancel carries requireManager), a representative
-// tenant set from /api/v1/tenant, the two dual-bearer sync operations, one
-// public operation and one capability-qualified portal operation, each
-// named by its contract operationId.
-func RegisterRoutes(mux *http.ServeMux, g *guards.Guards, rec *Recorder) {
-	staff := func(operation string) guards.StaffHandler {
-		return func(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-			rec.record(Reached{Operation: operation, Staff: &StaffFacts{
-				PlatformUserID: caller.PlatformUserID,
-				OrgSlug:        caller.OrgSlug,
-				OrgID:          caller.OrgID,
-				RoleID:         caller.RoleID,
-				Tier:           caller.Tier,
-				Scope:          caller.Scope,
-			}})
-			writeOK(w)
-		}
+// RegisterRoutes registers the shim surface the real modules have not yet
+// replaced: a representative tenant set from /api/v1/tenant, the two
+// dual-bearer sync operations, and one capability-qualified portal
+// operation, each named by its contract operationId. The order lifecycle
+// five and the public quote view were this surface's first half and came
+// out when the money-spine batch (HH-3.2 B4) registered the real order and
+// quote routes on the serve mux: Security S-3's per-operationId removal,
+// with the ServeMux duplicate-registration panic as the backstop. They
+// survive only as the DB-free proof registrar below, which no served mux
+// ever registers.
+// staffRecorder and publicRecorder are the reached-recorder handler
+// factories the registrars share (they were closures inside one registrar
+// before the superseded split).
+func staffRecorder(rec *Recorder, operation string) guards.StaffHandler {
+	return func(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+		rec.record(Reached{Operation: operation, Staff: &StaffFacts{
+			PlatformUserID: caller.PlatformUserID,
+			OrgSlug:        caller.OrgSlug,
+			OrgID:          caller.OrgID,
+			RoleID:         caller.RoleID,
+			Tier:           caller.Tier,
+			Scope:          caller.Scope,
+		}})
+		writeOK(w)
 	}
+}
+
+func publicRecorder(rec *Recorder, operation string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rec.record(Reached{Operation: operation})
+		writeOK(w)
+	}
+}
+
+func RegisterRoutes(mux *http.ServeMux, g *guards.Guards, rec *Recorder) {
 	tenant := func(operation string) guards.TenantHandler {
 		return func(w http.ResponseWriter, r *http.Request, scope authz.TenantScope) {
 			rec.record(Reached{Operation: operation, Tenant: &TenantFacts{
@@ -136,21 +151,6 @@ func RegisterRoutes(mux *http.ServeMux, g *guards.Guards, rec *Recorder) {
 			writeOK(w)
 		}
 	}
-	public := func(operation string) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			rec.record(Reached{Operation: operation})
-			writeOK(w)
-		}
-	}
-
-	// The order lifecycle, x-role requireStaff except orderCancel
-	// (requireManager), from the staff-order tag.
-	mux.Handle("GET /api/v1/orders/{id}", g.RequireStaff(staff("orderRead")))
-	mux.Handle("POST /api/v1/orders/{id}/confirm", g.RequireStaff(staff("orderConfirm")))
-	mux.Handle("POST /api/v1/orders/{id}/picking", g.RequireStaff(staff("orderMarkPicking")))
-	mux.Handle("POST /api/v1/orders/{id}/ready", g.RequireStaff(staff("orderMarkReady")))
-	mux.Handle("POST /api/v1/orders/{id}/cancel", g.RequireManager(staff("orderCancel")))
-
 	// A representative tenant set from /api/v1/tenant, x-role tenant.
 	mux.Handle("GET /api/v1/tenant/me", g.RequireTenant(tenant("tenantGetMe")))
 	mux.Handle("PATCH /api/v1/tenant/me", g.RequireTenant(tenant("tenantUpdateMe")))
@@ -161,12 +161,30 @@ func RegisterRoutes(mux *http.ServeMux, g *guards.Guards, rec *Recorder) {
 	mux.Handle("GET /api/v1/sync/{scope}", g.RequireSync(sync("syncPull")))
 	mux.Handle("POST /api/v1/sync/{scope}", g.RequireSync(sync("syncPush")))
 
-	// One public operation, security: [] and no x-role gate.
-	mux.Handle("GET /api/public/v1/quotes/{token}", g.Public(http.HandlerFunc(public("quotePublicViewQuote"))))
-
 	// One capability-qualified portal operation, x-role
 	// capability:view_billing.
 	mux.Handle("GET /api/v1/tenant/invoices", g.RequireCapability(identity.CapViewBilling, tenant("tenantListInvoices")))
+}
+
+// RegisterSupersededProofRoutes registers the operationIds whose shims the
+// money-spine modules replaced on the served mux: the five order lifecycle
+// routes (orderCancel carries requireManager) and the public quote view.
+// It exists so the DB-free acceptance sweeps keep a proof vehicle for the
+// guard classes those operations carried (kid tokens, rotation, the
+// anonymous public leg) while the served mux answers the real modules; it
+// is registered only by test harnesses, never by serve, and it comes out
+// entirely when the sweeps re-point at the real routes.
+func RegisterSupersededProofRoutes(mux *http.ServeMux, g *guards.Guards, rec *Recorder) {
+	// The order lifecycle, x-role requireStaff except orderCancel
+	// (requireManager), from the staff-order tag.
+	mux.Handle("GET /api/v1/orders/{id}", g.RequireStaff(staffRecorder(rec, "orderRead")))
+	mux.Handle("POST /api/v1/orders/{id}/confirm", g.RequireStaff(staffRecorder(rec, "orderConfirm")))
+	mux.Handle("POST /api/v1/orders/{id}/picking", g.RequireStaff(staffRecorder(rec, "orderMarkPicking")))
+	mux.Handle("POST /api/v1/orders/{id}/ready", g.RequireStaff(staffRecorder(rec, "orderMarkReady")))
+	mux.Handle("POST /api/v1/orders/{id}/cancel", g.RequireManager(staffRecorder(rec, "orderCancel")))
+
+	// One public operation, security: [] and no x-role gate.
+	mux.Handle("GET /api/public/v1/quotes/{token}", g.Public(publicRecorder(rec, "quotePublicViewQuote")))
 }
 
 // writeOK answers 200 with the minimal shim body. It reads nothing and

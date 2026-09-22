@@ -1,0 +1,405 @@
+// wire_money.go is the money-spine wiring of HH-3.2 batch B4: the wire
+// functions for gl, pricing, inventory, order, quote (plus product and
+// settings, the minimal compile closure this batch carried with them).
+// Each function constructs one module's service over the shared pool and
+// registers its routes through the Guards, carrying the pin's composition
+// root adapters for these modules verbatim where the adapter's own
+// dependencies have landed, and leaving the not-yet-landed seams unwired
+// with their designed fail-closed behavior (recorded per seam in the
+// batch report). The B7 composition-root decomposition folds these
+// functions into the full wire set; they exist now so the real modules
+// register the routes the identity shims held.
+package main
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// linkedUserID resolves the ERP users.id a platform user links to
+// (users.platform_user_id, migration 0215): the B4 linkage ruling's id
+// translation. It is never authority (tier, scope and role resolve from
+// the app-role tables in the guard); an unlinked or deleted user answers
+// not-ok and every id-consuming read fails closed rather than attributing
+// the write to nobody.
+func linkedUserID(pool *pgxpool.Pool) identity.UserIDLinker {
+	return func(ctx context.Context, platformUserID string) (string, bool) {
+		var id string
+		err := pool.QueryRow(ctx,
+			`SELECT id::text FROM users WHERE platform_user_id = $1 AND deleted_at IS NULL`,
+			platformUserID).Scan(&id)
+		if err != nil {
+			return "", false
+		}
+		return id, true
+	}
+}
+
+// wireMoney constructs and registers the money spine in dependency order
+// (the pin's own staging: product before pricing, pricing before order and
+// quote, gl before inventory's GL adapters). It registers every registrar
+// the landed seam set supports; the seams whose owners land in later
+// batches (billing, pos, till, customer) stay unwired and their surfaces
+// answer the modules' designed fail-closed refusals.
+func wireMoney(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, staffBaseURL string) {
+	link := linkedUserID(pool)
+	outboxStore := notify.NewPgOutboxStore(pool)
+	auditSvc := audit.NewService(audit.NewRepository(pool), log)
+
+	// The approvals rail (bridge batch): GL parks a manual journal through
+	// the filer, and a rail-approve posts the journal through the decider
+	// inside the decision transaction (GL-first ordering, the NewClientError
+	// translation), exactly the two rail seams the pin bound here. The
+	// notifier (messaging) and freight decider (dispatch) land in B5.
+	approvals := identity.NewApprovals(identity.NewApprovalRepository(pool))
+
+	// A-18 (W2): product catalogue, then A-07 (W3): pricing over it.
+	productSvc := product.NewService(product.NewRepository(pool))
+	productHandler := product.NewHandler(productSvc, log).WithUserLinker(link)
+	productHandler.RegisterRoutes(mux, g)
+	productHandler.RegisterSearchRoute(mux, g)
+	productHandler.RegisterCounterRoutes(mux, g)
+
+	pricingSvc := pricing.NewService(pricing.NewRepository(pool)).
+		WithCategoryResolver(productSvc).
+		WithUOMConverter(productSvc).
+		WithMarginGate(pricing.NewIdentityMarginGate())
+	pricing.NewHandler(pricingSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+	// SWARM-W5-C: the price-file import's three composition-root answers,
+	// and the below-floor override authority over the rail plus the bridged
+	// caller (the two-source order is the adapter's own, carried).
+	pricingSvc.
+		WithCostVisibility(pricingCostVisibility{}).
+		WithVendorDirectory(pricingVendorDirectory{pool: pool}).
+		WithCatalogSKUs(pricingCatalogSKUs{pool: pool}).
+		WithOverrideAuthority(w5cOverrideAuthority{svc: approvals, log: log}).
+		WithLogger(log)
+	pricing.NewHandler(pricingSvc, log).WithUserLinker(link).RegisterW4Routes(mux, g)
+
+	// A-01 (W5): GL, with the rail filer bound. The invoice/tax/payment
+	// readers (billing, pos, till) land in B6 and B7; unwired, the posting
+	// legs answer their not-configured errors, never a silent skip.
+	glSvc := gl.NewService(gl.NewRepository(pool)).
+		WithDeadRequeuer(outboxStore).
+		WithAudit(auditSvc).
+		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals})
+	gl.NewHandler(glSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc})
+
+	// W6: inventory over GL (poster + rule resolver, both in-batch).
+	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithAudit(auditSvc)
+	inventorySvc.WithGLPoster(invGLPoster{svc: glSvc}).WithRuleResolver(glRuleAdapter{svc: glSvc})
+	productSvc.WithBranchStock(inventorySvc).WithListPrices(pricingSvc)
+	inventory.NewHandler(inventorySvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+	inventory.NewHandler(inventorySvc, log).WithUserLinker(link).RegisterStockTruthRoutes(mux, g)
+
+	// The order lifecycle: base service, audit seams, reorder seams (pricing
+	// and inventory are in-batch), actor names. The customer-tier seam
+	// (customer module, B3-unlanded) and the cancel guards (billing, pos)
+	// stay unwired: repricing edits and cancels answer their fail-closed
+	// refusals, and the wiring batch that lands those modules closes them.
+	orderRepo := order.NewRepository(pool)
+	orderSvc := order.NewService(orderRepo).
+		WithAudit(auditSvc).
+		WithAuditTrail(auditSvc).
+		WithReorderPricing(pricingSvc).
+		WithReorderInventory(inventorySvc)
+	orderHandler := order.NewHandler(orderSvc).WithUserLinker(link)
+	orderHandler.RegisterRoutes(mux, g)
+	orderHandler.RegisterTransitionRoutes(mux, g)
+	orderHandler.RegisterEditRoutes(mux, g)
+	orderHandler.RegisterChangeRoutes(mux, g)
+
+	// The quote desk: the staff builder (audit, pricing, preview, cost basis,
+	// actor names, shares, stock reserver, availability, soft-hold expiry;
+	// the customer-tier seam lands with customer) and the public share
+	// routes (token in path, no guard, R4).
+	quoteRepo := quote.NewRepository(pool)
+	quoteStaffSvc := quote.NewStaffService(quoteRepo).
+		WithAudit(auditSvc).
+		WithAuditTrail(auditSvc).
+		WithPricing(pricingSvc).
+		WithPricePreview(pricingSvc).
+		WithCostBasis(inventorySvc).
+		WithActorNamer(quoteRepo).
+		WithShares(quoteRepo).
+		WithStockReserver(w5aQuoteStockReserver{svc: inventorySvc}).
+		WithAvailability(w5aQuoteAvailability{svc: inventorySvc}).
+		WithSoftHoldExpiry(w6cQuoteSoftHoldExpiry{svc: orderSvc})
+	quoteRepo.WithStockReserver(w5aQuoteStockReserver{svc: inventorySvc})
+	quoteStaffHandler := quote.NewStaffHandler(quoteStaffSvc).WithUserLinker(link)
+	quoteStaffHandler.RegisterStaffRoutes(mux, g)
+	quoteStaffHandler.RegisterShareRoutes(mux, g)
+	quoteStaffHandler.RegisterPublicRoutes(mux)
+	// The quote automation surface: staff + base URL + logger wired; the
+	// notice queue and contact reader (messagingprovider, customer) land in
+	// their own batches and the followup send path degrades without them.
+	quoteAutomation := quote.NewAutomationService(quote.NewFollowUpRepository(pool)).
+		WithStaff(quoteStaffSvc).
+		WithBaseURL(staffBaseURL).
+		WithLogger(log)
+	quote.NewAutomationHandler(quoteAutomation).WithUserLinker(link).RegisterAutomationRoutes(mux, g)
+	quoteStaffHandler.RegisterAvailabilityRoutes(mux, g)
+}
+
+// jeApprovalFilerAdapter satisfies gl.ApprovalFiler over the approvals
+// rail's FileJEApproval (the pin's adapter, re-pointed at the bridge).
+type jeApprovalFilerAdapter struct{ svc *identity.Approvals }
+
+func (a jeApprovalFilerAdapter) FileJEApproval(ctx context.Context, journalID, branchID string, amountCents int64, createdBy string) error {
+	_, err := a.svc.FileJEApproval(ctx, journalID, branchID, amountCents, createdBy)
+	return err
+}
+
+// jeDeciderAdapter satisfies the rail's JEDecider over gl's
+// ApproveJournalTx: a rail-approve posts the journal inside the decision
+// transaction, translating gl's typed refusals into the rail's client-error
+// taxonomy (carried verbatim from the pin's adapter belt).
+type jeDeciderAdapter struct{ svc *gl.Service }
+
+func (a jeDeciderAdapter) ApproveJournalTx(ctx context.Context, tx pgx.Tx, journalID, deciderID string) error {
+	if err := a.svc.ApproveJournalTx(ctx, tx, journalID, deciderID); err != nil {
+		if st, ok := gl.ErrorHTTPStatus(err); ok {
+			return identity.NewClientError(st, err.Error())
+		}
+		return err
+	}
+	return nil
+}
+
+// glRuleAdapter satisfies inventory's posting-rule resolver over gl
+// (carried verbatim).
+type glRuleAdapter struct{ svc *gl.Service }
+
+func (a glRuleAdapter) ResolveRule(ctx context.Context, eventType, lineRole, branchID string) (string, error) {
+	return a.svc.ResolveRule(ctx, eventType, lineRole, branchID)
+}
+
+// invGLPoster satisfies inventory's GL poster over gl's external posting
+// seam (carried verbatim).
+type invGLPoster struct{ svc *gl.Service }
+
+func (a invGLPoster) PostJournal(ctx context.Context, in inventory.GLJournal) (string, error) {
+	lines := make([]gl.ExternalLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
+}
+
+// w5aQuoteStockReserver satisfies quote's stock reservation seam over
+// inventory (carried verbatim).
+type w5aQuoteStockReserver struct{ svc *inventory.Service }
+
+func (a w5aQuoteStockReserver) ReserveTx(ctx context.Context, tx pgx.Tx, in quote.StockReserveInput) (quote.StockReserveResult, error) {
+	res, err := a.svc.ReserveTx(ctx, tx, inventory.ReserveInput{
+		ProductID:        in.ProductID,
+		BranchID:         in.BranchID,
+		LocationID:       in.LocationID,
+		ResType:          in.ResType,
+		QtyBase:          in.QtyBase,
+		SourceType:       in.SourceType,
+		SourceRefID:      in.SourceRefID,
+		Reason:           in.Reason,
+		CreatedBy:        in.CreatedBy,
+		EnforceAvailable: in.EnforceAvailable,
+		ExpiresAt:        in.ExpiresAt,
+	})
+	if err != nil {
+		return quote.StockReserveResult{}, err
+	}
+	return quote.StockReserveResult{
+		ReservationID: res.Reservation.ID,
+		HoldMode:      res.Reservation.HoldMode,
+		Applied:       res.Applied,
+	}, nil
+}
+
+func (a w5aQuoteStockReserver) ReleaseBySourceTx(ctx context.Context, tx pgx.Tx, sourceType, sourceRefID, status string) (int, error) {
+	return a.svc.ReleaseBySourceTx(ctx, tx, sourceType, sourceRefID, status)
+}
+
+// w5aQuoteAvailability satisfies quote.AvailabilityReader over the seam
+// inventory published (carried verbatim, with its projection helper).
+type w5aQuoteAvailability struct{ svc *inventory.Service }
+
+func w5aBranchStock(b inventory.BranchStock) quote.BranchStock {
+	return quote.BranchStock{
+		ProductID:     b.ProductID,
+		BranchID:      b.BranchID,
+		BranchCode:    b.BranchCode,
+		BranchName:    b.BranchName,
+		OnHandBase:    b.OnHandBase,
+		ReservedBase:  b.ReservedBase,
+		InTransitBase: b.InTransitBase,
+		AvailableBase: b.AvailableBase,
+		SoftHeldBase:  b.SoftHeldBase,
+		AvgCostCents:  b.AvgCostCents,
+	}
+}
+
+func (a w5aQuoteAvailability) AvailabilityAtBranch(ctx context.Context, productID, branchID string) (quote.BranchStock, error) {
+	b, err := a.svc.AvailabilityAtBranch(ctx, productID, branchID)
+	if err != nil {
+		return quote.BranchStock{}, err
+	}
+	return w5aBranchStock(b), nil
+}
+
+func (a w5aQuoteAvailability) AvailabilityAllBranches(ctx context.Context, productID string) ([]quote.BranchStock, error) {
+	rows, err := a.svc.AvailabilityAllBranches(ctx, productID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]quote.BranchStock, len(rows))
+	for i, b := range rows {
+		out[i] = w5aBranchStock(b)
+	}
+	return out, nil
+}
+
+// w6cQuoteSoftHoldExpiry satisfies quote's soft-hold expiry seam over
+// order (carried verbatim).
+type w6cQuoteSoftHoldExpiry struct{ svc *order.Service }
+
+func (a w6cQuoteSoftHoldExpiry) ExpiredSoftHolds(ctx context.Context, quoteID string) (quote.SoftHoldStatus, error) {
+	st, err := a.svc.ExpiredSoftHolds(ctx, quoteID)
+	if err != nil {
+		return quote.SoftHoldStatus{}, err
+	}
+	out := quote.SoftHoldStatus{
+		QuoteID: st.QuoteID, ActiveCount: st.ActiveCount, AnyExpired: st.AnyExpired,
+		Expired: make([]quote.ExpiredHold, 0, len(st.Expired)),
+	}
+	for _, h := range st.Expired {
+		out.Expired = append(out.Expired, quote.ExpiredHold{
+			ReservationID: h.ReservationID, ProductID: h.ProductID, ProductName: h.ProductName,
+			SKU: h.SKU, BranchID: h.BranchID, QtyBase: h.QtyBase, Status: h.Status,
+			ExpiresAt: h.ExpiresAt, EndedAt: h.EndedAt,
+		})
+	}
+	return out, nil
+}
+
+// pricingCostVisibility satisfies pricing's cost visibility gate over the
+// bridged caller (carried verbatim; the context read is the bridge stamp
+// the wire's registrars make from the guard-resolved caller).
+type pricingCostVisibility struct{}
+
+func (pricingCostVisibility) IsManager(ctx context.Context, userID string) (bool, error) {
+	if userID == "" {
+		// Not an error: there is nothing wrong, there is simply nobody to admit.
+		return false, nil
+	}
+	caller, ok := identity.StaffContextFromContext(ctx)
+	if !ok || caller.UserID != userID {
+		return false, nil
+	}
+	return caller.IsManager(), nil
+}
+
+// pricingVendorDirectory satisfies pricing's vendor picker read (carried
+// verbatim).
+type pricingVendorDirectory struct{ pool *pgxpool.Pool }
+
+func (a pricingVendorDirectory) ListVendors(ctx context.Context) ([]pricing.PriceFileVendor, error) {
+	if a.pool == nil {
+		return nil, nil
+	}
+	rows, err := a.pool.Query(ctx, `SELECT id::text, vendor_no::text, name FROM vendors ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []pricing.PriceFileVendor
+	for rows.Next() {
+		var v pricing.PriceFileVendor
+		if err := rows.Scan(&v.VendorID, &v.VendorNo, &v.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// pricingCatalogSKUs satisfies pricing's catalogue SKU lookup: one call for
+// the whole file, a SKU missing from the result is a SKU we do not stock,
+// and an error is propagated so pricing flags the preview unchecked (carried
+// verbatim).
+type pricingCatalogSKUs struct{ pool *pgxpool.Pool }
+
+func (a pricingCatalogSKUs) LookupSKUs(ctx context.Context, skus []string) (map[string]pricing.CatalogSKU, error) {
+	if a.pool == nil || len(skus) == 0 {
+		return map[string]pricing.CatalogSKU{}, nil
+	}
+	rows, err := a.pool.Query(ctx,
+		`SELECT id::text, sku::text, name FROM products WHERE sku = ANY($1::citext[])`, skus)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]pricing.CatalogSKU, len(skus))
+	for rows.Next() {
+		var e pricing.CatalogSKU
+		if err := rows.Scan(&e.ProductID, &e.SKU, &e.Name); err != nil {
+			return nil, err
+		}
+		out[e.SKU] = e
+	}
+	return out, rows.Err()
+}
+
+// w5cOverrideAuthority satisfies pricing.OverrideAuthority over the
+// approvals rail plus the bridged caller stamp: an APPROVED margin override
+// first, then the caller's own manager scope, checked against the branch
+// being priced (carried verbatim from the pin's adapter belt, re-pointed at
+// the bridge).
+type w5cOverrideAuthority struct {
+	svc *identity.Approvals
+	log *slog.Logger
+}
+
+func (a w5cOverrideAuthority) MarginOverrideAuthority(ctx context.Context, userID, branchID string) (pricing.OverrideGrant, error) {
+	if userID == "" || branchID == "" {
+		// An unattributed or unlocated request cannot be authorised. Not an error: there is nothing
+		// wrong, there is simply nobody to grant anything to.
+		return pricing.OverrideGrant{}, nil
+	}
+	// 1. the approvals substrate.
+	has, err := a.svc.HasApprovedOverride(ctx, userID, branchID, identity.PolicyMargin)
+	if err != nil {
+		// Propagated, NOT swallowed. pricing fails closed on an error, which is what we want when the
+		// approvals substrate is unreachable, an outage must not become a pricing hole.
+		return pricing.OverrideGrant{}, err
+	}
+	if has {
+		return pricing.OverrideGrant{Granted: true, Source: pricing.AuthorityApproval}, nil
+	}
+	// 2. the caller's own manager scope.
+	caller, ok := identity.StaffContextFromContext(ctx)
+	if !ok || caller.UserID != userID {
+		return pricing.OverrideGrant{}, nil
+	}
+	if caller.IsManager() && caller.CanAccessBranch(branchID) {
+		if a.log != nil {
+			a.log.Info("pricing: below-floor price cleared on MANAGER SCOPE (no approval record)",
+				"user_id", userID, "branch_id", branchID, "role", caller.RoleCode)
+		}
+		return pricing.OverrideGrant{Granted: true, Source: pricing.AuthorityManagerScope}, nil
+	}
+	return pricing.OverrideGrant{}, nil
+}

@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -184,8 +185,15 @@ func serve(getenv func(string) string) error {
 	rec := shims.NewRecorder(1024)
 	shims.RegisterRoutes(mux, g, rec)
 
+	// The money spine (HH-3.2 B4): gl, pricing, inventory, order, quote
+	// (plus product and settings, their compile closure) register their
+	// real routes through the Guards, and the identity shims for those
+	// operationIds came out of shims.RegisterRoutes in the same change
+	// (the ServeMux duplicate-registration panic is the backstop).
+	wireMoney(mux, pool, g, slog.Default(), "")
+
 	srv := &http.Server{Addr: cfg.listenAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	fmt.Printf("core: serve: listening on %s (identity shims)\n", cfg.listenAddr)
+	fmt.Printf("core: serve: listening on %s (identity shims plus the money spine)\n", cfg.listenAddr)
 	err = srv.ListenAndServe()
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
