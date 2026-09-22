@@ -36,6 +36,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/shims"
@@ -269,6 +270,20 @@ func registerRoutes(r httpx.Registrar, getenv func(string) string) (*appGraph, e
 	// the ERP antecedent's static dealer identity, equal to the vendored
 	// capture.
 	r.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(tenantconfig.Default())))
+
+	// The customer-quote surface (HH-3.6 C5). The service needs the
+	// concrete audit seam (ADR 0022: the acceptance audit write is
+	// mandatory); the re-point lands at THIS construction site. Until the
+	// integration re-point builds the service (store over the pool,
+	// customerquote.LoadSigningKeys over the environment, the concrete
+	// audit seam), the absence is named at spawn, never silent, and no
+	// default seam exists to degrade with.
+	var customerQuotes *customerquote.Service
+	if customerQuotes == nil {
+		fmt.Println("core: serve: customer-quote routes not served: the audit seam re-point is pending (ADR 0022: the acceptance audit write is mandatory)")
+	} else {
+		customerquote.RegisterRoutes(r, g, customerQuotes)
+	}
 
 	// The SMS belt precedes the operations wiring: the yard repository's
 	// stage transaction enqueues through its outbox. Its contact source
