@@ -158,9 +158,14 @@ Canonicalization pins, so rebuild-from-row is byte-reproducible:
   encoding/json with HTML escaping disabled: quote and backslash escaped, the
   short escapes for backspace, formfeed, newline, carriage return and tab, other
   control characters as lowercase \u00xx, U+2028 and U+2029 escaped, invalid
-  UTF-8 replaced by the replacement character. No HTML escaping anywhere, so a
+  UTF-8 mapped per byte to the six-character \ufffd escape. No HTML escaping anywhere, so a
   typed name containing angle brackets or an ampersand cannot fork the bytes
-  between sign time and verify time.
+  between sign time and verify time. The invalid-UTF-8 rule was pinned at
+  integration, when CI on one Go minor exposed that the toolchain's own
+  encoding of invalid bytes differs between minors (the raw replacement rune
+  versus the escape): the escape form is the writer's definition, so canonical
+  bytes and signatures are toolchain independent, and a typed U+FFFD (valid
+  UTF-8) passes through raw and remains distinguishable from the escape.
 - accepted_at is rendered from the stored value in UTC with exactly six
   fractional digits (microsecond precision, the column's own); the signing path
   truncates to microsecond before serializing, so the signed bytes equal the

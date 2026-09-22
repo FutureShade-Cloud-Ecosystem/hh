@@ -86,9 +86,14 @@ func TestCanonicalWriterMatchesEncoderNoHTML(t *testing.T) {
 		"Control\x01\x1f chars",
 		"Tab\there",
 		lineSeparators,
-		"Bytes\xff\xfe invalid",
 		"Ünïcödé 名前",
 	}
+	// The live-encoder mutual pin runs over VALID UTF-8 fixtures only:
+	// encoding/json's rendering of invalid bytes differs between Go
+	// minors (one emits the raw replacement rune, another the \ufffd
+	// escape), so the invalid cases are pinned as fixed bytes below,
+	// against the writer's own definition, which is the version
+	// independent one.
 	for _, name := range names {
 		f := fixtureFields()
 		f.SignedName = name
@@ -350,4 +355,37 @@ func chokepointRedact(s string) string {
 		return "[redacted]"
 	}
 	return s
+}
+
+// TestCanonicalWriterInvalidUTF8FixedBytes pins the writer's invalid-UTF-8
+// output as fixed bytes: each invalid byte maps to the six-character
+// \ufffd escape, independent of the Go toolchain (the live encoder's
+// rendering of invalid bytes differs between minors, which is exactly why
+// the canonical form is defined here and not by the toolchain).
+func TestCanonicalWriterInvalidUTF8FixedBytes(t *testing.T) {
+	f := fixtureFields()
+	f.SignedName = "Bytes\xff\xfe invalid"
+	got, err := CanonicalArtifactBytes(f)
+	if err != nil {
+		t.Fatalf("canonical bytes: %v", err)
+	}
+	if !bytes.Contains(got, []byte("\\ufffd\\ufffd")) {
+		t.Fatalf("invalid bytes must map per byte to the \\ufffd escape; got: %s", got)
+	}
+	if bytes.Contains(got, []byte{0xef, 0xbf, 0xbd}) {
+		t.Fatalf("the raw replacement rune must not appear for invalid bytes (it would collide with a typed U+FFFD and vary by toolchain); got: %s", got)
+	}
+	// A TYPED U+FFFD stays raw and distinguishable from the escape.
+	f2 := fixtureFields()
+	f2.SignedName = "Typed\ufffd replacement"
+	got2, err := CanonicalArtifactBytes(f2)
+	if err != nil {
+		t.Fatalf("canonical bytes: %v", err)
+	}
+	if !bytes.Contains(got2, []byte{0xef, 0xbf, 0xbd}) {
+		t.Fatalf("a typed U+FFFD must pass through as raw bytes; got: %s", got2)
+	}
+	if bytes.Contains(got2, []byte("\\ufffd")) {
+		t.Fatalf("a typed U+FFFD must not be escaped; got: %s", got2)
+	}
 }

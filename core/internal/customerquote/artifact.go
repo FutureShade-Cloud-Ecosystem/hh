@@ -73,8 +73,8 @@ const artifactStampLayout = "2006-01-02T15:04:05.000000Z07:00"
 // to match Go's encoding/json with HTML escaping disabled: quote and
 // backslash escaped, the short escapes for the five named controls, other
 // control characters as lowercase \u00xx, U+2028 and U+2029 escaped, invalid
-// UTF-8 replaced by the replacement character (ADR-0022's canonicalization
-// pin). A typed name carrying angle brackets, an ampersand or a lone
+// UTF-8 mapped per byte to the \ufffd escape (ADR-0022's canonicalization
+// pin; the escape form is the toolchain-independent one). A typed name carrying angle brackets, an ampersand or a lone
 // quote can never fork the bytes between sign time and verify time.
 func writeJSONString(dst []byte, s string) []byte {
 	dst = append(dst, '"')
@@ -108,10 +108,14 @@ func writeJSONString(dst []byte, s string) []byte {
 		}
 		r, size := utf8.DecodeRuneInString(s[i:])
 		if r == utf8.RuneError && size == 1 {
-			// Invalid UTF-8 becomes the replacement character, emitted as
-			// its raw UTF-8 bytes, matching the toolchain's encoding/json
-			// with HTML escaping disabled.
-			dst = append(dst, '\xef', '\xbf', '\xbd')
+			// Invalid UTF-8 maps per byte to the six-character \ufffd
+			// escape. The raw replacement RUNE is what one Go minor's
+			// encoding/json emits and another does not, so the escape form
+			// is pinned instead: canonical bytes, and therefore signatures,
+			// are toolchain independent. A typed U+FFFD (valid UTF-8) still
+			// passes through as its raw bytes below, so the two remain
+			// distinguishable in the canonical output.
+			dst = append(dst, '\\', 'u', 'f', 'f', 'f', 'd')
 			i++
 			continue
 		}
