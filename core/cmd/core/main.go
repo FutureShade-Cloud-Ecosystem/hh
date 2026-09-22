@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/shims"
@@ -182,7 +183,19 @@ func serve(getenv func(string) string) error {
 
 	mux := http.NewServeMux()
 	rec := shims.NewRecorder(1024)
-	shims.RegisterRoutes(mux, g, rec)
+
+	// The customer-quote surface (HH-3.6 C5) registers the moment its
+	// service exists; it cannot exist in this tree yet. The acceptance
+	// audit row is mandatory (ADR 0022), the module refuses a nil audit
+	// seam by construction, and the concrete recorder is not in this tree:
+	// it arrives with Lane A's audit carry. The integration-time re-point
+	// lands HERE, at this one construction site: build the service (store
+	// over this pool, customerquote.LoadSigningKeys over this environment,
+	// the concrete seam) and pass it in. Until then the absence is named
+	// at spawn, never silent, and no default seam exists to degrade with.
+	var customerQuotes *customerquote.Service
+	fmt.Println("core: serve: customer-quote routes not served: the audit seam re-point is pending (ADR 0022: the acceptance audit write is mandatory)")
+	registerRoutes(mux, g, rec, customerQuotes)
 
 	srv := &http.Server{Addr: cfg.listenAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	fmt.Printf("core: serve: listening on %s (identity shims)\n", cfg.listenAddr)
@@ -191,4 +204,22 @@ func serve(getenv func(string) string) error {
 		return nil
 	}
 	return err
+}
+
+// registerRoutes is the binary's one route composition point: every route
+// the core registers today is wired here, first among them the
+// identity-owned proof shims, so the document and the binary are kept equal
+// at exactly this seam (the composition precedent Lane B's tree set with
+// the public tenant config route). The customer-quote registration
+// (HH-3.6 C5) sits beside it: the dealer send through the staff guard, the
+// public pair through the public wrapper with no verification and no org
+// resolution (ADR-0020 leg 2: X-Org on a public request is an undeclared
+// header with zero effect). A nil service is the audit-seam re-point's
+// absence, named at spawn by the caller; it registers nothing.
+func registerRoutes(mux *http.ServeMux, g *guards.Guards, rec *shims.Recorder, cq *customerquote.Service) {
+	shims.RegisterRoutes(mux, g, rec)
+	if cq == nil {
+		return
+	}
+	customerquote.RegisterRoutes(mux, g, cq)
 }

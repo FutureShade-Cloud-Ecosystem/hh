@@ -1,13 +1,18 @@
 package customerquote
 
-// The route surface. Route spellings follow the modelled shapes of the
-// reviewed design; where the OpenAPI document that lands differs in
-// spelling, the document is the arbiter and the authority semantics here are
-// not the document's to reshape. The tenant operations register under the
-// tenant guard (the scope arrives as an argument, stamped by the middleware,
-// never read from a header); the public operations register under the public
-// wrapper with x-role public and empty security, and on them the token in
-// the path is the whole credential: no verification, no org resolution, and
+// The route surface (the registration batch, HH-3.6 C5). The document that
+// landed (ADR 0021, Decision 2) carries exactly three customer-quote
+// operations, and this registrar registers exactly those three: the dealer
+// desk's send (POST /api/v1/customer-quotes/{id}/send, x-role requireStaff)
+// and the public pair credentialed by the path token alone (GET and POST
+// /api/public/v1/customer-quotes/{token}(/accept), x-role public with empty
+// security). The tenant-side lifecycle (create, update, the tenant-shaped
+// send, revise) keeps its service seams with no route: the document carries
+// no tenant customer-quote operations, an undocumented registration is what
+// the composition point's parity discipline exists to refuse, and their
+// routes arrive, if ever, with their own document half (the posture
+// RecordChangeRequest already carries). On the public leg the token in the
+// path is the whole credential: no verification, no org resolution, and
 // X-Org with zero effect (ADR-0020's public leg).
 
 import (
@@ -17,44 +22,32 @@ import (
 	"net/http"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 )
 
 // maxBodyBytes bounds every request body this module reads.
 const maxBodyBytes = 1 << 20
 
 // RegisterRoutes registers the customer-quote surface on mux through the
-// settled Guards signature.
+// settled Guards signature: the send through the staff constructor, the
+// public pair through the public wrapper.
 func RegisterRoutes(mux *http.ServeMux, g *guards.Guards, svc *Service) {
-	create := g.RequireTenant(func(w http.ResponseWriter, r *http.Request, scope authz.TenantScope) {
-		var in CreateInput
-		if !readJSON(w, r, &in) {
-			return
-		}
-		out, err := svc.Create(r.Context(), Scope{OrgID: scope.OrgID, TenantID: scope.TenantID}, in)
-		writeResult(w, out, err, http.StatusCreated)
-	})
-	mux.Handle("POST /api/v1/tenant/customer-quotes", create)
-
-	mux.Handle("PATCH /api/v1/tenant/customer-quotes/{id}", g.RequireTenant(
-		func(w http.ResponseWriter, r *http.Request, scope authz.TenantScope) {
-			var in UpdateInput
-			if !readJSON(w, r, &in) {
-				return
-			}
-			out, err := svc.Update(r.Context(), Scope{OrgID: scope.OrgID, TenantID: scope.TenantID}, r.PathValue("id"), in)
-			writeResult(w, out, err, http.StatusOK)
-		}))
-
-	mux.Handle("POST /api/v1/tenant/customer-quotes/{id}/send", g.RequireTenant(
-		func(w http.ResponseWriter, r *http.Request, scope authz.TenantScope) {
-			out, err := svc.Send(r.Context(), Scope{OrgID: scope.OrgID, TenantID: scope.TenantID}, r.PathValue("id"))
-			writeResult(w, out, err, http.StatusOK)
-		}))
-
-	mux.Handle("POST /api/v1/tenant/customer-quotes/{id}/revise", g.RequireTenant(
-		func(w http.ResponseWriter, r *http.Request, scope authz.TenantScope) {
-			out, err := svc.Revise(r.Context(), Scope{OrgID: scope.OrgID, TenantID: scope.TenantID}, r.PathValue("id"))
+	// The send is a dealer desk action (ADR 0021, Decision 2): any
+	// authenticated staff member with an active grant in the request org
+	// (requireStaff, the constructor the dealer share-link mints use); the
+	// issuing contractor is the row's tenant, never a claim the caller
+	// holds. The caller arrives as the guard's argument, the settled
+	// Phase C shape. The stamp/linker bridge the carried modules need (the
+	// StaffContext stamped onto the request, the ERP users.id linker) has
+	// no consumer here: this module is greenfield, nothing downstream
+	// reads a stamped request context, and the frozen customer_quote
+	// schema records no sender column to link an id into, so the send
+	// records no per-caller fact beyond the guard's own admission
+	// decision. Should the audit re-point ever require send actorship,
+	// the caller is in hand at this seam, and the column it would land in
+	// is HH-3.7's question.
+	mux.Handle("POST /api/v1/customer-quotes/{id}/send", g.RequireStaff(
+		func(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+			out, err := svc.StaffSend(r.Context(), caller.OrgID, r.PathValue("id"))
 			writeResult(w, out, err, http.StatusOK)
 		}))
 

@@ -225,24 +225,64 @@ func fixtureCreate(horizon time.Time) CreateInput {
 	}
 }
 
+// The bench scopes: the tenant seams build under the alpha tenant in the
+// north org (the tenant leg of the fixture), the dealer desk sends under
+// the north org through the registered staff route. The south scopes carry
+// the org-fence legs.
+var benchTenantAlpha = Scope{OrgID: testkit.OrgNorthID, TenantID: testkit.TenantAlphaID}
+
+var benchTenantBeta = Scope{OrgID: testkit.OrgNorthID, TenantID: testkit.TenantBetaID}
+
+var benchTenantGamma = Scope{OrgID: testkit.OrgSouthID, TenantID: testkit.TenantGammaID}
+
+// staffHeaders are the dealer desk's credentials on the registered send
+// route: a staff bearer plus the X-Org selection, per ADR 0020 leg 3.
+func staffHeaders(slug string) map[string]string {
+	return map[string]string{authz.HeaderXOrg: slug}
+}
+
 func (b *bench) createQuote(t *testing.T, in CreateInput) TenantQuote {
 	t.Helper()
-	rec := doReq(t, b.mux, http.MethodPost, "/api/v1/tenant/customer-quotes",
-		b.kit.Minter.TenantToken(t, testkit.SubPortalAdminAlpha, testkit.TenantAlphaID), nil, in)
-	assertStatus(t, "create", rec, http.StatusCreated)
-	var out TenantQuote
-	decode(t, rec, &out)
+	out, err := b.svc.Create(context.Background(), benchTenantAlpha, in)
+	if err != nil {
+		t.Fatalf("create: status %d body %s", err.(*Error).Status, err.(*Error).Message)
+	}
 	return out
 }
 
+func (b *bench) createQuoteAs(t *testing.T, scope Scope, in CreateInput) TenantQuote {
+	t.Helper()
+	out, err := b.svc.Create(context.Background(), scope, in)
+	if err != nil {
+		t.Fatalf("create: status %d body %s", err.(*Error).Status, err.(*Error).Message)
+	}
+	return out
+}
+
+// sendQuote drives the REGISTERED send: the dealer desk action (ADR 0021,
+// Decision 2), a staff bearer with X-Org, through the module's routes.
 func (b *bench) sendQuote(t *testing.T, id string) SendResult {
 	t.Helper()
-	rec := doReq(t, b.mux, http.MethodPost, "/api/v1/tenant/customer-quotes/"+id+"/send",
-		b.kit.Minter.TenantToken(t, testkit.SubPortalAdminAlpha, testkit.TenantAlphaID), nil, struct{}{})
+	rec := doReq(t, b.mux, http.MethodPost, "/api/v1/customer-quotes/"+id+"/send",
+		b.kit.Minter.StaffToken(t, testkit.SubInsideSales), staffHeaders(testkit.OrgNorthSlug), struct{}{})
 	assertStatus(t, "send", rec, http.StatusOK)
 	var out SendResult
 	decode(t, rec, &out)
 	return out
+}
+
+// refuseAs asserts a service-seam refusal the way the HTTP leg would map
+// it: status and message, so the sentence pins keep their strength on the
+// unregistered tenant seams.
+func refuseAs(t *testing.T, leg string, err error, wantStatus int, wantMessage string) {
+	t.Helper()
+	re, ok := err.(*Error)
+	if !ok {
+		t.Fatalf("%s: error %v is not a module refusal", leg, err)
+	}
+	if re.Status != wantStatus || re.Message != wantMessage {
+		t.Fatalf("%s: status %d body %q, want status %d body %q", leg, re.Status, re.Message, wantStatus, wantMessage)
+	}
 }
 
 func (b *bench) acceptURL(token string) string {
@@ -432,6 +472,17 @@ func TestT1HomeownerAcceptsWithTokenAndNoAccount(t *testing.T) {
 	}
 }
 
+// reviseQuote is the tenant seam's revise (no route: the document carries
+// no tenant customer-quote operations), driven directly.
+func (b *bench) reviseQuote(t *testing.T, id string) TenantQuote {
+	t.Helper()
+	out, err := b.svc.Revise(context.Background(), benchTenantAlpha, id)
+	if err != nil {
+		t.Fatalf("revise: status %d body %s", err.(*Error).Status, err.(*Error).Message)
+	}
+	return out
+}
+
 // T2: a revised quote's old token is dead with 410, not 404, across every
 // generation (the append-only dead list; the single-tombstone mutation M2c
 // kills exactly at the third generation, and the demonstrated run is in the
@@ -443,11 +494,7 @@ func TestT2RevisedQuoteOldTokenAnswers410Never404(t *testing.T) {
 	first := b.sendQuote(t, created.ID)
 
 	// Revise: the token rotates the moment the intent to change forms.
-	rec := doReq(t, b.mux, http.MethodPost, "/api/v1/tenant/customer-quotes/"+created.ID+"/revise",
-		b.kit.Minter.TenantToken(t, testkit.SubPortalAdminAlpha, testkit.TenantAlphaID), nil, struct{}{})
-	assertStatus(t, "revise", rec, http.StatusOK)
-	var revised TenantQuote
-	decode(t, rec, &revised)
+	revised := b.reviseQuote(t, created.ID)
 
 	// Assert 3: the status is draft and the live slot is empty.
 	if revised.Status != StatusDraft || revised.HasLiveToken {
@@ -486,7 +533,7 @@ func TestT2RevisedQuoteOldTokenAnswers410Never404(t *testing.T) {
 	if rec := b.publicView(t, first.MagicLinkToken); rec.Code != http.StatusGone {
 		t.Fatalf("first token after second send: %d, want 410", rec.Code)
 	}
-	rec = b.publicAccept(t, second.MagicLinkToken, "Fixture Homeowner One", true)
+	rec := b.publicAccept(t, second.MagicLinkToken, "Fixture Homeowner One", true)
 	assertStatus(t, "accept with second token", rec, http.StatusOK)
 	var result AcceptanceResult
 	decode(t, rec, &result)
@@ -507,13 +554,9 @@ func TestT2RevisedQuoteOldTokenAnswers410Never404(t *testing.T) {
 	// generation (the M2c kill).
 	thirdQuote := b.createQuote(t, fixtureCreate(horizon))
 	gen1 := b.sendQuote(t, thirdQuote.ID)
-	rec = doReq(t, b.mux, http.MethodPost, "/api/v1/tenant/customer-quotes/"+thirdQuote.ID+"/revise",
-		b.kit.Minter.TenantToken(t, testkit.SubPortalAdminAlpha, testkit.TenantAlphaID), nil, struct{}{})
-	assertStatus(t, "fresh quote revise one", rec, http.StatusOK)
+	b.reviseQuote(t, thirdQuote.ID)
 	gen2 := b.sendQuote(t, thirdQuote.ID)
-	rec = doReq(t, b.mux, http.MethodPost, "/api/v1/tenant/customer-quotes/"+thirdQuote.ID+"/revise",
-		b.kit.Minter.TenantToken(t, testkit.SubPortalAdminAlpha, testkit.TenantAlphaID), nil, struct{}{})
-	assertStatus(t, "fresh quote revise two", rec, http.StatusOK)
+	b.reviseQuote(t, thirdQuote.ID)
 	gen3 := b.sendQuote(t, thirdQuote.ID)
 	for i, tok := range []string{gen1.MagicLinkToken, gen2.MagicLinkToken} {
 		if rec := b.publicView(t, tok); rec.Code != http.StatusGone {

@@ -140,17 +140,11 @@ func TestS2CrossQuoteTokenUse(t *testing.T) {
 	// Quote B under a different tenant (beta).
 	in := fixtureCreate(horizon)
 	in.Customer = CustomerContact{Name: "Fixture Homeowner Beta"}
-	rec := doReq(t, b.mux, http.MethodPost, "/api/v1/tenant/customer-quotes",
-		b.kit.Minter.TenantToken(t, testkit.SubPortalAdminBeta, testkit.TenantBetaID), nil, in)
-	assertStatus(t, "create B", rec, http.StatusCreated)
-	var quoteB TenantQuote
-	decode(t, rec, &quoteB)
-	rec = doReq(t, b.mux, http.MethodPost, "/api/v1/tenant/customer-quotes/"+quoteB.ID+"/send",
-		b.kit.Minter.TenantToken(t, testkit.SubPortalAdminBeta, testkit.TenantBetaID), nil, struct{}{})
-	assertStatus(t, "send B", rec, http.StatusOK)
+	quoteB := b.createQuoteAs(t, benchTenantBeta, in)
+	b.sendQuote(t, quoteB.ID)
 
 	// A's token resolves A only.
-	rec = b.publicView(t, sentA.MagicLinkToken)
+	rec := b.publicView(t, sentA.MagicLinkToken)
 	assertStatus(t, "A token view", rec, http.StatusOK)
 	var view PublicView
 	decode(t, rec, &view)
@@ -161,13 +155,29 @@ func TestS2CrossQuoteTokenUse(t *testing.T) {
 		t.Fatalf("A's token view leaks B's quote id")
 	}
 
-	// A's accept records against A; B is untouched.
+	// A's accept records against A; B is untouched. A body field naming
+	// another quote neither widens nor narrows: the token alone selects
+	// the row, and unknown body fields are ignored by the decoder.
 	rec = b.publicAccept(t, sentA.MagicLinkToken, "Fixture Homeowner One", true)
 	assertStatus(t, "A accept", rec, http.StatusOK)
 	var result AcceptanceResult
 	decode(t, rec, &result)
 	if result.QuoteID != a.ID {
 		t.Fatalf("A's acceptance recorded against %s", result.QuoteID)
+	}
+	a2 := b.createQuote(t, fixtureCreate(horizon))
+	sentA2 := b.sendQuote(t, a2.ID)
+	acceptNamingB := doReq(t, b.mux, http.MethodPost, b.acceptURL(sentA2.MagicLinkToken), "", nil,
+		map[string]any{"typed_name": "Fixture Homeowner Two", "accepted": true,
+			"quote_id": quoteB.ID, "customer_quote_id": quoteB.ID})
+	assertStatus(t, "accept naming B in the body", acceptNamingB, http.StatusOK)
+	var resultA2 AcceptanceResult
+	decode(t, acceptNamingB, &resultA2)
+	if resultA2.QuoteID != a2.ID {
+		t.Fatalf("a body naming B moved the acceptance to %s; the token alone must select", resultA2.QuoteID)
+	}
+	if strings.Contains(acceptNamingB.Body.String(), quoteB.ID) {
+		t.Fatalf("the acceptance result echoes B's quote id")
 	}
 	if got := b.scalarInt(t, `SELECT count(*) FROM quote_acceptance WHERE customer_quote_id = $1`, quoteB.ID); got != 0 {
 		t.Fatalf("B gained %d acceptance rows from A's token", got)

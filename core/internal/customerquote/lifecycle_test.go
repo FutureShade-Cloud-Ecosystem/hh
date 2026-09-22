@@ -3,8 +3,12 @@ package customerquote
 // The tenant-side lifecycle: the carried rules R2 to R8 with their ported
 // sentences, the ported HH Pro regressions (freeze at send, rotation on
 // revise, accepted never revisable), and the R8 change-request recording at
-// the service seam (the public route spelling is the OpenAPI document's to
-// author; no route is registered for it in this batch).
+// the service seam. The tenant operations carry no route (the document that
+// landed carries the send as a dealer desk action and no tenant
+// customer-quote operations at all, ADR 0021 Decision 2), so they are
+// driven here through their service seams with the refusal sentences
+// asserted at full strength through refuseAs; the send gates run through
+// the REGISTERED staff route, which shares the one send lifecycle.
 
 import (
 	"context"
@@ -18,12 +22,6 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
-func (b *bench) tenantCall(t *testing.T, method, target string, body any) *httptest.ResponseRecorder {
-	t.Helper()
-	return doReq(t, b.mux, method, target,
-		b.kit.Minter.TenantToken(t, testkit.SubPortalAdminAlpha, testkit.TenantAlphaID), nil, body)
-}
-
 func unpricedLine(name string) Line {
 	return Line{Name: name, Qty: "1", UOM: "EA", UnitCostCents: 0,
 		PriceSource: PriceSourceUnpriced, Presentation: PresentationCommodity}
@@ -31,24 +29,19 @@ func unpricedLine(name string) Line {
 
 func TestR2UnpricedLinesRefuseAtBuild(t *testing.T) {
 	b := benchFor(t)
+	ctx := context.Background()
 	horizon := b.kit.Clock.Now().Add(7 * 24 * time.Hour)
 	base := fixtureCreate(horizon)
 
 	one := base
 	one.Lines = append(fixtureLines(horizon), unpricedLine("Fixture Rail Kit"))
-	rec := b.tenantCall(t, http.MethodPost, "/api/v1/tenant/customer-quotes", one)
-	e := assertStatus(t, "one unpriced line", rec, http.StatusBadRequest)
-	if e.Error != RefuseUnpriced([]string{"Fixture Rail Kit"}) {
-		t.Fatalf("singular refusal %q", e.Error)
-	}
+	_, err := b.svc.Create(ctx, benchTenantAlpha, one)
+	refuseAs(t, "one unpriced line", err, http.StatusBadRequest, RefuseUnpriced([]string{"Fixture Rail Kit"}))
 
 	three := base
 	three.Lines = append(fixtureLines(horizon), unpricedLine("Fixture A"), unpricedLine("Fixture B"), unpricedLine("Fixture C"))
-	rec = b.tenantCall(t, http.MethodPost, "/api/v1/tenant/customer-quotes", three)
-	e = assertStatus(t, "three unpriced lines", rec, http.StatusBadRequest)
-	if e.Error != RefuseUnpriced([]string{"Fixture A", "Fixture B", "Fixture C"}) {
-		t.Fatalf("plural refusal %q", e.Error)
-	}
+	_, err = b.svc.Create(ctx, benchTenantAlpha, three)
+	refuseAs(t, "three unpriced lines", err, http.StatusBadRequest, RefuseUnpriced([]string{"Fixture A", "Fixture B", "Fixture C"}))
 
 	// A lapsed price counts as unpriced (R2's priced-and-lapsed case).
 	lapsed := b.kit.Clock.Now().Add(-time.Hour)
@@ -56,15 +49,13 @@ func TestR2UnpricedLinesRefuseAtBuild(t *testing.T) {
 	two.Lines = append(fixtureLines(horizon), Line{Name: "Fixture Lapsed", Qty: "1", UOM: "EA",
 		UnitCostCents: 500, PriceSource: PriceSourceQuoted, PriceValidUntil: &lapsed,
 		Presentation: PresentationCommodity})
-	rec = b.tenantCall(t, http.MethodPost, "/api/v1/tenant/customer-quotes", two)
-	e = assertStatus(t, "lapsed line", rec, http.StatusBadRequest)
-	if e.Error != RefuseUnpriced([]string{"Fixture Lapsed"}) {
-		t.Fatalf("lapsed refusal %q", e.Error)
-	}
+	_, err = b.svc.Create(ctx, benchTenantAlpha, two)
+	refuseAs(t, "lapsed line", err, http.StatusBadRequest, RefuseUnpriced([]string{"Fixture Lapsed"}))
 }
 
 func TestR3ExpiryCapsAtBuildAndUpdate(t *testing.T) {
 	b := benchFor(t)
+	ctx := context.Background()
 	now := b.kit.Clock.Now()
 	horizon := now.Add(2 * 24 * time.Hour)
 	requested := now.Add(30 * 24 * time.Hour)
@@ -75,11 +66,10 @@ func TestR3ExpiryCapsAtBuildAndUpdate(t *testing.T) {
 		t.Fatalf("the offer bound must cap at the supplier horizon: %v", created.ValidUntil)
 	}
 	// Re-applied on update: requesting later never escapes the horizon.
-	rec := b.tenantCall(t, http.MethodPatch, "/api/v1/tenant/customer-quotes/"+created.ID,
-		UpdateInput{ValidUntil: &requested})
-	assertStatus(t, "update with a later bound", rec, http.StatusOK)
-	var updated TenantQuote
-	decode(t, rec, &updated)
+	updated, err := b.svc.Update(ctx, benchTenantAlpha, created.ID, UpdateInput{ValidUntil: &requested})
+	if err != nil {
+		t.Fatalf("update with a later bound: %v", err)
+	}
 	if updated.ValidUntil == nil || !withinMillis(updated.ValidUntil, horizon) {
 		t.Fatalf("the update re-applied the cap: %v", updated.ValidUntil)
 	}
@@ -90,42 +80,31 @@ func TestR3ExpiryCapsAtBuildAndUpdate(t *testing.T) {
 
 func TestR5EditRulesAndPortedSentences(t *testing.T) {
 	b := benchFor(t)
+	ctx := context.Background()
 	horizon := b.kit.Clock.Now().Add(7 * 24 * time.Hour)
 	created := b.createQuote(t, fixtureCreate(horizon))
 	b.sendQuote(t, created.ID)
 
 	// The already-sent refusal names the revise remedy, with the sentence
 	// ported with normalized punctuation.
-	rec := b.tenantCall(t, http.MethodPatch, "/api/v1/tenant/customer-quotes/"+created.ID,
-		UpdateInput{MarkupBps: ptrInt(4500)})
-	e := assertStatus(t, "update after send", rec, http.StatusConflict)
-	if e.Error != sentUpdateSentence(created.ID) {
-		t.Fatalf("sent-update refusal %q, want %q", e.Error, sentUpdateSentence(created.ID))
-	}
+	_, err := b.svc.Update(ctx, benchTenantAlpha, created.ID, UpdateInput{MarkupBps: ptrInt(4500)})
+	refuseAs(t, "update after send", err, http.StatusConflict, sentUpdateSentence(created.ID))
 
 	// Revise reopens editing; the ported regression: the live link's numbers
 	// must not move without it.
-	rec = b.tenantCall(t, http.MethodPost, "/api/v1/tenant/customer-quotes/"+created.ID+"/revise", struct{}{})
-	assertStatus(t, "revise", rec, http.StatusOK)
-	rec = b.tenantCall(t, http.MethodPatch, "/api/v1/tenant/customer-quotes/"+created.ID,
-		UpdateInput{MarkupBps: ptrInt(3000)})
-	assertStatus(t, "update after revise", rec, http.StatusOK)
+	b.reviseQuote(t, created.ID)
+	if _, err := b.svc.Update(ctx, benchTenantAlpha, created.ID, UpdateInput{MarkupBps: ptrInt(3000)}); err != nil {
+		t.Fatalf("update after revise: %v", err)
+	}
 
 	// An accepted quote refuses absolutely: no edit, no revise.
 	resend := b.sendQuote(t, created.ID)
-	rec = b.publicAccept(t, resend.MagicLinkToken, "Fixture Homeowner One", true)
+	rec := b.publicAccept(t, resend.MagicLinkToken, "Fixture Homeowner One", true)
 	assertStatus(t, "accept", rec, http.StatusOK)
-	rec = b.tenantCall(t, http.MethodPatch, "/api/v1/tenant/customer-quotes/"+created.ID,
-		UpdateInput{MarkupBps: ptrInt(5000)})
-	e = assertStatus(t, "update after accept", rec, http.StatusConflict)
-	if e.Error != SentenceAcceptedNoChange {
-		t.Fatalf("accepted-update refusal %q", e.Error)
-	}
-	rec = b.tenantCall(t, http.MethodPost, "/api/v1/tenant/customer-quotes/"+created.ID+"/revise", struct{}{})
-	e = assertStatus(t, "revise after accept", rec, http.StatusConflict)
-	if e.Error != SentenceAcceptedNoRevise {
-		t.Fatalf("accepted-revise refusal %q", e.Error)
-	}
+	_, err = b.svc.Update(ctx, benchTenantAlpha, created.ID, UpdateInput{MarkupBps: ptrInt(5000)})
+	refuseAs(t, "update after accept", err, http.StatusConflict, SentenceAcceptedNoChange)
+	_, err = b.svc.Revise(ctx, benchTenantAlpha, created.ID)
+	refuseAs(t, "revise after accept", err, http.StatusConflict, SentenceAcceptedNoRevise)
 }
 
 func sentUpdateSentence(id string) string {
@@ -133,6 +112,16 @@ func sentUpdateSentence(id string) string {
 }
 
 func ptrInt(v int64) *int64 { return &v }
+
+func ptrTime(v time.Time) *time.Time { return &v }
+
+// staffSendReq drives the registered send route and returns the recorder
+// without asserting the status, for the gate legs that expect refusals.
+func (b *bench) staffSendReq(t *testing.T, id string) *httptest.ResponseRecorder {
+	t.Helper()
+	return doReq(t, b.mux, http.MethodPost, "/api/v1/customer-quotes/"+id+"/send",
+		b.kit.Minter.StaffToken(t, testkit.SubInsideSales), staffHeaders(testkit.OrgNorthSlug), struct{}{})
+}
 
 func TestR6SendGates(t *testing.T) {
 	b := benchFor(t)
@@ -143,16 +132,17 @@ func TestR6SendGates(t *testing.T) {
 	in := fixtureCreate(horizon)
 	in.Customer = CustomerContact{Name: "  "}
 	created := b.createQuote(t, in)
-	rec := b.tenantCall(t, http.MethodPost, "/api/v1/tenant/customer-quotes/"+created.ID+"/send", struct{}{})
+	rec := b.staffSendReq(t, created.ID)
 	e := assertStatus(t, "send without a name", rec, http.StatusBadRequest)
 	if e.Error != SentenceNeedCustomerName {
 		t.Fatalf("no-name refusal %q", e.Error)
 	}
 	// With the name patched in, the send proceeds (the control leg).
-	b.tenantCall(t, http.MethodPatch, "/api/v1/tenant/customer-quotes/"+created.ID,
-		UpdateInput{Customer: &CustomerContact{Name: "Fixture Homeowner One"}})
-	rec = b.tenantCall(t, http.MethodPost, "/api/v1/tenant/customer-quotes/"+created.ID+"/send", struct{}{})
-	assertStatus(t, "send with a name", rec, http.StatusOK)
+	if _, err := b.svc.Update(ctx, benchTenantAlpha, created.ID,
+		UpdateInput{Customer: &CustomerContact{Name: "Fixture Homeowner One"}}); err != nil {
+		t.Fatalf("patch the customer name: %v", err)
+	}
+	assertStatus(t, "send with a name", b.staffSendReq(t, created.ID), http.StatusOK)
 
 	// Unpriced lines refuse the send: a draft whose stored line lapses
 	// between build and send (R2 re-checked at the gate).
@@ -163,7 +153,7 @@ func TestR6SendGates(t *testing.T) {
 		`UPDATE customer_quote SET lines = $2 WHERE id = $1`, draft.ID, mustJSON(lapsedLines)); err != nil {
 		t.Fatalf("poke lines: %v", err)
 	}
-	rec = b.tenantCall(t, http.MethodPost, "/api/v1/tenant/customer-quotes/"+draft.ID+"/send", struct{}{})
+	rec = b.staffSendReq(t, draft.ID)
 	e = assertStatus(t, "send over a lapsed line", rec, http.StatusBadRequest)
 	if e.Error != RefuseUnpriced([]string{lapsedLines[1].Name}) {
 		t.Fatalf("lapsed-at-send refusal %q", e.Error)
@@ -174,7 +164,7 @@ func TestR6SendGates(t *testing.T) {
 	expiredIn := fixtureCreate(horizon)
 	expiredIn.ValidUntil = &past
 	expired := b.createQuote(t, expiredIn)
-	rec = b.tenantCall(t, http.MethodPost, "/api/v1/tenant/customer-quotes/"+expired.ID+"/send", struct{}{})
+	rec = b.staffSendReq(t, expired.ID)
 	e = assertStatus(t, "send with an expired offer", rec, http.StatusConflict)
 	if e.Error != SentenceAlreadyExpiredSend {
 		t.Fatalf("expired-send refusal %q", e.Error)
@@ -183,14 +173,12 @@ func TestR6SendGates(t *testing.T) {
 	// An accepted quote refuses the send.
 	sent := b.sendQuote(t, b.createQuote(t, fixtureCreate(horizon)).ID)
 	b.publicAccept(t, sent.MagicLinkToken, "Fixture Homeowner One", true)
-	rec = b.tenantCall(t, http.MethodPost, "/api/v1/tenant/customer-quotes/"+sent.ID+"/send", struct{}{})
+	rec = b.staffSendReq(t, sent.ID)
 	e = assertStatus(t, "send after accept", rec, http.StatusConflict)
 	if e.Error != SentenceAlreadyAccepted {
 		t.Fatalf("accepted-send refusal %q", e.Error)
 	}
 }
-
-func ptrTime(v time.Time) *time.Time { return &v }
 
 // withinMillis compares two instants across the database's microsecond
 // truncation and the JSON round trip.
@@ -227,7 +215,7 @@ func TestR4FreezeAndCounterReset(t *testing.T) {
 	// The frozen payload survives a revise and re-send unchanged in content,
 	// and the counters reset at the re-send.
 	frozen := b.scalarStr(t, `SELECT lines::text FROM customer_quote WHERE id = $1`, created.ID)
-	b.tenantCall(t, http.MethodPost, "/api/v1/tenant/customer-quotes/"+created.ID+"/revise", struct{}{})
+	b.reviseQuote(t, created.ID)
 	resend := b.sendQuote(t, created.ID)
 	if got := b.scalarInt(t, `SELECT view_count FROM customer_quote WHERE id = $1`, created.ID); got != 0 {
 		t.Fatalf("view count after re-send %d, want 0", got)
