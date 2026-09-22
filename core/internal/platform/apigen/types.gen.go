@@ -1940,25 +1940,25 @@ type DispatchLoadCommit struct {
 }
 
 type DispatchRun struct {
-	Id            string     `json:"id"`
-	RunNo         string     `json:"run_no"`
-	BranchId      string     `json:"branch_id"`
-	ScheduledDate string     `json:"scheduled_date"`
-	TruckId       *string    `json:"truck_id,omitempty"`
-	DriverId      *string    `json:"driver_id,omitempty"`
-	TruckCode     *string    `json:"truck_code,omitempty"`
-	DriverName    *string    `json:"driver_name,omitempty"`
-	Status        string     `json:"status"`
-	Notes         *string    `json:"notes,omitempty"`
-	DispatchedAt  *time.Time `json:"dispatched_at,omitempty"`
-	CompletedAt   *time.Time `json:"completed_at,omitempty"`
-	StopCount     int32      `json:"stop_count"`
-	CreatedAt     time.Time  `json:"created_at"`
-	CommitState   *string    `json:"commit_state,omitempty"`
-	ReopenedAt    *string    `json:"reopened_at,omitempty"`
-	ReopenReason  *string    `json:"reopen_reason,omitempty"`
-	Commit        any        `json:"commit,omitempty"`
-	Gauge         any        `json:"gauge,omitempty"`
+	Id            string              `json:"id"`
+	RunNo         string              `json:"run_no"`
+	BranchId      string              `json:"branch_id"`
+	ScheduledDate string              `json:"scheduled_date"`
+	TruckId       *string             `json:"truck_id,omitempty"`
+	DriverId      *string             `json:"driver_id,omitempty"`
+	TruckCode     *string             `json:"truck_code,omitempty"`
+	DriverName    *string             `json:"driver_name,omitempty"`
+	Status        string              `json:"status"`
+	Notes         *string             `json:"notes,omitempty"`
+	DispatchedAt  *time.Time          `json:"dispatched_at,omitempty"`
+	CompletedAt   *time.Time          `json:"completed_at,omitempty"`
+	StopCount     int32               `json:"stop_count"`
+	CreatedAt     time.Time           `json:"created_at"`
+	CommitState   *string             `json:"commit_state,omitempty"`
+	ReopenedAt    *string             `json:"reopened_at,omitempty"`
+	ReopenReason  *string             `json:"reopen_reason,omitempty"`
+	Commit        *DispatchLoadCommit `json:"commit,omitempty"`
+	Gauge         *DispatchLoadGauge  `json:"gauge,omitempty"`
 }
 
 type DispatchRunPage struct {
@@ -2201,11 +2201,11 @@ type DispatchSplitInput struct {
 }
 
 type DispatchSplitResult struct {
-	OrderId      string             `json:"order_id"`
-	FreightCents int64              `json:"freight_cents"`
-	Override     bool               `json:"override"`
-	Loads        []DispatchLoadStop `json:"loads"`
-	Parked       any                `json:"parked,omitempty"`
+	OrderId      string                    `json:"order_id"`
+	FreightCents int64                     `json:"freight_cents"`
+	Override     bool                      `json:"override"`
+	Loads        []DispatchLoadStop        `json:"loads"`
+	Parked       *DispatchFreightRaiseView `json:"parked,omitempty"`
 }
 
 type DispatchFreightRaiseMoney struct {
@@ -2216,17 +2216,17 @@ type DispatchFreightRaiseMoney struct {
 }
 
 type DispatchFreightRaiseView struct {
-	Id           string    `json:"id"`
-	OrderId      string    `json:"order_id"`
-	OrderNo      *string   `json:"order_no,omitempty"`
-	CustomerName *string   `json:"customer_name,omitempty"`
-	BranchId     string    `json:"branch_id"`
-	Loads        int32     `json:"loads"`
-	AskedBy      string    `json:"asked_by"`
-	AskedAt      time.Time `json:"asked_at"`
-	State        string    `json:"state"`
-	ApprovalId   *string   `json:"approval_id,omitempty"`
-	Money        any       `json:"money,omitempty"`
+	Id           string                     `json:"id"`
+	OrderId      string                     `json:"order_id"`
+	OrderNo      *string                    `json:"order_no,omitempty"`
+	CustomerName *string                    `json:"customer_name,omitempty"`
+	BranchId     string                     `json:"branch_id"`
+	Loads        int32                      `json:"loads"`
+	AskedBy      string                     `json:"asked_by"`
+	AskedAt      time.Time                  `json:"asked_at"`
+	State        string                     `json:"state"`
+	ApprovalId   *string                    `json:"approval_id,omitempty"`
+	Money        *DispatchFreightRaiseMoney `json:"money,omitempty"`
 }
 
 type DispatchWillCall struct {
@@ -2306,8 +2306,8 @@ type DispatchRescheduleResult struct {
 	ToDate       string                `json:"to_date"`
 	StopsMoved   int32                 `json:"stops_moved"`
 	RescheduleId string                `json:"reschedule_id"`
-	Stop         any                   `json:"stop,omitempty"`
-	Run          any                   `json:"run,omitempty"`
+	Stop         *DispatchStop         `json:"stop,omitempty"`
+	Run          *DispatchRun          `json:"run,omitempty"`
 	History      *[]DispatchReschedule `json:"history,omitempty"`
 }
 

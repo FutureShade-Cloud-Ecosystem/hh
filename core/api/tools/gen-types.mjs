@@ -38,7 +38,10 @@
 //                                       round-trips
 //   allOf                               a struct embedding each $ref item
 //                                       and flattening each inline object
-//   oneOf / anyOf / empty schema        any
+//   anyOf / oneOf: exactly one $ref     a pointer of the named type (the
+//     leg plus one null leg             nullable reference)
+//   any other oneOf / anyOf, and the    any
+//     empty schema
 //   enum (string)                       a defined string type; the values
 //                                       ride as a comment
 //   object with properties AND          a struct; the openness is noted in
@@ -172,6 +175,14 @@ function pointer(t) {
   return `*${t}`;
 }
 
+// isNullLeg reports whether one union leg is the null leg: type "null" as
+// a bare string (the document's spelling) or as an array holding only
+// null.
+function isNullLeg(leg) {
+  if (leg?.type === "null") return true;
+  return Array.isArray(leg?.type) && leg.type.length > 0 && leg.type.every((x) => x === "null");
+}
+
 // goType maps one schema to its Go type spelling. Object shapes return
 // null: their struct form is emitted by structLines (named) or inlineStruct
 // (anonymous, for nested inline object properties).
@@ -183,7 +194,20 @@ function goType(s, where) {
   }
   const ref = refName(s);
   if (ref) return ref;
-  if (s.oneOf || s.anyOf) return "any";
+  if (s.oneOf || s.anyOf) {
+    // A union of exactly one $ref leg plus one null leg is the document's
+    // nullable reference: a pointer of the named type, so handlers decode
+    // a typed value and nil, never any. Every other union (the true
+    // two-ref union among them) stays any; giving it a Go spelling wants
+    // an interface, which is a later decision, never a silent one here.
+    const legs = s.oneOf ?? s.anyOf;
+    const refs = legs.map(refName).filter(Boolean);
+    const nullLegs = legs.filter(isNullLeg);
+    if (legs.length === 2 && refs.length === 1 && nullLegs.length === 1) {
+      return pointer(refs[0]);
+    }
+    return "any";
+  }
   if (s.allOf) return null;
   if (s.enum) return scalar(s, where);
   const t = normType(s, where);
@@ -321,12 +345,6 @@ for (const path of Object.keys(doc.paths).sort()) {
 routesOut.push(`}`);
 routesOut.push(``);
 
-if (problems.length) {
-  console.error(`gen-types failed with ${problems.length} problem(s):`);
-  for (const p of problems) console.error(`  - ${p}`);
-  process.exit(1);
-}
-
 // gofmt runs the toolchain's own formatter over the emitted source, so the
 // committed files are gofmt-identical without a hand-rolled aligner.
 function gofmt(name, source) {
@@ -342,6 +360,15 @@ const files = [
   ["types.gen.go", gofmt("types.gen.go", typesOut.join("\n") + "\n")],
   ["routes.gen.go", gofmt("routes.gen.go", routesOut.join("\n") + "\n")],
 ];
+
+// The exit gate sits after the gofmt pass and before any write, so a
+// gofmt rejection fails --write mode too and no partial regeneration
+// reaches the tree.
+if (problems.length) {
+  console.error(`gen-types failed with ${problems.length} problem(s):`);
+  for (const p of problems) console.error(`  - ${p}`);
+  process.exit(1);
+}
 
 let drifted = false;
 for (const [name, content] of files) {
