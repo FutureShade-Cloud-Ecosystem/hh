@@ -177,3 +177,16 @@ initially routed to HH-3.7 and re-ruled to HH-5 by the Lane C checkpoint
 ruling; they are ticketed in the Plane Records module as HH-5 items
 (#157, #158, #159). D12 is not reopened. The gap-held annotations on the
 tenant_brand contract operations stand until HH-5 lands the table.
+
+## The public token elision table fails open for future routes (open)
+
+The coarse audit middleware's token elision (the S-1 fix) is an
+ALLOWLIST: publicTokenPrefixes names the three public token route
+families that exist today (customer-quotes, the dealer quote pair, the
+will-call pair), and a new public token route joins the table or its
+credential persists in the coarse audit row. Whoever adds the fourth
+public token route finds this table before Security does, or the route
+ships with the leak the S-1 fix closed. The serve-shaped regression
+covers today's routes only. A deny-by-default shape over /api/public/
+with an explicit exempt list is the safe-side redesign, deliberately
+not taken mid-Session (the integration review ruling r1, note N1).
