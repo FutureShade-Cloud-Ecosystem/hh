@@ -1,0 +1,175 @@
+package bankrec
+
+import (
+	"testing"
+	"time"
+)
+
+var refDate = time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
+
+func approvedRules() []MatchRule {
+	return []MatchRule{
+		{ID: "r-gw", Code: "gateway-ref-exact", Priority: 10, Status: RuleApproved, Kind: KindGatewayRefExact, Target: TargetPayment, ToleranceCents: 0},
+		{ID: "r-lodge", Code: "lodgement-ref-exact", Priority: 20, Status: RuleApproved, Kind: KindLodgementRefExact, Target: TargetLodgement, ToleranceCents: 0},
+		{ID: "r-run", Code: "run-settlement-fuzzy", Priority: 30, Status: RuleApproved, Kind: KindDescriptorFuzzy, Target: TargetPayment, DescriptorILike: "%RUN%", DateWindowDays: 3, AllowFeeSplit: true, FeeAccountCode: "6300"},
+	}
+}
+
+// legAmounts sums the debit/credit for an account code across a journal's lines.
+func legAmounts(p proposal, code string) (debit, credit int64) {
+	for _, l := range p.Journal.Lines {
+		if l.AccountCode == code {
+			debit += l.DebitCents
+			credit += l.CreditCents
+		}
+	}
+	return
+}
+
+func assertBalanced(t *testing.T, p proposal) {
+	t.Helper()
+	var d, c int64
+	for _, l := range p.Journal.Lines {
+		d += l.DebitCents
+		c += l.CreditCents
+	}
+	if d != c {
+		t.Fatalf("journal not balanced: debits=%d credits=%d", d, c)
+	}
+}
+
+// AC2, gateway_ref exact match posts DR 1000 / CR 1010 and targets the payment (→ MarkDeposited).
+func TestMatch_GatewayRefExact(t *testing.T) {
+	line := StatementLine{ID: "L1", Status: LineUnmatched, AmountCents: 100000, Reference: "GTW-1001", TxnDate: refDate}
+	pmts := []CandidatePayment{{PaymentID: "P1", GatewayRef: "GTW-1001", AmountCents: 100000, BranchID: "B1", ReceivedAt: refDate}}
+
+	prop, ok := matchLine(line, approvedRules(), pmts, nil)
+	if !ok {
+		t.Fatal("expected gateway-ref match")
+	}
+	if prop.Rule.ID != "r-gw" {
+		t.Fatalf("wrong rule fired: %s", prop.Rule.ID)
+	}
+	if prop.TargetType != TargetPayment || prop.TargetRef != "P1" {
+		t.Fatalf("wrong target: %s %s", prop.TargetType, prop.TargetRef)
+	}
+	if len(prop.PaymentIDs) != 1 || prop.PaymentIDs[0] != "P1" {
+		t.Fatalf("expected P1 flagged for deposit, got %v", prop.PaymentIDs)
+	}
+	if prop.FeeCents != 0 {
+		t.Fatalf("expected no fee, got %d", prop.FeeCents)
+	}
+	if d, _ := legAmounts(prop, AcctBank); d != 100000 {
+		t.Fatalf("expected DR 1000 = 100000, got %d", d)
+	}
+	if _, c := legAmounts(prop, AcctCardClearing); c != 100000 {
+		t.Fatalf("expected CR 1010 = 100000, got %d", c)
+	}
+	assertBalanced(t, prop)
+}
+
+// AC2, gateway rule (priority 10) wins over the fuzzy RUN rule (priority 30) when both could fire.
+func TestMatch_PriorityOrder(t *testing.T) {
+	line := StatementLine{ID: "L1", Status: LineUnmatched, AmountCents: 100000, Reference: "GTW-1001", Description: "RUN-PAY CARD SETTLEMENT", TxnDate: refDate}
+	pmts := []CandidatePayment{{PaymentID: "P1", GatewayRef: "GTW-1001", AmountCents: 100000, ReceivedAt: refDate}}
+	prop, ok := matchLine(line, approvedRules(), pmts, nil)
+	if !ok || prop.Rule.ID != "r-gw" {
+		t.Fatalf("expected gateway rule to win, got ok=%v rule=%s", ok, prop.Rule.ID)
+	}
+}
+
+// AC3, lodgement matches on exact reference + exact amount, and posts DR 1000 / CR 1020. A one-cent drift
+// must NOT auto-match (zero tolerance).
+func TestMatch_LodgementZeroTolerance(t *testing.T) {
+	line := StatementLine{ID: "L2", Status: LineUnmatched, AmountCents: 50000, Reference: "LODGE-77", TxnDate: refDate}
+	lodg := []Lodgement{{MovementID: "M1", Reference: "LODGE-77", AmountCents: 50000, BranchID: "B1", OccurredAt: refDate}}
+
+	prop, ok := matchLine(line, approvedRules(), nil, lodg)
+	if !ok {
+		t.Fatal("expected lodgement match")
+	}
+	if prop.TargetType != TargetLodgement || prop.TargetRef != "M1" {
+		t.Fatalf("wrong target: %s %s", prop.TargetType, prop.TargetRef)
+	}
+	if d, _ := legAmounts(prop, AcctBank); d != 50000 {
+		t.Fatalf("expected DR 1000 = 50000, got %d", d)
+	}
+	if _, c := legAmounts(prop, AcctUndeposited); c != 50000 {
+		t.Fatalf("expected CR 1020 = 50000, got %d", c)
+	}
+	assertBalanced(t, prop)
+
+	// one cent off → no match
+	drift := []Lodgement{{MovementID: "M1", Reference: "LODGE-77", AmountCents: 50001, OccurredAt: refDate}}
+	if _, ok := matchLine(line, approvedRules(), nil, drift); ok {
+		t.Fatal("a one-cent drift must NOT auto-match a lodgement (zero tolerance)")
+	}
+}
+
+// AC4, RUN settlement fee-split: bank net + fee to 6300 clears the gross card settlement. The journal key is
+// line-derived so a re-run posts the SAME key (GL dedupes → idempotent, no second journal).
+func TestMatch_RunSettlementFeeSplit(t *testing.T) {
+	line := StatementLine{ID: "L3", Status: LineUnmatched, AmountCents: 98000, Description: "RUN BATCH SETTLEMENT", TxnDate: refDate}
+	pmts := []CandidatePayment{{PaymentID: "P9", AmountCents: 100000, ReceivedAt: refDate}}
+
+	prop, ok := matchLine(line, approvedRules(), pmts, nil)
+	if !ok {
+		t.Fatal("expected fuzzy RUN match")
+	}
+	if prop.Rule.ID != "r-run" {
+		t.Fatalf("wrong rule: %s", prop.Rule.ID)
+	}
+	if prop.FeeCents != 2000 {
+		t.Fatalf("expected fee 2000, got %d", prop.FeeCents)
+	}
+	if d, _ := legAmounts(prop, AcctBank); d != 98000 {
+		t.Fatalf("expected DR 1000 net = 98000, got %d", d)
+	}
+	if d, _ := legAmounts(prop, "6300"); d != 2000 {
+		t.Fatalf("expected DR 6300 fee = 2000, got %d", d)
+	}
+	if _, c := legAmounts(prop, AcctCardClearing); c != 100000 {
+		t.Fatalf("expected CR 1010 gross = 100000, got %d", c)
+	}
+	assertBalanced(t, prop)
+
+	if prop.Journal.IdempotencyKey != "bankrec:line:L3" {
+		t.Fatalf("journal key not line-derived: %s", prop.Journal.IdempotencyKey)
+	}
+	// Re-running over the same line yields the identical idempotency key (idempotent post).
+	again, _ := matchLine(line, approvedRules(), pmts, nil)
+	if again.Journal.IdempotencyKey != prop.Journal.IdempotencyKey {
+		t.Fatal("re-match produced a different journal key (not idempotent)")
+	}
+}
+
+// A RUN line outside the date window does not match; a debit line never auto-matches.
+func TestMatch_WindowAndSign(t *testing.T) {
+	line := StatementLine{ID: "L4", Status: LineUnmatched, AmountCents: 98000, Description: "RUN BATCH", TxnDate: refDate}
+	far := []CandidatePayment{{PaymentID: "P", AmountCents: 100000, ReceivedAt: refDate.AddDate(0, 0, 10)}}
+	if _, ok := matchLine(line, approvedRules(), far, nil); ok {
+		t.Fatal("payment outside the ±3-day window must not match")
+	}
+	debit := StatementLine{ID: "L5", Status: LineUnmatched, AmountCents: -4500, Description: "SERVICE FEE", TxnDate: refDate}
+	if _, ok := matchLine(debit, approvedRules(), nil, nil); ok {
+		t.Fatal("a debit line must not auto-match")
+	}
+}
+
+func TestDescriptorMatches(t *testing.T) {
+	cases := []struct {
+		desc, pat string
+		want      bool
+	}{
+		{"RUN BATCH SETTLEMENT", "%RUN%", true},
+		{"run-pay deposit", "%RUN%", true},
+		{"CASH DEPOSIT", "%RUN%", false},
+		{"RUNNER", "RUN%", true},
+		{"PRERUN", "%RUN", true},
+	}
+	for _, c := range cases {
+		if got := descriptorMatches(c.desc, c.pat); got != c.want {
+			t.Errorf("descriptorMatches(%q,%q)=%v want %v", c.desc, c.pat, got, c.want)
+		}
+	}
+}

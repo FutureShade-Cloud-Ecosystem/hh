@@ -2,6 +2,7 @@ package staffcontext
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -110,6 +111,19 @@ func (s *Approvals) WithFreightDecider(d FreightDecider) *Approvals { s.freightD
 // wire adapter uses to translate a sibling module's typed error (e.g. GL's 409 on the JE decide-to-GL
 // bridge) into an identity error the handler maps faithfully, instead of a generic 500.
 func NewClientError(status int, msg string) error { return clientError{status: status, msg: msg} }
+
+// ApprovalErrorStatus is NewClientError's read half: the HTTP status a
+// rail client error carries, so a caller outside this package (a handler,
+// an integration harness) maps the taxonomy faithfully instead of
+// pattern-matching on messages. ok false is everything else (the 500
+// family and pass-throughs).
+func ApprovalErrorStatus(err error) (status int, ok bool) {
+	var ce clientError
+	if errors.As(err, &ce) {
+		return ce.status, true
+	}
+	return 0, false
+}
 
 // FileJEApproval files a JE_OVER_THRESHOLD request for a parked DRAFT journal and fans out cards. The GL
 // park-bridge calls it best-effort (the park never depends on it). requestedBy is the JE creator, so the

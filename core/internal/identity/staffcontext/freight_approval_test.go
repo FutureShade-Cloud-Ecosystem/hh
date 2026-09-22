@@ -166,7 +166,7 @@ func TestDecideApproval_FreightBridge_BothOutcomesCross(t *testing.T) {
 	t.Run("approve applies the parked split", func(t *testing.T) {
 		d := &recordingFreightDecider{}
 		f, s := freightDecideFixture(t, d)
-		if err := s.DecideApproval(context.Background(), "3f2504e0-4f89-11d3-9a0c-0305e82c3301", "gm", true, ""); err != nil {
+		if err := s.DecideApproval(context.Background(), "3f2504e0-4f89-11d3-9a0c-0305e82c3301", gmCtx(), true, ""); err != nil {
 			t.Fatalf("approve: %v", err)
 		}
 		if len(d.applied) != 1 || d.applied[0] != "raise-1" {
@@ -186,7 +186,7 @@ func TestDecideApproval_FreightBridge_BothOutcomesCross(t *testing.T) {
 	t.Run("reject refuses the parked split and applies nothing", func(t *testing.T) {
 		d := &recordingFreightDecider{}
 		f, s := freightDecideFixture(t, d)
-		if err := s.DecideApproval(context.Background(), "3f2504e0-4f89-11d3-9a0c-0305e82c3301", "gm", false, "not this time"); err != nil {
+		if err := s.DecideApproval(context.Background(), "3f2504e0-4f89-11d3-9a0c-0305e82c3301", gmCtx(), false, "not this time"); err != nil {
 			t.Fatalf("reject: %v", err)
 		}
 		if len(d.applied) != 0 {
@@ -207,7 +207,7 @@ func TestDecideApproval_FreightBridge_BothOutcomesCross(t *testing.T) {
 func TestDecideApproval_FreightBridgeFailure_RollsBackTheStamp(t *testing.T) {
 	d := &recordingFreightDecider{fail: NewClientError(409, "dispatch: this order has no live loads any more")}
 	f, s := freightDecideFixture(t, d)
-	err := s.DecideApproval(context.Background(), "3f2504e0-4f89-11d3-9a0c-0305e82c3301", "gm", true, "")
+	err := s.DecideApproval(context.Background(), "3f2504e0-4f89-11d3-9a0c-0305e82c3301", gmCtx(), true, "")
 	if err == nil {
 		t.Fatal("a failed apply must fail the decision")
 	}
@@ -227,7 +227,7 @@ func TestDecideApproval_FreightBridgeFailure_RollsBackTheStamp(t *testing.T) {
 func TestDecideApproval_FreightWithNoBridge_MovesNoMoney(t *testing.T) {
 	f, s := freightDecideFixture(t, nil)
 	s.freightDecider = nil
-	if err := s.DecideApproval(context.Background(), "3f2504e0-4f89-11d3-9a0c-0305e82c3301", "gm", true, ""); err != nil {
+	if err := s.DecideApproval(context.Background(), "3f2504e0-4f89-11d3-9a0c-0305e82c3301", gmCtx(), true, ""); err != nil {
 		t.Fatalf("an unwired bridge must not break the decision: %v", err)
 	}
 	if f.saved == nil || f.saved.status != ApprovalApproved {

@@ -1,0 +1,1106 @@
+// wire_operations.go is the operations-cluster wiring of HH-3.2 batch B5:
+// the wire functions for bankrec, dispatch, invcount, landedcost, lien,
+// messaging, payments, printing, purchasing, tasks, till and warranty, in
+// the pin's own construction order, carrying the pin's composition-root
+// adapters for these modules verbatim where the adapter's dependencies
+// have landed, and leaving the not-yet-landed seams unwired with their
+// designed fail-closed behavior (recorded per seam in the batch report).
+// Nothing here starts anything: the dispatchers, the jobs runner, the
+// messaging retention sweep and the approvals reconciler are worker-role
+// concerns that B7 wires (D37 pins their behaviour; only their startup
+// location changes, and none of it is here).
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strings"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/invcount"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/landedcost"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/lien"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messaging"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/printing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tasks"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/warranty"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// dispatchDriverSessionKnob is the P-4 pin closing: the driver session
+// ceiling's knob source (identity.DriverSessionHours) over the
+// dispatch-owned dispatch_policy table. The read is the pin's own
+// dealer-default row (the empty branch id resolves to branch_id IS NULL,
+// exactly as the pin's DriverSessionHours argued it must), validated by
+// the module's own ValidatePolicy so the 1-to-168 CHECK and the identity
+// ceiling agree.
+//
+// ONE DELIBERATE DIFFERENCE FROM THE PIN, recorded in the batch report:
+// the ERP's login-time read failed to the twelve-hour default on every
+// error arm; the target's enforcement-time read (B2-07) refuses on an
+// unreadable or out-of-contract knob rather than guessing, so the guard
+// answers the 503 family and no outage silently shortens or lengthens a
+// driver's session.
+type dispatchDriverSessionKnob struct{ repo *dispatch.Repository }
+
+func (k dispatchDriverSessionKnob) DriverSessionHours(ctx context.Context, orgID string) (int, error) {
+	p, err := k.repo.ReadPolicy(ctx, "")
+	if err != nil {
+		return 0, fmt.Errorf("driver session knob: %w", err)
+	}
+	p, err = dispatch.ValidatePolicy(p)
+	if err != nil {
+		return 0, fmt.Errorf("driver session knob: %w", err)
+	}
+	return p.DriverSessionHours, nil
+}
+
+// tasksDefaultChannelSlug is the fallback chat channel for a task EVENT
+// when the task carries no branch (the pin's constant, carried).
+const tasksDefaultChannelSlug = "yard-trenton"
+
+// yardCounterFallbackSlug is where a counter-audience EVENT lands when the
+// branch has no counter channel (or no branch at all), the pin's constant.
+const yardCounterFallbackSlug = "office"
+
+// wireOperations constructs and registers the operations cluster over the
+// money spine's shared instances, in the pin's order: printing before
+// dispatch (the run manifest enqueues through it), till before bankrec
+// (the recon reads run through the till repository), messaging before
+// tasks (the chat notifier posts through the service), landedcost before
+// purchasing (the AP tie-in capitalizes through it).
+func wireOperations(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, spine *moneySpine, streamTicketKey string) {
+	link := linkedUserID(pool)
+	auditSvc := spine.auditSvc
+	orderRepo := spine.orderRepo
+	orderSvc := spine.orderSvc
+	inventorySvc := spine.inventorySvc
+	inventoryRepo := inventory.NewRepository(pool)
+
+	// A-03 (W4): till / cash-drawer ops, the SOLE writer of the payments
+	// row. The CARD branch's charger seam (the payment module's RUN-PAY
+	// rail) stays unwired: that module is unlanded, and unwired the card
+	// tender refuses rather than charging through a rail nobody wired
+	// (fail closed, the module's own posture). The audit read seam feeds
+	// the NSF-reversed-allocation history.
+	tillRepo := till.NewRepository(pool)
+	tillSvc := till.NewService(tillRepo).
+		WithAudit(auditSvc).
+		WithAuditTrail(auditSvc)
+	till.NewHandler(tillSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+
+	// DIB-387: the quote conversion's credit/hold gate, closable now till
+	// has landed. The pin wired the SAME gate instance the POS ring uses;
+	// POS is unlanded, so this is the gate's first wired consumer in the
+	// target, on the quote repository the money batch serves.
+	spine.quoteRepo.WithCreditGate(till.NewHoldAwareCreditGate(tillRepo))
+
+	// A-02 (W5): bank reconciliation over the till repository's payment
+	// and lodgement reads, posting clearing journals through the GL.
+	bankrecSvc := bankrec.NewService(bankrec.NewRepository(pool)).
+		WithPayments(tillRepo).
+		WithLodgements(tillRepo).
+		WithJournalPoster(glPosterAdapter{svc: spine.glSvc}).
+		WithGLBalances(glBalanceAdapter{svc: spine.glSvc}).
+		WithAudit(auditSvc)
+	bankrec.NewHandler(bankrecSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+
+	// M6 (W6): the Lien Cockpit. The holdback-facts reader (billing) and
+	// the calendar registrar (compliance) are unlanded modules: unwired,
+	// the aging worklist degrades and booking does not register a
+	// compliance deadline, each the module's designed unwired behavior.
+	// The co-signer resolver is the re-pointed rail repository read (a
+	// projection by ERP user id; decide-time authority never runs through
+	// it).
+	lienSvc := lien.NewService(lien.NewRepository(pool)).
+		WithOrderHoldback(orderRepo).
+		WithGLPoster(lienGLPoster{svc: spine.glSvc}).
+		WithCoSigner(identity.NewApprovalRepository(pool)).
+		WithAudit(auditSvc)
+	lien.NewHandler(lienSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+
+	// A-15 (W6): inventory counts over inventory's count seam and the GL
+	// (the reason leg and the 1200 leg both resolve through the GL).
+	invcountSvc := invcount.NewService(invcount.NewRepository(pool)).
+		WithStockCounter(invCountAdapter{svc: inventorySvc}).
+		WithGLPoster(invcountGLPoster{svc: spine.glSvc}).
+		WithRuleResolver(glRuleAdapter{svc: spine.glSvc}).
+		WithGLBalanceReader(glBalanceAdapter{svc: spine.glSvc}).
+		WithAudit(auditSvc)
+	invcount.NewHandler(invcountSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+
+	// A-16 (W6): landed cost, capitalizing through inventory.
+	landedcostSvc := landedcost.NewService(landedcost.NewRepository(pool)).
+		WithCapitalizer(landedAdapter{svc: inventorySvc}).
+		WithGLPoster(landedGLPoster{svc: spine.glSvc}).
+		WithAudit(auditSvc)
+	landedcost.NewHandler(landedcostSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+
+	// SWARM-W4-C: purchasing, the whole AP side, over inventory's
+	// receiving seam, the vendors projection, landed cost and the GL.
+	// The PO sender stays the module's unwired default by the pin's own
+	// recorded decision (no transport is wired on this server; the send
+	// is recorded FAILED in words rather than DELIVERED into a log).
+	purchasingSvc := purchasing.NewService(purchasing.NewRepository(pool)).
+		WithStockReceiver(w4cStockReceiver{svc: inventorySvc}).
+		WithVendors(w4cVendorDirectory{pool: pool}).
+		WithLandedCoster(w4cLandedCoster{svc: landedcostSvc}).
+		WithGLPoster(w4cGLPoster{svc: spine.glSvc}).
+		WithRuleResolver(glRuleAdapter{svc: spine.glSvc}).
+		WithAudit(auditSvc).
+		WithLogger(log).
+		WithBranches(item5BranchDirectory{pool: pool}).
+		WithVendorAddresses(item5VendorAddressBook{pool: pool})
+	purchasing.NewHandler(purchasingSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+
+	// UNION-W4 and UNION-470: the inventory seams purchasing closes. The
+	// create-draft-PO seam was the money batch's StubPOCreator default;
+	// the real creator is bound now that purchasing exists, and the
+	// on-order read stops reporting the constant zero.
+	inventorySvc.WithPOCreator(unionPOCreator{svc: purchasingSvc})
+	inventorySvc.WithOnOrderReader(inv470OnOrder{svc: purchasingSvc})
+
+	// MSG-01 / DIB-152: the messaging hub. The stream-ticket HMAC takes
+	// its DEDICATED environment key (the A1 ruling; the HS256 secret it
+	// reused at the pin no longer exists). An empty key leaves the
+	// tickets seam nil, which is the designed degradation: the
+	// stream-ticket route answers 501 and clients use the Bearer stream.
+	messagingRepo := messaging.NewRepository(pool)
+	messagingHub := messaging.NewSSEHub(messagingRepo, log)
+	messagingSvc := messaging.NewService(messagingRepo).WithRealtime(messagingHub)
+	messaging.NewHandler(messagingSvc, log).WithHub(messagingHub).
+		WithStreamTickets(streamTicketKey).
+		WithUserLinker(link).RegisterRoutes(mux, g)
+	// SWARM-W5-D: the conversational tier registers through its own entry
+	// point on a second Handler value, exactly as at the pin (this
+	// surface needs neither the hub nor the tickets).
+	messaging.NewHandler(messagingSvc, log).WithUserLinker(link).RegisterConversationRoutes(mux, g)
+
+	// The approvals rail's messaging seams (0075): the notifier fans
+	// cards and decision echoes into the hub, best-effort, never failing
+	// a filing or a decision. The reconcile worker that heals missed
+	// fan-out is a worker-role loop (B7).
+	spine.approvals.WithApprovalNotifier(approvalNotifierAdapter{svc: messagingSvc, log: log})
+
+	// UNION-INV461: the inventory procurement nudge over messaging's
+	// internal post path.
+	inventorySvc.WithProcurementNudger(inv461Nudger{svc: messagingSvc})
+
+	// WMS-Lite (0073): the PICK walking skeleton. The shipped tasks
+	// surface and the yard surface each get their own Handler value over
+	// their own service, exactly as at the pin. The yard service's
+	// stage-outbox seam (messagingprovider's sms_outbox) is unlanded and
+	// stays unwired: unwired, staging a pick stages it and queues no SMS
+	// notice, the module's designed unwired behavior.
+	tasksSvc := tasks.NewService(tasks.NewRepository(pool)).
+		WithOrderReader(orderReaderAdapter{repo: orderRepo}).
+		WithChatNotifier(taskChatNotifier{svc: messagingSvc}).
+		WithLogger(log)
+	tasks.NewHandler(tasksSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+
+	// WTY-01 (DIB-153): warranty claims. The settlement journal posts
+	// through the GL poster; the SLA notifier posts breaches into
+	// #escalations (UNION-W5). The nightly SLA sweep is a worker-role job
+	// registration (B7).
+	warrantySvc := warranty.NewService(warranty.NewRepository(pool)).
+		WithGLPoster(warrantyGLPoster{svc: spine.glSvc}).
+		WithAudit(auditSvc).
+		WithLogger(log).
+		WithSLANotifier(unionSLANotifier{svc: messagingSvc, log: log})
+	warranty.NewHandler(warrantySvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+	warrantyW5Handler := warranty.NewHandler(warrantySvc, log).WithUserLinker(link)
+	warrantyW5Handler.RegisterW5Routes(mux, g)
+	warrantyW5Handler.RegisterPublicRoutes(mux)
+
+	// SWARM-W1A-B: the printing module, print_queue's first consumer.
+	printRepo := printing.NewRepository(pool)
+	printQueue := printing.NewQueueService(printRepo)
+	receiptSvc := printing.NewReceiptService(printRepo, printQueue).WithAudit(auditSvc)
+	printing.NewHandler(receiptSvc, printQueue, log).WithUserLinker(link).RegisterRoutes(mux, g)
+
+	// SWARM-W2-A: dispatch, the physical leg. The signature-capture seam
+	// (pos) is unlanded and stays unwired: unwired, a POD capture refuses
+	// rather than writing an attestation nobody sealed (fail closed). The
+	// AR gate keeps the pin's nil default (allow; the billing predicate
+	// is B6's to bind).
+	dispatchSvc := dispatch.NewService(dispatch.NewRepository(pool)).
+		WithActorNames(staffNameAdapter{repo: orderRepo}).
+		WithOrders(dispatchOrderAdapter{repo: orderRepo}).
+		WithFulfiller(dispatchFulfilAdapter{svc: orderSvc}).
+		WithPrinting(dispatchPrintAdapter{queue: printQueue}).
+		WithOrderValues(dispatchOrderValueAdapter{pool: pool}).
+		WithOrderLines(orderPickLineAdapter{repo: orderRepo}).
+		WithStockAvailability(dispatchStockAdapter{repo: inventoryRepo}).
+		WithFreightApprovals(dispatchFreightApprovalAdapter{svc: spine.approvals}).
+		WithOrderFreight(dispatchOrderFreightAdapter{pool: pool}).
+		WithPickState(dispatchPickStateAdapter{repo: tasks.NewRepository(pool)}).
+		WithAuditTrail(auditSvc).
+		WithAudit(auditSvc).
+		WithLogger(log)
+	dispatchHandler := dispatch.NewHandler(dispatchSvc, log).WithUserLinker(link)
+	dispatchHandler.RegisterRoutes(mux, g)
+	dispatchHandler.RegisterPublicRoutes(mux)
+	dispatchHandler.RegisterW3Routes(mux, g)
+
+	// The freight bridge's return leg (0195): a rail decision on a parked
+	// freight raise applies or refuses it inside the decision
+	// transaction. Unwired it would stamp the request and move no money
+	// (the safe half of the kill switch); wired, both arms cross.
+	spine.approvals.WithFreightDecider(dispatchFreightDeciderAdapter{svc: dispatchSvc})
+
+	// SWARM-W3-C: the yard surface over the pick feed. The fixture feed
+	// retires here: the pick source is dispatch's own feed, the weight
+	// round trip writes order lines through the order module's guarded
+	// edit, and the advance writes order status through the state-guarded
+	// event writer.
+	yardTasksSvc := tasks.NewService(tasks.NewRepository(pool)).
+		WithOrderReader(orderReaderAdapter{repo: orderRepo}).
+		WithChatNotifier(yardChatNotifier{svc: messagingSvc, log: log}).
+		WithPickSource(newDispatchPickSource(pool, orderRepo, log)).
+		WithLogger(log)
+	yardTasksSvc.
+		WithOrderLineWriter(orderLineWeightAdapter{svc: orderSvc, repo: orderRepo}).
+		WithOrderAdvancer(taskOrderAdvanceAdapter{svc: orderSvc}).
+		WithAudit(auditSvc)
+	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterYardRoutes(mux, g)
+	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterWeightRoutes(mux, g)
+
+	// The rail's HTTP surface (the A3 ownership ruling): the staff
+	// approvals routes register through the Guards with the same linker,
+	// and the decide path's authority is the guard's resolution (nothing
+	// on it reads the scaffold tables).
+	identity.NewApprovalsHandler(spine.approvals, link).RegisterRoutes(mux, g)
+
+	// SWARM-W3-B: payments (F-1's assignment to this batch). The gateway
+	// selector is fail-closed at boot exactly as at the pin (DIB-416):
+	// live-without-credentials refuses, production on a non-live gateway
+	// refuses. The service this batch constructs for the portal union is
+	// built so the selection and wiring are proven; the portal BFF that
+	// consumes it lands in B7.
+	unionGateway, unionGwErr := payments.SelectGateway(payments.LoadGatewayConfig())
+	if unionGwErr != nil {
+		panic("payments: gateway selection refused to boot: " + unionGwErr.Error())
+	}
+	w3bPaymentsRepo := payments.NewRepository(pool)
+	w3bPaySvc := payments.NewService(w3bPaymentsRepo, unionGateway)
+	_ = w3bPaySvc // consumed by the portal BFF at the tops batch; constructed so boot proves it wires
+	// DIB-170: payment reversal, manager-gated, reason-required, audited.
+	w3bReverseSvc := payments.NewReverseService(w3bPaymentsRepo).WithAudit(auditSvc)
+	payments.NewReversalHandler(w3bReverseSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+}
+
+// ── the carried adapter belt (pin main.go, verbatim where the dependency
+// landed; the identity.Service adapters re-point at the bridge's
+// Approvals, the sanctioned class) ─────────────────────────────────────
+
+// glPosterAdapter satisfies bankrec.JournalPoster over the GL provider
+// (glSvc.PostExternal). It lives in the wire set so bankrec does not
+// import gl's service internals.
+type glPosterAdapter struct{ svc *gl.Service }
+
+func (a glPosterAdapter) PostJournal(ctx context.Context, in gl.ExternalJournal) (string, error) {
+	return a.svc.PostExternal(ctx, in)
+}
+
+// glBalanceAdapter satisfies bankrec.GLBalanceReader (and invcount's)
+// over the GL provider, so both read GL balances through the service
+// rather than the 0034 views directly.
+type glBalanceAdapter struct{ svc *gl.Service }
+
+func (a glBalanceAdapter) GLBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
+	return a.svc.GLBalanceCents(ctx, accountCode, year, month, branchID)
+}
+
+// lienGLPoster satisfies lien.GLPoster over glSvc.PostExternal (the
+// 1150/2350 holdback release journal).
+type lienGLPoster struct{ svc *gl.Service }
+
+func (a lienGLPoster) PostJournal(ctx context.Context, in lien.GLJournal) (string, error) {
+	lines := make([]gl.ExternalLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
+}
+
+// invcountGLPoster satisfies invcount.GLPoster over glSvc.PostExternal
+// (the reason-coded variance journal).
+type invcountGLPoster struct{ svc *gl.Service }
+
+func (a invcountGLPoster) PostJournal(ctx context.Context, in invcount.GLJournal) (string, error) {
+	lines := make([]gl.ExternalLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
+}
+
+// landedGLPoster satisfies landedcost.GLPoster over glSvc.PostExternal
+// (the capitalization / retro-split journal).
+type landedGLPoster struct{ svc *gl.Service }
+
+func (a landedGLPoster) PostJournal(ctx context.Context, in landedcost.GLJournal) (string, error) {
+	lines := make([]gl.ExternalLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
+}
+
+// warrantyGLPoster satisfies warranty.GLPoster over glSvc.PostExternal
+// (the warranty.settled recovery/expense journal).
+type warrantyGLPoster struct{ svc *gl.Service }
+
+func (a warrantyGLPoster) PostJournal(ctx context.Context, in warranty.GLJournal) (string, error) {
+	lines := make([]gl.ExternalLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return a.svc.PostExternal(ctx, gl.ExternalJournal{Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey, Memo: in.Memo, BranchID: in.BranchID, Lines: lines})
+}
+
+// staffNameAdapter satisfies dispatch's actor-name resolver (and the pos
+// and billing histories at the pin) over order.Repository's existing
+// users join, so no module gains a copy of the display-name SELECT.
+type staffNameAdapter struct{ repo *order.Repository }
+
+func (a staffNameAdapter) ActorNames(ctx context.Context, ids []string) (map[string]string, error) {
+	return a.repo.ActorNames(ctx, ids)
+}
+
+// orderReaderAdapter satisfies tasks.OrderReader over the order
+// Repository's narrow OrderBrief read (id/branch/fulfilment), mapping
+// order.ErrNotFound onto tasks.ErrUnknownOrder so tasks never imports
+// order.
+type orderReaderAdapter struct{ repo *order.Repository }
+
+func (a orderReaderAdapter) OrderBrief(ctx context.Context, orderID string) (tasks.OrderBrief, error) {
+	b, err := a.repo.OrderBrief(ctx, orderID)
+	if err != nil {
+		if errors.Is(err, order.ErrNotFound) {
+			return tasks.OrderBrief{}, tasks.ErrUnknownOrder
+		}
+		return tasks.OrderBrief{}, err
+	}
+	return tasks.OrderBrief{ID: b.ID, BranchID: b.BranchID, Fulfillment: b.Fulfillment, Status: b.Status}, nil
+}
+
+// taskChatNotifier satisfies tasks.ChatNotifier over messaging's
+// event-post seam: the order's branch yard channel when known, else the
+// default channel, idempotent on the event key.
+type taskChatNotifier struct{ svc *messaging.Service }
+
+func (a taskChatNotifier) PostTaskEvent(ctx context.Context, ref tasks.TaskEventRef) error {
+	slug := tasksDefaultChannelSlug
+	if ref.BranchID != "" {
+		if s, err := a.svc.YardSlugForBranch(ctx, ref.BranchID); err == nil && s != "" {
+			slug = s
+		}
+	}
+	_, _, err := a.svc.PostEventToChannelSlug(ctx, slug, ref.EventKey, ref.Summary, messaging.EventRef{
+		Topic: ref.Topic, Entity: ref.Entity, DeepLink: ref.DeepLink, Summary: ref.Summary,
+	}, false)
+	return err
+}
+
+// yardChatNotifier is taskChatNotifier reading ref.Audience and routing
+// accordingly: yard events to the branch yard channel, counter events to
+// the counter channel with the yard channel and #office as fallbacks.
+type yardChatNotifier struct {
+	svc *messaging.Service
+	log *slog.Logger
+}
+
+func (a yardChatNotifier) PostTaskEvent(ctx context.Context, ref tasks.TaskEventRef) error {
+	yardSlug := tasksDefaultChannelSlug
+	if ref.BranchID != "" {
+		if s, err := a.svc.YardSlugForBranch(ctx, ref.BranchID); err == nil && s != "" {
+			yardSlug = s
+		}
+	}
+	candidates := []string{yardSlug, yardCounterFallbackSlug}
+	if ref.Audience == tasks.AudienceCounter {
+		if counter := tasks.CounterSlugForYardSlug(yardSlug); counter != "" {
+			candidates = append([]string{counter}, candidates...)
+		}
+	}
+
+	var lastErr error
+	for _, slug := range candidates {
+		_, _, err := a.svc.PostEventToChannelSlug(ctx, slug, ref.EventKey, ref.Summary, messaging.EventRef{
+			Topic: ref.Topic, Entity: ref.Entity, DeepLink: ref.DeepLink, Summary: ref.Summary,
+		}, false)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if a.log != nil {
+			a.log.Warn("yard: channel post failed, trying the next route", "slug", slug, "topic", ref.Topic, "err", err)
+		}
+	}
+	return lastErr
+}
+
+// dispatchOrderAdapter satisfies dispatch.OrderReader over the order
+// Repository's OrderBrief (the authority read for a stop's branch and
+// schedulability).
+type dispatchOrderAdapter struct{ repo *order.Repository }
+
+func (a dispatchOrderAdapter) Brief(ctx context.Context, orderID string) (dispatch.OrderBrief, error) {
+	b, err := a.repo.OrderBrief(ctx, orderID)
+	if err != nil {
+		return dispatch.OrderBrief{}, err
+	}
+	return dispatch.OrderBrief{ID: b.ID, BranchID: b.BranchID, Fulfillment: b.Fulfillment, Status: b.Status}, nil
+}
+
+// ResolveOrderID completes dispatch.OrderReader (DIB-483): pure
+// delegation to order.Repository.ResolveOrderID, the system's single
+// order-number resolver, already carrying the UUID passthrough and the
+// branch-scoped number lookup that keep #SO- numbers from being an
+// existence oracle for another branch's book.
+func (a dispatchOrderAdapter) ResolveOrderID(ctx context.Context, idOrNo string, global bool, branchIDs []string) (string, error) {
+	return a.repo.ResolveOrderID(ctx, idOrNo, global, branchIDs)
+}
+
+// dispatchFulfilAdapter satisfies dispatch.OrderFulfiller over
+// order.Service.AdvanceFromEvent, the ONLY sanctioned system/event status
+// writer: the move is graded against the forward-only ladder inside the
+// guarded write.
+type dispatchFulfilAdapter struct{ svc *order.Service }
+
+func (a dispatchFulfilAdapter) MarkFulfilled(ctx context.Context, orderID, reason string) error {
+	return a.svc.AdvanceFromEvent(ctx, orderID, "FULFILLED", reason)
+}
+
+// dispatchPrintAdapter satisfies dispatch.PrintEnqueuer over
+// printing.QueueService.Enqueue (DIB-411).
+type dispatchPrintAdapter struct{ queue *printing.QueueService }
+
+func (a dispatchPrintAdapter) Enqueue(ctx context.Context, in dispatch.PrintJobRequest) (string, error) {
+	job, err := a.queue.Enqueue(ctx, printing.EnqueueInput{
+		DocType:      in.DocType,
+		RefID:        in.RefID,
+		BranchID:     in.BranchID,
+		RenderTarget: in.RenderTarget,
+	})
+	if err != nil {
+		return "", err
+	}
+	return job.ID, nil
+}
+
+// orderPickLineAdapter satisfies dispatch.OrderLineReader over the order
+// Repository's STAFF-side line read. It drops the money: a pick ticket
+// carries what to pull and how much of it, and the picker's number is the
+// ENTERED quantity in the ENTERED unit, never qty_base.
+type orderPickLineAdapter struct{ repo *order.Repository }
+
+func (a orderPickLineAdapter) OrderPickLines(ctx context.Context, orderID string) ([]dispatch.PickFeedLine, error) {
+	lines, _, _, err := a.repo.OrderLines(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]dispatch.PickFeedLine, 0, len(lines))
+	for _, l := range lines {
+		out = append(out, dispatch.PickFeedLine{
+			LineNo:      l.LineNo,
+			ProductID:   l.ProductID,
+			Description: l.Description,
+			QtyOrdered:  l.QtyEntered,
+			UOM:         l.UOMEntered,
+		})
+	}
+	return out, nil
+}
+
+// dispatchPickStateAdapter satisfies dispatch.PickCompletionReader over
+// the yard module's own read: STAGED and DONE both mean the material was
+// pulled, which is what minting a will-call square asserts.
+type dispatchPickStateAdapter struct{ repo *tasks.Repository }
+
+func (a dispatchPickStateAdapter) OrderPickState(ctx context.Context, orderID string) (dispatch.PickCompletion, error) {
+	status, err := a.repo.OrderPickStatus(ctx, orderID)
+	if err != nil {
+		return dispatch.PickCompletion{}, err
+	}
+	if status == "" {
+		return dispatch.PickCompletion{}, nil
+	}
+	return dispatch.PickCompletion{
+		Exists: true,
+		Staged: status == tasks.StatusStaged || status == tasks.StatusDone,
+		Status: status,
+	}, nil
+}
+
+func (a dispatchPickStateAdapter) OrderPickStates(ctx context.Context, orderIDs []string) (map[string]dispatch.PickCompletion, error) {
+	statuses, err := a.repo.OrderPickStatuses(ctx, orderIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]dispatch.PickCompletion, len(statuses))
+	for id, status := range statuses {
+		out[id] = dispatch.PickCompletion{
+			Exists: true,
+			Staged: status == tasks.StatusStaged || status == tasks.StatusDone,
+			Status: status,
+		}
+	}
+	return out, nil
+}
+
+// dispatchOrderValueAdapter satisfies dispatch.OrderValueReader: the load
+// board's two figures, read on the server, never accepted from a request.
+type dispatchOrderValueAdapter struct{ pool *pgxpool.Pool }
+
+func (a dispatchOrderValueAdapter) OrderValueCents(ctx context.Context, orderID string) (int64, bool, error) {
+	return a.readCents(ctx, orderID, "total_cents")
+}
+
+func (a dispatchOrderValueAdapter) OrderFreightCents(ctx context.Context, orderID string) (int64, bool, error) {
+	return a.readCents(ctx, orderID, "freight_cents")
+}
+
+// OrderQuotedFreightCents reads the frozen baseline (0194) the
+// second-truck gate measures against. NULL is "never came from a quote"
+// and any value, ZERO INCLUDED, is a real baseline; it deliberately does
+// not go through readCents's `cents <= 0` rule.
+func (a dispatchOrderValueAdapter) OrderQuotedFreightCents(ctx context.Context, orderID string) (int64, bool, error) {
+	if a.pool == nil {
+		return 0, false, nil
+	}
+	var cents *int64
+	err := a.pool.QueryRow(ctx, `SELECT quoted_freight_cents FROM orders WHERE id = $1`, orderID).Scan(&cents)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	if cents == nil {
+		return 0, false, nil
+	}
+	return *cents, true, nil
+}
+
+// readCents answers (cents, known, err); known=false with a nil error is
+// "there is no figure", which the load board renders as a dash, never as
+// zero.
+func (a dispatchOrderValueAdapter) readCents(ctx context.Context, orderID, col string) (int64, bool, error) {
+	if a.pool == nil {
+		return 0, false, nil
+	}
+	// col is one of two package-local literals, never caller input.
+	var cents int64
+	err := a.pool.QueryRow(ctx, `SELECT `+col+` FROM orders WHERE id = $1`, orderID).Scan(&cents)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	if cents <= 0 {
+		return 0, false, nil
+	}
+	return cents, true, nil
+}
+
+// dispatchOrderFreightAdapter satisfies dispatch.OrderFreightWriter, the
+// one write that moves an order's own freight figure when a raise is
+// applied. It takes the TRANSACTION rather than the pool because the
+// approve path runs inside the rail's decide transaction, so the money
+// and the APPROVED stamp are atomic.
+type dispatchOrderFreightAdapter struct{ pool *pgxpool.Pool }
+
+func (a dispatchOrderFreightAdapter) SetOrderFreightTx(ctx context.Context, tx pgx.Tx, orderID string, cents int64) error {
+	if tx == nil {
+		return errors.New("dispatch freight: no transaction")
+	}
+	_, err := tx.Exec(ctx, `UPDATE orders SET freight_cents = $2 WHERE id = $1`, orderID, cents)
+	return err
+}
+
+// dispatchFreightApprovalAdapter satisfies dispatch.FreightApprovalFiler
+// over the rail: dispatch parks a raise, this files the request that
+// decides it on the ONE approvals queue. The seam carries no amount, so
+// no figure from a customer's delivery charge can reach the queue.
+type dispatchFreightApprovalAdapter struct{ svc *identity.Approvals }
+
+func (a dispatchFreightApprovalAdapter) FileFreightApproval(ctx context.Context, raiseID, branchID, requestedBy, detail string) (string, error) {
+	req, err := a.svc.FileFreightApproval(ctx, raiseID, branchID, requestedBy, detail)
+	if err != nil {
+		return "", err
+	}
+	return req.ID, nil
+}
+
+// dispatchFreightDeciderAdapter satisfies the rail's FreightDecider over
+// dispatch.Service, the return leg: an approve applies the parked split,
+// a refusal marks it refused, both inside the decision's transaction.
+type dispatchFreightDeciderAdapter struct{ svc *dispatch.Service }
+
+func (a dispatchFreightDeciderAdapter) ApplyFreightRaiseTx(ctx context.Context, tx pgx.Tx, raiseID, deciderID string) error {
+	return asIdentityError(a.svc.ApplyFreightRaiseTx(ctx, tx, raiseID, deciderID))
+}
+
+func (a dispatchFreightDeciderAdapter) RefuseFreightRaiseTx(ctx context.Context, tx pgx.Tx, raiseID, deciderID string) error {
+	return asIdentityError(a.svc.RefuseFreightRaiseTx(ctx, tx, raiseID, deciderID))
+}
+
+// asIdentityError re-grades a dispatch refusal into the rail's taxonomy
+// so the decide handler answers the real status; anything unrecognized
+// passes through to the 500 arm.
+func asIdentityError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if status, msg, ok := dispatch.ErrorHTTPStatus(err); ok {
+		return identity.NewClientError(status, msg)
+	}
+	return err
+}
+
+// dispatchStockAdapter satisfies dispatch.StockAvailabilityReader over
+// the inventory repository's per-branch on-hand read; a product nobody
+// stocks answers 0 with no error.
+type dispatchStockAdapter struct{ repo *inventory.Repository }
+
+func (a dispatchStockAdapter) OnHandBase(ctx context.Context, productID, branchID string) (float64, error) {
+	if a.repo == nil {
+		return 0, nil
+	}
+	qty, err := a.repo.OnHandQtyBranch(ctx, nil, productID, branchID)
+	if err != nil {
+		return 0, err
+	}
+	return qty, nil
+}
+
+// dispatchPickSource satisfies tasks.PickSource over dispatch.PickFeed.
+// This type is the entire coupling between the two modules.
+type dispatchPickSource struct{ feed *dispatch.PickFeed }
+
+func newDispatchPickSource(pool *pgxpool.Pool, orderRepo *order.Repository, log *slog.Logger) dispatchPickSource {
+	return dispatchPickSource{feed: dispatch.NewPickFeed(dispatch.NewRepository(pool)).
+		WithOrderLines(orderPickLineAdapter{repo: orderRepo}).
+		WithLogger(log)}
+}
+
+// PickTicket maps dispatch.ErrNotFound onto tasks.ErrUnknownOrder, the
+// seam contract's one required error translation.
+func (a dispatchPickSource) PickTicket(ctx context.Context, orderID string) (tasks.PickTicket, error) {
+	t, err := a.feed.TicketForOrder(ctx, orderID)
+	if err != nil {
+		if errors.Is(err, dispatch.ErrNotFound) {
+			return tasks.PickTicket{}, tasks.ErrUnknownOrder
+		}
+		return tasks.PickTicket{}, err
+	}
+	return pickTicketFromFeed(t), nil
+}
+
+func (a dispatchPickSource) PendingTickets(ctx context.Context, branchID string, limit, offset int) ([]tasks.PickTicket, int, error) {
+	feed, total, err := a.feed.PendingTickets(ctx, branchID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]tasks.PickTicket, 0, len(feed))
+	for _, t := range feed {
+		out = append(out, pickTicketFromFeed(t))
+	}
+	return out, total, nil
+}
+
+// pickTicketFromFeed is the field copy. Source is "DISPATCH" and that
+// string is load-bearing: the yard console renders its fixture warning
+// off exactly this value.
+func pickTicketFromFeed(t dispatch.PickFeedTicket) tasks.PickTicket {
+	lines := make([]tasks.PickLine, 0, len(t.Lines))
+	for _, l := range t.Lines {
+		lines = append(lines, tasks.PickLine{
+			LineNo:      l.LineNo,
+			ProductID:   l.ProductID,
+			SKU:         l.SKU,
+			Description: l.Description,
+			QtyOrdered:  l.QtyOrdered,
+			UOM:         l.UOM,
+			Location:    l.Location,
+		})
+	}
+	return tasks.PickTicket{
+		OrderID:      t.OrderID,
+		OrderNo:      t.OrderNo,
+		BranchID:     t.BranchID,
+		CustomerName: t.CustomerName,
+		Fulfillment:  t.Fulfillment,
+		MTOClass:     t.MTOClass,
+		Priority:     t.Priority,
+		Reference:    t.Reference,
+		RequestedAt:  t.RequestedAt,
+		Lines:        lines,
+		Source:       "DISPATCH",
+	}
+}
+
+// orderLineWeightAdapter satisfies tasks.OrderLineWriter (DIB-324):
+// SetLineQty goes through order.Service.EditLineQty, the module's own
+// status-guarded, repriced, audited edit, never a repository write.
+type orderLineWeightAdapter struct {
+	svc  *order.Service
+	repo *order.Repository
+}
+
+func (a orderLineWeightAdapter) LineUOM(ctx context.Context, orderID string, lineNo int) (string, error) {
+	_, uom, _, _, err := a.repo.LineForEdit(ctx, orderID, lineNo)
+	return uom, err
+}
+
+func (a orderLineWeightAdapter) SetLineQty(ctx context.Context, orderID string, lineNo int, qtyEntered string) error {
+	_, err := a.svc.EditLineQty(ctx, orderID, lineNo, qtyEntered)
+	return err
+}
+
+// taskOrderAdvanceAdapter satisfies tasks.OrderAdvancer (DIB-325) over
+// the same state-guarded event writer dispatch's handoff uses.
+type taskOrderAdvanceAdapter struct{ svc *order.Service }
+
+func (a taskOrderAdvanceAdapter) AdvanceOrder(ctx context.Context, orderID, targetStatus, reason string) error {
+	return a.svc.AdvanceFromEvent(ctx, orderID, targetStatus, reason)
+}
+
+// invCountAdapter satisfies invcount.StockCounter over inventory's count
+// seam (the type translation between the two modules' count shapes).
+type invCountAdapter struct{ svc *inventory.Service }
+
+func (a invCountAdapter) SnapshotOnHand(ctx context.Context, branchID string) ([]invcount.Snapshot, error) {
+	snaps, err := a.svc.SnapshotOnHand(ctx, branchID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]invcount.Snapshot, len(snaps))
+	for i, s := range snaps {
+		out[i] = invcount.Snapshot{ProductID: s.ProductID, LocationID: s.LocationID, OnHandBase: s.OnHandBase, AvgCostCents: s.AvgCostCents}
+	}
+	return out, nil
+}
+
+func (a invCountAdapter) WeightedAvgCostCents(ctx context.Context, productID, branchID string) (int64, error) {
+	return a.svc.WeightedAvgCostCents(ctx, productID, branchID)
+}
+
+func (a invCountAdapter) PostCountAdjustmentTx(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, qtyDelta float64, unitCostCents int64, reason string) (string, error) {
+	return a.svc.PostCountAdjustmentTx(ctx, tx, productID, locationID, branchID, qtyDelta, unitCostCents, reason)
+}
+
+// landedAdapter satisfies landedcost.Capitalizer over inventory's
+// landed-cost seam (the landed-seam types into landedcost types).
+type landedAdapter struct{ svc *inventory.Service }
+
+func (a landedAdapter) ReceivedLinesForPO(ctx context.Context, poID string) ([]landedcost.ReceivedLine, error) {
+	lines, err := a.svc.ReceivedLinesForPO(ctx, poID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]landedcost.ReceivedLine, len(lines))
+	for i, l := range lines {
+		out[i] = landedcost.ReceivedLine{POLineID: l.POLineID, ProductID: l.ProductID, QtyBase: l.QtyBase, ValueCents: l.ValueCents, WeightKg: l.WeightKg, IsSpecialBuy: l.IsSpecialBuy}
+	}
+	return out, nil
+}
+
+func (a landedAdapter) CapitalizeLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64) (int64, error) {
+	return a.svc.CapitalizeLandedCostTx(ctx, tx, productID, branchID, allocatedCadCents)
+}
+
+func (a landedAdapter) CapitalizeLandedCostSnapTx(ctx context.Context, tx pgx.Tx, productID, branchID string, allocatedCadCents int64) (int64, int64, bool, error) {
+	return a.svc.CapitalizeLandedCostSnapTx(ctx, tx, productID, branchID, allocatedCadCents)
+}
+
+func (a landedAdapter) RestoreLandedCostTx(ctx context.Context, tx pgx.Tx, productID, branchID string, snapAvg, absorbed int64) (int64, error) {
+	return a.svc.RestoreLandedCostTx(ctx, tx, productID, branchID, snapAvg, absorbed)
+}
+
+// w4cStockReceiver satisfies purchasing.StockReceiver over
+// inventory.Service.ReceivePOTx: purchasing writes the RECEIVING
+// DOCUMENT, inventory writes the receipt moves.
+type w4cStockReceiver struct{ svc *inventory.Service }
+
+func (a w4cStockReceiver) ReceiveDocumentTx(ctx context.Context, tx pgx.Tx, receivingDocID string) error {
+	return a.svc.ReceivePOTx(ctx, tx, receivingDocID)
+}
+
+// w4cVendorDirectory satisfies purchasing.VendorDirectory with a
+// read-only projection over the vendors table, satisfied here because no
+// package owns that table.
+type w4cVendorDirectory struct{ pool *pgxpool.Pool }
+
+const w4cVendorCols = `id::text, vendor_no::text, name, payment_terms_days, is_active`
+
+func (a w4cVendorDirectory) ListVendors(ctx context.Context) ([]purchasing.Vendor, error) {
+	if a.pool == nil {
+		return nil, nil
+	}
+	rows, err := a.pool.Query(ctx, `SELECT `+w4cVendorCols+` FROM vendors ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("vendor directory: list: %w", err)
+	}
+	defer rows.Close()
+	var out []purchasing.Vendor
+	for rows.Next() {
+		var v purchasing.Vendor
+		if err := rows.Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.IsActive); err != nil {
+			return nil, fmt.Errorf("vendor directory: scan: %w", err)
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (a w4cVendorDirectory) Vendor(ctx context.Context, vendorID string) (purchasing.Vendor, error) {
+	if a.pool == nil {
+		return purchasing.Vendor{}, fmt.Errorf("vendor directory: no database")
+	}
+	var v purchasing.Vendor
+	err := a.pool.QueryRow(ctx, `SELECT `+w4cVendorCols+` FROM vendors WHERE id = $1`, vendorID).
+		Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.IsActive)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return purchasing.Vendor{}, purchasing.ErrUnknownVendor
+	}
+	if err != nil {
+		return purchasing.Vendor{}, fmt.Errorf("vendor directory: get %s: %w", vendorID, err)
+	}
+	return v, nil
+}
+
+// item5BranchDirectory satisfies purchasing.BranchDirectory over
+// locations + system_settings, so the standardized PO document carries a
+// ship-to and the dealer's own name without purchasing learning either
+// table's shape.
+type item5BranchDirectory struct{ pool *pgxpool.Pool }
+
+func (a item5BranchDirectory) Branch(ctx context.Context, branchID string) (purchasing.BranchBrief, error) {
+	if a.pool == nil {
+		return purchasing.BranchBrief{}, fmt.Errorf("branch directory: no database")
+	}
+	var b purchasing.BranchBrief
+	var line1, city, province, postal string
+	err := a.pool.QueryRow(ctx, `
+		SELECT l.name, l.code::text,
+		       COALESCE(l.address->>'line1',''), COALESCE(l.address->>'city',''),
+		       COALESCE(l.address->>'province',''), COALESCE(l.address->>'postal',''),
+		       COALESCE((SELECT value #>> '{}' FROM system_settings WHERE key = 'org_name'), ''),
+		       COALESCE((SELECT value #>> '{}' FROM system_settings WHERE key = 'org_phone'), ''),
+		       COALESCE((SELECT value #>> '{}' FROM system_settings WHERE key = 'org_email'), '')
+		  FROM locations l
+		 WHERE l.id = $1`, branchID).
+		Scan(&b.Name, &b.Code, &line1, &city, &province, &postal, &b.OrgName, &b.Phone, &b.Email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return purchasing.BranchBrief{}, fmt.Errorf("branch directory: unknown branch %s", branchID)
+	}
+	if err != nil {
+		return purchasing.BranchBrief{}, fmt.Errorf("branch directory: get %s: %w", branchID, err)
+	}
+	parts := make([]string, 0, 4)
+	for _, p := range []string{line1, city, province, postal} {
+		if strings.TrimSpace(p) != "" {
+			parts = append(parts, p)
+		}
+	}
+	b.Address = strings.Join(parts, ", ")
+	return b, nil
+}
+
+// item5VendorAddressBook satisfies purchasing.VendorAddressBook over the
+// two free-form JSONB blobs the vendors row carries: deliberately narrow,
+// deliberately empty-by-default, and complete rather than choosing.
+type item5VendorAddressBook struct{ pool *pgxpool.Pool }
+
+func (a item5VendorAddressBook) VendorOrderCandidates(ctx context.Context, vendorID string) ([]string, error) {
+	if a.pool == nil {
+		return nil, fmt.Errorf("vendor address book: no database")
+	}
+	var remit, meta string
+	err := a.pool.QueryRow(ctx, `
+		SELECT COALESCE(remit_address->>'email',''), COALESCE(metadata->>'email','')
+		  FROM vendors WHERE id = $1`, vendorID).Scan(&remit, &meta)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("vendor address book: get %s: %w", vendorID, err)
+	}
+	out := make([]string, 0, 2)
+	for _, c := range []string{remit, meta} {
+		if strings.TrimSpace(c) != "" {
+			out = append(out, strings.TrimSpace(c))
+		}
+	}
+	return out, nil
+}
+
+// w4cLandedCoster satisfies purchasing.LandedCoster over landedcost's
+// existing Create + Apply path, unmodified.
+type w4cLandedCoster struct{ svc *landedcost.Service }
+
+func (a w4cLandedCoster) CreateAndApply(ctx context.Context, in purchasing.LandedCostDraft) (string, error) {
+	id, err := a.svc.Create(ctx, landedcost.CreateInput{
+		POID:            in.POID,
+		PORef:           in.PORef,
+		BranchID:        in.BranchID,
+		Currency:        in.Currency,
+		FXRate:          in.FXRate,
+		FreightCents:    in.FreightCents,
+		DutyCents:       in.DutyCents,
+		HandlingCents:   in.HandlingCents,
+		AllocationBasis: in.Basis,
+	})
+	if err != nil {
+		return "", err
+	}
+	if err := a.svc.Apply(ctx, id); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// w4cGLPoster satisfies purchasing.GLPoster over glSvc.PostExternal (the
+// vendor-bill journal).
+type w4cGLPoster struct{ svc *gl.Service }
+
+func (a w4cGLPoster) PostJournal(ctx context.Context, in purchasing.GLJournal) (string, error) {
+	lines := make([]gl.ExternalLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return a.svc.PostExternal(ctx, gl.ExternalJournal{
+		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
+		Memo: in.Memo, BranchID: in.BranchID, Lines: lines,
+	})
+}
+
+// unionPOCreator adapts inventory's POCreator seam onto purchasing's
+// CreatePO; the caller's context carries the staff identity, so
+// purchasing's own branch fence applies.
+type unionPOCreator struct{ svc *purchasing.Service }
+
+func (u unionPOCreator) CreateDraftPO(ctx context.Context, in inventory.SuggestedPO) (string, string, error) {
+	lines := make([]purchasing.AddLineParams, 0, len(in.Lines))
+	for _, l := range in.Lines {
+		lines = append(lines, purchasing.AddLineParams{
+			ProductID:      l.ProductID,
+			QtyOrderedBase: l.QtyBase,
+			UnitCostCents:  l.UnitCostCents,
+		})
+	}
+	po, err := u.svc.CreatePO(ctx, purchasing.CreatePORequest{
+		VendorID: in.VendorID,
+		BranchID: in.BranchID,
+		Notes:    in.Memo,
+		Lines:    lines,
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return po.ID, po.PONo, nil
+}
+
+// inv470OnOrder satisfies inventory.OnOrderReader over purchasing's
+// outstanding-on-order aggregate, the same read the on-order panel is
+// built from.
+type inv470OnOrder struct{ svc *purchasing.Service }
+
+func (a inv470OnOrder) OutstandingOnOrderBase(ctx context.Context, branchID string, productIDs []string) ([]inventory.OnOrderQty, error) {
+	rows, err := a.svc.OutstandingOnOrderBase(ctx, branchID, productIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]inventory.OnOrderQty, len(rows))
+	for i, r := range rows {
+		out[i] = inventory.OnOrderQty{ProductID: r.ProductID, BranchID: r.BranchID, QtyBase: r.QtyBase}
+	}
+	return out, nil
+}
+
+// inv461Nudger satisfies inventory.ProcurementNudger over messaging's
+// internal post path, refusing any tier but the NOTABLE one the module
+// asked for.
+type inv461Nudger struct{ svc *messaging.Service }
+
+func (n inv461Nudger) PostProcurementNudge(ctx context.Context, post inventory.NudgePost) (bool, error) {
+	if post.Class != inventory.NudgeClassNotable {
+		return false, fmt.Errorf("procurement nudge: refusing to post at tier %q (NOTABLE only)", post.Class)
+	}
+	_, inserted, err := n.svc.PostEventToChannelSlug(ctx, post.ChannelSlug, post.EventKey, post.Body,
+		messaging.EventRef{Topic: post.Topic, Entity: post.Entity, Summary: post.Summary},
+		false)
+	return inserted, err
+}
+
+// unionSLANotifier satisfies warranty's SLA-breach notifier over
+// messaging's unmutable ESCALATION tier: the ALERT row is the system of
+// record, the escalation post is visibility.
+type unionSLANotifier struct {
+	svc *messaging.Service
+	log *slog.Logger
+}
+
+func (u unionSLANotifier) NotifySLABreach(ctx context.Context, in warranty.SLABreachEvent) error {
+	body := "SLA breached: claim " + in.ClaimNo + ", phase " + in.Phase + ", due " + in.DueAt
+	if in.VendorName != "" {
+		body += ", " + in.VendorName
+	}
+	_, _, err := u.svc.PostEventToChannelSlug(ctx, "escalations", "warranty-sla:"+in.AlertID, body,
+		messaging.EventRef{Topic: in.Topic, Entity: "warranty_claim:" + in.ClaimID, Summary: body}, false)
+	return err
+}
+
+// approvalNotifierAdapter satisfies the rail's ApprovalNotifier over
+// messaging's per-person channel posts, best-effort: a messaging blip
+// never fails a filing or a decision.
+type approvalNotifierAdapter struct {
+	svc *messaging.Service
+	log *slog.Logger
+}
+
+func (a approvalNotifierAdapter) ApprovalRequested(ctx context.Context, n identity.ApprovalNotice) {
+	ref := messaging.ApprovalRef{
+		ApprovalID:  n.ApprovalID,
+		PolicyType:  string(n.Policy),
+		SubjectRef:  n.SubjectRef,
+		BranchID:    n.BranchID,
+		AmountCents: n.AmountCents,
+		RequestedBy: n.RequestedBy,
+		Detail:      n.Detail,
+		DeepLink:    n.DeepLink,
+		Status:      "PENDING",
+	}
+	if err := a.svc.PostApprovalToUserChannels(ctx, n.ApproverIDs, ref); err != nil {
+		a.log.Warn("approvals: fan-out card post partial failure", "approval_id", n.ApprovalID, "err", err)
+	}
+}
+
+func (a approvalNotifierAdapter) ApprovalDecided(ctx context.Context, n identity.ApprovalDecidedNotice) {
+	if err := a.svc.PostApprovalDecision(ctx, n.ApprovalID, n.Status, n.DecidedBy, n.Note); err != nil {
+		a.log.Warn("approvals: decision echo partial failure", "approval_id", n.ApprovalID, "err", err)
+	}
+	if n.RequestedBy != "" {
+		a.svc.NotifyUser(n.RequestedBy, "approval.decided", map[string]string{
+			"approval_id": n.ApprovalID,
+			"status":      n.Status,
+		})
+	}
+}

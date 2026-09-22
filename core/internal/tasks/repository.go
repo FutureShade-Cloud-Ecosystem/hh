@@ -1,0 +1,236 @@
+package tasks
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+var errNoDB = errors.New("tasks: database not configured")
+
+// Repository owns all tasks + task_events persistence (pgx). Every status move is transactional: the
+// tasks status write and its task_events audit row commit together (the order.SetStatus / outbox
+// precedent), so a task can never move without its history edge, and the legality check runs on a
+// FOR UPDATE-locked pre-image, so the recorded from→to is exactly the transition that landed.
+type Repository struct {
+	pool        *pgxpool.Pool // nil in scaffold/tests
+	stageOutbox StageOutbox   // W2: out-of-band staged-notice seam (yard_repository.go); nil = skipped
+}
+
+func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
+
+// taskColumns is the 0073 base tasks SELECT/RETURNING list. Nullable uuid/text/numeric columns are
+// COALESCE'd to "" and the nullable ints/timestamps are read into pointers.
+//
+// It is no longer scanned directly: yardColumns (yard_repository.go) extends it with the 0095 stage
+// stamp + shortage counts, and every read here uses THAT, so Create/Get/List/Transition/Stage all
+// return one identical Task shape. Keeping the base constant separate is what makes the extension
+// provably additive, yardColumns is literally taskColumns plus a suffix.
+const taskColumns = `id::text, task_type, order_id::text, order_line_no,
+	COALESCE(branch_id::text, ''), priority, status,
+	COALESCE(created_by::text, ''), COALESCE(assigned_to::text, ''), COALESCE(claimed_by::text, ''),
+	claimed_at, pushed_at, accept_deadline_at, done_at,
+	COALESCE(photo_url, ''), COALESCE(weight_entered::text, ''), COALESCE(weight_uom, ''),
+	source, COALESCE(source_message_id::text, ''), created_at, updated_at`
+
+type rowScanner interface{ Scan(dest ...any) error }
+
+// CreateTask inserts one task (status QUEUED) and its birth task_events row (from_status NULL →
+// to_status QUEUED) in a single tx, returning the persisted task. order_id is required; branch_id /
+// created_by / source_message_id are nullable (empty string → SQL NULL).
+func (r *Repository) CreateTask(ctx context.Context, in NewTaskInput) (Task, error) {
+	if r.pool == nil {
+		return Task{}, errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Task{}, fmt.Errorf("tasks: begin create: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	t, err := scanYardTask(tx.QueryRow(ctx, `
+		INSERT INTO tasks (task_type, order_id, order_line_no, branch_id, priority, status, created_by, source, source_message_id)
+		VALUES ($1, $2::uuid, $3, NULLIF($4,'')::uuid, $5, 'QUEUED', NULLIF($6,'')::uuid, $7, NULLIF($8,'')::uuid)
+		RETURNING `+yardColumns,
+		in.TaskType, in.OrderID, in.OrderLineNo, in.BranchID, in.Priority, in.CreatedBy, in.Source, in.SourceMessageID))
+	if err != nil {
+		return Task{}, fmt.Errorf("tasks: insert task: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO task_events (task_id, from_status, to_status, actor_id, note)
+		VALUES ($1::uuid, NULL, 'QUEUED', NULLIF($2,'')::uuid, 'created')`,
+		t.ID, in.CreatedBy); err != nil {
+		return Task{}, fmt.Errorf("tasks: insert create event: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Task{}, fmt.Errorf("tasks: commit create: %w", err)
+	}
+	return t, nil
+}
+
+// GetTask loads one task by id. A malformed (non-UUID) id short-circuits to ErrNotFound before the
+// query (tasks.id is a uuid column, a non-UUID would raise SQLSTATE 22P02 → HTTP 500), mirroring the
+// order module's boundary guard.
+func (r *Repository) GetTask(ctx context.Context, id string) (Task, error) {
+	if r.pool == nil {
+		return Task{}, errNoDB
+	}
+	if !looksLikeUUID(id) {
+		return Task{}, ErrNotFound
+	}
+	t, err := scanYardTask(r.pool.QueryRow(ctx, `SELECT `+yardColumns+` FROM tasks WHERE id = $1`, id))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Task{}, ErrNotFound
+		}
+		return Task{}, fmt.Errorf("tasks: get %q: %w", id, err)
+	}
+	return t, nil
+}
+
+// ListTasks returns one page of the picking queue, filtered by optional status + branch_id. This is
+// the query projection that IS the queue (no separate queue table): open tasks surface by ordering
+// QUEUED/PUSHED first, then priority, then oldest.
+//
+// Cursor pagination (HH-3.2 B5): the offset family is retired. The resume
+// predicate is a row-value comparison over the queue's stable-ordering key
+// (open-first flag inverted so every leg ascends, priority rank, created_at,
+// id tie-breaker), guarded by an IS NULL leg so it evaluates only with a key
+// present; the ORDER BY gains the id tie-breaker the key needs. No count
+// query: the cursor envelope carries no total.
+func (r *Repository) ListTasks(ctx context.Context, f TaskFilter) ([]Task, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	where := "1=1"
+	var args []any
+	if f.Status != "" {
+		args = append(args, f.Status)
+		where += fmt.Sprintf(" AND status = $%d", len(args))
+	}
+	if f.BranchID != "" {
+		args = append(args, f.BranchID)
+		where += fmt.Sprintf(" AND branch_id = $%d::uuid", len(args))
+	}
+
+	var cActive, cPriority, cCreated, cID any
+	if f.AfterCursor {
+		cActive, cPriority, cCreated, cID = f.CursorActive, f.CursorPriority, f.CursorCreatedAt, f.CursorID
+	}
+	args = append(args, cActive, cPriority, cCreated, cID, f.Limit)
+	q := fmt.Sprintf(`SELECT %s FROM tasks WHERE %s
+		   AND ($%d::int IS NULL OR
+		        ((status NOT IN ('QUEUED','PUSHED'))::int,
+		         CASE priority WHEN 'URGENT' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'NORMAL' THEN 2 ELSE 3 END,
+		         created_at, id)
+		        > ($%d::int, $%d::int, $%d::timestamptz, $%d::uuid))
+		ORDER BY (status IN ('QUEUED','PUSHED')) DESC,
+		         CASE priority WHEN 'URGENT' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'NORMAL' THEN 2 ELSE 3 END,
+		         created_at, id
+		LIMIT $%d`,
+		yardColumns, where,
+		len(args)-4, len(args)-4, len(args)-3, len(args)-2, len(args)-1, len(args))
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Task
+	for rows.Next() {
+		t, err := scanYardTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Transition applies one status move atomically: it locks the target task row (FOR UPDATE), reads the
+// true immediately-prior status, enforces the state machine on that locked pre-image, writes the new
+// status (plus the transition's field effects, claimed_by/at on ACCEPTED, done_at/photo_url on DONE),
+// and appends the task_events row, all in one tx. A missing/malformed id → ErrNotFound; a no-op
+// (To == current) → ErrNoTransition; an illegal jump → ErrIllegalTransition. Locking the row makes the
+// recorded from→to the exact transition that landed, never a stale pre-image (the order.UpdateStatus
+// FOR UPDATE precedent).
+func (r *Repository) Transition(ctx context.Context, in TransitionInput) (Task, error) {
+	if r.pool == nil {
+		return Task{}, errNoDB
+	}
+	if !looksLikeUUID(in.TaskID) {
+		return Task{}, ErrNotFound
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Task{}, fmt.Errorf("tasks: begin transition: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var from string
+	if err := tx.QueryRow(ctx, `SELECT status FROM tasks WHERE id = $1 FOR UPDATE`, in.TaskID).Scan(&from); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Task{}, ErrNotFound
+		}
+		return Task{}, fmt.Errorf("tasks: lock %q: %w", in.TaskID, err)
+	}
+	if from == in.To {
+		return Task{}, ErrNoTransition
+	}
+	if !canTransition(from, in.To) {
+		return Task{}, ErrIllegalTransition
+	}
+
+	t, err := scanYardTask(tx.QueryRow(ctx, `
+		UPDATE tasks SET
+			status     = $2,
+			claimed_by = CASE WHEN $2 = 'ACCEPTED' THEN NULLIF($3,'')::uuid ELSE claimed_by END,
+			claimed_at = CASE WHEN $2 = 'ACCEPTED' THEN now() ELSE claimed_at END,
+			done_at    = CASE WHEN $2 = 'DONE' THEN now() ELSE done_at END,
+			photo_url  = CASE WHEN $2 = 'DONE' AND $4 <> '' THEN $4 ELSE photo_url END,
+			updated_at = now()
+		WHERE id = $1
+		RETURNING `+yardColumns,
+		in.TaskID, in.To, in.ActorID, in.PhotoURL))
+	if err != nil {
+		return Task{}, fmt.Errorf("tasks: update %q: %w", in.TaskID, err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO task_events (task_id, from_status, to_status, actor_id, note)
+		VALUES ($1::uuid, $2, $3, NULLIF($4,'')::uuid, $5)`,
+		in.TaskID, from, in.To, in.ActorID, in.Note); err != nil {
+		return Task{}, fmt.Errorf("tasks: insert transition event: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Task{}, fmt.Errorf("tasks: commit transition: %w", err)
+	}
+	return t, nil
+}
+
+// looksLikeUUID reports whether s is a canonical 36-char 8-4-4-4-12 hex UUID (the shape of a tasks.id),
+// so a malformed id is rejected before it reaches a Postgres uuid column (which would otherwise raise
+// SQLSTATE 22P02 → HTTP 500). Mirrors the order module's validator.
+func looksLikeUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
+}

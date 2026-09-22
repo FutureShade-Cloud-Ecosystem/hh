@@ -1,6 +1,6 @@
 {
   "_README": [
-    "STATIC SYNTHETIC TEST DATA — NOT a real BisTrack export.",
+    "STATIC SYNTHETIC TEST DATA, NOT a real BisTrack export.",
     "Purpose: the M2 gate criterion C1 (roadmap.yaml 'GL reconciled against static BisTrack test data', due 2026-07-31).",
     "The live BisTrack GLExport is BLOCKED on client data access (Q-045/046/047, decision_log D-031); this file is the",
     "static-snapshot FALLBACK. GRAIN: this is a per-account CLOSING TRIAL BALANCE for ONE fiscal period (one row per GL",
@@ -8,9 +8,9 @@
     "bistrack_map.json (third-party GL = Microsoft Dynamics GP / Great Plains, confirmed 2026-05-19). Summary-vs-detail",
     "depth is still open discovery. DROP-IN CAVEAT: IF the real BisTrack export is delivered at balance (closing-TB) grain,",
     "keep this JSON envelope and replace the `accounts` rows (and, if BisTrack account numbers differ from these synthetic",
-    "ones, the per-row `erp_account_code` crosswalk) — the harness (bistrack_tieout.go) reconciles on erp_account_code and",
+    "ones, the per-row `erp_account_code` crosswalk), the harness (bistrack_tieout.go) reconciles on erp_account_code and",
     "is unchanged. IF instead it lands as 46-column line-level detail, a loader ADAPTER is needed to aggregate lines to",
-    "per-account closing balances first — that is NOT a row-swap. BisTrack accounts are crosswalked to the ERP gl_accounts",
+    "per-account closing balances first, that is NOT a row-swap. BisTrack accounts are crosswalked to the ERP gl_accounts",
     "codes (0007/0032).",
     "Money is DOLLARS as strings here (BisTrack/GP export convention, exact 2-decimal); the harness parses to int64 CENTS.",
     "Sign convention: debit and credit are both non-negative magnitudes (BisTrack posts one side per account row).",

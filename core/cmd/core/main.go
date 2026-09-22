@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/shims"
@@ -119,11 +120,11 @@ func loadServeConfig(getenv func(string) string) (serveConfig, error) {
 	return cfg, nil
 }
 
-// serve constructs the identity surface and serves it until the listener
-// fails. The driver session knob source is deliberately unwired here: the
-// knob lives in dispatch_policy, a dispatch-owned table whose concrete
-// reader lands with the Phase C dispatch module, and the guard refuses the
-// driver ceiling leg until then (fail closed, identity.SessionCeiling).
+// serve constructs the served surface and serves it until the listener
+// fails. The driver session knob is WIRED: the concrete reader reads
+// dispatch_policy's dealer-default row (branch override inert per the
+// pin's comment), and an uncomputable ceiling refuses the driver leg
+// (fail closed, identity.SessionCeiling).
 func serve(getenv func(string) string) error {
 	cfg, err := loadServeConfig(getenv)
 	if err != nil {
@@ -176,7 +177,15 @@ func serve(getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
-	g, err := guards.NewGuards(gate, staff, portal, nil)
+	// P-4 closed (HH-3.2 B5): the driver session ceiling's knob source is
+	// the dispatch-owned dispatch_policy reader, wired now that dispatch
+	// has landed. Before this the guard refused the driver ceiling leg
+	// (fail closed, identity.SessionCeiling with no knob source); with it,
+	// a driver-role token whose window fits the dealer's knob passes and
+	// an over-knob window is refused. The knob read itself refuses on an
+	// unreadable policy (the B2-07 no-fallback ruling), so the 503 family
+	// answers an outage rather than silently shortening sessions.
+	g, err := guards.NewGuards(gate, staff, portal, dispatchDriverSessionKnob{repo: dispatch.NewRepository(pool)})
 	if err != nil {
 		return err
 	}
@@ -189,8 +198,22 @@ func serve(getenv func(string) string) error {
 	// (plus product and settings, their compile closure) register their
 	// real routes through the Guards, and the identity shims for those
 	// operationIds came out of shims.RegisterRoutes in the same change
-	// (the ServeMux duplicate-registration panic is the backstop).
-	wireMoney(mux, pool, g, slog.Default(), "")
+	// (the ServeMux duplicate-registration panic is the backstop). The
+	// spine's shared instances (the rail, the order and quote
+	// repositories, the audit service) feed the operations wiring.
+	spine := wireMoney(mux, pool, g, slog.Default(), "")
+
+	// The operations cluster (HH-3.2 B5): bankrec, dispatch, invcount,
+	// landedcost, lien, messaging, payments, printing, purchasing, tasks,
+	// till and warranty, plus the rail's staff approvals surface (the A3
+	// ownership ruling: its decide path resolves through these Guards).
+	// The stream-ticket HMAC key is a DEDICATED environment input (the A1
+	// ruling; the HS256 secret it reused at the pin no longer exists):
+	// unset leaves the tickets seam dark and clients use the Bearer
+	// stream, the designed degradation. The value is a credential by
+	// content: it arrives as an environment value, is held in memory
+	// only, and is never logged or echoed.
+	wireOperations(mux, pool, g, slog.Default(), spine, os.Getenv("CORE_STREAM_TICKET_KEY"))
 
 	srv := &http.Server{Addr: cfg.listenAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	fmt.Printf("core: serve: listening on %s (identity shims plus the money spine)\n", cfg.listenAddr)

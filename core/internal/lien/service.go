@@ -1,0 +1,360 @@
+package lien
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+)
+
+// service.go, the lien domain orchestration: jobs, the idempotent holdback sync, the dual-gated release (with
+// the PAYABLE-refused 422 + the 1150/2350 GL post), document rendering + version history, and the Bill 60
+// aging + Monday triage roll-ups. Table access is entirely through the lienStore seam.
+
+const actHoldbackRelease = "HOLDBACK_RELEASE"
+
+// - jobs -
+
+// CreateJob records a lien job and, when a substantial-performance date is known, registers the 45-day
+// holdback-release deadline on the compliance calendar (the registry the Monday triage reads).
+func (s *Service) CreateJob(ctx context.Context, in JobInput) (Job, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return Job{}, err
+	}
+	if strings.TrimSpace(in.JobNo) == "" {
+		return Job{}, unprocessable("lien: job_no is required")
+	}
+	if strings.TrimSpace(in.BranchID) == "" {
+		return Job{}, unprocessable("lien: branch_id is required")
+	}
+	if in.Direction == "" {
+		in.Direction = dirReceivable
+	}
+	if in.Direction != dirReceivable && in.Direction != dirPayable {
+		return Job{}, unprocessable("lien: holdback_direction must be RECEIVABLE or PAYABLE")
+	}
+	job, err := s.store.InsertJob(ctx, in, caller.UserID)
+	if err != nil {
+		return Job{}, err
+	}
+	s.registerReleaseDeadline(ctx, job)
+	return job, nil
+}
+
+// GetJob reads one job.
+func (s *Service) GetJob(ctx context.Context, id string) (Job, error) {
+	return s.store.GetJob(ctx, id)
+}
+
+// ListJobs lists jobs for a branch ("" = all).
+func (s *Service) ListJobs(ctx context.Context, branchID string) ([]Job, error) {
+	return s.store.ListJobs(ctx, branchID)
+}
+
+// registerReleaseDeadline best-effort registers the Bill 60 45-day release deadline for a job (idempotent in
+// the calendar). A calendar failure is logged, not fatal, the aging roll-up still computes the window itself.
+func (s *Service) registerReleaseDeadline(ctx context.Context, job Job) {
+	if s.calendar == nil || job.SubstantialPerfDate == "" {
+		return
+	}
+	perf, err := time.Parse("2006-01-02", job.SubstantialPerfDate)
+	if err != nil {
+		return
+	}
+	due := perf.AddDate(0, 0, releaseRuleDays).Format("2006-01-02")
+	if err := s.calendar.RegisterDeadline(ctx, job.ID, "HOLDBACK_RELEASE", due, releaseRuleDays); err != nil {
+		s.log.Warn("lien: register release deadline failed", "job_id", job.ID, "err", err)
+	}
+}
+
+// - holdback sync (idempotent) -
+
+// SyncHoldbacks books RETENTION rows into the holdback ledger from billing's holdback-bearing invoices for a
+// job's branch/customer. IDEMPOTENT: an invoice already booked as RETENTION for this job is skipped, so a
+// re-run books nothing new (the sync-idempotent AC). Retention was posted to 1150 at invoice.finalized, so no
+// GL journal rides a RETENTION row (the 0038 CHECK only requires a journal on RELEASE).
+func (s *Service) SyncHoldbacks(ctx context.Context, jobID string) (SyncResult, error) {
+	if _, err := s.caller(ctx); err != nil {
+		return SyncResult{}, err
+	}
+	job, err := s.store.GetJob(ctx, jobID)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	res := SyncResult{JobID: jobID}
+	if s.holdback == nil {
+		return res, nil
+	}
+	invoices, err := s.holdback.InvoicesWithHoldback(ctx, job.BranchID)
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("lien: read holdback invoices: %w", err)
+	}
+	booked, err := s.store.RetentionInvoiceIDs(ctx, jobID)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	for _, inv := range invoices {
+		// Scope a job to its customer when one is set (a job with no customer sweeps its whole branch).
+		if job.CustomerID != "" && inv.CustomerID != "" && inv.CustomerID != job.CustomerID {
+			continue
+		}
+		if booked[inv.InvoiceID] {
+			res.SkippedCount++
+			continue
+		}
+		amount := holdbackAmount(inv.HoldbackCents, job.HSTOnHoldback)
+		if amount <= 0 {
+			res.SkippedCount++
+			continue
+		}
+		if _, err := s.store.InsertHoldbackEntry(ctx, HoldbackEntry{
+			JobID:       jobID,
+			InvoiceID:   inv.InvoiceID,
+			BranchID:    job.BranchID,
+			EntryType:   "RETENTION",
+			AmountCents: amount,
+			Reason:      "synced from invoice " + inv.InvoiceNo,
+		}); err != nil {
+			return SyncResult{}, err
+		}
+		booked[inv.InvoiceID] = true // guard against a duplicate invoice id inside the same batch
+		res.BookedCount++
+		res.BookedCents += amount
+	}
+	return res, nil
+}
+
+// holdbackAmount applies the HST-on-holdback config flag. billing already computes holdback_cents on the
+// pre-tax base; when a job opts into HST-on-holdback, the retention is grossed up by the Ontario HST rate so
+// the held amount matches a tax-inclusive contract. hstBps is a DOCUMENTED PLACEHOLDER (the M5 tax engine owns
+// the authoritative rate; M6 must not hardcode a live rate, so this only fires when the per-job flag is set).
+func holdbackAmount(base int64, hstOnHoldback bool) int64 {
+	if !hstOnHoldback {
+		return base
+	}
+	const hstBps = 1300 // 13% ON HST (placeholder; parity with the W4 flat stub)
+	return base + (base*hstBps)/10000
+}
+
+// - dual-gated release -
+
+// ReleaseHoldbackApproved is the co-signed holdback release the HTTP route drives. It enforces the dual gate
+// (gatekeeper = GENERAL_MANAGER + a Controller/Payables-Receivables four-eyes co-signer), refuses a PAYABLE
+// direction (422, recordable but release is manual), posts the DR 2350 / CR 1150 journal through the GL
+// provider, and records the RELEASE ledger row carrying that journal id (the 0038 CHECK forbids a journal-less
+// release).
+func (s *Service) ReleaseHoldbackApproved(ctx context.Context, jobID string, appr ReleaseApproval) (ReleaseResult, error) {
+	return s.releaseHoldback(ctx, jobID, appr)
+}
+
+func (s *Service) releaseHoldback(ctx context.Context, jobID string, appr ReleaseApproval) (ReleaseResult, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return ReleaseResult{}, err
+	}
+	// Dual gate. Gatekeeper must be the General Manager; the co-signer must be a finance authority and differ
+	// from the gatekeeper (four-eyes).
+	if caller.RoleCode != roleGatekeeper {
+		return ReleaseResult{}, forbidden("lien: holdback release gatekeeper must be %s", roleGatekeeper)
+	}
+	if appr.ApproverID == "" || appr.ApproverID == caller.UserID {
+		return ReleaseResult{}, forbidden("lien: four-eyes, the co-signer must differ from the gatekeeper")
+	}
+	// The co-signer's authority is resolved SERVER-SIDE from identity, never trusted from the request body. A
+	// gatekeeper could otherwise post a body claiming any co-signer id + role and self-satisfy the four-eyes
+	// gate (S3 W6 B4). We assert the id resolves to an ACTIVE user who ACTUALLY holds a finance authority; the
+	// body-asserted appr.ApproverRole is ignored and overwritten with the resolved role for the audit trail.
+	if s.cosigner == nil {
+		return ReleaseResult{}, clientErr(500, "lien: co-signer resolver not configured")
+	}
+	cosigner, err := s.cosigner.ResolveStaff(ctx, appr.ApproverID)
+	if err != nil {
+		return ReleaseResult{}, forbidden("lien: holdback release co-signer could not be verified")
+	}
+	if cosigner.Status != identity.StatusActive {
+		return ReleaseResult{}, forbidden("lien: holdback release co-signer must be an active staff member")
+	}
+	if cosigner.RoleCode != roleController && cosigner.RoleCode != rolePayRec {
+		return ReleaseResult{}, forbidden("lien: holdback release co-signer must be %s or %s", roleController, rolePayRec)
+	}
+	appr.ApproverRole = cosigner.RoleCode // record the VERIFIED role, not the client's claim
+
+	job, err := s.store.GetJob(ctx, jobID)
+	if err != nil {
+		return ReleaseResult{}, err
+	}
+	// PAYABLE retention is recordable but its release is NOT posted here (manual, a scoped PARTIAL). 422.
+	if job.Direction == dirPayable {
+		return ReleaseResult{}, unprocessable("lien: PAYABLE holdback release is manual, recorded, not posted (register a calendar deadline)")
+	}
+
+	entries, err := s.store.HoldbackEntriesForJob(ctx, jobID)
+	if err != nil {
+		return ReleaseResult{}, err
+	}
+	outstanding := outstandingCents(entries)
+	if outstanding <= 0 {
+		return ReleaseResult{}, unprocessable("lien: no outstanding retention to release for this job")
+	}
+	if s.gl == nil {
+		return ReleaseResult{}, clientErr(500, "lien: GL poster not configured")
+	}
+
+	// DR 2350 (holdback payable) / CR 1150 (holdback receivable), the frozen release pair. Idempotent on the
+	// job (a replay returns the same journal from the GL, and the RELEASE row upsert below is guarded).
+	journalID, err := s.gl.PostJournal(ctx, GLJournal{
+		Source:         "ADJUSTMENT",
+		SourceRefID:    jobID,
+		IdempotencyKey: "holdback-release:" + jobID,
+		Memo:           "Bill 60 holdback release, job " + job.JobNo,
+		BranchID:       job.BranchID,
+		Lines: []GLLine{
+			{AccountCode: "2350", DebitCents: outstanding, Memo: "release holdback payable"},
+			{AccountCode: "1150", CreditCents: outstanding, Memo: "release holdback receivable"},
+		},
+	})
+	if err != nil {
+		return ReleaseResult{}, fmt.Errorf("lien: post release journal: %w", err)
+	}
+
+	releasedAt := s.clock().Format("2006-01-02")
+	if _, err := s.store.InsertHoldbackEntry(ctx, HoldbackEntry{
+		JobID:       jobID,
+		BranchID:    job.BranchID,
+		EntryType:   "RELEASE",
+		AmountCents: outstanding,
+		GLJournalID: journalID,
+		ReleasedAt:  releasedAt,
+		Reason:      fmt.Sprintf("released by %s, co-signed %s (%s)", caller.UserID, appr.ApproverID, appr.ApproverRole),
+	}); err != nil {
+		return ReleaseResult{}, err
+	}
+
+	if s.audit != nil {
+		if aerr := s.audit.Record(ctx, audit.SensitiveAccess{
+			Action:     actHoldbackRelease,
+			EntityType: "lien.holdback",
+			EntityID:   jobID,
+			ActorID:    caller.UserID,
+			Reason:     fmt.Sprintf("co-signed by %s (%s)", appr.ApproverID, appr.ApproverRole),
+			Extra:      map[string]any{"amount_cents": outstanding, "gl_journal_id": journalID},
+		}); aerr != nil {
+			return ReleaseResult{}, fmt.Errorf("lien: audit release: %w", aerr)
+		}
+	}
+
+	return ReleaseResult{
+		JobID:        jobID,
+		AmountCents:  outstanding,
+		GLJournalID:  journalID,
+		ReleasedAt:   releasedAt,
+		ApprovedBy:   appr.ApproverID,
+		GatekeeperBy: caller.UserID,
+	}, nil
+}
+
+// outstandingCents nets a job's ledger: ΣRETENTION − ΣRELEASE.
+func outstandingCents(entries []HoldbackEntry) int64 {
+	var total int64
+	for _, e := range entries {
+		switch e.EntryType {
+		case "RETENTION":
+			total += e.AmountCents
+		case "RELEASE":
+			total -= e.AmountCents
+		}
+	}
+	return total
+}
+
+// - documents (render + version history) -
+
+// CreateDocument renders a statute-driven, DRAFT-bannered Construction-Act document from its merge data,
+// stamping the next version for that (job, template_kind), the version history is append-only.
+func (s *Service) CreateDocument(ctx context.Context, in DocumentInput) (Document, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return Document{}, err
+	}
+	if strings.TrimSpace(in.JobID) == "" {
+		return Document{}, unprocessable("lien: job_id is required")
+	}
+	if !knownTemplate(in.TemplateKind) {
+		return Document{}, unprocessable("lien: unknown template_kind %q", in.TemplateKind)
+	}
+	if _, err := s.store.GetJob(ctx, in.JobID); err != nil {
+		return Document{}, err
+	}
+	version, err := s.store.NextDocumentVersion(ctx, in.JobID, in.TemplateKind)
+	if err != nil {
+		return Document{}, err
+	}
+	if in.Data == nil {
+		in.Data = map[string]any{}
+	}
+	content, err := renderTemplate(in.TemplateKind, version, in.Data)
+	if err != nil {
+		return Document{}, err
+	}
+	doc := Document{
+		JobID:           in.JobID,
+		TemplateKind:    in.TemplateKind,
+		Status:          "DRAFT",
+		Version:         version,
+		RenderedContent: content,
+		Data:            in.Data,
+		IsDraftBanner:   true, // data-driven DRAFT banner, M6 has no client sign-off yet (DIB-42)
+	}
+	return s.store.InsertDocument(ctx, doc, caller.UserID)
+}
+
+// ListDocuments returns the latest documents for a job.
+func (s *Service) ListDocuments(ctx context.Context, jobID string) ([]Document, error) {
+	return s.store.DocumentsForJob(ctx, jobID)
+}
+
+// DocumentVersions returns the full version history of one document (same job + template_kind).
+func (s *Service) DocumentVersions(ctx context.Context, documentID string) ([]Document, error) {
+	return s.store.DocumentVersions(ctx, documentID)
+}
+
+// - aging + triage -
+
+// HoldbackAging computes the Bill 60 outstanding-holdback aging for a branch ("" = all).
+func (s *Service) HoldbackAging(ctx context.Context, branchID string) ([]AgingRow, error) {
+	entries, err := s.store.HoldbackLedger(ctx, branchID)
+	if err != nil {
+		return nil, err
+	}
+	facts, err := s.jobFacts(ctx, branchID)
+	if err != nil {
+		return nil, err
+	}
+	return buildAging(entries, facts, s.clock()), nil
+}
+
+// Triage computes the Monday triage worklist (aging rows badge-classified) for a branch ("" = all).
+func (s *Service) Triage(ctx context.Context, branchID string) ([]TriageItem, error) {
+	rows, err := s.HoldbackAging(ctx, branchID)
+	if err != nil {
+		return nil, err
+	}
+	return buildTriage(rows), nil
+}
+
+// jobFacts loads the per-job projection the roll-ups need.
+func (s *Service) jobFacts(ctx context.Context, branchID string) (map[string]jobFacts, error) {
+	jobs, err := s.store.ListJobs(ctx, branchID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]jobFacts, len(jobs))
+	for _, j := range jobs {
+		out[j.ID] = jobFacts{JobNo: j.JobNo, BranchID: j.BranchID, Direction: j.Direction}
+	}
+	return out, nil
+}

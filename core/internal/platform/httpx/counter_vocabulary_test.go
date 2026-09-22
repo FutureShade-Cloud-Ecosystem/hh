@@ -152,12 +152,12 @@ func TestError_IsTheOnlyDoorAnEnvelopeGoesThrough(t *testing.T) {
 	}
 
 	// Guard the guard: a scan that reads nothing passes every assertion below vacuously.
-	// The floor is the exact non-test file count of this tree at the money-spine
+	// The floor is the exact non-test file count of this tree at the operations
 	// carry (the walk covers internal/ minus this package), and every carry batch that
 	// adds files raises it in the same change: a floor left behind while the tree grows
 	// is the vacuous pass this check exists to prevent, and so is a floor above a tree
 	// that shrank. It is never lowered without a recorded reason.
-	if scanned < 188 {
+	if scanned < 342 {
 		t.Fatalf("the sweep read only %d Go files, it is measuring nothing", scanned)
 	}
 

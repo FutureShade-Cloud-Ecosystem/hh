@@ -55,7 +55,7 @@ func linkedUserID(pool *pgxpool.Pool) identity.UserIDLinker {
 // the landed seam set supports; the seams whose owners land in later
 // batches (billing, pos, till, customer) stay unwired and their surfaces
 // answer the modules' designed fail-closed refusals.
-func wireMoney(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, staffBaseURL string) {
+func wireMoney(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, staffBaseURL string) *moneySpine {
 	link := linkedUserID(pool)
 	outboxStore := notify.NewPgOutboxStore(pool)
 	auditSvc := audit.NewService(audit.NewRepository(pool), log)
@@ -154,6 +154,33 @@ func wireMoney(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, log *sl
 		WithLogger(log)
 	quote.NewAutomationHandler(quoteAutomation).WithUserLinker(link).RegisterAutomationRoutes(mux, g)
 	quoteStaffHandler.RegisterAvailabilityRoutes(mux, g)
+
+	return &moneySpine{
+		glSvc:        glSvc,
+		inventorySvc: inventorySvc,
+		orderSvc:     orderSvc,
+		orderRepo:    orderRepo,
+		quoteRepo:    quoteRepo,
+		approvals:    approvals,
+		auditSvc:     auditSvc,
+	}
+}
+
+// moneySpine carries the money batch's shared handles to the operations
+// batch's wire function: the services whose pointers later seams mutate
+// (the rail's deciders), the repositories later adapters read (order,
+// quote), and the audit service every operations module takes. One struct,
+// because the operations modules were composed against exactly these
+// instances at the pin and a second construction would strand a setter on
+// an instance nobody serves.
+type moneySpine struct {
+	glSvc        *gl.Service
+	inventorySvc *inventory.Service
+	orderSvc     *order.Service
+	orderRepo    *order.Repository
+	quoteRepo    *quote.Repository
+	approvals    *identity.Approvals
+	auditSvc     *audit.Service
 }
 
 // jeApprovalFilerAdapter satisfies gl.ApprovalFiler over the approvals

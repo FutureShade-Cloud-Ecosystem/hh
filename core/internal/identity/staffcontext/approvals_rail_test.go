@@ -64,7 +64,7 @@ func TestDecideApproval_CASConflict409(t *testing.T) {
 	}
 	s := NewApprovals(f).WithApprovalNotifier(notifier)
 
-	err := s.DecideApproval(context.Background(), tstApproval, "gm", true, "")
+	err := s.DecideApproval(context.Background(), tstApproval, gmCtx(), true, "")
 	if err == nil {
 		t.Fatal("a lost CAS must return an error, not succeed")
 	}
@@ -98,7 +98,7 @@ func TestDecideApproval_JEOrdering(t *testing.T) {
 	f := newStore()
 	jd := &fakeJEDecider{err: NewClientError(http.StatusConflict, "gl: journal is POSTED, not DRAFT")}
 	s := NewApprovals(f).WithJEDecider(jd)
-	err := s.DecideApproval(context.Background(), tstApproval, "gm", true, "")
+	err := s.DecideApproval(context.Background(), tstApproval, gmCtx(), true, "")
 	if err == nil {
 		t.Fatal("a GL refusal on approve must surface as an error")
 	}
@@ -122,7 +122,7 @@ func TestDecideApproval_JEOrdering(t *testing.T) {
 	f = newStore()
 	jd = &fakeJEDecider{}
 	s = NewApprovals(f).WithJEDecider(jd)
-	if err := s.DecideApproval(context.Background(), tstApproval, "gm", true, "ok"); err != nil {
+	if err := s.DecideApproval(context.Background(), tstApproval, gmCtx(), true, "ok"); err != nil {
 		t.Fatalf("GL success should let the decide succeed: %v", err)
 	}
 	if !jd.called || jd.deciderID != "gm" {
@@ -139,7 +139,7 @@ func TestDecideApproval_JEOrdering(t *testing.T) {
 	f = newStore()
 	jd = &fakeJEDecider{}
 	s = NewApprovals(f).WithJEDecider(jd)
-	if err := s.DecideApproval(context.Background(), tstApproval, "gm", false, "no"); err != nil {
+	if err := s.DecideApproval(context.Background(), tstApproval, gmCtx(), false, "no"); err != nil {
 		t.Fatalf("decline should succeed: %v", err)
 	}
 	if jd.called {

@@ -83,23 +83,30 @@ func (f *fakeStore) ApprovalsForReconcile(_ context.Context, _ time.Time) ([]App
 	return f.reconcile, nil
 }
 
+// clerkCtx and mgrCtx are the non-approver halves of the authority matrix
+// (the signature re-point moved the caller resolution out of the service,
+// so the tests hand the caller in directly).
+func clerkCtx() StaffContext {
+	return StaffContext{UserID: "clerk", RoleCode: "INSIDE_SALES", Tier: TierFrontline, Scope: ScopeBranch, Branches: map[string]bool{trt: true}}
+}
+
+func mgrCtx() StaffContext {
+	return StaffContext{UserID: "mgr", RoleCode: "BRANCH_MANAGER", Tier: TierManager, Scope: ScopeBranch, Branches: map[string]bool{trt: true}}
+}
+
 func TestApprovals_DecideApproval_AuthorityEnforced(t *testing.T) {
 	f := &fakeStore{
 		approval: ApprovalRequest{ID: "ar1", BranchID: trt, Policy: PolicyMargin, Status: ApprovalPending},
-		ctxs: map[string]StaffContext{
-			"clerk": {UserID: "clerk", RoleCode: "INSIDE_SALES", Tier: TierFrontline, Scope: ScopeBranch, Branches: map[string]bool{trt: true}},
-			"gm":    {UserID: "gm", RoleCode: "GENERAL_MANAGER", Tier: TierLeadership, Scope: ScopeGlobal},
-		},
 	}
 	s := NewApprovals(f)
 
-	if err := s.DecideApproval(context.Background(), tstApproval, "clerk", true, ""); err == nil {
+	if err := s.DecideApproval(context.Background(), tstApproval, clerkCtx(), true, ""); err == nil {
 		t.Error("front-line decide should be rejected by the authority model")
 	}
 	if f.saved != nil {
 		t.Error("nothing should persist when the authority check fails")
 	}
-	if err := s.DecideApproval(context.Background(), tstApproval, "gm", true, ""); err != nil {
+	if err := s.DecideApproval(context.Background(), tstApproval, gmCtx(), true, ""); err != nil {
 		t.Fatalf("GM approve should succeed: %v", err)
 	}
 	if f.saved == nil || f.saved.status != ApprovalApproved || f.saved.by != "gm" {
@@ -120,14 +127,14 @@ func TestApprovals_DecideApproval_NoSelfApproval(t *testing.T) {
 	}
 	s := NewApprovals(f)
 
-	if err := s.DecideApproval(context.Background(), tstApproval, "mgr", true, ""); err == nil {
+	if err := s.DecideApproval(context.Background(), tstApproval, mgrCtx(), true, ""); err == nil {
 		t.Fatal("the requester must not approve their own request (separation of duties)")
 	}
 	if f.saved != nil {
 		t.Fatal("nothing should persist on a self-approval attempt")
 	}
 	// a DIFFERENT authorized approver succeeds.
-	if err := s.DecideApproval(context.Background(), tstApproval, "gm", true, ""); err != nil {
+	if err := s.DecideApproval(context.Background(), tstApproval, gmCtx(), true, ""); err != nil {
 		t.Fatalf("a different authorized approver should succeed: %v", err)
 	}
 }

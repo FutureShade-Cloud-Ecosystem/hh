@@ -48,9 +48,6 @@ type approvalStore interface {
 	// HasApprovedOverride reports whether an APPROVED override exists for this
 	// requester + branch + policy (+ optional subject), closing the loop (H-2).
 	HasApprovedOverride(ctx context.Context, requestedBy, branchID, subjectRef string, policy PolicyType) (bool, error)
-	// ResolveStaff loads the deciding or listing caller's authority: the rail's
-	// own read, keyed by user id exactly as the ERP had it.
-	ResolveStaff(ctx context.Context, userID string) (StaffContext, error)
 	// ListApproverCandidates returns the ACTIVE staff whose role could grant approval authority: the
 	// fan-out candidate pool ResolveApprovers filters via CanApprove (0075).
 	ListApproverCandidates(ctx context.Context) ([]StaffContext, error)
@@ -173,11 +170,15 @@ func (s *Approvals) HasApprovedOverride(ctx context.Context, requestedBy, branch
 
 // ListApprovals returns the requests the caller is allowed to see:
 // a GLOBAL user sees every branch; a scoped user sees only their granted branches.
-func (s *Approvals) ListApprovals(ctx context.Context, callerID, status string) ([]ApprovalRequest, error) {
-	caller, err := s.store.ResolveStaff(ctx, callerID)
-	if err != nil {
-		return nil, err
-	}
+//
+// CARRY NOTE (the A3 decide-path re-point, HH-3.2 B5): the ERP signature
+// took the caller's user id and re-resolved authority from the identity
+// scaffold tables inside this method. Under the carry the caller arrives
+// as the bridged StaffContext the guard already resolved from the Phase B
+// source (the request path's only authority read, D3); the store's
+// scaffold read is gone from the decide path and nothing on it derives
+// authority from the scaffold tables.
+func (s *Approvals) ListApprovals(ctx context.Context, caller StaffContext, status string) ([]ApprovalRequest, error) {
 	if caller.Scope == ScopeGlobal {
 		return s.store.ListApprovals(ctx, status, nil)
 	}
@@ -193,14 +194,19 @@ func (s *Approvals) ListApprovals(ctx context.Context, callerID, status string) 
 
 // DecideApproval enforces the authority model, bridges a JE decision to the GL maker-checker (GL first),
 // then persists the decision via a compare-and-swap and fires the decision echo.
-func (s *Approvals) DecideApproval(ctx context.Context, id, callerID string, approve bool, reason string) error {
+//
+// CARRY NOTE (the A3 decide-path re-point, HH-3.2 B5): the ERP signature
+// took the caller's user id and re-resolved authority from the identity
+// scaffold tables inside this method, which fails open on scaffold drift
+// (a revoked grant could still decide money). Under the carry the caller
+// arrives as the bridged StaffContext the guard already resolved from the
+// Phase B source (staff_role_grant per request, D3), with the ERP users.id
+// the linkage supplied on the stamp: decide-time authority never reads the
+// scaffold tables on any path.
+func (s *Approvals) DecideApproval(ctx context.Context, id string, caller StaffContext, approve bool, reason string) error {
 	// Reject a malformed (non-UUID) approval id before it reaches the uuid PK cast (22P02 to HTTP 500).
 	if _, err := uuid.Parse(id); err != nil {
 		return clientErr(http.StatusBadRequest, "invalid approval id")
-	}
-	caller, err := s.store.ResolveStaff(ctx, callerID)
-	if err != nil {
-		return err
 	}
 	req, err := s.store.GetApproval(ctx, id)
 	if err != nil {
@@ -465,41 +471,97 @@ func (r *ApprovalRepository) HasApprovedOverride(ctx context.Context, requestedB
 	return ok, nil
 }
 
-// ResolveStaff loads a user's CURRENT authority (status, tier, scope, granted
-// branches) straight from the DB: the rail's caller read on the carried ERP
-// query, keyed by users.id. See the dual-source note on ApprovalRepository:
-// the request path resolves through the Phase B resolver instead, and the
-// bridge maps that resolution onto this same vocabulary.
+// ResolveStaff loads one user's CURRENT authority (status, tier, scope,
+// granted branches) keyed by users.id.
+//
+// CARRY NOTE (the A3 decide-path re-point, HH-3.2 B5): the carried ERP
+// query read the identity scaffold tables (users, user_roles, roles,
+// user_branch_grants) without the tombstone columns those reads predate.
+// This read is RE-POINTED at the canonical source: the role, tier and
+// scope come from staff_role through the user's linked grants
+// (users.platform_user_id, the same linkage column the wire's linker
+// reads; migration 0215), tombstones honored on every leg, the winning
+// grant chosen by the Phase B resolver's rule (lowest tier, then role id)
+// so this projection and the guard can never disagree on the vocabulary,
+// and the ERP role code from staff_role.origin_code (the bridge's mapping
+// in data form). It is a PROJECTION read for document surfaces that name a
+// person by their ERP id (lien's co-signer); decide-time authority never
+// runs through it (DecideApproval takes the guard-resolved caller), and
+// until HH-5 adds the org dimension the grant read crosses no org
+// predicate because the frozen data holds one org.
 func (r *ApprovalRepository) ResolveStaff(ctx context.Context, userID string) (StaffContext, error) {
 	if r.pool == nil {
 		return StaffContext{}, errNoDB
 	}
-	var roleCode, scope, status string
-	var tier int
-	var branchIDs []string
-	err := r.pool.QueryRow(ctx, `
-		SELECT u.status, COALESCE(ro.code::text,''), COALESCE(ro.tier,0), COALESCE(ro.scope,'BRANCH'),
-		       COALESCE(array_remove(array_agg(DISTINCT ubg.branch_id::text), NULL), ARRAY[]::text[])
-		FROM users u
-		LEFT JOIN user_roles ur ON ur.user_id = u.id
-		LEFT JOIN roles ro ON ro.id = ur.role_id
-		LEFT JOIN user_branch_grants ubg ON ubg.user_id = u.id
-		WHERE u.id = $1
-		GROUP BY u.id, u.status, ro.code, ro.tier, ro.scope`, userID).Scan(&status, &roleCode, &tier, &scope, &branchIDs)
+	var status, platformID string
+	err := r.pool.QueryRow(ctx,
+		`SELECT u.status, COALESCE(u.platform_user_id,'') FROM users u WHERE u.id = $1 AND u.deleted_at IS NULL`,
+		userID).Scan(&status, &platformID)
 	if err != nil {
 		return StaffContext{}, fmt.Errorf("resolve staff %q: %w", userID, err)
 	}
-	branches := make(map[string]bool, len(branchIDs))
-	for _, b := range branchIDs {
-		branches[b] = true
+	out := StaffContext{UserID: userID, Status: status, Branches: map[string]bool{}}
+	if platformID == "" {
+		// No platform link: no canonical grants exist, and the projection
+		// resolves an unlinked person to no authority rather than to the
+		// scaffold's stale copy (fail closed, same as the guard chain).
+		return out, nil
 	}
-	return StaffContext{UserID: userID, RoleCode: roleCode, Tier: Tier(tier), Scope: Scope(scope), Status: status, Branches: branches}, nil
+	var roleCode, scope string
+	var tier int
+	err = r.pool.QueryRow(ctx, `
+		SELECT COALESCE(sr.origin_code,''), COALESCE(sr.tier,0), COALESCE(sr.scope,'branch')
+		FROM staff_role_grant g
+		JOIN staff_role sr ON sr.id = g.role_id
+		WHERE g.platform_user_id = $1 AND g.deleted_at IS NULL AND sr.deleted_at IS NULL
+		ORDER BY sr.tier, sr.id
+		LIMIT 1`, platformID).Scan(&roleCode, &tier, &scope)
+	if err != nil {
+		return StaffContext{}, fmt.Errorf("resolve staff %q: %w", userID, err)
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT ubg.branch_id::text
+		FROM user_branch_grants ubg
+		WHERE ubg.user_id = $1 AND ubg.deleted_at IS NULL
+		ORDER BY ubg.branch_id`, userID)
+	if err != nil {
+		return StaffContext{}, fmt.Errorf("resolve staff %q: %w", userID, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var b string
+		if err := rows.Scan(&b); err != nil {
+			return StaffContext{}, fmt.Errorf("resolve staff %q: %w", userID, err)
+		}
+		out.Branches[b] = true
+	}
+	if err := rows.Err(); err != nil {
+		return StaffContext{}, fmt.Errorf("resolve staff %q: %w", userID, err)
+	}
+	out.RoleCode = roleCode
+	out.Tier = Tier(tier)
+	switch scope {
+	case "global":
+		out.Scope = ScopeGlobal
+	default:
+		out.Scope = ScopeBranch
+	}
+	return out, nil
 }
 
 // ListApproverCandidates returns every ACTIVE staff member WITH an assigned role (an unassigned user can
 // approve nothing) projected as a StaffContext: the fan-out candidate pool ResolveApprovers filters via
 // CanApprove (0075). Role/branch is read straight from the DB, so a promotion/transfer is reflected on the
 // next fan-out or reconcile pass.
+//
+// CARRY NOTE (the A3 candidate-pool tombstones, HH-3.2 B5): the carried
+// query predates the tombstone columns migration 0213 added, so a
+// tombstoned user, role assignment or branch grant kept a person in the
+// card pool after their access was revoked. Every leg now honors
+// deleted_at. The pool is FAN-OUT ONLY (best-effort card targeting):
+// decide-time authority comes from the caller the guard resolved, never
+// from this read, so the scaffold role vocabulary it still reads cannot
+// grant anyone the power to decide money.
 func (r *ApprovalRepository) ListApproverCandidates(ctx context.Context) ([]StaffContext, error) {
 	if r.pool == nil {
 		return nil, errNoDB
@@ -508,10 +570,10 @@ func (r *ApprovalRepository) ListApproverCandidates(ctx context.Context) ([]Staf
 		SELECT u.id::text, COALESCE(ro.code::text,''), COALESCE(ro.tier,0), COALESCE(ro.scope,'BRANCH'), u.status,
 		       COALESCE(array_remove(array_agg(DISTINCT ubg.branch_id::text), NULL), ARRAY[]::text[])
 		FROM users u
-		JOIN user_roles ur ON ur.user_id = u.id
-		JOIN roles ro ON ro.id = ur.role_id
-		LEFT JOIN user_branch_grants ubg ON ubg.user_id = u.id
-		WHERE u.status = 'ACTIVE'
+		JOIN user_roles ur ON ur.user_id = u.id AND ur.deleted_at IS NULL
+		JOIN roles ro ON ro.id = ur.role_id AND ro.deleted_at IS NULL
+		LEFT JOIN user_branch_grants ubg ON ubg.user_id = u.id AND ubg.deleted_at IS NULL
+		WHERE u.status = 'ACTIVE' AND u.deleted_at IS NULL
 		GROUP BY u.id, ro.code, ro.tier, ro.scope, u.status`)
 	if err != nil {
 		return nil, fmt.Errorf("list approver candidates: %w", err)
