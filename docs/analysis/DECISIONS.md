@@ -188,6 +188,25 @@ Reason: the preflight's prompt named a checkout and not a branch, and that check
 
 Touches: `core/db/README.md`, `core/db/PORTED.md`, `docs/BLOCKERS.md`, and HH-3.7's first port entry.
 
+## HH: the ecosystem reconciliation rulings
+
+Recorded from `HH-RECONCILIATION-RULING-r1`, Colton's ruling on the reconciliation report `hh-reconciliation-report-r1.md` (both held in the session workspace's `context/` directory), which approved the report with amendments, adopted the FB Move draft (r3) as the migration standard's record, and commissioned Phase C. Each decision below is his wording as settled there.
+
+**D34 (messaging).** All HH product messaging, email, text, push and campaigns, sends through Messaging in FB Console behind the bought relays (Resend; Twilio or Vonage). The core holds no mail server and no provider accounts of its own; Postal and Listmonk are cut. Resolves the target shape of the carried direct-Twilio provider (`hardscapeos_dibbits/backend/internal/messagingprovider/`), which the strangler keeps writing until its roles switch.
+
+Touches: HH-3.2's provider carry, HH-9 (House Messages), demo email.
+
+**D35 (the dealer support widget).** Every deployed HH app, plus the public support page, carries a feedback and support widget that flows into that dealer's project in FB Plan, or a general Support project, and it exists before the first go-live. Placement, folded in by the ruling: a shell-chrome component in the design system that every shell inherits, posting to a Function that creates the FB Plan work item with context attached and emails the dealer a reference, the FB Plan key held server-side.
+
+Touches: HH-4 (one implementation in the design system), HH-6 through HH-10 (every shell).
+
+**D36 (no HH Session depends on work outside the path).** Sessions HH-2 through HH-12 depend on nothing in the Factory, the Office, any partner plane, or the parked deliverables (planning objects in TablesDB, the Bun agent tier, the LLM gateway, the Migration Studio). FB Plan carries planning for the whole path. Basis: Colton's decision that the cutover work stays off the Factory until after the cutover. This replaces the report's proposed wording, which named rooms and chat as parked; the partner planes are adopted on their own track, and the Hardscape House team's operating plane is not a Session deliverable. It resolves D4's forward pointer (the launcher section later giving way to a Shade operator mode) and the "until the Shade's planning module exists" phrasing in the platform context: FB Plan carries planning until a recorded decision says otherwise.
+
+**D37 (jobs in the worker role, for the strangler).** Phase C ports the ERP's scheduler and both outbox dispatchers into the `worker` role unchanged in behaviour, per the HH-3.2 work order. Reasons, all from the report's side-by-side: the running ERP keeps writing `job_schedules`, `events_outbox` and `sms_outbox` until HH-11, so a behaviour-compatible port is the mechanism least likely to double-run or strand work while it shares those tables; River could not absorb the outboxes during the strangler in any case; and the port adds no migration, so the freeze holds without an exception. River is not rejected. It is deferred to a post-cutover App Shape question, together with greenfield products that carry no scheduler, and is adopted there only after an end-to-end dive through its repository and documentation. If it is adopted into a carried database later, its tables go in their own schema, which its migrator supports, rather than through `core/db/migrations/`.
+
+**D38 (sign-in for HH product users, the settled parts).** Appwrite Auth issues every HH product user's session, as HH-3.3's JWKS verifier and the HH-4 auth package already assume. The verified email is the join key to the product's own user and role rows. Staff sign-in keeps both gates the ERP enforces today: a verified email inside the company Workspace domain, and an existing active staff row, with no auto-provisioning; the core refuses anything else whatever the upstream provider passes through. Which method each audience uses stays open, tracked to HH-4.2 and decided before it locks the auth package.
+
+**D39 (ERP migrations numbered past the D33 pin).** The ERP's own migrations 0213 through 0219, and any later ones, are ported by HH-3.7 through its existing door, each as a ported or deferred decision, and take the next free numbers in core's sequence. `core/db/PORTED.md` records each ERP number beside its core number. Core's frozen additive migrations are never renumbered. Before HH-5 puts the ERP and the core on one database, HH-3.7 reports how each migration runner records what it has applied, so two histories with overlapping numbers cannot share one tracking table.
 
 **D40 (the HH-3.2 fold: the Registrar re-pin, the driver-session knob's no-fallback read, and the position-cursor convention).** Three records from the module-carry lane's final batch, each closing a ruling the reviews held open.
 
@@ -208,3 +227,4 @@ Whether Appwrite Team memberships surface as OIDC claims stays a S2 check. D3 st
 - Q8 (per-role landing) at HH-6's mid checkpoint with Colton; default is the switcher seeded from the served row.
 - Q11 (warranty micro-app) at HH-9's design sync with Colton.
 - The state of the delivery's BisTrack phase at HH-11's start checkpoint.
+- The sign-in method per audience (staff, contractors, homeowners) at HH-4.2, per D38; the ruling's proposal to confirm there: staff by Google as built, contractors by an email link with Google allowed where the account matches, homeowners by the magic link D2 specifies.
