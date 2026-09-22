@@ -165,7 +165,11 @@ Canonicalization pins, so rebuild-from-row is byte-reproducible:
   encoding of invalid bytes differs between minors (the raw replacement rune
   versus the escape): the escape form is the writer's definition, so canonical
   bytes and signatures are toolchain independent, and a typed U+FFFD (valid
-  UTF-8) passes through raw and remains distinguishable from the escape.
+  UTF-8) passes through raw and remains distinguishable from the escape. This was the LAST
+  free change to the v1 signed bytes: once a production acceptance is
+  signed, any change to the canonical bytes means a v2 (a new version
+  byte in the signed fields and a new generation of verifiers), because
+  a re-canonicalization would invalidate every existing signature.
 - accepted_at is rendered from the stored value in UTC with exactly six
   fractional digits (microsecond precision, the column's own); the signing path
   truncates to microsecond before serializing, so the signed bytes equal the

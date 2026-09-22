@@ -87,3 +87,26 @@ One entry per ERP migration landing on `master` above the baseline, each a human
 | :------------ | :--------- | :------- | :----- | :-------- |
 
 First entry, per D33: refreshing `core/api/erp-routes.txt` from `master` (the snapshot vendored under D22 was taken from a `Demo` commit ahead of `master`); the route difference the refresh reports measures how far the snapshot was off.
+
+## Drift measurement (the erp-routes hold's precondition)
+
+Measured at origin/master 05809a25 against the pinned 6eaea3ec:
+git diff --name-status 6eaea3ec origin/master -- backend/migrations/
+returns EIGHT added files and nothing else (no modification, no
+deletion; the baseline at 0212 and below is untouched, D32 holds):
+
+- 0213_a_saved_sort_is_curation_too.sql
+- 0214_purchasing_delivery_method.sql
+- 0215_a_widget_title_that_was_never_chosen_stops_speaking_for_the_catalog.sql
+- 0216_purchasing_delivery_method_can_be_unrecorded.sql
+- 0217_a_finance_note_a_client_reads_names_nobody.sql
+- 0218_the_setup_entries_behind_no_customer_document_come_back_out.sql
+- 0219_an_invoice_with_no_journal_behind_it_asks_for_one.sql
+- 0220_pos_counter_layout.sql
+
+These eight are HH-3.7's port-or-defer decisions under D39: each ports
+through the tracking lane's door into core's next free numbers (the
+ERP's 0213 to 0215 collide with core's frozen additive set and are
+never carried by those numbers), each decision recorded here beside
+its core number. The erp-routes refresh stays held until the tracking
+lane takes this up with Colton.
