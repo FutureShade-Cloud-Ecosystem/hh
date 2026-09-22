@@ -21,6 +21,7 @@ function step(name, args) {
 }
 
 step("merge", ["merge.mjs"]);
+step("generated server types", ["gen-types.mjs"]);
 step("route parity", ["parity.mjs"]);
 step("fixture validation", ["fixtures.mjs"]);
 step("state map coverage", ["statemap.mjs"]);

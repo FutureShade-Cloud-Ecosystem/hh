@@ -172,7 +172,7 @@ var tenantShimRoutes = []struct {
 	method, target, op string
 }{
 	{http.MethodGet, "/api/v1/tenant/me", "tenantGetMe"},
-	{http.MethodPatch, "/api/v1/tenant/me", "tenantUpdateMe"},
+	{http.MethodPut, "/api/v1/tenant/me", "tenantUpdateMe"},
 	{http.MethodPost, "/api/v1/tenant/token/refresh", "tenantRefreshToken"},
 	{http.MethodGet, "/api/v1/tenant/invoices", "tenantListInvoices"},
 }

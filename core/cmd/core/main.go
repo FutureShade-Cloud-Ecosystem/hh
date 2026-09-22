@@ -19,6 +19,8 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/shims"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/tenantconfig"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 )
 
@@ -182,7 +184,7 @@ func serve(getenv func(string) string) error {
 
 	mux := http.NewServeMux()
 	rec := shims.NewRecorder(1024)
-	shims.RegisterRoutes(mux, g, rec)
+	registerRoutes(mux, g, rec, tenantconfig.Default())
 
 	srv := &http.Server{Addr: cfg.listenAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	fmt.Printf("core: serve: listening on %s (identity shims)\n", cfg.listenAddr)
@@ -191,4 +193,17 @@ func serve(getenv func(string) string) error {
 		return nil
 	}
 	return err
+}
+
+// registerRoutes wires every route the core registers today onto one
+// registrar: the identity-owned proof shims and the public tenant config
+// handler (the G2 handler half, ADR 0021), the latter riding g.Public so
+// it runs on the public leg, with no verification and no org resolution
+// (ADR-0020 leg 2). The registration parity test drives this same
+// function through a recording registrar and asserts the result against
+// the contract's generated route table in both directions, so this is the
+// one composition point the document and the binary are kept equal at.
+func registerRoutes(mux shims.Registrar, g *guards.Guards, rec *shims.Recorder, publicConfig apigen.TenantPublicConfig) {
+	shims.RegisterRoutes(mux, g, rec)
+	mux.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(publicConfig)))
 }

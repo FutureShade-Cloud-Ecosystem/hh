@@ -80,13 +80,24 @@ func (rec *Recorder) Entries() []Reached {
 	return append([]Reached(nil), rec.entries...)
 }
 
-// RegisterRoutes registers the shim surface on mux through the settled
+// Registrar is the route registration surface the shim wiring registers
+// through: one Handle per route, in the Go method-prefixed pattern
+// syntax. *http.ServeMux satisfies it, and the registration parity test's
+// recording registrar satisfies it to enumerate the registered surface
+// (the standard library offers no enumeration), so the core's routes and
+// the contract can be asserted equal in both directions without touching
+// mux internals.
+type Registrar interface {
+	Handle(pattern string, h http.Handler)
+}
+
+// RegisterRoutes registers the shim surface onto mux through the settled
 // Guards signature. This is the whole proof surface: the five order
 // lifecycle routes (orderCancel carries requireManager), a representative
 // tenant set from /api/v1/tenant, the two dual-bearer sync operations, one
 // public operation and one capability-qualified portal operation, each
 // named by its contract operationId.
-func RegisterRoutes(mux *http.ServeMux, g *guards.Guards, rec *Recorder) {
+func RegisterRoutes(mux Registrar, g *guards.Guards, rec *Recorder) {
 	staff := func(operation string) guards.StaffHandler {
 		return func(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 			rec.record(Reached{Operation: operation, Staff: &StaffFacts{
@@ -152,8 +163,15 @@ func RegisterRoutes(mux *http.ServeMux, g *guards.Guards, rec *Recorder) {
 	mux.Handle("POST /api/v1/orders/{id}/cancel", g.RequireManager(staff("orderCancel")))
 
 	// A representative tenant set from /api/v1/tenant, x-role tenant.
+	// tenantUpdateMe is PUT, not PATCH: the document declares put
+	// (core/api/fragments/tenant.yaml, the tenantUpdateMe operation), both
+	// ERP baselines register the route as PUT (backend/internal/portal/
+	// settings.go at the pinned commit, and the vendored list at
+	// core/api/erp-routes.txt line 655), so the earlier PATCH spelling was
+	// a transcription slip in this shim, fixed to match the document
+	// (B-parity, Tech Lead F-1: the document is authoritative).
 	mux.Handle("GET /api/v1/tenant/me", g.RequireTenant(tenant("tenantGetMe")))
-	mux.Handle("PATCH /api/v1/tenant/me", g.RequireTenant(tenant("tenantUpdateMe")))
+	mux.Handle("PUT /api/v1/tenant/me", g.RequireTenant(tenant("tenantUpdateMe")))
 	mux.Handle("POST /api/v1/tenant/token/refresh", g.RequireTenant(tenant("tenantRefreshToken")))
 
 	// The two dual-bearer sync operations, x-role scope-member; the G4
