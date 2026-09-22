@@ -106,6 +106,25 @@ func (s *Store) GetQuoteForTenant(ctx context.Context, q DBTX, tenantID, orgID, 
 	return row, nil
 }
 
+// GetQuoteForOrg reads one quote under the dealer desk's org fence: the
+// staff send's lookup, where the org is the whole scope the caller holds
+// (ADR 0021, Decision 2: the send is a dealer action and the issuing
+// contractor is on the row, not in the caller's scope). A tombstoned row is
+// absent on this leg, exactly as on the tenant leg.
+func (s *Store) GetQuoteForOrg(ctx context.Context, q DBTX, orgID, quoteID string) (QuoteRow, error) {
+	row, ok, err := scanQuote(q.QueryRow(ctx,
+		`SELECT `+quoteCols+` FROM customer_quote
+		 WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
+		quoteID, orgID))
+	if err != nil {
+		return QuoteRow{}, err
+	}
+	if !ok {
+		return QuoteRow{}, ErrQuoteNotFound
+	}
+	return row, nil
+}
+
 // GetQuoteLockTx reads one quote under the quote row lock, inside the
 // acceptance transaction, with the tombstone visible (the public leg answers
 // 410 on tombstoned quotes rather than not-found).

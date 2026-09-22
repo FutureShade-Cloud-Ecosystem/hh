@@ -42,6 +42,10 @@ const (
 type Config struct {
 	// Now is the clock; tests inject, production uses time.Now.
 	Now func() time.Time
+	// Mailer is the delivery seam of the send (D34). Nil selects the
+	// no-provider stub, which is the honest default, not a fallback: the
+	// core holds no mail server and no provider accounts of its own.
+	Mailer Mailer
 }
 
 // Scope is the tenant leg's stamped scope: the org from the Team behind the
@@ -58,6 +62,7 @@ type Service struct {
 	store   *Store
 	seam    AuditSeam
 	keys    *SigningKeys
+	mail    Mailer
 	cfg     Config
 	defects DefectCounter
 }
@@ -80,7 +85,10 @@ func NewService(store *Store, seam AuditSeam, keys *SigningKeys, cfg Config) (*S
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Service{store: store, seam: seam, keys: keys, cfg: cfg}, nil
+	if cfg.Mailer == nil {
+		cfg.Mailer = NoProviderMailer{}
+	}
+	return &Service{store: store, seam: seam, keys: keys, mail: cfg.Mailer, cfg: cfg}, nil
 }
 
 // Defects exposes the loud data-defect counter.
@@ -415,11 +423,43 @@ func (s *Service) Update(ctx context.Context, scope Scope, quoteID string, in Up
 // deviation and routed as a schema finding; no number is fabricated).
 func quoteRef(row QuoteRow) string { return row.ID }
 
-// Send mints a fresh token, retires whatever was live, re-freezes the lines,
-// resets the view counters and moves the status to sent (R4, R6, and the
-// send rotation). The raw token appears exactly once, here.
+// Send is the tenant leg's modelled send operation (the design's modelled
+// tenant surface). No route reaches it: the document that landed carries
+// the send as a dealer desk action (ADR 0021, Decision 2), so this method
+// is the seam a tenant-side document half would call if one ever lands,
+// the RecordChangeRequest posture. The lifecycle itself is shared with the
+// registered staff send through send below.
 func (s *Service) Send(ctx context.Context, scope Scope, quoteID string) (SendResult, error) {
-	row, err := s.store.GetQuoteForTenant(ctx, s.store.Pool(), scope.TenantID, scope.OrgID, quoteID)
+	fetch := func() (QuoteRow, error) {
+		return s.store.GetQuoteForTenant(ctx, s.store.Pool(), scope.TenantID, scope.OrgID, quoteID)
+	}
+	return s.send(ctx, quoteID, fetch)
+}
+
+// StaffSend is the registered send, the dealer desk action the document
+// carries (POST /api/v1/customer-quotes/{id}/send, x-role requireStaff;
+// ADR 0021, Decision 2). The org fence is the caller's whole scope: the
+// issuing contractor is recorded on the row's tenant_id, and the desk that
+// operates the send holds a staff bearer with X-Org, never the
+// contractor's own tenant bearer; beyond the fence the lifecycle is
+// identical to the tenant leg's.
+func (s *Service) StaffSend(ctx context.Context, orgID, quoteID string) (SendResult, error) {
+	fetch := func() (QuoteRow, error) {
+		return s.store.GetQuoteForOrg(ctx, s.store.Pool(), orgID, quoteID)
+	}
+	return s.send(ctx, quoteID, fetch)
+}
+
+// send is the one send lifecycle (R4, R6 and the rotation of DESIGN 2.4):
+// the gates, the mint, the dead-list rotation with the live hash installed,
+// the re-freeze of the presentation lines, the counter reset and the status
+// flip to sent, all under the quote row lock on one transaction; then the
+// send event handed to the delivery seam (D34) with the raw token, which
+// appears in the returned result and that handoff, and nowhere else. The
+// fetch closure is the leg's scoped read: the tenant predicate or the org
+// fence.
+func (s *Service) send(ctx context.Context, quoteID string, fetch func() (QuoteRow, error)) (SendResult, error) {
+	row, err := fetch()
 	if err != nil {
 		if errors.Is(err, ErrQuoteNotFound) {
 			return SendResult{}, refuse(http.StatusNotFound, SentenceQuoteGone)
@@ -462,7 +502,22 @@ func (s *Service) Send(ctx context.Context, scope Scope, quoteID string) (SendRe
 	if err := tx.Commit(ctx); err != nil {
 		return SendResult{}, refuse(http.StatusServiceUnavailable, MsgBusy)
 	}
-	final, err := s.store.GetQuoteForTenant(ctx, s.store.Pool(), scope.TenantID, scope.OrgID, quoteID)
+	// The send event: the committed minted link handed to the delivery seam
+	// once (D34: the core itself delivers nothing; the stub records and
+	// returns, and the desk receives the raw token in this send's
+	// response). After the commit on purpose, and best-effort by
+	// construction: the send has already succeeded, so the handoff can
+	// never misstate it.
+	sentDoc, derr := decodeDoc(locked)
+	if derr != nil {
+		sentDoc.Contact = CustomerContact{}
+	}
+	_ = s.mail.SendQuoteLink(ctx, SentLink{
+		QuoteID: locked.ID, OrgID: locked.OrgID, TenantID: locked.TenantID,
+		CustomerName: sentDoc.Contact.Name, Token: raw, ValidUntil: locked.ValidUntil,
+		SentAt: s.now(),
+	})
+	final, err := fetch()
 	if err != nil {
 		return SendResult{}, refuse(http.StatusServiceUnavailable, MsgBusy)
 	}
