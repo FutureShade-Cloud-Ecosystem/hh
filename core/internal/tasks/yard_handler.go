@@ -28,14 +28,14 @@ import (
 //	PUT  /api/v1/yard/picks/{id}/lines                record what was ACTUALLY pulled, per line (0187)
 //	POST /api/v1/yard/picks/{id}/shortages            report a shortage (+ counter EVENT)
 //	POST /api/v1/yard/picks/{id}/shortages/{sid}/resolve   clear one (+ counter EVENT)
-func (h *Handler) RegisterYardRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("GET /api/v1/yard/pick-queue", g.RequireStaff(h.staff(h.pickQueue)))
-	mux.Handle("GET /api/v1/yard/pending-tickets", g.RequireStaff(h.staff(h.pendingTickets)))
-	mux.Handle("GET /api/v1/yard/picks/{id}", g.RequireStaff(h.staff(h.pickDetail)))
-	mux.Handle("POST /api/v1/yard/picks/{id}/stage", g.RequireStaff(h.staff(h.stage)))
-	mux.Handle("PUT /api/v1/yard/picks/{id}/lines", g.RequireStaff(h.staff(h.recordPick)))
-	mux.Handle("POST /api/v1/yard/picks/{id}/shortages", g.RequireStaff(h.staff(h.reportShortage)))
-	mux.Handle("POST /api/v1/yard/picks/{id}/shortages/{sid}/resolve", g.RequireStaff(h.staff(h.resolveShortage)))
+func (h *Handler) RegisterYardRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("GET /api/v1/yard/pick-queue", g.RequireStaff(h.staff(h.pickQueue)))
+	r.Handle("GET /api/v1/yard/pending-tickets", g.RequireStaff(h.staff(h.pendingTickets)))
+	r.Handle("GET /api/v1/yard/picks/{id}", g.RequireStaff(h.staff(h.pickDetail)))
+	r.Handle("POST /api/v1/yard/picks/{id}/stage", g.RequireStaff(h.staff(h.stage)))
+	r.Handle("PUT /api/v1/yard/picks/{id}/lines", g.RequireStaff(h.staff(h.recordPick)))
+	r.Handle("POST /api/v1/yard/picks/{id}/shortages", g.RequireStaff(h.staff(h.reportShortage)))
+	r.Handle("POST /api/v1/yard/picks/{id}/shortages/{sid}/resolve", g.RequireStaff(h.staff(h.resolveShortage)))
 }
 
 // yardBranchFence applies the program's branch posture (UNION-W3, C's park 2, the

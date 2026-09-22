@@ -31,12 +31,16 @@ func (s *staffAuthorityStub) ResolveStaff(_ context.Context, _, _ string) (ident
 	return s.authority, s.has, nil
 }
 
-// portalRoleStub is the always-absent PortalRoleSource; staff-only route
-// tests never consult it.
-type portalRoleStub struct{}
+// portalRoleStub is the settable PortalRoleSource; staff-only route tests
+// never consult it, and portal-leg tests set the contractor role the
+// capability guards resolve (absent by default, the no-row 403 half).
+type portalRoleStub struct {
+	role string
+	has  bool
+}
 
-func (portalRoleStub) PortalRole(_ context.Context, _, _ string) (string, bool, error) {
-	return "", false, nil
+func (p *portalRoleStub) PortalRole(_ context.Context, _, _ string) (string, bool, error) {
+	return p.role, p.has, nil
 }
 
 // StaffGuards is the Guards-for-tests bundle: the real Guards, the harness
@@ -46,6 +50,7 @@ type StaffGuards struct {
 	*guards.Guards
 	Harness *Harness
 	stub    *staffAuthorityStub
+	portal  *portalRoleStub
 }
 
 // NewStaffGuards wires the double and points the harness doubles at one
@@ -56,11 +61,12 @@ func NewStaffGuards(t *testing.T) *StaffGuards {
 	h.Membership.SetMember(StaffSubAny, OrgNorthSlug, true)
 	h.Resolver.Set(OrgNorthSlug, OrgNorthID)
 	stub := &staffAuthorityStub{has: true}
-	g, err := guards.NewGuards(h.Gate, stub, portalRoleStub{}, nil)
+	portal := &portalRoleStub{}
+	g, err := guards.NewGuards(h.Gate, stub, portal, nil)
 	if err != nil {
 		t.Fatalf("testkit: NewGuards: %v", err)
 	}
-	return &StaffGuards{Guards: g, Harness: h, stub: stub}
+	return &StaffGuards{Guards: g, Harness: h, stub: stub, portal: portal}
 }
 
 // SetAuthority swaps the authority every staff guard resolves for any
@@ -74,6 +80,18 @@ func (sg *StaffGuards) SetAuthority(a identity.StaffAuthority) {
 // authenticated-without-grant leg every staff guard refuses.
 func (sg *StaffGuards) SetNoAuthority() {
 	sg.stub.has = false
+}
+
+// SetPortalRole sets the contractor role every capability guard resolves
+// for a tenant bearer; SetNoPortalRole restores the absent (no-row) leg.
+func (sg *StaffGuards) SetPortalRole(role string) {
+	sg.portal.role = role
+	sg.portal.has = true
+}
+
+// SetNoPortalRole makes the resolved portal row absent, the RBAC-403 leg.
+func (sg *StaffGuards) SetNoPortalRole() {
+	sg.portal.has = false
 }
 
 // Bearer mints the staff bearer the double admits.

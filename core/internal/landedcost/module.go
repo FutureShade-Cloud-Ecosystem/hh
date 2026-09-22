@@ -13,12 +13,13 @@ import (
 	"errors"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"log/slog"
-	"net/http"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // errNotImplemented marks a scaffold stub the A-16 worker fills.
@@ -177,12 +178,12 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 
 // RegisterRoutes self-registers the landed-cost routes behind the identity guards. Reads are RequireStaff;
 // create/apply/retro are RequireManager. FROZEN guard signature; A-16 fills the route bodies.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("GET /api/v1/landed-costs", g.RequireStaff(h.staff(h.list)))
-	mux.Handle("POST /api/v1/landed-costs", g.RequireManager(h.staff(h.create)))
-	mux.Handle("GET /api/v1/landed-costs/{id}", g.RequireStaff(h.staff(h.get)))
-	mux.Handle("GET /api/v1/landed-costs/{id}/preview", g.RequireStaff(h.staff(h.preview)))
-	mux.Handle("POST /api/v1/landed-costs/{id}/apply", g.RequireManager(h.staff(h.apply)))
-	mux.Handle("POST /api/v1/landed-costs/{id}/retro", g.RequireManager(h.staff(h.retro)))
-	mux.Handle("POST /api/v1/landed-costs/{id}/void", g.RequireManager(h.staff(h.void)))
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("GET /api/v1/landed-costs", g.RequireStaff(h.staff(h.list)))
+	r.Handle("POST /api/v1/landed-costs", g.RequireManager(h.staff(h.create)))
+	r.Handle("GET /api/v1/landed-costs/{id}", g.RequireStaff(h.staff(h.get)))
+	r.Handle("GET /api/v1/landed-costs/{id}/preview", g.RequireStaff(h.staff(h.preview)))
+	r.Handle("POST /api/v1/landed-costs/{id}/apply", g.RequireManager(h.staff(h.apply)))
+	r.Handle("POST /api/v1/landed-costs/{id}/retro", g.RequireManager(h.staff(h.retro)))
+	r.Handle("POST /api/v1/landed-costs/{id}/void", g.RequireManager(h.staff(h.void)))
 }

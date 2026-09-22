@@ -24,21 +24,21 @@ import (
 //	house queue + claim  , requireStaff, additionally gated on CHANNEL MEMBERSHIP in the service.
 //	  Claiming is the one write a rep makes for themselves, and it is legitimate: taking ownership of
 //	  an unclaimed conversation is the queue working as designed.
-func (h *Handler) RegisterConversationRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("GET /api/v1/messaging/rep-assignments", g.RequireStaff(h.staff(h.listRepAssignments)))
-	mux.Handle("POST /api/v1/messaging/rep-assignments", g.RequireAdmin(h.staff(h.assignRep)))
-	mux.Handle("DELETE /api/v1/messaging/rep-assignments", g.RequireAdmin(h.staff(h.unassignRep)))
+func (h *Handler) RegisterConversationRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("GET /api/v1/messaging/rep-assignments", g.RequireStaff(h.staff(h.listRepAssignments)))
+	r.Handle("POST /api/v1/messaging/rep-assignments", g.RequireAdmin(h.staff(h.assignRep)))
+	r.Handle("DELETE /api/v1/messaging/rep-assignments", g.RequireAdmin(h.staff(h.unassignRep)))
 	// The routing preview: "where would a message from this customer go?", read-only, no write, so the
 	// admin UI can show the consequence of an assignment before anyone sends anything.
-	mux.Handle("GET /api/v1/messaging/rep-route", g.RequireStaff(h.staff(h.previewRoute)))
+	r.Handle("GET /api/v1/messaging/rep-route", g.RequireStaff(h.staff(h.previewRoute)))
 	// The inbound ingress: one customer message in, one routed post out. Staff-gated because the
 	// bridges that call it (portal / SMS relays) run server-side with a service identity.
-	mux.Handle("POST /api/v1/messaging/inbound/customer", g.RequireStaff(h.staff(h.inboundCustomer)))
+	r.Handle("POST /api/v1/messaging/inbound/customer", g.RequireStaff(h.staff(h.inboundCustomer)))
 	// DIB-271: the house queue for one channel, and the claim.
-	mux.Handle("GET /api/v1/messaging/channels/{id}/house-queue", g.RequireStaff(h.staff(h.houseQueue)))
-	mux.Handle("POST /api/v1/messaging/house-conversations/{convID}/claim", g.RequireStaff(h.staff(h.claimConversation)))
+	r.Handle("GET /api/v1/messaging/channels/{id}/house-queue", g.RequireStaff(h.staff(h.houseQueue)))
+	r.Handle("POST /api/v1/messaging/house-conversations/{convID}/claim", g.RequireStaff(h.staff(h.claimConversation)))
 	// DIB-275: the ack arithmetic for one forced-ack message.
-	mux.Handle("GET /api/v1/messaging/channels/{id}/messages/{msgID}/ack-progress", g.RequireStaff(h.staff(h.ackProgress)))
+	r.Handle("GET /api/v1/messaging/channels/{id}/messages/{msgID}/ack-progress", g.RequireStaff(h.staff(h.ackProgress)))
 }
 
 // queryUUID reads an OPTIONAL uuid query param, 400-ing a malformed one at the boundary (the same

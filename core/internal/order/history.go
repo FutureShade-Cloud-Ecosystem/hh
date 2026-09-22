@@ -209,21 +209,21 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // RegisterRoutes wires the order-change history read. requireStaff gates it: "how did this order's
 // status move, by whom, when" is a counter-level question (same posture as the payment-history reads).
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("GET /api/v1/orders/{id}/history", g.RequireStaff(h.staff(h.orderHistory)))
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("GET /api/v1/orders/{id}/history", g.RequireStaff(h.staff(h.orderHistory)))
 	// B2/R6: the staff order read, current status + this caller's legal_actions (handler.go).
-	mux.Handle("GET /api/v1/orders/{id}", g.RequireStaff(h.staff(h.orderRead)))
+	r.Handle("GET /api/v1/orders/{id}", g.RequireStaff(h.staff(h.orderRead)))
 	// DIB-489/490: the staff duplicate trio (duplicate.go) rides this registration so the whole
 	// order surface keeps wiring through the calls the composition root already makes, same
 	// requireStaff gate, no main.go change.
-	h.registerDuplicateRoutes(mux, g)
+	h.registerDuplicateRoutes(r, g)
 	// DIB-492/493 (activity.go): the merged activity stream + the human-notes writes. Counter-level
 	// surfaces open to any active in-branch staff, exactly like the history read above, the route
 	// guard is the capability wrapper (protected by construction) and the service re-checks the
 	// caller's branch on the resolved order.
-	mux.Handle("GET /api/v1/orders/{id}/activity", g.RequireStaff(h.staff(h.orderActivity)))
-	mux.Handle("POST /api/v1/orders/{id}/notes", g.RequireStaff(h.staff(h.addOrderNote)))
-	mux.Handle("PATCH /api/v1/orders/{id}/notes/{noteId}", g.RequireStaff(h.staff(h.editOrderNote)))
+	r.Handle("GET /api/v1/orders/{id}/activity", g.RequireStaff(h.staff(h.orderActivity)))
+	r.Handle("POST /api/v1/orders/{id}/notes", g.RequireStaff(h.staff(h.addOrderNote)))
+	r.Handle("PATCH /api/v1/orders/{id}/notes/{noteId}", g.RequireStaff(h.staff(h.editOrderNote)))
 }
 
 // orderHistory answers: how did this order's status change over time, from→to, who, when, why.

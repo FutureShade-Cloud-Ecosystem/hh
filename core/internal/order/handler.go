@@ -30,11 +30,11 @@ const maxBodyBytes = 8 << 10
 // enforces on the resolved caller. CANCELLED is manager-gated at the route (requireManager, Tier ≤ 2)
 // AND re-checked in the service (defence-in-depth), the service (manualRules) is the single source of
 // authority truth, so the route guard is a coarse first line, not the only one.
-func (h *Handler) RegisterTransitionRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("POST /api/v1/orders/{id}/confirm", g.RequireStaff(h.staff(h.confirm)))
-	mux.Handle("POST /api/v1/orders/{id}/picking", g.RequireStaff(h.staff(h.markPicking)))
-	mux.Handle("POST /api/v1/orders/{id}/ready", g.RequireStaff(h.staff(h.markReady)))
-	mux.Handle("POST /api/v1/orders/{id}/cancel", g.RequireManager(h.staff(h.cancel)))
+func (h *Handler) RegisterTransitionRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("POST /api/v1/orders/{id}/confirm", g.RequireStaff(h.staff(h.confirm)))
+	r.Handle("POST /api/v1/orders/{id}/picking", g.RequireStaff(h.staff(h.markPicking)))
+	r.Handle("POST /api/v1/orders/{id}/ready", g.RequireStaff(h.staff(h.markReady)))
+	r.Handle("POST /api/v1/orders/{id}/cancel", g.RequireManager(h.staff(h.cancel)))
 }
 
 // confirm applies the ruling-D2 DRAFT→CONFIRMED move: the on-ramp that puts a DRAFT-born order

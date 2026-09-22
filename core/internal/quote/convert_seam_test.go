@@ -60,8 +60,8 @@ func (s *seamStore) Convert(_ context.Context, customerID, quoteID string, opt C
 }
 
 // the reads the PORTAL door needs, which the staff fake does not carry.
-func (s *seamStore) ListQuotes(context.Context, string, Filter) ([]Quote, int, error) {
-	return nil, 0, nil
+func (s *seamStore) ListQuotes(context.Context, string, Filter) ([]Quote, error) {
+	return nil, nil
 }
 func (s *seamStore) GetQuote(context.Context, string, string) (Detail, error) { return Detail{}, nil }
 func (s *seamStore) Accept(context.Context, string, string) (Quote, error)    { return Quote{}, nil }

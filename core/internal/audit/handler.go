@@ -34,10 +34,10 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 // argument (guards.StaffHandler); this module does not read it today, and the
 // parameter is kept so the registrar's shape is the one every carried module
 // shares.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("GET /api/v1/audit", g.RequireAdmin(h.list))
-	mux.Handle("GET /api/v1/audit/{id}", g.RequireAdmin(h.get))
-	mux.Handle("GET /api/v1/audit/transaction/{entityType}/{entityId}", g.RequireStaff(h.reopen))
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("GET /api/v1/audit", g.RequireAdmin(h.list))
+	r.Handle("GET /api/v1/audit/{id}", g.RequireAdmin(h.get))
+	r.Handle("GET /api/v1/audit/transaction/{entityType}/{entityId}", g.RequireStaff(h.reopen))
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {

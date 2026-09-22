@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"testing"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 )
@@ -44,7 +46,7 @@ func (f *fakeQuoteStore) scoped(customerID, quoteID string) (*Quote, error) {
 	return q, nil
 }
 
-func (f *fakeQuoteStore) ListQuotes(_ context.Context, customerID string, flt Filter) ([]Quote, int, error) {
+func (f *fakeQuoteStore) ListQuotes(_ context.Context, customerID string, flt Filter) ([]Quote, error) {
 	var all []Quote
 	for _, q := range f.quotes {
 		if q.CustomerID != customerID {
@@ -55,17 +57,29 @@ func (f *fakeQuoteStore) ListQuotes(_ context.Context, customerID string, flt Fi
 		}
 		all = append(all, *q)
 	}
-	total := len(all)
-
-	lo := flt.Offset
-	if lo > len(all) {
-		lo = len(all)
+	// Cursor carry (HH-3.2 fold): the fake follows the same stable ordering
+	// the SQL half states (created_at DESC, quote_no); seeds carry no clock,
+	// so quote_no DESC is the fake's stand-in ordering, asserted consistently
+	// with the cursor the handler mints from the last kept row.
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].CreatedAt.After(all[j].CreatedAt)
+		}
+		return all[i].QuoteNo > all[j].QuoteNo
+	})
+	if flt.AfterCursor {
+		for i, q := range all {
+			if q.CreatedAt.Format(time.RFC3339Nano) == flt.CursorCreated && q.QuoteNo == flt.CursorQuoteNo {
+				all = all[i+1:]
+				break
+			}
+		}
 	}
 	hi := len(all)
-	if flt.Limit > 0 && lo+flt.Limit < hi {
-		hi = lo + flt.Limit
+	if flt.Limit > 0 && flt.Limit < hi {
+		hi = flt.Limit
 	}
-	return all[lo:hi], total, nil
+	return all[:hi], nil
 }
 
 func (f *fakeQuoteStore) GetQuote(_ context.Context, customerID, quoteID string) (Detail, error) {
@@ -293,29 +307,40 @@ func TestQuote_List_TenantScopedAndFiltered(t *testing.T) {
 	svc := NewService(store)
 	ctx := context.Background()
 
-	all, total, err := svc.ListQuotes(ctx, tenant, Filter{Limit: 50})
+	all, err := svc.ListQuotes(ctx, tenant, Filter{Limit: 50})
 	if err != nil {
 		t.Fatalf("list all: %v", err)
 	}
-	if total != 3 || len(all) != 3 {
-		t.Fatalf("tenant scope: got %d items / total %d, want 3/3 (cust-B excluded)", len(all), total)
+	if len(all) != 3 {
+		t.Fatalf("tenant scope: got %d items, want 3 (cust-B excluded)", len(all))
 	}
 
-	sent, total, err := svc.ListQuotes(ctx, tenant, Filter{Status: "SENT", Limit: 50})
+	sent, err := svc.ListQuotes(ctx, tenant, Filter{Status: "SENT", Limit: 50})
 	if err != nil {
 		t.Fatalf("list SENT: %v", err)
 	}
-	if total != 2 || len(sent) != 2 {
-		t.Fatalf("status filter: got %d / total %d, want 2/2", len(sent), total)
+	if len(sent) != 2 {
+		t.Fatalf("status filter: got %d, want 2", len(sent))
 	}
 
-	// Pagination: total reflects the full filtered set, the page is clamped to Limit.
-	page, total, err := svc.ListQuotes(ctx, tenant, Filter{Limit: 1})
+	// Cursor pagination (HH-3.2 fold): the page clamps to Limit, and the
+	// follow-on page starts after the last kept row's key.
+	page, err := svc.ListQuotes(ctx, tenant, Filter{Limit: 1})
 	if err != nil {
 		t.Fatalf("list page: %v", err)
 	}
-	if total != 3 || len(page) != 1 {
-		t.Fatalf("pagination: got %d items / total %d, want 1/3", len(page), total)
+	if len(page) != 1 {
+		t.Fatalf("pagination: got %d items, want 1", len(page))
+	}
+	rest, err := svc.ListQuotes(ctx, tenant, Filter{
+		Limit: 50, AfterCursor: true,
+		CursorCreated: page[0].CreatedAt.Format(time.RFC3339Nano), CursorQuoteNo: page[0].QuoteNo,
+	})
+	if err != nil {
+		t.Fatalf("list after cursor: %v", err)
+	}
+	if len(rest) != 2 {
+		t.Fatalf("after cursor: got %d items, want 2", len(rest))
 	}
 }
 
@@ -415,10 +440,10 @@ func TestQuote_ServiceValidation(t *testing.T) {
 		}
 	}
 
-	_, _, err := svc.ListQuotes(ctx, "", Filter{})
+	_, err := svc.ListQuotes(ctx, "", Filter{})
 	mustBadReq("ListQuotes empty customer", err)
 
-	_, _, err = svc.ListQuotes(ctx, tenant, Filter{Status: "BOGUS"})
+	_, err = svc.ListQuotes(ctx, tenant, Filter{Status: "BOGUS"})
 	mustBadReq("ListQuotes bad status", err)
 
 	_, err = svc.GetQuote(ctx, tenant, "")

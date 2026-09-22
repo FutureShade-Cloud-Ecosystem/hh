@@ -31,14 +31,14 @@ func NewAutomationHandler(svc *AutomationService) *AutomationHandler {
 //
 // It is a SEPARATE registration from RegisterShareRoutes so a deployment can carry quote sharing
 // without carrying an outbound-SMS surface, and so the Wave 2 registration lines stay untouched.
-func (h *AutomationHandler) RegisterAutomationRoutes(mux *http.ServeMux, g *guards.Guards) {
+func (h *AutomationHandler) RegisterAutomationRoutes(r httpx.Registrar, g *guards.Guards) {
 	if g == nil {
 		panic("quote: guards are required")
 	}
-	mux.Handle("POST /api/v1/quotes/{id}/sms-share", g.RequireStaff(h.staff(h.shareBySMS)))
-	mux.Handle("GET /api/v1/quotes/{id}/followups", g.RequireStaff(h.staff(h.history)))
-	mux.Handle("POST /api/v1/quotes/{id}/followups/disable", g.RequireStaff(h.staff(h.disable)))
-	mux.Handle("POST /api/v1/quotes/{id}/followups/enable", g.RequireStaff(h.staff(h.enable)))
+	r.Handle("POST /api/v1/quotes/{id}/sms-share", g.RequireStaff(h.staff(h.shareBySMS)))
+	r.Handle("GET /api/v1/quotes/{id}/followups", g.RequireStaff(h.staff(h.history)))
+	r.Handle("POST /api/v1/quotes/{id}/followups/disable", g.RequireStaff(h.staff(h.disable)))
+	r.Handle("POST /api/v1/quotes/{id}/followups/enable", g.RequireStaff(h.staff(h.enable)))
 }
 
 // shareBySMS texts the customer this quote's share link.

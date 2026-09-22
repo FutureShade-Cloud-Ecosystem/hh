@@ -17,6 +17,8 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // OrderReader is the ORDER AUTHORITY seam: it answers "does this order exist, which branch owns it,
@@ -188,27 +190,27 @@ type PrintEnqueuer interface {
 // The public will-call routes take NO guard, by design, the token IS the credential (0092's header
 // states the model). They are registered last and separately so that fact is visible at the call
 // site rather than buried in a path prefix.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// fleet registry
-	mux.Handle("GET /api/v1/dispatch/trucks", g.RequireStaff(h.staff(h.listTrucks)))
-	mux.Handle("POST /api/v1/dispatch/trucks", g.RequireManager(h.staff(h.createTruck)))
-	mux.Handle("GET /api/v1/dispatch/drivers", g.RequireStaff(h.staff(h.listDrivers)))
-	mux.Handle("POST /api/v1/dispatch/drivers", g.RequireManager(h.staff(h.createDriver)))
+	r.Handle("GET /api/v1/dispatch/trucks", g.RequireStaff(h.staff(h.listTrucks)))
+	r.Handle("POST /api/v1/dispatch/trucks", g.RequireManager(h.staff(h.createTruck)))
+	r.Handle("GET /api/v1/dispatch/drivers", g.RequireStaff(h.staff(h.listDrivers)))
+	r.Handle("POST /api/v1/dispatch/drivers", g.RequireManager(h.staff(h.createDriver)))
 
 	// the board + scheduling
-	mux.Handle("GET /api/v1/dispatch/board", g.RequireStaff(h.staff(h.board)))
-	mux.Handle("POST /api/v1/dispatch/stops", g.RequireStaff(h.staff(h.schedule)))
-	mux.Handle("GET /api/v1/dispatch/stops/{id}", g.RequireStaff(h.staff(h.stop)))
-	mux.Handle("POST /api/v1/dispatch/stops/{id}/assign", g.RequireStaff(h.staff(h.assignStop)))
-	mux.Handle("POST /api/v1/dispatch/stops/{id}/status", g.RequireStaff(h.staff(h.advanceStop)))
-	mux.Handle("POST /api/v1/dispatch/stops/{id}/pod", g.RequireStaff(h.staff(h.capturePOD)))
-	mux.Handle("POST /api/v1/dispatch/stops/{id}/photos", g.RequireStaff(h.staff(h.uploadPhoto)))
-	mux.Handle("GET /api/v1/dispatch/photos/{id}", g.RequireStaff(h.staff(h.photo)))
+	r.Handle("GET /api/v1/dispatch/board", g.RequireStaff(h.staff(h.board)))
+	r.Handle("POST /api/v1/dispatch/stops", g.RequireStaff(h.staff(h.schedule)))
+	r.Handle("GET /api/v1/dispatch/stops/{id}", g.RequireStaff(h.staff(h.stop)))
+	r.Handle("POST /api/v1/dispatch/stops/{id}/assign", g.RequireStaff(h.staff(h.assignStop)))
+	r.Handle("POST /api/v1/dispatch/stops/{id}/status", g.RequireStaff(h.staff(h.advanceStop)))
+	r.Handle("POST /api/v1/dispatch/stops/{id}/pod", g.RequireStaff(h.staff(h.capturePOD)))
+	r.Handle("POST /api/v1/dispatch/stops/{id}/photos", g.RequireStaff(h.staff(h.uploadPhoto)))
+	r.Handle("GET /api/v1/dispatch/photos/{id}", g.RequireStaff(h.staff(h.photo)))
 
 	// runs
-	mux.Handle("GET /api/v1/dispatch/runs", g.RequireStaff(h.staff(h.listRuns)))
-	mux.Handle("POST /api/v1/dispatch/runs", g.RequireStaff(h.staff(h.createRun)))
-	mux.Handle("GET /api/v1/dispatch/runs/{id}", g.RequireStaff(h.staff(h.run)))
+	r.Handle("GET /api/v1/dispatch/runs", g.RequireStaff(h.staff(h.listRuns)))
+	r.Handle("POST /api/v1/dispatch/runs", g.RequireStaff(h.staff(h.createRun)))
+	r.Handle("GET /api/v1/dispatch/runs/{id}", g.RequireStaff(h.staff(h.run)))
 	// The NUMBER lookup lives on its OWN TOP-LEVEL path, not under /runs/.
 	//
 	// Two reasons, one of which cost a boot. (1) Semantics: an id lookup answers 403 across branches
@@ -217,13 +219,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
 	// `/runs/{id}/manifest` are ambiguous to net/http's mux, neither is more specific, so
 	// registering both PANICS at startup. That is a server that does not boot, and it was caught by
 	// the fence test building the real route table rather than calling the service directly.
-	mux.Handle("GET /api/v1/dispatch/run-by-no/{runNo}", g.RequireStaff(h.staff(h.runByNo)))
-	mux.Handle("POST /api/v1/dispatch/runs/{id}/crew", g.RequireStaff(h.staff(h.assignCrew)))
-	mux.Handle("POST /api/v1/dispatch/runs/{id}/dispatch", g.RequireStaff(h.staff(h.dispatchRun)))
-	mux.Handle("POST /api/v1/dispatch/runs/{id}/complete", g.RequireStaff(h.staff(h.completeRun)))
-	mux.Handle("POST /api/v1/dispatch/runs/{id}/cancel", g.RequireStaff(h.staff(h.cancelRun)))
-	mux.Handle("GET /api/v1/dispatch/runs/{id}/manifest", g.RequireStaff(h.staff(h.manifest)))
-	mux.Handle("POST /api/v1/dispatch/runs/{id}/manifest/print", g.RequireStaff(h.staff(h.printManifest)))
+	r.Handle("GET /api/v1/dispatch/run-by-no/{runNo}", g.RequireStaff(h.staff(h.runByNo)))
+	r.Handle("POST /api/v1/dispatch/runs/{id}/crew", g.RequireStaff(h.staff(h.assignCrew)))
+	r.Handle("POST /api/v1/dispatch/runs/{id}/dispatch", g.RequireStaff(h.staff(h.dispatchRun)))
+	r.Handle("POST /api/v1/dispatch/runs/{id}/complete", g.RequireStaff(h.staff(h.completeRun)))
+	r.Handle("POST /api/v1/dispatch/runs/{id}/cancel", g.RequireStaff(h.staff(h.cancelRun)))
+	r.Handle("GET /api/v1/dispatch/runs/{id}/manifest", g.RequireStaff(h.staff(h.manifest)))
+	r.Handle("POST /api/v1/dispatch/runs/{id}/manifest/print", g.RequireStaff(h.staff(h.printManifest)))
 
 	// - the LOAD BOARD (0184, the Aug-26 call) -
 	//
@@ -238,45 +240,45 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
 	// RequireManager here would be the wrong shape twice over: it would lock out YARD_TEAM, who build
 	// the trucks, and let SALES_MANAGER in, who must never commit. The mux cannot express "dispatch",
 	// so the mux does not pretend to.
-	mux.Handle("GET /api/v1/dispatch/loadboard", g.RequireStaff(h.staff(h.loadBoard)))
-	mux.Handle("GET /api/v1/dispatch/loadboard/calendar", g.RequireStaff(h.staff(h.loadBoardCalendar)))
-	mux.Handle("GET /api/v1/dispatch/loadboard/gaps", g.RequireStaff(h.staff(h.loadBoardGaps)))
+	r.Handle("GET /api/v1/dispatch/loadboard", g.RequireStaff(h.staff(h.loadBoard)))
+	r.Handle("GET /api/v1/dispatch/loadboard/calendar", g.RequireStaff(h.staff(h.loadBoardCalendar)))
+	r.Handle("GET /api/v1/dispatch/loadboard/gaps", g.RequireStaff(h.staff(h.loadBoardGaps)))
 	// The same scan, keyed on ONE order, the yard's view of it. Staff-gated at the door and
 	// branch-fenced in the service, exactly like its whole-day sibling above.
-	mux.Handle("GET /api/v1/dispatch/orders/{id}/gaps", g.RequireStaff(h.staff(h.orderGaps)))
+	r.Handle("GET /api/v1/dispatch/orders/{id}/gaps", g.RequireStaff(h.staff(h.orderGaps)))
 	// The bulk load. Staff-gated at the door and branch-fenced PER STOP in the service, so a list is
 	// not a way around the fence.
-	mux.Handle("POST /api/v1/dispatch/loads/mark-loaded", g.RequireStaff(h.staff(h.markLoaded)))
+	r.Handle("POST /api/v1/dispatch/loads/mark-loaded", g.RequireStaff(h.staff(h.markLoaded)))
 	// Who changed which rule, and what it was before. Manager-gated in the service to match
 	// SavePolicy: somebody who may change the rules may see who changed them.
-	mux.Handle("GET /api/v1/dispatch/policy/history", g.RequireStaff(h.staff(h.policyHistory)))
-	mux.Handle("GET /api/v1/dispatch/policy", g.RequireStaff(h.staff(h.readDispatchPolicy)))
-	mux.Handle("PUT /api/v1/dispatch/policy", g.RequireManager(h.staff(h.saveDispatchPolicy)))
+	r.Handle("GET /api/v1/dispatch/policy/history", g.RequireStaff(h.staff(h.policyHistory)))
+	r.Handle("GET /api/v1/dispatch/policy", g.RequireStaff(h.staff(h.readDispatchPolicy)))
+	r.Handle("PUT /api/v1/dispatch/policy", g.RequireManager(h.staff(h.saveDispatchPolicy)))
 	// REOPENING IS NORMAL, and it is registered as an ordinary route on the LOAD, because that is the
 	// object a dispatch manager is looking at when a better-fitting order turns up. RequireManager is
 	// the mux's coarse half; canReopenLoad in the service is the real one.
-	mux.Handle("POST /api/v1/dispatch/stops/{id}/reopen", g.RequireManager(h.staff(h.reopenStop)))
-	mux.Handle("POST /api/v1/dispatch/runs/{id}/reopen", g.RequireManager(h.staff(h.reopenRun)))
-	mux.Handle("POST /api/v1/dispatch/runs/{id}/reopen/clear", g.RequireStaff(h.staff(h.clearRunReopen)))
-	mux.Handle("POST /api/v1/dispatch/stops/{id}/commit", g.RequireStaff(h.staff(h.commitStop)))
-	mux.Handle("POST /api/v1/dispatch/stops/{id}/load-facts", g.RequireStaff(h.staff(h.setLoadFacts)))
-	mux.Handle("POST /api/v1/dispatch/freight-split", g.RequireStaff(h.staff(h.splitFreight)))
+	r.Handle("POST /api/v1/dispatch/stops/{id}/reopen", g.RequireManager(h.staff(h.reopenStop)))
+	r.Handle("POST /api/v1/dispatch/runs/{id}/reopen", g.RequireManager(h.staff(h.reopenRun)))
+	r.Handle("POST /api/v1/dispatch/runs/{id}/reopen/clear", g.RequireStaff(h.staff(h.clearRunReopen)))
+	r.Handle("POST /api/v1/dispatch/stops/{id}/commit", g.RequireStaff(h.staff(h.commitStop)))
+	r.Handle("POST /api/v1/dispatch/stops/{id}/load-facts", g.RequireStaff(h.staff(h.setLoadFacts)))
+	r.Handle("POST /api/v1/dispatch/freight-split", g.RequireStaff(h.staff(h.splitFreight)))
 	// The parked raise behind an approval card (0195). Staff-gated at the door like every other read
 	// on this board; branch-fenced AND money-gated in the service, which is what actually decides
 	// whether the figures on it reach the caller. An approver who may not see load money gets the
 	// subject and no numbers, the same payload, minus a key.
-	mux.Handle("GET /api/v1/dispatch/freight-raises/{id}", g.RequireStaff(h.staff(h.freightRaise)))
+	r.Handle("GET /api/v1/dispatch/freight-raises/{id}", g.RequireStaff(h.staff(h.freightRaise)))
 	// The Pro/AI seam. It answers 501 with a sentence in the core build (handler_loadboard.go says
 	// why the route exists at all rather than being absent).
-	mux.Handle("POST /api/v1/dispatch/auto-assign", g.RequireStaff(h.staff(h.autoAssign)))
+	r.Handle("POST /api/v1/dispatch/auto-assign", g.RequireStaff(h.staff(h.autoAssign)))
 
 	// the driver's own day
-	mux.Handle("GET /api/v1/dispatch/my-runs", g.RequireStaff(h.staff(h.myRuns)))
+	r.Handle("GET /api/v1/dispatch/my-runs", g.RequireStaff(h.staff(h.myRuns)))
 
 	// will-call (DIB-79), staff side
-	mux.Handle("POST /api/v1/dispatch/will-call", g.RequireStaff(h.staff(h.mintWillCall)))
-	mux.Handle("GET /api/v1/dispatch/will-call", g.RequireStaff(h.staff(h.listWillCall)))
-	mux.Handle("POST /api/v1/dispatch/will-call/{id}/revoke", g.RequireManager(h.staff(h.revokeWillCall)))
+	r.Handle("POST /api/v1/dispatch/will-call", g.RequireStaff(h.staff(h.mintWillCall)))
+	r.Handle("GET /api/v1/dispatch/will-call", g.RequireStaff(h.staff(h.listWillCall)))
+	r.Handle("POST /api/v1/dispatch/will-call/{id}/revoke", g.RequireManager(h.staff(h.revokeWillCall)))
 }
 
 // RegisterPublicRoutes registers the UNAUTHENTICATED will-call surface the QR square points at.
@@ -284,7 +286,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
 // Kept a separate method with a separate name so that "these two routes have no guard" is a decision
 // someone makes explicitly in main.go, not something that happens because a path started with the
 // right prefix. Mirrors quote.Handler.RegisterPublicRoutes.
-func (h *Handler) RegisterPublicRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/public/v1/will-call/{token}", h.publicWillCall)
-	mux.HandleFunc("POST /api/public/v1/will-call/{token}/confirm", h.publicConfirmWillCall)
+func (h *Handler) RegisterPublicRoutes(r httpx.Registrar) {
+	r.Handle("GET /api/public/v1/will-call/{token}", http.HandlerFunc(h.publicWillCall))
+	r.Handle("POST /api/public/v1/will-call/{token}/confirm", http.HandlerFunc(h.publicConfirmWillCall))
 }

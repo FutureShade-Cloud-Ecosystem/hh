@@ -32,16 +32,16 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 // faceted reads are public catalogue data; the attribute WRITE is gated by the
 // staff manager guard passed in from cmd/server (Tier≤2), so an anonymous caller
 // can no longer mutate product attributes (C-1).
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	if g == nil {
 		// Fail closed: a missing guard would silently expose the attribute write to
 		// anonymous callers. Refuse to register rather than ship an open mutation.
 		panic("product.RegisterRoutes: guards are required (the PUT must be auth-gated)")
 	}
-	mux.HandleFunc("GET /api/v1/products", h.list)
-	mux.HandleFunc("GET /api/v1/products/facets", h.facets)
-	mux.HandleFunc("GET /api/v1/products/{id}", h.get)
-	mux.Handle("PUT /api/v1/products/{id}", g.RequireManager(h.staff(h.update)))
+	r.Handle("GET /api/v1/products", http.HandlerFunc(h.list))
+	r.Handle("GET /api/v1/products/facets", http.HandlerFunc(h.facets))
+	r.Handle("GET /api/v1/products/{id}", http.HandlerFunc(h.get))
+	r.Handle("PUT /api/v1/products/{id}", g.RequireManager(h.staff(h.update)))
 }
 
 // RegisterSearchRoute wires the STAFF fuzzy product search (DIB-56).
@@ -58,11 +58,11 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
 //
 // Route precedence: the literal /products/search binds ahead of the /products/{id} wildcard above under
 // Go's ServeMux specificity rules, so "search" is never parsed as a product id.
-func (h *Handler) RegisterSearchRoute(mux *http.ServeMux, g *guards.Guards) {
+func (h *Handler) RegisterSearchRoute(r httpx.Registrar, g *guards.Guards) {
 	if g == nil {
 		panic("product: guards are required")
 	}
-	mux.Handle("GET /api/v1/products/search", g.RequireStaff(h.staff(h.search)))
+	r.Handle("GET /api/v1/products/search", g.RequireStaff(h.staff(h.search)))
 }
 
 // RegisterCounterRoutes wires the W3 counter surface: the ranked instant search (GABLE:pos-search +
@@ -82,23 +82,23 @@ func (h *Handler) RegisterSearchRoute(mux *http.ServeMux, g *guards.Guards) {
 // The WRITE side is gated by writeGuard (manager), exactly like the attribute PUT. If the catalogue
 // reads ever become authenticated, this route moves with them, it is registered here, in one place,
 // for that reason.
-func (h *Handler) RegisterCounterRoutes(mux *http.ServeMux, g *guards.Guards) {
+func (h *Handler) RegisterCounterRoutes(r httpx.Registrar, g *guards.Guards) {
 	if g == nil {
 		panic("product: guards are required")
 	}
 	// Literal segments bind ahead of the /products/{id} wildcard under Go's ServeMux specificity
 	// rules, so "counter-search" and "scan" are never parsed as product ids.
-	mux.Handle("GET /api/v1/products/counter-search", g.RequireStaff(h.staff(h.counterSearch)))
-	mux.Handle("GET /api/v1/products/scan", g.RequireStaff(h.staff(h.resolveScan)))
+	r.Handle("GET /api/v1/products/counter-search", g.RequireStaff(h.staff(h.counterSearch)))
+	r.Handle("GET /api/v1/products/scan", g.RequireStaff(h.staff(h.resolveScan)))
 	// DIB-80 / S1 · the material calculator's basis read. Registered HERE, with the counter routes,
 	// because it is the same surface and the same audience: a rep at the counter answering "how much
 	// material for this job?". Staff-gated like the counter search rather than left public with the
 	// catalogue reads, it exposes the yard's packaging and waste rules, which are operational data
 	// about how Dibbits sells, not the product facts a customer already sees on a shelf tag.
-	mux.Handle("GET /api/v1/products/coverage", g.RequireStaff(h.staff(h.coverage)))
-	mux.HandleFunc("GET /api/v1/products/{id}/image", h.getImage)
-	mux.Handle("PUT /api/v1/products/{id}/image", g.RequireManager(h.staff(h.putImage)))
-	mux.Handle("DELETE /api/v1/products/{id}/image", g.RequireManager(h.staff(h.deleteImage)))
+	r.Handle("GET /api/v1/products/coverage", g.RequireStaff(h.staff(h.coverage)))
+	r.Handle("GET /api/v1/products/{id}/image", http.HandlerFunc(h.getImage))
+	r.Handle("PUT /api/v1/products/{id}/image", g.RequireManager(h.staff(h.putImage)))
+	r.Handle("DELETE /api/v1/products/{id}/image", g.RequireManager(h.staff(h.deleteImage)))
 }
 
 // counterSearch serves the debounced instant search. Envelope matches the other catalogue searches.

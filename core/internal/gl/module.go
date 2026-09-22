@@ -29,13 +29,14 @@ import (
 	"errors"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"log/slog"
-	"net/http"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // errNotImplemented marks a scaffold stub the A-01 worker fills. Every method below returns it until then.
@@ -356,32 +357,32 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 // SIGNATURE; the route SET is the worker's to fill, the frozen routes below are joined by the CoA-deactivate,
 // journal void/reverse, recurring /run, tie-out, and year-end-close routes the A-01 tasks require. Handler
 // bodies live in handler.go.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// Chart of accounts
-	mux.Handle("GET /api/v1/gl/accounts", g.RequireManager(h.staff(h.listAccounts)))
-	mux.Handle("POST /api/v1/gl/accounts", g.RequireManager(h.staff(h.createAccount)))
-	mux.Handle("POST /api/v1/gl/accounts/{code}/deactivate", g.RequireManager(h.staff(h.deactivateAccount)))
+	r.Handle("GET /api/v1/gl/accounts", g.RequireManager(h.staff(h.listAccounts)))
+	r.Handle("POST /api/v1/gl/accounts", g.RequireManager(h.staff(h.createAccount)))
+	r.Handle("POST /api/v1/gl/accounts/{code}/deactivate", g.RequireManager(h.staff(h.deactivateAccount)))
 	// Journals
-	mux.Handle("GET /api/v1/gl/journals", g.RequireManager(h.staff(h.listJournals)))
-	mux.Handle("GET /api/v1/gl/journals/{id}", g.RequireManager(h.staff(h.getJournal)))
-	mux.Handle("POST /api/v1/gl/journals", g.RequireManager(h.staff(h.createJournal)))
-	mux.Handle("POST /api/v1/gl/journals/{id}/approve", g.RequireManager(h.staff(h.approveJournal)))
-	mux.Handle("POST /api/v1/gl/journals/{id}/void", g.RequireManager(h.staff(h.voidJournal)))
-	mux.Handle("POST /api/v1/gl/journals/{id}/reverse", g.RequireManager(h.staff(h.reverseJournal)))
+	r.Handle("GET /api/v1/gl/journals", g.RequireManager(h.staff(h.listJournals)))
+	r.Handle("GET /api/v1/gl/journals/{id}", g.RequireManager(h.staff(h.getJournal)))
+	r.Handle("POST /api/v1/gl/journals", g.RequireManager(h.staff(h.createJournal)))
+	r.Handle("POST /api/v1/gl/journals/{id}/approve", g.RequireManager(h.staff(h.approveJournal)))
+	r.Handle("POST /api/v1/gl/journals/{id}/void", g.RequireManager(h.staff(h.voidJournal)))
+	r.Handle("POST /api/v1/gl/journals/{id}/reverse", g.RequireManager(h.staff(h.reverseJournal)))
 	// Recurring templates
-	mux.Handle("GET /api/v1/gl/recurring", g.RequireManager(h.staff(h.listRecurring)))
-	mux.Handle("POST /api/v1/gl/recurring/{id}/run", g.RequireManager(h.staff(h.runRecurring)))
+	r.Handle("GET /api/v1/gl/recurring", g.RequireManager(h.staff(h.listRecurring)))
+	r.Handle("POST /api/v1/gl/recurring/{id}/run", g.RequireManager(h.staff(h.runRecurring)))
 	// Trial balance + subledger tie-out
-	mux.Handle("GET /api/v1/gl/trial-balance", g.RequireManager(h.staff(h.trialBalance)))
-	mux.Handle("GET /api/v1/gl/tie-out", g.RequireManager(h.staff(h.tieOut)))
+	r.Handle("GET /api/v1/gl/trial-balance", g.RequireManager(h.staff(h.trialBalance)))
+	r.Handle("GET /api/v1/gl/tie-out", g.RequireManager(h.staff(h.tieOut)))
 	// M2-C1 static BisTrack GL reconciliation (read-only; Admin/Finance, same guard as the GP-parity export).
-	mux.Handle("GET /api/v1/gl/tieout/bistrack", g.RequireAdmin(h.staff(h.bistrackTieOut)))
+	r.Handle("GET /api/v1/gl/tieout/bistrack", g.RequireAdmin(h.staff(h.bistrackTieOut)))
 	// Periods
-	mux.Handle("GET /api/v1/gl/periods", g.RequireManager(h.staff(h.listPeriods)))
-	mux.Handle("POST /api/v1/gl/periods/{id}/close", g.RequireManager(h.staff(h.closePeriod)))
-	mux.Handle("POST /api/v1/gl/periods/{id}/reopen", g.RequireAdmin(h.staff(h.reopenPeriod)))
-	mux.Handle("POST /api/v1/gl/periods/close-year", g.RequireAdmin(h.staff(h.closeYear)))
+	r.Handle("GET /api/v1/gl/periods", g.RequireManager(h.staff(h.listPeriods)))
+	r.Handle("POST /api/v1/gl/periods/{id}/close", g.RequireManager(h.staff(h.closePeriod)))
+	r.Handle("POST /api/v1/gl/periods/{id}/reopen", g.RequireAdmin(h.staff(h.reopenPeriod)))
+	r.Handle("POST /api/v1/gl/periods/close-year", g.RequireAdmin(h.staff(h.closeYear)))
 	// Policy + export
-	mux.Handle("GET /api/v1/gl/policy", g.RequireManager(h.staff(h.policy)))
-	mux.Handle("POST /api/v1/gl/export", g.RequireAdmin(h.staff(h.export)))
+	r.Handle("GET /api/v1/gl/policy", g.RequireManager(h.staff(h.policy)))
+	r.Handle("POST /api/v1/gl/export", g.RequireAdmin(h.staff(h.export)))
 }

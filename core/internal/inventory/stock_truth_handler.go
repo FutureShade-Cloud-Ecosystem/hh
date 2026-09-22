@@ -28,33 +28,33 @@ import (
 )
 
 // RegisterStockTruthRoutes registers the Wave 4 inventory routes behind the identity guards.
-func (h *Handler) RegisterStockTruthRoutes(mux *http.ServeMux, g *guards.Guards) {
+func (h *Handler) RegisterStockTruthRoutes(r httpx.Registrar, g *guards.Guards) {
 	// DIB-73 cross-branch visibility + DIB-61 browse
-	mux.Handle("GET /api/v1/inventory/branch-stock", g.RequireStaff(h.staff(h.branchStock)))
-	mux.Handle("GET /api/v1/inventory/browse", g.RequireStaff(h.staff(h.browse)))
+	r.Handle("GET /api/v1/inventory/branch-stock", g.RequireStaff(h.staff(h.branchStock)))
+	r.Handle("GET /api/v1/inventory/browse", g.RequireStaff(h.staff(h.browse)))
 
 	// DIB-60 reservations + policy
-	mux.Handle("GET /api/v1/inventory/reservations", g.RequireStaff(h.staff(h.listReservations)))
-	mux.Handle("POST /api/v1/inventory/reservations", g.RequireManager(h.staff(h.createReservation)))
-	mux.Handle("POST /api/v1/inventory/reservations/release", g.RequireManager(h.staff(h.releaseReservation)))
-	mux.Handle("POST /api/v1/inventory/reservations/expire", g.RequireManager(h.staff(h.expireReservations)))
-	mux.Handle("GET /api/v1/inventory/allocation-policy", g.RequireStaff(h.staff(h.getPolicy)))
-	mux.Handle("PUT /api/v1/inventory/allocation-policy", g.RequireManager(h.staff(h.putPolicy)))
+	r.Handle("GET /api/v1/inventory/reservations", g.RequireStaff(h.staff(h.listReservations)))
+	r.Handle("POST /api/v1/inventory/reservations", g.RequireManager(h.staff(h.createReservation)))
+	r.Handle("POST /api/v1/inventory/reservations/release", g.RequireManager(h.staff(h.releaseReservation)))
+	r.Handle("POST /api/v1/inventory/reservations/expire", g.RequireManager(h.staff(h.expireReservations)))
+	r.Handle("GET /api/v1/inventory/allocation-policy", g.RequireStaff(h.staff(h.getPolicy)))
+	r.Handle("PUT /api/v1/inventory/allocation-policy", g.RequireManager(h.staff(h.putPolicy)))
 
 	// DIB-71 transfers
-	mux.Handle("GET /api/v1/inventory/transfers", g.RequireStaff(h.staff(h.listTransfers)))
-	mux.Handle("GET /api/v1/inventory/transfers/{id}", g.RequireStaff(h.staff(h.getTransfer)))
-	mux.Handle("POST /api/v1/inventory/transfers", g.RequireManager(h.staff(h.createTransfer)))
-	mux.Handle("POST /api/v1/inventory/transfers/{id}/ship", g.RequireManager(h.staff(h.shipTransfer)))
-	mux.Handle("POST /api/v1/inventory/transfers/{id}/receive", g.RequireManager(h.staff(h.receiveTransfer)))
-	mux.Handle("POST /api/v1/inventory/transfers/{id}/cancel", g.RequireManager(h.staff(h.cancelTransfer)))
+	r.Handle("GET /api/v1/inventory/transfers", g.RequireStaff(h.staff(h.listTransfers)))
+	r.Handle("GET /api/v1/inventory/transfers/{id}", g.RequireStaff(h.staff(h.getTransfer)))
+	r.Handle("POST /api/v1/inventory/transfers", g.RequireManager(h.staff(h.createTransfer)))
+	r.Handle("POST /api/v1/inventory/transfers/{id}/ship", g.RequireManager(h.staff(h.shipTransfer)))
+	r.Handle("POST /api/v1/inventory/transfers/{id}/receive", g.RequireManager(h.staff(h.receiveTransfer)))
+	r.Handle("POST /api/v1/inventory/transfers/{id}/cancel", g.RequireManager(h.staff(h.cancelTransfer)))
 
 	// DIB-72 replenishment
-	mux.Handle("GET /api/v1/inventory/shortfall", g.RequireStaff(h.staff(h.shortfall)))
-	mux.Handle("GET /api/v1/inventory/reorder-points", g.RequireStaff(h.staff(h.listReorderPoints)))
-	mux.Handle("PUT /api/v1/inventory/reorder-points", g.RequireManager(h.staff(h.putReorderPoint)))
-	mux.Handle("POST /api/v1/inventory/reorder-points/bootstrap", g.RequireManager(h.staff(h.bootstrapReorderPoints)))
-	mux.Handle("POST /api/v1/inventory/shortfall/create-po", g.RequireManager(h.staff(h.createPOFromShortfall)))
+	r.Handle("GET /api/v1/inventory/shortfall", g.RequireStaff(h.staff(h.shortfall)))
+	r.Handle("GET /api/v1/inventory/reorder-points", g.RequireStaff(h.staff(h.listReorderPoints)))
+	r.Handle("PUT /api/v1/inventory/reorder-points", g.RequireManager(h.staff(h.putReorderPoint)))
+	r.Handle("POST /api/v1/inventory/reorder-points/bootstrap", g.RequireManager(h.staff(h.bootstrapReorderPoints)))
+	r.Handle("POST /api/v1/inventory/shortfall/create-po", g.RequireManager(h.staff(h.createPOFromShortfall)))
 
 	// - DIB-460 / DIB-461 · what is coming, and the two ways to ask for more -
 	//
@@ -69,9 +69,9 @@ func (h *Handler) RegisterStockTruthRoutes(mux *http.ServeMux, g *guards.Guards)
 	//	                                     includes noticing (see the frontend's reorderControlFor);
 	//	                                     a yard picker being ABLE to post one is not a reason to
 	//	                                     put a button on their screen.
-	mux.Handle("GET /api/v1/inventory/incoming-transfers", g.RequireStaff(h.staff(h.incomingTransfers)))
-	mux.Handle("POST /api/v1/inventory/reorder-po", g.RequireManager(h.staff(h.reorderPO)))
-	mux.Handle("POST /api/v1/inventory/nudge-procurement", g.RequireStaff(h.staff(h.nudgeProcurement)))
+	r.Handle("GET /api/v1/inventory/incoming-transfers", g.RequireStaff(h.staff(h.incomingTransfers)))
+	r.Handle("POST /api/v1/inventory/reorder-po", g.RequireManager(h.staff(h.reorderPO)))
+	r.Handle("POST /api/v1/inventory/nudge-procurement", g.RequireStaff(h.staff(h.nudgeProcurement)))
 }
 
 // reachFromRequest projects the guard-resolved caller onto a branch-scoped read.

@@ -26,34 +26,34 @@ import (
 // RegisterW4Routes registers the DIB-70 / DIB-69 / M2-uom surface. It is a SEPARATE method rather
 // than more lines inside RegisterRoutes so the wave's additions are one call site to find, one
 // block to review, and one line to remove if the wave is reverted.
-func (h *Handler) RegisterW4Routes(mux *http.ServeMux, g *guards.Guards) {
+func (h *Handler) RegisterW4Routes(r httpx.Registrar, g *guards.Guards) {
 	if g == nil {
 		panic("pricing.RegisterW4Routes: guards are required (routes must be auth-gated)")
 	}
 	// DIB-70 promotions.
-	mux.Handle("GET /api/v1/pricing/promotions", g.RequireStaff(h.staff(h.listPromotions)))
-	mux.Handle("POST /api/v1/pricing/promotions", g.RequireManager(h.staff(h.createPromotion)))
-	mux.Handle("PUT /api/v1/pricing/promotions/{id}", g.RequireManager(h.staff(h.updatePromotion)))
-	mux.Handle("DELETE /api/v1/pricing/promotions/{id}", g.RequireManager(h.staff(h.deletePromotion)))
+	r.Handle("GET /api/v1/pricing/promotions", g.RequireStaff(h.staff(h.listPromotions)))
+	r.Handle("POST /api/v1/pricing/promotions", g.RequireManager(h.staff(h.createPromotion)))
+	r.Handle("PUT /api/v1/pricing/promotions/{id}", g.RequireManager(h.staff(h.updatePromotion)))
+	r.Handle("DELETE /api/v1/pricing/promotions/{id}", g.RequireManager(h.staff(h.deletePromotion)))
 
 	// DIB-154 clearance.
-	mux.Handle("GET /api/v1/pricing/clearance", g.RequireStaff(h.staff(h.listClearance)))
-	mux.Handle("PUT /api/v1/pricing/clearance/{productId}", g.RequireManager(h.staff(h.upsertClearance)))
-	mux.Handle("DELETE /api/v1/pricing/clearance/{productId}", g.RequireManager(h.staff(h.deleteClearance)))
+	r.Handle("GET /api/v1/pricing/clearance", g.RequireStaff(h.staff(h.listClearance)))
+	r.Handle("PUT /api/v1/pricing/clearance/{productId}", g.RequireManager(h.staff(h.upsertClearance)))
+	r.Handle("DELETE /api/v1/pricing/clearance/{productId}", g.RequireManager(h.staff(h.deleteClearance)))
 
 	// DIB-69 rebate core.
-	mux.Handle("GET /api/v1/pricing/rebates/programs", g.RequireStaff(h.staff(h.listRebatePrograms)))
-	mux.Handle("POST /api/v1/pricing/rebates/programs", g.RequireManager(h.staff(h.createRebateProgram)))
-	mux.Handle("PUT /api/v1/pricing/rebates/programs/{id}", g.RequireManager(h.staff(h.updateRebateProgram)))
-	mux.Handle("DELETE /api/v1/pricing/rebates/programs/{id}", g.RequireManager(h.staff(h.deleteRebateProgram)))
-	mux.Handle("GET /api/v1/pricing/rebates/vendors/{vendorId}/ledger", g.RequireStaff(h.staff(h.vendorLedger)))
-	mux.Handle("POST /api/v1/pricing/rebates/accrue", g.RequireManager(h.staff(h.accrueRebates)))
+	r.Handle("GET /api/v1/pricing/rebates/programs", g.RequireStaff(h.staff(h.listRebatePrograms)))
+	r.Handle("POST /api/v1/pricing/rebates/programs", g.RequireManager(h.staff(h.createRebateProgram)))
+	r.Handle("PUT /api/v1/pricing/rebates/programs/{id}", g.RequireManager(h.staff(h.updateRebateProgram)))
+	r.Handle("DELETE /api/v1/pricing/rebates/programs/{id}", g.RequireManager(h.staff(h.deleteRebateProgram)))
+	r.Handle("GET /api/v1/pricing/rebates/vendors/{vendorId}/ledger", g.RequireStaff(h.staff(h.vendorLedger)))
+	r.Handle("POST /api/v1/pricing/rebates/accrue", g.RequireManager(h.staff(h.accrueRebates)))
 
 	// M2-uom conversions.
-	mux.Handle("POST /api/v1/pricing/uom/plan", g.RequireStaff(h.staff(h.planUOM)))
-	mux.Handle("GET /api/v1/pricing/uom/conversions", g.RequireStaff(h.staff(h.listConversions)))
-	mux.Handle("PUT /api/v1/pricing/uom/conversions", g.RequireManager(h.staff(h.upsertConversion)))
-	mux.Handle("DELETE /api/v1/pricing/uom/conversions/{id}", g.RequireManager(h.staff(h.deleteConversion)))
+	r.Handle("POST /api/v1/pricing/uom/plan", g.RequireStaff(h.staff(h.planUOM)))
+	r.Handle("GET /api/v1/pricing/uom/conversions", g.RequireStaff(h.staff(h.listConversions)))
+	r.Handle("PUT /api/v1/pricing/uom/conversions", g.RequireManager(h.staff(h.upsertConversion)))
+	r.Handle("DELETE /api/v1/pricing/uom/conversions/{id}", g.RequireManager(h.staff(h.deleteConversion)))
 }
 
 // - promotions -

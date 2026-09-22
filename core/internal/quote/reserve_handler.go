@@ -21,13 +21,13 @@ import (
 )
 
 // RegisterAvailabilityRoutes wires the at-quote availability + hold endpoints.
-func (h *StaffHandler) RegisterAvailabilityRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("GET /api/v1/quotes/{id}/availability", g.RequireStaff(h.staff(h.quoteAvailability)))
-	mux.Handle("GET /api/v1/quotes/{id}/holds", g.RequireStaff(h.staff(h.quoteHolds)))
-	mux.Handle("GET /api/v1/quotes/{id}/hold-expiry", g.RequireStaff(h.staff(h.quoteHoldExpiry)))
-	mux.Handle("POST /api/v1/quotes/{id}/holds/resync", g.RequireStaff(h.staff(h.resyncHolds)))
-	mux.Handle("POST /api/v1/quotes/{id}/holds/release", g.RequireStaff(h.staff(h.releaseHolds)))
-	mux.Handle("GET /api/v1/quote-availability/{productId}/branches", g.RequireStaff(h.staff(h.crossBranchPeek)))
+func (h *StaffHandler) RegisterAvailabilityRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("GET /api/v1/quotes/{id}/availability", g.RequireStaff(h.staff(h.quoteAvailability)))
+	r.Handle("GET /api/v1/quotes/{id}/holds", g.RequireStaff(h.staff(h.quoteHolds)))
+	r.Handle("GET /api/v1/quotes/{id}/hold-expiry", g.RequireStaff(h.staff(h.quoteHoldExpiry)))
+	r.Handle("POST /api/v1/quotes/{id}/holds/resync", g.RequireStaff(h.staff(h.resyncHolds)))
+	r.Handle("POST /api/v1/quotes/{id}/holds/release", g.RequireStaff(h.staff(h.releaseHolds)))
+	r.Handle("GET /api/v1/quote-availability/{productId}/branches", g.RequireStaff(h.staff(h.crossBranchPeek)))
 }
 
 func (h *StaffHandler) quoteAvailability(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {

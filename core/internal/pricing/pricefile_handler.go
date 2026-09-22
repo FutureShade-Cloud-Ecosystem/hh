@@ -40,11 +40,11 @@ import (
 // oversized upload is refused rather than read into memory and then rejected.
 const maxPriceFileUpload = (12 << 20) + (256 << 10)
 
-func (h *Handler) registerPriceFileRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("GET /api/v1/pricing/price-file/vendors", g.RequireStaff(h.staff(h.priceFileVendors)))
-	mux.Handle("POST /api/v1/pricing/price-file/preview", g.RequireStaff(h.staff(h.previewPriceFile)))
-	mux.Handle("POST /api/v1/pricing/price-file/apply", g.RequireManager(h.staff(h.applyPriceFile)))
-	mux.Handle("GET /api/v1/pricing/price-file/runs", g.RequireStaff(h.staff(h.priceFileRuns)))
+func (h *Handler) registerPriceFileRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("GET /api/v1/pricing/price-file/vendors", g.RequireStaff(h.staff(h.priceFileVendors)))
+	r.Handle("POST /api/v1/pricing/price-file/preview", g.RequireStaff(h.staff(h.previewPriceFile)))
+	r.Handle("POST /api/v1/pricing/price-file/apply", g.RequireManager(h.staff(h.applyPriceFile)))
+	r.Handle("GET /api/v1/pricing/price-file/runs", g.RequireStaff(h.staff(h.priceFileRuns)))
 }
 
 func (h *Handler) priceFileVendors(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {

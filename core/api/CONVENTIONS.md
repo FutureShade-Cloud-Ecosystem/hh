@@ -105,6 +105,16 @@ Every list endpoint uses cursor pagination, replacing the ERP's offset pages:
   `limit` (`type: integer, format: int32`). Never `offset`, never `total`:
   cursor pagination replaces offset on every list.
 
+One endpoint's cursor is a position token rather than a row key, recorded
+here as its convention difference: `GET /api/v1/tasks/yard/pending`
+(the yard pending-tickets feed) is an in-memory merge of two dispatch
+reads whose resume token carries the merge position, not a row key,
+opaque under the shared v1 encoding; malformed and negative positions are
+refused. The feed's own design ("a merge cannot be offset at the
+database") leaves no row key the seam could filter on without crossing
+module lines; if conformance ever wants a row key there, that is a seam
+redesign with its own review, ordered above both lanes.
+
 One deliberate difference is recorded here rather than transcribed: the ERP
 handler for `GET /api/v1/audit/transaction/{entityType}/{entityId}`
 (`audit/handler.go`, the `reopen` read path) returns the trail as a bare

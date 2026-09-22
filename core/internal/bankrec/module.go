@@ -17,12 +17,13 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"io"
 	"log/slog"
-	"net/http"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // errNotImplemented marks a scaffold stub the A-02 worker fills.
@@ -166,16 +167,16 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 
 // RegisterRoutes self-registers the bankrec routes. reads are RequireStaff; import/match are RequireManager;
 // rule approval + reconciliation completion are RequireAdmin. Signature is FROZEN across the W5 handlers.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("GET /api/v1/bankrec/accounts", g.RequireStaff(h.staff(h.accounts)))
-	mux.Handle("POST /api/v1/bankrec/imports", g.RequireManager(h.staff(h.createImport)))
-	mux.Handle("GET /api/v1/bankrec/lines", g.RequireStaff(h.staff(h.lines)))
-	mux.Handle("GET /api/v1/bankrec/matches", g.RequireStaff(h.staff(h.matchHistory)))
-	mux.Handle("POST /api/v1/bankrec/match", g.RequireManager(h.staff(h.match)))
-	mux.Handle("POST /api/v1/bankrec/unmatch", g.RequireManager(h.staff(h.unmatch)))
-	mux.Handle("GET /api/v1/bankrec/rules", g.RequireStaff(h.staff(h.rules)))
-	mux.Handle("POST /api/v1/bankrec/rules", g.RequireAdmin(h.staff(h.createRule)))
-	mux.Handle("GET /api/v1/bankrec/reconciliations", g.RequireStaff(h.staff(h.reconciliations)))
-	mux.Handle("POST /api/v1/bankrec/reconciliations", g.RequireManager(h.staff(h.openReconciliation)))
-	mux.Handle("POST /api/v1/bankrec/reconciliations/{id}/complete", g.RequireAdmin(h.staff(h.completeReconciliation)))
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("GET /api/v1/bankrec/accounts", g.RequireStaff(h.staff(h.accounts)))
+	r.Handle("POST /api/v1/bankrec/imports", g.RequireManager(h.staff(h.createImport)))
+	r.Handle("GET /api/v1/bankrec/lines", g.RequireStaff(h.staff(h.lines)))
+	r.Handle("GET /api/v1/bankrec/matches", g.RequireStaff(h.staff(h.matchHistory)))
+	r.Handle("POST /api/v1/bankrec/match", g.RequireManager(h.staff(h.match)))
+	r.Handle("POST /api/v1/bankrec/unmatch", g.RequireManager(h.staff(h.unmatch)))
+	r.Handle("GET /api/v1/bankrec/rules", g.RequireStaff(h.staff(h.rules)))
+	r.Handle("POST /api/v1/bankrec/rules", g.RequireAdmin(h.staff(h.createRule)))
+	r.Handle("GET /api/v1/bankrec/reconciliations", g.RequireStaff(h.staff(h.reconciliations)))
+	r.Handle("POST /api/v1/bankrec/reconciliations", g.RequireManager(h.staff(h.openReconciliation)))
+	r.Handle("POST /api/v1/bankrec/reconciliations/{id}/complete", g.RequireAdmin(h.staff(h.completeReconciliation)))
 }

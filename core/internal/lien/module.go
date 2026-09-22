@@ -21,6 +21,8 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // errNotImplemented marks a scaffold stub the M6 worker fills.
@@ -182,19 +184,19 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 // RegisterRoutes self-registers the lien routes behind the identity guards. Reads are RequireManager (the
 // Monday triage is manager-visible); release is dual-gated (gatekeeper GENERAL_MANAGER + Controller inside the
 // service). FROZEN guard signature; M6 fills the route bodies.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// - reads: the Monday triage is manager-visible (RequireManager) -
-	mux.Handle("GET /api/v1/lien/jobs", g.RequireManager(h.staff(h.listJobs)))
-	mux.Handle("GET /api/v1/lien/jobs/{id}", g.RequireManager(h.staff(h.getJob)))
-	mux.Handle("GET /api/v1/lien/triage", g.RequireManager(h.staff(h.triage)))
-	mux.Handle("GET /api/v1/lien/holdback/aging", g.RequireManager(h.staff(h.aging)))
-	mux.Handle("GET /api/v1/lien/jobs/{id}/documents", g.RequireManager(h.staff(h.listDocuments)))
-	mux.Handle("GET /api/v1/lien/documents/{id}/versions", g.RequireManager(h.staff(h.documentVersions)))
+	r.Handle("GET /api/v1/lien/jobs", g.RequireManager(h.staff(h.listJobs)))
+	r.Handle("GET /api/v1/lien/jobs/{id}", g.RequireManager(h.staff(h.getJob)))
+	r.Handle("GET /api/v1/lien/triage", g.RequireManager(h.staff(h.triage)))
+	r.Handle("GET /api/v1/lien/holdback/aging", g.RequireManager(h.staff(h.aging)))
+	r.Handle("GET /api/v1/lien/jobs/{id}/documents", g.RequireManager(h.staff(h.listDocuments)))
+	r.Handle("GET /api/v1/lien/documents/{id}/versions", g.RequireManager(h.staff(h.documentVersions)))
 	// - mutations (route-gated RequireManager; the release adds the in-service dual gate) -
-	mux.Handle("POST /api/v1/lien/jobs", g.RequireManager(h.staff(h.createJob)))
-	mux.Handle("POST /api/v1/lien/jobs/{id}/sync", g.RequireManager(h.staff(h.syncHoldbacks)))
-	mux.Handle("POST /api/v1/lien/documents", g.RequireManager(h.staff(h.createDocument)))
-	mux.Handle("POST /api/v1/lien/holdback/{jobID}/release", g.RequireManager(h.staff(h.release)))
+	r.Handle("POST /api/v1/lien/jobs", g.RequireManager(h.staff(h.createJob)))
+	r.Handle("POST /api/v1/lien/jobs/{id}/sync", g.RequireManager(h.staff(h.syncHoldbacks)))
+	r.Handle("POST /api/v1/lien/documents", g.RequireManager(h.staff(h.createDocument)))
+	r.Handle("POST /api/v1/lien/holdback/{jobID}/release", g.RequireManager(h.staff(h.release)))
 }
 
 func (h *Handler) notImplemented(w http.ResponseWriter, _ *http.Request) {

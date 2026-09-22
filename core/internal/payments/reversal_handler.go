@@ -36,8 +36,8 @@ func NewReversalHandler(svc *ReverseService, log *slog.Logger) *ReversalHandler 
 // RegisterRoutes registers the undo route behind the manager gate. The gate is applied HERE as well
 // as inside the service (ReverseInput.IsManager): the route gate stops the request, the service check
 // stops an in-process caller that bypassed HTTP, and neither is a substitute for the other.
-func (h *ReversalHandler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("POST /api/v1/ar/payments/{id}/reverse", g.RequireManager(h.staff(h.reverse)))
+func (h *ReversalHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("POST /api/v1/ar/payments/{id}/reverse", g.RequireManager(h.staff(h.reverse)))
 }
 
 func (h *ReversalHandler) reverse(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {

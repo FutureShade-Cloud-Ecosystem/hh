@@ -14,21 +14,21 @@ import (
 // separation-of-duties invariant (approver ≠ maker) is enforced in the SERVICE, not by RBAC, so
 // two Managers are required for a batch to go live. Manufacturer/vendor names surface here on
 // staff screens only (rule 1); no A-08 route is portal-reachable.
-func (h *Handler) registerBatchRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("GET /api/v1/pricing/batches", g.RequireStaff(h.staff(h.listBatches)))
-	mux.Handle("POST /api/v1/pricing/batches", g.RequireManager(h.staff(h.createBatch)))
-	mux.Handle("GET /api/v1/pricing/batches/{id}", g.RequireStaff(h.staff(h.getBatch)))
-	mux.Handle("GET /api/v1/pricing/batches/{id}/lines", g.RequireStaff(h.staff(h.listBatchLines)))
+func (h *Handler) registerBatchRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("GET /api/v1/pricing/batches", g.RequireStaff(h.staff(h.listBatches)))
+	r.Handle("POST /api/v1/pricing/batches", g.RequireManager(h.staff(h.createBatch)))
+	r.Handle("GET /api/v1/pricing/batches/{id}", g.RequireStaff(h.staff(h.getBatch)))
+	r.Handle("GET /api/v1/pricing/batches/{id}/lines", g.RequireStaff(h.staff(h.listBatchLines)))
 	// Import accepts the raw CSV body (text/csv). Filename rides on ?source_ref=.
-	mux.Handle("POST /api/v1/pricing/batches/{id}/import", g.RequireManager(h.staff(h.importBatch)))
-	mux.Handle("POST /api/v1/pricing/batches/{id}/approve", g.RequireManager(h.staff(h.approveBatch)))
-	mux.Handle("POST /api/v1/pricing/batches/{id}/apply", g.RequireManager(h.staff(h.applyBatch)))
-	mux.Handle("POST /api/v1/pricing/batches/apply-due", g.RequireManager(h.staff(h.applyDueBatches)))
+	r.Handle("POST /api/v1/pricing/batches/{id}/import", g.RequireManager(h.staff(h.importBatch)))
+	r.Handle("POST /api/v1/pricing/batches/{id}/approve", g.RequireManager(h.staff(h.approveBatch)))
+	r.Handle("POST /api/v1/pricing/batches/{id}/apply", g.RequireManager(h.staff(h.applyBatch)))
+	r.Handle("POST /api/v1/pricing/batches/apply-due", g.RequireManager(h.staff(h.applyDueBatches)))
 	// Import profiles (mapping editor), the seeded V-* manufacturer column mappings.
-	mux.Handle("GET /api/v1/pricing/import-profiles", g.RequireStaff(h.staff(h.listImportProfiles)))
-	mux.Handle("PUT /api/v1/pricing/import-profiles/{id}", g.RequireManager(h.staff(h.updateImportProfileMapping)))
+	r.Handle("GET /api/v1/pricing/import-profiles", g.RequireStaff(h.staff(h.listImportProfiles)))
+	r.Handle("PUT /api/v1/pricing/import-profiles/{id}", g.RequireManager(h.staff(h.updateImportProfileMapping)))
 	// Append-only change-log viewer (who/when/before/after).
-	mux.Handle("GET /api/v1/pricing/change-log", g.RequireStaff(h.staff(h.changeLog)))
+	r.Handle("GET /api/v1/pricing/change-log", g.RequireStaff(h.staff(h.changeLog)))
 }
 
 func (h *Handler) listImportProfiles(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {

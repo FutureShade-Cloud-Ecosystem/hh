@@ -801,8 +801,575 @@ recorded per class, not per count):
 | core/internal/warranty/caller_stamp.go | NEW |  |  |  |  |
 | core/internal/identity/staffcontext/approvals_handler.go | NEW |  |  |  |  |
 | core/internal/identity/staffcontext/approvals_handler_test.go | NEW |  |  |  |  |
-| core/internal/till/integration_helpers_test.go | NEW |  |  |  |  |
 | core/cmd/core/wire_operations.go | NEW |  |  |  |  |
 | core/cmd/core/wire_test.go | NEW |  |  |  |  |
 
 Batch totals: 2806 em, 14 en, 33999 box, 2 mojibake normalized.
+
+## Batch 5 (the fold): sanctioned edit classes
+
+- Registrar re-pin, ALL carried modules and shims (the B3 ruling): the
+  one-method Registrar interface promoted to the platform package
+  (platform/httpx/registrar.go NEW), `type Registrar = httpx.Registrar`
+  left beside the shims, every exported registrar's first parameter
+  re-pinned from *http.ServeMux to httpx.Registrar, and the four
+  remaining HandleFunc sites converted to Handle with http.HandlerFunc
+  (dispatch will-call pair, warranty intake, messaging stream switch,
+  product public reads).
+- Guards swap, the nineteen carried modules: every positional-guard
+  registrar takes (r httpx.Registrar, g *guards.Guards), 175 guarded
+  registrations compose g.RequireX(h.staff(...)), handlers gain the
+  caller guards.StaffCaller parameter, one caller_stamp.go per module
+  (billing three: ARLanding, MonthEnd, Register; dashboard two), the
+  mapping evidence-pinned to the pin's main.go wiring lines.
+- Portal bearer split (R6): the BFF legs re-home onto g.RequireTenant /
+  g.RequireCapability with the module's own PortalContext resolved from
+  the guard-resolved tenant scope (tenant_stamp.go NEW;
+  portal_users.ResolveTenantUser read); the session-MINT legs (login,
+  accept-invite, password reset, sliding refresh) carry unregistered
+  (the SSO-precedent leave-behind, the D38 sign-in item); the HS256
+  secret parameter passes empty.
+- Cursor conversions, the portal BFF lists (invoice, tenant quote,
+  tenant order) plus the billing/order/quote tenant list seams behind
+  them: ParseCursorPage, fetch limit+1, no count query, next_cursor
+  from the last kept row; stable-ordering bases recorded in code
+  comments beside each conversion (issue_date/invoice_no;
+  created_at/quote_no; created_at/order_no). Offset family gone.
+- assist/adapters follows the staff quote list's dropped total echo.
+- The composition-root fold: main.go rewritten to the role split
+  (serve, worker, migrate, seed, demoseed); wire_tops.go, worker.go,
+  roles_oneshot.go, tops_adapters.go NEW; viz_adapters.go and
+  needs_adapters.go carried from the pin's cmd/server; the pin's
+  cmd/demoseed carried as demoseed_*.go with main renamed
+  demoseedRole; the pin's five cmd/demoseed adapter transcriptions
+  collapsed onto the shared declarations (the one-package constraint;
+  identical bodies at the pin); dibbits_seed.sql embedded.
+- boot fail-fasts restored with their owners (order cancel guards and
+  edit seams, quote edit seams); availability and stock-seam warnings
+  restored (wired, never fire); POS card rail and vault failures are
+  boot refusals; the lane's own panic posture kept on the payments
+  gateway selector.
+- healthz re-homed on serve with the live DB ping; google_sso carried
+  as the constant false (the SSO leave-behind).
+- The audit middleware wraps the served mux outside the otel wrap
+  (A-21); the authenticator re-points at the JWKS verifier plus the
+  linkage read; the audit row's role word reads empty (no token
+  snapshot exists under JWKS, D3; recorded as a finding).
+- go.mod: golang.org/x/crypto added (portal bcrypt; the pin's version).
+- Relative-path re-points in carried tests: dashboard and testaudit
+  migration reads to db/migrations; bistrack_map.json to the module's
+  testdata (pin blob 876851727bb3e90f at
+  docs/legacy/bistrack_map.json); demoseed plan/source reads to the
+  demoseed_ filenames.
+- till/integration_helpers_test.go (batch 4's NEW row) is DELETED: the
+  full integration_test.go it stood in for arrives here and carries
+  its own helpers.
+- Personal-data class, this batch: seeded demo-persona fixture names
+  and demo channel names inside test fixtures kept as data, counts
+  only (the same class the operations batch recorded); no third-party
+  identifying values were removed from production prose this batch
+  (none found in the nineteen modules' non-test comments).
+
+| carried file | pin sha256 (16) | em | en | box | mojibake |
+|---|---|---|---|---|---|
+| core/cmd/core/demoseed_apply.go | c44b3e7cc4030cbc | 8 | 0 | 0 | 0 |
+| core/cmd/core/demoseed_build.go | c5ea29c5db1199d8 | 33 | 0 | 1116 | 0 |
+| core/cmd/core/demoseed_compose.go | 03aadcbc81e4d6dc | 5 | 0 | 43 | 0 |
+| core/cmd/core/demoseed_ids.go | 9c09f1ec0a86dc4a | 10 | 0 | 45 | 0 |
+| core/cmd/core/demoseed_main.go | 738764f3cef80a75 | 13 | 0 | 0 | 0 |
+| core/cmd/core/demoseed_plan.go | 4315e95fddd76337 | 73 | 8 | 373 | 0 |
+| core/cmd/core/demoseed_plan_test.go | c4f3af9398802696 | 61 | 0 | 362 | 0 |
+| core/cmd/core/demoseed_resolve.go | d976140f53247b5c | 12 | 0 | 0 | 0 |
+| core/cmd/core/demoseed_seal.go | 3ea67ba401c25c9d | 3 | 0 | 0 | 0 |
+| core/cmd/core/demoseed_source_test.go | 08849471a717c818 | 2 | 0 | 0 | 0 |
+| core/cmd/core/dibbits_seed.sql | f3d2b9e3daa88f08 | 79 | 0 | 831 | 0 |
+| core/cmd/core/healthz_test.go | 8a58810301a4bb3d | 1 | 0 | 0 | 0 |
+| core/cmd/core/needs_adapters.go | 90761f975fc98c21 | 4 | 0 | 279 | 0 |
+| core/cmd/core/tzdata_test.go | b73e815475ba7ba8 | 7 | 0 | 0 | 0 |
+| core/cmd/core/viz_adapters.go | 5d016bd61d050701 | 31 | 2 | 423 | 0 |
+| core/cmd/core/viz_label_vocabulary_test.go | ead565f413bd3386 | 27 | 0 | 27 | 0 |
+| core/cmd/core/w6a_adapters_test.go | 852a4fb69733b072 | 7 | 0 | 0 | 0 |
+| core/internal/assist/activity_conversation_test.go | 1ac722475c04b82d | 17 | 0 | 0 | 0 |
+| core/internal/assist/adapters/activity.go | f378024ce435b529 | 6 | 0 | 0 | 0 |
+| core/internal/assist/adapters/activity_test.go | 3be1dc4c71b9ce07 | 2 | 0 | 0 | 0 |
+| core/internal/assist/adapters/adapters.go | af86b518ad72a58b | 4 | 0 | 698 | 0 |
+| core/internal/assist/adapters/adapters_test.go | f324ca338aac97c7 | 18 | 0 | 513 | 0 |
+| core/internal/assist/adapters/catalogue.go | ecceca883f086f79 | 14 | 0 | 194 | 0 |
+| core/internal/assist/adapters/customer.go | 58875402c49b5c31 | 6 | 0 | 0 | 0 |
+| core/internal/assist/adapters/dib478_report_contract_integration_test.go | a15aac445fb45ae0 | 11 | 0 | 0 | 0 |
+| core/internal/assist/adapters/dib494_activity_integration_test.go | 280f66dd55d4af7a | 6 | 0 | 0 | 0 |
+| core/internal/assist/adapters/documents.go | 4cd9bdd5f1fedd9a | 6 | 0 | 259 | 0 |
+| core/internal/assist/adapters/fakes_test.go | ff70f988d35e70ab | 1 | 0 | 332 | 0 |
+| core/internal/assist/adapters/fixtures_integration_test.go | 0bb9518985c11983 | 11 | 0 | 0 | 0 |
+| core/internal/assist/adapters/integration_test.go | 8c92c7cf0380a511 | 29 | 0 | 650 | 0 |
+| core/internal/assist/adapters/money.go | 9a36f9a033c69ca4 | 11 | 0 | 131 | 0 |
+| core/internal/assist/adapters/order.go | b3eac01f1bd89630 | 4 | 0 | 0 | 0 |
+| core/internal/assist/adapters/payment.go | 78b602df440347f1 | 5 | 0 | 0 | 0 |
+| core/internal/assist/adapters/quoteassist_integration_test.go | 2498d36d038d2977 | 12 | 0 | 82 | 0 |
+| core/internal/assist/adapters/quoteassist_rails_test.go | 0ec358b7d92f1703 | 26 | 0 | 287 | 0 |
+| core/internal/assist/adapters/quoteassist_reads_test.go | db067864eb2ff438 | 22 | 0 | 261 | 0 |
+| core/internal/assist/adapters/quotecatalogue.go | ab0b6584244c8035 | 8 | 0 | 0 | 0 |
+| core/internal/assist/adapters/quoteextract.go | 5eb306fa8e2eae7d | 15 | 0 | 570 | 0 |
+| core/internal/assist/adapters/quotelines.go | 0b2b3edc25dde698 | 12 | 0 | 380 | 0 |
+| core/internal/assist/adapters/scope_test.go | ea3c1b336c5aebbe | 8 | 0 | 0 | 0 |
+| core/internal/assist/adapters/stock.go | 3414cf4de0d5ecc5 | 5 | 0 | 0 | 0 |
+| core/internal/assist/adapters/wiring.go | a7d10e46392d8034 | 6 | 0 | 210 | 0 |
+| core/internal/assist/adapters/yard.go | 250a56e7f85ad352 | 7 | 0 | 0 | 0 |
+| core/internal/assist/admin.go | 983317764145e65e | 9 | 0 | 0 | 0 |
+| core/internal/assist/anthropic_provider.go | d38994e5aaa635b4 | 6 | 0 | 0 | 0 |
+| core/internal/assist/capability.go | 70ddbb0cbf28e202 | 28 | 0 | 66 | 0 |
+| core/internal/assist/capability_test.go | df61f5ff8ed8bfa8 | 4 | 0 | 0 | 0 |
+| core/internal/assist/clarify.go | 66004507924792a3 | 11 | 0 | 0 | 0 |
+| core/internal/assist/commands.go | 6fafa479027cb3ab | 25 | 0 | 473 | 0 |
+| core/internal/assist/commands_activity.go | 0938c817e13f2c58 | 19 | 0 | 79 | 0 |
+| core/internal/assist/commands_activity_test.go | 675c2012882dd112 | 10 | 0 | 0 | 0 |
+| core/internal/assist/commands_domain.go | 34651fb0aff01886 | 34 | 2 | 940 | 0 |
+| core/internal/assist/commands_test.go | b12d00ecad4a021e | 7 | 0 | 435 | 0 |
+| core/internal/assist/conversation.go | 7b9b05e2b859a64f | 9 | 0 | 380 | 0 |
+| core/internal/assist/conversation_test.go | 3832007e56a60270 | 25 | 0 | 401 | 0 |
+| core/internal/assist/dates.go | e21b149c7094308a | 3 | 5 | 0 | 0 |
+| core/internal/assist/dib513_refusal_test.go | 96b47534023982a0 | 6 | 0 | 0 | 0 |
+| core/internal/assist/fakes_test.go | c6851d3e232f60dc | 1 | 0 | 412 | 0 |
+| core/internal/assist/format.go | 5875861bbc1389e1 | 6 | 0 | 0 | 0 |
+| core/internal/assist/handler.go | 75d4c8cf0010b06f | 12 | 0 | 85 | 0 |
+| core/internal/assist/handler_test.go | aeba1ed72b53e88b | 19 | 0 | 563 | 0 |
+| core/internal/assist/integration_test.go | 8f89c08e8ed00b43 | 43 | 0 | 320 | 0 |
+| core/internal/assist/ledger.go | bcbe171d43e1e7fd | 7 | 0 | 0 | 0 |
+| core/internal/assist/limits.go | b257f7fe8dd5b9d5 | 9 | 0 | 0 | 0 |
+| core/internal/assist/limits_test.go | 7f1925b7abb694b3 | 13 | 0 | 71 | 0 |
+| core/internal/assist/model.go | ec6cd34af680f9be | 31 | 0 | 190 | 0 |
+| core/internal/assist/model_activity.go | 279a24d0b34977b5 | 6 | 0 | 0 | 0 |
+| core/internal/assist/model_domain.go | aff65118dc65adc7 | 15 | 0 | 428 | 0 |
+| core/internal/assist/provider.go | d70ce5c6f01038e9 | 11 | 0 | 51 | 0 |
+| core/internal/assist/registry.go | ade9adb9799f343b | 10 | 0 | 0 | 0 |
+| core/internal/assist/registry_test.go | 48e851382de43e44 | 11 | 0 | 0 | 0 |
+| core/internal/assist/repository.go | 1c6b0ed2ff660586 | 11 | 0 | 323 | 0 |
+| core/internal/assist/resolver.go | 94d1b094dd217746 | 48 | 0 | 1201 | 0 |
+| core/internal/assist/resolver_fakes_test.go | ca40b09f407fa4fd | 4 | 1 | 114 | 0 |
+| core/internal/assist/resolver_test.go | 7a884ab30b80021c | 18 | 2 | 494 | 0 |
+| core/internal/assist/service.go | aa8afbfbfd8331ab | 24 | 0 | 117 | 0 |
+| core/internal/assist/service_test.go | f2363598a7814841 | 24 | 0 | 427 | 0 |
+| core/internal/assist/settings.go | 7e857e6782bb20dd | 4 | 0 | 0 | 0 |
+| core/internal/assist/stub_provider.go | 0b917e01b12ab6aa | 36 | 0 | 396 | 0 |
+| core/internal/billing/ar_landing.go | f45e45909331e8e3 | 25 | 0 | 706 | 0 |
+| core/internal/billing/ar_landing_capability_test.go | 5551441ff66e3fa7 | 13 | 0 | 0 | 0 |
+| core/internal/billing/ar_landing_handler.go | bb2612d780ca493b | 15 | 0 | 0 | 0 |
+| core/internal/billing/ar_landing_history.go | cf7d0fcb58749074 | 18 | 0 | 134 | 0 |
+| core/internal/billing/ar_landing_history_integration_test.go | f456df3c74c74985 | 8 | 0 | 0 | 0 |
+| core/internal/billing/ar_landing_history_test.go | 92e02f41f14e0a79 | 18 | 0 | 337 | 0 |
+| core/internal/billing/ar_landing_store.go | 13d073e8bf23d8fa | 8 | 0 | 76 | 1 |
+| core/internal/billing/ar_landing_test.go | 63cc84ce3b784522 | 11 | 0 | 0 | 0 |
+| core/internal/billing/ar_reminders.go | 5aac62d5fa92dd44 | 29 | 0 | 667 | 0 |
+| core/internal/billing/ar_reminders_test.go | ef8b5c7846ce678f | 7 | 0 | 326 | 0 |
+| core/internal/billing/autohold.go | 1e61cf662b7afd80 | 16 | 0 | 37 | 0 |
+| core/internal/billing/credit_gate.go | 5c06b7543b27b800 | 23 | 0 | 950 | 0 |
+| core/internal/billing/credit_gate_integration_test.go | 9bec3c09fb858a4c | 15 | 0 | 0 | 0 |
+| core/internal/billing/credit_gate_test.go | 1f6f091dc5138046 | 10 | 0 | 298 | 0 |
+| core/internal/billing/credit_job.go | 25051008cde98432 | 3 | 0 | 0 | 0 |
+| core/internal/billing/credit_memo.go | a15639e84cbcd6cd | 19 | 0 | 318 | 0 |
+| core/internal/billing/credit_memo_repost.go | 1bab88ba8c4dd571 | 13 | 0 | 0 | 0 |
+| core/internal/billing/credit_memo_repost_integration_test.go | 691bd32bb7777cde | 18 | 0 | 29 | 0 |
+| core/internal/billing/credit_memo_repost_test.go | 0a9bf7ffda492da0 | 6 | 0 | 88 | 0 |
+| core/internal/billing/credit_repository.go | 2349c27741b6b7d1 | 13 | 0 | 0 | 0 |
+| core/internal/billing/customer_ar_read.go | 2db7101519f4c0eb | 16 | 0 | 380 | 0 |
+| core/internal/billing/customer_ar_read_test.go | 3ef43c965a1b8d7e | 5 | 0 | 85 | 0 |
+| core/internal/billing/dib483_autohold_integration_test.go | d0b8a6dfdd7ee084 | 10 | 0 | 0 | 0 |
+| core/internal/billing/dib483_autohold_test.go | 571ada8895f3ec04 | 20 | 0 | 192 | 0 |
+| core/internal/billing/dib510_register_integration_test.go | 98d52ab3bc8a656a | 14 | 0 | 311 | 0 |
+| core/internal/billing/dib510_register_test.go | 4047760dbc8f912e | 13 | 0 | 646 | 0 |
+| core/internal/billing/gl_seam.go | fa5f223ff9710bcf | 5 | 0 | 0 | 0 |
+| core/internal/billing/invoice_writer.go | fa492d0a55b89e36 | 23 | 0 | 327 | 0 |
+| core/internal/billing/invoice_writer_test.go | 72653059f543c41b | 15 | 0 | 16 | 0 |
+| core/internal/billing/lien_seam.go | 36fd5dde4e708346 | 5 | 0 | 0 | 0 |
+| core/internal/billing/model.go | aea5a16d50481bed | 1 | 0 | 0 | 0 |
+| core/internal/billing/monthend_handler.go | 01b129204ccf320c | 9 | 0 | 59 | 0 |
+| core/internal/billing/order_cancel_seam.go | bc777be1a1210ec1 | 4 | 0 | 0 | 0 |
+| core/internal/billing/order_seam.go | 98d4d3e4a4848692 | 2 | 0 | 0 | 0 |
+| core/internal/billing/register_detail_repository.go | b654927e2b01e036 | 8 | 0 | 0 | 0 |
+| core/internal/billing/register_handler.go | 5c0686b971bcaaf9 | 15 | 0 | 366 | 0 |
+| core/internal/billing/register_messages.go | 1231ce93f0fbeddb | 7 | 0 | 116 | 0 |
+| core/internal/billing/register_model.go | 1fcfd46d86394086 | 19 | 0 | 442 | 0 |
+| core/internal/billing/register_money.go | e0800c1515b2536a | 4 | 0 | 52 | 0 |
+| core/internal/billing/register_repository.go | 434bf61710e2794f | 12 | 0 | 291 | 0 |
+| core/internal/billing/register_service.go | 37d33e3299196290 | 16 | 0 | 320 | 0 |
+| core/internal/billing/register_writes.go | 1361b58900635885 | 8 | 0 | 0 | 0 |
+| core/internal/billing/repository.go | 13b29134d0750fc6 | 0 | 0 | 0 | 0 |
+| core/internal/billing/repository_integration_test.go | 4a66304cc3d50608 | 21 | 0 | 250 | 0 |
+| core/internal/billing/service.go | 18d7f8a8e69a04cc | 1 | 0 | 0 | 0 |
+| core/internal/billing/service_test.go | a23dd3502f5823cc | 1 | 0 | 0 | 0 |
+| core/internal/billing/statement_notice_integration_test.go | d9556de1f3b85b2b | 10 | 0 | 52 | 0 |
+| core/internal/billing/statement_outbox.go | b57181a2ca8c5632 | 9 | 0 | 145 | 0 |
+| core/internal/billing/statement_repository.go | 9e1fc5bc62ba3c7e | 8 | 0 | 0 | 0 |
+| core/internal/billing/statements.go | 6b611d1bea7dbe56 | 13 | 2 | 229 | 0 |
+| core/internal/billing/statements_integration_test.go | 158b255e257c9d2a | 11 | 0 | 246 | 0 |
+| core/internal/billing/train9_autohold_audit_integration_test.go | 5bbab7e1c754444c | 7 | 0 | 0 | 0 |
+| core/internal/billing/w6c_notice_counts_integration_test.go | 00c89eb00113d7f4 | 4 | 0 | 0 | 0 |
+| core/internal/bistrack/connector.go | ec412ea753247748 | 8 | 0 | 8 | 0 |
+| core/internal/bistrack/direction.go | 58f87527f4e4dcd7 | 7 | 0 | 0 | 0 |
+| core/internal/bistrack/handler.go | f4c992d388f702e2 | 5 | 0 | 0 | 0 |
+| core/internal/bistrack/mapping.go | eed5c4bddd18bddc | 5 | 0 | 0 | 0 |
+| core/internal/bistrack/mapping_test.go | 5a0ba9ae5766b1e4 | 2 | 0 | 0 | 0 |
+| core/internal/bistrack/model.go | 87c510a164b52a7b | 10 | 0 | 0 | 0 |
+| core/internal/bistrack/module.go | 4fd811757943ee0c | 5 | 0 | 0 | 0 |
+| core/internal/bistrack/repository.go | e3491c9bcf478272 | 6 | 0 | 331 | 0 |
+| core/internal/bistrack/repository_integration_test.go | 1a40717ab8237318 | 3 | 0 | 0 | 0 |
+| core/internal/bistrack/scaffold_test.go | b1dc8c15f6359a22 | 11 | 0 | 370 | 0 |
+| core/internal/bistrack/service.go | a021c180a898247c | 5 | 0 | 0 | 0 |
+| core/internal/bistrack/shapes.go | bab89678812f172a | 6 | 0 | 74 | 0 |
+| core/internal/bistrack/testdata/crosswalk.json | a7dab7703d9cc62c | 0 | 0 | 0 | 0 |
+| core/internal/bistrack/testdata/customers.json | 51b17a50f5d077da | 0 | 0 | 0 | 0 |
+| core/internal/bistrack/testdata/inventory.json | bd3d6487062296cf | 0 | 0 | 0 | 0 |
+| core/internal/bistrack/testdata/orders.json | 8d218c21d042890d | 0 | 0 | 0 | 0 |
+| core/internal/bistrack/testdata/products.json | 723b0117183a975a | 0 | 0 | 0 | 0 |
+| core/internal/branches/branches_integration_test.go | 5118b7da0ce2c3d2 | 3 | 0 | 0 | 0 |
+| core/internal/branches/caller_test.go | 28186c756090a821 | 13 | 0 | 0 | 0 |
+| core/internal/branches/default_failloud_integration_test.go | fcff45c1c0bee62e | 4 | 0 | 0 | 0 |
+| core/internal/branches/handler.go | f2bf53ad8dbae432 | 6 | 0 | 0 | 0 |
+| core/internal/branches/list_snapshot_integration_test.go | aca82fcc27c126c9 | 8 | 0 | 0 | 0 |
+| core/internal/branches/model.go | df6ba18f7d9a342d | 7 | 0 | 4 | 0 |
+| core/internal/branches/repository.go | 4422dd5c5061ee70 | 8 | 0 | 39 | 0 |
+| core/internal/branches/service.go | 4ef07130616dd9f9 | 11 | 0 | 72 | 0 |
+| core/internal/branches/service_test.go | 85e395bc5b32e05d | 0 | 0 | 0 | 0 |
+| core/internal/compliance/banner_vocabulary_test.go | e7a66b2949a298cd | 12 | 0 | 0 | 0 |
+| core/internal/compliance/calendar_integration_test.go | def52961464be0f7 | 16 | 0 | 158 | 0 |
+| core/internal/compliance/handler.go | e860be61084cf7d0 | 1 | 0 | 0 | 0 |
+| core/internal/compliance/integration_test.go | e33938074bf64e8b | 1 | 0 | 0 | 0 |
+| core/internal/compliance/model.go | e700d34cd175185b | 6 | 0 | 0 | 0 |
+| core/internal/compliance/module.go | 1a9ccab7c25daa31 | 3 | 0 | 113 | 0 |
+| core/internal/compliance/repository.go | 34b8b3373ed49087 | 1 | 0 | 0 | 0 |
+| core/internal/compliance/service.go | d291d6a1bc5e09ab | 2 | 0 | 0 | 0 |
+| core/internal/compliance/service_test.go | 553dfe7387969bb1 | 0 | 0 | 102 | 0 |
+| core/internal/compliance/store.go | 0e22b2291aba9ae5 | 0 | 0 | 64 | 0 |
+| core/internal/customer/account_lookup.go | 77db508e51dcc1ce | 9 | 0 | 0 | 0 |
+| core/internal/customer/account_lookup_test.go | 4e8a4b0c1f4bf5fe | 6 | 0 | 65 | 0 |
+| core/internal/customer/dib482_sms_consent_integration_test.go | 1997d519ac55fcb2 | 11 | 0 | 0 | 0 |
+| core/internal/customer/duplicate_account_integration_test.go | a39967d08161639b | 1 | 0 | 0 | 0 |
+| core/internal/customer/duplicate_account_test.go | f9bfd86ab3d58784 | 2 | 0 | 0 | 0 |
+| core/internal/customer/handler.go | 46c91f3fd4291156 | 7 | 0 | 0 | 0 |
+| core/internal/customer/model.go | dd487c2b20b0275c | 6 | 0 | 0 | 0 |
+| core/internal/customer/repository.go | 775fab3fb7ca94fa | 3 | 0 | 54 | 0 |
+| core/internal/customer/search_integration_test.go | 57be465c135b86b6 | 3 | 0 | 50 | 0 |
+| core/internal/customer/search_scope.go | 0e848db39d95b37a | 4 | 0 | 39 | 0 |
+| core/internal/customer/search_scope_test.go | a9d6787b1b74c10f | 3 | 0 | 52 | 0 |
+| core/internal/customer/service.go | af19d30dd94ef94a | 3 | 0 | 0 | 0 |
+| core/internal/customer/service_test.go | c715e420b0886125 | 3 | 0 | 0 | 0 |
+| core/internal/customer/sms_consent.go | 0f2c5ab07c7400bf | 8 | 0 | 0 | 0 |
+| core/internal/customer/sms_consent_repository.go | 8e2c017e7398b7a9 | 7 | 0 | 0 | 0 |
+| core/internal/customer/write.go | 01968fd63879f80c | 3 | 0 | 0 | 0 |
+| core/internal/customer/write_integration_test.go | e75cb88f9bb8f8e9 | 1 | 0 | 0 | 0 |
+| core/internal/customer/write_test.go | d1c2a3d99e0eefe8 | 5 | 0 | 0 | 0 |
+| core/internal/dashboard/defaulton_test.go | f660a569a144a469 | 9 | 0 | 12 | 0 |
+| core/internal/dashboard/dispatcher_profile_integration_test.go | 901ae2b020f86ad7 | 11 | 0 | 0 | 0 |
+| core/internal/dashboard/gallery.go | 23f19cf96f0f07bd | 17 | 0 | 348 | 0 |
+| core/internal/dashboard/gallery_integration_test.go | 942e31c75429eda7 | 14 | 0 | 142 | 0 |
+| core/internal/dashboard/gallery_test.go | d21018c7de9aba0d | 19 | 0 | 287 | 0 |
+| core/internal/dashboard/handler.go | f348c0de7fbb2162 | 11 | 0 | 4 | 0 |
+| core/internal/dashboard/hotkeys.go | 41be779e87b3c834 | 17 | 6 | 0 | 0 |
+| core/internal/dashboard/hotkeys_integration_test.go | b45a19bcc88a9312 | 10 | 0 | 0 | 0 |
+| core/internal/dashboard/hotkeys_test.go | e375aca18f4aac2e | 14 | 0 | 20 | 0 |
+| core/internal/dashboard/integration_test.go | 9c7fb1bdeb256683 | 11 | 0 | 42 | 0 |
+| core/internal/dashboard/layout.go | d4dc1ce3f0c4c889 | 12 | 0 | 0 | 0 |
+| core/internal/dashboard/layout_test.go | dae6041898dc2175 | 5 | 0 | 0 | 0 |
+| core/internal/dashboard/model.go | 944d4fdcf99b965a | 18 | 0 | 16 | 0 |
+| core/internal/dashboard/needs.go | 73c2642d6a57fec6 | 19 | 0 | 394 | 0 |
+| core/internal/dashboard/needs_test.go | eb72169027ef9e89 | 6 | 0 | 255 | 0 |
+| core/internal/dashboard/payments_tile_test.go | 2171ce65226aeace | 6 | 0 | 23 | 0 |
+| core/internal/dashboard/platform_hotkeys_test.go | 723369f90d89f1c8 | 5 | 0 | 0 | 0 |
+| core/internal/dashboard/provider.go | e13822e6b7674294 | 3 | 0 | 0 | 0 |
+| core/internal/dashboard/quickaction.go | 823f20465abe410e | 18 | 0 | 0 | 0 |
+| core/internal/dashboard/quickaction_handler.go | 7ea7d28541e59a1b | 4 | 0 | 0 | 0 |
+| core/internal/dashboard/quickaction_integration_test.go | 3f1cde5f209e9969 | 3 | 0 | 0 | 0 |
+| core/internal/dashboard/quickaction_repository.go | 64a7717147d84226 | 1 | 0 | 0 | 0 |
+| core/internal/dashboard/quickaction_service.go | 5028371f379bae22 | 5 | 0 | 0 | 0 |
+| core/internal/dashboard/quickaction_test.go | 2557f1e851687853 | 6 | 0 | 194 | 0 |
+| core/internal/dashboard/repository.go | dae553a3ed9bba6d | 5 | 0 | 131 | 0 |
+| core/internal/dashboard/service.go | 5ed76ff5baebd997 | 25 | 0 | 8 | 0 |
+| core/internal/dashboard/service_test.go | f21d97ff2d5895a6 | 8 | 0 | 133 | 0 |
+| core/internal/dashboard/tabs.go | 1674765641b3dbb0 | 8 | 0 | 0 | 0 |
+| core/internal/dashboard/tabs_test.go | 95bc89db0e9d28e6 | 13 | 0 | 32 | 0 |
+| core/internal/dashboard/viz.go | 5d10a57dfe126ca7 | 36 | 0 | 436 | 0 |
+| core/internal/dashboard/viz_errors.go | 3c60123a5f81d01f | 0 | 0 | 0 | 0 |
+| core/internal/dashboard/viz_handler.go | fc47b7cdcdbe20db | 4 | 0 | 0 | 0 |
+| core/internal/dashboard/viz_repository.go | 01f61c914794975d | 2 | 0 | 0 | 0 |
+| core/internal/dashboard/viz_service.go | 2c23e0dbf418cf87 | 6 | 0 | 0 | 0 |
+| core/internal/dashboard/viz_test.go | f6f9b2520e42ca3c | 3 | 0 | 235 | 0 |
+| core/internal/dashboard/widget.go | 7ae59f773c90de49 | 62 | 0 | 502 | 0 |
+| core/internal/dashboard/widget_branch_existence_test.go | 7c2f0d9b55b0e883 | 9 | 0 | 59 | 0 |
+| core/internal/dashboard/widget_data.go | 5afaeea70f5a07c8 | 18 | 0 | 170 | 0 |
+| core/internal/dashboard/widget_data_test.go | f7ccdd0becfb603c | 15 | 0 | 34 | 0 |
+| core/internal/dashboard/widget_handler.go | af152b8fbbb7ff8c | 28 | 0 | 0 | 0 |
+| core/internal/dashboard/widget_integration_test.go | 8c2b11480e3ee711 | 11 | 0 | 235 | 0 |
+| core/internal/dashboard/widget_repository.go | 8c94b7af294e8a68 | 7 | 0 | 63 | 1 |
+| core/internal/dashboard/widget_service.go | a2bb042542b643fe | 43 | 0 | 263 | 0 |
+| core/internal/dashboard/widget_span_test.go | ec2d045851c4acd1 | 21 | 0 | 161 | 0 |
+| core/internal/dashboard/widget_test.go | da7a6da1a7c8ecdc | 47 | 0 | 663 | 0 |
+| core/internal/dashboard/window.go | a6e5dd7562a4f107 | 12 | 0 | 316 | 0 |
+| core/internal/dashboard/window_test.go | 07b180c09fb8fd28 | 16 | 0 | 34 | 0 |
+| core/internal/export/audit.go | e5086de7b2853677 | 13 | 0 | 0 | 0 |
+| core/internal/export/audit_test.go | 8ee7139fbd74175a | 6 | 0 | 168 | 1 |
+| core/internal/export/catalogue.go | 616ce7ed9284dbde | 19 | 0 | 0 | 0 |
+| core/internal/export/catalogue_test.go | ea5c70495b78752e | 14 | 0 | 431 | 0 |
+| core/internal/export/evidence_test.go | 957b5ab934b670f5 | 7 | 0 | 0 | 0 |
+| core/internal/export/handler.go | 9349cc4c87b27fd7 | 8 | 0 | 0 | 0 |
+| core/internal/export/integration_test.go | 5877de3246c88395 | 13 | 0 | 0 | 0 |
+| core/internal/export/libreoffice_test.go | b6488bad3b1ab47a | 12 | 0 | 0 | 0 |
+| core/internal/export/statement.go | 7f3a620c43c0d127 | 8 | 0 | 76 | 0 |
+| core/internal/export/statement_test.go | 5a87ad4a06d99f11 | 8 | 0 | 159 | 0 |
+| core/internal/export/workbook.go | f9a8a3005ffc0601 | 14 | 0 | 243 | 0 |
+| core/internal/export/xlsx.go | 07156942ea9ad1b6 | 10 | 0 | 91 | 0 |
+| core/internal/export/xlsx_test.go | 4025b99d36434c40 | 19 | 0 | 504 | 0 |
+| core/internal/feedback/feedback.go | de6ee39e69c005aa | 7 | 0 | 0 | 0 |
+| core/internal/feedback/feedback_test.go | ea49a4d0b63010a6 | 6 | 0 | 0 | 0 |
+| core/internal/feedback/handler.go | 186598e4be0e99ae | 3 | 0 | 0 | 0 |
+| core/internal/finstmt/dib510_register_mount.go | 51c626a930982b7a | 13 | 0 | 198 | 0 |
+| core/internal/finstmt/export.go | bf0fe91ef6098156 | 4 | 0 | 43 | 0 |
+| core/internal/finstmt/fence_integration_test.go | d19725a3f5f060d1 | 2 | 0 | 0 | 0 |
+| core/internal/finstmt/fence_test.go | f6b1df1887c5905a | 6 | 0 | 0 | 0 |
+| core/internal/finstmt/handler.go | 75964468b5eb85d3 | 6 | 0 | 189 | 0 |
+| core/internal/finstmt/integration_test.go | f155b9028932f3fb | 9 | 0 | 370 | 0 |
+| core/internal/finstmt/model.go | 9091f25c67f13eec | 2 | 0 | 171 | 0 |
+| core/internal/finstmt/module.go | b16b588679111cbb | 3 | 0 | 198 | 0 |
+| core/internal/finstmt/repository.go | e38f3ef4ed444539 | 2 | 0 | 75 | 0 |
+| core/internal/finstmt/service.go | b5e1104aea56e955 | 6 | 0 | 374 | 0 |
+| core/internal/finstmt/service_test.go | 1d3a92f3d6ea3dd7 | 1 | 0 | 306 | 0 |
+| core/internal/finstmt/xlsx.go | 5cf9cceb3fe37ebe | 21 | 0 | 0 | 0 |
+| core/internal/finstmt/xlsx_integration_test.go | e49fe32869e702f3 | 8 | 0 | 39 | 0 |
+| core/internal/finstmt/xlsx_test.go | f5f9da934d879fa3 | 17 | 0 | 156 | 0 |
+| core/internal/lien/integration_test.go | fc8773b8b1be09d5 | 19 | 0 | 60 | 0 |
+| core/internal/messagingprovider/collections.go | 318fd9c2faf978fb | 16 | 0 | 194 | 0 |
+| core/internal/messagingprovider/collections_aging.go | 56e8634ca4d00751 | 2 | 0 | 194 | 0 |
+| core/internal/messagingprovider/collections_integration_test.go | fc8c611bc83ef30c | 21 | 0 | 0 | 0 |
+| core/internal/messagingprovider/consent_delivery_time_integration_test.go | 6a897e3aa470cf18 | 9 | 0 | 53 | 0 |
+| core/internal/messagingprovider/consumer.go | 2477620a899150e0 | 7 | 0 | 0 | 0 |
+| core/internal/messagingprovider/consumer_quote.go | 7f2d0dde11f43829 | 4 | 0 | 0 | 0 |
+| core/internal/messagingprovider/e2e_quote_stub_test.go | 67b156cb303d6ffe | 10 | 0 | 0 | 0 |
+| core/internal/messagingprovider/e2e_stub_test.go | 208819c75199907f | 5 | 0 | 0 | 0 |
+| core/internal/messagingprovider/outbox.go | 4ef4bb7a3f195a6b | 8 | 0 | 0 | 0 |
+| core/internal/messagingprovider/outbox_integration_test.go | a65ddc87ee06679c | 4 | 0 | 0 | 0 |
+| core/internal/messagingprovider/policy.go | a25d4c41a8516ba2 | 15 | 5 | 194 | 0 |
+| core/internal/messagingprovider/policy_test.go | 1daccad62eddbefe | 17 | 9 | 0 | 0 |
+| core/internal/messagingprovider/prefs.go | 5d8ed804f560d67c | 4 | 1 | 0 | 0 |
+| core/internal/messagingprovider/provider.go | 4e4b38925f6595dc | 15 | 0 | 194 | 0 |
+| core/internal/messagingprovider/provider_test.go | 51fc447d0a97bcc2 | 4 | 0 | 0 | 0 |
+| core/internal/messagingprovider/recipients.go | 3d785a85e5eea0c6 | 7 | 1 | 0 | 0 |
+| core/internal/messagingprovider/recipients_db.go | 437bd8531d4e8765 | 9 | 0 | 194 | 0 |
+| core/internal/messagingprovider/recipients_db_integration_test.go | 41cdd8d685a2ff0b | 10 | 1 | 0 | 0 |
+| core/internal/messagingprovider/templates.go | c8d848ffc1f978e8 | 12 | 0 | 0 | 0 |
+| core/internal/messagingprovider/templates_quote.go | 97381d3b12e31104 | 14 | 0 | 194 | 0 |
+| core/internal/messagingprovider/templates_quote_test.go | c1bf39d98224ef3e | 8 | 0 | 0 | 0 |
+| core/internal/messagingprovider/templates_test.go | 3d0434b04af2c740 | 2 | 0 | 0 | 0 |
+| core/internal/messagingprovider/twilio.go | 0020a0ddd87fa1b5 | 9 | 0 | 0 | 0 |
+| core/internal/order/lifecycle_integration_test.go | 43bfce736459614a | 27 | 0 | 48 | 0 |
+| core/internal/order/w6c_multiship_invoice_integration_test.go | 7e081719c9ec5d3b | 17 | 0 | 274 | 0 |
+| core/internal/payment/dib396_lease_test.go | c31e015352224749 | 8 | 0 | 0 | 0 |
+| core/internal/payment/handler.go | 20bdf6f8e1efe332 | 2 | 0 | 0 | 0 |
+| core/internal/payment/handler_test.go | a3dc5f699a6a9a0e | 3 | 0 | 0 | 0 |
+| core/internal/payment/integration_test.go | c7ad0b7bf61f93e7 | 11 | 0 | 0 | 0 |
+| core/internal/payment/model.go | dfb8eb8cf435b7c1 | 10 | 0 | 8 | 0 |
+| core/internal/payment/processor.go | 50cf89f3f8543e55 | 1 | 0 | 0 | 0 |
+| core/internal/payment/processor_test.go | 6c263cad5ec018b2 | 6 | 0 | 0 | 0 |
+| core/internal/payment/run_payments.go | 4e64942e50c478a4 | 6 | 0 | 0 | 0 |
+| core/internal/payment/run_payments_test.go | 4071db42d2b73e27 | 10 | 0 | 0 | 0 |
+| core/internal/payment/runpay_selector_integration_test.go | 945665cd7edaa5c6 | 10 | 0 | 79 | 0 |
+| core/internal/payment/selector.go | a991ce7b9ab3db97 | 8 | 0 | 70 | 0 |
+| core/internal/payment/selector_test.go | 60cd6618d37df1e1 | 9 | 0 | 0 | 0 |
+| core/internal/payment/store.go | 84f6a7da1049ffee | 7 | 0 | 0 | 0 |
+| core/internal/payment/store_test.go | 0c4a1ee0f6bcb018 | 5 | 0 | 16 | 0 |
+| core/internal/payment/surcharge.go | 88368f4b9b623bf4 | 1 | 0 | 0 | 0 |
+| core/internal/payment/surcharge_test.go | 832ce995f9ef0f76 | 5 | 0 | 0 | 0 |
+| core/internal/payment/tender.go | 297d69508f437c06 | 8 | 0 | 114 | 0 |
+| core/internal/payment/tender_test.go | 263328d281e5b7b3 | 6 | 0 | 0 | 0 |
+| core/internal/payment/vault.go | 3b6785f2e4247593 | 3 | 0 | 0 | 0 |
+| core/internal/payment/vault_test.go | e54722c03c4fd46c | 3 | 0 | 0 | 0 |
+| core/internal/portal/addresses.go | bf5417618b3094ea | 16 | 0 | 69 | 0 |
+| core/internal/portal/addresses_repository.go | 415aa3333bd0c5e8 | 7 | 0 | 0 | 0 |
+| core/internal/portal/auth.go | cabe18aa4936b1e6 | 9 | 0 | 56 | 0 |
+| core/internal/portal/catalog.go | 5aa4a8c5cd9700f0 | 0 | 0 | 0 | 0 |
+| core/internal/portal/catalog_product.go | bea0ade4e73db43d | 10 | 0 | 0 | 0 |
+| core/internal/portal/dashboard.go | 533dafbbdfda0678 | 0 | 0 | 0 | 0 |
+| core/internal/portal/dib479_addresses_test.go | 8b15aa1b85678b79 | 11 | 0 | 0 | 0 |
+| core/internal/portal/dib479_catalog_product_test.go | c1061a1a4a71b2e9 | 7 | 0 | 0 | 0 |
+| core/internal/portal/dib479_integration_test.go | bce489b8571eb354 | 8 | 0 | 165 | 0 |
+| core/internal/portal/dib479_me_capabilities_test.go | 9223505cd163c634 | 7 | 0 | 0 | 0 |
+| core/internal/portal/dib479_refresh_test.go | e3d6d44d3e7382f1 | 13 | 0 | 246 | 0 |
+| core/internal/portal/dib479_roles_test.go | 540242e2a5b37ada | 5 | 0 | 0 | 0 |
+| core/internal/portal/dib483_convert_test.go | 6d05cc57efcb1302 | 10 | 0 | 42 | 0 |
+| core/internal/portal/handler.go | d1b95025a50ece35 | 6 | 0 | 334 | 0 |
+| core/internal/portal/handlers_feature_test.go | d0d262c7624565c4 | 0 | 0 | 237 | 0 |
+| core/internal/portal/integration_test.go | cb961fac6f3d1e8a | 5 | 0 | 0 | 0 |
+| core/internal/portal/invoices.go | 38fcc0ef2702894c | 0 | 0 | 0 | 0 |
+| core/internal/portal/model.go | 21f337347c3b8b76 | 1 | 0 | 0 | 0 |
+| core/internal/portal/notifications.go | 06f8e34a6de00def | 1 | 0 | 0 | 0 |
+| core/internal/portal/notifications_test.go | 7ce181d4c983c5a4 | 0 | 0 | 0 | 0 |
+| core/internal/portal/orders.go | 01b665a44d8fdf28 | 0 | 0 | 0 | 0 |
+| core/internal/portal/password_reset.go | 12697a7ab3554455 | 3 | 0 | 0 | 0 |
+| core/internal/portal/password_reset_test.go | ccb382428035e6ba | 1 | 0 | 0 | 0 |
+| core/internal/portal/payment_methods.go | ad642973c73c41d7 | 1 | 0 | 0 | 0 |
+| core/internal/portal/payments.go | 6fedc6b9e0ab454b | 2 | 0 | 0 | 0 |
+| core/internal/portal/payments_test.go | 3a6714baa0677adc | 1 | 0 | 0 | 0 |
+| core/internal/portal/procurement.go | 1437cc5ff39788ee | 0 | 0 | 0 | 0 |
+| core/internal/portal/projects.go | 2b5d16a27f9b83b3 | 15 | 0 | 123 | 0 |
+| core/internal/portal/projects_integration_test.go | 4e138443668d8fd2 | 15 | 0 | 0 | 0 |
+| core/internal/portal/projects_test.go | 3a9a9b06f077d50d | 4 | 0 | 0 | 0 |
+| core/internal/portal/quotes.go | df7fff3bfa15e80e | 2 | 0 | 0 | 0 |
+| core/internal/portal/rbac.go | 607abf801895cf81 | 11 | 0 | 46 | 0 |
+| core/internal/portal/rbac_test.go | 970df29fdf24069b | 1 | 0 | 0 | 0 |
+| core/internal/portal/refresh.go | 2620f688fdf03cd0 | 14 | 0 | 0 | 0 |
+| core/internal/portal/reorder.go | c869a8b5faff0786 | 5 | 0 | 0 | 0 |
+| core/internal/portal/reorder_test.go | c8b2103751e0a310 | 3 | 0 | 0 | 0 |
+| core/internal/portal/repository.go | 81641fdd60c58e14 | 11 | 0 | 35 | 0 |
+| core/internal/portal/returns.go | dc27ef95ceeee7b8 | 8 | 0 | 0 | 0 |
+| core/internal/portal/returns_test.go | a13b852de90f36bf | 4 | 0 | 0 | 0 |
+| core/internal/portal/service.go | 4826fac2427a75c6 | 9 | 0 | 35 | 0 |
+| core/internal/portal/service_test.go | 0d391f890f28aeb7 | 3 | 0 | 366 | 0 |
+| core/internal/portal/settings.go | d73f8be367934ee1 | 5 | 0 | 0 | 0 |
+| core/internal/portal/settings_test.go | 5507506467b7d5ef | 0 | 0 | 0 | 0 |
+| core/internal/pos/counterprice.go | 99cabc740c89b6c4 | 14 | 0 | 0 | 0 |
+| core/internal/pos/counterprice_test.go | 1c41f791c8d9fef9 | 3 | 0 | 325 | 0 |
+| core/internal/pos/dib488_rev6_test.go | efaf4a17c0abd2b2 | 2 | 0 | 87 | 0 |
+| core/internal/pos/dib488_rev8_test.go | fbba7f5965c66318 | 7 | 0 | 195 | 0 |
+| core/internal/pos/dib488_rows_test.go | 0611873af6c60223 | 7 | 0 | 97 | 0 |
+| core/internal/pos/dib488_test.go | 8a1194c3158cb526 | 2 | 0 | 57 | 0 |
+| core/internal/pos/dib488_ws_test.go | 388e61fec7e54699 | 4 | 0 | 43 | 0 |
+| core/internal/pos/gate_ledger_test.go | 5c88cd918f600ca4 | 6 | 0 | 56 | 0 |
+| core/internal/pos/gl_seam.go | 955868ca13e1ec41 | 2 | 0 | 0 | 0 |
+| core/internal/pos/handler.go | 840f1754cdec26b3 | 12 | 0 | 73 | 0 |
+| core/internal/pos/hotkeys.go | 33fe3e797e9fd9ea | 25 | 0 | 0 | 0 |
+| core/internal/pos/hotkeys_test.go | b921fe8db2df81a1 | 6 | 0 | 328 | 0 |
+| core/internal/pos/hotlist_bulk_integration_test.go | 8b42bb9237a3ee5e | 4 | 0 | 0 | 0 |
+| core/internal/pos/integration_test.go | 237aac4272e1a8b9 | 27 | 0 | 59 | 0 |
+| core/internal/pos/model.go | 637542a67398b542 | 53 | 1 | 170 | 0 |
+| core/internal/pos/order_cancel_seam.go | 152c5a17440212bc | 3 | 0 | 0 | 0 |
+| core/internal/pos/order_no_integration_test.go | 8cddffce4539bae1 | 1 | 0 | 0 | 0 |
+| core/internal/pos/order_status_history_test.go | 17fc5a5b4974f27e | 3 | 0 | 0 | 0 |
+| core/internal/pos/platform_hotkeys_test.go | a007008ced348629 | 10 | 0 | 84 | 0 |
+| core/internal/pos/policy.go | e2ef3b0b2629aae4 | 14 | 0 | 0 | 0 |
+| core/internal/pos/policy_history.go | 9442fbd83db6e01a | 18 | 0 | 149 | 0 |
+| core/internal/pos/policy_history_integration_test.go | d1f546bdd88ef690 | 8 | 0 | 0 | 0 |
+| core/internal/pos/policy_history_test.go | e41d76cbe8715a77 | 11 | 0 | 337 | 0 |
+| core/internal/pos/pricing_orders.go | c9ba0ce1aa9e611c | 4 | 0 | 0 | 0 |
+| core/internal/pos/quickpicks.go | eb36b7002537a081 | 15 | 0 | 0 | 0 |
+| core/internal/pos/quickpicks_test.go | ff326cf439072f19 | 7 | 0 | 424 | 0 |
+| core/internal/pos/repository.go | 459e1686dc4ce0ec | 11 | 0 | 216 | 0 |
+| core/internal/pos/repository_quickpicks.go | 963a78f47b77184c | 10 | 0 | 0 | 0 |
+| core/internal/pos/repository_rev8.go | 32aac9c218d15a1b | 9 | 0 | 0 | 0 |
+| core/internal/pos/repository_w7.go | 3039f68a69e056d9 | 10 | 0 | 227 | 0 |
+| core/internal/pos/return_hooks.go | f42928d0b098bcca | 2 | 0 | 0 | 0 |
+| core/internal/pos/return_requests.go | b88525d6c1e3df8b | 18 | 0 | 208 | 0 |
+| core/internal/pos/return_requests_test.go | 67a09d83e0d22ed5 | 6 | 0 | 285 | 0 |
+| core/internal/pos/returns.go | c0eed1d3fbb8c67b | 11 | 0 | 0 | 0 |
+| core/internal/pos/rev8.go | 2a880084b810fc69 | 15 | 0 | 0 | 0 |
+| core/internal/pos/sale_hooks.go | 872f675815b67afd | 5 | 0 | 113 | 0 |
+| core/internal/pos/sale_lookup.go | 10fdf90c13b639f1 | 17 | 0 | 278 | 0 |
+| core/internal/pos/sale_lookup_day_test.go | a7b629e764ab8c81 | 12 | 0 | 0 | 0 |
+| core/internal/pos/service.go | c77dee9f4da8a1df | 71 | 0 | 24 | 0 |
+| core/internal/pos/service_test.go | 6a3f9118b5fcf64a | 39 | 0 | 984 | 0 |
+| core/internal/pos/service_w7_test.go | a47042c217c35bca | 17 | 0 | 338 | 0 |
+| core/internal/pos/signature.go | 448aa9580eb0575e | 1 | 0 | 0 | 0 |
+| core/internal/pos/signature_typed.go | 2546b18789b3c1c2 | 12 | 0 | 0 | 0 |
+| core/internal/pos/signature_typed_handler.go | 085475df48ce6d37 | 2 | 0 | 0 | 0 |
+| core/internal/pos/signature_typed_integration_test.go | a989cb95dbec7a66 | 7 | 0 | 0 | 0 |
+| core/internal/pos/signature_typed_test.go | 990a61c58f684cd8 | 7 | 0 | 0 | 0 |
+| core/internal/pos/split_tender.go | 0e45e44273237198 | 10 | 0 | 74 | 0 |
+| core/internal/pos/split_tender_integration_test.go | 0d139f61e972dcf6 | 16 | 0 | 0 | 0 |
+| core/internal/pos/split_tender_test.go | d674f9348783ce1a | 12 | 0 | 559 | 0 |
+| core/internal/pos/standing.go | 4b58c746ff9fdc91 | 11 | 0 | 0 | 0 |
+| core/internal/pos/standing_test.go | c364e67655bf771c | 8 | 0 | 245 | 0 |
+| core/internal/pos/workspace.go | 297517402317c089 | 11 | 0 | 0 | 0 |
+| core/internal/printing/receipt_integration_test.go | a8295e7a8e77dca5 | 11 | 0 | 46 | 0 |
+| core/internal/procurement/model.go | 0dcacdc62eb0f533 | 0 | 0 | 0 | 0 |
+| core/internal/procurement/repository.go | c986b8e908a0e0bd | 0 | 0 | 0 | 0 |
+| core/internal/procurement/repository_integration_test.go | 7041d72862f40c13 | 18 | 0 | 255 | 0 |
+| core/internal/procurement/service.go | 5cc9f66f0aed1474 | 0 | 0 | 204 | 0 |
+| core/internal/procurement/service_test.go | 5e799a9b8971a12f | 0 | 0 | 110 | 0 |
+| core/internal/quote/credit_integration_test.go | 2a925af77490f6ef | 5 | 0 | 0 | 0 |
+| core/internal/quote/dib483_fulfillment_integration_test.go | 0e531bea4b812d4f | 8 | 0 | 0 | 0 |
+| core/internal/quote/freight_baseline_integration_test.go | 73ad22838534ad87 | 15 | 0 | 0 | 0 |
+| core/internal/quoteassist/ai_degrade_test.go | 3da3a9e140e5fb1c | 17 | 0 | 0 | 0 |
+| core/internal/quoteassist/extract.go | 285bb95a734b89d3 | 21 | 0 | 570 | 18 |
+| core/internal/quoteassist/extract_test.go | 7db2bc6432dafd9a | 61 | 0 | 523 | 0 |
+| core/internal/quoteassist/fakes_test.go | a9748e5ae70c2001 | 7 | 0 | 240 | 0 |
+| core/internal/quoteassist/handler.go | 69d409a99a981c61 | 9 | 0 | 0 | 0 |
+| core/internal/quoteassist/handler_test.go | a482ffac28a9044d | 16 | 0 | 309 | 0 |
+| core/internal/quoteassist/integration_test.go | c0280ccad784c170 | 36 | 0 | 337 | 0 |
+| core/internal/quoteassist/model.go | 01d13dffd3a3ef38 | 29 | 0 | 816 | 0 |
+| core/internal/quoteassist/repository.go | c557b15f34398298 | 4 | 0 | 0 | 0 |
+| core/internal/quoteassist/scope.go | 297bd228f20790f6 | 16 | 0 | 574 | 0 |
+| core/internal/quoteassist/scope_test.go | 35b4fbd24fa4d838 | 27 | 0 | 293 | 0 |
+| core/internal/quoteassist/segment.go | 7b379f79efb698c8 | 22 | 1 | 380 | 2 |
+| core/internal/quoteassist/service.go | 9117382b2bfdc22b | 13 | 0 | 0 | 0 |
+| core/internal/quoteassist/units.go | 81aecfecd34e6f80 | 10 | 0 | 380 | 0 |
+| core/internal/reporting/catalog.go | cbbfd4f00051df29 | 9 | 3 | 1068 | 0 |
+| core/internal/reporting/catalog_test.go | d1554ab697d393cc | 12 | 0 | 0 | 0 |
+| core/internal/reporting/commission.go | fe6efe5c60cb7e76 | 9 | 0 | 361 | 0 |
+| core/internal/reporting/commission_integration_test.go | df3aea6ba4dca53c | 21 | 0 | 55 | 0 |
+| core/internal/reporting/commission_repo.go | ef2283f6909d22d9 | 6 | 0 | 205 | 0 |
+| core/internal/reporting/commission_service.go | 2223c8675bc8e2ba | 9 | 1 | 192 | 0 |
+| core/internal/reporting/commission_test.go | 9a603a09b42c3eb3 | 15 | 0 | 0 | 0 |
+| core/internal/reporting/errors.go | cb1e23ff931e690e | 5 | 0 | 0 | 0 |
+| core/internal/reporting/export.go | fa578d8e2bda8e07 | 5 | 0 | 0 | 0 |
+| core/internal/reporting/fixture_integration_test.go | 852ce0ffd971d537 | 11 | 0 | 424 | 0 |
+| core/internal/reporting/handler.go | a4946e89f2113f7e | 6 | 0 | 456 | 0 |
+| core/internal/reporting/model.go | 191847a5e5f300b8 | 11 | 0 | 430 | 0 |
+| core/internal/reporting/params.go | 31759586f82218f1 | 5 | 0 | 132 | 0 |
+| core/internal/reporting/params_test.go | ce4a76d1de941982 | 5 | 0 | 0 | 4 |
+| core/internal/reporting/render_test.go | 55d6a8ab9b105ea8 | 10 | 0 | 0 | 0 |
+| core/internal/reporting/repository.go | 3ac59bb01165d55e | 10 | 0 | 240 | 0 |
+| core/internal/reporting/runner.go | 3448832225c27ca5 | 7 | 0 | 92 | 0 |
+| core/internal/reporting/seams.go | 5c776bb374b21ab6 | 6 | 0 | 40 | 0 |
+| core/internal/reporting/service.go | 42f05f54f8eac5dd | 12 | 0 | 463 | 0 |
+| core/internal/reporting/surface_integration_test.go | 2b1a62a47cc1872d | 30 | 0 | 0 | 0 |
+| core/internal/reporting/templates_integration_test.go | bf731fad39a9438f | 32 | 0 | 713 | 0 |
+| core/internal/tax/dib419_window_isolation_test.go | 9856d621cd4d46b7 | 6 | 0 | 0 | 0 |
+| core/internal/tax/handler.go | 0d7e2d010bc7710b | 0 | 0 | 330 | 0 |
+| core/internal/tax/integration_test.go | e1ad5466ce4cb15c | 14 | 0 | 184 | 0 |
+| core/internal/tax/model.go | 733095233019cb5d | 9 | 0 | 168 | 0 |
+| core/internal/tax/module.go | 7f4cc81d902d6f10 | 6 | 0 | 284 | 0 |
+| core/internal/tax/repository.go | fdd1fa5864e4aadc | 2 | 0 | 288 | 0 |
+| core/internal/tax/service.go | 90dc194eeb05ef1e | 13 | 0 | 407 | 0 |
+| core/internal/tax/service_test.go | 48772837f2a05057 | 1 | 0 | 477 | 0 |
+| core/internal/testaudit/dated_tests_test.go | 0daa889e49ce2bc8 | 28 | 0 | 216 | 0 |
+| core/internal/testaudit/house_day_test.go | 6086045cb6e13b57 | 38 | 0 | 739 | 0 |
+| core/internal/till/integration_test.go | 0161d7bfe031dfbd | 11 | 0 | 59 | 0 |
+| core/internal/tour/handler.go | def098776816ebd1 | 6 | 0 | 0 | 0 |
+| core/internal/tour/integration_test.go | 58e52ee9eed1c3bd | 24 | 0 | 192 | 0 |
+| core/internal/tour/model.go | a0e2c86741c5240b | 33 | 0 | 444 | 0 |
+| core/internal/tour/repository.go | 08fa9202f844b163 | 10 | 0 | 232 | 0 |
+| core/internal/tour/service.go | a8f1daba7e46c463 | 13 | 0 | 396 | 0 |
+| core/internal/tour/service_test.go | a4575f9c7c95e6b2 | 40 | 0 | 376 | 0 |
+| core/internal/warranty/integration_w6c_test.go | bb9eee35d3e19d40 | 9 | 0 | 57 | 0 |
+
+Batch-5 totals: 5074 em, 51 en, 59553 box, 27 mojibake normalized.
+
+NEW files (no pin counterpart):
+
+| file | |
+|---|---|
+| core/cmd/core/demoseed_integration_test.go | NEW |  |  |  |  |
+| core/cmd/core/role_test.go | NEW |  |  |  |  |
+| core/cmd/core/roles_oneshot.go | NEW |  |  |  |  |
+| core/cmd/core/tops_adapters.go | NEW |  |  |  |  |
+| core/cmd/core/wire_tops.go | NEW |  |  |  |  |
+| core/cmd/core/worker.go | NEW |  |  |  |  |
+| core/internal/assist/caller_stamp.go | NEW |  |  |  |  |
+| core/internal/billing/caller_stamp_arlandinghandler.go | NEW |  |  |  |  |
+| core/internal/billing/caller_stamp_monthendhandler.go | NEW |  |  |  |  |
+| core/internal/billing/caller_stamp_registerhandler.go | NEW |  |  |  |  |
+| core/internal/bistrack/caller_stamp.go | NEW |  |  |  |  |
+| core/internal/bistrack/testdata/bistrack_map.json | NEW |  |  |  |  |
+| core/internal/branches/caller_stamp.go | NEW |  |  |  |  |
+| core/internal/compliance/caller_stamp.go | NEW |  |  |  |  |
+| core/internal/customer/caller_stamp.go | NEW |  |  |  |  |
+| core/internal/dashboard/caller_stamp.go | NEW |  |  |  |  |
+| core/internal/dashboard/caller_stamp_quickactionhandler.go | NEW |  |  |  |  |
+| core/internal/export/caller_stamp.go | NEW |  |  |  |  |
+| core/internal/feedback/caller_stamp.go | NEW |  |  |  |  |
+| core/internal/finstmt/caller_stamp.go | NEW |  |  |  |  |
+| core/internal/payment/caller_stamp.go | NEW |  |  |  |  |
+| core/internal/platform/httpx/registrar.go | NEW |  |  |  |  |
+| core/internal/portal/tenant_stamp.go | NEW |  |  |  |  |
+| core/internal/pos/caller_stamp.go | NEW |  |  |  |  |
+| core/internal/quoteassist/caller_stamp.go | NEW |  |  |  |  |
+| core/internal/reporting/caller_stamp.go | NEW |  |  |  |  |
+| core/internal/tax/caller_stamp.go | NEW |  |  |  |  |
+| core/internal/tour/caller_stamp.go | NEW |  |  |  |  |

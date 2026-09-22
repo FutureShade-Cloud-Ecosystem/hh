@@ -26,12 +26,12 @@ import (
 // RegisterEditRoutes wires the DIB-175 staff order-edit endpoints. Line edits move money, so they are
 // manager-gated at the route (requireManager, Tier ≤ 2) exactly like cancel; the requested-date edit
 // and the change-history read are open to any active in-branch staff (requireStaff).
-func (h *Handler) RegisterEditRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("PATCH /api/v1/orders/{id}/lines/{lineNo}", g.RequireManager(h.staff(h.editLineQty)))
-	mux.Handle("POST /api/v1/orders/{id}/lines", g.RequireManager(h.staff(h.addLine)))
-	mux.Handle("DELETE /api/v1/orders/{id}/lines/{lineNo}", g.RequireManager(h.staff(h.removeLine)))
-	mux.Handle("PATCH /api/v1/orders/{id}", g.RequireStaff(h.staff(h.editOrderHeader)))
-	mux.Handle("GET /api/v1/orders/{id}/edits", g.RequireStaff(h.staff(h.orderEditHistory)))
+func (h *Handler) RegisterEditRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("PATCH /api/v1/orders/{id}/lines/{lineNo}", g.RequireManager(h.staff(h.editLineQty)))
+	r.Handle("POST /api/v1/orders/{id}/lines", g.RequireManager(h.staff(h.addLine)))
+	r.Handle("DELETE /api/v1/orders/{id}/lines/{lineNo}", g.RequireManager(h.staff(h.removeLine)))
+	r.Handle("PATCH /api/v1/orders/{id}", g.RequireStaff(h.staff(h.editOrderHeader)))
+	r.Handle("GET /api/v1/orders/{id}/edits", g.RequireStaff(h.staff(h.orderEditHistory)))
 }
 
 // decodeEditBody reads a bounded JSON body. The bound is the same package-level maxBodyBytes the

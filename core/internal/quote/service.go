@@ -20,7 +20,7 @@ var (
 // quoteStore is the persistence the Service needs. Real impl: Repository (pgx); tests
 // use a fake. Every operation is tenant-scoped by customerID.
 type quoteStore interface {
-	ListQuotes(ctx context.Context, customerID string, f Filter) ([]Quote, int, error)
+	ListQuotes(ctx context.Context, customerID string, f Filter) ([]Quote, error)
 	GetQuote(ctx context.Context, customerID, quoteID string) (Detail, error)
 	Accept(ctx context.Context, customerID, quoteID string) (Quote, error)
 	Reject(ctx context.Context, customerID, quoteID string) (Quote, error)
@@ -43,13 +43,14 @@ func NewService(store quoteStore) *Service { return &Service{store: store} }
 // Recorder simply records no history (the conversion itself is unaffected).
 func (s *Service) WithAudit(r audit.Recorder) *Service { s.audit = r; return s }
 
-// ListQuotes returns one tenant-scoped page of quotes plus the unfiltered total.
-func (s *Service) ListQuotes(ctx context.Context, customerID string, f Filter) ([]Quote, int, error) {
+// ListQuotes returns one tenant-scoped page of quotes (cursor envelope; the
+// total echo is gone with the offset family, HH-3.2 fold).
+func (s *Service) ListQuotes(ctx context.Context, customerID string, f Filter) ([]Quote, error) {
 	if customerID == "" {
-		return nil, 0, httpx.BadRequestf("customer id is required")
+		return nil, httpx.BadRequestf("customer id is required")
 	}
 	if f.Status != "" && !validStatus(f.Status) {
-		return nil, 0, httpx.BadRequestf("unknown quote status %q", f.Status)
+		return nil, httpx.BadRequestf("unknown quote status %q", f.Status)
 	}
 	return s.store.ListQuotes(ctx, customerID, f)
 }

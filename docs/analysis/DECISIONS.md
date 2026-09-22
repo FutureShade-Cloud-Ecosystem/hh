@@ -188,6 +188,17 @@ Reason: the preflight's prompt named a checkout and not a branch, and that check
 
 Touches: `core/db/README.md`, `core/db/PORTED.md`, `docs/BLOCKERS.md`, and HH-3.7's first port entry.
 
+
+**D40 (the HH-3.2 fold: the Registrar re-pin, the driver-session knob's no-fallback read, and the position-cursor convention).** Three records from the module-carry lane's final batch, each closing a ruling the reviews held open.
+
+The Registrar re-pin, applied per the B3 review's items 1 and 2: the one-method registration seam (`Handle(pattern string, h http.Handler)`) is a platform type (`core/internal/platform/httpx`, `registrar.go`), with `type Registrar = httpx.Registrar` left beside the identity shims so real modules never depend on shims for a type; every ported module's exported registrar declares `RegisterRoutes(r Registrar, g *guards.Guards, owned <collaborator>)` as the official interface form, callers passing a concrete `*http.ServeMux` compile unchanged, and every production registration lands inside `registerRoutes` (`core/cmd/core/main.go`), never on a privately constructed mux, with the ServeMux duplicate-registration panic as the shim-removal backstop.
+
+The driver session ceiling's knob read has no fallback arm, upholding B2-07 against the ERP's behaviour: the ceiling reads the `dispatch_policy` dealer-default row at enforcement time and refuses on every uncomputable arm (the 503 family), where the ERP's login-time read fell back to the twelve-hour constant on every error. Authority is B2-07, whose operative sentence is "the default arm refusing when the check cannot be computed"; no later change may reintroduce a fallback on this read.
+
+The yard pending-tickets feed's cursor is a position token, not a row key, recorded as that endpoint's convention difference in `core/api/CONVENTIONS.md` (the Pagination section's position-cursor sentence); HH-3.4's conformance work meets it recorded, and a row key there would be a seam redesign with its own review, ordered above both lanes.
+
+Touches: `core/internal/platform/httpx/registrar.go`, every carried module registrar, `core/cmd/core` (the role split and `registerRoutes`), `core/api/CONVENTIONS.md`, `docs/analysis/DECISIONS.md`.
+
 ## Carried as verification, not decided
 
 Whether Appwrite Team memberships surface as OIDC claims stays a S2 check. D3 stands either way: if claims are absent, a Function enriches userinfo and the engine resolves the coarse gate from Team membership by lookup.

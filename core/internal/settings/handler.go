@@ -29,17 +29,17 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 // RegisterRoutes wires the kit's routes. Idempotent-by-construction is NOT promised: register once,
 // from one module (the pilot's quote handler); a second registration panics in ServeMux exactly as
 // any duplicated route would.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	if g == nil {
 		panic("settings: guards are required")
 	}
-	mux.Handle("GET /api/v1/surfaces/{surface}/config", g.RequireStaff(h.staff(h.config)))
-	mux.Handle("PUT /api/v1/surfaces/{surface}/items", g.RequireStaff(h.staff(h.putRoleItems)))
-	mux.Handle("DELETE /api/v1/surfaces/{surface}/items", g.RequireStaff(h.staff(h.resetRoleItems)))
-	mux.Handle("PUT /api/v1/surfaces/{surface}/my-items", g.RequireStaff(h.staff(h.putMyItems)))
-	mux.Handle("DELETE /api/v1/surfaces/{surface}/my-items", g.RequireStaff(h.staff(h.resetMyItems)))
-	mux.Handle("PUT /api/v1/surfaces/{surface}/my-workspace", g.RequireStaff(h.staff(h.putMyWorkspace)))
-	mux.Handle("DELETE /api/v1/surfaces/{surface}/my-workspace", g.RequireStaff(h.staff(h.resetMyWorkspace)))
+	r.Handle("GET /api/v1/surfaces/{surface}/config", g.RequireStaff(h.staff(h.config)))
+	r.Handle("PUT /api/v1/surfaces/{surface}/items", g.RequireStaff(h.staff(h.putRoleItems)))
+	r.Handle("DELETE /api/v1/surfaces/{surface}/items", g.RequireStaff(h.staff(h.resetRoleItems)))
+	r.Handle("PUT /api/v1/surfaces/{surface}/my-items", g.RequireStaff(h.staff(h.putMyItems)))
+	r.Handle("DELETE /api/v1/surfaces/{surface}/my-items", g.RequireStaff(h.staff(h.resetMyItems)))
+	r.Handle("PUT /api/v1/surfaces/{surface}/my-workspace", g.RequireStaff(h.staff(h.putMyWorkspace)))
+	r.Handle("DELETE /api/v1/surfaces/{surface}/my-workspace", g.RequireStaff(h.staff(h.resetMyWorkspace)))
 
 	// D-111, the platform roster. NOT under /surfaces/{surface}: a surface's config is one
 	// dealer's curation of one screen, and this is the deployment's floor beneath every dealer.
@@ -47,8 +47,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
 	// parameter. The READ is staff-wide (a dealer's admin must be able to see what their override
 	// is overriding); the WRITE is the platform operator's alone, gated IN THE SERVICE where the
 	// caller is actually resolved, the same placement PutRoleItems' admin gate takes.
-	mux.Handle("GET /api/v1/platform/hotkeys", g.RequireStaff(h.staff(h.platformHotkeys)))
-	mux.Handle("PUT /api/v1/platform/hotkeys/{surface}", g.RequireStaff(h.staff(h.putPlatformHotkeys)))
+	r.Handle("GET /api/v1/platform/hotkeys", g.RequireStaff(h.staff(h.platformHotkeys)))
+	r.Handle("PUT /api/v1/platform/hotkeys/{surface}", g.RequireStaff(h.staff(h.putPlatformHotkeys)))
 }
 
 // answer maps kit errors onto the wire: StatusError speaks its own status, the two refusal types

@@ -1,0 +1,5 @@
+[
+  {"BisTrackID":"P1","SKU":"DBS-PAVER-01","Name":"Antico Paver","ProductGroup":"Paver","IsFeatured":true,"IsSpecialOrder":false,"UpdatedAt":"2026-05-01T11:00:00Z"},
+  {"BisTrackID":"P2","SKU":"DBS-STEP-01","Name":"Natural Step","ProductGroup":"Step","IsFeatured":false,"IsSpecialOrder":true,"UpdatedAt":"2026-05-01T11:00:01Z"},
+  {"BisTrackID":"P3","SKU":"","Name":"Uncoded item","ProductGroup":"Other","IsFeatured":false,"IsSpecialOrder":false,"UpdatedAt":"2026-05-01T11:00:02Z"}
+]

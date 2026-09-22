@@ -20,18 +20,18 @@ import (
 )
 
 // registerBuilderRoutes wires the DIB-506 work-area endpoints + mounts the shared settings kit.
-func (h *StaffHandler) registerBuilderRoutes(mux *http.ServeMux, g *guards.Guards) {
+func (h *StaffHandler) registerBuilderRoutes(r httpx.Registrar, g *guards.Guards) {
 	// The literal "policy" segment binds ahead of the {id} wildcard by ServeMux precedence.
-	mux.Handle("GET /api/v1/quotes/policy", g.RequireStaff(h.staff(h.readQuotePolicy)))
-	mux.Handle("PUT /api/v1/quotes/policy", g.RequireStaff(h.staff(h.putQuotePolicy)))
-	mux.Handle("GET /api/v1/quotes/{id}/terms", g.RequireStaff(h.staff(h.readTerms)))
-	mux.Handle("PUT /api/v1/quotes/{id}/terms", g.RequireStaff(h.staff(h.putTerms)))
-	mux.Handle("GET /api/v1/quotes/{id}/margin-glance", g.RequireStaff(h.staff(h.marginGlance)))
+	r.Handle("GET /api/v1/quotes/policy", g.RequireStaff(h.staff(h.readQuotePolicy)))
+	r.Handle("PUT /api/v1/quotes/policy", g.RequireStaff(h.staff(h.putQuotePolicy)))
+	r.Handle("GET /api/v1/quotes/{id}/terms", g.RequireStaff(h.staff(h.readTerms)))
+	r.Handle("PUT /api/v1/quotes/{id}/terms", g.RequireStaff(h.staff(h.putTerms)))
+	r.Handle("GET /api/v1/quotes/{id}/margin-glance", g.RequireStaff(h.staff(h.marginGlance)))
 
 	// The DIB-507 kit: mounted here because the pilot consumer is the module that proves the kit
 	// (spec §7). A scaffold store (no pool) simply does not mount, surfaces degrade to defaults.
 	if ksvc := h.svc.settingsKitService(); ksvc != nil {
-		settings.NewHandler(ksvc).WithUserLinker(h.userLink).RegisterRoutes(mux, g)
+		settings.NewHandler(ksvc).WithUserLinker(h.userLink).RegisterRoutes(r, g)
 	}
 }
 

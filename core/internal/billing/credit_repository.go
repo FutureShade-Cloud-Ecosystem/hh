@@ -1,0 +1,307 @@
+package billing
+
+// credit_repository.go, the pgx side of DIB-65 / DIB-52 (see credit_gate.go for the design).
+//
+// Module note, restated here because this is the file that actually does it: billing WRITES
+// credit_holds, which is internal/till's table (0035). That bend is deliberate, documented in
+// migration 0104, and bounded, the alternative was a second holds table duplicating the "one ACTIVE
+// hold per customer" invariant, and two copies of an invariant is how you get two of them disagreeing
+// at the counter while a customer waits. The POS and convert gates read this table already, so
+// writing to it is what makes AR holds effective with no change on their side.
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+// CreditPolicy resolves the effective policy for a branch: the branch row when one exists, otherwise
+// the org default (branch_id IS NULL). A missing org row is a migration failure, not a runtime state,
+// so it errors rather than defaulting to something permissive in silence.
+func (r *Repository) CreditPolicy(ctx context.Context, branchID string) (CreditPolicy, error) {
+	if r.pool == nil {
+		return CreditPolicy{}, errNoDB
+	}
+	var p CreditPolicy
+	var bid *string
+	err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(branch_id::text,''), aging_bucket_days, aging_threshold_cents, aging_hold_enabled,
+		        limit_hold_enabled, limit_tolerance_cents, cod_enforced, auto_hold_enabled
+		   FROM ar_credit_policy
+		  WHERE ($1 <> '' AND branch_id = $1::uuid) OR branch_id IS NULL
+		  ORDER BY branch_id NULLS LAST
+		  LIMIT 1`, branchID).
+		Scan(&bid, &p.AgingBucketDays, &p.AgingThresholdCents, &p.AgingHoldEnabled,
+			&p.LimitHoldEnabled, &p.LimitToleranceCents, &p.CODEnforced, &p.AutoHoldEnabled)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CreditPolicy{}, errors.New("billing: no ar_credit_policy row, migration 0104 seeds the org default")
+		}
+		return CreditPolicy{}, fmt.Errorf("billing: read credit policy: %w", err)
+	}
+	if bid != nil {
+		p.BranchID = *bid
+	}
+	return p, nil
+}
+
+// SetAutoHoldEnabled flips ar_credit_policy.auto_hold_enabled, and ONLY that column (DIB-483).
+//
+// The statement names one column on purpose. The thresholds in this table are the client's, set by
+// UPDATE after a conversation, and a writer that could touch them would eventually be handed a whole
+// policy struct by a well-meaning refactor. Narrow here is cheap; narrow later is not.
+//
+// branchID "" targets the ORG DEFAULT row (branch_id IS NULL), the row 0104 seeds. A branch id with
+// no row of its own is NOT silently upgraded into one: it updates nothing and reports so, because
+// creating a branch policy row is a different act with different consequences (it stops inheriting),
+// and a switch that silently forks a branch off the org default is a switch that will surprise
+// somebody.
+func (r *Repository) SetAutoHoldEnabled(ctx context.Context, branchID string, enabled bool) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE ar_credit_policy
+		    SET auto_hold_enabled = $2, updated_at = now()
+		  WHERE ($1 = '' AND branch_id IS NULL) OR ($1 <> '' AND branch_id = $1::uuid)`,
+		branchID, enabled)
+	if err != nil {
+		return fmt.Errorf("billing: set auto_hold_enabled: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		if branchID == "" {
+			return errors.New("billing: no ar_credit_policy org default row, migration 0104 seeds it")
+		}
+		return errors.New("billing: this branch has no credit policy row of its own, it inherits the org default, so change the org setting")
+	}
+	return nil
+}
+
+// agingSelect is the AR aging projection, bucketed by DUE DATE.
+//
+// Due date, not issue date, and that is the choice worth flagging. "60 days old" as a credit trigger
+// means "60 days LATE", not "60 days since we sent it", on net-30 terms those differ by a month, and
+// a policy that confuses them holds accounts that are perfectly current. The aging screen and the
+// auto-hold rule read this same query, so the number an operator argues about is the number the
+// machine used.
+//
+// It reads open invoice balances only (FINALIZED / PARTIALLY_PAID). Non-invoice AR movements (NSF
+// fees, adjustments) are deliberately excluded from the BUCKETS because they have no due date to age
+// from; they are still visible in the tie-out via ARBalanceCents, which is the figure that has to
+// reconcile to the GL.
+const agingSelect = `
+	SELECT c.id::text, c.name, c.account_no::text, COALESCE(c.home_branch_id::text,''),
+	       c.payment_terms_days, c.credit_limit_cents,
+	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date <= i.due_date), 0),
+	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date >  i.due_date AND $1::date <= i.due_date + 30), 0),
+	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date >  i.due_date + 30 AND $1::date <= i.due_date + 60), 0),
+	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date >  i.due_date + 60), 0),
+	       COALESCE(SUM(i.balance_cents), 0),
+	       COALESCE(SUM(i.balance_cents) FILTER (WHERE $1::date > i.due_date + $2::int), 0),
+	       EXISTS (SELECT 1 FROM credit_holds h WHERE h.customer_id = c.id AND h.status = 'ACTIVE'),
+	       COALESCE((SELECT h.hold_kind FROM credit_holds h WHERE h.customer_id = c.id AND h.status = 'ACTIVE' LIMIT 1), '')
+	  FROM customers c
+	  JOIN invoices i ON i.customer_id = c.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')
+	 WHERE ($3 = '' OR i.branch_id = $3::uuid)
+	 GROUP BY c.id, c.name, c.account_no, c.home_branch_id, c.payment_terms_days, c.credit_limit_cents
+	HAVING COALESCE(SUM(i.balance_cents), 0) <> 0
+	 ORDER BY COALESCE(SUM(i.balance_cents), 0) DESC`
+
+// AgingRows returns one row per account carrying an open balance.
+func (r *Repository) AgingRows(ctx context.Context, asOf time.Time, bucketDays int, branchID string) ([]AgingRow, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	if bucketDays <= 0 {
+		bucketDays = 60
+	}
+	rows, err := r.pool.Query(ctx, agingSelect, asOf, bucketDays, branchID)
+	if err != nil {
+		return nil, fmt.Errorf("billing: aging rows: %w", err)
+	}
+	defer rows.Close()
+	var out []AgingRow
+	for rows.Next() {
+		var a AgingRow
+		if err := rows.Scan(&a.CustomerID, &a.CustomerName, &a.AccountNo, &a.BranchID,
+			&a.TermsDays, &a.CreditLimitCents,
+			&a.CurrentCents, &a.Days30Cents, &a.Days60Cents, &a.Days90PlusCents,
+			&a.TotalCents, &a.PastBucketCents, &a.OnHold, &a.HoldKind); err != nil {
+			return nil, fmt.Errorf("billing: scan aging row: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// PlaceHold inserts an ACTIVE credit hold, returning placed=false when the account already has one.
+//
+// The no-op-on-existing behaviour is what makes the nightly sweep idempotent, and it is enforced by
+// the database (ux_credit_holds_one_active), not by a read-then-write we would have to get right
+// under concurrency. The WHERE NOT EXISTS is the fast path; the unique index is the guarantee.
+func (r *Repository) PlaceHold(ctx context.Context, customerID, kind, reason, placedBy string) (string, bool, error) {
+	if r.pool == nil {
+		return "", false, errNoDB
+	}
+	var actor *string
+	if placedBy != "" {
+		actor = &placedBy
+	}
+	var id string
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO credit_holds (customer_id, status, hold_kind, auto_placed, reason, placed_by)
+		 SELECT $1::uuid, 'ACTIVE', $2, $4, $3, $5::uuid
+		  WHERE NOT EXISTS (SELECT 1 FROM credit_holds WHERE customer_id = $1::uuid AND status = 'ACTIVE')
+		 RETURNING id::text`, customerID, kind, reason, placedBy == "", actor).Scan(&id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, nil // already held, nothing to do, and that is a success
+		}
+		return "", false, fmt.Errorf("billing: place hold: %w", err)
+	}
+	return id, true, nil
+}
+
+// holdColumns is the canonical hold SELECT list.
+const holdColumns = `h.id::text, h.customer_id::text, COALESCE(c.name,''), h.status, h.hold_kind,
+	h.auto_placed, h.reason, h.override_until, h.override_reason, h.created_at`
+
+func scanHold(row pgx.Row) (CreditHold, error) {
+	var h CreditHold
+	var until *time.Time
+	if err := row.Scan(&h.ID, &h.CustomerID, &h.CustomerName, &h.Status, &h.Kind,
+		&h.AutoPlaced, &h.Reason, &until, &h.OverrideReason, &h.CreatedAt); err != nil {
+		return CreditHold{}, err
+	}
+	h.OverrideUntil = until
+	return h, nil
+}
+
+// ActiveHold returns the customer's ACTIVE hold, if any.
+func (r *Repository) ActiveHold(ctx context.Context, customerID string) (CreditHold, bool, error) {
+	if r.pool == nil {
+		return CreditHold{}, false, errNoDB
+	}
+	h, err := scanHold(r.pool.QueryRow(ctx,
+		`SELECT `+holdColumns+` FROM credit_holds h
+		   LEFT JOIN customers c ON c.id = h.customer_id
+		  WHERE h.customer_id = $1::uuid AND h.status = 'ACTIVE'`, customerID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CreditHold{}, false, nil
+		}
+		return CreditHold{}, false, fmt.Errorf("billing: active hold: %w", err)
+	}
+	return h, true, nil
+}
+
+// ListHolds returns holds filtered by status ("" = all), newest first.
+func (r *Repository) ListHolds(ctx context.Context, status string) ([]CreditHold, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+holdColumns+` FROM credit_holds h
+		   LEFT JOIN customers c ON c.id = h.customer_id
+		  WHERE ($1 = '' OR h.status = $1)
+		  ORDER BY h.created_at DESC LIMIT 500`, status)
+	if err != nil {
+		return nil, fmt.Errorf("billing: list holds: %w", err)
+	}
+	defer rows.Close()
+	var out []CreditHold
+	for rows.Next() {
+		h, err := scanHold(rows)
+		if err != nil {
+			return nil, fmt.Errorf("billing: scan hold: %w", err)
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// OverrideHold stamps the override window. The guarded WHERE means only an ACTIVE hold can be
+// overridden, overriding a released hold would write a permission that refers to nothing.
+func (r *Repository) OverrideHold(ctx context.Context, holdID, reason string, until time.Time, actorID string) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	var actor *string
+	if actorID != "" {
+		actor = &actorID
+	}
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE credit_holds
+		    SET override_until = $2, override_reason = $3, overridden_by = $4::uuid, updated_at = now()
+		  WHERE id = $1::uuid AND status = 'ACTIVE'`, holdID, until, reason, actor)
+	if err != nil {
+		return fmt.Errorf("billing: override hold: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("billing: hold %s is not ACTIVE, nothing to override", holdID)
+	}
+	return nil
+}
+
+// ReleaseHold releases an AR-placed hold and returns the kind it released.
+//
+// It REFUSES NSF holds by SQL predicate rather than by a Go check, so the refusal cannot be bypassed
+// by a future second caller that forgets it. NSF holds carry a Tier-1 authorization requirement that
+// this module does not enforce, so this module does not get to lift them.
+func (r *Repository) ReleaseHold(ctx context.Context, holdID, reason, actorID string) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	var actor *string
+	if actorID != "" {
+		actor = &actorID
+	}
+	var kind string
+	err := r.pool.QueryRow(ctx,
+		`UPDATE credit_holds
+		    SET status = 'RELEASED', release_reason = $2, released_by = $3::uuid, released_at = now(), updated_at = now()
+		  WHERE id = $1::uuid AND status = 'ACTIVE' AND hold_kind <> 'NSF'
+		 RETURNING hold_kind`, holdID, reason, actor).Scan(&kind)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("billing: hold %s is not an ACTIVE non-NSF hold, an NSF hold is released "+
+				"through the till's Tier-1 path, which enforces an authorization this module does not", holdID)
+		}
+		return "", fmt.Errorf("billing: release hold: %w", err)
+	}
+	return kind, nil
+}
+
+// OrderDispatchFacts gathers everything CanDispatch needs in ONE round trip. The gate is on the
+// fulfilment hot path, a driver waiting at a gate is not the place to discover we issue four queries.
+//
+// The override window is evaluated IN SQL against now(), so a stale application clock cannot extend
+// somebody's override past its expiry.
+func (r *Repository) OrderDispatchFacts(ctx context.Context, orderID string) (DispatchFacts, error) {
+	if r.pool == nil {
+		return DispatchFacts{}, errNoDB
+	}
+	var f DispatchFacts
+	err := r.pool.QueryRow(ctx,
+		`SELECT o.id::text, o.customer_id::text, o.branch_id::text, c.payment_terms_days, COALESCE(c.name,''),
+		        COALESCE((SELECT SUM(i.balance_cents) FROM invoices i
+		                   WHERE i.order_id = o.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')), 0),
+		        EXISTS (SELECT 1 FROM credit_holds h WHERE h.customer_id = o.customer_id AND h.status = 'ACTIVE'),
+		        COALESCE((SELECT h.hold_kind FROM credit_holds h
+		                   WHERE h.customer_id = o.customer_id AND h.status = 'ACTIVE' LIMIT 1), ''),
+		        COALESCE((SELECT h.override_until > now() FROM credit_holds h
+		                   WHERE h.customer_id = o.customer_id AND h.status = 'ACTIVE' LIMIT 1), FALSE),
+		        EXISTS (SELECT 1 FROM invoices i WHERE i.order_id = o.id AND i.status <> 'DRAFT')
+		   FROM orders o
+		   JOIN customers c ON c.id = o.customer_id
+		  WHERE o.id = $1::uuid`, orderID).
+		Scan(&f.OrderID, &f.CustomerID, &f.BranchID, &f.TermsDays, &f.CustomerName,
+			&f.UnpaidCents, &f.HoldActive, &f.HoldKind, &f.OverrideInForce, &f.InvoicesFinalized)
+	if err != nil {
+		return DispatchFacts{}, err
+	}
+	return f, nil
+}

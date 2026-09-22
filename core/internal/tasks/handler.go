@@ -40,13 +40,13 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 // state reachable). The exact state machine enforced downstream is:
 //
 //	QUEUED/PUSHED → ACCEPTED (claim) → IN_PROGRESS (accept) → DONE (done); any non-terminal → CANCELLED (cancel).
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("POST /api/v1/tasks", g.RequireStaff(h.staff(h.create)))
-	mux.Handle("GET /api/v1/tasks", g.RequireStaff(h.staff(h.list)))
-	mux.Handle("POST /api/v1/tasks/{id}/claim", g.RequireStaff(h.staff(h.claim)))
-	mux.Handle("POST /api/v1/tasks/{id}/accept", g.RequireStaff(h.staff(h.accept)))
-	mux.Handle("POST /api/v1/tasks/{id}/done", g.RequireStaff(h.staff(h.done)))
-	mux.Handle("POST /api/v1/tasks/{id}/cancel", g.RequireStaff(h.staff(h.cancel)))
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("POST /api/v1/tasks", g.RequireStaff(h.staff(h.create)))
+	r.Handle("GET /api/v1/tasks", g.RequireStaff(h.staff(h.list)))
+	r.Handle("POST /api/v1/tasks/{id}/claim", g.RequireStaff(h.staff(h.claim)))
+	r.Handle("POST /api/v1/tasks/{id}/accept", g.RequireStaff(h.staff(h.accept)))
+	r.Handle("POST /api/v1/tasks/{id}/done", g.RequireStaff(h.staff(h.done)))
+	r.Handle("POST /api/v1/tasks/{id}/cancel", g.RequireStaff(h.staff(h.cancel)))
 }
 
 type createRequest struct {

@@ -61,51 +61,51 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 // RegisterRoutes self-registers on the shared mux. readGuard = any ACTIVE staff (Sales+);
 // writeGuard = Tier≤Manager (pricing policy is management information). Both are injected
 // from cmd/server so a route is auth-gated by construction.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	if g == nil {
 		panic("pricing.RegisterRoutes: guards are required (routes must be auth-gated)")
 	}
-	mux.Handle("POST /api/v1/pricing/resolve", g.RequireStaff(h.staff(h.resolve)))
+	r.Handle("POST /api/v1/pricing/resolve", g.RequireStaff(h.staff(h.resolve)))
 
 	// Rules (US-P04-P08). Reads = Sales+; writes = Manager+.
-	mux.Handle("GET /api/v1/pricing/rules", g.RequireStaff(h.staff(h.listRules)))
-	mux.Handle("GET /api/v1/pricing/rules/{id}", g.RequireStaff(h.staff(h.getRule)))
-	mux.Handle("POST /api/v1/pricing/rules", g.RequireManager(h.staff(h.createRule)))
-	mux.Handle("PUT /api/v1/pricing/rules/{id}", g.RequireManager(h.staff(h.updateRule)))
-	mux.Handle("DELETE /api/v1/pricing/rules/{id}", g.RequireManager(h.staff(h.deleteRule)))
+	r.Handle("GET /api/v1/pricing/rules", g.RequireStaff(h.staff(h.listRules)))
+	r.Handle("GET /api/v1/pricing/rules/{id}", g.RequireStaff(h.staff(h.getRule)))
+	r.Handle("POST /api/v1/pricing/rules", g.RequireManager(h.staff(h.createRule)))
+	r.Handle("PUT /api/v1/pricing/rules/{id}", g.RequireManager(h.staff(h.updateRule)))
+	r.Handle("DELETE /api/v1/pricing/rules/{id}", g.RequireManager(h.staff(h.deleteRule)))
 
 	// Category margin-policy grid (US-P01/02/03, the keystone).
-	mux.Handle("GET /api/v1/pricing/category-policies", g.RequireStaff(h.staff(h.listCategoryPolicies)))
-	mux.Handle("PUT /api/v1/pricing/category-policies/{categoryId}", g.RequireManager(h.staff(h.upsertCategoryPolicy)))
+	r.Handle("GET /api/v1/pricing/category-policies", g.RequireStaff(h.staff(h.listCategoryPolicies)))
+	r.Handle("PUT /api/v1/pricing/category-policies/{categoryId}", g.RequireManager(h.staff(h.upsertCategoryPolicy)))
 
 	// Customer overrides (US-P09).
-	mux.Handle("GET /api/v1/pricing/customers/{customerId}/overrides", g.RequireStaff(h.staff(h.listOverrides)))
-	mux.Handle("POST /api/v1/pricing/customers/{customerId}/overrides", g.RequireManager(h.staff(h.createOverride)))
-	mux.Handle("PUT /api/v1/pricing/overrides/{id}", g.RequireManager(h.staff(h.updateOverride)))
-	mux.Handle("DELETE /api/v1/pricing/overrides/{id}", g.RequireManager(h.staff(h.deleteOverride)))
+	r.Handle("GET /api/v1/pricing/customers/{customerId}/overrides", g.RequireStaff(h.staff(h.listOverrides)))
+	r.Handle("POST /api/v1/pricing/customers/{customerId}/overrides", g.RequireManager(h.staff(h.createOverride)))
+	r.Handle("PUT /api/v1/pricing/overrides/{id}", g.RequireManager(h.staff(h.updateOverride)))
+	r.Handle("DELETE /api/v1/pricing/overrides/{id}", g.RequireManager(h.staff(h.deleteOverride)))
 
 	// Audit-log viewer (US-P12) + low-margin batch preview (US-P13). Read-only (Sales+).
-	mux.Handle("GET /api/v1/pricing/audit", g.RequireStaff(h.staff(h.listAudit)))
-	mux.Handle("POST /api/v1/pricing/reports/low-margin", g.RequireStaff(h.staff(h.lowMarginReport)))
+	r.Handle("GET /api/v1/pricing/audit", g.RequireStaff(h.staff(h.listAudit)))
+	r.Handle("POST /api/v1/pricing/reports/low-margin", g.RequireStaff(h.staff(h.lowMarginReport)))
 	// D-PA-3 auto-populated daily low-margin report, the live-sales scan. Read-only (Sales+),
 	// exactly like the batch preview above.
-	mux.Handle("GET /api/v1/pricing/reports/low-margin/scan", g.RequireStaff(h.staff(h.lowMarginScan)))
+	r.Handle("GET /api/v1/pricing/reports/low-margin/scan", g.RequireStaff(h.staff(h.lowMarginScan)))
 
 	// Quantity-break editor (A-07 Tier-B). A break is an ADJUSTMENT that STACKS on the tier-resolved
 	// base; the editor lets the dealer principal configure + review the PROVISIONAL skid trigger values. Reads =
 	// Sales+; writes = Manager+ (the keystone RBAC point, a break is real-money config).
-	mux.Handle("GET /api/v1/pricing/quantity-breaks", g.RequireStaff(h.staff(h.listQuantityBreaks)))
-	mux.Handle("GET /api/v1/pricing/quantity-breaks/{id}", g.RequireStaff(h.staff(h.getQuantityBreak)))
-	mux.Handle("POST /api/v1/pricing/quantity-breaks", g.RequireManager(h.staff(h.createQuantityBreak)))
-	mux.Handle("PUT /api/v1/pricing/quantity-breaks/{id}", g.RequireManager(h.staff(h.updateQuantityBreak)))
-	mux.Handle("DELETE /api/v1/pricing/quantity-breaks/{id}", g.RequireManager(h.staff(h.deleteQuantityBreak)))
+	r.Handle("GET /api/v1/pricing/quantity-breaks", g.RequireStaff(h.staff(h.listQuantityBreaks)))
+	r.Handle("GET /api/v1/pricing/quantity-breaks/{id}", g.RequireStaff(h.staff(h.getQuantityBreak)))
+	r.Handle("POST /api/v1/pricing/quantity-breaks", g.RequireManager(h.staff(h.createQuantityBreak)))
+	r.Handle("PUT /api/v1/pricing/quantity-breaks/{id}", g.RequireManager(h.staff(h.updateQuantityBreak)))
+	r.Handle("DELETE /api/v1/pricing/quantity-breaks/{id}", g.RequireManager(h.staff(h.deleteQuantityBreak)))
 
 	// A-08 Price Change Log, batch price updates, CSV imports, append-only change log.
-	h.registerBatchRoutes(mux, g)
+	h.registerBatchRoutes(r, g)
 
 	// The price-file import (0198): upload → map → PREVIEW → apply. Its preview is behind the READ
 	// guard on purpose and its apply behind the write guard, pricefile_handler.go argues both.
-	h.registerPriceFileRoutes(mux, g)
+	h.registerPriceFileRoutes(r, g)
 
 	// DEFERRED (out of this build): the list-price GET/PUT + POST /pricing/list-prices/recompute
 	// depends on an UNBUILT costing seam (D-PA-3/US-P15), do not promote into core.

@@ -351,9 +351,9 @@ func (s *Service) InvoicePayments(ctx context.Context, invoiceID string) (Invoic
 
 // registerHistoryRoutes wires the two Q-044 attribution reads. Staff-gated: "who took this payment /
 // what did it pay" is a counter-level question (unlike the manager-gated financial-distress reads).
-func (h *Handler) registerHistoryRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("GET /api/v1/ar/payments/{id}/history", g.RequireStaff(h.staff(h.paymentHistory)))
-	mux.Handle("GET /api/v1/ar/invoices/{id}/payments", g.RequireStaff(h.staff(h.invoicePayments)))
+func (h *Handler) registerHistoryRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("GET /api/v1/ar/payments/{id}/history", g.RequireStaff(h.staff(h.paymentHistory)))
+	r.Handle("GET /api/v1/ar/invoices/{id}/payments", g.RequireStaff(h.staff(h.invoicePayments)))
 }
 
 // paymentHistory answers: who took this payment, when, how, and which invoices it was applied to,

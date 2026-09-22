@@ -582,10 +582,10 @@ type duplicateCreateRequest struct {
 // so the whole order HTTP surface keeps registering through the calls the composition root already
 // makes, no main.go change. All three are open to any active in-branch staff (see the file header
 // for why duplicate does not need the selling/manager tiers).
-func (h *Handler) registerDuplicateRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("GET /api/v1/orders/{id}/duplicate-preview", g.RequireStaff(h.staff(h.duplicatePreview)))
-	mux.Handle("POST /api/v1/orders/{id}/duplicate", g.RequireStaff(h.staff(h.duplicateCreate)))
-	mux.Handle("GET /api/v1/orders/{id}/duplicate-check", g.RequireStaff(h.staff(h.duplicateCheck)))
+func (h *Handler) registerDuplicateRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("GET /api/v1/orders/{id}/duplicate-preview", g.RequireStaff(h.staff(h.duplicatePreview)))
+	r.Handle("POST /api/v1/orders/{id}/duplicate", g.RequireStaff(h.staff(h.duplicateCreate)))
+	r.Handle("GET /api/v1/orders/{id}/duplicate-check", g.RequireStaff(h.staff(h.duplicateCheck)))
 }
 
 func (h *Handler) duplicatePreview(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {

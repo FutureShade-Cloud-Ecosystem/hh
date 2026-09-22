@@ -16,6 +16,8 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // StaffFacts are the stamped staff scope facts one reached shim records.
@@ -114,7 +116,11 @@ func publicRecorder(rec *Recorder, operation string) http.HandlerFunc {
 	}
 }
 
-func RegisterRoutes(mux *http.ServeMux, g *guards.Guards, rec *Recorder) {
+// Registrar is the compatibility alias the Phase C B3 ruling keeps
+// at the old home after the interface promoted to httpx.
+type Registrar = httpx.Registrar
+
+func RegisterRoutes(r httpx.Registrar, g *guards.Guards, rec *Recorder) {
 	tenant := func(operation string) guards.TenantHandler {
 		return func(w http.ResponseWriter, r *http.Request, scope authz.TenantScope) {
 			rec.record(Reached{Operation: operation, Tenant: &TenantFacts{
@@ -152,18 +158,18 @@ func RegisterRoutes(mux *http.ServeMux, g *guards.Guards, rec *Recorder) {
 		}
 	}
 	// A representative tenant set from /api/v1/tenant, x-role tenant.
-	mux.Handle("GET /api/v1/tenant/me", g.RequireTenant(tenant("tenantGetMe")))
-	mux.Handle("PATCH /api/v1/tenant/me", g.RequireTenant(tenant("tenantUpdateMe")))
-	mux.Handle("POST /api/v1/tenant/token/refresh", g.RequireTenant(tenant("tenantRefreshToken")))
+	r.Handle("GET /api/v1/tenant/me", g.RequireTenant(tenant("tenantGetMe")))
+	r.Handle("PATCH /api/v1/tenant/me", g.RequireTenant(tenant("tenantUpdateMe")))
+	r.Handle("POST /api/v1/tenant/token/refresh", g.RequireTenant(tenant("tenantRefreshToken")))
 
 	// The two dual-bearer sync operations, x-role scope-member; the G4
 	// rule is bearer-conditioned inside the guard.
-	mux.Handle("GET /api/v1/sync/{scope}", g.RequireSync(sync("syncPull")))
-	mux.Handle("POST /api/v1/sync/{scope}", g.RequireSync(sync("syncPush")))
+	r.Handle("GET /api/v1/sync/{scope}", g.RequireSync(sync("syncPull")))
+	r.Handle("POST /api/v1/sync/{scope}", g.RequireSync(sync("syncPush")))
 
 	// One capability-qualified portal operation, x-role
 	// capability:view_billing.
-	mux.Handle("GET /api/v1/tenant/invoices", g.RequireCapability(identity.CapViewBilling, tenant("tenantListInvoices")))
+	r.Handle("GET /api/v1/tenant/invoices", g.RequireCapability(identity.CapViewBilling, tenant("tenantListInvoices")))
 }
 
 // RegisterSupersededProofRoutes registers the operationIds whose shims the
@@ -174,17 +180,17 @@ func RegisterRoutes(mux *http.ServeMux, g *guards.Guards, rec *Recorder) {
 // anonymous public leg) while the served mux answers the real modules; it
 // is registered only by test harnesses, never by serve, and it comes out
 // entirely when the sweeps re-point at the real routes.
-func RegisterSupersededProofRoutes(mux *http.ServeMux, g *guards.Guards, rec *Recorder) {
+func RegisterSupersededProofRoutes(r httpx.Registrar, g *guards.Guards, rec *Recorder) {
 	// The order lifecycle, x-role requireStaff except orderCancel
 	// (requireManager), from the staff-order tag.
-	mux.Handle("GET /api/v1/orders/{id}", g.RequireStaff(staffRecorder(rec, "orderRead")))
-	mux.Handle("POST /api/v1/orders/{id}/confirm", g.RequireStaff(staffRecorder(rec, "orderConfirm")))
-	mux.Handle("POST /api/v1/orders/{id}/picking", g.RequireStaff(staffRecorder(rec, "orderMarkPicking")))
-	mux.Handle("POST /api/v1/orders/{id}/ready", g.RequireStaff(staffRecorder(rec, "orderMarkReady")))
-	mux.Handle("POST /api/v1/orders/{id}/cancel", g.RequireManager(staffRecorder(rec, "orderCancel")))
+	r.Handle("GET /api/v1/orders/{id}", g.RequireStaff(staffRecorder(rec, "orderRead")))
+	r.Handle("POST /api/v1/orders/{id}/confirm", g.RequireStaff(staffRecorder(rec, "orderConfirm")))
+	r.Handle("POST /api/v1/orders/{id}/picking", g.RequireStaff(staffRecorder(rec, "orderMarkPicking")))
+	r.Handle("POST /api/v1/orders/{id}/ready", g.RequireStaff(staffRecorder(rec, "orderMarkReady")))
+	r.Handle("POST /api/v1/orders/{id}/cancel", g.RequireManager(staffRecorder(rec, "orderCancel")))
 
 	// One public operation, security: [] and no x-role gate.
-	mux.Handle("GET /api/public/v1/quotes/{token}", g.Public(publicRecorder(rec, "quotePublicViewQuote")))
+	r.Handle("GET /api/public/v1/quotes/{token}", g.Public(publicRecorder(rec, "quotePublicViewQuote")))
 }
 
 // writeOK answers 200 with the minimal shim body. It reads nothing and

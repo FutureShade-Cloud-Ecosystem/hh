@@ -33,9 +33,9 @@ func NewHandler(receipts *ReceiptService, queue *QueueService, log *slog.Logger)
 // the resource it is a representation OF, the operator holds a sale id, not a "document id". The
 // printing MODULE still owns the handler: receipts, labels and delivery docs are one concern, and
 // none of them belongs to the counter service.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("GET /api/v1/pos/sales/{id}/receipt", g.RequireStaff(h.staff(h.receipt)))
-	mux.Handle("GET /api/v1/printing/jobs", g.RequireStaff(h.staff(h.listJobs)))
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("GET /api/v1/pos/sales/{id}/receipt", g.RequireStaff(h.staff(h.receipt)))
+	r.Handle("GET /api/v1/printing/jobs", g.RequireStaff(h.staff(h.listJobs)))
 }
 
 // receipt renders the print-CSS receipt document for a committed sale.

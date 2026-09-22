@@ -31,23 +31,23 @@ import (
 // ALL RequireStaff, matching RegisterRoutes' gating rule exactly: the people who run a delivery day
 // are frontline roles, and the branch fence inside the service is what makes that safe. Nothing here
 // registers a manager-only write, because nothing here outlives the day the way a truck row does.
-func (h *Handler) RegisterW3Routes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("POST /api/v1/dispatch/stops/{id}/mto", g.RequireStaff(h.staff(h.setStopMTO)))
-	mux.Handle("POST /api/v1/dispatch/stops/{id}/attach-photos", g.RequireStaff(h.staff(h.attachPhotos)))
-	mux.Handle("POST /api/v1/dispatch/stops/{id}/reschedule", g.RequireStaff(h.staff(h.rescheduleStop)))
-	mux.Handle("GET /api/v1/dispatch/stops/{id}/reschedules", g.RequireStaff(h.staff(h.stopReschedules)))
-	mux.Handle("GET /api/v1/dispatch/stops/{id}/payment-hold", g.RequireStaff(h.staff(h.stopPaymentHold)))
+func (h *Handler) RegisterW3Routes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("POST /api/v1/dispatch/stops/{id}/mto", g.RequireStaff(h.staff(h.setStopMTO)))
+	r.Handle("POST /api/v1/dispatch/stops/{id}/attach-photos", g.RequireStaff(h.staff(h.attachPhotos)))
+	r.Handle("POST /api/v1/dispatch/stops/{id}/reschedule", g.RequireStaff(h.staff(h.rescheduleStop)))
+	r.Handle("GET /api/v1/dispatch/stops/{id}/reschedules", g.RequireStaff(h.staff(h.stopReschedules)))
+	r.Handle("GET /api/v1/dispatch/stops/{id}/payment-hold", g.RequireStaff(h.staff(h.stopPaymentHold)))
 
-	mux.Handle("POST /api/v1/dispatch/runs/{id}/reschedule", g.RequireStaff(h.staff(h.rescheduleRun)))
-	mux.Handle("GET /api/v1/dispatch/runs/{id}/reschedules", g.RequireStaff(h.staff(h.runReschedules)))
-	mux.Handle("GET /api/v1/dispatch/runs/{id}/payment-holds", g.RequireStaff(h.staff(h.runPaymentHolds)))
+	r.Handle("POST /api/v1/dispatch/runs/{id}/reschedule", g.RequireStaff(h.staff(h.rescheduleRun)))
+	r.Handle("GET /api/v1/dispatch/runs/{id}/reschedules", g.RequireStaff(h.staff(h.runReschedules)))
+	r.Handle("GET /api/v1/dispatch/runs/{id}/payment-holds", g.RequireStaff(h.staff(h.runPaymentHolds)))
 
-	mux.Handle("POST /api/v1/dispatch/scans", g.RequireStaff(h.staff(h.recordScan)))
+	r.Handle("POST /api/v1/dispatch/scans", g.RequireStaff(h.staff(h.recordScan)))
 	// The trail read hangs off its OWN top-level path with the order in the QUERY rather than under
 	// /orders/{id}/, for the routing reason RegisterRoutes' run-by-no comment records: dispatch does
 	// not own an /orders/ path space, and inventing one here would put this module's routes in
 	// another module's namespace.
-	mux.Handle("GET /api/v1/dispatch/scan-trail", g.RequireStaff(h.staff(h.scanTrail)))
+	r.Handle("GET /api/v1/dispatch/scan-trail", g.RequireStaff(h.staff(h.scanTrail)))
 }
 
 // - DIB-63 -

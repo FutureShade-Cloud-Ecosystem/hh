@@ -1,0 +1,5 @@
+[
+  {"BisTrackID":"S1","ProductBisTrackID":"P1","BranchCode":"TRT","OnHandBase":120.0,"ValuationMethod":"WEIGHTED_AVG","UpdatedAt":"2026-05-01T12:00:00Z"},
+  {"BisTrackID":"S2","ProductBisTrackID":"PX","BranchCode":"TRT","OnHandBase":5.0,"ValuationMethod":"WEIGHTED_AVG","UpdatedAt":"2026-05-01T12:00:01Z"},
+  {"BisTrackID":"S3","ProductBisTrackID":"P1","BranchCode":"KIN","OnHandBase":-3.0,"ValuationMethod":"WEIGHTED_AVG","UpdatedAt":"2026-05-01T12:00:02Z"}
+]

@@ -32,13 +32,14 @@ import (
 	"context"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"log/slog"
-	"net/http"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // - consumer-declared seams (main.go wires the adapters) -
@@ -337,34 +338,34 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 // invoice, entering and posting a bill) is RequireManager. The tolerance configuration is RequireAdmin: it
 // decides how large a variance may pass without anyone looking at it, which is a control setting, not an
 // operational one.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("GET /api/v1/purchasing/vendors", g.RequireStaff(h.staff(h.listVendors)))
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("GET /api/v1/purchasing/vendors", g.RequireStaff(h.staff(h.listVendors)))
 
-	mux.Handle("GET /api/v1/purchasing/pos", g.RequireStaff(h.staff(h.listPOs)))
-	mux.Handle("POST /api/v1/purchasing/pos", g.RequireManager(h.staff(h.createPO)))
-	mux.Handle("GET /api/v1/purchasing/pos/{id}", g.RequireStaff(h.staff(h.getPO)))
-	mux.Handle("POST /api/v1/purchasing/pos/{id}/lines", g.RequireManager(h.staff(h.addLine)))
-	mux.Handle("DELETE /api/v1/purchasing/pos/{id}/lines/{lineID}", g.RequireManager(h.staff(h.removeLine)))
-	mux.Handle("POST /api/v1/purchasing/pos/{id}/transition", g.RequireManager(h.staff(h.transition)))
-	mux.Handle("POST /api/v1/purchasing/pos/{id}/receive", g.RequireManager(h.staff(h.receive)))
+	r.Handle("GET /api/v1/purchasing/pos", g.RequireStaff(h.staff(h.listPOs)))
+	r.Handle("POST /api/v1/purchasing/pos", g.RequireManager(h.staff(h.createPO)))
+	r.Handle("GET /api/v1/purchasing/pos/{id}", g.RequireStaff(h.staff(h.getPO)))
+	r.Handle("POST /api/v1/purchasing/pos/{id}/lines", g.RequireManager(h.staff(h.addLine)))
+	r.Handle("DELETE /api/v1/purchasing/pos/{id}/lines/{lineID}", g.RequireManager(h.staff(h.removeLine)))
+	r.Handle("POST /api/v1/purchasing/pos/{id}/transition", g.RequireManager(h.staff(h.transition)))
+	r.Handle("POST /api/v1/purchasing/pos/{id}/receive", g.RequireManager(h.staff(h.receive)))
 	// DIB-460. The READ is RequireStaff for the same reason the receiving worklist is: "when is it
 	// showing up" is a counter question, and an answer only managers can see is the pain the ticket
 	// describes ("having to go ask procurement"). The WRITE is RequireManager: a promised receiving
 	// date is a buyer's statement about a vendor commitment, and the receiving worklist sorts on it.
-	mux.Handle("GET /api/v1/purchasing/incoming", g.RequireStaff(h.staff(h.incoming)))
-	mux.Handle("PUT /api/v1/purchasing/pos/{id}/expected-date", g.RequireManager(h.staff(h.setExpectedDate)))
+	r.Handle("GET /api/v1/purchasing/incoming", g.RequireStaff(h.staff(h.incoming)))
+	r.Handle("PUT /api/v1/purchasing/pos/{id}/expected-date", g.RequireManager(h.staff(h.setExpectedDate)))
 
-	mux.Handle("GET /api/v1/purchasing/receiving", g.RequireStaff(h.staff(h.worklist)))
-	mux.Handle("GET /api/v1/purchasing/receipts/{id}", g.RequireStaff(h.staff(h.getReceipt)))
-	mux.Handle("POST /api/v1/purchasing/receipts/{id}/landed-cost", g.RequireManager(h.staff(h.attachLandedCost)))
+	r.Handle("GET /api/v1/purchasing/receiving", g.RequireStaff(h.staff(h.worklist)))
+	r.Handle("GET /api/v1/purchasing/receipts/{id}", g.RequireStaff(h.staff(h.getReceipt)))
+	r.Handle("POST /api/v1/purchasing/receipts/{id}/landed-cost", g.RequireManager(h.staff(h.attachLandedCost)))
 
-	mux.Handle("GET /api/v1/purchasing/bills", g.RequireStaff(h.staff(h.listBills)))
-	mux.Handle("POST /api/v1/purchasing/bills", g.RequireManager(h.staff(h.createBill)))
-	mux.Handle("GET /api/v1/purchasing/bills/{id}", g.RequireStaff(h.staff(h.getBill)))
-	mux.Handle("POST /api/v1/purchasing/bills/{id}/post", g.RequireManager(h.staff(h.postBill)))
+	r.Handle("GET /api/v1/purchasing/bills", g.RequireStaff(h.staff(h.listBills)))
+	r.Handle("POST /api/v1/purchasing/bills", g.RequireManager(h.staff(h.createBill)))
+	r.Handle("GET /api/v1/purchasing/bills/{id}", g.RequireStaff(h.staff(h.getBill)))
+	r.Handle("POST /api/v1/purchasing/bills/{id}/post", g.RequireManager(h.staff(h.postBill)))
 
-	mux.Handle("GET /api/v1/purchasing/tolerance", g.RequireStaff(h.staff(h.getTolerance)))
-	mux.Handle("PUT /api/v1/purchasing/tolerance", g.RequireAdmin(h.staff(h.setTolerance)))
+	r.Handle("GET /api/v1/purchasing/tolerance", g.RequireStaff(h.staff(h.getTolerance)))
+	r.Handle("PUT /api/v1/purchasing/tolerance", g.RequireAdmin(h.staff(h.setTolerance)))
 
 	// - item 5 · the standardized outbound purchase order -
 	//
@@ -377,21 +378,21 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
 	// The POLICY is RequireAdmin, alongside the match tolerance, and for its reason: it decides who
 	// in the building learns what the dealer pays, which is a control setting and not an
 	// operational one.
-	mux.Handle("GET /api/v1/purchasing/policy", g.RequireStaff(h.staff(h.getPurchasingPolicy)))
-	mux.Handle("PUT /api/v1/purchasing/policy", g.RequireAdmin(h.staff(h.setPurchasingPolicy)))
+	r.Handle("GET /api/v1/purchasing/policy", g.RequireStaff(h.staff(h.getPurchasingPolicy)))
+	r.Handle("PUT /api/v1/purchasing/policy", g.RequireAdmin(h.staff(h.setPurchasingPolicy)))
 
-	mux.Handle("GET /api/v1/purchasing/vendors/{vendorID}/contact", g.RequireStaff(h.staff(h.getVendorContact)))
-	mux.Handle("PUT /api/v1/purchasing/vendors/{vendorID}/contact", g.RequireManager(h.staff(h.setVendorContact)))
-	mux.Handle("DELETE /api/v1/purchasing/vendors/{vendorID}/contact", g.RequireManager(h.staff(h.deleteVendorContact)))
-	mux.Handle("GET /api/v1/purchasing/vendors/{vendorID}/skus", g.RequireStaff(h.staff(h.listVendorSKUs)))
-	mux.Handle("PUT /api/v1/purchasing/vendors/{vendorID}/skus", g.RequireManager(h.staff(h.setVendorSKU)))
-	mux.Handle("DELETE /api/v1/purchasing/vendors/{vendorID}/skus/{productID}", g.RequireManager(h.staff(h.deleteVendorSKU)))
+	r.Handle("GET /api/v1/purchasing/vendors/{vendorID}/contact", g.RequireStaff(h.staff(h.getVendorContact)))
+	r.Handle("PUT /api/v1/purchasing/vendors/{vendorID}/contact", g.RequireManager(h.staff(h.setVendorContact)))
+	r.Handle("DELETE /api/v1/purchasing/vendors/{vendorID}/contact", g.RequireManager(h.staff(h.deleteVendorContact)))
+	r.Handle("GET /api/v1/purchasing/vendors/{vendorID}/skus", g.RequireStaff(h.staff(h.listVendorSKUs)))
+	r.Handle("PUT /api/v1/purchasing/vendors/{vendorID}/skus", g.RequireManager(h.staff(h.setVendorSKU)))
+	r.Handle("DELETE /api/v1/purchasing/vendors/{vendorID}/skus/{productID}", g.RequireManager(h.staff(h.deleteVendorSKU)))
 
-	mux.Handle("GET /api/v1/purchasing/pos/{id}/document", g.RequireStaff(h.staff(h.poDocumentHTML)))
-	mux.Handle("GET /api/v1/purchasing/pos/{id}/document.csv", g.RequireStaff(h.staff(h.poDocumentCSV)))
-	mux.Handle("GET /api/v1/purchasing/pos/{id}/costs", g.RequireStaff(h.staff(h.poCosts)))
-	mux.Handle("GET /api/v1/purchasing/pos/{id}/sends", g.RequireStaff(h.staff(h.listPOSends)))
-	mux.Handle("POST /api/v1/purchasing/pos/{id}/send", g.RequireManager(h.staff(h.sendPO)))
+	r.Handle("GET /api/v1/purchasing/pos/{id}/document", g.RequireStaff(h.staff(h.poDocumentHTML)))
+	r.Handle("GET /api/v1/purchasing/pos/{id}/document.csv", g.RequireStaff(h.staff(h.poDocumentCSV)))
+	r.Handle("GET /api/v1/purchasing/pos/{id}/costs", g.RequireStaff(h.staff(h.poCosts)))
+	r.Handle("GET /api/v1/purchasing/pos/{id}/sends", g.RequireStaff(h.staff(h.listPOSends)))
+	r.Handle("POST /api/v1/purchasing/pos/{id}/send", g.RequireManager(h.staff(h.sendPO)))
 
-	mux.Handle("GET /api/v1/purchasing/vendor-ref", g.RequireStaff(h.staff(h.vendorRef)))
+	r.Handle("GET /api/v1/purchasing/vendor-ref", g.RequireStaff(h.staff(h.vendorRef)))
 }

@@ -60,11 +60,13 @@ func scanQuote(row pgx.Row) (Quote, error) {
 	return q, nil
 }
 
-// ListQuotes returns a tenant-scoped, optionally status-filtered, paginated page plus
-// the status-filtered total for the envelope. Lines are not joined here.
-func (r *Repository) ListQuotes(ctx context.Context, customerID string, f Filter) ([]Quote, int, error) {
+// ListQuotes returns a tenant-scoped, optionally status-filtered page. Lines are
+// not joined here. Cursor pagination (HH-3.2 fold), the tenant half: stable-ordering
+// basis created_at DESC, quote_no (unique), the same basis the staff list carries;
+// the cursor is the created_at/quote_no pair of the last kept row.
+func (r *Repository) ListQuotes(ctx context.Context, customerID string, f Filter) ([]Quote, error) {
 	if r.pool == nil {
-		return nil, 0, errNoDB
+		return nil, errNoDB
 	}
 
 	where := "customer_id = $1"
@@ -73,21 +75,18 @@ func (r *Repository) ListQuotes(ctx context.Context, customerID string, f Filter
 		args = append(args, f.Status)
 		where += fmt.Sprintf(" AND status = $%d", len(args))
 	}
-
-	var total int
-	countQ := "SELECT COUNT(*) FROM quotes WHERE " + where
-	if err := r.pool.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("count quotes: %w", err)
+	var cCreated, cQuoteNo any
+	if f.AfterCursor {
+		cCreated, cQuoteNo = f.CursorCreated, f.CursorQuoteNo
 	}
-
+	args = append(args, cCreated, cQuoteNo, f.Limit)
 	q := fmt.Sprintf(
-		"SELECT %s FROM quotes WHERE %s ORDER BY created_at DESC, quote_no LIMIT $%d OFFSET $%d",
-		quoteColumns, where, len(args)+1, len(args)+2,
+		"SELECT %s FROM quotes WHERE %s AND ($%d::timestamptz IS NULL OR (created_at, quote_no) < ($%d::timestamptz, $%d::text)) ORDER BY created_at DESC, quote_no LIMIT $%d",
+		quoteColumns, where, len(args)-2, len(args)-2, len(args)-1, len(args),
 	)
-	args = append(args, f.Limit, f.Offset)
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("list quotes: %w", err)
+		return nil, fmt.Errorf("list quotes: %w", err)
 	}
 	defer rows.Close()
 
@@ -95,14 +94,14 @@ func (r *Repository) ListQuotes(ctx context.Context, customerID string, f Filter
 	for rows.Next() {
 		qt, err := scanQuote(rows)
 		if err != nil {
-			return nil, 0, fmt.Errorf("scan quote: %w", err)
+			return nil, fmt.Errorf("scan quote: %w", err)
 		}
 		out = append(out, qt)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
-	return out, total, nil
+	return out, nil
 }
 
 // GetQuote loads one quote WITH its lines, scoped to the tenant. A missing or

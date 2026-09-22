@@ -48,12 +48,10 @@ type Detail struct {
 type Filter struct {
 	Status string
 	Limit  int
-	Offset int
-	// Cursor pagination (HH-3.2 B4), the staff list half. Stable-ordering
-	// basis: created_at DESC, quote_no (quote_no is unique), the cursor is
-	// the created_at/quote_no pair of the last kept row. Offset remains
-	// only for the tenant-scoped ListQuotes seam the portal surface owns;
-	// that half converts in its own batch.
+	// Cursor pagination (HH-3.2 B4 and the fold): both halves of the quote
+	// list family convert. Stable-ordering basis: created_at DESC, quote_no
+	// (quote_no is unique), the cursor is the created_at/quote_no pair of
+	// the last kept row.
 	AfterCursor   bool
 	CursorCreated string
 	CursorQuoteNo string

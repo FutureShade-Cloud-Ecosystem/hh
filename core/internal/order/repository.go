@@ -57,9 +57,12 @@ func scanOrder(row rowScanner) (Order, error) {
 
 // ListOrders returns a tenant-scoped, optionally status-filtered, paginated page plus
 // the matching total.
-func (r *Repository) ListOrders(ctx context.Context, customerID string, f Filter) ([]Order, int, error) {
+// ListOrders returns a tenant-scoped, optionally status-filtered page. Cursor
+// pagination (HH-3.2 fold): stable-ordering basis created_at DESC, order_no
+// (unique); the cursor is that pair of the last kept row, no count query.
+func (r *Repository) ListOrders(ctx context.Context, customerID string, f Filter) ([]Order, error) {
 	if r.pool == nil {
-		return nil, 0, errNoDB
+		return nil, errNoDB
 	}
 	where := "customer_id = $1"
 	args := []any{customerID}
@@ -68,18 +71,17 @@ func (r *Repository) ListOrders(ctx context.Context, customerID string, f Filter
 		where += fmt.Sprintf(" AND status = $%d", len(args))
 	}
 
-	var total int
-	if err := r.pool.QueryRow(ctx, "SELECT COUNT(*) FROM orders WHERE "+where, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("count orders: %w", err)
+	var cCreated, cNo any
+	if f.AfterCursor {
+		cCreated, cNo = f.CursorCreated, f.CursorOrderNo
 	}
-
-	q := fmt.Sprintf("SELECT %s FROM orders WHERE %s ORDER BY created_at DESC, order_no LIMIT $%d OFFSET $%d",
-		orderColumns, where, len(args)+1, len(args)+2)
-	args = append(args, f.Limit, f.Offset)
+	args = append(args, cCreated, cNo, f.Limit)
+	q := fmt.Sprintf("SELECT %s FROM orders WHERE %s AND ($%d::timestamptz IS NULL OR (created_at, order_no) < ($%d::timestamptz, $%d::text)) ORDER BY created_at DESC, order_no LIMIT $%d",
+		orderColumns, where, len(args)-2, len(args)-2, len(args)-1, len(args))
 
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -87,14 +89,14 @@ func (r *Repository) ListOrders(ctx context.Context, customerID string, f Filter
 	for rows.Next() {
 		o, err := scanOrder(rows)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		out = append(out, o)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
-	return out, total, nil
+	return out, nil
 }
 
 // GetOrder loads one order WITH lines + delivery_instructions, scoped to the tenant.

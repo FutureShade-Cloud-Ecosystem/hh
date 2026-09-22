@@ -62,7 +62,7 @@ const maxReasonLen = 2000
 // orderStore is the persistence the Service needs. Real impl: Repository (pgx); tests
 // use a fake. Every operation is tenant-scoped by customerID.
 type orderStore interface {
-	ListOrders(ctx context.Context, customerID string, f Filter) ([]Order, int, error)
+	ListOrders(ctx context.Context, customerID string, f Filter) ([]Order, error)
 	GetOrder(ctx context.Context, customerID, orderID string) (Detail, error)
 	SetDeliveryInstructions(ctx context.Context, customerID, orderID, text string) error
 	// UpdateStatus is the DIB-159 status-transition write: it moves ONE order to newStatus
@@ -209,13 +209,14 @@ func (s *Service) WithAudit(r audit.Recorder) *Service {
 	return s
 }
 
-// ListOrders returns one tenant-scoped page of orders plus the unfiltered total.
-func (s *Service) ListOrders(ctx context.Context, customerID string, f Filter) ([]Order, int, error) {
+// ListOrders returns one tenant-scoped page of orders (cursor envelope; the
+// total echo is gone with the offset family, HH-3.2 fold).
+func (s *Service) ListOrders(ctx context.Context, customerID string, f Filter) ([]Order, error) {
 	if customerID == "" {
-		return nil, 0, httpx.BadRequestf("customer id is required")
+		return nil, httpx.BadRequestf("customer id is required")
 	}
 	if f.Status != "" && !validStatus(f.Status) {
-		return nil, 0, httpx.BadRequestf("unknown order status %q", f.Status)
+		return nil, httpx.BadRequestf("unknown order status %q", f.Status)
 	}
 	return s.store.ListOrders(ctx, customerID, f)
 }

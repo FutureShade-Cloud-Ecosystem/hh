@@ -26,10 +26,10 @@ import (
 // The advance rule is READ-ONLY over HTTP on purpose. Turning it on moves orders toward invoicing,
 // which is a decision with money at the end of it; it is a deliberate write against the database with
 // an attributable updated_by, not a toggle somebody finds in a settings screen. advance.go says why.
-func (h *Handler) RegisterWeightRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("POST /api/v1/yard/weight-requests", g.RequireStaff(h.staff(h.requestWeight)))
-	mux.Handle("POST /api/v1/yard/picks/{id}/weight", g.RequireStaff(h.staff(h.submitWeight)))
-	mux.Handle("GET /api/v1/yard/advance-rules/{taskType}", g.RequireStaff(h.staff(h.advanceRule)))
+func (h *Handler) RegisterWeightRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("POST /api/v1/yard/weight-requests", g.RequireStaff(h.staff(h.requestWeight)))
+	r.Handle("POST /api/v1/yard/picks/{id}/weight", g.RequireStaff(h.staff(h.submitWeight)))
+	r.Handle("GET /api/v1/yard/advance-rules/{taskType}", g.RequireStaff(h.staff(h.advanceRule)))
 }
 
 type weightRequestBody struct {

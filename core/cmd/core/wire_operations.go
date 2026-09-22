@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
@@ -29,8 +28,10 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/landedcost"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/lien"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messaging"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messagingprovider"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/printing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tasks"
@@ -82,7 +83,27 @@ const yardCounterFallbackSlug = "office"
 // (the recon reads run through the till repository), messaging before
 // tasks (the chat notifier posts through the service), landedcost before
 // purchasing (the AP tie-in capitalizes through it).
-func wireOperations(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, spine *moneySpine, streamTicketKey string) {
+// operationsSpine carries the operations cluster's shared handles to the
+// tops wiring and the worker role: the services whose seams the tops
+// modules close (dispatch's signature capture and AR gate, the yard stage
+// outbox, warranty's credit issuer) and the loops' subjects (the messaging
+// services the retention sweep and reconciler read).
+type operationsSpine struct {
+	dispatchSvc   *dispatch.Service
+	yardTasksSvc  *tasks.Service
+	warrantySvc   *warranty.Service
+	messagingSvc  *messaging.Service
+	messagingRepo *messaging.Repository
+	lienSvc       *lien.Service
+	printQueue    *printing.QueueService
+	tillRepo      *till.Repository
+	unionGateway  payments.PaymentGateway
+	purchasingSvc *purchasing.Service
+	landedcostSvc *landedcost.Service
+}
+
+func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, spine *moneySpine, streamTicketKey string, smsOutbox *messagingprovider.Outbox) *operationsSpine {
+	ops := &operationsSpine{}
 	link := linkedUserID(pool)
 	auditSvc := spine.auditSvc
 	orderRepo := spine.orderRepo
@@ -100,7 +121,7 @@ func wireOperations(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, lo
 	tillSvc := till.NewService(tillRepo).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc)
-	till.NewHandler(tillSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+	till.NewHandler(tillSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// DIB-387: the quote conversion's credit/hold gate, closable now till
 	// has landed. The pin wired the SAME gate instance the POS ring uses;
@@ -116,7 +137,7 @@ func wireOperations(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, lo
 		WithJournalPoster(glPosterAdapter{svc: spine.glSvc}).
 		WithGLBalances(glBalanceAdapter{svc: spine.glSvc}).
 		WithAudit(auditSvc)
-	bankrec.NewHandler(bankrecSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+	bankrec.NewHandler(bankrecSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// M6 (W6): the Lien Cockpit. The holdback-facts reader (billing) and
 	// the calendar registrar (compliance) are unlanded modules: unwired,
@@ -130,7 +151,7 @@ func wireOperations(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, lo
 		WithGLPoster(lienGLPoster{svc: spine.glSvc}).
 		WithCoSigner(identity.NewApprovalRepository(pool)).
 		WithAudit(auditSvc)
-	lien.NewHandler(lienSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+	lien.NewHandler(lienSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// A-15 (W6): inventory counts over inventory's count seam and the GL
 	// (the reason leg and the 1200 leg both resolve through the GL).
@@ -140,14 +161,14 @@ func wireOperations(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, lo
 		WithRuleResolver(glRuleAdapter{svc: spine.glSvc}).
 		WithGLBalanceReader(glBalanceAdapter{svc: spine.glSvc}).
 		WithAudit(auditSvc)
-	invcount.NewHandler(invcountSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+	invcount.NewHandler(invcountSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// A-16 (W6): landed cost, capitalizing through inventory.
 	landedcostSvc := landedcost.NewService(landedcost.NewRepository(pool)).
 		WithCapitalizer(landedAdapter{svc: inventorySvc}).
 		WithGLPoster(landedGLPoster{svc: spine.glSvc}).
 		WithAudit(auditSvc)
-	landedcost.NewHandler(landedcostSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+	landedcost.NewHandler(landedcostSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// SWARM-W4-C: purchasing, the whole AP side, over inventory's
 	// receiving seam, the vendors projection, landed cost and the GL.
@@ -164,7 +185,7 @@ func wireOperations(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, lo
 		WithLogger(log).
 		WithBranches(item5BranchDirectory{pool: pool}).
 		WithVendorAddresses(item5VendorAddressBook{pool: pool})
-	purchasing.NewHandler(purchasingSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+	purchasing.NewHandler(purchasingSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// UNION-W4 and UNION-470: the inventory seams purchasing closes. The
 	// create-draft-PO seam was the money batch's StubPOCreator default;
@@ -183,11 +204,11 @@ func wireOperations(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, lo
 	messagingSvc := messaging.NewService(messagingRepo).WithRealtime(messagingHub)
 	messaging.NewHandler(messagingSvc, log).WithHub(messagingHub).
 		WithStreamTickets(streamTicketKey).
-		WithUserLinker(link).RegisterRoutes(mux, g)
+		WithUserLinker(link).RegisterRoutes(r, g)
 	// SWARM-W5-D: the conversational tier registers through its own entry
 	// point on a second Handler value, exactly as at the pin (this
 	// surface needs neither the hub nor the tickets).
-	messaging.NewHandler(messagingSvc, log).WithUserLinker(link).RegisterConversationRoutes(mux, g)
+	messaging.NewHandler(messagingSvc, log).WithUserLinker(link).RegisterConversationRoutes(r, g)
 
 	// The approvals rail's messaging seams (0075): the notifier fans
 	// cards and decision echoes into the hub, best-effort, never failing
@@ -209,7 +230,7 @@ func wireOperations(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, lo
 		WithOrderReader(orderReaderAdapter{repo: orderRepo}).
 		WithChatNotifier(taskChatNotifier{svc: messagingSvc}).
 		WithLogger(log)
-	tasks.NewHandler(tasksSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+	tasks.NewHandler(tasksSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// WTY-01 (DIB-153): warranty claims. The settlement journal posts
 	// through the GL poster; the SLA notifier posts breaches into
@@ -220,16 +241,16 @@ func wireOperations(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, lo
 		WithAudit(auditSvc).
 		WithLogger(log).
 		WithSLANotifier(unionSLANotifier{svc: messagingSvc, log: log})
-	warranty.NewHandler(warrantySvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+	warranty.NewHandler(warrantySvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 	warrantyW5Handler := warranty.NewHandler(warrantySvc, log).WithUserLinker(link)
-	warrantyW5Handler.RegisterW5Routes(mux, g)
-	warrantyW5Handler.RegisterPublicRoutes(mux)
+	warrantyW5Handler.RegisterW5Routes(r, g)
+	warrantyW5Handler.RegisterPublicRoutes(r)
 
 	// SWARM-W1A-B: the printing module, print_queue's first consumer.
 	printRepo := printing.NewRepository(pool)
 	printQueue := printing.NewQueueService(printRepo)
 	receiptSvc := printing.NewReceiptService(printRepo, printQueue).WithAudit(auditSvc)
-	printing.NewHandler(receiptSvc, printQueue, log).WithUserLinker(link).RegisterRoutes(mux, g)
+	printing.NewHandler(receiptSvc, printQueue, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// SWARM-W2-A: dispatch, the physical leg. The signature-capture seam
 	// (pos) is unlanded and stays unwired: unwired, a POD capture refuses
@@ -251,9 +272,9 @@ func wireOperations(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, lo
 		WithAudit(auditSvc).
 		WithLogger(log)
 	dispatchHandler := dispatch.NewHandler(dispatchSvc, log).WithUserLinker(link)
-	dispatchHandler.RegisterRoutes(mux, g)
-	dispatchHandler.RegisterPublicRoutes(mux)
-	dispatchHandler.RegisterW3Routes(mux, g)
+	dispatchHandler.RegisterRoutes(r, g)
+	dispatchHandler.RegisterPublicRoutes(r)
+	dispatchHandler.RegisterW3Routes(r, g)
 
 	// The freight bridge's return leg (0195): a rail decision on a parked
 	// freight raise applies or refuses it inside the decision
@@ -261,12 +282,16 @@ func wireOperations(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, lo
 	// (the safe half of the kill switch); wired, both arms cross.
 	spine.approvals.WithFreightDecider(dispatchFreightDeciderAdapter{svc: dispatchSvc})
 
-	// SWARM-W3-C: the yard surface over the pick feed. The fixture feed
-	// retires here: the pick source is dispatch's own feed, the weight
-	// round trip writes order lines through the order module's guarded
-	// edit, and the advance writes order status through the state-guarded
-	// event writer.
-	yardTasksSvc := tasks.NewService(tasks.NewRepository(pool)).
+	// SWARM-W3-C: the yard surface over the pick feed.	// The stage-outbox seam (messagingprovider, landed with the fold): the
+	// pin's W2-B wiring handed the yard repository the SMS outbox so a staged
+	// pick enqueues its customer notice INSIDE the stage transaction. Nil (the
+	// DB-free proof constructions) leaves the seam dark, the module's own
+	// unwired posture.
+	yardRepo := tasks.NewRepository(pool)
+	if smsOutbox != nil {
+		yardRepo = yardRepo.WithStageOutbox(stageNoticeAdapter{outbox: smsOutbox})
+	}
+	yardTasksSvc := tasks.NewService(yardRepo).
 		WithOrderReader(orderReaderAdapter{repo: orderRepo}).
 		WithChatNotifier(yardChatNotifier{svc: messagingSvc, log: log}).
 		WithPickSource(newDispatchPickSource(pool, orderRepo, log)).
@@ -275,14 +300,14 @@ func wireOperations(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, lo
 		WithOrderLineWriter(orderLineWeightAdapter{svc: orderSvc, repo: orderRepo}).
 		WithOrderAdvancer(taskOrderAdvanceAdapter{svc: orderSvc}).
 		WithAudit(auditSvc)
-	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterYardRoutes(mux, g)
-	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterWeightRoutes(mux, g)
+	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterYardRoutes(r, g)
+	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterWeightRoutes(r, g)
 
 	// The rail's HTTP surface (the A3 ownership ruling): the staff
 	// approvals routes register through the Guards with the same linker,
 	// and the decide path's authority is the guard's resolution (nothing
 	// on it reads the scaffold tables).
-	identity.NewApprovalsHandler(spine.approvals, link).RegisterRoutes(mux, g)
+	identity.NewApprovalsHandler(spine.approvals, link).RegisterRoutes(r, g)
 
 	// SWARM-W3-B: payments (F-1's assignment to this batch). The gateway
 	// selector is fail-closed at boot exactly as at the pin (DIB-416):
@@ -294,12 +319,26 @@ func wireOperations(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, lo
 	if unionGwErr != nil {
 		panic("payments: gateway selection refused to boot: " + unionGwErr.Error())
 	}
+	ops.unionGateway = unionGateway
 	w3bPaymentsRepo := payments.NewRepository(pool)
 	w3bPaySvc := payments.NewService(w3bPaymentsRepo, unionGateway)
 	_ = w3bPaySvc // consumed by the portal BFF at the tops batch; constructed so boot proves it wires
 	// DIB-170: payment reversal, manager-gated, reason-required, audited.
 	w3bReverseSvc := payments.NewReverseService(w3bPaymentsRepo).WithAudit(auditSvc)
-	payments.NewReversalHandler(w3bReverseSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+	payments.NewReversalHandler(w3bReverseSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+
+	return &operationsSpine{
+		lienSvc:       lienSvc,
+		dispatchSvc:   dispatchSvc,
+		yardTasksSvc:  yardTasksSvc,
+		warrantySvc:   warrantySvc,
+		messagingSvc:  messagingSvc,
+		messagingRepo: messagingRepo,
+		printQueue:    printQueue,
+		tillRepo:      tillRepo,
+		purchasingSvc: purchasingSvc,
+		landedcostSvc: landedcostSvc,
+	}
 }
 
 // ── the carried adapter belt (pin main.go, verbatim where the dependency

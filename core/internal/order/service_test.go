@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
@@ -35,10 +36,10 @@ func newFakeStore(ds ...Detail) *fakeStore {
 	return &fakeStore{details: m}
 }
 
-func (f *fakeStore) ListOrders(_ context.Context, customerID string, flt Filter) ([]Order, int, error) {
+func (f *fakeStore) ListOrders(_ context.Context, customerID string, flt Filter) ([]Order, error) {
 	f.lastFilter = flt
 	if f.listForceErr != nil {
-		return nil, 0, f.listForceErr
+		return nil, f.listForceErr
 	}
 	var matched []Order
 	for _, d := range f.details {
@@ -50,16 +51,21 @@ func (f *fakeStore) ListOrders(_ context.Context, customerID string, flt Filter)
 		}
 		matched = append(matched, d.Order)
 	}
-	total := len(matched)
-	// honor offset/limit so pagination pass-through is observable
-	if flt.Offset >= len(matched) {
-		return nil, total, nil
+	// Cursor carry (HH-3.2 fold): honor the cursor/limit window so the
+	// pagination pass-through stays observable; seeds carry no clock, so
+	// the map walk order is the fake's stand-in stable ordering.
+	if flt.AfterCursor {
+		for i, o := range matched {
+			if o.CreatedAt.Format(time.RFC3339Nano) == flt.CursorCreated && o.OrderNo == flt.CursorOrderNo {
+				matched = matched[i+1:]
+				break
+			}
+		}
 	}
-	matched = matched[flt.Offset:]
 	if flt.Limit > 0 && flt.Limit < len(matched) {
 		matched = matched[:flt.Limit]
 	}
-	return matched, total, nil
+	return matched, nil
 }
 
 func (f *fakeStore) GetOrder(_ context.Context, customerID, orderID string) (Detail, error) {
@@ -235,23 +241,23 @@ func TestListOrders(t *testing.T) {
 	svc := NewService(store)
 	ctx := context.Background()
 
-	t.Run("tenant-scoped page + total", func(t *testing.T) {
-		got, total, err := svc.ListOrders(ctx, "cust-a", Filter{})
+	t.Run("tenant-scoped page", func(t *testing.T) {
+		got, err := svc.ListOrders(ctx, "cust-a", Filter{})
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
-		if total != 2 || len(got) != 2 {
-			t.Fatalf("want 2 orders for cust-a, got len=%d total=%d", len(got), total)
+		if len(got) != 2 {
+			t.Fatalf("want 2 orders for cust-a, got len=%d", len(got))
 		}
 	})
 
 	t.Run("status filter passed through", func(t *testing.T) {
-		got, total, err := svc.ListOrders(ctx, "cust-a", Filter{Status: "CONFIRMED"})
+		got, err := svc.ListOrders(ctx, "cust-a", Filter{Status: "CONFIRMED"})
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
-		if total != 1 || len(got) != 1 || got[0].ID != "1" {
-			t.Fatalf("want only order 1, got len=%d total=%d", len(got), total)
+		if len(got) != 1 || got[0].ID != "1" {
+			t.Fatalf("want only order 1, got len=%d", len(got))
 		}
 		if store.lastFilter.Status != "CONFIRMED" {
 			t.Fatalf("filter not forwarded: %+v", store.lastFilter)
@@ -259,26 +265,24 @@ func TestListOrders(t *testing.T) {
 	})
 
 	t.Run("pagination forwarded", func(t *testing.T) {
-		_, total, err := svc.ListOrders(ctx, "cust-a", Filter{Limit: 1, Offset: 1})
+		_, err := svc.ListOrders(ctx, "cust-a", Filter{Limit: 1, AfterCursor: true,
+			CursorCreated: "2020-01-01T00:00:00Z", CursorOrderNo: "SO-1"})
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
-		if total != 2 {
-			t.Fatalf("total should be unfiltered by paging, got %d", total)
-		}
-		if store.lastFilter.Limit != 1 || store.lastFilter.Offset != 1 {
+		if store.lastFilter.Limit != 1 || !store.lastFilter.AfterCursor {
 			t.Fatalf("paging not forwarded: %+v", store.lastFilter)
 		}
 	})
 
 	t.Run("missing customer id", func(t *testing.T) {
-		if _, _, err := svc.ListOrders(ctx, "", Filter{}); !isBadRequest(err) {
+		if _, err := svc.ListOrders(ctx, "", Filter{}); !isBadRequest(err) {
 			t.Fatalf("want bad request, got %v", err)
 		}
 	})
 
 	t.Run("unknown status rejected before store", func(t *testing.T) {
-		if _, _, err := svc.ListOrders(ctx, "cust-a", Filter{Status: "BOGUS"}); !isBadRequest(err) {
+		if _, err := svc.ListOrders(ctx, "cust-a", Filter{Status: "BOGUS"}); !isBadRequest(err) {
 			t.Fatalf("want bad request, got %v", err)
 		}
 	})

@@ -18,6 +18,8 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // errNotImplemented marks a scaffold stub the A-15 worker fills.
@@ -153,19 +155,19 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 
 // RegisterRoutes self-registers the count routes behind the identity guards. Reads are RequireStaff; sheet
 // create/freeze/count are RequireStaff; the post (maker-checker) + recon are RequireManager. FROZEN signature.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// reads + sheet create/freeze/count are staff; the checker approval, the post, and the recon are manager.
-	mux.Handle("GET /api/v1/counts/sheets", g.RequireStaff(h.staff(h.listSheets)))
-	mux.Handle("POST /api/v1/counts/sheets", g.RequireStaff(h.staff(h.createSheet)))
-	mux.Handle("GET /api/v1/counts/sheets/{id}", g.RequireStaff(h.staff(h.sheetDetail)))
-	mux.Handle("POST /api/v1/counts/sheets/{id}/freeze", g.RequireStaff(h.staff(h.freezeSheet)))
-	mux.Handle("POST /api/v1/counts/sheets/{id}/counts", g.RequireStaff(h.staff(h.submitCounts)))
-	mux.Handle("POST /api/v1/counts/sheets/{id}/approve", g.RequireManager(h.staff(h.approveSheet)))
-	mux.Handle("POST /api/v1/counts/sheets/{id}/post", g.RequireManager(h.staff(h.postSheet)))
-	mux.Handle("POST /api/v1/counts/sheets/{id}/cancel", g.RequireStaff(h.staff(h.cancelSheet)))
-	mux.Handle("GET /api/v1/counts/reason-codes", g.RequireStaff(h.staff(h.reasonCodes)))
-	mux.Handle("GET /api/v1/counts/negative-stock", g.RequireStaff(h.staff(h.negativeStock)))
-	mux.Handle("GET /api/v1/counts/recon", g.RequireManager(h.staff(h.recon)))
+	r.Handle("GET /api/v1/counts/sheets", g.RequireStaff(h.staff(h.listSheets)))
+	r.Handle("POST /api/v1/counts/sheets", g.RequireStaff(h.staff(h.createSheet)))
+	r.Handle("GET /api/v1/counts/sheets/{id}", g.RequireStaff(h.staff(h.sheetDetail)))
+	r.Handle("POST /api/v1/counts/sheets/{id}/freeze", g.RequireStaff(h.staff(h.freezeSheet)))
+	r.Handle("POST /api/v1/counts/sheets/{id}/counts", g.RequireStaff(h.staff(h.submitCounts)))
+	r.Handle("POST /api/v1/counts/sheets/{id}/approve", g.RequireManager(h.staff(h.approveSheet)))
+	r.Handle("POST /api/v1/counts/sheets/{id}/post", g.RequireManager(h.staff(h.postSheet)))
+	r.Handle("POST /api/v1/counts/sheets/{id}/cancel", g.RequireStaff(h.staff(h.cancelSheet)))
+	r.Handle("GET /api/v1/counts/reason-codes", g.RequireStaff(h.staff(h.reasonCodes)))
+	r.Handle("GET /api/v1/counts/negative-stock", g.RequireStaff(h.staff(h.negativeStock)))
+	r.Handle("GET /api/v1/counts/recon", g.RequireManager(h.staff(h.recon)))
 }
 
 func (h *Handler) notImplemented(w http.ResponseWriter, _ *http.Request) {

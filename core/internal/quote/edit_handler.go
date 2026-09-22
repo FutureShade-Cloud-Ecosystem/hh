@@ -36,39 +36,39 @@ func NewStaffHandler(svc *StaffService) *StaffHandler { return &StaffHandler{svc
 
 // RegisterStaffRoutes wires the staff quote endpoints. requireStaff is injected as a decorator rather
 // than imported, so this module never depends on the identity package's guards.
-func (h *StaffHandler) RegisterStaffRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("POST /api/v1/quotes", g.RequireStaff(h.staff(h.createQuote)))
-	mux.Handle("GET /api/v1/quotes", g.RequireStaff(h.staff(h.listQuotes)))
-	mux.Handle("GET /api/v1/quotes/{id}", g.RequireStaff(h.staff(h.readQuote)))
-	mux.Handle("PATCH /api/v1/quotes/{id}", g.RequireStaff(h.staff(h.setValidUntil)))
-	mux.Handle("POST /api/v1/quotes/{id}/lines", g.RequireStaff(h.staff(h.addLine)))
-	mux.Handle("PATCH /api/v1/quotes/{id}/lines/{lineNo}", g.RequireStaff(h.staff(h.editLineQty)))
-	mux.Handle("DELETE /api/v1/quotes/{id}/lines/{lineNo}", g.RequireStaff(h.staff(h.removeLine)))
-	mux.Handle("GET /api/v1/quotes/{id}/edits", g.RequireStaff(h.staff(h.editHistory)))
+func (h *StaffHandler) RegisterStaffRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("POST /api/v1/quotes", g.RequireStaff(h.staff(h.createQuote)))
+	r.Handle("GET /api/v1/quotes", g.RequireStaff(h.staff(h.listQuotes)))
+	r.Handle("GET /api/v1/quotes/{id}", g.RequireStaff(h.staff(h.readQuote)))
+	r.Handle("PATCH /api/v1/quotes/{id}", g.RequireStaff(h.staff(h.setValidUntil)))
+	r.Handle("POST /api/v1/quotes/{id}/lines", g.RequireStaff(h.staff(h.addLine)))
+	r.Handle("PATCH /api/v1/quotes/{id}/lines/{lineNo}", g.RequireStaff(h.staff(h.editLineQty)))
+	r.Handle("DELETE /api/v1/quotes/{id}/lines/{lineNo}", g.RequireStaff(h.staff(h.removeLine)))
+	r.Handle("GET /api/v1/quotes/{id}/edits", g.RequireStaff(h.staff(h.editHistory)))
 	// DIB-483, the COUNTER door onto quote→order conversion (M3-G7). requireStaff is the coarse
 	// first line only, exactly as everywhere else on this surface: the SELLING-role gate is inside
 	// the service (identity.CanSellOnCredit), because that is where the caller is actually resolved.
 	// Registering this at requireManager instead would have been the wrong gate, inside/outside
 	// sales are Tier-3 frontline roles and they are the people who do this.
-	mux.Handle("POST /api/v1/quotes/{id}/convert", g.RequireStaff(h.staff(h.convertQuote)))
+	r.Handle("POST /api/v1/quotes/{id}/convert", g.RequireStaff(h.staff(h.convertQuote)))
 	// DIB-59 comparison. A POST because the alternates are a request BODY, not a filter, but it is a
 	// strictly read-only operation: it writes nothing, to any table, including pricing_audit_log.
-	mux.Handle("POST /api/v1/quotes/{id}/lines/{lineNo}/compare", g.RequireStaff(h.staff(h.compareLine)))
+	r.Handle("POST /api/v1/quotes/{id}/lines/{lineNo}/compare", g.RequireStaff(h.staff(h.compareLine)))
 	// DIB-491, the related-documents lineage read (lineage.go): a quote's document family as
 	// normalized rows, askable from EITHER end of the quote→order link. The orders route lives here
 	// because the read model is the quote family, the same "one namespace for the operator, whatever
 	// Go package implements it" reasoning the AR month-end routes state out loud.
-	mux.Handle("GET /api/v1/quotes/{id}/related-documents", g.RequireStaff(h.staff(h.quoteRelatedDocs)))
-	mux.Handle("GET /api/v1/orders/{id}/related-documents", g.RequireStaff(h.staff(h.orderRelatedDocs)))
+	r.Handle("GET /api/v1/quotes/{id}/related-documents", g.RequireStaff(h.staff(h.quoteRelatedDocs)))
+	r.Handle("GET /api/v1/orders/{id}/related-documents", g.RequireStaff(h.staff(h.orderRelatedDocs)))
 	// DIB-491, the dealer's acceptance settings (acceptcontrols.go). requireStaff is the coarse
 	// first line only, exactly as everywhere else on this surface: the Tier-1 GLOBAL admin gate runs
 	// in the service (settingsAdmin), because that is where the caller is actually resolved, the
 	// same in-service gate DIB-483's counter door uses for its selling-role check.
-	mux.Handle("GET /api/v1/quotes/settings/acceptance", g.RequireStaff(h.staff(h.acceptanceSettings)))
-	mux.Handle("PUT /api/v1/quotes/settings/acceptance", g.RequireStaff(h.staff(h.setAcceptanceSettings)))
+	r.Handle("GET /api/v1/quotes/settings/acceptance", g.RequireStaff(h.staff(h.acceptanceSettings)))
+	r.Handle("PUT /api/v1/quotes/settings/acceptance", g.RequireStaff(h.staff(h.setAcceptanceSettings)))
 	// DIB-506/DIB-507, the work-area endpoints (policy, terms, margin glance) and the shared
 	// settings kit's /api/v1/surfaces/… routes, mounted by this pilot consumer (builder_handler.go).
-	h.registerBuilderRoutes(mux, g)
+	h.registerBuilderRoutes(r, g)
 }
 
 // decodeBody reads a bounded JSON body. A malformed body is a 400, never a silent zero-value edit -

@@ -57,10 +57,10 @@ func NewApprovalsHandler(svc *Approvals, link UserIDLinker) *ApprovalsHandler {
 // RequireStaff exactly as the ERP's authn gate had them: the decide
 // authority model (who may approve what, four-eyes) lives in the service,
 // resolved from the guard's caller, never from the route.
-func (h *ApprovalsHandler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("POST /api/v1/staff/approvals", g.RequireStaff(h.staff(h.createApproval)))
-	mux.Handle("GET /api/v1/staff/approvals", g.RequireStaff(h.staff(h.listApprovals)))
-	mux.Handle("POST /api/v1/staff/approvals/{id}/decide", g.RequireStaff(h.staff(h.decideApproval)))
+func (h *ApprovalsHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("POST /api/v1/staff/approvals", g.RequireStaff(h.staff(h.createApproval)))
+	r.Handle("GET /api/v1/staff/approvals", g.RequireStaff(h.staff(h.listApprovals)))
+	r.Handle("POST /api/v1/staff/approvals/{id}/decide", g.RequireStaff(h.staff(h.decideApproval)))
 }
 
 type createApprovalRequest struct {

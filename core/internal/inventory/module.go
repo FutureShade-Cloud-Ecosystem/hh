@@ -23,12 +23,13 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"log/slog"
-	"net/http"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // errNotImplemented marks a scaffold stub the INV-CORE worker fills.
@@ -276,11 +277,11 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 
 // RegisterRoutes self-registers the inventory routes behind the identity guards. Reads are RequireStaff;
 // receiving + adjustments are RequireManager. FROZEN guard signature; INV-CORE fills the route bodies.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("GET /api/v1/inventory/on-hand", g.RequireStaff(h.staff(h.onHand)))
-	mux.Handle("GET /api/v1/inventory/moves", g.RequireStaff(h.staff(h.moves)))
-	mux.Handle("GET /api/v1/inventory/pending-fulfilment", g.RequireStaff(h.staff(h.pendingFulfilment)))
-	mux.Handle("POST /api/v1/inventory/receive", g.RequireManager(h.staff(h.receive)))
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("GET /api/v1/inventory/on-hand", g.RequireStaff(h.staff(h.onHand)))
+	r.Handle("GET /api/v1/inventory/moves", g.RequireStaff(h.staff(h.moves)))
+	r.Handle("GET /api/v1/inventory/pending-fulfilment", g.RequireStaff(h.staff(h.pendingFulfilment)))
+	r.Handle("POST /api/v1/inventory/receive", g.RequireManager(h.staff(h.receive)))
 
 	// - DIB-472 · the transit-days config behind the transfer eta pre-fill -
 	//
@@ -294,6 +295,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
 	// the default they are accepting. WRITE is admin: it is a tech-admin knob, and it is the ONE thing
 	// standing between "a maintained default" and the ticket's stated fear of a stale guess with a
 	// database row behind it.
-	mux.Handle("GET /api/v1/inventory/transit-days", g.RequireStaff(h.staff(h.transitDays)))
-	mux.Handle("PUT /api/v1/inventory/transit-days", g.RequireAdmin(h.staff(h.putTransitDays)))
+	r.Handle("GET /api/v1/inventory/transit-days", g.RequireStaff(h.staff(h.transitDays)))
+	r.Handle("PUT /api/v1/inventory/transit-days", g.RequireAdmin(h.staff(h.putTransitDays)))
 }

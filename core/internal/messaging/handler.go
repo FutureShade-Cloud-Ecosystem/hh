@@ -55,49 +55,49 @@ func (h *Handler) WithStreamTickets(secret string) *Handler {
 // the HR/audit export is admin-only (requireAdmin, the SAME gate the audit viewer uses), so the
 // wiring passes both guards, matching the audit.RegisterRoutes(mux, requireAdmin, requireStaff)
 // convention. There is otherwise no manager/admin split in P1 (channel-admin tooling is deferred).
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("GET /api/v1/messaging/channels", g.RequireStaff(h.staff(h.listChannels)))
-	mux.Handle("GET /api/v1/messaging/channels/{id}/messages", g.RequireStaff(h.staff(h.listMessages)))
-	mux.Handle("POST /api/v1/messaging/channels/{id}/messages", g.RequireStaff(h.staff(h.postMessage)))
-	mux.Handle("GET /api/v1/messaging/channels/{id}/threads/{rootID}", g.RequireStaff(h.staff(h.listThread)))
-	mux.Handle("POST /api/v1/messaging/channels/{id}/read", g.RequireStaff(h.staff(h.markRead)))
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("GET /api/v1/messaging/channels", g.RequireStaff(h.staff(h.listChannels)))
+	r.Handle("GET /api/v1/messaging/channels/{id}/messages", g.RequireStaff(h.staff(h.listMessages)))
+	r.Handle("POST /api/v1/messaging/channels/{id}/messages", g.RequireStaff(h.staff(h.postMessage)))
+	r.Handle("GET /api/v1/messaging/channels/{id}/threads/{rootID}", g.RequireStaff(h.staff(h.listThread)))
+	r.Handle("POST /api/v1/messaging/channels/{id}/read", g.RequireStaff(h.staff(h.markRead)))
 	// Feature 1 (0071): forced-ack. POST an ack for one message (mirrors markRead: channel-scoped,
 	// staff-gated); GET the caller's un-acked forced-ack messages for the kiosk to poll.
-	mux.Handle("POST /api/v1/messaging/channels/{id}/messages/{msgID}/ack", g.RequireStaff(h.staff(h.ackMessage)))
-	mux.Handle("GET /api/v1/messaging/unacked", g.RequireStaff(h.staff(h.unacked)))
+	r.Handle("POST /api/v1/messaging/channels/{id}/messages/{msgID}/ack", g.RequireStaff(h.staff(h.ackMessage)))
+	r.Handle("GET /api/v1/messaging/unacked", g.RequireStaff(h.staff(h.unacked)))
 	// Feature A (0069): per-user notification prefs for a channel. Staff-gated, mirroring markRead.
-	mux.Handle("GET /api/v1/messaging/channels/{id}/notify-prefs", g.RequireStaff(h.staff(h.getNotifyPrefs)))
-	mux.Handle("PUT /api/v1/messaging/channels/{id}/notify-prefs", g.RequireStaff(h.staff(h.putNotifyPrefs)))
-	mux.Handle("GET /api/v1/messaging/unread", g.RequireStaff(h.staff(h.unread)))
+	r.Handle("GET /api/v1/messaging/channels/{id}/notify-prefs", g.RequireStaff(h.staff(h.getNotifyPrefs)))
+	r.Handle("PUT /api/v1/messaging/channels/{id}/notify-prefs", g.RequireStaff(h.staff(h.putNotifyPrefs)))
+	r.Handle("GET /api/v1/messaging/unread", g.RequireStaff(h.staff(h.unread)))
 	// FR-7 real-time: Server-Sent Events over the existing Go API. Two auth paths on ONE route: an
 	// EventSource passes ?ticket= (verified in-handler, it can't send a Bearer), everything else uses
 	// the Bearer guard. POST /stream-ticket (Bearer'd) mints the short-lived, user-bound ticket.
-	mux.Handle("POST /api/v1/messaging/stream-ticket", g.RequireStaff(h.staff(h.mintStreamTicket)))
+	r.Handle("POST /api/v1/messaging/stream-ticket", g.RequireStaff(h.staff(h.mintStreamTicket)))
 	// CARRY NOTE (guards swap, HH-3.2 B5): the pin assigned the guarded
 	// handler to a variable and called it as a function inside the
 	// ticket-or-Bearer switch; under the Guards constructor set the
 	// guarded value is an http.Handler, so the switch serves through it.
 	streamBearer := g.RequireStaff(h.staff(h.streamBearer))
-	mux.HandleFunc("GET /api/v1/messaging/stream", func(w http.ResponseWriter, r *http.Request) {
+	r.Handle("GET /api/v1/messaging/stream", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("ticket") != "" {
 			h.streamTicket(w, r)
 			return
 		}
 		streamBearer.ServeHTTP(w, r)
-	})
+	}))
 	// Feature B (0070): admin-only HR/audit export. Gated by the SAME admin guard as the audit viewer.
-	mux.Handle("GET /api/v1/messaging/export", g.RequireAdmin(h.staff(h.export)))
+	r.Handle("GET /api/v1/messaging/export", g.RequireAdmin(h.staff(h.export)))
 	// DIB-449: the event-class config. READ is staff, "why don't I get a message for every payment?"
 	// is a question any staffer may ask of the system, and a config they can see is a config they can
 	// trust. WRITE is admin, behind the SAME guard as the export, because it is a tech-admin knob.
-	mux.Handle("GET /api/v1/messaging/event-classes", g.RequireStaff(h.staff(h.listEventClasses)))
-	mux.Handle("PUT /api/v1/messaging/event-classes/{topic}", g.RequireAdmin(h.staff(h.putEventClass)))
+	r.Handle("GET /api/v1/messaging/event-classes", g.RequireStaff(h.staff(h.listEventClasses)))
+	r.Handle("PUT /api/v1/messaging/event-classes/{topic}", g.RequireAdmin(h.staff(h.putEventClass)))
 	// DIB-462: the caller's OWN targeted-payment rules. Staff-gated and self-scoped, the user id comes
 	// from the verified StaffContext, never from the path or the body, so there is no route through
 	// which one staffer can read or change another's notification choices. This is a preference in the
 	// same class as the per-channel mode above, not an admin knob like the event classes.
-	mux.Handle("GET /api/v1/messaging/payment-rules", g.RequireStaff(h.staff(h.getPaymentRules)))
-	mux.Handle("PUT /api/v1/messaging/payment-rules/{rule}", g.RequireStaff(h.staff(h.putPaymentRule)))
+	r.Handle("GET /api/v1/messaging/payment-rules", g.RequireStaff(h.staff(h.getPaymentRules)))
+	r.Handle("PUT /api/v1/messaging/payment-rules/{rule}", g.RequireStaff(h.staff(h.putPaymentRule)))
 }
 
 // caller builds the messaging Caller from the identity StaffContext stamped by RequireStaff. ok is

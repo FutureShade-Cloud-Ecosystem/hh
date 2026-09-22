@@ -19,7 +19,7 @@ import (
 
 // RegisterW5Routes wires the STAFF-side Wave-5 surface. Additive: no route registered here existed before, and
 // nothing in RegisterRoutes changes.
-func (h *Handler) RegisterW5Routes(mux *http.ServeMux, g *guards.Guards) {
+func (h *Handler) RegisterW5Routes(r httpx.Registrar, g *guards.Guards) {
 	// CARRY NOTE (guards swap, HH-3.2 B5): the pin failed fast when the
 	// composition root passed nil middleware; the Guards constructor set
 	// carries the same fail-fast (NewGuards refuses to build without its
@@ -28,24 +28,24 @@ func (h *Handler) RegisterW5Routes(mux *http.ServeMux, g *guards.Guards) {
 		panic("warranty.RegisterW5Routes: guards are required")
 	}
 	// ERP:warranty-p2, what the money actually did.
-	mux.Handle("GET /api/v1/warranty/claims/{id}/postings", g.RequireStaff(h.staff(h.claimPostings)))
+	r.Handle("GET /api/v1/warranty/claims/{id}/postings", g.RequireStaff(h.staff(h.claimPostings)))
 
 	// DIB-221, WTY-RECOVERY.
-	mux.Handle("GET /api/v1/warranty/recovery", g.RequireStaff(h.staff(h.recoveryBoard)))
-	mux.Handle("GET /api/v1/warranty/claims/{id}/recovery", g.RequireStaff(h.staff(h.recoveryActions)))
-	mux.Handle("POST /api/v1/warranty/claims/{id}/recovery", g.RequireStaff(h.staff(h.logRecoveryAction)))
+	r.Handle("GET /api/v1/warranty/recovery", g.RequireStaff(h.staff(h.recoveryBoard)))
+	r.Handle("GET /api/v1/warranty/claims/{id}/recovery", g.RequireStaff(h.staff(h.recoveryActions)))
+	r.Handle("POST /api/v1/warranty/claims/{id}/recovery", g.RequireStaff(h.staff(h.logRecoveryAction)))
 
 	// DIB-222, the STAFF side of intake evidence (the public side is RegisterPublicRoutes).
-	mux.Handle("GET /api/v1/warranty/claims/{id}/photos", g.RequireStaff(h.staff(h.intakePhotos)))
-	mux.Handle("GET /api/v1/warranty/claims/{id}/photos/{photoId}", g.RequireStaff(h.staff(h.intakePhotoBytes)))
+	r.Handle("GET /api/v1/warranty/claims/{id}/photos", g.RequireStaff(h.staff(h.intakePhotos)))
+	r.Handle("GET /api/v1/warranty/claims/{id}/photos/{photoId}", g.RequireStaff(h.staff(h.intakePhotoBytes)))
 
 	// DIB-223, SLA.
-	mux.Handle("GET /api/v1/warranty/sla", g.RequireStaff(h.staff(h.slaBoard)))
-	mux.Handle("GET /api/v1/warranty/sla/targets", g.RequireStaff(h.staff(h.slaTargets)))
+	r.Handle("GET /api/v1/warranty/sla", g.RequireStaff(h.staff(h.slaBoard)))
+	r.Handle("GET /api/v1/warranty/sla/targets", g.RequireStaff(h.staff(h.slaTargets)))
 	// The sweep RAISES alerts and emits notifications, a write, and manager-gated for the same reason the
 	// settlement route is: it is the button that makes the system tell people things.
-	mux.Handle("POST /api/v1/warranty/sla/sweep", g.RequireManager(h.staff(h.slaSweep)))
-	mux.Handle("POST /api/v1/warranty/claims/{id}/sla/{alertId}/ack", g.RequireStaff(h.staff(h.ackSLAAlert)))
+	r.Handle("POST /api/v1/warranty/sla/sweep", g.RequireManager(h.staff(h.slaSweep)))
+	r.Handle("POST /api/v1/warranty/claims/{id}/sla/{alertId}/ack", g.RequireStaff(h.staff(h.ackSLAAlert)))
 }
 
 // RegisterPublicRoutes registers the UNAUTHENTICATED warranty intake doorway (DIB-222).
@@ -57,8 +57,8 @@ func (h *Handler) RegisterW5Routes(mux *http.ServeMux, g *guards.Guards) {
 // ONE ROUTE, ONE VERB, ONE WRITE. There is no public GET here and there must not be one: the reference number
 // the POST returns is a receipt, not a lookup key. The service method this calls takes no staff context and
 // cannot reach a table outside warranty.
-func (h *Handler) RegisterPublicRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/public/v1/warranty/intake", h.publicIntake)
+func (h *Handler) RegisterPublicRoutes(r httpx.Registrar) {
+	r.Handle("POST /api/public/v1/warranty/intake", http.HandlerFunc(h.publicIntake))
 }
 
 // - ERP:warranty-p2 -

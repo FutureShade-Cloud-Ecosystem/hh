@@ -17,13 +17,13 @@ import (
 )
 
 // RegisterShareRoutes wires the STAFF share-link management endpoints (all staff-gated, per R1).
-func (h *StaffHandler) RegisterShareRoutes(mux *http.ServeMux, g *guards.Guards) {
+func (h *StaffHandler) RegisterShareRoutes(r httpx.Registrar, g *guards.Guards) {
 	if g == nil {
 		panic("quote: guards are required")
 	}
-	mux.Handle("POST /api/v1/quotes/{id}/share-links", g.RequireStaff(h.staff(h.mintShareLink)))
-	mux.Handle("GET /api/v1/quotes/{id}/share-links", g.RequireStaff(h.staff(h.listShareLinks)))
-	mux.Handle("DELETE /api/v1/quotes/{id}/share-links/{linkId}", g.RequireStaff(h.staff(h.revokeShareLink)))
+	r.Handle("POST /api/v1/quotes/{id}/share-links", g.RequireStaff(h.staff(h.mintShareLink)))
+	r.Handle("GET /api/v1/quotes/{id}/share-links", g.RequireStaff(h.staff(h.listShareLinks)))
+	r.Handle("DELETE /api/v1/quotes/{id}/share-links/{linkId}", g.RequireStaff(h.staff(h.revokeShareLink)))
 }
 
 // RegisterPublicRoutes wires the UNAUTHENTICATED customer endpoints. The token in the path IS the
@@ -32,9 +32,9 @@ func (h *StaffHandler) RegisterShareRoutes(mux *http.ServeMux, g *guards.Guards)
 // What keeps that safe is enforced in the service and the repository, not here: the token grants
 // exactly one quote, the payload is a hand-built allowlist that cannot leak a field added upstream,
 // a dead link answers 410 rather than revealing whether the quote exists, and every use is logged.
-func (h *StaffHandler) RegisterPublicRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/public/v1/quotes/{token}", h.publicQuote)
-	mux.HandleFunc("POST /api/public/v1/quotes/{token}/accept", h.publicAccept)
+func (h *StaffHandler) RegisterPublicRoutes(r httpx.Registrar) {
+	r.Handle("GET /api/public/v1/quotes/{token}", http.HandlerFunc(h.publicQuote))
+	r.Handle("POST /api/public/v1/quotes/{token}/accept", http.HandlerFunc(h.publicAccept))
 }
 
 func (h *StaffHandler) mintShareLink(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {

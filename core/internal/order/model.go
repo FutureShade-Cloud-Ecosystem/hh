@@ -50,5 +50,10 @@ type Detail struct {
 type Filter struct {
 	Status string
 	Limit  int
-	Offset int
+	// Cursor pagination (HH-3.2 fold), the tenant list half.
+	// Stable-ordering basis: created_at DESC, order_no (unique); the
+	// cursor is that pair.
+	AfterCursor   bool
+	CursorCreated string
+	CursorOrderNo string
 }

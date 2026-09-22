@@ -14,7 +14,6 @@ package main
 import (
 	"context"
 	"log/slog"
-	"net/http"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
@@ -23,6 +22,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
@@ -55,7 +55,7 @@ func linkedUserID(pool *pgxpool.Pool) identity.UserIDLinker {
 // the landed seam set supports; the seams whose owners land in later
 // batches (billing, pos, till, customer) stay unwired and their surfaces
 // answer the modules' designed fail-closed refusals.
-func wireMoney(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, staffBaseURL string) *moneySpine {
+func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, staffBaseURL string) *moneySpine {
 	link := linkedUserID(pool)
 	outboxStore := notify.NewPgOutboxStore(pool)
 	auditSvc := audit.NewService(audit.NewRepository(pool), log)
@@ -70,15 +70,15 @@ func wireMoney(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, log *sl
 	// A-18 (W2): product catalogue, then A-07 (W3): pricing over it.
 	productSvc := product.NewService(product.NewRepository(pool))
 	productHandler := product.NewHandler(productSvc, log).WithUserLinker(link)
-	productHandler.RegisterRoutes(mux, g)
-	productHandler.RegisterSearchRoute(mux, g)
-	productHandler.RegisterCounterRoutes(mux, g)
+	productHandler.RegisterRoutes(r, g)
+	productHandler.RegisterSearchRoute(r, g)
+	productHandler.RegisterCounterRoutes(r, g)
 
 	pricingSvc := pricing.NewService(pricing.NewRepository(pool)).
 		WithCategoryResolver(productSvc).
 		WithUOMConverter(productSvc).
 		WithMarginGate(pricing.NewIdentityMarginGate())
-	pricing.NewHandler(pricingSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+	pricing.NewHandler(pricingSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 	// SWARM-W5-C: the price-file import's three composition-root answers,
 	// and the below-floor override authority over the rail plus the bridged
 	// caller (the two-source order is the adapter's own, carried).
@@ -88,7 +88,7 @@ func wireMoney(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, log *sl
 		WithCatalogSKUs(pricingCatalogSKUs{pool: pool}).
 		WithOverrideAuthority(w5cOverrideAuthority{svc: approvals, log: log}).
 		WithLogger(log)
-	pricing.NewHandler(pricingSvc, log).WithUserLinker(link).RegisterW4Routes(mux, g)
+	pricing.NewHandler(pricingSvc, log).WithUserLinker(link).RegisterW4Routes(r, g)
 
 	// A-01 (W5): GL, with the rail filer bound. The invoice/tax/payment
 	// readers (billing, pos, till) land in B6 and B7; unwired, the posting
@@ -97,15 +97,15 @@ func wireMoney(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, log *sl
 		WithDeadRequeuer(outboxStore).
 		WithAudit(auditSvc).
 		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals})
-	gl.NewHandler(glSvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
+	gl.NewHandler(glSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc})
 
 	// W6: inventory over GL (poster + rule resolver, both in-batch).
 	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithAudit(auditSvc)
 	inventorySvc.WithGLPoster(invGLPoster{svc: glSvc}).WithRuleResolver(glRuleAdapter{svc: glSvc})
 	productSvc.WithBranchStock(inventorySvc).WithListPrices(pricingSvc)
-	inventory.NewHandler(inventorySvc, log).WithUserLinker(link).RegisterRoutes(mux, g)
-	inventory.NewHandler(inventorySvc, log).WithUserLinker(link).RegisterStockTruthRoutes(mux, g)
+	inventory.NewHandler(inventorySvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	inventory.NewHandler(inventorySvc, log).WithUserLinker(link).RegisterStockTruthRoutes(r, g)
 
 	// The order lifecycle: base service, audit seams, reorder seams (pricing
 	// and inventory are in-batch), actor names. The customer-tier seam
@@ -119,10 +119,10 @@ func wireMoney(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, log *sl
 		WithReorderPricing(pricingSvc).
 		WithReorderInventory(inventorySvc)
 	orderHandler := order.NewHandler(orderSvc).WithUserLinker(link)
-	orderHandler.RegisterRoutes(mux, g)
-	orderHandler.RegisterTransitionRoutes(mux, g)
-	orderHandler.RegisterEditRoutes(mux, g)
-	orderHandler.RegisterChangeRoutes(mux, g)
+	orderHandler.RegisterRoutes(r, g)
+	orderHandler.RegisterTransitionRoutes(r, g)
+	orderHandler.RegisterEditRoutes(r, g)
+	orderHandler.RegisterChangeRoutes(r, g)
 
 	// The quote desk: the staff builder (audit, pricing, preview, cost basis,
 	// actor names, shares, stock reserver, availability, soft-hold expiry;
@@ -142,9 +142,9 @@ func wireMoney(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, log *sl
 		WithSoftHoldExpiry(w6cQuoteSoftHoldExpiry{svc: orderSvc})
 	quoteRepo.WithStockReserver(w5aQuoteStockReserver{svc: inventorySvc})
 	quoteStaffHandler := quote.NewStaffHandler(quoteStaffSvc).WithUserLinker(link)
-	quoteStaffHandler.RegisterStaffRoutes(mux, g)
-	quoteStaffHandler.RegisterShareRoutes(mux, g)
-	quoteStaffHandler.RegisterPublicRoutes(mux)
+	quoteStaffHandler.RegisterStaffRoutes(r, g)
+	quoteStaffHandler.RegisterShareRoutes(r, g)
+	quoteStaffHandler.RegisterPublicRoutes(r)
 	// The quote automation surface: staff + base URL + logger wired; the
 	// notice queue and contact reader (messagingprovider, customer) land in
 	// their own batches and the followup send path degrades without them.
@@ -152,17 +152,22 @@ func wireMoney(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, log *sl
 		WithStaff(quoteStaffSvc).
 		WithBaseURL(staffBaseURL).
 		WithLogger(log)
-	quote.NewAutomationHandler(quoteAutomation).WithUserLinker(link).RegisterAutomationRoutes(mux, g)
-	quoteStaffHandler.RegisterAvailabilityRoutes(mux, g)
+	quote.NewAutomationHandler(quoteAutomation).WithUserLinker(link).RegisterAutomationRoutes(r, g)
+	quoteStaffHandler.RegisterAvailabilityRoutes(r, g)
 
 	return &moneySpine{
-		glSvc:        glSvc,
-		inventorySvc: inventorySvc,
-		orderSvc:     orderSvc,
-		orderRepo:    orderRepo,
-		quoteRepo:    quoteRepo,
-		approvals:    approvals,
-		auditSvc:     auditSvc,
+		glSvc:           glSvc,
+		inventorySvc:    inventorySvc,
+		orderSvc:        orderSvc,
+		orderRepo:       orderRepo,
+		quoteRepo:       quoteRepo,
+		approvals:       approvals,
+		auditSvc:        auditSvc,
+		outboxStore:     outboxStore,
+		productSvc:      productSvc,
+		pricingSvc:      pricingSvc,
+		quoteStaffSvc:   quoteStaffSvc,
+		quoteAutomation: quoteAutomation,
 	}
 }
 
@@ -174,13 +179,18 @@ func wireMoney(mux *http.ServeMux, pool *pgxpool.Pool, g *guards.Guards, log *sl
 // instances at the pin and a second construction would strand a setter on
 // an instance nobody serves.
 type moneySpine struct {
-	glSvc        *gl.Service
-	inventorySvc *inventory.Service
-	orderSvc     *order.Service
-	orderRepo    *order.Repository
-	quoteRepo    *quote.Repository
-	approvals    *identity.Approvals
-	auditSvc     *audit.Service
+	glSvc           *gl.Service
+	inventorySvc    *inventory.Service
+	orderSvc        *order.Service
+	orderRepo       *order.Repository
+	quoteRepo       *quote.Repository
+	approvals       *identity.Approvals
+	auditSvc        *audit.Service
+	outboxStore     *notify.PgOutboxStore
+	productSvc      *product.Service
+	pricingSvc      *pricing.Service
+	quoteStaffSvc   *quote.StaffService
+	quoteAutomation *quote.AutomationService
 }
 
 // jeApprovalFilerAdapter satisfies gl.ApprovalFiler over the approvals

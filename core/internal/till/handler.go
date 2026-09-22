@@ -33,30 +33,30 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 // complete is a RequireStaff route plus the in-service conditional manager gate. requireAdmin is threaded in
 // by the W5 scaffold (Tier-1 GLOBAL) for the A-05 NSF/credit-hold admin routes that transfer onto this
 // handler; it is unused until A-05 fills them.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
-	mux.Handle("POST /api/v1/till/sessions", g.RequireStaff(h.staff(h.openSession)))
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
+	r.Handle("POST /api/v1/till/sessions", g.RequireStaff(h.staff(h.openSession)))
 	// DIB-488 rev 5: the POS terminal rediscovers its OPEN drawer on mount (reload/duplicate).
 	// The literal path binds ahead of the {id} wildcard below by ServeMux precedence.
-	mux.Handle("GET /api/v1/till/sessions/open", g.RequireStaff(h.staff(h.openSessionLookup)))
-	mux.Handle("GET /api/v1/till/sessions/{id}", g.RequireStaff(h.staff(h.getSession)))
-	mux.Handle("POST /api/v1/till/sessions/{id}/movements", g.RequireStaff(h.staff(h.recordMovement)))
-	mux.Handle("POST /api/v1/till/sessions/{id}/count", g.RequireStaff(h.staff(h.countSession)))
-	mux.Handle("GET /api/v1/till/sessions/{id}/zreport", g.RequireStaff(h.staff(h.zreport)))
-	mux.Handle("POST /api/v1/till/sessions/{id}/complete", g.RequireStaff(h.staff(h.completeSession)))
-	mux.Handle("GET /api/v1/till/policy", g.RequireManager(h.staff(h.policy)))
+	r.Handle("GET /api/v1/till/sessions/open", g.RequireStaff(h.staff(h.openSessionLookup)))
+	r.Handle("GET /api/v1/till/sessions/{id}", g.RequireStaff(h.staff(h.getSession)))
+	r.Handle("POST /api/v1/till/sessions/{id}/movements", g.RequireStaff(h.staff(h.recordMovement)))
+	r.Handle("POST /api/v1/till/sessions/{id}/count", g.RequireStaff(h.staff(h.countSession)))
+	r.Handle("GET /api/v1/till/sessions/{id}/zreport", g.RequireStaff(h.staff(h.zreport)))
+	r.Handle("POST /api/v1/till/sessions/{id}/complete", g.RequireStaff(h.staff(h.completeSession)))
+	r.Handle("GET /api/v1/till/policy", g.RequireManager(h.staff(h.policy)))
 
 	// - W5 A-05: NSF + credit holds + declined-attempt log -
 	// Marking a bounce + editing money policy are manager rights; releasing a credit hold is Tier-1 only
 	// (requireAdmin, threaded in by the W5 scaffold). The bounced/credit-hold reads expose customer
 	// financial-distress PII, so they are manager-gated (matching the finstmt AR reads), not staff-wide.
-	mux.Handle("GET /api/v1/ar/bounced", g.RequireManager(h.staff(h.listBounced)))
-	mux.Handle("POST /api/v1/ar/payments/{id}/nsf", g.RequireManager(h.staff(h.markNSF)))
-	mux.Handle("GET /api/v1/ar/credit-holds", g.RequireManager(h.staff(h.listCreditHolds)))
-	mux.Handle("POST /api/v1/ar/credit-holds/{id}/release", g.RequireAdmin(h.staff(h.releaseHold)))
-	mux.Handle("GET /api/v1/ar/nsf-policy", g.RequireManager(h.staff(h.getNSFPolicy)))
-	mux.Handle("PUT /api/v1/ar/nsf-policy", g.RequireManager(h.staff(h.updateNSFPolicy)))
-	mux.Handle("POST /api/v1/ar/payment-attempts", g.RequireStaff(h.staff(h.recordAttempt)))
-	h.registerHistoryRoutes(mux, g) // Q-044 payment/invoice attribution reads (history.go)
+	r.Handle("GET /api/v1/ar/bounced", g.RequireManager(h.staff(h.listBounced)))
+	r.Handle("POST /api/v1/ar/payments/{id}/nsf", g.RequireManager(h.staff(h.markNSF)))
+	r.Handle("GET /api/v1/ar/credit-holds", g.RequireManager(h.staff(h.listCreditHolds)))
+	r.Handle("POST /api/v1/ar/credit-holds/{id}/release", g.RequireAdmin(h.staff(h.releaseHold)))
+	r.Handle("GET /api/v1/ar/nsf-policy", g.RequireManager(h.staff(h.getNSFPolicy)))
+	r.Handle("PUT /api/v1/ar/nsf-policy", g.RequireManager(h.staff(h.updateNSFPolicy)))
+	r.Handle("POST /api/v1/ar/payment-attempts", g.RequireStaff(h.staff(h.recordAttempt)))
+	h.registerHistoryRoutes(r, g) // Q-044 payment/invoice attribution reads (history.go)
 }
 
 // listBounced returns the bounced-payment queue; ?gateway_ref= is an exact-ref search.

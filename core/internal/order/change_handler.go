@@ -37,27 +37,27 @@ import (
 )
 
 // RegisterChangeRoutes wires the W5 order-depth surface.
-func (h *Handler) RegisterChangeRoutes(mux *http.ServeMux, g *guards.Guards) {
+func (h *Handler) RegisterChangeRoutes(r httpx.Registrar, g *guards.Guards) {
 	// Reservations (W4 seam 3 landing).
-	mux.Handle("GET /api/v1/orders/{id}/reservations", g.RequireStaff(h.staff(h.orderReservations)))
-	mux.Handle("POST /api/v1/orders/{id}/reservations/resync", g.RequireManager(h.staff(h.resyncReservations)))
+	r.Handle("GET /api/v1/orders/{id}/reservations", g.RequireStaff(h.staff(h.orderReservations)))
+	r.Handle("POST /api/v1/orders/{id}/reservations/resync", g.RequireManager(h.staff(h.resyncReservations)))
 
 	// Change orders (SCOPE:F10).
-	mux.Handle("GET /api/v1/orders/{id}/changes", g.RequireStaff(h.staff(h.listChanges)))
-	mux.Handle("POST /api/v1/orders/{id}/changes", g.RequireStaff(h.staff(h.raiseChange)))
-	mux.Handle("GET /api/v1/order-changes/{changeId}", g.RequireStaff(h.staff(h.getChange)))
-	mux.Handle("POST /api/v1/order-changes/{changeId}/yard-ack", g.RequireStaff(h.staff(h.yardAck)))
-	mux.Handle("POST /api/v1/order-changes/{changeId}/finance-approve", g.RequireManager(h.staff(h.financeApprove)))
-	mux.Handle("POST /api/v1/order-changes/{changeId}/reject", g.RequireStaff(h.staff(h.rejectChange)))
-	mux.Handle("POST /api/v1/order-changes/{changeId}/cancel", g.RequireStaff(h.staff(h.cancelChange)))
-	mux.Handle("POST /api/v1/order-changes/{changeId}/apply", g.RequireManager(h.staff(h.applyChange)))
+	r.Handle("GET /api/v1/orders/{id}/changes", g.RequireStaff(h.staff(h.listChanges)))
+	r.Handle("POST /api/v1/orders/{id}/changes", g.RequireStaff(h.staff(h.raiseChange)))
+	r.Handle("GET /api/v1/order-changes/{changeId}", g.RequireStaff(h.staff(h.getChange)))
+	r.Handle("POST /api/v1/order-changes/{changeId}/yard-ack", g.RequireStaff(h.staff(h.yardAck)))
+	r.Handle("POST /api/v1/order-changes/{changeId}/finance-approve", g.RequireManager(h.staff(h.financeApprove)))
+	r.Handle("POST /api/v1/order-changes/{changeId}/reject", g.RequireStaff(h.staff(h.rejectChange)))
+	r.Handle("POST /api/v1/order-changes/{changeId}/cancel", g.RequireStaff(h.staff(h.cancelChange)))
+	r.Handle("POST /api/v1/order-changes/{changeId}/apply", g.RequireManager(h.staff(h.applyChange)))
 
 	// Multi-ship (DIB-78).
-	mux.Handle("GET /api/v1/orders/{id}/shipments", g.RequireStaff(h.staff(h.getShipmentPlan)))
-	mux.Handle("PUT /api/v1/orders/{id}/shipments", g.RequireStaff(h.staff(h.planShipments)))
-	mux.Handle("POST /api/v1/orders/{id}/shipments/invoice-policy", g.RequireManager(h.staff(h.setInvoicePolicy)))
-	mux.Handle("POST /api/v1/orders/{id}/shipments/invoice", g.RequireManager(h.staff(h.invoiceShipments)))
-	mux.Handle("POST /api/v1/shipment-groups/{groupId}/status", g.RequireStaff(h.staff(h.transitionGroup)))
+	r.Handle("GET /api/v1/orders/{id}/shipments", g.RequireStaff(h.staff(h.getShipmentPlan)))
+	r.Handle("PUT /api/v1/orders/{id}/shipments", g.RequireStaff(h.staff(h.planShipments)))
+	r.Handle("POST /api/v1/orders/{id}/shipments/invoice-policy", g.RequireManager(h.staff(h.setInvoicePolicy)))
+	r.Handle("POST /api/v1/orders/{id}/shipments/invoice", g.RequireManager(h.staff(h.invoiceShipments)))
+	r.Handle("POST /api/v1/shipment-groups/{groupId}/status", g.RequireStaff(h.staff(h.transitionGroup)))
 }
 
 // - reservations -

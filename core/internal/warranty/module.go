@@ -16,12 +16,13 @@ import (
 	"context"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"log/slog"
-	"net/http"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // - consumer-declared seams (adapters live in main.go / integration tests) -
@@ -127,32 +128,32 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 // RegisterRoutes self-registers the warranty routes behind the identity guards (PRD §4): reads + claim
 // capture/lifecycle are RequireStaff (staff create/edit); settlement is RequireManager (manager settle);
 // registry configuration is RequireAdmin (admin configure registry).
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, g *guards.Guards) {
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// - FR-1 vendor registry: reads staff-visible; config admin-gated -
-	mux.Handle("GET /api/v1/warranty/vendors", g.RequireStaff(h.staff(h.listVendorProfiles)))
-	mux.Handle("GET /api/v1/warranty/vendors/{vendorID}", g.RequireStaff(h.staff(h.getVendorProfile)))
-	mux.Handle("PUT /api/v1/warranty/vendors/{vendorID}", g.RequireAdmin(h.staff(h.upsertVendorProfile)))
-	mux.Handle("POST /api/v1/warranty/vendors/{vendorID}/overrides", g.RequireAdmin(h.staff(h.addOverride)))
+	r.Handle("GET /api/v1/warranty/vendors", g.RequireStaff(h.staff(h.listVendorProfiles)))
+	r.Handle("GET /api/v1/warranty/vendors/{vendorID}", g.RequireStaff(h.staff(h.getVendorProfile)))
+	r.Handle("PUT /api/v1/warranty/vendors/{vendorID}", g.RequireAdmin(h.staff(h.upsertVendorProfile)))
+	r.Handle("POST /api/v1/warranty/vendors/{vendorID}/overrides", g.RequireAdmin(h.staff(h.addOverride)))
 
 	// - FR-2 claim capture + reads -
-	mux.Handle("GET /api/v1/warranty/claims", g.RequireStaff(h.staff(h.listClaims)))
-	mux.Handle("GET /api/v1/warranty/claims/{id}", g.RequireStaff(h.staff(h.getClaim)))
-	mux.Handle("GET /api/v1/warranty/claims/{id}/events", g.RequireStaff(h.staff(h.claimEvents)))
-	mux.Handle("GET /api/v1/warranty/claims/{id}/checklist", g.RequireStaff(h.staff(h.claimChecklist)))
-	mux.Handle("POST /api/v1/warranty/claims", g.RequireStaff(h.staff(h.createClaim)))
+	r.Handle("GET /api/v1/warranty/claims", g.RequireStaff(h.staff(h.listClaims)))
+	r.Handle("GET /api/v1/warranty/claims/{id}", g.RequireStaff(h.staff(h.getClaim)))
+	r.Handle("GET /api/v1/warranty/claims/{id}/events", g.RequireStaff(h.staff(h.claimEvents)))
+	r.Handle("GET /api/v1/warranty/claims/{id}/checklist", g.RequireStaff(h.staff(h.claimChecklist)))
+	r.Handle("POST /api/v1/warranty/claims", g.RequireStaff(h.staff(h.createClaim)))
 
 	// - FR-3 lifecycle: assign, checklist tick, phase advance, evidence -
-	mux.Handle("POST /api/v1/warranty/claims/{id}/assign", g.RequireStaff(h.staff(h.assignClaim)))
-	mux.Handle("POST /api/v1/warranty/claims/{id}/checklist", g.RequireStaff(h.staff(h.tickChecklist)))
-	mux.Handle("POST /api/v1/warranty/claims/{id}/advance", g.RequireStaff(h.staff(h.advancePhase)))
-	mux.Handle("POST /api/v1/warranty/claims/{id}/evidence", g.RequireStaff(h.staff(h.attachEvidence)))
+	r.Handle("POST /api/v1/warranty/claims/{id}/assign", g.RequireStaff(h.staff(h.assignClaim)))
+	r.Handle("POST /api/v1/warranty/claims/{id}/checklist", g.RequireStaff(h.staff(h.tickChecklist)))
+	r.Handle("POST /api/v1/warranty/claims/{id}/advance", g.RequireStaff(h.staff(h.advancePhase)))
+	r.Handle("POST /api/v1/warranty/claims/{id}/evidence", g.RequireStaff(h.staff(h.attachEvidence)))
 
 	// - FR-5 settlement: manager-gated -
-	mux.Handle("POST /api/v1/warranty/claims/{id}/settle", g.RequireManager(h.staff(h.settleClaim)))
+	r.Handle("POST /api/v1/warranty/claims/{id}/settle", g.RequireManager(h.staff(h.settleClaim)))
 
 	// - FR-7 reporting: staff-visible metrics -
-	mux.Handle("GET /api/v1/warranty/reports", g.RequireStaff(h.staff(h.reports)))
+	r.Handle("GET /api/v1/warranty/reports", g.RequireStaff(h.staff(h.reports)))
 
 	// - board convenience: the Kanban columns (confirmed phases) -
-	mux.Handle("GET /api/v1/warranty/board", g.RequireStaff(h.staff(h.board)))
+	r.Handle("GET /api/v1/warranty/board", g.RequireStaff(h.staff(h.board)))
 }
