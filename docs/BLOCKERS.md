@@ -190,3 +190,14 @@ ships with the leak the S-1 fix closed. The serve-shaped regression
 covers today's routes only. A deny-by-default shape over /api/public/
 with an explicit exempt list is the safe-side redesign, deliberately
 not taken mid-Session (the integration review ruling r1, note N1).
+
+## The bistrack module's push half and its rollback sentence are retired (open)
+
+D43 retires the carried design that pushes to BisTrack during a shadow
+phase, and the "rollback is free until November" sentence written into
+core/internal/bistrack: nothing on the HH path writes to BisTrack at any
+phase, and the parallel run is a nightly read-only reload of a recent
+backup into a Dibbits staging org (HH-BISTRACK-CUTOVER-RULING-r1). The
+module stays the fail-closed stub it is today; the FIRST lane that
+touches it removes the push half and that sentence. Until then this
+entry marks the obligation.
