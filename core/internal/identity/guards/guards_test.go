@@ -586,7 +586,7 @@ func TestRequireTenantPortalStatus(t *testing.T) {
 		if code != http.StatusUnauthorized || body != string(authz.BodyUnauthorized) {
 			t.Fatalf("%s portal row: %d %s", status, code, body)
 		}
-		code, body = call(t, h, http.MethodPatch, "/api/v1/tenant/me", f.tenantToken(t), nil)
+		code, body = call(t, h, http.MethodPut, "/api/v1/tenant/me", f.tenantToken(t), nil)
 		if code != http.StatusUnauthorized || body != string(authz.BodyUnauthorized) {
 			t.Fatalf("%s portal row update: %d %s", status, code, body)
 		}

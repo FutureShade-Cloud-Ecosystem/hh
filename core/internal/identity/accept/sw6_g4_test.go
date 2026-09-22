@@ -88,7 +88,7 @@ func TestGate_G4_TenantBearer_RejectsXOrg(t *testing.T) {
 		target string
 	}{
 		{"tenant me read", http.MethodGet, "/api/v1/tenant/me"},
-		{"tenant me update", http.MethodPatch, "/api/v1/tenant/me"},
+		{"tenant me update", http.MethodPut, "/api/v1/tenant/me"},
 		{"tenant refresh", http.MethodPost, "/api/v1/tenant/token/refresh"},
 		{"tenant invoices", http.MethodGet, "/api/v1/tenant/invoices"},
 		{"capability probe", http.MethodGet, capProbeTarget(identity.CapViewBilling)},

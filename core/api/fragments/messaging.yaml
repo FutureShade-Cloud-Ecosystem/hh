@@ -822,9 +822,12 @@ components:
           enum: [TEXT, EVENT, APPROVAL]
         body: { type: string }
         ref:
-          type: object
-          additionalProperties: true
-          description: MessagingEventRef or MessagingApprovalRef by kind
+          oneOf:
+            - $ref: "#/components/schemas/MessagingEventRef"
+            - $ref: "#/components/schemas/MessagingApprovalRef"
+          description: >-
+            The structured ref by kind: MessagingEventRef on an EVENT message,
+            MessagingApprovalRef on an APPROVAL card; absent on TEXT.
         thread_root_id: { type: string, format: uuid }
         reply_count:
           type: integer

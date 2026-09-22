@@ -189,7 +189,7 @@ func TestRegisterRoutesExercised(t *testing.T) {
 	// The tenant set.
 	for _, c := range []struct{ method, path, op string }{
 		{http.MethodGet, "/api/v1/tenant/me", "tenantGetMe"},
-		{http.MethodPatch, "/api/v1/tenant/me", "tenantUpdateMe"},
+		{http.MethodPut, "/api/v1/tenant/me", "tenantUpdateMe"},
 		{http.MethodPost, "/api/v1/tenant/token/refresh", "tenantRefreshToken"},
 	} {
 		if got := f.do(t, c.method, c.path, tenant, nil).Code; got != http.StatusOK {

@@ -32,7 +32,7 @@ const MAP = {
   "login.json": "TenantLoginResponse",
   "refresh.json": "TenantRefreshResponse",
   "me.json": "TenantMe",
-  "config.json": "TenantConfig",
+  "config.json": "TenantPublicConfig",
   "dashboard.json": "TenantDashboard",
   "billing-summary.json": "TenantBillingSummary",
   "catalog-search-paver.json": "TenantCatalogSearchResponse",

@@ -158,8 +158,15 @@ func RegisterRoutes(r httpx.Registrar, g *guards.Guards, rec *Recorder) {
 		}
 	}
 	// A representative tenant set from /api/v1/tenant, x-role tenant.
+	// tenantUpdateMe is PUT, not PATCH: the document declares put
+	// (core/api/fragments/tenant.yaml, the tenantUpdateMe operation), both
+	// ERP baselines register the route as PUT (backend/internal/portal/
+	// settings.go at the pinned commit, and the vendored list at
+	// core/api/erp-routes.txt line 655), so the earlier PATCH spelling was
+	// a transcription slip in this shim, fixed to match the document
+	// (B-parity, Tech Lead F-1: the document is authoritative).
 	r.Handle("GET /api/v1/tenant/me", g.RequireTenant(tenant("tenantGetMe")))
-	r.Handle("PATCH /api/v1/tenant/me", g.RequireTenant(tenant("tenantUpdateMe")))
+	r.Handle("PUT /api/v1/tenant/me", g.RequireTenant(tenant("tenantUpdateMe")))
 	r.Handle("POST /api/v1/tenant/token/refresh", g.RequireTenant(tenant("tenantRefreshToken")))
 
 	// The two dual-bearer sync operations, x-role scope-member; the G4

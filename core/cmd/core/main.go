@@ -40,6 +40,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/shims"
 	staffcontext "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/tenantconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/otelhttp"
@@ -261,6 +262,13 @@ func registerRoutes(r httpx.Registrar, getenv func(string) string) (*appGraph, e
 	// fold's report).
 	rec := shims.NewRecorder(1024)
 	shims.RegisterRoutes(r, g, rec)
+
+	// The G2 handler half (ADR 0021): the public tenant config on the
+	// public leg, no verification, no org resolution (ADR-0020 leg 2).
+	// The served values come from the stub sourcing ADR 0021 records:
+	// the ERP antecedent's static dealer identity, equal to the vendored
+	// capture.
+	r.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(tenantconfig.Default())))
 
 	// The SMS belt precedes the operations wiring: the yard repository's
 	// stage transaction enqueues through its outbox. Its contact source

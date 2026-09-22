@@ -191,7 +191,7 @@ func TestGate_TenantIsolation_AllTenantRoutes(t *testing.T) {
 		refused := 0
 		for _, c := range []struct{ method, target, leg string }{
 			{http.MethodGet, "/api/v1/tenant/me", "inactive portal me read"},
-			{http.MethodPatch, "/api/v1/tenant/me", "inactive portal me update"},
+			{http.MethodPut, "/api/v1/tenant/me", "inactive portal me update"},
 			{http.MethodPost, "/api/v1/tenant/token/refresh", "inactive portal refresh"},
 			{http.MethodGet, "/api/v1/sync/orders", "inactive portal sync pull"},
 			{http.MethodPost, "/api/v1/sync/orders", "inactive portal sync push"},
@@ -227,7 +227,7 @@ func TestGate_TenantIsolation_AllTenantRoutes(t *testing.T) {
 		// above are the deactivated row's status, never the routes.
 		for _, c := range []struct{ method, target, op string }{
 			{http.MethodGet, "/api/v1/tenant/me", "tenantGetMe"},
-			{http.MethodPatch, "/api/v1/tenant/me", "tenantUpdateMe"},
+			{http.MethodPut, "/api/v1/tenant/me", "tenantUpdateMe"},
 			{http.MethodPost, "/api/v1/tenant/token/refresh", "tenantRefreshToken"},
 			{http.MethodGet, "/api/v1/sync/orders", "syncPull"},
 			{http.MethodPost, "/api/v1/sync/orders", "syncPush"},
@@ -251,7 +251,7 @@ func TestGate_TenantIsolation_AllTenantRoutes(t *testing.T) {
 		s.kit.Membership.SetTenantOrgs(SubPortalAbsent, testkit.OrgNorthSlug)
 		for _, c := range []struct{ method, target, op string }{
 			{http.MethodGet, "/api/v1/tenant/me", "tenantGetMe"},
-			{http.MethodPatch, "/api/v1/tenant/me", "tenantUpdateMe"},
+			{http.MethodPut, "/api/v1/tenant/me", "tenantUpdateMe"},
 			{http.MethodPost, "/api/v1/tenant/token/refresh", "tenantRefreshToken"},
 			{http.MethodGet, "/api/v1/sync/orders", "syncPull"},
 			{http.MethodPost, "/api/v1/sync/orders", "syncPush"},

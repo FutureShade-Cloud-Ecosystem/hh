@@ -123,6 +123,21 @@ with `cursor` and `limit` like every other list, because an unbounded array
 breaks the pagination rule and gives the client no resume token; the
 trail's causal sort key is `seq`, so a cursor over it is well defined.
 
+Out-of-range limits are a second recorded divergence, pinned here by ruling of
+the HH-3.4 Tech Lead review (change neither side): the document's `Limit`
+parameter (`core/api/skeleton.yaml`) declares `minimum: 1, maximum: 200,
+default: 50`, while the core's cursor helpers (Lane A's
+`core/internal/platform/httpx` `ParseCursorPage`, `DefaultPageLimit` 50 and
+`MaxPageLimit` 200) read an unparseable or non-positive `limit` as the default
+and clamp an over-maximum value to the maximum, fail-quiet, carried from the
+ERP's offset family. The declared minimum and maximum are client-facing
+bounds, and the page envelope's `limit` echo is the caller's way to observe
+the effective value. A malformed cursor is refused with 400; an out-of-range
+limit is not. If strictness (refusal) is ever wanted instead, it is a
+deliberate helper change with its own review and its own decision record,
+ordered above both lanes; it must never arrive as a silent edit inside a
+module batch.
+
 ## Naming
 
 - Schema names are PascalCase and carry the fragment's assigned prefix
