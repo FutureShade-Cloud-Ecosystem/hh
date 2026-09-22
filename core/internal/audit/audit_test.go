@@ -180,6 +180,69 @@ func TestU5_OrNewUUID(t *testing.T) {
 	}
 }
 
+// fxPublicToken is a fixture raw share token: 43 characters of the mint's base64url alphabet
+// (ADR-0022: 32 bytes, base64url, unpadded), the shape the public token routes carry in the path.
+const fxPublicToken = "FxPublicTokenFixture43CharAlphabet_01"
+
+// TestElidePublicToken pins the coarse trail's credential elision (the S-1 fix): every public
+// token route family's credential segment is replaced by the "{token}" placeholder, keeping the
+// family and the action leg visible, while non-public paths pass through verbatim.
+func TestElidePublicToken(t *testing.T) {
+	cases := map[string]string{
+		// The three families the tree serves, action leg and bare form.
+		"/api/public/v1/customer-quotes/" + fxPublicToken:             "/api/public/v1/customer-quotes/{token}",
+		"/api/public/v1/customer-quotes/" + fxPublicToken + "/accept": "/api/public/v1/customer-quotes/{token}/accept",
+		"/api/public/v1/quotes/" + fxPublicToken + "/accept":          "/api/public/v1/quotes/{token}/accept",
+		"/api/public/v1/will-call/" + fxPublicToken + "/confirm":      "/api/public/v1/will-call/{token}/confirm",
+		// A credential carrying an encoded slash elides wholesale: no fragment survives.
+		"/api/public/v1/customer-quotes/abc/def/accept": "/api/public/v1/customer-quotes/{token}/accept",
+		// An unknown action leg collapses into the placeholder rather than persisting a fragment.
+		"/api/public/v1/quotes/" + fxPublicToken + "/future-leg": "/api/public/v1/quotes/{token}",
+		// Degenerate shapes stay safe (empty token segment, trailing slash).
+		"/api/public/v1/customer-quotes/": "/api/public/v1/customer-quotes/{token}",
+		"/api/public/v1/will-call/x/":     "/api/public/v1/will-call/{token}",
+		// Non-public paths are the trail's value and pass through verbatim.
+		"/api/v1/pos/sales": "/api/v1/pos/sales",
+		"/api/v1/customer-quotes/" + sampleUUID + "/send": "/api/v1/customer-quotes/" + sampleUUID + "/send",
+		"/api/public/v1/other-resource/" + sampleUUID:     "/api/public/v1/other-resource/" + sampleUUID,
+	}
+	for in, want := range cases {
+		if got := elidePublicToken(in); got != want {
+			t.Errorf("elidePublicToken(%q) = %q, want %q", in, got, want)
+		}
+		if strings.Contains(elidePublicToken(in), fxPublicToken) {
+			t.Errorf("elidePublicToken(%q) leaked the credential", in)
+		}
+	}
+}
+
+// TestU22_PublicTokenPathElidedInCoarseRow drives the middleware itself: the coarse row for a
+// POST to a public token route carries the elided path, and no persisted string value carries the
+// raw credential. The serve-shaped companion (core/cmd/core/cq_auditwrap_test.go) proves the same
+// through the production wrap over the real surface and the real audit_log.
+func TestU22_PublicTokenPathElidedInCoarseRow(t *testing.T) {
+	f := newFakeStore()
+	runThrough(newTestService(f), stubAuth{},
+		http.MethodPost, "/api/public/v1/customer-quotes/"+fxPublicToken+"/accept", 200, nil, nil)
+	waitForInserts(t, f, 1)
+	e := f.snapshot()[0]
+	if e.Changes["path"] != "/api/public/v1/customer-quotes/{token}/accept" {
+		t.Errorf("changes.path = %v, want the elided spelling", e.Changes["path"])
+	}
+	noCleartext(t, e, fxPublicToken)
+
+	// The mis-post leg (no /accept suffix) elides the same way.
+	f2 := newFakeStore()
+	runThrough(newTestService(f2), stubAuth{},
+		http.MethodPost, "/api/public/v1/customer-quotes/"+fxPublicToken, 405, nil, nil)
+	waitForInserts(t, f2, 1)
+	e2 := f2.snapshot()[0]
+	if e2.Changes["path"] != "/api/public/v1/customer-quotes/{token}" {
+		t.Errorf("mis-post changes.path = %v, want the elided spelling", e2.Changes["path"])
+	}
+	noCleartext(t, e2, fxPublicToken)
+}
+
 // -- U6-U14, U21: middleware (httptest, stub authenticator, fake store) -------
 
 // runThrough runs one request through the middleware wrapping a handler that returns `status` (and,

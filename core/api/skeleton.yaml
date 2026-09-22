@@ -244,9 +244,10 @@ paths:
       tags: [staff-settings]
       summary: Read a tenant's brand record
       description: >-
-        Gap-held pending a schema ruling (queue card
-        20260921-210000-tenantbrand-gap); no backing store exists, so this
-        operation is a recorded read, not an implementable one.
+        Gap-held pending a schema ruling (the tenant_brand schema gap
+        ruling in the session workspace's context/); no backing store
+        exists, so this operation is a recorded read, not an
+        implementable one.
       x-role: requireStaff
       x-addition: "D12 tenant_brand; no ERP source route"
       parameters:
@@ -267,9 +268,10 @@ paths:
       tags: [staff-settings]
       summary: Create or replace a tenant's brand record
       description: >-
-        Gap-held pending a schema ruling (queue card
-        20260921-210000-tenantbrand-gap); no backing store exists, so this
-        operation is a recorded write, not an implementable one.
+        Gap-held pending a schema ruling (the tenant_brand schema gap
+        ruling in the session workspace's context/); no backing store
+        exists, so this operation is a recorded write, not an
+        implementable one.
       x-role: requireAdmin
       x-addition: "D12 tenant_brand; no ERP source route"
       parameters:

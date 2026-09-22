@@ -965,8 +965,9 @@ func TestPlan_AnApprovalIsWaitingOnSomebodyElse(t *testing.T) {
 		Scope: identity.ScopeBranch, Status: "ACTIVE",
 		Branches: map[string]bool{in.Branches[0].ID: true, in.Branches[1].ID: true},
 	}
-	// The account that decides it. GENERAL_MANAGER is 0061's role for ryan@dibbits.ca and
-	// ryanr@coppsbuildall.com, planted by a MIGRATION, so present on the migrations-only staging box
+	// The account that decides it. GENERAL_MANAGER is 0061's role for
+	// scrubbed-0004@example.invalid and scrubbed-0006@example.invalid,
+	// planted by a MIGRATION, so present on the migrations-only staging box
 	// this seed exists for.
 	gm := identity.StaffContext{
 		UserID: "not-the-filer", RoleCode: "GENERAL_MANAGER", Tier: identity.TierLeadership,

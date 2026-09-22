@@ -5,7 +5,7 @@
 // category taxonomy, its demo LOGINS, rather than standing up a parallel one beside it. A seed that
 // invented its own branch would put a fake yard in every tester's branch picker; a seed that
 // invented its own categories would fork the taxonomy somebody curates; and a seed that invented its
-// own demo accounts would put a second Dana Whitlock beside 0200's, with a password nobody knows.
+// own demo accounts would put a second 0200 dispatcher persona beside 0200's, with a password nobody knows.
 //
 // THE THIRD ONE IS WHY THIS FILE EXISTS AT ALL RATHER THAN THE LOOKUP LIVING IN plan.go. buildPlan is
 // a pure function of planInput and two tests hold it to that, TestBuild_UsesNoWallClock reads the

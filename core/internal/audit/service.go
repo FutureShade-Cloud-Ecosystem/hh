@@ -170,6 +170,11 @@ var mutating = map[string]bool{
 // Middleware records every mutating /api/... request (except login) AFTER it completes. Recording is
 // best-effort + async so it never adds latency to, or fails, the request (US-A2). It also reads/echoes/
 // threads/persists X-Request-Id so the coarse row correlates with the request's Recorder rows (US-A5).
+//
+// The persisted path never carries a public route's credential: elidePublicToken (below) scrubs the
+// token segment of the public token route families to the fixed "{token}" placeholder before the row
+// is built, so the operator trail keeps the route shape (family plus action leg) without the
+// credential whose secrecy is those routes' whole authorization model.
 func (s *Service) Middleware(authn Authenticator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -188,7 +193,7 @@ func (s *Service) Middleware(authn Authenticator) func(http.Handler) http.Handle
 					RequestID:  reqID,
 					Changes: map[string]any{
 						"method":     r.Method,
-						"path":       r.URL.Path,
+						"path":       elidePublicToken(r.URL.Path),
 						"status":     rec.status,
 						"actor_role": role,
 					},
@@ -200,6 +205,45 @@ func (s *Service) Middleware(authn Authenticator) func(http.Handler) http.Handle
 }
 
 // -- pure helpers ------------------------------------------------------------
+
+// publicTokenPrefixes names the served route families whose path segment right after the prefix is
+// the credential itself (the share or will-call token; ADR-0022 pins the customer-quote one's
+// hash-only-at-rest rule). The coarse middleware row must never persist that segment, so
+// elidePublicToken replaces it with the route template's own placeholder spelling. The table is
+// exhaustive over the tree's mutating /api/public surface by construction: a new public token route
+// joins the table or its credential persists, and the serve-shaped regression over the audit wrap
+// (core/cmd/core/cq_auditwrap_test.go) fails on the leak.
+var publicTokenPrefixes = []string{
+	"/api/public/v1/customer-quotes/", // the customer-quote public accept pair (ADR-0022)
+	"/api/public/v1/quotes/",          // the dealer share-link accept pair (the carried R4 surface)
+	"/api/public/v1/will-call/",       // the dispatch will-call confirm pair (DIB-79)
+}
+
+// publicActionSuffixes names the action legs a public token route carries after the token segment.
+// Anything else between the family prefix and the end of the path is elided together with the token:
+// an unknown suffix collapses into the placeholder rather than persisting any part of a credential,
+// so a token carrying an encoded slash cannot smuggle a fragment past the elision.
+var publicActionSuffixes = []string{"/accept", "/confirm"}
+
+// elidePublicToken returns path with the credential segment of a known public token route family
+// replaced by the fixed "{token}" placeholder, keeping the family and the action leg visible for
+// operators. Paths outside the families return unchanged (an ordinary /api path carries ids, not
+// credentials, and its raw shape is the trail's value).
+func elidePublicToken(path string) string {
+	for _, prefix := range publicTokenPrefixes {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		rest := path[len(prefix):]
+		for _, suffix := range publicActionSuffixes {
+			if strings.HasSuffix(rest, suffix) {
+				return prefix + "{token}" + suffix
+			}
+		}
+		return prefix + "{token}"
+	}
+	return path
+}
 
 func httpAction(method string) string {
 	switch method {

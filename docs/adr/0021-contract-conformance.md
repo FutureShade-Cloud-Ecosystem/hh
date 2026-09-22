@@ -471,8 +471,8 @@ The module-to-path-group mapping table is recorded above as this ADR's second
 annex (ruling G1: this lane is sole author); what stays outside it is the Lane
 A comparison at integration, where a disagreement is a finding for Colton per
 the ruling, not a lane-level fix. The tenant brand backing store is gap-held
-under queue card
-20260921-210000-tenantbrand-gap (the operations carry the hold sentence in
+under the tenant_brand schema gap ruling in the session workspace's
+context/ (the operations carry the hold sentence in
 their descriptions); the store is greenfield schema the ERP never had and
 lands in HH-5 per the routing of record in the Lane C checkpoint ruling
 (HH-LANE-C-CHECKPOINT-RULING-r1), not in HH-3.7 and not in this ADR.

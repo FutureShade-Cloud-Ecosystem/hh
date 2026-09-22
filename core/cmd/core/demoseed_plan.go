@@ -675,13 +675,15 @@ var demoParked = []parkedSpec{
 // identity.sellingRoles admits neither LOGISTICS_MANAGER nor YARD_TEAM nor DRIVERS; a JE approval is
 // filed by the ledger and refuses a caller-facing filer outright. FREIGHT_ABOVE_QUOTE is filed by
 // the DISPATCHER, from the load board, when a split would charge a customer more delivery than they
-// were quoted, which is precisely Dana Whitlock's job. So one policy fits, twice, once per branch,
+// were quoted, which is precisely the dispatcher persona's job (0200's
+// Scrubname0008 Whitlock). So one policy fits, twice, once per branch,
 // and the alternative was to plant a margin override under a driver's name.
 //
 // WHO IT WAITS ON. CanApprove routes FREIGHT_ABOVE_QUOTE to identity's rail-approver set -
 // GENERAL_MANAGER, FINANCIAL_CONTROLLER, SUPER_ADMIN, all Tier-1 GLOBAL, so branch access is
-// automatic. On a migrations-only staging box those roles are held by 0061's ryan@dibbits.ca and
-// ryanr@coppsbuildall.com and by 0043's platform admin, all planted by MIGRATIONS and therefore all
+// automatic. On a migrations-only staging box those roles are held by 0061's
+// scrubbed-0004@example.invalid and scrubbed-0006@example.invalid and by
+// 0043's platform admin, all planted by MIGRATIONS and therefore all
 // present on the one box a demo is shown from. Four eyes holds because the dispatcher is none of them.
 //
 // AND THE PROPOSAL IS PLANTED WITH THE REQUEST, which is the same argument seal.go makes about a

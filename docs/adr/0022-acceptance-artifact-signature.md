@@ -52,7 +52,12 @@ migration's comment ("token is stored only as a hash", 0214 Block 8); the value 
 an encoding whose atoms are hashes, with the v1 marker inside the value, and
 nothing but sha256 hex atoms is ever at rest, so the migration's recorded intent
 (no raw token at rest, raw value only in the send response) holds; the encoding is
-losslessly convertible to share-link rows if a migration ever opens.
+losslessly convertible to share-link rows if a migration ever opens. The at-rest
+pin binds the coarse HTTP audit middleware's path capture too: the middleware
+elides the token segment of every public token route's path to the fixed
+"{token}" placeholder before the row persists, so no operator-readable trail
+carries the credential (the serve-shaped regression core/cmd/core/
+cq_auditwrap_test.go fails on any regression).
 
 The encoding and its grammar, pinned exactly:
 
