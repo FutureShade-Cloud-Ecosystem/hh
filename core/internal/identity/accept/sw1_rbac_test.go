@@ -271,7 +271,7 @@ func TestGate_RBAC403(t *testing.T) {
 		for _, c := range []struct{ method, target, leg string }{
 			{http.MethodGet, "/api/v1/tenant/invoices", "inactive portal user invoices"},
 			{http.MethodGet, "/api/v1/tenant/me", "inactive portal user me read"},
-			{http.MethodPatch, "/api/v1/tenant/me", "inactive portal user me update"},
+			{http.MethodPut, "/api/v1/tenant/me", "inactive portal user me update"},
 			{http.MethodPost, "/api/v1/tenant/token/refresh", "inactive portal user refresh"},
 			{http.MethodGet, "/api/v1/sync/orders", "inactive portal user sync pull"},
 			{http.MethodPost, "/api/v1/sync/orders", "inactive portal user sync push"},
