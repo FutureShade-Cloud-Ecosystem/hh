@@ -93,6 +93,7 @@ jobs:
           npm --prefix core/api/tools ci
           node core/api/tools/merge.mjs
           git diff --exit-code -- core/api/openapi.yaml
+          node core/api/tools/gen-types.mjs
           node core/api/tools/parity.mjs
           node core/api/tools/fixtures.mjs
           node core/api/tools/statemap.mjs
@@ -106,3 +107,10 @@ jobs:
         run: |
           go build ./...
           go vet ./...
+      - name: Test core
+        working-directory: core
+        # The untagged suite. The database-gated legs skip politely here
+        # (no gate variables in CI, zero secrets in the workflow); -p 1
+        # serializes packages so locally set gate variables cannot race
+        # two packages' fixture cleanups on one scratch database.
+        run: go test ./... -count=1 -p 1

@@ -58,6 +58,7 @@ tags:
   - { name: staff-bistrack }
   - { name: staff-compliance }
   - { name: staff-customer }
+  - { name: staff-customer-quote }
   - { name: staff-dashboard }
   - { name: staff-demo }
   - { name: staff-dispatch }
@@ -232,14 +233,21 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
 
   # --- D12: tenant_brand, staff write side ----------------------------------
-  # The tenant read side is GET /api/v1/tenant/config, whose response embeds
-  # TenantBrand. Rendered inside the HH Pro frame on customer quotes and the
-  # public desk; the dealer's tokens never appear on a contractor's document.
+  # The tenant read side is the authenticated login and refresh payloads
+  # (TenantConfig embedding TenantBrand); the public config route serves the
+  # dealer fields only (ADR 0021). Rendered inside the HH Pro frame on
+  # customer quotes and the public desk; the dealer's tokens never appear on a
+  # contractor's document.
   /api/v1/tenants/{tenantId}/brand:
     get:
       operationId: getTenantBrand
       tags: [staff-settings]
       summary: Read a tenant's brand record
+      description: >-
+        Gap-held pending a schema ruling (the tenant_brand schema gap
+        ruling in the session workspace's context/); no backing store
+        exists, so this operation is a recorded read, not an
+        implementable one.
       x-role: requireStaff
       x-addition: "D12 tenant_brand; no ERP source route"
       parameters:
@@ -259,6 +267,11 @@ paths:
       operationId: putTenantBrand
       tags: [staff-settings]
       summary: Create or replace a tenant's brand record
+      description: >-
+        Gap-held pending a schema ruling (the tenant_brand schema gap
+        ruling in the session workspace's context/); no backing store
+        exists, so this operation is a recorded write, not an
+        implementable one.
       x-role: requireAdmin
       x-addition: "D12 tenant_brand; no ERP source route"
       parameters:
@@ -281,6 +294,120 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  # --- D8: the customer-quote send and public acceptance (G1) -----------------
+  # Contractor to homeowner. The staff send route is the only place the raw
+  # magic-link token ever appears (only its hash is stored), and the public
+  # pair is credentialed by the path token alone, the surface the D10 and D12
+  # token ruling lands on.
+  /api/v1/customer-quotes/{id}/send:
+    post:
+      operationId: customerQuoteSend
+      tags: [staff-customer-quote]
+      summary: Send a customer quote to the homeowner by magic link
+      description: >-
+        The customer-quote surface (D8): contractor to homeowner, with the
+        issuing contractor recorded on the entity (tenant_id) and the send
+        itself a dealer desk action. Sending mints the one-time magic-link
+        token, stores only its hash, moves the quote from draft to sent, and
+        returns the raw token here and nowhere else, exactly as the dealer
+        share-link mint does. A later send of a revised quote rotates the
+        token and kills the previous link with 410.
+      x-role: requireStaff
+      x-addition: "G1 customer-quote send (D8); no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The sent quote, carrying the raw magic-link token this one time
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerQuote"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/public/v1/customer-quotes/{token}:
+    get:
+      operationId: customerQuotePublicView
+      tags: [public]
+      summary: View a customer quote through its magic link
+      description: >-
+        Pre-auth: the opaque token in the path is the credential, and it grants
+        read of exactly one customer quote (D8), rendered under HH Pro's brand
+        with the contractor's tenant_brand inside the frame (D2, D12). The
+        payload is an allowlist with no token, no tenant internals and no
+        staff-only field. A token that never existed answers 404; a link that
+        died (expired, revoked, or rotated by a later send) answers 410 with
+        the Error envelope, so the holder learns the link died rather than
+        being told the quote never existed.
+      x-role: public
+      security: []
+      x-addition: "G1 customer-quote public view (D8, D10, D12); no ERP source route"
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: The magic-link token; it is the credential
+          schema: { type: string }
+      responses:
+        "200":
+          description: The homeowner-facing quote view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerQuotePublicView"
+        "404": { $ref: "#/components/responses/NotFound" }
+        "410":
+          description: The link existed and died (expired, revoked, or rotated by a later send)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/public/v1/customer-quotes/{token}/accept:
+    post:
+      operationId: customerQuotePublicAccept
+      tags: [public]
+      summary: Accept a customer quote through its magic link
+      description: >-
+        Pre-auth: the opaque token in the path is the credential. Acceptance is
+        a typed full name plus an explicit affirmative, two required acts,
+        recorded as the acceptance artifact (D8): accepted_at, accepted_by_name
+        and, when the homeowner draws a signature, a signature attachment in
+        the D10 attachment store referenced by signature_attachment_id. A 409
+        names why the quote is not awaiting acceptance; a dead or rotated link
+        answers 410.
+      x-role: public
+      security: []
+      x-addition: "G1 customer-quote public acceptance (D8, D10, D12); no ERP source route"
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: The magic-link token; it is the credential
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerQuoteAcceptanceRequest"
+      responses:
+        "200":
+          description: The acceptance confirmation, restating the agreed total
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerQuoteAcceptanceResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "410":
+          description: The link existed and died (expired, revoked, or rotated by a later send)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   # --- D4: the operator surface ---------------------------------------------
   # Org-scoped staff endpoints the launcher's operator-console section
@@ -1027,7 +1154,12 @@ components:
         customer_contact: { type: string }
         status:
           type: string
-          enum: [draft, sent, accepted, declined, expired]
+          description: >-
+            The customer_quote status CHECK set, verbatim: viewed is written on
+            the first view of a sent link and changes-requested on the
+            homeowner's public change request, so the contract carries the
+            lifecycle the frozen schema pins.
+          enum: [draft, sent, viewed, changes-requested, accepted, declined, expired]
         lines:
           type: array
           items: { $ref: "#/components/schemas/QuoteLine" }
@@ -1044,6 +1176,75 @@ components:
             signature_attachment_id:
               type: [string, "null"]
               format: uuid
+
+    CustomerQuotePublicView:
+      type: object
+      description: >-
+        What a magic-link holder sees: an allowlist over CustomerQuote (D8),
+        not a projection of the full entity, so the token, the tenant facts
+        and the issuing-contractor internals cannot leak. Rendered under HH
+        Pro's brand with the contractor's tenant_brand inside the frame (D2,
+        D12).
+      required: [id, status, lines, total_cents]
+      properties:
+        id: { type: string, format: uuid }
+        customer_name: { type: string }
+        status:
+          type: string
+          description: The customer_quote status CHECK set, verbatim
+          enum: [draft, sent, viewed, changes-requested, accepted, declined, expired]
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/CustomerQuotePublicLine" }
+        total_cents: { type: integer, format: int64 }
+        acceptable:
+          type: boolean
+          description: Whether this link may still be used to accept; drives whether the accept form renders
+
+    CustomerQuotePublicLine:
+      type: object
+      description: >-
+        The homeowner-visible shape of a quote line: description, quantity and
+        the money. Prices are absent when the quote hides line prices, never
+        fabricated as zero.
+      required: [description, quantity]
+      properties:
+        description: { type: string }
+        quantity: { type: number }
+        uom: { type: string }
+        unit_price_cents: { type: integer, format: int64 }
+        line_total_cents: { type: integer, format: int64 }
+
+    CustomerQuoteAcceptanceRequest:
+      type: object
+      description: >-
+        The acceptance payload: a typed full name plus an explicit affirmative,
+        two required acts (D8).
+      required: [typed_name, accepted]
+      properties:
+        typed_name:
+          type: string
+          description: The homeowner's full name, bounded server-side
+        accepted:
+          type: boolean
+          description: Must be true; the affirmative is a required separate act
+
+    CustomerQuoteAcceptanceResult:
+      type: object
+      description: >-
+        The acceptance confirmation (D8): it echoes the agreed total so the
+        homeowner's own record does not depend on a careful reading of the
+        page. The signature, when one was drawn, lands as a D10 attachment
+        referenced from the acceptance artifact.
+      required: [id, status, accepted_by_name, accepted_at, total_cents]
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [accepted]
+        accepted_by_name: { type: string }
+        accepted_at: { type: string, format: date-time }
+        total_cents: { type: integer, format: int64 }
 
     # --- D9: the tenant-facing invoice view ----------------------------------
 

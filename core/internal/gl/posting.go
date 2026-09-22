@@ -1,0 +1,734 @@
+package gl
+
+// posting.go, the transactional-outbox posting consumer + the two provider methods bankrec depends on
+// (PostExternal / GLBalanceCents) + the boot-time ValidatePostingRules. The consumer owns all PostedTopics
+// financial topics (the W5 eight + the W7 POS-return pair); each builder resolves posting_rules (via the
+// frozen two-name mapping) and the event's finance facts (through the sibling read seams) into a BALANCED
+// journal, posted idempotently on a deterministic key so a redelivered outbox row can never double-post
+// (gl_journals.idempotency_key).
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+)
+
+// postingEventType maps an outbox topic to its posting_rules.event_type (the frozen two-name scheme).
+func postingEventType(topic string) string {
+	if topic == "ar.invoice.finalized" {
+		return "invoice.finalized" // the 0007 legacy key
+	}
+	return topic // every other topic seeds its rules under the literal topic name (0032)
+}
+
+// consume is the single outbox handler for all PostedTopics. It builds the journal for the topic, then posts
+// it idempotently. A builder that returns post=false is a legitimate no-op (e.g. a zero over/short, a dormant
+// COGS leg) and the event is acked. Any error leaves the row PENDING for retry, never a published-without-
+// journal financial event.
+func (s *Service) consume(ctx context.Context, e notify.Event) error {
+	var (
+		draft journalDraft
+		post  bool
+		err   error
+	)
+	switch e.Topic {
+	case "ar.invoice.finalized":
+		draft, post, err = s.buildInvoiceFinalized(ctx, e.Payload)
+	case "payment.received":
+		draft, post, err = s.buildPaymentReceived(ctx, e.Payload)
+	case "tax.relief.assessed":
+		draft, post, err = s.buildTaxRelief(ctx, e.Payload)
+	case "payment.bounced":
+		draft, post, err = s.buildPaymentBounced(ctx, e.Payload)
+	case "order.fulfilled":
+		draft, post, err = s.buildOrderFulfilled(ctx, e.Payload)
+	case "till.session.completed":
+		draft, post, err = s.buildTillSessionCompleted(ctx, e.Payload)
+	case "pos.return.committed":
+		draft, post, err = s.buildPosReturnCommitted(ctx, e.Payload)
+	case "order.returned":
+		draft, post, err = s.buildOrderReturned(ctx, e.Payload)
+	case "pos.sale.committed", "bank.recon.completed":
+		// No direct GL effect: a POS sale's revenue/cash post via its own invoice.finalized / payment.received
+		// events; bankrec posts its clearing journals directly through PostExternal. Ack to avoid double-count.
+		return nil
+	default:
+		return fmt.Errorf("gl: no posting builder for topic %q", e.Topic)
+	}
+	if err != nil {
+		return err
+	}
+	if !post {
+		return nil
+	}
+	if !draft.balanced() {
+		return fmt.Errorf("gl: built journal for %q is unbalanced (Σdebit=%d Σcredit=%d)", e.Topic, draft.debitTotal(), draft.creditTotal())
+	}
+	draft.Status = StatusPosted
+	if draft.OccurredAt.IsZero() {
+		draft.OccurredAt = s.clock()
+	}
+	if _, _, err := s.store.InsertJournal(ctx, draft); err != nil {
+		return fmt.Errorf("gl: post %q journal: %w", e.Topic, err)
+	}
+	return nil
+}
+
+// pick resolves a required posting-rule role to an account code, erroring loudly when a rule is missing (the
+// ValidatePostingRules boot check makes this unreachable in a healthy config, the guard is defence in depth).
+func pick(rules map[string]string, event, role string) (string, error) {
+	code, ok := rules[role]
+	if !ok || code == "" {
+		return "", fmt.Errorf("gl: no posting rule for %s/%s", event, role)
+	}
+	return code, nil
+}
+
+func dr(code string, cents int64, memo string) draftLine {
+	return draftLine{AccountCode: code, DebitCents: cents, Memo: memo}
+}
+func cr(code string, cents int64, memo string) draftLine {
+	return draftLine{AccountCode: code, CreditCents: cents, Memo: memo}
+}
+
+// - builders (one per posting topic) -
+
+type invoiceFinalizedPayload struct {
+	InvoiceID string `json:"invoice_id"`
+}
+
+func (s *Service) buildInvoiceFinalized(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p invoiceFinalizedPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: invoice.finalized payload: %w", err)
+	}
+	if p.InvoiceID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: invoice.finalized missing invoice_id")
+	}
+	if s.invoices == nil {
+		return journalDraft{}, false, fmt.Errorf("gl: invoice reader not configured")
+	}
+	a, err := s.invoices.InvoiceForGL(ctx, p.InvoiceID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	et := "invoice.finalized"
+	rules, err := s.store.PostingAccounts(ctx, et, a.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	arCode, err := pick(rules, et, "ar")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	revCode, err := pick(rules, et, "revenue")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	taxCode, err := pick(rules, et, "tax")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	lines := []draftLine{
+		dr(arCode, a.TotalCents-a.HoldbackCents, "AR"),
+	}
+	if a.HoldbackCents > 0 {
+		hbCode, err := pick(rules, et, "holdback")
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		lines = append(lines, dr(hbCode, a.HoldbackCents, "holdback receivable"))
+	}
+	lines = append(lines, cr(revCode, a.SubtotalCents, "revenue"), cr(taxCode, a.TaxCents, "HST"))
+	return journalDraft{
+		Source:         SourceInvoice,
+		SourceRefID:    p.InvoiceID,
+		IdempotencyKey: "ar.invoice.finalized:" + p.InvoiceID,
+		Memo:           "Invoice " + a.InvoiceNo,
+		BranchID:       a.BranchID,
+		OccurredAt:     a.FinalizedAt,
+		Lines:          lines,
+	}, true, nil
+}
+
+type paymentReceivedPayload struct {
+	PaymentID string `json:"payment_id"`
+	Method    string `json:"method"`
+}
+
+func (s *Service) buildPaymentReceived(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p paymentReceivedPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.received payload: %w", err)
+	}
+	if p.PaymentID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.received missing payment_id")
+	}
+	if s.payments == nil {
+		return journalDraft{}, false, fmt.Errorf("gl: payment reader not configured")
+	}
+	// The payment.received payload carries no branch/customer, the PaymentReader seam is the source of truth
+	// and picks the 1010 (card) / 1020 (cash/cheque undeposited) debit leg (1020 undeposited-funds doctrine).
+	f, err := s.payments.PaymentForGL(ctx, p.PaymentID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	et := "payment.received"
+	rules, err := s.store.PostingAccounts(ctx, et, f.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	arCode, err := pick(rules, et, "ar")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	debitRole := "cash" // → 1020 undeposited funds
+	if f.Method == "CARD" {
+		debitRole = "card_clearing" // → 1010 card settlement clearing
+	}
+	debitCode, err := pick(rules, et, debitRole)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	lines := []draftLine{
+		dr(debitCode, f.AmountCents, "receipt ("+f.Method+")"),
+		cr(arCode, f.AmountCents, "AR settled"),
+	}
+	return journalDraft{
+		Source:         SourcePayment,
+		SourceRefID:    p.PaymentID,
+		IdempotencyKey: "payment.received:" + p.PaymentID,
+		Memo:           "Payment " + f.Method,
+		BranchID:       f.BranchID,
+		OccurredAt:     s.clock(),
+		Lines:          lines,
+	}, true, nil
+}
+
+type taxReliefPayload struct {
+	OrderID string `json:"order_id"`
+}
+
+func (s *Service) buildTaxRelief(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p taxReliefPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: tax.relief.assessed payload: %w", err)
+	}
+	if p.OrderID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: tax.relief.assessed missing order_id")
+	}
+	if s.taxSplits == nil {
+		return journalDraft{}, false, fmt.Errorf("gl: tax split reader not configured")
+	}
+	// FN 13/8/5 split: full = 13% HST, onCredit = 8% ON provincial portion given point-of-sale relief,
+	// net = 5% federal collected. invoice.finalized already CREDITED 2200 the full 13%; the relief REDUCES that
+	// liability to the 5% net federal actually collected by DEBITING 2200 for the 8% ON portion, offsetting the
+	// FN relief recoverable (1165): DR 2200 8% / CR 1165 8%. After both entries 2200 nets to +5% of subtotal.
+	// found=false (standard-rate sale) → no relief legs.
+	full, onCredit, net, found, err := s.taxSplits.TaxSplit(ctx, p.OrderID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	if !found || onCredit == 0 {
+		return journalDraft{}, false, nil
+	}
+	et := "tax.relief.assessed"
+	rules, err := s.store.PostingAccounts(ctx, et, "")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	hstCode, err := pick(rules, et, "hst_full")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	reliefCode, err := pick(rules, et, "fn_relief")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	memo := fmt.Sprintf("FN POS relief 8%% (full=%d net=%d)", full, net)
+	lines := []draftLine{
+		dr(hstCode, onCredit, "reduce HST payable 8% to net 5%"),
+		cr(reliefCode, onCredit, "offset FN relief recoverable"),
+	}
+	return journalDraft{
+		Source:         SourceAdjustment,
+		SourceRefID:    p.OrderID,
+		IdempotencyKey: "tax.relief.assessed:" + p.OrderID,
+		Memo:           memo,
+		OccurredAt:     s.clock(),
+		Lines:          lines,
+	}, true, nil
+}
+
+type paymentBouncedPayload struct {
+	PaymentID   string `json:"payment_id"`
+	BranchID    string `json:"branch_id"`
+	Method      string `json:"method"` // CASH/CARD/CHEQUE/EFT/OTHER, picks the reversal leg with Cleared (A-05 emits it)
+	AmountCents int64  `json:"amount_cents"`
+	FeeCents    int64  `json:"fee_cents"`
+	FeeTaxable  bool   `json:"fee_taxable"` // true = the gross NSF fee splits into 4200 income + 2200 HST
+	Cleared     bool   `json:"cleared"`     // true = had settled to bank 1000; false = still undeposited/clearing
+}
+
+// hstRateBps is the 13% Ontario HST rate used to back out the tax embedded in a tax-inclusive (gross) NSF fee.
+// It mirrors pos.flatHSTRateBps, the frozen W4/W5 provisional standard rate (M5 owns the real rate table).
+const hstRateBps = 1300
+
+func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p paymentBouncedPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.bounced payload: %w", err)
+	}
+	if p.PaymentID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.bounced missing payment_id")
+	}
+	branch := p.BranchID
+	amount := p.AmountCents
+	method := p.Method
+	// Fall back to the PaymentReader facts for amount/branch/method when the emitter omitted them.
+	if (amount == 0 || branch == "" || method == "") && s.payments != nil {
+		if f, err := s.payments.PaymentForGL(ctx, p.PaymentID); err == nil {
+			if amount == 0 {
+				amount = f.AmountCents
+			}
+			if branch == "" {
+				branch = f.BranchID
+			}
+			if method == "" {
+				method = f.Method
+			}
+		}
+	}
+	if amount == 0 {
+		return journalDraft{}, false, fmt.Errorf("gl: payment.bounced has no amount")
+	}
+	et := "payment.bounced"
+	rules, err := s.store.PostingAccounts(ctx, et, branch)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	arCode, err := pick(rules, et, "ar")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	// The reversal-credit leg mirrors the account the ORIGINAL receipt debited, keyed off method AND status:
+	//   DEPOSITED (Cleared) → 1000 bank (the receipt had settled) ; else CARD → 1010 card clearing (where a card
+	//   receipt lands first) ; else cash/cheque/EFT → 1020 undeposited funds. A card receipt that bounced before
+	//   settlement must reverse 1010, NOT 1020 (that was the A-05 defect).
+	bankRole := "undeposited" // reverse the still-undeposited cash/cheque receipt (1020)
+	switch {
+	case p.Cleared:
+		bankRole = "bank" // reverse the settled bank credit (1000)
+	case method == "CARD":
+		bankRole = "card_clearing" // reverse the still-clearing card receipt (1010)
+	}
+	bankCode, err := pick(rules, et, bankRole)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	// Reinstate AR for the reversed receipt + the NSF fee charged to the customer; credit the bank leg for the
+	// reversal. The fee credit goes to NSF fee income (4200); when the fee is taxable the GROSS fee (which AR
+	// already carries in full) splits into fee income + the embedded HST (2200) so the tax is not booked at $0.
+	lines := []draftLine{
+		dr(arCode, amount+p.FeeCents, "NSF reversal + fee to AR"),
+		cr(bankCode, amount, "reverse receipt"),
+	}
+	if p.FeeCents > 0 {
+		feeCode, err := pick(rules, et, "fee_income")
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		if p.FeeTaxable {
+			// Back the HST out of the tax-inclusive gross fee: net = gross·10000/(10000+rate); HST = gross − net.
+			net := p.FeeCents * 10000 / (10000 + hstRateBps)
+			hst := p.FeeCents - net
+			hstCode, err := pick(rules, et, "hst")
+			if err != nil {
+				return journalDraft{}, false, err
+			}
+			lines = append(lines, cr(feeCode, net, "NSF fee income (net)"), cr(hstCode, hst, "HST on NSF fee"))
+		} else {
+			lines = append(lines, cr(feeCode, p.FeeCents, "NSF fee income"))
+		}
+	}
+	return journalDraft{
+		Source:         SourceAdjustment,
+		SourceRefID:    p.PaymentID,
+		IdempotencyKey: "payment.bounced:" + p.PaymentID,
+		Memo:           "NSF reversal",
+		BranchID:       branch,
+		OccurredAt:     s.clock(),
+		Lines:          lines,
+	}, true, nil
+}
+
+type orderFulfilledPayload struct {
+	OrderID  string `json:"order_id"`
+	BranchID string `json:"branch_id"`
+	Lines    []struct {
+		ProductID string  `json:"product_id"`
+		QtyBase   float64 `json:"qty_base"`
+	} `json:"lines"`
+}
+
+func (s *Service) buildOrderFulfilled(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p orderFulfilledPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: order.fulfilled payload: %w", err)
+	}
+	if p.OrderID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: order.fulfilled missing order_id")
+	}
+	// CostBasis is dormant at W5 (NoopCostBasis, found=false) → no COGS leg → no-op ack. The real inventory
+	// cost basis arrives with W6; the builder is fully wired for it (DR 5000 COGS / CR 1200 Inventory).
+	// PRODUCTION cost basis comes from PO receipts (move_type=RECEIPT / source_type='po_receipt', per
+	// migration 0011 + the WAC weighted-average carried on the stock ledger): a product only has a cost
+	// basis once it has been received against a purchase order. A sold product with NO cost basis therefore
+	// posts revenue+cash but NO COGS leg, silently overstating gross margin. Do NOT swallow that, every
+	// missing-cost-basis line is logged WARN below (product id + order id) so it is diagnosable, and the
+	// whole draft is skipped only when NO line has a cost basis (total == 0).
+	if s.costBasis == nil {
+		return journalDraft{}, false, nil
+	}
+	var total int64
+	for _, ln := range p.Lines {
+		cost, found, err := s.costBasis.UnitCostCents(ctx, ln.ProductID, ln.QtyBase)
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		if found {
+			total += cost
+			continue
+		}
+		// OBSERVABLE no-op: this sold line books no COGS because the product has no cost basis (never
+		// received against a PO). Left silent this overstates gross margin with no signal, surface it.
+		s.log.Warn("gl: COGS skipped, product has no cost basis (no PO receipt); gross margin overstated for this line",
+			"product_id", ln.ProductID, "order_id", p.OrderID, "qty_base", ln.QtyBase)
+	}
+	if total == 0 {
+		return journalDraft{}, false, nil
+	}
+	et := "order.fulfilled"
+	rules, err := s.store.PostingAccounts(ctx, et, p.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	cogsCode, err := pick(rules, et, "cogs")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	invCode, err := pick(rules, et, "inventory")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	return journalDraft{
+		Source:         SourceFulfillment,
+		SourceRefID:    p.OrderID,
+		IdempotencyKey: "order.fulfilled:" + p.OrderID,
+		Memo:           "COGS on fulfillment",
+		BranchID:       p.BranchID,
+		OccurredAt:     s.clock(),
+		Lines:          []draftLine{dr(cogsCode, total, "COGS"), cr(invCode, total, "inventory relief")},
+	}, true, nil
+}
+
+type posReturnCommittedPayload struct {
+	ReturnID      string `json:"return_id"`
+	OrderID       string `json:"order_id"`
+	InvoiceID     string `json:"invoice_id"`
+	RefundMethod  string `json:"refund_method"` // CASH | CARD | ACCOUNT_CREDIT, picks the credit rail
+	SubtotalCents int64  `json:"subtotal_cents"`
+	TaxCents      int64  `json:"tax_cents"`
+	TotalCents    int64  `json:"total_cents"`
+	FeeCents      int64  `json:"fee_cents"` // A-06 restocking fee, reduces the rail credit; books to fee_revenue
+	BranchID      string `json:"branch_id"`
+}
+
+// buildPosReturnCommitted posts the money reversal of a POS return: DR 4000 revenue (subtotal) + DR 2200
+// HST (tax) / CR the refund rail, 1020 undeposited for CASH (the drawer paid out), 1010 card clearing
+// for CARD (the processor reversal clears there), 1100 AR for ACCOUNT_CREDIT (the customer's account
+// absorbed it). The rules are seeded in 0043; the payload carries the full split so no sibling read is
+// needed. Idempotent per return.
+func (s *Service) buildPosReturnCommitted(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p posReturnCommittedPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: pos.return.committed payload: %w", err)
+	}
+	if p.ReturnID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: pos.return.committed missing return_id")
+	}
+	if p.TotalCents == 0 {
+		return journalDraft{}, false, nil // a zero-value return books nothing
+	}
+	if p.SubtotalCents+p.TaxCents != p.TotalCents {
+		return journalDraft{}, false, fmt.Errorf("gl: pos.return.committed split does not add up (%d+%d != %d)",
+			p.SubtotalCents, p.TaxCents, p.TotalCents)
+	}
+	// A-06 restocking fee: the rail is credited total − fee and the fee credits its own revenue line, so
+	// the journal stays balanced (DR subtotal + DR tax = CR total−fee + CR fee). A fee outside [0,total]
+	// is a malformed event.
+	if p.FeeCents < 0 || p.FeeCents > p.TotalCents {
+		return journalDraft{}, false, fmt.Errorf("gl: pos.return.committed fee_cents %d out of range (total %d)",
+			p.FeeCents, p.TotalCents)
+	}
+	et := "pos.return.committed"
+	rules, err := s.store.PostingAccounts(ctx, et, p.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	var railRole string
+	switch p.RefundMethod {
+	case "CASH":
+		railRole = "undeposited"
+	case "CARD":
+		railRole = "card_clearing"
+	case "ACCOUNT_CREDIT":
+		railRole = "ar"
+	default:
+		return journalDraft{}, false, fmt.Errorf("gl: pos.return.committed unknown refund_method %q", p.RefundMethod)
+	}
+	railCode, err := pick(rules, et, railRole)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	var lines []draftLine
+	if p.SubtotalCents > 0 {
+		revCode, err := pick(rules, et, "revenue")
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		lines = append(lines, dr(revCode, p.SubtotalCents, "revenue reversed"))
+	}
+	if p.TaxCents > 0 {
+		hstCode, err := pick(rules, et, "hst")
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		lines = append(lines, dr(hstCode, p.TaxCents, "HST reversed"))
+	}
+	if net := p.TotalCents - p.FeeCents; net > 0 {
+		lines = append(lines, cr(railCode, net, "refund ("+p.RefundMethod+")"))
+	}
+	if p.FeeCents > 0 {
+		feeCode, err := pick(rules, et, "fee_revenue")
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		lines = append(lines, cr(feeCode, p.FeeCents, "restocking fee"))
+	}
+	return journalDraft{
+		Source:         SourceAdjustment,
+		SourceRefID:    p.ReturnID,
+		IdempotencyKey: "pos.return.committed:" + p.ReturnID,
+		Memo:           "POS return refund",
+		BranchID:       p.BranchID,
+		OccurredAt:     s.clock(),
+		Lines:          lines,
+	}, true, nil
+}
+
+type orderReturnedPayload struct {
+	OrderID  string `json:"order_id"`
+	ReturnID string `json:"return_id"`
+	BranchID string `json:"branch_id"`
+	Lines    []struct {
+		ProductID string  `json:"product_id"`
+		QtyBase   float64 `json:"qty_base"`
+	} `json:"lines"`
+}
+
+// buildOrderReturned posts the stock side of a restocked POS return, buildOrderFulfilled inverted:
+// DR 1200 inventory / CR 5000 COGS at the CostBasis weighted average. found=false (no cost row) skips
+// quietly, exactly like the fulfilment COGS leg. Keyed per RETURN (an order can be returned in parts).
+func (s *Service) buildOrderReturned(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p orderReturnedPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: order.returned payload: %w", err)
+	}
+	if p.ReturnID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: order.returned missing return_id")
+	}
+	if s.costBasis == nil {
+		return journalDraft{}, false, nil
+	}
+	var total int64
+	for _, ln := range p.Lines {
+		cost, found, err := s.costBasis.UnitCostCents(ctx, ln.ProductID, ln.QtyBase)
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		if found {
+			total += cost
+		}
+	}
+	if total == 0 {
+		return journalDraft{}, false, nil
+	}
+	et := "order.returned"
+	rules, err := s.store.PostingAccounts(ctx, et, p.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	invCode, err := pick(rules, et, "inventory")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	cogsCode, err := pick(rules, et, "cogs")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	return journalDraft{
+		Source:         SourceAdjustment,
+		SourceRefID:    p.ReturnID,
+		IdempotencyKey: "order.returned:" + p.ReturnID,
+		Memo:           "COGS reversed on return",
+		BranchID:       p.BranchID,
+		OccurredAt:     s.clock(),
+		Lines:          []draftLine{dr(invCode, total, "inventory restocked"), cr(cogsCode, total, "COGS reversal")},
+	}, true, nil
+}
+
+type tillCompletedPayload struct {
+	SessionID      string `json:"session_id"`
+	BranchID       string `json:"branch_id"`
+	OverShortCents int64  `json:"over_short_cents"`
+}
+
+func (s *Service) buildTillSessionCompleted(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p tillCompletedPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: till.session.completed payload: %w", err)
+	}
+	if p.OverShortCents == 0 {
+		return journalDraft{}, false, nil // a balanced drawer books nothing
+	}
+	et := "till.session.completed"
+	rules, err := s.store.PostingAccounts(ctx, et, p.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	osCode, err := pick(rules, et, "over_short")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	undCode, err := pick(rules, et, "undeposited")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	amt := abs64(p.OverShortCents)
+	var lines []draftLine
+	if p.OverShortCents < 0 {
+		// Short: cash missing → expense. DR 6350 Cash Over/Short, CR 1020 Undeposited Funds.
+		lines = []draftLine{dr(osCode, amt, "cash short"), cr(undCode, amt, "undeposited reduced")}
+	} else {
+		// Over: extra cash → gain. DR 1020 Undeposited Funds, CR 6350 Cash Over/Short.
+		lines = []draftLine{dr(undCode, amt, "undeposited increased"), cr(osCode, amt, "cash over")}
+	}
+	return journalDraft{
+		Source:         SourceAdjustment,
+		SourceRefID:    p.SessionID,
+		IdempotencyKey: "till.session.completed:" + p.SessionID,
+		Memo:           "Till over/short",
+		BranchID:       p.BranchID,
+		OccurredAt:     s.clock(),
+		Lines:          lines,
+	}, true, nil
+}
+
+// - provider surface (bankrec + finstmt + boot) -
+
+func (s *Service) postExternal(ctx context.Context, in ExternalJournal) (string, error) {
+	if len(in.Lines) == 0 {
+		return "", badReq("gl: external journal has no lines")
+	}
+	source := in.Source
+	if source == "" {
+		source = SourceAdjustment
+	}
+	lines := make([]draftLine, 0, len(in.Lines))
+	for _, l := range in.Lines {
+		lines = append(lines, draftLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo})
+	}
+	draft := journalDraft{
+		Source:         source,
+		SourceRefID:    in.SourceRefID,
+		IdempotencyKey: in.IdempotencyKey,
+		Memo:           in.Memo,
+		BranchID:       in.BranchID,
+		Status:         StatusPosted,
+		OccurredAt:     s.clock(),
+		Lines:          lines,
+	}
+	// Reject any leg carrying a negative debit or credit BEFORE the DB does. A negative debit leg (e.g. a
+	// landed-cost over-absorption booking COGS as −9, DIB-189) can still net Σdebit==Σcredit and slip past
+	// balanced(), only to be rejected by gl_journal_lines_check (debit_cents > 0) as an opaque constraint error.
+	// Failing loudly here as errUnbalanced makes such a malformed journal a caller-visible Go error, not a DB
+	// surprise. All legitimate legs are non-negative, so this changes no correct behavior.
+	for _, l := range draft.Lines {
+		if l.DebitCents < 0 || l.CreditCents < 0 {
+			return "", errUnbalanced
+		}
+	}
+	if !draft.balanced() {
+		return "", errUnbalanced
+	}
+	id, _, err := s.store.InsertJournal(ctx, draft)
+	return id, err
+}
+
+func (s *Service) glBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
+	netDebit, normal, err := s.store.AccountBalance(ctx, accountCode, year, month, branchID)
+	if err != nil {
+		return 0, err
+	}
+	// Natural orientation: a credit-normal account's balance is the credit surplus (−net_debit).
+	if normal == NormalCredit {
+		return -netDebit, nil
+	}
+	return netDebit, nil
+}
+
+// ValidatePostingRules is the boot-time parity check (also exposed for the AC8 test): every ACTIVE posting
+// rule must resolve to an existing + active account, AND every role the eight posting builders require must
+// exist for its event_type. A failure here means an event would post a wrong or zero-leg journal, so it is a
+// loud config error surfaced at boot (RegisterPostingHandlers), never a silent bad post.
+func (s *Service) ValidatePostingRules(ctx context.Context) error {
+	rules, err := s.store.ListActiveRules(ctx)
+	if err != nil {
+		return err
+	}
+	var problems []string
+	present := map[string]map[string]bool{}
+	for _, r := range rules {
+		if !r.AccountOK {
+			problems = append(problems, fmt.Sprintf("%s/%s→%s (missing/inactive account)", r.EventType, r.LineRole, r.AccountCode))
+		}
+		if present[r.EventType] == nil {
+			present[r.EventType] = map[string]bool{}
+		}
+		present[r.EventType][r.LineRole] = true
+	}
+	required := map[string][]string{
+		"invoice.finalized":      {"ar", "revenue", "tax"},
+		"payment.received":       {"cash", "ar", "card_clearing"},
+		"tax.relief.assessed":    {"hst_full", "fn_relief"},
+		"payment.bounced":        {"ar", "bank", "undeposited", "card_clearing", "fee_income", "hst"},
+		"till.session.completed": {"over_short", "undeposited"},
+		"order.fulfilled":        {"cogs", "inventory"},
+		"pos.return.committed":   {"revenue", "hst", "undeposited", "card_clearing", "ar", "fee_revenue"},
+		"order.returned":         {"inventory", "cogs"},
+	}
+	for et, roles := range required {
+		for _, role := range roles {
+			if !present[et][role] {
+				problems = append(problems, fmt.Sprintf("missing rule %s/%s", et, role))
+			}
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("gl: %d posting-rule problem(s): %v", len(problems), problems)
+	}
+	return nil
+}

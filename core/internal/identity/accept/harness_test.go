@@ -172,7 +172,7 @@ var tenantShimRoutes = []struct {
 	method, target, op string
 }{
 	{http.MethodGet, "/api/v1/tenant/me", "tenantGetMe"},
-	{http.MethodPatch, "/api/v1/tenant/me", "tenantUpdateMe"},
+	{http.MethodPut, "/api/v1/tenant/me", "tenantUpdateMe"},
 	{http.MethodPost, "/api/v1/tenant/token/refresh", "tenantRefreshToken"},
 	{http.MethodGet, "/api/v1/tenant/invoices", "tenantListInvoices"},
 }
@@ -384,6 +384,10 @@ func newSweep(t *testing.T) *sweep {
 		portal:  portal,
 	}
 	shims.RegisterRoutes(s.mux, g, s.shimRec)
+	// The superseded proof set: the order lifecycle and public quote shims
+	// the money-spine modules replaced on the served mux live on here as
+	// the DB-free proof vehicle (no served mux registers them).
+	shims.RegisterSupersededProofRoutes(s.mux, g, s.shimRec)
 	s.probes["admin"] = testkit.NewRecorder()
 	s.mux.Handle(adminProbeTarget, g.RequireAdmin(staffProbe(s.probes["admin"])))
 	s.probes["staff"] = testkit.NewRecorder()

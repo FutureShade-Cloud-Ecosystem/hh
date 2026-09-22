@@ -105,6 +105,16 @@ Every list endpoint uses cursor pagination, replacing the ERP's offset pages:
   `limit` (`type: integer, format: int32`). Never `offset`, never `total`:
   cursor pagination replaces offset on every list.
 
+One endpoint's cursor is a position token rather than a row key, recorded
+here as its convention difference: `GET /api/v1/tasks/yard/pending`
+(the yard pending-tickets feed) is an in-memory merge of two dispatch
+reads whose resume token carries the merge position, not a row key,
+opaque under the shared v1 encoding; malformed and negative positions are
+refused. The feed's own design ("a merge cannot be offset at the
+database") leaves no row key the seam could filter on without crossing
+module lines; if conformance ever wants a row key there, that is a seam
+redesign with its own review, ordered above both lanes.
+
 One deliberate difference is recorded here rather than transcribed: the ERP
 handler for `GET /api/v1/audit/transaction/{entityType}/{entityId}`
 (`audit/handler.go`, the `reopen` read path) returns the trail as a bare
@@ -112,6 +122,21 @@ JSON array with no envelope. The contract serves it as `AuditEntryPage`
 with `cursor` and `limit` like every other list, because an unbounded array
 breaks the pagination rule and gives the client no resume token; the
 trail's causal sort key is `seq`, so a cursor over it is well defined.
+
+Out-of-range limits are a second recorded divergence, pinned here by ruling of
+the HH-3.4 Tech Lead review (change neither side): the document's `Limit`
+parameter (`core/api/skeleton.yaml`) declares `minimum: 1, maximum: 200,
+default: 50`, while the core's cursor helpers (Lane A's
+`core/internal/platform/httpx` `ParseCursorPage`, `DefaultPageLimit` 50 and
+`MaxPageLimit` 200) read an unparseable or non-positive `limit` as the default
+and clamp an over-maximum value to the maximum, fail-quiet, carried from the
+ERP's offset family. The declared minimum and maximum are client-facing
+bounds, and the page envelope's `limit` echo is the caller's way to observe
+the effective value. A malformed cursor is refused with 400; an out-of-range
+limit is not. If strictness (refusal) is ever wanted instead, it is a
+deliberate helper change with its own review and its own decision record,
+ordered above both lanes; it must never arrive as a silent edit inside a
+module batch.
 
 ## Naming
 

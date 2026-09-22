@@ -1,0 +1,6 @@
+[
+  {"BisTrackID":"O1","OrderType":"ORDER","CustomerBisTrackID":"C1","Status":"OPEN","UpdatedAt":"2026-05-01T13:00:00Z"},
+  {"BisTrackID":"O2","OrderType":"QUOTE","CustomerBisTrackID":"C1","Status":"DRAFT","UpdatedAt":"2026-05-01T13:00:01Z"},
+  {"BisTrackID":"O3","OrderType":"ORDER","CustomerBisTrackID":"C1","Status":"OPEN","UpdatedAt":"2026-05-01T13:00:02Z"},
+  {"BisTrackID":"O4","OrderType":"ORDER","CustomerBisTrackID":"CX","Status":"OPEN","UpdatedAt":"2026-05-01T13:00:03Z"}
+]

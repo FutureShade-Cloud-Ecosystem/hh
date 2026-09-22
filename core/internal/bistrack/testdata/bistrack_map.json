@@ -1,0 +1,649 @@
+{
+  "meta": {
+    "source": "btprod_2026-04-28.bak (3.0 GB native SQL Server backup) restored to Docker SQL Server 2022; INFORMATION_SCHEMA + sys catalogs dumped via restore_and_dump.sh; consumed here via verified Phase 0 extracts only",
+    "verified_date": "2026-05-05",
+    "generated": "2026-06-09",
+    "generated_by": "G1-T2 BisTrack schema ingestion (Dibbits/HardscapeOS build)",
+    "inputs": [
+      "dibbits/docs/wiki/Migration/SchemaInventory.md",
+      "dibbits/docs/wiki/Migration/BiTrackMapping.md",
+      "dibbits/docs/wiki/Migration/Inventory-Migration-and-Cleanup.md",
+      "dibbits/docs/wiki/Features/must-have/m9-bistrack-sync.md",
+      "dibbits/docs/spec/ARCHITECTURE.md (target module list)",
+      "command/state/roadmap.yaml (M4 wave definitions only)"
+    ],
+    "limitations": [
+      "Raw 3.0 GB .bak is NOT in this workspace; nothing here was re-verified against the database, all figures come from the Phase 0 verified extracts listed in inputs.",
+      "SchemaInventory.md lists only the top 34 tables by row count; the remaining 1,206 table rows live in the source xlsx, which is also not in this workspace. Per-table detail below is therefore complete for large tables and notes-derived for the rest.",
+      "Only 100 of 1,885 stored-procedure bodies were extracted in Phase 0 (high-risk subsystems); business logic in the remaining ~1,785 procs is uncharacterized.",
+      "Schema is single-schema dbo, pure PascalCase, no prefixes."
+    ],
+    "stats": {
+      "tables": 1240,
+      "views": 135,
+      "columns": 18147,
+      "pks": 1559,
+      "fks": 1958,
+      "procs": 1885,
+      "proc_bodies_extracted": 100
+    },
+    "migration_priority_legend": {
+      "M1-M3-prep": "Prerequisite cleanup/build before the migration month (A-18 UDF promotion M1-W2; WS1 catalog + UoM cleanup and WS7 cruft exclusion recommended to start M3/Aug)",
+      "M4-W14": "Month 4 wave 1 (Sep, 'Migration V1'): ETL pipeline build, financial + master data migration, Dry Run #1",
+      "M4-W15": "Month 4 EDI wave: Tier 1 vendor EDI setup + UAT (partner re-setup, not row ETL)",
+      "M4-W16": "Month 4 wave 2 (Sep, 'Migration V2'): open documents, COD gate, approval workflows, Dry Run #2",
+      "M6-W21": "Month 6 cutover wave (Nov): final production ETL run on frozen BisTrack snapshot",
+      "seed-not-migrate": "Rebuilt or seeded natively in HardscapeOS; no row migration from BisTrack",
+      "no-migrate": "Excluded: empty subsystem, cruft, or reference-only history kept in the read-only BisTrack archive",
+      "triage": "Unclassified; needs G2 triage before a wave can be assigned"
+    }
+  },
+  "subsystems": [
+    {
+      "name": "Customer",
+      "bistrack_tables_count": 58,
+      "total_rows": 11737717,
+      "key_tables": [
+        { "table": "Customer", "rows": 8485, "role": "Customer master; carries 5+ credit-hold columns (OnHold, NeverPutOrdersOnHold, CreditApprovalRequired, CreditControlStatusID, CreditRatingID)" },
+        { "table": "CustomerBalanceHistory", "rows": 11665740, "role": "AR balance history, 3 columns; largest table in the database" },
+        { "table": "Customer_BAK_241031", "rows": 8408, "role": "Stale 2024-10-31 backup copy of Customer left in production, EXCLUDE" },
+        { "table": "CustomerAddress", "rows": null, "role": "Address book; OrderHeader.InvoiceAddressID FKs here (address snapshot pattern on orders confirmed)" },
+        { "table": "CustomerContact", "rows": null, "role": "Contacts incl. Email column used for quote delivery" }
+      ],
+      "target_module": "crm",
+      "migration_priority": "M4-W14",
+      "notes": "Customer master + addresses + contacts migrate in Migration V1; AR opening balances derive from finance-side tables, NOT by replaying 11.67M CustomerBalanceHistory rows. Post-fork direction-of-truth per M9: customer = native (HardscapeOS) master, push on edit, pull net-new hourly."
+    },
+    {
+      "name": "Product / Item",
+      "bistrack_tables_count": 102,
+      "total_rows": 841101,
+      "key_tables": [
+        { "table": "Product", "rows": 4779, "role": "Product master, 189 columns; substitution tree via self-FKs ReplacementID / ParentID / SellProductID; no clean IsActive flag" },
+        { "table": "ProductPriceHistory2", "rows": 463668, "role": "Price history (note '2' version suffix); classified under Product/Item in the extract" },
+        { "table": "ProductAnalysis", "rows": 168573, "role": "Sales-velocity / analysis feed for replenishment seeding" },
+        { "table": "ProductGroupAnalysisHistory", "rows": 135601, "role": "Group-level analysis history" },
+        { "table": "ProductBranchSupplier", "rows": null, "role": "Per-branch reorder points, lead times, preferred vendor" }
+      ],
+      "target_module": "product",
+      "migration_priority": "M4-W14",
+      "notes": "Blocked by M1-M3-prep: WS1 catalog cleanup (active/dead SKU audit, dedupe, UoM normalization, A-18 UDF promotion, ProductGroup -> product_categories mapping). 189 legacy columns map onto products + promoted hardscape facets (migration 051), manufacturer, collection, color, finish, application, dimensions, pallet_count, weight, pieces_per_sf, coverage_sf_per_unit."
+    },
+    {
+      "name": "Stock / Inventory",
+      "bistrack_tables_count": 62,
+      "total_rows": 4787478,
+      "key_tables": [
+        { "table": "StockValuationData", "rows": 3973238, "role": "FIFO cost-layer history, every receipt creates a layer; mostly consumed layers" },
+        { "table": "StockTransaction", "rows": 367999, "role": "Every stock movement (receipts, adjustments, transfers, sales)" },
+        { "table": "StockReceiptCost", "rows": 77722, "role": "Landed cost detail (freight, duty, handling) per receipt line" },
+        { "table": "StockAllocation", "rows": 66930, "role": "Soft/hard allocations against orders, source of truth for committed inventory; likely contains stale rows" }
+      ],
+      "target_module": "inventory",
+      "migration_priority": "M4-W16",
+      "notes": "Single largest migration risk (WS2/WS3: 24-36h alone). Active cost layers only; on-hand snapshot re-run at M6-W21 inside a 4-8h freeze window with physical count (WS6). Valuation must reconcile to rpt2201BusinessAdvisorProductValuation within $100 and 0.1%. During parallel-op, inventory direction-of-truth = BisTrack, pulled every 15 min (M9), flipping to native at cutover."
+    },
+    {
+      "name": "Pricing",
+      "bistrack_tables_count": 56,
+      "total_rows": 81890,
+      "key_tables": [
+        { "table": "(price list tables)", "rows": null, "role": "Price-list driven pricing; individual tables not in extract fragment" }
+      ],
+      "target_module": "product",
+      "migration_priority": "M4-W14",
+      "notes": "Current price lists migrate with the catalog. The A-07 Pricing Configurator (built M1-W3) replaces BisTrack rule mechanics; ProductPriceHistory2 history goes to the read-only archive, with A-08 Price Change Log starting fresh natively."
+    },
+    {
+      "name": "Invoice",
+      "bistrack_tables_count": 42,
+      "total_rows": 745788,
+      "key_tables": [
+        { "table": "InvoiceHeader", "rows": 55872, "role": "Invoice master" },
+        { "table": "InvoiceLine", "rows": 125471, "role": "Invoice detail" },
+        { "table": "InvoiceTax", "rows": 121544, "role": "Tax lines per invoice" },
+        { "table": "AccountsInvoiceExportLine", "rows": 199782, "role": "62-column invoice export staging, part of the Great Plains posting seam" },
+        { "table": "AccountsInvoiceExportTaxLine", "rows": 138584, "role": "Tax detail on the invoice export seam" }
+      ],
+      "target_module": "finance",
+      "migration_priority": "M4-W14",
+      "notes": "Open/unpaid invoices migrate as AR opening detail; paid history stays in the read-only archive. The AccountsInvoiceExport* tables define the shape invoices must keep landing in Great Plains (dual-track A-01)."
+    },
+    {
+      "name": "Branch",
+      "bistrack_tables_count": 37,
+      "total_rows": 16031,
+      "key_tables": [
+        { "table": "(branch config tables)", "rows": null, "role": "Branch configuration for Trenton + Kingston; individual tables not in extract fragment" }
+      ],
+      "target_module": "admin",
+      "migration_priority": "seed-not-migrate",
+      "notes": "Two branches are seeded natively in M1-W1 (Branch Setup). Build a BranchID crosswalk for every migrated row; no direct row migration."
+    },
+    {
+      "name": "Order",
+      "bistrack_tables_count": 37,
+      "total_rows": 1178379,
+      "key_tables": [
+        { "table": "OrderHeader", "rows": 63402, "role": "Orders AND quotes in one table, 241 columns; OrderType + status differentiate; carries IsReservation/DaysToReserve (parked orders), FollowUpDateTime/ExpiryDate/QuoteRank (quote lifecycle), PaymentTermsID FK" },
+        { "table": "OrderLine", "rows": 168397, "role": "Order/quote lines, 187 columns" },
+        { "table": "OrderLinePriceInfo", "rows": 168397, "role": "87-column 1:1 price detail per line" },
+        { "table": "OrderLineUDF", "rows": 168395, "role": "1-column UDF blob per line; 50-60 actively used fields to promote (A-18)" },
+        { "table": "OrderTax", "rows": 146341, "role": "Order tax lines" },
+        { "table": "OrderPayment", "rows": 40954, "role": "Payments incl. CashOnDeliveryPayment bit (classified under Order subsystem in extract despite Payment subsystem existing)" },
+        { "table": "OrderFilter", "rows": 164387, "role": "2-column filter/index helper" }
+      ],
+      "target_module": "sales",
+      "migration_priority": "M4-W16",
+      "notes": "Open documents only (WS4): non-invoiced orders, open POs, parked/reserved orders, active quotes, each open line must recreate its inventory allocation. Closed order history stays in the archive. Post-fork direction-of-truth: orders are native-always; BisTrack-originated orders surface as missing_target discrepancies (M9)."
+    },
+    {
+      "name": "GL / Accounting",
+      "bistrack_tables_count": 36,
+      "total_rows": 1818855,
+      "key_tables": [
+        { "table": "GeneralLedger", "rows": 572226, "role": "GL journal history" },
+        { "table": "GLExportRule", "rows": 386815, "role": "Export 'rule' table with anomalous transaction-scale volume, likely per-transaction export mapping/staging to Great Plains; needs investigation" },
+        { "table": "GLExport", "rows": 181249, "role": "GL export batches to Great Plains" },
+        { "table": "GeneralLedgerExportLine", "rows": 165838, "role": "46-column GL export detail, the posting contract" },
+        { "table": "AccountsTransaction", "rows": 112460, "role": "AR/AP transaction master (58 columns)" },
+        { "table": "AccountsTransactionGLDistribution", "rows": 138203, "role": "GL distribution per accounts transaction" },
+        { "table": "AccountsStatementTransaction", "rows": 106272, "role": "Customer statement lines" },
+        { "table": "AccountsTransactionTax", "rows": 66758, "role": "Tax on accounts transactions" }
+      ],
+      "target_module": "finance",
+      "migration_priority": "M4-W14",
+      "notes": "M4-W14 is explicitly 'Financial Data Migration'. Strategy is dual-track A-01: (1) Day-1 Great Plains integration that reproduces the GLExport* posting shape so month-end close is unchanged; (2) native GL (gl_accounts / gl_journal_entries / gl_journal_lines, migration 025) built in parallel. Migrate opening balances + open AR/AP, not 572K journal rows. GP mechanism (eConnect / Integration Manager / flat file), version, and summary-vs-detail depth are still open discovery."
+    },
+    {
+      "name": "Delivery / Dispatch",
+      "bistrack_tables_count": 30,
+      "total_rows": 64,
+      "key_tables": [
+        { "table": "Delivery / DeliveryNoteHeader / DeliveryNoteLine", "rows": null, "role": "Near-empty, 64 rows across all 30 tables; the delivery-note workflow is effectively unused" },
+        { "table": "DeliveryTime / DeliveryOption / DeliveryArea", "rows": null, "role": "Small lookup masters FK'd from OrderHeader (DeliveryTime/DeliveryOption confirmed tinyint FKs)" },
+        { "table": "DispatchAPIQueue", "rows": null, "role": "Dispatch API queue (P2 scope)" }
+      ],
+      "target_module": "logistics",
+      "migration_priority": "no-migrate",
+      "notes": "Dibbits' real dispatch lives in the Journey/Manifest subsystem, not these tables. Migrate only the lookup masters (DeliveryTime/DeliveryOption/DeliveryArea) as config; do not model HardscapeOS logistics on the empty DeliveryNote pattern."
+    },
+    {
+      "name": "EDI",
+      "bistrack_tables_count": 28,
+      "total_rows": 121945,
+      "key_tables": [
+        { "table": "(EDI document/partner tables)", "rows": null, "role": "EDI is actively used (~122K rows); individual tables not in extract fragment" }
+      ],
+      "target_module": "edi",
+      "migration_priority": "M4-W15",
+      "notes": "A-11: re-establish Tier 1 vendor EDI partnerships natively in M4-W15 + UAT; historical EDI documents stay in the archive. Partner re-setup, not row ETL."
+    },
+    {
+      "name": "Payment",
+      "bistrack_tables_count": 25,
+      "total_rows": 166,
+      "key_tables": [
+        { "table": "PaymentTerms", "rows": null, "role": "Terms master, OrderHeader.PaymentTermsID FK confirmed (header fragment resolved: it is PaymentTermsID, not PaymentType)" },
+        { "table": "(payment method/config tables)", "rows": null, "role": "25 config-scale tables totaling 166 rows; the 40,954-row OrderPayment table is classified under Order in the extract" }
+      ],
+      "target_module": "finance",
+      "migration_priority": "M4-W14",
+      "notes": "Terms/methods migrate as config crosswalk in W14; the COD gate itself (promoting OrderPayment.CashOnDeliveryPayment from informational bit to enforced state machine, Active #3) lands in M4-W16 alongside L2/L3 card processing and surcharge rules. Bank-rec home (native vs Great Plains vs both) is an open A-01/A-02 question."
+    },
+    {
+      "name": "Credit / Hold",
+      "bistrack_tables_count": 22,
+      "total_rows": 75579,
+      "key_tables": [
+        { "table": "CreditControlStatus", "rows": null, "role": "Credit-control status lookup" },
+        { "table": "CreditRating", "rows": null, "role": "Credit rating lookup" }
+      ],
+      "target_module": "crm",
+      "migration_priority": "M4-W14",
+      "notes": "Credit fields ride along on the Customer master 1:1 (P1 mapping: OnHold, NeverPutOrdersOnHold, CreditApprovalRequired, CreditControlStatusID, CreditRatingID, NumberOfOrders...). The order-gating logic is NOT YET DISCUSSED with Dibbits (pending P1), data migrates, behavior TBD. COD enforcement (Active #3) consumes this synced credit data."
+    },
+    {
+      "name": "Journey / Manifest",
+      "bistrack_tables_count": 21,
+      "total_rows": 34962,
+      "key_tables": [
+        { "table": "JourneyHeader", "rows": 9596, "role": "Delivery journeys: Reference, JourneyDate, BranchID, VehicleID/Name, DriverID/Name, TotalWeight, TotalVolume" },
+        { "table": "JourneyLine / JourneyStop", "rows": null, "role": "Act as load-ticket equivalents (P3), no dedicated LoadTicket table exists" },
+        { "table": "rptJourneyManifestHeader / rptJourneyManifestPack / rptNAJourneyManifestLine / rptRB... (4 VIEWS)", "rows": null, "role": "Manifest exists only as report views, not physical tables" },
+        { "table": "JourneyForwardPlanning", "rows": null, "role": "Forward planning for dispatch scheduling (P2)" }
+      ],
+      "target_module": "logistics",
+      "migration_priority": "M6-W21",
+      "notes": "Historical journeys stay in the archive; only open/planned journeys at cutover migrate. Design: REUSE Journey* shapes, PROMOTE the four manifest views to first-class Manifest + ManifestVersion entities, ADD MTO classification fields (Active #1 MTO compliance manifest)."
+    },
+    {
+      "name": "Audit",
+      "bistrack_tables_count": 13,
+      "total_rows": 3214953,
+      "key_tables": [
+        { "table": "Audit", "rows": 2999981, "role": "Central polymorphic audit trail (12 columns) + AuditDetailChar/Num/Type/Group satellites" },
+        { "table": "DocumentPrintAudit", "rows": 164170, "role": "Print audit per document" }
+      ],
+      "target_module": "governance",
+      "migration_priority": "no-migrate",
+      "notes": "Reference-only: do NOT import 3M rows into HardscapeOS audit_log. Keep BisTrack as a read-only archive for 12 months post-cutover. Native A-21 Audit Trail starts fresh; the AuditDetailChar/Num typed-satellite pattern is a useful design reference for G2."
+    },
+    {
+      "name": "Tax",
+      "bistrack_tables_count": 11,
+      "total_rows": 71,
+      "key_tables": [
+        { "table": "(tax code/rate lookups)", "rows": null, "role": "71 rows of tax config; individual tables not in extract fragment" }
+      ],
+      "target_module": "tax",
+      "migration_priority": "seed-not-migrate",
+      "notes": "Avalara AvaTax + M5 Canadian localization replace BisTrack tax config. Build a tax-code crosswalk so migrated open documents keep their tax treatment; OrderTax/InvoiceTax rows ride with their parent documents."
+    },
+    {
+      "name": "Pack",
+      "bistrack_tables_count": 8,
+      "total_rows": 0,
+      "key_tables": [
+        { "table": "ProductPack", "rows": 0, "role": "Pallet/pack tracking, UNUSED at Dibbits" }
+      ],
+      "target_module": "inventory",
+      "migration_priority": "no-migrate",
+      "notes": "Zero rows across all 8 tables. Active #7 pallet/load tracking is a greenfield activation (PalletScan, LoaderConfirm, DiscrepancyFlag are NEW), there is no legacy pack data to migrate or stay compatible with."
+    },
+    {
+      "name": "Pick",
+      "bistrack_tables_count": 8,
+      "total_rows": 0,
+      "key_tables": [
+        { "table": "PickingNoteHeader", "rows": 0, "role": "Picking workflow, UNUSED at Dibbits" },
+        { "table": "PickingNoteLine / PickingNoteItem / OrderPickingHistory / HandheldPickingNoteLine", "rows": 0, "role": "Entire pick subsystem empty" }
+      ],
+      "target_module": "inventory",
+      "migration_priority": "no-migrate",
+      "notes": "Zero rows. Active #7 plans to activate picking natively; post-pick change control (Active #10) gates on lock + approval flows, not legacy pick data. G2 may borrow the table shapes but must not assume any pick history exists."
+    },
+    {
+      "name": "Vehicle / Driver",
+      "bistrack_tables_count": 6,
+      "total_rows": 34,
+      "key_tables": [
+        { "table": "Vehicle", "rows": 11, "role": "Fleet master" },
+        { "table": "Driver", "rows": 11, "role": "Driver master" }
+      ],
+      "target_module": "logistics",
+      "migration_priority": "seed-not-migrate",
+      "notes": "11 vehicles + 11 drivers, hand-seed during dispatch build (M3-W10) rather than ETL; keep a crosswalk for migrated open journeys."
+    },
+    {
+      "name": "Per (UoM)",
+      "bistrack_tables_count": 4,
+      "total_rows": 8753,
+      "key_tables": [
+        { "table": "Per", "rows": 1454, "role": "UoM master: PerCode, ConversionToBase, BasePer flag, PerType" },
+        { "table": "PerConversion", "rows": 42, "role": "Product-level conversion factors, SEVERE coverage gap vs 4,779 products" },
+        { "table": "PerRule / PerRuleConversion", "rows": 7257, "role": "Rule-based conversions (derived: 8,753 subsystem total minus Per minus PerConversion), may carry the real conversion logic; verify before assuming the 42-row table is the whole story" }
+      ],
+      "target_module": "product",
+      "migration_priority": "M1-M3-prep",
+      "notes": "Feature M2 (UoM expansion, migration 052: PLT/TON/LYR/PC/CYD) + Active #8. The Per system maps to the native UoM model, but conversion coverage must be seeded/validated BEFORE catalog migration (WS1 gate: every active product has base UoM + >=1 selling UoM with valid factor). Plan: bulk import tool + AI-assisted population + admin audit UI."
+    },
+    {
+      "name": "Quote",
+      "bistrack_tables_count": 3,
+      "total_rows": 0,
+      "key_tables": [
+        { "table": "QuoteRank / ItemQuoteStatus", "rows": 0, "role": "Tracking-only lookups; true quote data lives in OrderHeader" }
+      ],
+      "target_module": "sales",
+      "migration_priority": "no-migrate",
+      "notes": "Decoy subsystem: quotes are OrderHeader rows differentiated by OrderType + status. All quote migration and sync logic must filter OrderHeader, never read these tables."
+    },
+    {
+      "name": "Hire",
+      "bistrack_tables_count": 3,
+      "total_rows": 0,
+      "key_tables": [
+        { "table": "(hire/rental tables)", "rows": 0, "role": "Equipment hire/rental, unused" }
+      ],
+      "target_module": "none",
+      "migration_priority": "no-migrate",
+      "notes": "Empty; Dibbits has no rental business in BisTrack. Out of Phase 1 scope."
+    },
+    {
+      "name": "Lock / Hold",
+      "bistrack_tables_count": 2,
+      "total_rows": 474,
+      "key_tables": [
+        { "table": "LockHold", "rows": 472, "role": "Polymorphic transaction lock: TransactionID + TransactionType FK, LockedByID, ClearedByID, DateTimeLocked/Cleared" }
+      ],
+      "target_module": "governance",
+      "migration_priority": "no-migrate",
+      "notes": "Locks are transient, rebuild, don't migrate. The polymorphic pattern is the design seed for Active #10 post-pick change control (ChangeRequest, ApprovalChain, DelegationRule layered on a LockHold-style gate) and A-26 approval workflows (M4-W16)."
+    },
+    {
+      "name": "Other",
+      "bistrack_tables_count": 626,
+      "total_rows": 1106720,
+      "key_tables": [
+        { "table": "Permission", "rows": 218448, "role": "Row-scale permission grants (13 columns), input to A-20 RBAC design (13 roles / 3 tiers)" },
+        { "table": "SalesAnalysis2", "rows": 170473, "role": "Sales analysis (version-suffixed); velocity seed for replenishment (WS5)" },
+        { "table": "SalesAnalysis3", "rows": 167479, "role": "Second versioned sales-analysis table coexisting with SalesAnalysis2" },
+        { "table": "ScanTrackImage", "rows": 125534, "role": "Scanned/tracked images (24 columns), likely binary document payloads; storage strategy needed" },
+        { "table": "OrderLineWMSInfo", "rows": 129997, "role": "WMS info per order line" },
+        { "table": "rpt2201BusinessAdvisorProductValuation", "rows": 68956, "role": "Valuation report snapshot, the WS3 reconciliation target (match within $100)" }
+      ],
+      "target_module": "triage",
+      "migration_priority": "triage",
+      "notes": "626 tables (50.5% of the schema) are unclassified. Most are likely config, report snapshots, and module scaffolding for features Dibbits never used, but Permission, SalesAnalysis2/3, and ScanTrackImage prove real operational data hides here. G2 must run a classification pass (row count > 0 AND recent activity) before declaring the migration surface complete."
+    }
+  ],
+  "domain_mappings": [
+    {
+      "bistrack_entity": "Customers / AR",
+      "bistrack_tables": ["Customer", "CustomerAddress", "CustomerContact", "CustomerBalanceHistory", "CreditControlStatus", "CreditRating", "AccountsStatementTransaction", "Customer_BAK_241031 (EXCLUDE)"],
+      "hardscapeos_domain": "crm (customer master) + finance (AR balances, statements)",
+      "transformation_notes": "Migrate 8,485 customers minus dead/duplicate accounts; EXCLUDE the 8,408-row Customer_BAK_241031 copy (a blind union would near-double the customer base). AR opening balances computed per customer, not by replaying 11.67M CustomerBalanceHistory rows (archive those). Credit-hold columns carry 1:1 onto the customer record; gating behavior is pending P1. M9 sync: customer master = native post-fork (push on edit, hourly pull for net-new); bistrack_id_map provides BisTrack ID <-> native UUID identity."
+    },
+    {
+      "bistrack_entity": "Products / UoM ('Per' system)",
+      "bistrack_tables": ["Product", "ProductGroup", "ProductBranchSupplier", "Per", "PerConversion", "PerRule", "PerRuleConversion", "OrderLineUDF (attribute source)", "ProductAnalysis", "SalesAnalysis2"],
+      "hardscapeos_domain": "product (catalog, categories, facets, UoM) + inventory (reorder points)",
+      "transformation_notes": "189-column Product flattens to products + promoted hardscape facets (migration 051); ProductGroup hierarchy maps to product_categories with hardscape facet assignment. 'Per' system: Per (1,454 rows, ConversionToBase + BasePer flag) maps to the expanded UoM enum (052: PLT/TON/LYR/PC/CYD) + conversion table, but PerConversion has only 42 product-level rows for 4,779 products, with ~7,257 rows in PerRule/PerRuleConversion that may encode rule-based conversions; resolve which mechanism is authoritative, then bulk-seed factors (WS1 gate). Substitution self-FKs (ReplacementID/ParentID/SellProductID) map to explicit product-relationship records (feeds quote comparison, Active #6). 50-60 live UDF fields promote from the 1-column OrderLineUDF blob (A-18, M1-W2). Derive is_active from StockTransaction recency + OrderLine activity, no source flag exists. M9 sync: product = BisTrack master until cutover, hourly pull."
+    },
+    {
+      "bistrack_entity": "Orders / Quotes (OrderHeader + OrderType pattern)",
+      "bistrack_tables": ["OrderHeader", "OrderLine", "OrderLinePriceInfo", "OrderLineUDF", "OrderTax", "OrderFilter", "OrderLineWMSInfo", "QuoteRank (lookup only)", "ItemQuoteStatus (lookup only)"],
+      "hardscapeos_domain": "sales (orders, quotes, reservations)",
+      "transformation_notes": "BisTrack stores quotes and orders as one 241-column OrderHeader differentiated by OrderType + status, G2 must explicitly decide unified-with-type vs split quote/order entities; either way the migration filter is OrderType, never the empty Quote tables. Quote lifecycle columns (FollowUpDateTime, ExpiryDate, QuoteRank, DateTimeQuoteAccepted/Rejected, CPQQuoteID) feed follow-up automation (Active #2) and quote delivery (Active #9). IsReservation + DaysToReserve map to parked-order state (Active #4). OrderLine (187 cols) + OrderLinePriceInfo (87 cols) collapse into a normalized line + price breakdown. Migrate OPEN documents only (WS4): non-invoiced orders, parked orders, active quotes; each open line recreates its allocation. M9 sync: orders native-always; BisTrack-originated post-fork orders surface as missing_target."
+    },
+    {
+      "bistrack_entity": "Inventory / Stock valuation",
+      "bistrack_tables": ["StockValuationData", "StockTransaction", "StockReceiptCost", "StockAllocation", "ProductBranchSupplier", "rpt2201BusinessAdvisorProductValuation (reconciliation target)"],
+      "hardscapeos_domain": "inventory (on-hand, allocations, cost layers, cycle counts, replenishment)",
+      "transformation_notes": "Confirm valuation method (FIFO vs weighted-average vs standard) FIRST, it decides whether 3.97M StockValuationData rows collapse to average cost or prune to active layers (remaining qty > 0). Fold StockReceiptCost landed costs (freight/duty/handling) into layers or separate landed-cost records (A-16). Resolve negative on-hand balances and stale allocations BEFORE snapshot; migrate allocations only for still-open orders and reconcile against StockAllocation totals. Reorder points / lead times / preferred vendors from ProductBranchSupplier seed the replenishment engine (A-12); velocity seeds from SalesAnalysis2 + ProductAnalysis. Acceptance: valuation matches within 0.1% / $100 vs rpt2201; zero negative balances; final snapshot in M6-W21 freeze window with physical count (WS6)."
+    },
+    {
+      "bistrack_entity": "Payments / COD",
+      "bistrack_tables": ["OrderPayment", "PaymentTerms", "(payment method/config tables)"],
+      "hardscapeos_domain": "finance (payments, terms, COD gate) + pos (tender)",
+      "transformation_notes": "OrderPayment.CashOnDeliveryPayment is today an informational per-payment bit, HardscapeOS PROMOTES it to an enforced state-machine gate (Active #3, M4-W16) driven by PaymentTerms + customer credit state. OrderHeader.PaymentTermsID FK confirmed (header-fragment ambiguity resolved: PaymentTermsID, not PaymentType), crosswalk terms to native payment_terms. Open payments on open orders migrate with their documents; settled payment history archives. Bank-rec ownership (native vs Great Plains, Moneris/EFT/cheque matching back to OrderPayment rows) is an open A-01/A-02 discovery question."
+    },
+    {
+      "bistrack_entity": "GL seams to Great Plains",
+      "bistrack_tables": ["GeneralLedger", "GLExport", "GLExportRule", "GeneralLedgerExportLine", "AccountsTransaction", "AccountsTransactionGLDistribution", "AccountsTransactionTax", "AccountsInvoiceExportLine", "AccountsInvoiceExportTaxLine", "AccountsStatementTransaction"],
+      "hardscapeos_domain": "finance (native GL: gl_accounts, gl_journal_entries, gl_journal_lines; GP export adapter)",
+      "transformation_notes": "Dibbits' third-party GL is Microsoft Dynamics GP (Great Plains), confirmed 2026-05-19. Dual-track A-01: Track 1 (cutover-blocking) reverse-engineers the BisTrack->GP posting contract from GLExport + GeneralLedgerExportLine (46 cols) + AccountsInvoiceExportLine (62 cols) so every HardscapeOS transaction lands in GP in the same shape and month-end close runs unchanged; Track 2 builds the native GL in parallel so GP can be deprecated on Dibbits' timeline. GLExportRule's 386,815 rows (transaction-scale for a 'rule' table) must be explained, likely per-transaction mapping/staging; the answer probably lives in unextracted stored procedures. Migrate chart-of-accounts mapping + opening balances + open AR/AP only; 572K GeneralLedger journal rows stay in the archive. GP mechanism/version/posting depth = open discovery."
+    },
+    {
+      "bistrack_entity": "Audit / Locks",
+      "bistrack_tables": ["Audit", "AuditDetailChar", "AuditDetailNum", "AuditDetailType", "AuditDetailGroup", "DocumentPrintAudit", "LockHold"],
+      "hardscapeos_domain": "governance (audit_log, approval workflows, change control)",
+      "transformation_notes": "Do NOT migrate the 3M-row Audit trail into audit_log, keep BisTrack as a read-only archive for 12 months and start the native A-21 audit trail fresh at cutover. LockHold's polymorphic lock (TransactionID + TransactionType + LockedBy/ClearedBy + timestamps) is the proven pattern to generalize for Active #10 post-pick change control (ChangeRequest, ApprovalChain, DelegationRule) and A-26 approval workflows; active locks at cutover are transient state, re-establish, don't ETL. Discrepancy resolutions during parallel-op also write to audit_log (M9 zero-trust checklist)."
+    },
+    {
+      "bistrack_entity": "Invoicing (AR documents)",
+      "bistrack_tables": ["InvoiceHeader", "InvoiceLine", "InvoiceTax"],
+      "hardscapeos_domain": "finance (invoices) + docgen (rendered documents)",
+      "transformation_notes": "Open/unpaid invoices migrate as line-level AR opening detail (feeds CP-05 portal invoice pay and statements); paid history stays in the archive, retrievable for 12 months. Invoice totals must tie to AR opening balances and to the GP seam."
+    },
+    {
+      "bistrack_entity": "Delivery / Dispatch / Manifest",
+      "bistrack_tables": ["JourneyHeader", "JourneyLine", "JourneyStop", "JourneyForwardPlanning", "rptJourneyManifestHeader (VIEW)", "rptJourneyManifestPack (VIEW)", "rptNAJourneyManifestLine (VIEW)", "rptRB* manifest (VIEW)", "Vehicle", "Driver", "DeliveryTime", "DeliveryOption", "DeliveryArea", "DispatchAPIQueue", "DeliveryNoteHeader (empty)", "DeliveryNoteLine (empty)"],
+      "hardscapeos_domain": "logistics (journeys, manifests, vehicles, drivers, scheduling)",
+      "transformation_notes": "Journey* tables are the real dispatch system (9,596 journeys); the 30-table Delivery/Dispatch subsystem holds only 64 rows and must not shape the target model. PROMOTE the four rptJourneyManifest* views into first-class Manifest + ManifestVersion entities and ADD MTO classification fields (Active #1). JourneyLine/JourneyStop double as load tickets (P3), no separate LoadTicket entity needed. Hand-seed the 11-vehicle/11-driver fleet; migrate only open journeys at M6-W21; lookup masters (DeliveryTime/DeliveryOption/DeliveryArea) crosswalk as config since OrderHeader FKs them."
+    },
+    {
+      "bistrack_entity": "Credit holds",
+      "bistrack_tables": ["Customer (OnHold, NeverPutOrdersOnHold, CreditApprovalRequired, CreditControlStatusID, CreditRatingID, NumberOfOrders...)", "CreditControlStatus", "CreditRating"],
+      "hardscapeos_domain": "crm (credit profile) + sales (order gating)",
+      "transformation_notes": "Reuse credit fields 1:1 on the customer record with lookup crosswalks. The enforcement behavior (when holds block order entry/dispatch) is pending P1, NOT YET DISCUSSED with Dibbits. COD enforcement (Active #3) reads this same credit state, so the P1 decision should precede the W16 COD gate build."
+    },
+    {
+      "bistrack_entity": "EDI",
+      "bistrack_tables": ["(28 EDI tables, ~122K rows; not enumerated in extract fragment)"],
+      "hardscapeos_domain": "edi",
+      "transformation_notes": "EDI is live at Dibbits. Re-onboard Tier 1 vendors natively (A-11, M4-W15) with UAT per partner; historical EDI documents archive. Enumerate the 28 tables in the next extract pass to identify partner configs vs document logs."
+    },
+    {
+      "bistrack_entity": "Pricing",
+      "bistrack_tables": ["(56 price-list tables; not enumerated in extract fragment)", "ProductPriceHistory2", "OrderLinePriceInfo"],
+      "hardscapeos_domain": "product (price lists) + sales (line pricing) + reporting (history)",
+      "transformation_notes": "Price-list-driven: migrate current/effective price lists with the catalog (M4-W14); the A-07 Pricing Configurator (M1-W3) owns rule mechanics natively. ProductPriceHistory2 (463,668 rows, note the '2' version suffix, verify it is the authoritative copy) archives; A-08 Price Change Log starts fresh. OrderLinePriceInfo's 87-column breakdown defines the pricing-trace fields quoting must preserve."
+    }
+  ],
+  "anomalies": [
+    {
+      "id": "BT-A-001",
+      "severity": "BLOCKER",
+      "finding": "UoM conversion coverage gap: PerConversion holds 42 rows against 4,779 products (Per master: 1,454 UoMs). UoM auto-conversion, the core selling motion for hardscape (pallet <-> piece <-> sq-ft <-> ton), fails for virtually the entire catalog without massive seeding.",
+      "evidence": "SchemaInventory.md Cover ('CRITICAL DATA-QUALITY FLAGS: PerConversion has only 42 rows for 4,779 products') + Subsystem Summary ('Per (1,454) + PerConversion (only 42 rows!) ... SEVERE coverage gap'); BiTrackMapping row 8 rated High risk; Inventory-Migration WS1 makes UoM normalization a gate that 'blocks everything'. Nuance: Per-subsystem total is 8,753 rows, implying ~7,257 rows in PerRule/PerRuleConversion, rule-based conversion may carry part of the real logic and must be characterized before sizing the seeding effort.",
+      "recommended_action": "G2: characterize PerRule/PerRuleConversion semantics (and the relevant proc bodies) to determine true coverage; then execute the WS1 seeding plan, bulk import tool + AI-assisted factor population + admin audit UI (Active #8), with the acceptance gate 'every active product has a base UoM and >=1 selling UoM with a verified factor' BEFORE catalog migration (M4-W14). Start no later than M3.",
+      "owner_decision_needed": true
+    },
+    {
+      "id": "BT-A-002",
+      "severity": "HIGH",
+      "finding": "Inventory valuation method (FIFO vs weighted-average vs standard cost) is unconfirmed with Dibbits, yet it dictates the entire cost-layer migration design (WS3, the hardest workstream).",
+      "evidence": "Inventory-Migration WS3 ('Valuation method confirmation, confirm with Dibbits... determines whether we migrate individual cost layers or collapse to a single average cost') and Open Question #1.",
+      "recommended_action": "Get the answer from Amanda (financials SME) before G2 freezes the inventory cost model; design the cost-layer schema to support both layer-based and average costing if the answer slips.",
+      "owner_decision_needed": true
+    },
+    {
+      "id": "BT-A-003",
+      "severity": "HIGH",
+      "finding": "StockValuationData is 3,973,238 rows of FIFO cost-layer history, most of it presumably fully consumed layers; migrating it wholesale is infeasible and unnecessary, but the pruning rule and history-retention depth are undecided.",
+      "evidence": "SchemaInventory All Tables row 2 (3,973,238 rows, 12 cols); Inventory-Migration WS3 ('migrate only the active cost layers (remaining quantity > 0)'; historical cost options a/b/c undecided).",
+      "recommended_action": "Prune to active layers; reconcile total valuation vs rpt2201BusinessAdvisorProductValuation within $100 and 0.1%; get owner sign-off on history depth (recommend: active layers only, full history in read-only archive).",
+      "owner_decision_needed": true
+    },
+    {
+      "id": "BT-A-004",
+      "severity": "HIGH",
+      "finding": "Negative stock balances are expected in BisTrack (mis-sequenced transactions accumulate them) and cannot be migrated; volume at Dibbits is unquantified.",
+      "evidence": "Inventory-Migration WS2 ('BisTrack systems commonly accumulate negative stock balances... you can't migrate a -47 pallet count'); WS2 acceptance requires zero negative balances in target.",
+      "recommended_action": "Run a negative-balance scan in the next extract pass to quantify; resolve every negative in BisTrack before snapshot (adjustment policy needs ops sign-off); pair with the WS6 pre-cutover physical count.",
+      "owner_decision_needed": true
+    },
+    {
+      "id": "BT-A-005",
+      "severity": "HIGH",
+      "finding": "Product has no clean IsActive flag, so the active-vs-dead split of 4,779 SKUs (the very first migration filter) must be inferred, and duplicate SKUs are expected from organic growth.",
+      "evidence": "Inventory-Migration WS1 ('BisTrack has no clean IsActive flag, requires cross-referencing StockTransaction recency and OrderLine activity'; duplicate detection called out).",
+      "recommended_action": "Define the activity heuristic (e.g., stock movement or order line within trailing 24 months OR on-hand > 0), produce the candidate dead-SKU list, and have Ryan B. (inventory SMEs) ratify it; flag-don't-delete discontinued SKUs for historical order reference.",
+      "owner_decision_needed": true
+    },
+    {
+      "id": "BT-A-006",
+      "severity": "HIGH",
+      "finding": "168,395 OrderLineUDF rows sit in a 1-column table (opaque packed/blob UDF storage) holding 50-60 actively used business fields (manufacturer, collection, finish, color, coverage) that must become first-class product columns before any catalog or inventory migration.",
+      "evidence": "SchemaInventory All Tables row 15 (OrderLineUDF, 1 column, 168,395 rows); Inventory-Migration WS1 attribute promotion ('scoped as A-18 but must complete BEFORE inventory migration').",
+      "recommended_action": "A-18 ETL (scheduled M1-W2): parse the UDF payload format, inventory the distinct fields, confirm the 50-60 live-field list with Dibbits, promote to migration-051 facet columns; treat unparsed remainders as metadata JSONB.",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-007",
+      "severity": "HIGH",
+      "finding": "1,885 stored procedures exist but only 100 bodies were extracted; business rules for GL export shaping, COD/credit behavior, stock costing, and locking may live in the ~1,785 unexamined procs.",
+      "evidence": "SchemaInventory Cover ('Stored procedures 1,885; Procs body extracted 100 (matching high-risk subsystems)').",
+      "recommended_action": "Targeted second extraction pass during G2 keyed to open questions: GLExport*/GP posting procs, OrderPayment/COD procs, StockValuation costing procs, LockHold lifecycle procs, PerRule conversion procs. Do not finalize the finance or inventory data model on table shapes alone.",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-008",
+      "severity": "HIGH",
+      "finding": "M9 bi-directional sync architecture assumes WebTrack supports incremental queries (?since= / ?modified_since=), which is still unverified; without it, every 15-minute cycle becomes a full-table pull.",
+      "evidence": "m9-bistrack-sync.md Critical Assumption #2 ('needs verification. [Validate by: code spike, open]') and top risk ('WebTrack API has undocumented quirks, High/High').",
+      "recommended_action": "Run the code spike against a WebTrack sandbox in week 1 of M9 work (M2-W8 per roadmap); if unsupported, fall back to full-pull + local diffing at a reduced cadence and re-size the sync budget. CSV export/import is the documented last resort.",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-009",
+      "severity": "HIGH",
+      "finding": "626 of 1,240 tables (50.5%, ~1.1M rows) are bucketed as 'Other', unclassified, and demonstrably include operational data: Permission (218,448 rows), SalesAnalysis2/3 (170K/167K), ScanTrackImage (125,534), rpt2201 valuation snapshot (68,956). The migration surface is not fully mapped.",
+      "evidence": "SchemaInventory Subsystem Summary ('Other | 626 | 1106720') + All Tables rows 8, 11, 16, 25, 31.",
+      "recommended_action": "G2 classification pass over the full 1,240-table list (needs the source xlsx or a re-dump): bucket by row count > 0 and FK proximity to mapped subsystems; explicitly disposition every table with > 1,000 rows. Until then, treat subsystem totals as floors, not ceilings.",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-010",
+      "severity": "MEDIUM",
+      "finding": "Customer_BAK_241031, an 8,408-row backup copy of Customer from 2024-10-31, sits in production. Blind schema-walk migration would nearly double the customer base with 7-month-stale duplicates; its presence also signals ad-hoc DBA table copies elsewhere.",
+      "evidence": "SchemaInventory Cover critical flag ('Customer_BAK_241031 (8,408 rows), 2024-10-31 customer backup table left in production. Audit before...'); live Customer = 8,485 rows (delta of 77 customers since the backup). Inventory-Migration WS7: 'Do NOT migrate.'",
+      "recommended_action": "Add to the hard exclusion list; diff against live Customer once as a cheap data-quality audit (the 77-row delta bounds churn since Oct 2024); sweep the full table list for other *_BAK / date-suffixed copies and exclude them all.",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-011",
+      "severity": "MEDIUM",
+      "finding": "PickingNoteHeader has 0 rows, the entire Pick subsystem (8 tables, including PickingNoteLine, PickingNoteItem, OrderPickingHistory, HandheldPickingNoteLine) is unused at Dibbits.",
+      "evidence": "SchemaInventory Cover flag + Subsystem Summary ('Pick | 8 | 0'); BiTrackMapping row 7 ('PickingNoteHeader (0 ROWS, UNUSED)').",
+      "recommended_action": "Nothing to migrate. Design Active #7 picking/pallet workflows greenfield (the empty BisTrack shapes are reference only); plan yard training accordingly since staff have never run a system pick workflow.",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-012",
+      "severity": "MEDIUM",
+      "finding": "ProductPack has 0 rows, pallet/pack tracking (8 tables) is unused, despite pallets being the physical core of a hardscape yard.",
+      "evidence": "SchemaInventory Cover flag + Subsystem Summary ('Pack | 8 | 0, pallet tracking not currently used').",
+      "recommended_action": "Treat Active #7 pallet/load tracking as net-new capability with no legacy data: PalletScan/LoaderConfirm/DiscrepancyFlag designed fresh; pallet_count on products comes from promoted UDF attributes, not Pack tables.",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-013",
+      "severity": "MEDIUM",
+      "finding": "The 30-table Delivery/Dispatch subsystem holds 64 total rows, effectively empty, while real dispatch runs through Journey/Manifest (JourneyHeader 9,596 rows). The obvious-looking tables are the wrong model to copy.",
+      "evidence": "SchemaInventory Subsystem Summary ('Delivery / Dispatch | 30 | 64' vs 'Journey / Manifest | 21 | 34,962'); BiTrackMapping P2/P3 point at Delivery + Journey tables jointly.",
+      "recommended_action": "Model HardscapeOS logistics on Journey*/JourneyStop semantics; carry over only the Delivery* lookup masters (DeliveryTime/DeliveryOption/DeliveryArea) that OrderHeader FKs; confirm with Dibbits why delivery notes are unused (likely superseded by journey paperwork).",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-014",
+      "severity": "MEDIUM",
+      "finding": "Manifest infrastructure exists only as 4 report views (rptJourneyManifestHeader/Pack/NALine/RB...), not physical tables, there is no persisted manifest entity to migrate or version, yet MTO compliance (Active #1) requires durable, versioned manifests.",
+      "evidence": "SchemaInventory Cover ('Manifest infrastructure EXISTS as 4 views'); BiTrackMapping row 1 ('PROMOTE the four manifest views to first-class objects (Manifest, ManifestVersion). ADD MTOClassi...').",
+      "recommended_action": "G2: design Manifest + ManifestVersion as first-class tables with MTO classification fields; extract the 4 view definitions in the next pass so the projection logic (what BisTrack considers a manifest line/pack) is reproduced exactly.",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-015",
+      "severity": "MEDIUM",
+      "finding": "Internal inconsistency in the extract: the Payment subsystem reports 25 tables / 166 total rows, yet its own note (and the scope mapping) cite OrderPayment at 40,954 rows, OrderPayment is evidently classified under Order. Subsystem totals cannot be trusted as table-location guides for COD work.",
+      "evidence": "SchemaInventory Subsystem Summary ('Payment | 25 | 166 | OrderPayment (40,954 rows). CashOnDeliveryPayment bit lives here.'); same pattern: ProductPriceHistory2 (464K) cited in the Pricing note but classified under Product/Item (All Tables row 5).",
+      "recommended_action": "Treat subsystem assignment as advisory; resolve every key table's real identity from the full table list during G2. For COD (Active #3, M4-W16), source from OrderPayment regardless of bucket.",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-016",
+      "severity": "MEDIUM",
+      "finding": "Extreme table width at the heart of the migration: OrderHeader 241 columns, OrderLine 187, AccountsInvoiceExportLine 62, OrderLinePriceInfo 87, Product 189. The order/quote mapping alone covers ~600 columns of denormalized state.",
+      "evidence": "SchemaInventory All Tables rows 13, 14, 9, 34 and Subsystem Summary (Product 189 cols).",
+      "recommended_action": "Budget G2 mapping time accordingly; produce a column-level disposition sheet (map / derive / drop / archive) for OrderHeader + OrderLine before writing ETL; the verified header fragment proves real column widths must come from INFORMATION_SCHEMA, not proc signatures.",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-017",
+      "severity": "MEDIUM",
+      "finding": "StockAllocation (66,930 rows) likely contains stale allocations against orders cancelled, expired, or fulfilled years ago; migrating them would corrupt available-to-sell math from day 1.",
+      "evidence": "Inventory-Migration WS7 ('likely contains allocations against orders that were cancelled, expired, or fulfilled years ago') and WS4 reconciliation requirement.",
+      "recommended_action": "Migrate only allocations whose parent order is open/non-invoiced; reconcile allocated-quantity-per-product between systems as a WS4 acceptance gate (available-to-sell must match).",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-018",
+      "severity": "MEDIUM",
+      "finding": "Inventory migration is 66-96 hours across 7 interdependent workstreams, but the master plan carried it as a single ~2-week 'Migration Script V1' line item; the cleanup prerequisites (WS1/WS7) must start in M3 (Aug), a month with no migration budget.",
+      "evidence": "Inventory-Migration effort summary + IMPORTANT callout ('cannot fit into 2 weeks alongside other feature work... starting in Month 3 (August)'); roadmap.yaml M4 W14/W16 are the only migration weeks.",
+      "recommended_action": "Commander decision: pull WS1 (catalog/UoM cleanup) and WS7 (exclusion lists) forward into M3 alongside W9-W12 feature work, or accept right-shift risk to the M4 gate ('Dry Run #2 data integrity >98%'). Reflect in the Master Checklist.",
+      "owner_decision_needed": true
+    },
+    {
+      "id": "BT-A-019",
+      "severity": "MEDIUM",
+      "finding": "ScanTrackImage holds 125,534 rows x 24 columns, almost certainly scanned document/image payloads (PODs, signatures, tickets) stored in-database. Unaddressed, this is a silent multi-GB blob migration with retention/legal implications; ignored, it strands delivery evidence.",
+      "evidence": "SchemaInventory All Tables row 25; table is bucketed 'Other' and appears in no workstream.",
+      "recommended_action": "Characterize in the next extract pass (column types, avg payload size, linkage to orders/journeys); decide: migrate to object storage, keep in read-only archive with a lookup link from HardscapeOS, or drop. Retention requirement needs Dibbits input.",
+      "owner_decision_needed": true
+    },
+    {
+      "id": "BT-A-020",
+      "severity": "MEDIUM",
+      "finding": "GLExportRule contains 386,815 rows, transaction-scale volume for a table named like configuration. The BisTrack->Great Plains posting mechanism is not understood at the level required to reproduce it on Day 1 (which is cutover-blocking under dual-track A-01).",
+      "evidence": "SchemaInventory All Tables row 6 (GLExportRule, 7 cols, 386,815 rows) alongside GLExport (181,249) and GeneralLedgerExportLine (165,838); A-01 confirms GP integration mechanism/posting depth still open discovery.",
+      "recommended_action": "Prioritize GL export procs in the BT-A-007 extraction pass; sample GLExportRule rows to determine whether it is per-transaction account mapping, staging, or log; schedule the A-01 GP walkthrough (mechanism: eConnect/Integration Manager/flat file; summary vs detail) with Amanda before G2 finance modeling closes.",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-021",
+      "severity": "MEDIUM",
+      "finding": "CustomerBalanceHistory is 11,665,740 rows (3 columns), the largest table in the database, but is balance history, not open AR; wholesale migration would dominate ETL runtime for no operational value.",
+      "evidence": "SchemaInventory All Tables row 1; Customer subsystem note ('11.6M-row CustomerBalanceHistory').",
+      "recommended_action": "Compute AR opening balances per customer at snapshot time; leave the history in the read-only archive. Confirm with Amanda how much balance/statement history the finance team needs queryable post-cutover.",
+      "owner_decision_needed": true
+    },
+    {
+      "id": "BT-A-022",
+      "severity": "MEDIUM",
+      "finding": "The central Audit table holds 2,999,981 rows (plus AuditDetailChar/Num/Type/Group satellites; subsystem total 3.21M). Migrating it would pollute the native audit_log and bloat the cutover; not retaining access to it loses the compliance trail.",
+      "evidence": "SchemaInventory All Tables row 3 + Subsystem Summary (Audit 13 tables / 3,214,953 rows); Inventory-Migration WS7 ('reference-only, don't migrate... keep BisTrack accessible as a read-only archive for 12 months post-cutover').",
+      "recommended_action": "Do not migrate; stand up the read-only BisTrack archive (already implied by the M6-W24 decommission-confirmation gate) and get Dibbits' written agreement on the 12-month retention window.",
+      "owner_decision_needed": true
+    },
+    {
+      "id": "BT-A-023",
+      "severity": "MEDIUM",
+      "finding": "Six operational unknowns that shape the G2 inventory/locations model and the cutover runbook are still unanswered: valuation method, bin-level vs branch-level tracking, lot/serial tracking, transaction-history depth, freeze-window tolerance, and last-physical-count recency.",
+      "evidence": "Inventory-Migration 'Open Questions for Dibbits' #1-#6.",
+      "recommended_action": "Put all six on the next SME breakaway call (Amanda for #1; Ryan B. for #2/#3/#6; ops for #4/#5); G2 should not freeze the locations/lot model before #2 and #3 are answered.",
+      "owner_decision_needed": true
+    },
+    {
+      "id": "BT-A-024",
+      "severity": "LOW",
+      "finding": "RESOLVED: column widths read from the .bak header fragment were stored-procedure parameter widths, not real column widths (e.g., DeliveryPostCode appeared varchar(5); real column is varchar(50), Canadian postal codes fit). Cross-cutting risk C2 closed.",
+      "evidence": "SchemaInventory 'Verified Header Fragment' table (all 9 rows verified against the restore; PaymentTermsID identity also confirmed there).",
+      "recommended_action": "None, closed. Process rule going forward: only INFORMATION_SCHEMA widths from the verified dump are authoritative.",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-025",
+      "severity": "LOW",
+      "finding": "Quote subsystem tables (QuoteRank, ItemQuoteStatus, +1) hold 0 data rows, they are tracking lookups; real quotes are OrderHeader rows. Any tool that 'migrates quotes' from Quote tables migrates nothing.",
+      "evidence": "SchemaInventory Cover ('Quotes are NOT separate tables') + Subsystem Summary ('Quote | 3 | 0 ... True quote data lives in OrderHeader').",
+      "recommended_action": "Encode in ETL and M9 sync mappers: quote extraction filters OrderHeader by OrderType; QuoteRank/ItemQuoteStatus crosswalk as lookups only.",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-026",
+      "severity": "LOW",
+      "finding": "Hire subsystem (3 tables) is empty, no equipment-rental business in BisTrack; out of Phase 1 scope.",
+      "evidence": "SchemaInventory Subsystem Summary ('Hire | 3 | 0').",
+      "recommended_action": "Exclude; one-line confirmation with Dibbits that no rental line of business is planned for go-live.",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-027",
+      "severity": "LOW",
+      "finding": "Version-suffixed table cruft beyond the BAK table: ProductPriceHistory2, SalesAnalysis2 AND SalesAnalysis3 coexist (170K and 167K rows), superseded copies likely linger, and the authoritative version per family is unproven.",
+      "evidence": "SchemaInventory All Tables rows 5, 11, 16.",
+      "recommended_action": "During the BT-A-009 triage pass, identify base/older versions (ProductPriceHistory without suffix? SalesAnalysis 1?) and prove which copy current BisTrack code writes to (proc references) before using any as a migration or velocity-seed source.",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-028",
+      "severity": "LOW",
+      "finding": "Doc drift across the sync spec lineage: the bistrack sync migration is numbered 053 (M9 §04), 055 (ARCHITECTURE.md), and 074 (applied per M9 §07); sync cadence is 'every 5 minutes' in ARCHITECTURE §2.3 vs the 15-minute floor in M9 NFRs; the Go module exists only in the old fork and is not yet ported.",
+      "evidence": "m9-bistrack-sync.md §04 migrations table, §07 ('Migration 074... applied (schema only)'; module port pending); ARCHITECTURE.md §2.3 + §3.1 (055_bistrack_sync.sql).",
+      "recommended_action": "Treat M9 §07 (074, 15-min cadence, port pending) as current truth; reconcile ARCHITECTURE.md during G2 so the schema blueprint references one migration number.",
+      "owner_decision_needed": false
+    },
+    {
+      "id": "BT-A-029",
+      "severity": "LOW",
+      "finding": "Verification ceiling of this map: the raw 3.0 GB .bak and the source xlsx (full 1,240-row table list) are not in the workspace; SchemaInventory.md carries only the top 34 tables by row count, so per-table figures outside that fragment are notes-derived.",
+      "evidence": "SchemaInventory.md '...1206 more rows, see source xlsx'; workspace search confirms no .bak/.xlsx present.",
+      "recommended_action": "For G2, either land the xlsx in the repo (docs/legacy/) or re-run restore_and_dump.sh to emit a CSV of all 1,240 tables; this also unblocks the BT-A-009 triage.",
+      "owner_decision_needed": false
+    }
+  ]
+}

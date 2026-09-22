@@ -1,0 +1,6 @@
+[
+  {"BisTrackID":"C1","SourceTable":"Customer","AccountNo":"A-100","Name":"Acme Landscaping","OnHold":true,"UpdatedAt":"2026-05-01T10:00:00Z"},
+  {"BisTrackID":"C2","SourceTable":"Customer","AccountNo":"A-200","Name":"NewCo","OnHold":false,"UpdatedAt":"2026-05-01T10:00:01Z"},
+  {"BisTrackID":"C3","SourceTable":"Customer_BAK_241031","AccountNo":"A-100","Name":"Acme (stale backup)","OnHold":true,"UpdatedAt":"2024-10-31T00:00:00Z"},
+  {"BisTrackID":"C4","SourceTable":"Customer","AccountNo":"","Name":"","OnHold":false,"UpdatedAt":"2026-05-01T10:00:02Z"}
+]

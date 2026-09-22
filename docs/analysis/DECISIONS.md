@@ -208,6 +208,24 @@ Touches: HH-4 (one implementation in the design system), HH-6 through HH-10 (eve
 
 **D39 (ERP migrations numbered past the D33 pin).** The ERP's own migrations 0213 through 0219, and any later ones, are ported by HH-3.7 through its existing door, each as a ported or deferred decision, and take the next free numbers in core's sequence. `core/db/PORTED.md` records each ERP number beside its core number. Core's frozen additive migrations are never renumbered. Before HH-5 puts the ERP and the core on one database, HH-3.7 reports how each migration runner records what it has applied, so two histories with overlapping numbers cannot share one tracking table.
 
+**D40 (the Registrar re-pin).** Ratified and split from the fold's combined entry by the Phase C integration review ruling (r1), held at `context/phase-c-integration-ruling-r1.md` in the session workspace, whose section 4(a) is the ratification: the settled registration signature's first parameter becomes the platform Registrar interface, a Phase B input a lane amended and the ruling now makes official.
+
+The Registrar re-pin, applied per the B3 review's items 1 and 2: the one-method registration seam (`Handle(pattern string, h http.Handler)`) is a platform type (`core/internal/platform/httpx`, `registrar.go`), with `type Registrar = httpx.Registrar` left beside the identity shims so real modules never depend on shims for a type; every ported module's exported registrar declares `RegisterRoutes(r Registrar, g *guards.Guards, owned <collaborator>)` as the official interface form, callers passing a concrete `*http.ServeMux` compile unchanged, and every production registration lands inside `registerRoutes` (`core/cmd/core/main.go`), never on a privately constructed mux, with the ServeMux duplicate-registration panic as the shim-removal backstop.
+
+Touches: `core/internal/platform/httpx/registrar.go`, every carried module registrar, `core/cmd/core` (registerRoutes), `docs/analysis/DECISIONS.md`.
+
+**D41 (the driver session ceiling's no-fallback read).** Ratified and split by the same ruling, whose section 4(b) is the ratification, given knowing the consequence: an unreadable dispatch_policy row locks drivers out rather than giving them a working session, a user-visible behaviour change during the strangler that is Colton's yes, not a lane's.
+
+The driver session ceiling's knob read has no fallback arm, upholding B2-07 against the ERP's behaviour: the ceiling reads the `dispatch_policy` dealer-default row at enforcement time and refuses on every uncomputable arm (the 503 family), where the ERP's login-time read fell back to the twelve-hour constant on every error. Authority is B2-07, whose operative sentence is "the default arm refusing when the check cannot be computed"; no later change may reintroduce a fallback on this read.
+
+Touches: `core/cmd/core` (the knob wiring), `docs/analysis/DECISIONS.md`.
+
+**D42 (the position-cursor convention).** Ratified and split by the same ruling, whose section 4(c) finds it minor and correctly recorded.
+
+The yard pending-tickets feed's cursor is a position token, not a row key, recorded as that endpoint's convention difference in `core/api/CONVENTIONS.md` (the Pagination section's position-cursor sentence); HH-3.4's conformance work meets it recorded, and a row key there would be a seam redesign with its own review, ordered above both lanes.
+
+Touches: `core/api/CONVENTIONS.md` (the Pagination section's position-cursor sentence), `docs/analysis/DECISIONS.md`.
+
 ## Carried as verification, not decided
 
 Whether Appwrite Team memberships surface as OIDC claims stays a S2 check. D3 stands either way: if claims are absent, a Function enriches userinfo and the engine resolves the coarse gate from Team membership by lookup.

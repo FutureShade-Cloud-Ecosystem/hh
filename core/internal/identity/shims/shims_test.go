@@ -69,6 +69,7 @@ func (p *portalSrc) PortalRole(context.Context, string, string) (string, bool, e
 
 type shimFixture struct {
 	keys   *rsa.PrivateKey
+	g      *guards.Guards
 	mux    *http.ServeMux
 	rec    *Recorder
 	staff  *staffSrc
@@ -101,9 +102,11 @@ func newShimFixture(t *testing.T, tier int, roleID, scope string) *shimFixture {
 	if err != nil {
 		t.Fatalf("NewGuards: %v", err)
 	}
+	f.g = g
 	f.mux = http.NewServeMux()
 	f.rec = NewRecorder(64)
 	RegisterRoutes(f.mux, g, f.rec)
+	RegisterSupersededProofRoutes(f.mux, g, f.rec)
 	return f
 }
 
@@ -144,8 +147,9 @@ func (f *shimFixture) do(t *testing.T, method, path, bearer string, header map[s
 	return rec
 }
 
-// The RegisterRoutes signature exercised end to end: the five order
-// lifecycle routes behind their contract x-role classes, the tenant set,
+// The registrars exercised end to end: the five order
+// lifecycle routes behind their contract x-role classes (the superseded
+// proof registrar, exactly as the acceptance harness registers it), the tenant set,
 // the two sync operations under both bearers, the public operation with
 // and without an org header (the G4 public non-rule), and the
 // capability-qualified portal operation in both directions.
@@ -185,7 +189,7 @@ func TestRegisterRoutesExercised(t *testing.T) {
 	// The tenant set.
 	for _, c := range []struct{ method, path, op string }{
 		{http.MethodGet, "/api/v1/tenant/me", "tenantGetMe"},
-		{http.MethodPatch, "/api/v1/tenant/me", "tenantUpdateMe"},
+		{http.MethodPut, "/api/v1/tenant/me", "tenantUpdateMe"},
 		{http.MethodPost, "/api/v1/tenant/token/refresh", "tenantRefreshToken"},
 	} {
 		if got := f.do(t, c.method, c.path, tenant, nil).Code; got != http.StatusOK {
@@ -260,5 +264,54 @@ func TestRecorderBounded(t *testing.T) {
 	}
 	if len(rec.Entries()) != 2 {
 		t.Fatalf("Entries is not a copy")
+	}
+}
+
+// TestRegisterRoutes_ServedSetExcludesSuperseded pins the S-3 removal: the
+// served registrar answers none of the operationIds the real modules
+// registered (the five order lifecycle routes and the public quote view
+// from the money-spine batch; the tenant me pair and the invoices read
+// from the portal re-homing). A re-added entry would collide with the real
+// module's pattern on the serve mux and panic at boot; this test catches
+// it in the suite instead, naming the operation.
+func TestRegisterRoutes_ServedSetExcludesSuperseded(t *testing.T) {
+	f := newShimFixture(t, identity.TierFrontline, "inside_sales", identity.ScopeBranch)
+	staff := f.token(t, fxStaffAud)
+	xorg := map[string]string{authz.HeaderXOrg: fxOrgSlug}
+	tenant := f.token(t, fxTenaAud)
+	served := http.NewServeMux()
+	RegisterRoutes(served, f.g, f.rec)
+	staffCases := []struct{ method, path, op string }{
+		{http.MethodGet, "/api/v1/orders/b3-order-1", "orderRead"},
+		{http.MethodPost, "/api/v1/orders/b3-order-1/confirm", "orderConfirm"},
+		{http.MethodPost, "/api/v1/orders/b3-order-1/picking", "orderMarkPicking"},
+		{http.MethodPost, "/api/v1/orders/b3-order-1/ready", "orderMarkReady"},
+		{http.MethodPost, "/api/v1/orders/b3-order-1/cancel", "orderCancel"},
+		{http.MethodGet, "/api/public/v1/quotes/fx-quote-token", "quotePublicViewQuote"},
+	}
+	for _, c := range staffCases {
+		req := httptest.NewRequest(c.method, c.path, nil)
+		req.Header.Set("Authorization", "Bearer "+staff)
+		for k, v := range xorg {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		served.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: served shim set still answers %d, want 404 (the real module owns the pattern)", c.op, rec.Code)
+		}
+	}
+	for _, c := range []struct{ method, path, op string }{
+		{http.MethodGet, "/api/v1/tenant/me", "tenantGetMe"},
+		{http.MethodPut, "/api/v1/tenant/me", "tenantUpdateMe"},
+		{http.MethodGet, "/api/v1/tenant/invoices", "tenantListInvoices"},
+	} {
+		req := httptest.NewRequest(c.method, c.path, nil)
+		req.Header.Set("Authorization", "Bearer "+tenant)
+		rec := httptest.NewRecorder()
+		served.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: served shim set still answers %d, want 404 (the portal module owns the pattern)", c.op, rec.Code)
+		}
 	}
 }

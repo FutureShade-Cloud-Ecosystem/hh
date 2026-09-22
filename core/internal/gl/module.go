@@ -1,0 +1,388 @@
+// Package gl is the W5 A-01 General Ledger module: chart of accounts, journal lifecycle (maker-checker),
+// the transactional-outbox posting consumer, trial balance + subledger tie-out, period/year close, and the
+// GP-parity export. It EVOLVES the 0007 GL block (gl_accounts / gl_journals / gl_journal_lines /
+// posting_rules / fiscal_periods) with the 0032 additions (idempotency_key, gl_policy, tie-out state, …).
+//
+// SCAFFOLD STATUS: this file freezes the exported types, the consumer-defined seam interfaces, and the
+// provider method signatures that bankrec/finstmt/main.go depend on. Bodies are errNotImplemented stubs so
+// the tree compiles + boots; worker W5-A01 fills them (PostExternal + GLBalanceCents must go real early -
+// bankrec depends on them). Signatures are FROZEN, a worker fills a body, never changes a signature.
+//
+// TOPIC → POSTING_RULES.event_type MAPPING (frozen; mirrored in migration 0032's header):
+//
+//	'ar.invoice.finalized'  → 'invoice.finalized'   (the 0007 legacy key, its rules already live there)
+//	every other outbox topic → its LITERAL topic name (0032 seeds the new rules under the topic names)
+//
+// The two-name scheme is recorded here AND in the migration so a literal-topic posting-rules lookup can
+// never silently resolve to zero rules. The eight consumed topics are the RegisterPostingHandlers set.
+//
+// order.fulfilled PAYLOAD CONTRACT (frozen for the W6 inventory cross-wave):
+//
+//	{order_id, branch_id, lines:[{product_id, qty_base}]}
+//
+// The consumer calls CostBasis per line against posting_rules {cogs:5000, inventory:1200}. CostBasis is
+// dormant at W5 (main.go wires NoopCostBasis, found=false); the real impl arrives with W6 inventory.
+package gl
+
+import (
+	"context"
+	"errors"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	"log/slog"
+	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+)
+
+// errNotImplemented marks a scaffold stub the A-01 worker fills. Every method below returns it until then.
+var errNotImplemented = errors.New("gl: not implemented (scaffold stub)")
+
+// - consumer-defined seam interfaces (declared here; adapters live in the sibling modules) -
+
+// InvoiceReader resolves the finance facts of a finalized invoice for the ar.invoice.finalized posting.
+// Satisfied by *billing.Repository via internal/billing/gl_seam.go (same-package pool access).
+type InvoiceReader interface {
+	InvoiceForGL(ctx context.Context, invoiceID string) (InvoiceAmounts, error)
+}
+
+// InvoiceAmounts is the finance projection of an invoice used to build its journal legs.
+type InvoiceAmounts struct {
+	SubtotalCents int64
+	TaxCents      int64
+	TotalCents    int64
+	HoldbackCents int64
+	BranchID      string
+	CustomerID    string
+	InvoiceNo     string
+	FinalizedAt   time.Time
+}
+
+// TaxSplitReader resolves the FN relief split (full HST / on-credit / net collected) recorded on the sale's
+// tax_decision_snapshot, for the tax.relief.assessed posting. Satisfied by *pos.Repository (gl_seam.go).
+type TaxSplitReader interface {
+	TaxSplit(ctx context.Context, orderID string) (full, onCredit, net int64, found bool, err error)
+}
+
+// ARSubledger returns the AR subledger balance as-of a date for the 1100 tie-out. Satisfied by
+// *billing.Repository (gl_seam.go). A branchID of "" means the consolidated balance.
+type ARSubledger interface {
+	ARBalanceCents(ctx context.Context, asOf time.Time, branchID string) (int64, error)
+}
+
+// PaymentReader resolves the branch/customer/method/status facts of a payment. REQUIRED: the pos
+// payment.received payload carries no branch/invoice, so the consumer resolves the facts here and chooses
+// the 1010 (card clearing) / 1020 (undeposited) / 1000 (bank) leg. Satisfied by *till.Repository.
+type PaymentReader interface {
+	PaymentForGL(ctx context.Context, paymentID string) (PaymentFacts, error)
+}
+
+// PaymentFacts is the finance projection of a payment used to pick its debit leg + branch-stamp.
+type PaymentFacts struct {
+	BranchID    string
+	CustomerID  string
+	Method      string
+	Status      string
+	AmountCents int64
+}
+
+// CostBasis returns the unit cost for a fulfilled line (order.fulfilled → COGS). Dormant at W5: NoopCostBasis
+// returns found=false so the COGS leg is skipped until the W6 inventory module supplies a real cost basis.
+type CostBasis interface {
+	UnitCostCents(ctx context.Context, productID string, qtyBase float64) (int64, bool, error)
+}
+
+// DeadRequeuer re-queues DEAD outbox rows for the named topics (the boot-time replay of pre-W5 rows that
+// were emitted before a handler existed). Satisfied by *notify.PgOutboxStore (internal/notify/requeue.go).
+type DeadRequeuer interface {
+	RequeueDead(ctx context.Context, topics []string) (int, error)
+}
+
+// ApprovalFiler is GL's nil-able approvals-rail seam (0075). When CreateJournal parks a MANUAL journal as
+// DRAFT (at/over the shipped gl_policy maker-checker threshold), GL best-effort files a JE_OVER_THRESHOLD
+// approval request through this seam so the rail fans out approval cards. The adapter (main.go) wraps
+// identity.Service.FileJEApproval. Log-and-continue: parking NEVER depends on it, a rail/identity blip
+// must not fail a journal write, and nil (unwired) is byte-identical to the shipped park behavior.
+type ApprovalFiler interface {
+	FileJEApproval(ctx context.Context, journalID, branchID string, amountCents int64, createdBy string) error
+}
+
+// NoopCostBasis is the dormant W5 cost-basis seam: it always reports "no cost basis" (found=false) so the
+// COGS leg of an order.fulfilled posting is skipped until the W6 inventory module supplies a real one. The
+// scaffold wires this into glSvc; W6 swaps in the inventory-backed impl.
+type NoopCostBasis struct{}
+
+// UnitCostCents always returns found=false (dormant).
+func (NoopCostBasis) UnitCostCents(ctx context.Context, productID string, qtyBase float64) (int64, bool, error) {
+	return 0, false, nil
+}
+
+// - provider types (bankrec passes these into PostExternal) -
+
+// ExternalJournal is a caller-built journal posted through the GL provider seam. Source uses the 0007 CHECK
+// set (MANUAL/INVOICE/PAYMENT/FULFILLMENT/PO_RECEIPT/ADJUSTMENT/CLOSING); bankrec passes "ADJUSTMENT".
+// IdempotencyKey de-dupes a replayed post (gl_journals.idempotency_key partial-unique, 0032).
+type ExternalJournal struct {
+	Source         string
+	SourceRefID    string
+	IdempotencyKey string
+	Memo           string
+	BranchID       string
+	Lines          []ExternalLine
+}
+
+// ExternalLine is one leg of an ExternalJournal, addressed by account code (resolved to account_id on post).
+type ExternalLine struct {
+	AccountCode string
+	DebitCents  int64
+	CreditCents int64
+	Memo        string
+}
+
+// - repository -
+
+// Repository is the GL pgx access layer. It reads/writes ONLY GL-owned tables (the 0007 block + 0032
+// additions) and the 0034 balance views. A nil pool is tolerated (scaffold/offline mode).
+type Repository struct {
+	pool *pgxpool.Pool
+}
+
+// NewRepository wraps a pool (may be nil in scaffold mode).
+func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
+
+// - service -
+
+// Service is the GL domain seam. It owns the journal lifecycle, the posting consumer, tie-out, and close.
+// Sibling seams are injected via the With* builder options (main.go wires the real adapters).
+type Service struct {
+	repo          *Repository
+	store         glStore
+	invoices      InvoiceReader
+	taxSplits     TaxSplitReader
+	ar            ARSubledger
+	payments      PaymentReader
+	costBasis     CostBasis
+	dead          DeadRequeuer
+	audit         audit.Recorder
+	approvalFiler ApprovalFiler // 0075: nil-able JE park → approvals-rail filing seam
+	log           *slog.Logger
+	now           func() time.Time
+	callerFrom    func(context.Context) (identity.StaffContext, bool)
+}
+
+// NewService wires the repository. Optional deps are injected via the With* methods. The repository is the
+// default glStore (the pgx access layer); unit tests swap in a DB-free fake via withStore. callerFrom reads
+// the guard-stamped StaffContext (created_by, the four-eyes approver, the Controller reopen gate).
+func NewService(repo *Repository) *Service {
+	return &Service{
+		repo:       repo,
+		store:      repo,
+		log:        slog.Default(),
+		now:        time.Now,
+		callerFrom: identity.StaffContextFromContext,
+	}
+}
+
+// withStore swaps the persistence seam (unit tests inject a DB-free fake).
+func (s *Service) withStore(st glStore) *Service { s.store = st; return s }
+
+// withCaller swaps the guard-stamped StaffContext resolver (unit tests).
+func (s *Service) withCaller(f func(context.Context) (identity.StaffContext, bool)) *Service {
+	s.callerFrom = f
+	return s
+}
+
+// withClock injects a deterministic clock (unit tests).
+func (s *Service) withClock(now func() time.Time) *Service { s.now = now; return s }
+
+// withLog swaps the structured logger (unit tests assert on WARN/observability output).
+func (s *Service) withLog(l *slog.Logger) *Service { s.log = l; return s }
+
+// caller resolves the trusted, server-stamped acting staff member (never a spoofable header).
+func (s *Service) caller(ctx context.Context) (identity.StaffContext, error) {
+	if s.callerFrom == nil {
+		return identity.StaffContext{}, errUnauthorized
+	}
+	c, ok := s.callerFrom(ctx)
+	if !ok || c.UserID == "" {
+		return identity.StaffContext{}, errUnauthorized
+	}
+	return c, nil
+}
+
+// authorizeBranchRead fences a branch-filtered LEDGER READ (DIB-392). The rule is landedcost's
+// (service.go:97-103): a GLOBAL caller is unrestricted; a scoped caller must name a branch they can
+// reach, an empty filter means "every branch", which is not theirs to ask for.
+func (s *Service) authorizeBranchRead(ctx context.Context, branchID string) error {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return err
+	}
+	if branchID == "" {
+		if caller.Scope != identity.ScopeGlobal {
+			return errForbidden
+		}
+		return nil
+	}
+	if !caller.CanAccessBranch(branchID) {
+		return errForbidden
+	}
+	return nil
+}
+
+// clock returns the service clock (defaults to time.Now).
+func (s *Service) clock() time.Time {
+	if s.now == nil {
+		return time.Now()
+	}
+	return s.now()
+}
+
+// WithInvoiceReader injects the billing invoice-facts seam.
+func (s *Service) WithInvoiceReader(r InvoiceReader) *Service { s.invoices = r; return s }
+
+// WithTaxSplitReader injects the pos tax-split seam.
+func (s *Service) WithTaxSplitReader(r TaxSplitReader) *Service { s.taxSplits = r; return s }
+
+// WithARSubledger injects the billing AR-balance seam (the 1100 tie-out).
+func (s *Service) WithARSubledger(r ARSubledger) *Service { s.ar = r; return s }
+
+// WithPaymentReader injects the till payment-facts seam (the 1010/1020/1000 leg choice).
+func (s *Service) WithPaymentReader(r PaymentReader) *Service { s.payments = r; return s }
+
+// WithAudit injects the A-21 Recorder for sensitive-access stamping (reopen, close).
+func (s *Service) WithAudit(r audit.Recorder) *Service { s.audit = r; return s }
+
+// WithCostBasis injects the inventory cost-basis seam (dormant at W5, NoopCostBasis).
+func (s *Service) WithCostBasis(c CostBasis) *Service { s.costBasis = c; return s }
+
+// WithDeadRequeuer injects the outbox DEAD-row replay seam (boot-time pre-W5 replay).
+func (s *Service) WithDeadRequeuer(d DeadRequeuer) *Service { s.dead = d; return s }
+
+// WithApprovalFiler injects the approvals-rail JE-park filing seam (0075). Nil = the shipped maker-checker
+// park behaves exactly as today (no rail filing). Chainable.
+func (s *Service) WithApprovalFiler(f ApprovalFiler) *Service { s.approvalFiler = f; return s }
+
+// - provider surface (bankrec + finstmt + boot depend on these) -
+
+// PostExternal posts a caller-built balanced journal through the GL, idempotent on in.IdempotencyKey, and
+// returns the journal id. bankrec's clearing journals go through here. FROZEN signature; A-01 fills the body.
+func (s *Service) PostExternal(ctx context.Context, in ExternalJournal) (journalID string, err error) {
+	return s.postExternal(ctx, in)
+}
+
+// GLBalanceCents returns the balance of an account for a period/branch, read from v_gl_account_balances.
+// FROZEN signature; A-01 fills the body (must go real early, bankrec's variance check depends on it).
+func (s *Service) GLBalanceCents(ctx context.Context, accountCode string, year, month int, branchID string) (int64, error) {
+	return s.glBalanceCents(ctx, accountCode, year, month, branchID)
+}
+
+// RegisterPostingHandlers wires the outbox consumer for all eight posted topics onto the dispatcher. Each
+// handler resolves posting rules (via the two-name mapping above), builds the journal, and posts it
+// idempotently. FROZEN topic set. This runs once at boot (main.go), so it is also the natural home of the
+// two boot-time controls: ValidatePostingRules (a dangling/inactive posting rule is a loud config error, not
+// a silent zero-leg post) and the DeadRequeuer replay (pre-W5 outbox rows that dead-lettered before a handler
+// existed are reset to PENDING so the now-registered consumer re-delivers them). Registering here keeps the
+// dispatcher domain-free.
+func (s *Service) RegisterPostingHandlers(d *notify.Dispatcher) {
+	for _, topic := range PostedTopics {
+		d.Register(topic, s.postEvent)
+	}
+	bootCtx := context.Background()
+	if err := s.ValidatePostingRules(bootCtx); err != nil {
+		s.log.Error("gl: posting-rule validation failed at boot, some events will not post correctly", "err", err)
+	}
+	if s.dead != nil {
+		if n, err := s.dead.RequeueDead(bootCtx, PostedTopics); err != nil {
+			s.log.Warn("gl: dead-letter replay at boot failed", "err", err)
+		} else if n > 0 {
+			s.log.Info("gl: requeued pre-W5 dead-letter outbox rows for posting", "rows", n)
+		}
+	}
+}
+
+// PostedTopics is the frozen set of outbox topics the GL posting consumer owns (the W5 eight + the two
+// W7 POS-return topics).
+var PostedTopics = []string{
+	"ar.invoice.finalized",
+	"payment.received",
+	"pos.sale.committed",
+	"tax.relief.assessed",
+	"payment.bounced",
+	"order.fulfilled",
+	"bank.recon.completed",
+	"till.session.completed",
+	"pos.return.committed",
+	"order.returned",
+}
+
+// postEvent is the single outbox handler for all eight posted topics. It resolves the mapped posting rules,
+// builds the journal legs from the event facts (resolving invoice/payment/tax/cost facts through the sibling
+// read seams), and posts the balanced journal idempotently (gl_journals.idempotency_key). Returning an error
+// leaves the outbox row PENDING so the event is retried, a financial event is never published without its
+// journal. Implementation lives in posting.go.
+func (s *Service) postEvent(ctx context.Context, e notify.Event) error {
+	return s.consume(ctx, e)
+}
+
+// - handler -
+
+// Handler exposes the GL HTTP surface (chart of accounts, journals, trial balance, periods, policy, export).
+// SCAFFOLD: routes are registered but every handler answers 501 until A-01 fills the service.
+type Handler struct {
+	userLink identity.UserIDLinker
+	svc      *Service
+	log      *slog.Logger
+}
+
+// NewHandler wires the service.
+func NewHandler(svc *Service, log *slog.Logger) *Handler {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &Handler{svc: svc, log: log}
+}
+
+// RegisterRoutes self-registers the GL routes. DIB-392: the ledger READS (chart of accounts, journals,
+// journal detail, trial balance, periods) are RequireManager, not RequireStaff, RequireStaff admits any
+// ACTIVE login, including Tier-3 front line and a roleless Tier-0 account, and the general ledger is the
+// company's money in full detail (every customer's revenue, every wage line, every loan balance). The
+// journal/CoA writes are RequireManager as before;
+// period reopen, year-end close, and the GP-parity export are RequireAdmin (Tier-1 GLOBAL; the reopen path
+// additionally enforces the Financial-Controller-only rule inside the service). The scaffold froze the guard
+// SIGNATURE; the route SET is the worker's to fill, the frozen routes below are joined by the CoA-deactivate,
+// journal void/reverse, recurring /run, tie-out, and year-end-close routes the A-01 tasks require. Handler
+// bodies live in handler.go.
+func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
+	// Chart of accounts
+	r.Handle("GET /api/v1/gl/accounts", g.RequireManager(h.staff(h.listAccounts)))
+	r.Handle("POST /api/v1/gl/accounts", g.RequireManager(h.staff(h.createAccount)))
+	r.Handle("POST /api/v1/gl/accounts/{code}/deactivate", g.RequireManager(h.staff(h.deactivateAccount)))
+	// Journals
+	r.Handle("GET /api/v1/gl/journals", g.RequireManager(h.staff(h.listJournals)))
+	r.Handle("GET /api/v1/gl/journals/{id}", g.RequireManager(h.staff(h.getJournal)))
+	r.Handle("POST /api/v1/gl/journals", g.RequireManager(h.staff(h.createJournal)))
+	r.Handle("POST /api/v1/gl/journals/{id}/approve", g.RequireManager(h.staff(h.approveJournal)))
+	r.Handle("POST /api/v1/gl/journals/{id}/void", g.RequireManager(h.staff(h.voidJournal)))
+	r.Handle("POST /api/v1/gl/journals/{id}/reverse", g.RequireManager(h.staff(h.reverseJournal)))
+	// Recurring templates
+	r.Handle("GET /api/v1/gl/recurring", g.RequireManager(h.staff(h.listRecurring)))
+	r.Handle("POST /api/v1/gl/recurring/{id}/run", g.RequireManager(h.staff(h.runRecurring)))
+	// Trial balance + subledger tie-out
+	r.Handle("GET /api/v1/gl/trial-balance", g.RequireManager(h.staff(h.trialBalance)))
+	r.Handle("GET /api/v1/gl/tie-out", g.RequireManager(h.staff(h.tieOut)))
+	// M2-C1 static BisTrack GL reconciliation (read-only; Admin/Finance, same guard as the GP-parity export).
+	r.Handle("GET /api/v1/gl/tieout/bistrack", g.RequireAdmin(h.staff(h.bistrackTieOut)))
+	// Periods
+	r.Handle("GET /api/v1/gl/periods", g.RequireManager(h.staff(h.listPeriods)))
+	r.Handle("POST /api/v1/gl/periods/{id}/close", g.RequireManager(h.staff(h.closePeriod)))
+	r.Handle("POST /api/v1/gl/periods/{id}/reopen", g.RequireAdmin(h.staff(h.reopenPeriod)))
+	r.Handle("POST /api/v1/gl/periods/close-year", g.RequireAdmin(h.staff(h.closeYear)))
+	// Policy + export
+	r.Handle("GET /api/v1/gl/policy", g.RequireManager(h.staff(h.policy)))
+	r.Handle("POST /api/v1/gl/export", g.RequireAdmin(h.staff(h.export)))
+}

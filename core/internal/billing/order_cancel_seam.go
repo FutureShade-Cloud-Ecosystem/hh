@@ -1,0 +1,41 @@
+// order_cancel_seam.go, B2/R2: the invoice half of the order module's cancel predicate. A manual order
+// CANCELLED is refused when money is already attached; this answers "does this order have an invoice
+// that has been finalized?" without the order module importing billing or reading the invoices table
+// (module boundary). Satisfies order.FinalizedInvoiceReader structurally, billingRepo is passed to
+// orderSvc.WithCancelGuards in the composition root, the same way it already satisfies
+// order.InvoiceOrderResolver (order_seam.go).
+package billing
+
+import (
+	"context"
+	"fmt"
+)
+
+// OrderHasFinalizedInvoice reports whether the order has at least one invoice whose finalize
+// transaction has run.
+//
+// invoices.status ∈ (DRAFT, FINALIZED, PARTIALLY_PAID, PAID, VOID). We count FINALIZED / PARTIALLY_PAID
+// / PAID:
+//   - DRAFT is excluded, nothing has posted yet, so cancelling orphans nothing.
+//   - VOID is excluded, the invoice has already been unwound, so it is not money still attached.
+//
+// A read failure is returned, never swallowed: the caller must not treat an unreadable predicate as
+// permission to cancel (fail closed).
+func (r *Repository) OrderHasFinalizedInvoice(ctx context.Context, orderID string) (bool, error) {
+	if r.pool == nil {
+		// No pool means we cannot prove absence. Report the error so the order service fails closed
+		// rather than reading a bare false as "no money attached".
+		return false, fmt.Errorf("billing: no database configured for the order cancel predicate")
+	}
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM invoices
+			WHERE order_id = $1::uuid
+			  AND status IN ('FINALIZED','PARTIALLY_PAID','PAID')
+		)`, orderID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check finalized invoice for order %q: %w", orderID, err)
+	}
+	return exists, nil
+}

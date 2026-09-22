@@ -1436,78 +1436,10 @@ paths:
 components:
   schemas:
     # --- order: resource and lifecycle ---------------------------------------
-    Order:
-      type: object
-      description: >-
-        The list/summary view of an orders row (the ERP field set; no tenant
-        alias columns on the staff resource).
-      required:
-        - id
-        - order_no
-        - customer_id
-        - quote_id
-        - status
-        - fulfillment
-        - requested_date
-        - subtotal_cents
-        - tax_cents
-        - total_cents
-        - created_at
-      properties:
-        id: { type: string, format: uuid }
-        order_no: { type: string }
-        customer_id: { type: string, format: uuid }
-        quote_id:
-          type: string
-          description: Empty when the order is not quote-originated
-        status:
-          type: string
-          enum: [DRAFT, CONFIRMED, PICKING, READY, PARTIALLY_FULFILLED, FULFILLED, INVOICED, CLOSED, CANCELLED]
-        fulfillment:
-          type: string
-          enum: [PICKUP, DELIVERY, WILL_CALL]
-        requested_date: { type: string, format: date-time }
-        subtotal_cents: { type: integer, format: int64 }
-        tax_cents: { type: integer, format: int64 }
-        total_cents: { type: integer, format: int64 }
-        created_at: { type: string, format: date-time }
-
-    OrderLine:
-      type: object
-      description: >-
-        One order_lines row, including allocation and fulfillment progress.
-        Quantities are DECIMAL carried as strings.
-      required:
-        - line_no
-        - product_id
-        - description
-        - qty_entered
-        - uom_entered
-        - qty_base
-        - allocated_base
-        - fulfilled_base
-        - unit_price_cents
-        - line_total_cents
-      properties:
-        line_no: { type: integer, format: int32 }
-        product_id: { type: string }
-        description: { type: string }
-        qty_entered:
-          type: string
-          description: DECIMAL as string
-        uom_entered: { type: string }
-        qty_base:
-          type: string
-          description: DECIMAL as string
-        allocated_base:
-          type: string
-          description: DECIMAL as string
-        fulfilled_base:
-          type: string
-          description: DECIMAL as string
-        unit_price_cents: { type: integer, format: int64 }
-        line_total_cents: { type: integer, format: int64 }
-
+    # The unreferenced list-row (Order) and line-row (OrderLine) wire shapes
+    # were removed by the HH-3.4 orphan resolution: every order route serves
+    # the view family below, and no operation or schema referenced either
+    # name (ADR 0021's orphan ledger).
     OrderViewLine:
       type: object
       description: >-
