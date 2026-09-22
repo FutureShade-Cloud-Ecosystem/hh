@@ -18,6 +18,7 @@ package customerquote
 import (
 	"encoding/json"
 	"errors"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"io"
 	"net/http"
 
@@ -30,7 +31,7 @@ const maxBodyBytes = 1 << 20
 // RegisterRoutes registers the customer-quote surface on mux through the
 // settled Guards signature: the send through the staff constructor, the
 // public pair through the public wrapper.
-func RegisterRoutes(mux *http.ServeMux, g *guards.Guards, svc *Service) {
+func RegisterRoutes(mux httpx.Registrar, g *guards.Guards, svc *Service) {
 	// The send is a dealer desk action (ADR 0021, Decision 2): any
 	// authenticated staff member with an active grant in the request org
 	// (requireStaff, the constructor the dealer share-link mints use); the
