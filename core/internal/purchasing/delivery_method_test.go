@@ -48,9 +48,10 @@ func TestNormalizeDeliveryMethod_EmptyIsUnrecordedAndNonsenseIsRefused(t *testin
 			t.Errorf("normalizeDeliveryMethod(%q) = %q, want %q", in, got, want)
 		}
 	}
-	// THE ASSERTION THAT WOULD HAVE CAUGHT THE ORIGINAL DEFECT: nothing an unasked caller can
-	// send may come back as an arrival. If this ever fails, the program is inventing a fact
-	// about a truck.
+	// These legs pin the pure function's ported contract: at this layer nothing an unasked caller
+	// can send may come back as an arrival. (The ROUTE refuses an explicit empty before normalize
+	// is consulted; that refusal is pinned in TestSetDeliveryMethod_ARefusedRequestNeverReachesTheStore.
+	// The fold exists for the create path, a recorded residual that lands against this contract.)
 	for _, silent := range []string{"", "   ", "\t", "\n "} {
 		got, err := normalizeDeliveryMethod(silent)
 		if err != nil {

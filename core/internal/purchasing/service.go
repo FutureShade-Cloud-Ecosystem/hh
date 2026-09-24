@@ -238,10 +238,15 @@ const (
 
 // normalizeDeliveryMethod folds the request's value to one of the three the column accepts.
 //
-// EMPTY MEANS UNKNOWN. A caller that predates DIB-572 omits the field, and folding those to
-// DELIVERY would print an arrival on the receiving worklist that no person ever stated. An
-// unrecognised value is a different thing and IS refused: "PICK UP" silently becoming DELIVERY
-// would put a wrong word on the worklist, which is worse than a 400 that names the values.
+// EMPTY MEANS UNKNOWN, at this layer: a caller that predates DIB-572 omits the field, and folding
+// those to DELIVERY would print an arrival on the receiving worklist that no person ever stated.
+// In the ERP that caller is the CREATE path; in core the create half is not yet ported (a recorded
+// residual), so the fold's only caller today is the correction route, which refuses an explicit
+// empty body BEFORE calling here (SetDeliveryMethod): on a correction a request that says nothing
+// is malformed, never an unrecord. The branch stays because it is the ported contract of this
+// function and the create half lands against it. An unrecognised value is a different thing and
+// IS refused: "PICK UP" silently becoming DELIVERY would put a wrong word on the worklist, which
+// is worse than a 400 that names the values.
 func normalizeDeliveryMethod(m string) (string, error) {
 	switch strings.ToUpper(strings.TrimSpace(m)) {
 	case "":
