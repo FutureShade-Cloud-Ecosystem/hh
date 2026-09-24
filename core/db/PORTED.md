@@ -85,8 +85,16 @@ One entry per ERP migration landing on `master` above the baseline, each a human
 
 | ERP migration | ERP commit | Decision | Reason | Ported as |
 | :------------ | :--------- | :------- | :----- | :-------- |
+| 0213 `0213_a_saved_sort_is_curation_too.sql` | `05809a25` | Ported | Additive CHECK widening by one value on two carried tables; no row written, read or moved; existing rows re-validate clean. | 0216 `0216_a_saved_sort_is_curation_too.sql` |
+| 0214 `0214_purchasing_delivery_method.sql` | `05809a25` | Ported | Adds `purchasing_pos.delivery_method`; ported paired with the 0216 port so core never carries the uncorrected default. | 0217 `0217_purchasing_delivery_method.sql` |
+| 0215 `0215_a_widget_title_that_was_never_chosen_stops_speaking_for_the_catalog.sql` | `05809a25` | Ported | Guarded byte-identity rewrites of seeded widget titles with `updated_by IS NULL` guards; idempotent. Count-verified on core's from-zero apply: matched 6 rows in `dashboard_profile_widgets`, 5 in `dashboard_gallery_entries`, 0 in `dashboard_user_widgets`; a second run matches 0. | 0218 `0218_a_widget_title_that_was_never_chosen_stops_speaking_for_the_catalog.sql` |
+| 0216 `0216_purchasing_delivery_method_can_be_unrecorded.sql` | `05809a25` | Ported | Second half of the 0214 pair: third CHECK value, corrected default, guarded backfill. Ruling condition 1 met: the backfill cut's bookkeeping lookup pattern was adapted from the ERP's 0214 file number to core's 0217 file number (the 0214 port), the one adaptation in an otherwise byte-identical body; core's runner records the same filename-stem versions in the same `schema_migrations` shape, so the guarded lookup resolves identically on core's from-zero path. | 0219 `0219_purchasing_delivery_method_can_be_unrecorded.sql` |
+| 0217 `0217_a_finance_note_a_client_reads_names_nobody.sql` | `05809a25` | Ported | Adapted port. Rewrites `gl_policy.notes` and `nsf_policy.notes` to the ERP's clean replacement sentences. Ruling condition 2 met: the WHERE predicates are byte-identical to core's own scrubbed literals carried at `0032_gl_module.sql:55` and `0035_nsf_credit_hold.sql:63`, extracted by script from those files; the ERP's original sentence never entered core, in code or in commit text. Same safety properties as the ERP's 0217: no `updated_at` bump, no `schema_migrations` reference, idempotent (from-zero apply rewrote 1 row per table; a second run matches 0). | 0220 `0220_a_finance_note_a_client_reads_names_nobody.sql` |
+| 0218 `0218_the_setup_entries_behind_no_customer_document_come_back_out.sql` | `05809a25` | Ported | Verbatim. Balanced reversing journals with fixed UUIDs and idempotency keys for the four demonstration journals 0056 posted; triple-guarded no-op where 0056 is absent, and core carried 0056 verbatim. | 0221 `0221_the_setup_entries_behind_no_customer_document_come_back_out.sql` |
+| 0219 `0219_an_invoice_with_no_journal_behind_it_asks_for_one.sql` | `05809a25` | Ported | Verbatim. Queues outbox posting events for finalized invoices and received payments with no GL journal, and requeues DEAD events whose documents still lack one. Ruling condition 3 met: core's `events_outbox` matches the ERP's on the `status`, `attempts` and `last_error` columns, verified by comparing the carried baseline DDL at `core/db/migrations/0013_audit_outbox.sql:22` against the ERP's `backend/migrations/0013_audit_outbox.sql:22` at `05809a25` (identical, no later ALTER in either tree). On core's from-zero apply it queued 2 PENDING `ar.invoice.finalized` rows, the two demo invoices 0055 carries. | 0222 `0222_an_invoice_with_no_journal_behind_it_asks_for_one.sql` |
+| 0220 `0220_pos_counter_layout.sql` | `05809a25` | Ported | Pure DDL: `counter_layout` on `pos_policy` and `pos_user_workspace`, both NOT NULL with a default that preserves what existing users already see; both tables are carried. | 0223 `0223_pos_counter_layout.sql` |
 
-First entry, per D33: refreshing `core/api/erp-routes.txt` from `master` (the snapshot vendored under D22 was taken from a `Demo` commit ahead of `master`); the route difference the refresh reports measures how far the snapshot was off.
+First entry, per D33: refreshing `core/api/erp-routes.txt` from `master` (the snapshot vendored under D22 was taken from a `Demo` commit ahead of `master`); the route difference the refresh reports measures how far the snapshot was off. Done in this run: the refresh renamed the provenance header to `05809a25` and added exactly one route line (`PUT /api/v1/purchasing/pos/{id}/delivery-method`).
 
 ## Drift measurement (the erp-routes hold's precondition)
 
@@ -104,9 +112,11 @@ deletion; the baseline at 0212 and below is untouched, D32 holds):
 - 0219_an_invoice_with_no_journal_behind_it_asks_for_one.sql
 - 0220_pos_counter_layout.sql
 
-These eight are HH-3.7's port-or-defer decisions under D39: each ports
-through the tracking lane's door into core's next free numbers (the
-ERP's 0213 to 0215 collide with core's frozen additive set and are
-never carried by those numbers), each decision recorded here beside
-its core number. The erp-routes refresh stays held until the tracking
-lane takes this up with Colton.
+These eight were HH-3.7's port-or-defer decisions under D39, and all eight
+are now ported: each landed at its core number in the ledger above (the
+ERP's 0213 to 0215 collide with core's frozen additive set and are never
+carried by those numbers), through the tracking lane's door, in the pull
+request that moves `SCHEMA-FROZEN`. The hold on the erp-routes refresh is
+released (its release condition is met: Phase C merged, the eight
+decisions ruled, and the refresh has run), and the refreshed vendored
+list lands in the same pull request.
