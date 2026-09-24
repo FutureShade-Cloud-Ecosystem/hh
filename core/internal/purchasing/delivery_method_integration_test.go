@@ -128,12 +128,19 @@ func TestIntegration_SetDeliveryMethod_RefusedOnAFinishedPOAndOutsideTheFence(t 
 		}
 	}
 
-	// A Kingston-only caller cannot re-route a Trenton order's arrival.
+	// A Kingston-only caller cannot re-route a Trenton order's arrival, and the refusal is the 403
+	// classification, the fence and not some incidental failure.
 	other := h.draftPOAt(t, branchTRT, product, "", 10)
 	scoped := NewService(NewRepository(h.pool)).
 		WithVendors(itVendors{pool: h.pool}).
 		withCaller(scopedCaller(h.user, branchKGN))
-	if _, err := scoped.SetDeliveryMethod(h.ctx, other.ID, DeliveryPickup); err == nil {
+	err = func() error { _, err := scoped.SetDeliveryMethod(h.ctx, other.ID, DeliveryPickup); return err }()
+	if err == nil {
 		t.Error("a caller with no grant on the PO's branch changed its arrival")
+	} else {
+		var ce clientError
+		if !errors.As(err, &ce) || ce.status != http.StatusForbidden {
+			t.Errorf("a cross-branch refusal = %v, want the 403 fence classification", err)
+		}
 	}
 }

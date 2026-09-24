@@ -68,16 +68,17 @@ func TestNormalizeDeliveryMethod_EmptyIsUnrecordedAndNonsenseIsRefused(t *testin
 	}
 }
 
-// TestCanSetDeliveryMethod_OnlyWhileTheWorklistStillShowsIt.
+// TestCanSetDeliveryMethod_OnlyWhileAnOrderIsStillOpen.
 //
-// The statuses this route accepts are exactly the statuses the receiving worklist renders, and
-// that is the property that makes the column honest: every row on which a person can SEE a
+// The statuses this route accepts are exactly the statuses the ERP's receiving worklist renders
+// (core's worklist does not render the column yet; the DIB-573 read half is a recorded residual),
+// and that is the property that makes the column honest: every row on which a person can SEE a
 // wrong arrival is a row they can CORRECT. A finished order's arrival is a historical fact
 // nobody is waiting on.
-func TestCanSetDeliveryMethod_OnlyWhileTheWorklistStillShowsIt(t *testing.T) {
+func TestCanSetDeliveryMethod_OnlyWhileAnOrderIsStillOpen(t *testing.T) {
 	for _, st := range []string{StatusDraft, StatusOrdered, StatusPartial} {
 		if !CanSetDeliveryMethod(st) {
-			t.Errorf("%s: a person can see this order's arrival and cannot correct it", st)
+			t.Errorf("%s: an open order's arrival cannot be corrected", st)
 		}
 	}
 	for _, st := range []string{StatusReceived, StatusClosed, StatusCancelled} {

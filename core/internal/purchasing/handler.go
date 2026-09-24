@@ -142,8 +142,9 @@ func (h *Handler) setExpectedDate(w http.ResponseWriter, r *http.Request, caller
 //
 // The same shape and the same verb as the expected-date handler above, because it is the same kind
 // of thing: one field, set to what the body says. It exists because the column could be WRITTEN
-// only at create time, which made a mistyped arrival permanent and made the receiving worklist
-// print a fact nobody could put right.
+// only at create time, which made a mistyped arrival permanent and, in the ERP, made the
+// receiving worklist print a fact nobody could put right. (Core's worklist does not render the
+// column yet; the DIB-573 read half is a recorded residual.)
 func (h *Handler) setDeliveryMethod(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var in SetDeliveryMethodRequest
 	if !decodeJSON(w, r, &in) {

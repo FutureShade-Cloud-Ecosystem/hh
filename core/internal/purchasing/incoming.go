@@ -281,10 +281,13 @@ func CanSetExpectedDate(status string) bool {
 // and then learns nobody actually knows must be able to say so; forcing them to choose between two
 // answers they do not have is how the column starts lying again.
 //
-// A finished order is refused, on exactly CanSetExpectedDate's rule and for the same reason: the
-// receiving worklist, the only screen that renders this column, shows ORDERED and PARTIAL orders
-// only, so every row on which a person can see a wrong arrival is a row this route can correct.
-// Rewriting a RECEIVED or CLOSED order's arrival changes a historical fact nobody is waiting on.
+// A finished order is refused, on exactly CanSetExpectedDate's rule and for the same reason. In
+// the ERP the receiving worklist is the screen that renders this column and it shows ORDERED and
+// PARTIAL orders only, so every row on which a person can see a wrong arrival is a row this route
+// can correct. Core's worklist does not render the column yet (the DIB-573 read half is a recorded
+// residual); the refusal rule is ported unchanged so the two correction routes do not drift apart
+// while the read half is pending. Rewriting a RECEIVED or CLOSED order's arrival changes a
+// historical fact nobody is waiting on.
 func (s *Service) SetDeliveryMethod(ctx context.Context, poID, method string) (PODetail, error) {
 	if strings.TrimSpace(poID) == "" {
 		return PODetail{}, badReq("purchasing: po id is required")
