@@ -356,7 +356,8 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("PUT /api/v1/purchasing/pos/{id}/expected-date", g.RequireManager(h.staff(h.setExpectedDate)))
 	// DIB-572 (ported from the ERP). RequireManager on the same principle as the line above: the
 	// arrival a purchase order carries is a buyer's statement about how the goods are coming, and
-	// the receiving worklist renders it to a yard that plans around it.
+	// in the ERP the receiving worklist renders it to a yard that plans around it (core's worklist
+	// does not render the column yet; the DIB-573 read half is a recorded residual).
 	r.Handle("PUT /api/v1/purchasing/pos/{id}/delivery-method", g.RequireManager(h.staff(h.setDeliveryMethod)))
 
 	r.Handle("GET /api/v1/purchasing/receiving", g.RequireStaff(h.staff(h.worklist)))

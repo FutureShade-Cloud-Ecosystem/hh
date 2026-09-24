@@ -271,11 +271,13 @@ paths:
       tags: [staff-purchasing]
       summary: Record or correct how a purchase order's goods reach the yard
       description: >-
-        Sets the arrival the receiving worklist shows. delivery_method is
-        required: on a correction an empty value is a malformed request, not
-        an unrecord, and sending UNKNOWN is how an arrival is unrecorded.
-        Refused on a RECEIVED, CLOSED or CANCELLED order, the same finished
-        statuses the expected-date route refuses.
+        Sets the arrival the purchase order carries, readable on GET
+        /api/v1/purchasing/pos/{id}. delivery_method is required: on a
+        correction an empty value is a malformed request, not an unrecord,
+        and sending UNKNOWN is how an arrival is unrecorded. Refused on a
+        RECEIVED, CLOSED or CANCELLED order, the same finished statuses the
+        expected-date route refuses. Core's receiving worklist does not
+        render the column yet; the DIB-573 read half is unported.
       x-role: requireManager
       parameters:
         - $ref: "#/components/parameters/XOrg"
