@@ -138,6 +138,25 @@ func (h *Handler) setExpectedDate(w http.ResponseWriter, r *http.Request, caller
 	httpx.WriteJSON(w, http.StatusOK, po)
 }
 
+// PUT /api/v1/purchasing/pos/{id}/delivery-method, DIB-572's correction path (ported from the ERP).
+//
+// The same shape and the same verb as the expected-date handler above, because it is the same kind
+// of thing: one field, set to what the body says. It exists because the column could be WRITTEN
+// only at create time, which made a mistyped arrival permanent and made the receiving worklist
+// print a fact nobody could put right.
+func (h *Handler) setDeliveryMethod(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in SetDeliveryMethodRequest
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	po, err := h.svc.SetDeliveryMethod(r.Context(), r.PathValue("id"), in.DeliveryMethod)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, po)
+}
+
 func (h *Handler) worklist(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	items, err := h.svc.Worklist(r.Context(), r.URL.Query().Get("branch_id"))
 	if err != nil {

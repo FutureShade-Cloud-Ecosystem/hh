@@ -122,6 +122,10 @@ type IncomingPOLine struct {
 type incomingStore interface {
 	OpenPOLinesForProduct(ctx context.Context, productID string, reach BranchReach) ([]IncomingPOLine, error)
 	UpdateExpectedAt(ctx context.Context, poID, expectedAt string) error
+	// UpdateDeliveryMethod is DIB-572's correction path (ported from the ERP). It sits on this seam
+	// rather than on a new one for the reason the seam exists at all: what it must be possible to
+	// state without a database is the FENCE and the STATUS GUARD, not the UPDATE.
+	UpdateDeliveryMethod(ctx context.Context, poID, method string) error
 }
 
 // incoming resolves the seam: the injected fake in unit tests, else the real repository.
@@ -256,6 +260,71 @@ func (s *Service) SetExpectedDate(ctx context.Context, poID, expectedAt string) 
 
 // CanSetExpectedDate reports whether a PO in this status still has a receiving date worth promising.
 func CanSetExpectedDate(status string) bool {
+	switch status {
+	case StatusDraft, StatusOrdered, StatusPartial:
+		return true
+	default:
+		return false
+	}
+}
+
+// SetDeliveryMethod records how the goods on this purchase order reach the yard, or unrecords it.
+// Ported from the ERP (DIB-572, the route that makes the 0217/0219 column honest).
+//
+// WHY THIS EXISTS. The ERP's 0214 gave purchasing_pos a delivery_method and nothing anywhere could
+// write it after the draft was created: no route, no service method, no UPDATE. A column a person
+// can read and cannot correct is worse than no column: a missing feature can be worked around, and
+// a wrong value on a worklist cannot. This is deliberately the same shape as DIB-460's
+// expected-date handler, a PUT that SETS one field to what the body says.
+//
+// UNKNOWN IS A VALUE YOU MAY SET, not just one you may leave. A buyer who marked an order PICKUP
+// and then learns nobody actually knows must be able to say so; forcing them to choose between two
+// answers they do not have is how the column starts lying again.
+//
+// A finished order is refused, on exactly CanSetExpectedDate's rule and for the same reason: the
+// receiving worklist, the only screen that renders this column, shows ORDERED and PARTIAL orders
+// only, so every row on which a person can see a wrong arrival is a row this route can correct.
+// Rewriting a RECEIVED or CLOSED order's arrival changes a historical fact nobody is waiting on.
+func (s *Service) SetDeliveryMethod(ctx context.Context, poID, method string) (PODetail, error) {
+	if strings.TrimSpace(poID) == "" {
+		return PODetail{}, badReq("purchasing: po id is required")
+	}
+	// The EDIT path does not treat an empty body as UNKNOWN by accident. On CREATE an omitted field
+	// is an old caller who cannot express the question; on a correction it is a malformed request,
+	// and a request that says nothing must not silently erase what a buyer recorded.
+	if strings.TrimSpace(method) == "" {
+		return PODetail{}, badReq("purchasing: delivery_method is required")
+	}
+	delivery, err := normalizeDeliveryMethod(method)
+	if err != nil {
+		return PODetail{}, err
+	}
+	po, err := s.GetPO(ctx, poID)
+	if err != nil {
+		return PODetail{}, err
+	}
+	if _, _, err := s.branchFence(ctx, po.BranchID); err != nil {
+		return PODetail{}, err
+	}
+	if !CanSetDeliveryMethod(po.Status) {
+		return PODetail{}, conflict("purchasing: cannot change the arrival of a %s purchase order", po.Status)
+	}
+	st, err := s.incoming()
+	if err != nil {
+		return PODetail{}, err
+	}
+	if err := st.UpdateDeliveryMethod(ctx, poID, delivery); err != nil {
+		return PODetail{}, err
+	}
+	s.record(ctx, "purchasing.po.delivery_method_set", poID,
+		map[string]any{"po_no": po.PONo, "delivery_method": delivery, "was": po.DeliveryMethod})
+	return s.GetPO(ctx, poID)
+}
+
+// CanSetDeliveryMethod reports whether a PO in this status still has an arrival worth correcting.
+// The same three statuses as CanSetExpectedDate, and deliberately not a call to it: the two answer
+// different questions and a later change to one must not silently move the other.
+func CanSetDeliveryMethod(status string) bool {
 	switch status {
 	case StatusDraft, StatusOrdered, StatusPartial:
 		return true

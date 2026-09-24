@@ -6015,6 +6015,7 @@ type PurchasingPO struct {
 	LineCount        int32              `json:"line_count"`
 	Currency         PurchasingCurrency `json:"currency"`
 	FxRate           float64            `json:"fx_rate"`
+	DeliveryMethod   *string            `json:"delivery_method,omitempty"`
 	SubtotalCents    *int64             `json:"subtotal_cents,omitempty"`
 	SubtotalCadCents *int64             `json:"subtotal_cad_cents,omitempty"`
 	CreatedAt        time.Time          `json:"created_at"`
@@ -6235,6 +6236,10 @@ type PurchasingAddLineRequest struct {
 
 type PurchasingSetExpectedDateRequest struct {
 	ExpectedAt string `json:"expected_at"`
+}
+
+type PurchasingSetDeliveryMethodRequest struct {
+	DeliveryMethod string `json:"delivery_method"`
 }
 
 type PurchasingTransitionRequest struct {
