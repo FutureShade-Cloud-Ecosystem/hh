@@ -1,12 +1,12 @@
 # ERP route list vendored for route parity (D22 in docs/analysis/DECISIONS.md).
-# Taken from hardscapeos_dibbits at commit f295034a493cd9e8fea7de5d957605c91848e7b8.
+# Taken from hardscapeos_dibbits at commit 05809a250aebc34c75cf01391063b8ebb5e6118d.
 # Produced by: node core/api/tools/refresh-erp-routes.mjs <path-to-hardscapeos_dibbits>
 # which runs, in that checkout:
 #   grep -rhoE '"(GET|POST|PUT|PATCH|DELETE) /api[^"]*"' backend/internal --include=*.go --exclude=*_test.go
 # then strips the quotes, renames /api/portal/v1/X to /api/v1/tenant/X,
 # deduplicates, and sorts in byte order.
 # Never edit by hand; the tracking lane (HH-3.7) refreshes it from the ERP head.
-# 655 routes.
+# 656 routes.
 DELETE /api/v1/ar/customers/{customerID}/ap-contact
 DELETE /api/v1/assist/admin/limits/user/{user}
 DELETE /api/v1/dashboard/layout
@@ -640,6 +640,7 @@ PUT /api/v1/pricing/uom/conversions
 PUT /api/v1/products/{id}
 PUT /api/v1/products/{id}/image
 PUT /api/v1/purchasing/policy
+PUT /api/v1/purchasing/pos/{id}/delivery-method
 PUT /api/v1/purchasing/pos/{id}/expected-date
 PUT /api/v1/purchasing/tolerance
 PUT /api/v1/purchasing/vendors/{vendorID}/contact
