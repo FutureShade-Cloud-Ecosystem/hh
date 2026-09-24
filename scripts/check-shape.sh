@@ -73,13 +73,18 @@ printf '%s\n' "$dash_probe" | grep -qP '[\x{2013}\x{2014}]' \
 # other file, stay under the rule.
 carried_baseline='^core/db/migrations/(0[01][0-9]{2}|020[0-9]|021[0-2])_'
 
-# The HH-3.7 ports are excepted by name, on the same ground as the baseline:
-# the MID ruling (Plane #25, D39) carries ERP 0213 through 0220 byte-verbatim
-# from the same pre-rule source, and scrubbing their comment text would break
-# the byte-identity the ruling and the port ledger demand (the one permitted
-# adaptation is 0219's bookkeeping lookup pattern, which is not prose). The
-# exception is a closed list of exactly the eight ported files, so every later
-# migration and every other file stays under the rule.
+# The HH-3.7 ports are excepted by name, on the same ground as the baseline.
+# Seven of the eight are byte-verbatim ERP carries under the MID ruling
+# (Plane #25, D39) from the same pre-rule source, and scrubbing their comment
+# text would break the byte-identity the ruling and the port ledger demand
+# (0219's one permitted adaptation is its bookkeeping lookup pattern, which is
+# not prose). The eighth, 0220, is a core-authored rewrite whose only dashes
+# sit inside its two WHERE literals, copied byte-identical from core's own
+# carried baseline at 0032_gl_module.sql and 0035_nsf_credit_hold.sql, which
+# the carried_baseline range already excepts; rewriting them would break the
+# ruling's condition 2. The exception is a closed list of exactly the eight
+# ported files, so every later migration and every other file stays under the
+# rule.
 ported_carry='^core/db/migrations/(0216_a_saved_sort_is_curation_too|0217_purchasing_delivery_method|0218_a_widget_title_that_was_never_chosen_stops_speaking_for_the_catalog|0219_purchasing_delivery_method_can_be_unrecorded|0220_a_finance_note_a_client_reads_names_nobody|0221_the_setup_entries_behind_no_customer_document_come_back_out|0222_an_invoice_with_no_journal_behind_it_asks_for_one|0223_pos_counter_layout)\.sql$'
 
 if git ls-files -z | xargs -0 -r grep -IlP '[\x{2013}\x{2014}]' \
