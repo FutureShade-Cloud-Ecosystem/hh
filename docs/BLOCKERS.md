@@ -124,15 +124,17 @@ it must be run against `manifest.yaml` and this note removed.
 
 ## HH-3.7 (tracking)
 
-- **Open: `erp-routes.txt` vendored from a `Demo` commit, not `master`.**
-  D33 records that the commit from which `core/api/erp-routes.txt` was
-  vendored under D22 is a `Demo` commit sixteen ahead of `master`, not
-  `master`'s head (`6eaea3ec`), so the parity gate in `ci` has been proving
-  the contract against a `Demo` snapshot. Refreshing the file from `master`
-  with `refresh-erp-routes.mjs` is HH-3.7's first entry; the route
-  difference the refresh reports is the measure of how far the snapshot was
-  off. Not fixed in HH-3.1: `core/api/` is outside its scope and the
-  tracking lane owns the tool by D22.
+- **Closed in HH-3.7's first run: `erp-routes.txt` vendored from a `Demo`
+  commit, not `master`.** D33 records that the commit from which
+  `core/api/erp-routes.txt` was vendored under D22 is a `Demo` commit
+  sixteen ahead of `master`, not `master`'s head (`6eaea3ec`), so the
+  parity gate in `ci` had been proving the contract against a `Demo`
+  snapshot. The lane's first run refreshed the file from `master` at
+  05809a25 with `refresh-erp-routes.mjs`; the route difference the refresh
+  reported is exactly one added route, `PUT
+  /api/v1/purchasing/pos/{id}/delivery-method`, the measure of how far the
+  snapshot was off. Closed by pull request #14
+  (https://github.com/FutureShade-Cloud-Ecosystem/hh/pull/14).
 
 ## HH-3.3 (identity)
 
@@ -150,20 +152,22 @@ it must be run against `manifest.yaml` and this note removed.
   they ran against the pin-era pre-migrate backup, the baseline the additive
   set was designed for. Nothing in HH-3.3 touches `core/db/migrations/`.
 
-## HH-3.7 erp-routes refresh held for Phase C (open)
+## HH-3.7 erp-routes refresh held for Phase C (released)
 
 The first assigned port entry, refreshing core/api/erp-routes.txt from
-master per the D33 finding, is HELD until Phase C integrates. Reason:
+master per the D33 finding, was HELD until Phase C integrated. Reason:
 HH-3.4's parity test runs against the vendored list exactly as it stands
 and must not re-vendor it; a refresh landing mid-lane moves the baseline
 under that test, which either breaks it or passes it against a list
 nobody approved (gate G2 of the Phase C dispatch ruling, verified
 delivered artifact at context/phase-c-dispatch-ruling-r1.md in the
 session workspace, sha256 5f88eb29015fa966077b4c0b3710a77a7d42a160aa13
-cef96916b9db53c5dfdc). The tracking lane stays open for everything
-else. Release condition: Phase C integrated and merged; then the refresh
-runs as the lane's first port entry, and ERP migrations 0213 onward
-follow through the same door per D39.
+cef96916b9db53c5dfdc). Release condition met: Phase C integrated and
+merged, the eight decisions ruled, and the refresh ran as the lane's
+first port entry in pull request #14
+(https://github.com/FutureShade-Cloud-Ecosystem/hh/pull/14), which also
+carries ERP migrations 0213 through 0220 through the same door per D39.
+The tracking lane stays open for everything else.
 
 ## The migration door rule: ports versus greenfield schema (open)
 
