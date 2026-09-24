@@ -254,8 +254,10 @@ func TestDeliveryMethodRoute_IsGuardedNoLessThanItsSibling(t *testing.T) {
 //
 // The route guard above answers "may this caller call it at all". This answers the narrower
 // question underneath: when the SERVICE refuses, does it refuse before writing? Every refusal
-// the service can reach without a database is checked here against one recording store, so
-// that no future rearrangement of SetDeliveryMethod can move a validation to after the UPDATE.
+// the service can reach without a database is checked here against one recording store. What this
+// fixture cannot see is a rearrangement past a refusal that needs the real column: the status
+// guard reads the order through the store, so moving it after the UPDATE is invisible here and is
+// pinned instead by the integration file's refused-write read-back.
 func TestSetDeliveryMethod_ARefusedRequestNeverReachesTheStore(t *testing.T) {
 	cases := []struct {
 		name   string

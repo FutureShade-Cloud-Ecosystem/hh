@@ -4,9 +4,12 @@
 // from the delivery-method half of the ERP's dib572_dib573_integration_test.go. What the unit file
 // cannot prove lives here: that a normalized value is what the column stores (an un-normalized
 // write would meet the 0219 CHECK as a 500), that a finished order's refusal is the 409 conflict
-// classification, and that the branch fence holds on this path. The worklist legs of the ERP file
-// are not ported: core's worklist does not render the column (the DIB-573 half is a recorded
-// residual), so the read-back here is GetPO.
+// classification AND leaves the column untouched (a status guard moved to after the write is
+// otherwise invisible to every assertion here), and that the branch fence holds on this path. The
+// fence is enforced by GetPO's branch access check; the branchFence line in SetDeliveryMethod
+// mirrors the ported sibling and is not itself the gate (round 4, verified by deletion). The
+// worklist legs of the ERP file are not ported: core's worklist does not render the column (the
+// DIB-573 half is a recorded residual), so the read-back here is GetPO.
 package purchasing
 
 import (
@@ -126,6 +129,14 @@ func TestIntegration_SetDeliveryMethod_RefusedOnAFinishedPOAndOutsideTheFence(t 
 		if !errors.As(err, &ce) || ce.status != http.StatusConflict {
 			t.Errorf("a finished order's refusal = %v, want the 409 conflict classification", err)
 		}
+	}
+
+	// The refusal must also reach the column as nothing. A status guard moved to after the write
+	// would still return the 409 above, and only this read-back sees the difference.
+	if full, err := h.svc.GetPO(h.ctx, po.ID); err != nil {
+		t.Fatalf("get after the refusal: %v", err)
+	} else if full.DeliveryMethod != DeliveryUnknown {
+		t.Fatalf("the refused write still reached the column: %q", full.DeliveryMethod)
 	}
 
 	// A Kingston-only caller cannot re-route a Trenton order's arrival, and the refusal is the 403
