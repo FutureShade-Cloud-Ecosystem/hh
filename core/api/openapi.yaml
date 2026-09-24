@@ -15434,7 +15434,7 @@ paths:
       tags:
         - staff-purchasing
       summary: Record or correct how a purchase order's goods reach the yard
-      description: Sets the arrival the receiving worklist shows. An empty delivery_method unrecords it, one representation of "nobody recorded it" rather than two. Refused on a RECEIVED, CLOSED or CANCELLED order, the same finished statuses the expected-date route refuses.
+      description: "Sets the arrival the receiving worklist shows. delivery_method is required: on a correction an empty value is a malformed request, not an unrecord, and sending UNKNOWN is how an arrival is unrecorded. Refused on a RECEIVED, CLOSED or CANCELLED order, the same finished statuses the expected-date route refuses."
       x-role: requireManager
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -40812,7 +40812,11 @@ components:
       properties:
         delivery_method:
           type: string
-          description: PICKUP or DELIVERY; the empty string unrecords the arrival. An unrecognized word is refused rather than folded to a value nobody said.
+          enum:
+            - PICKUP
+            - DELIVERY
+            - UNKNOWN
+          description: "PICKUP or DELIVERY record the arrival; UNKNOWN unrecords it. The empty string is refused: a correction that says nothing must not silently erase what a buyer recorded. An unrecognized word is refused rather than folded to a value nobody said."
     PurchasingTransitionRequest:
       type: object
       required:
