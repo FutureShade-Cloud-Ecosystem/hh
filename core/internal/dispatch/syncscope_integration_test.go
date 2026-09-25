@@ -1026,3 +1026,70 @@ func TestSyncModuleInvariantsHold(t *testing.T) {
 		t.Fatalf("the unknown order create answered %+v", res[0])
 	}
 }
+
+// TestSyncReviewRound1Fixes: the two round-1 review findings, each
+// pinned by its own leg: a cancelled run's READY stops fall back to
+// unassigned WITH a stops-scope seq (the unassignment is a stop change
+// a device's pull must see), and an empty reason correction on a
+// failed stop is that operation's refusal, never a database CHECK
+// tripping an outage.
+func TestSyncReviewRound1Fixes(t *testing.T) {
+	f := newSyncFixture(t)
+	ctx := context.Background()
+
+	// F1: the cancel arm's unassignment is sync-visible on the stop.
+	runKey := syncFreshKey()
+	syncApplied(t, f, "runs", f.north, "create", runKey, map[string]any{
+		"branch_id": testkit.BranchNorthAID, "scheduled_date": syncToday(),
+		"truck_id": f.truck, "driver_id": f.driver,
+	}, nil)
+	run := syncRowOf(t, f, "runs", f.north, runKey)
+	stopKey := syncFreshKey()
+	syncApplied(t, f, "stops", f.north, "create", stopKey, map[string]any{
+		"order_id":       syncSeedOrder(t, f, testkit.BranchNorthAID),
+		"scheduled_date": syncToday(), "run_id": run.ID,
+	}, nil)
+	stop := syncRowOf(t, f, "stops", f.north, stopKey)
+	syncApplied(t, f, "runs", f.north, "update", syncFreshKey(),
+		map[string]any{"id": run.ID, "status": RunCancelled}, nil)
+	after, ok, err := f.stops.Load(ctx, f.north, stop.ID)
+	if err != nil || !ok {
+		t.Fatalf("F1: the stop vanished on the run cancel: ok=%v err=%v", ok, err)
+	}
+	if after.Data["run_id"] != nil && fmt.Sprint(after.Data["run_id"]) != "" {
+		t.Fatalf("F1: the stop still rides the cancelled run: %+v", after.Data)
+	}
+	if after.Seq <= stop.Seq {
+		t.Fatalf("F1: the unassignment drew no stops-scope seq (%d then %d): a device pull would never see it", stop.Seq, after.Seq)
+	}
+	t.Logf("F1: the cancelled run's stop fell back to unassigned, stops seq %d to %d", stop.Seq, after.Seq)
+
+	// F2: an empty reason correction on a failed stop is refused as
+	// that operation, and a second live stop for a served order is
+	// answered as a refusal, never an outage.
+	f2Run := syncOpenRun(t, f)
+	f2Stop := syncEnRouteStop(t, f, f2Run)
+	syncApplied(t, f, "stops", f.north, "update", syncFreshKey(),
+		map[string]any{"id": f2Stop.ID, "status": StopFailed, "failure_reason": "FX reason"}, nil)
+	res := syncPush(t, f, "stops", f.north, syncOp("update", syncFreshKey(),
+		map[string]any{"id": f2Stop.ID, "failure_reason": "  "}, nil))
+	if len(res) != 1 || res[0].Status != "rejected" || !strings.Contains(*res[0].Error, "needs a reason") {
+		t.Fatalf("F2: the empty reason correction answered %+v", res[0])
+	}
+	t.Logf("F2: the empty reason correction answered rejected (%s)", *res[0].Error)
+
+	orderID := syncSeedOrder(t, f, testkit.BranchNorthAID)
+	syncApplied(t, f, "stops", f.north, "create", syncFreshKey(), map[string]any{
+		"order_id": orderID, "scheduled_date": syncToday(), "run_id": f2Run.ID,
+	}, nil)
+	res = syncPush(t, f, "stops", f.north, syncOp("create", syncFreshKey(), map[string]any{
+		"order_id": orderID, "scheduled_date": syncToday(), "run_id": f2Run.ID,
+	}, nil))
+	if len(res) != 1 || res[0].Status != "rejected" {
+		t.Fatalf("F2: the second live stop for a served order answered %+v, want a refusal", res[0])
+	}
+	if msg := *res[0].Error; !strings.Contains(msg, "live delivery") && !strings.Contains(msg, "already has a delivery") {
+		t.Fatalf("F2: the second live stop's refusal %q does not name the standing delivery", msg)
+	}
+	t.Logf("F2: the second live stop for a served order answered rejected (%s)", *res[0].Error)
+}

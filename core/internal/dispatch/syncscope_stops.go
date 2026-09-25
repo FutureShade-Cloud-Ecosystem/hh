@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
@@ -338,6 +339,13 @@ func (s *StopsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key str
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			// The live-stop index lost the race the pre-check narrows:
+			// one live delivery per order is the caller's own fact,
+			// answered as a refusal, never as an outage.
+			return sync.RowState{}, refused(fmt.Errorf("this order already has a live delivery stop"))
+		}
 		return sync.RowState{}, fmt.Errorf("dispatch: stops sync create insert: %w", err)
 	}
 	r, err := stopsSyncRowByID(ctx, tx, rowID)
@@ -371,6 +379,11 @@ func (s *StopsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key 
 	reason, hasReason := fields["failure_reason"].(string)
 	if !hasStatus && !hasReason {
 		return sync.RowState{}, refused(fmt.Errorf("an update that moves nothing refuses"))
+	}
+	// A failed stop without a reason is a state 0090 refuses to hold:
+	// the correction may change the sentence, never erase it.
+	if hasReason && strings.TrimSpace(reason) == "" {
+		return sync.RowState{}, refused(fmt.Errorf("a failed stop needs a reason"))
 	}
 
 	tx, err := s.pool.Begin(ctx)

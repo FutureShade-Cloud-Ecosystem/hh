@@ -51,7 +51,7 @@ type syncLinker = identity.UserIDLinker
 // gaps allowed, never reused, exactly the recipe every adapter write
 // runs inside its own transaction.
 const (
-	runsSyncScope = "runs"
+	runsSyncScope  = "runs"
 	stopsSyncScope = "stops"
 	podSyncScope   = "pod"
 )

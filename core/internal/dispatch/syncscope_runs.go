@@ -413,8 +413,12 @@ func (s *RunsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key s
 		case RunCancelled:
 			// CancelRun's own rule: a withdrawn run's READY stops fall
 			// back to the unassigned column, they are not cancelled.
-			if _, err := tx.Exec(ctx,
-				`UPDATE delivery_stops SET run_id = NULL, stop_no = 0, updated_at = now()
+			// The stops draw their own scope's seq beside the move (the
+			// unassignment is a stop change a device's pull must see,
+			// same as the REST path's stamped AssignStop).
+			if _, err := tx.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
+				UPDATE delivery_stops SET run_id = NULL, stop_no = 0, updated_at = now(),
+				       seq = (SELECT next_value FROM seq)
 				 WHERE run_id = $1::uuid AND status = 'READY'`, id); err != nil {
 				return sync.RowState{}, fmt.Errorf("dispatch: unassign stops on sync cancel: %w", err)
 			}
