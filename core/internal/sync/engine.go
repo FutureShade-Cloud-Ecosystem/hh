@@ -264,9 +264,9 @@ func (e *Engine) resolveStale(ctx context.Context, store Store, info ScopeInfo, 
 		Status:   resultApplied,
 		Seq:      &written.Seq,
 		Conflict: &apigen.SyncConflict{
-			ClientId:    op.ClientId,
+			ClientId: op.ClientId,
 			Policy:      string(out.Policy),
-			ServerState: written.Data,
+			ServerState: out.ServerState,
 			Applied:     &applied,
 		},
 	}
