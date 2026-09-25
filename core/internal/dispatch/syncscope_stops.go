@@ -396,6 +396,9 @@ func (s *StopsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key 
 		return sync.RowState{}, refused(fmt.Errorf("a %s stop carries no failure reason to correct", from))
 	}
 	if hasStatus && from != status {
+		if status == StopDelivered {
+			return sync.RowState{}, refused(ErrPODRequired)
+		}
 		if !stopCanTransition(from, status) {
 			return sync.RowState{}, refused(ErrIllegalTransition)
 		}
