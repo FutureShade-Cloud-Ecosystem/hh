@@ -29,6 +29,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -284,9 +286,8 @@ func numericLeg(v any) (int, bool) {
 			return int(n), true
 		}
 	case string:
-		var out int
-		if _, err := fmt.Sscan(n, &out); err == nil {
-			return out, true
+		if n, err := strconv.Atoi(strings.TrimSpace(n)); err == nil {
+			return n, true
 		}
 	}
 	return 0, false

@@ -80,4 +80,18 @@ func TestYardScopesRouteTenancy(t *testing.T) {
 	if tenantRefusals["shortages"] != tenantRefusals["weights"] || tenantRefusals["shortages"] != tenantRefusals["attachments"] {
 		t.Fatalf("the tenant refusals differ across the yard scopes")
 	}
+
+	// Receiving answers the honest 501 in both directions: the scope is
+	// registry-declared (manual) but unwired, because the frozen schema
+	// gives purchasing_receipts no column a per-scope monotonic feed seq
+	// can live in (the lane's reported schema-shaped stop). A fabricated
+	// empty feed would be the lie this refusal refuses.
+	if rec := do(http.MethodGet, "/api/v1/sync/receiving", staff, nil,
+		map[string]string{authz.HeaderXOrg: testkit.OrgNorthSlug}); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("receiving pull: %d %s, want the honest 501", rec.Code, rec.Body.String())
+	}
+	if rec := do(http.MethodPost, "/api/v1/sync/receiving", staff, []byte(`{"ops":[]}`),
+		map[string]string{authz.HeaderXOrg: testkit.OrgNorthSlug}); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("receiving push: %d %s, want the honest 501", rec.Code, rec.Body.String())
+	}
 }

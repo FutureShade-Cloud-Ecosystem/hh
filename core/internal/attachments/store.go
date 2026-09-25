@@ -41,8 +41,14 @@ type attachmentRow struct {
 	deleted    bool
 }
 
+// rowScanner is the shared scan surface a row or row-set carries (pgx
+// cannot split one row across scanners, but Row and Rows share Scan).
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
 // scanAttachment reads the 14-target row.
-func scanAttachment(row pgx.Row) (attachmentRow, error) {
+func scanAttachment(row rowScanner) (attachmentRow, error) {
 	var a Attachment
 	var tenantID *string
 	var seq int64
@@ -174,19 +180,10 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 	ids := []string{}
 	scanned := []attachmentRow{}
 	for rows.Next() {
-		var r attachmentRow
-		var tenantID *string
-		var a Attachment
-		if err := rows.Scan(
-			&a.ID, &a.OrgID, &tenantID, &a.Kind,
-			&a.AppwriteFileID, &a.Bucket, &a.Mime, &a.SizeBytes,
-			&a.Checksum, &a.CreatedBy, &a.CreatedAt, &a.DeletedAt,
-			&r.seq, &r.deleted,
-		); err != nil {
+		r, err := scanAttachment(rows)
+		if err != nil {
 			return nil, nil, fmt.Errorf("attachments: sync pull scan: %w", err)
 		}
-		a.TenantID = tenantID
-		r.attachment = a
 		scanned = append(scanned, r)
 		if r.deleted {
 			tombstones = append(tombstones, sync.Tombstone{ID: r.attachment.ID, Seq: r.seq})
