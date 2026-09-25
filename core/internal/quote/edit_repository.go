@@ -96,13 +96,17 @@ func lockQuoteForEdit(ctx context.Context, tx pgx.Tx, quoteID string, allowedFro
 // quote whose terms never set it, so the sum is byte-identical to the shipped behavior there.
 func recomputeTotals(ctx context.Context, tx pgx.Tx, quoteID, actorID string) (QuoteTotals, error) {
 	var t QuoteTotals
-	err := tx.QueryRow(ctx, `
+	// The quotes scope's seq rides the fold-up (0213, syncscope.go):
+	// a totals change is a header change, and a device's pull must see
+	// it the moment it lands.
+	err := tx.QueryRow(ctx, quoteSeqCTE+`
 		UPDATE quotes SET
 			subtotal_cents = COALESCE((SELECT SUM(line_total_cents) FROM quote_lines WHERE quote_id = $1), 0),
 			total_cents    = COALESCE((SELECT SUM(line_total_cents) FROM quote_lines WHERE quote_id = $1), 0)
 			                 + tax_cents + delivery_fee_cents,
 			updated_by     = NULLIF($2,'')::uuid,
-			updated_at     = now()
+			updated_at     = now(),
+			seq            = (SELECT next_value FROM qseq)
 		WHERE id = $1
 		RETURNING subtotal_cents, total_cents`, quoteID, actorID).Scan(&t.SubtotalCents, &t.TotalCents)
 	if err != nil {
@@ -331,8 +335,9 @@ func (r *Repository) UpdateValidUntilGuarded(ctx context.Context, quoteID, newDa
 		`SELECT COALESCE(valid_until::text,'') FROM quotes WHERE id = $1`, quoteID).Scan(&before); err != nil {
 		return "", "", status, fmt.Errorf("read quote expiry pre-image: %w", err)
 	}
-	if err = tx.QueryRow(ctx, `
-		UPDATE quotes SET valid_until = NULLIF($2,'')::date, updated_by = NULLIF($3,'')::uuid, updated_at = now()
+	if err = tx.QueryRow(ctx, quoteSeqCTE+`
+		UPDATE quotes SET valid_until = NULLIF($2,'')::date, updated_by = NULLIF($3,'')::uuid, updated_at = now(),
+		                   seq = (SELECT next_value FROM qseq)
 		 WHERE id = $1
 		 RETURNING COALESCE(valid_until::text,'')`, quoteID, newDate, actorID).Scan(&after); err != nil {
 		return before, "", status, fmt.Errorf("update quote expiry: %w", err)
@@ -351,13 +356,20 @@ func (r *Repository) UpdateValidUntilGuarded(ctx context.Context, quoteID, newDa
 // - creation -
 
 // CreateQuote inserts a DRAFT quote, minting its number from quote_no_seq as '#Q-<n>'.
+//
+// The sync legs (0213, syncscope.go) stamp beside the row: the org
+// read off the branch (the fence the drive-run adapters stamp the same
+// way) and the seq from the quotes scope's allocator, both inside the
+// one statement, so a quote the desk opens is visible to a device's
+// pull the moment it lands.
 func (r *Repository) CreateQuote(ctx context.Context, in QuoteCreate) (id, quoteNo string, err error) {
 	if r.pool == nil {
 		return "", "", errNoDB
 	}
-	err = r.pool.QueryRow(ctx, `
-		INSERT INTO quotes (quote_no, customer_id, branch_id, status, valid_until, created_by)
-		VALUES ('#Q-' || nextval('quote_no_seq'), $1::uuid, $2::uuid, 'DRAFT', NULLIF($3,'')::date, NULLIF($4,'')::uuid)
+	err = r.pool.QueryRow(ctx, quoteSeqCTE+`
+		INSERT INTO quotes (quote_no, customer_id, branch_id, status, valid_until, created_by, org_id, seq)
+		SELECT '#Q-' || nextval('quote_no_seq'), $1::uuid, $2::uuid, 'DRAFT', NULLIF($3,'')::date, NULLIF($4,'')::uuid,
+		       (SELECT org_id FROM locations WHERE id = $2::uuid), (SELECT next_value FROM qseq)
 		RETURNING id::text, quote_no::text`,
 		in.CustomerID, in.BranchID, in.ValidUntil, in.CreatedBy).Scan(&id, &quoteNo)
 	if err != nil {
