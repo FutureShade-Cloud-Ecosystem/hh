@@ -315,6 +315,17 @@ func registerRoutes(r httpx.Registrar, getenv func(string) string) (*appGraph, e
 	}
 	customerquote.RegisterRoutes(r, g, cqService)
 
+	// The customer_quotes sync scope (HH-3.5 #169, manual policy)
+	// registers beside the service it reads through: the module's own
+	// TenantQuote projection over its own table, the lifecycle writes
+	// stamping their seqs (send, revise, accept), and the sync writes
+	// bounded to the compose legs so no replay can resurrect a rotated
+	// token's document. The engine rides the operations spine the
+	// wiring above returned.
+	if err := ops.syncEngine.RegisterScope("customer_quotes", customerquote.NewSyncStore(cqStore, cqService)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+
 	return &appGraph{
 		cfg: cfg, log: log, pool: pool, verify: verifier, link: linkedUserID(pool), g: g,
 		money: money, ops: ops, tops: tops, smsBelt: belt,

@@ -186,13 +186,20 @@ func (s *Store) InsertQuote(ctx context.Context, q DBTX, in QuoteRow, seq int64)
 
 // UpdateDraftQuote writes the draft-state edits (R5: only a draft may be
 // edited) with the scope predicate and the status guard in the statement
-// itself, so a raced state change cannot be overwritten.
+// itself, so a raced state change cannot be overwritten. The write draws a
+// fresh customer_quote seq through the data-modifying CTE in the same
+// statement (the caller holds no transaction here, and a separate
+// allocate-then-write round trip could interleave two writers), so an
+// online draft edit reappears in the tenant's pull feed.
 func (s *Store) UpdateDraftQuote(ctx context.Context, q DBTX, tenantID, orgID, quoteID string, in QuoteRow) (QuoteRow, error) {
 	row, ok, err := scanQuote(q.QueryRow(ctx,
-		`UPDATE customer_quote SET
+		`WITH seq AS (INSERT INTO scope_sequences (scope) VALUES ('`+ScopeCustomerQuote+`')
+		              ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
+		              RETURNING next_value)
+		UPDATE customer_quote SET
 		   markup_bps = $4, lines = $5, labour_lines = $6, overhead_lines = $7,
 		   hide_line_prices = $8, customer_contact = $9, valid_until = $10,
-		   supplier_price_horizon = $11, updated_at = now()
+		   supplier_price_horizon = $11, updated_at = now(), seq = (SELECT next_value FROM seq)
 		 WHERE id = $1 AND tenant_id = $2 AND org_id = $3 AND status = 'draft' AND deleted_at IS NULL
 		 RETURNING `+quoteCols,
 		quoteID, tenantID, orgID, in.MarkupBps, in.LinesJSON, in.LabourJSON, in.OverheadJSON,
@@ -209,15 +216,24 @@ func (s *Store) UpdateDraftQuote(ctx context.Context, q DBTX, tenantID, orgID, q
 // RotateOnSend performs the send write under the row lock: retire whatever
 // is live into the dead list, install the minted hash as live, re-freeze the
 // presentation lines, reset the view counters, set the link bound to the
-// offer bound, and move the status to sent (R4 and the send rotation).
+// offer bound, and move the status to sent (R4 and the send rotation). The
+// write draws a fresh customer_quote seq on the same transaction: a
+// rotation is a document change the tenant's feed must see (the sync
+// obligation every module write carries, HH-3.5), and the bumped seq is
+// what makes a stale offline edit meet the manual policy's conflict arm
+// instead of silently landing under a rotated token.
 func (s *Store) RotateOnSend(ctx context.Context, tx pgx.Tx, quoteID string, newState TokenState, linesJSON []byte, shareExpiresAt, validUntil time.Time) error {
-	_, err := tx.Exec(ctx,
+	seq, err := s.AllocateSeqTx(ctx, tx, ScopeCustomerQuote)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx,
 		`UPDATE customer_quote SET
 		   share_token_hash = $2, share_expires_at = $3, valid_until = $4,
 		   lines = $5, status = 'sent', view_count = 0, first_viewed_at = NULL,
-		   updated_at = now()
+		   updated_at = now(), seq = $6
 		 WHERE id = $1`,
-		quoteID, newState.Encode(), shareExpiresAt, validUntil, linesJSON)
+		quoteID, newState.Encode(), shareExpiresAt, validUntil, linesJSON, seq)
 	if err != nil {
 		return fmt.Errorf("customerquote: send rotation: %w", err)
 	}
@@ -227,12 +243,19 @@ func (s *Store) RotateOnSend(ctx context.Context, tx pgx.Tx, quoteID string, new
 // RetireOnRevise performs the revise rotation under the row lock: the live
 // hash moves to the dead list, the live slot empties, and the status returns
 // to draft (the HH Pro rule: the token rotates the moment the intent to
-// change forms, not at the eventual re-send).
+// change forms, not at the eventual re-send). The write draws a fresh
+// customer_quote seq on the same transaction, for the same feed reason the
+// send rotation carries one.
 func (s *Store) RetireOnRevise(ctx context.Context, tx pgx.Tx, quoteID string, newState TokenState) error {
-	_, err := tx.Exec(ctx,
-		`UPDATE customer_quote SET share_token_hash = $2, status = 'draft', updated_at = now()
+	seq, err := s.AllocateSeqTx(ctx, tx, ScopeCustomerQuote)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx,
+		`UPDATE customer_quote SET
+		   share_token_hash = $2, status = 'draft', updated_at = now(), seq = $3
 		 WHERE id = $1`,
-		quoteID, newState.Encode())
+		quoteID, newState.Encode(), seq)
 	if err != nil {
 		return fmt.Errorf("customerquote: revise rotation: %w", err)
 	}

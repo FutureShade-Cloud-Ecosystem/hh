@@ -45,6 +45,7 @@ import (
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync/readcache"
 )
 
 // poSyncScope is the per-scope sequence counter (scope_sequences, the
@@ -609,4 +610,65 @@ func (s *SyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key stri
 		return sync.RowState{}, fmt.Errorf("purchasing: commit sync delete: %w", err)
 	}
 	return sync.RowState{ID: id, Seq: seq, Deleted: true}, nil
+}
+
+// ----------------------------------------------------------------
+
+// vendorsColumns is the sync projection: the identification legs plus
+// the sync legs.
+const vendorsColumns = `id::text, vendor_no::text, name, payment_terms_days, is_edi,
+	is_active, created_at, updated_at,
+	seq, (deleted_at IS NOT NULL) AS deleted`
+
+// vendorRow is the wire shape of one cached vendor row.
+type vendorRow struct {
+	ID               string    `json:"id"`
+	VendorNo         string    `json:"vendor_no"`
+	Name             string    `json:"name"`
+	PaymentTermsDays int       `json:"payment_terms_days"`
+	IsEDI            bool      `json:"is_edi"`
+	IsActive         bool      `json:"is_active"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+// scanVendorRow reads the 9-target row and projects it.
+func scanVendorRow(row readcache.Scanner) (string, int64, bool, map[string]any, error) {
+	var r vendorRow
+	var seq int64
+	var deleted bool
+	if err := row.Scan(&r.ID, &r.VendorNo, &r.Name, &r.PaymentTermsDays, &r.IsEDI,
+		&r.IsActive, &r.CreatedAt, &r.UpdatedAt, &seq, &deleted); err != nil {
+		return "", 0, false, nil, err
+	}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return "", 0, false, nil, fmt.Errorf("purchasing: sync projection: %w", err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return "", 0, false, nil, fmt.Errorf("purchasing: sync projection decode: %w", err)
+	}
+	return r.ID, seq, deleted, data, nil
+}
+
+// vendorsPredicate is the org predicate over the module's own table.
+func vendorsPredicate(f sync.ScopeFilter) ([]any, bool) {
+	if f.Tenant || f.OrgID == "" {
+		return nil, false
+	}
+	return []any{f.OrgID}, true
+}
+
+// NewVendorsStore builds the vendors Store.
+func NewVendorsStore(pool *pgxpool.Pool) *readcache.Store {
+	return readcache.New(pool, readcache.Query{
+		Page: `SELECT ` + vendorsColumns + ` FROM vendors
+		 WHERE org_id = $1::uuid AND seq IS NOT NULL AND seq > $2
+		 ORDER BY seq ASC LIMIT $3`,
+		ByID: `SELECT ` + vendorsColumns + ` FROM vendors
+		 WHERE org_id = $1::uuid AND id = $2::uuid`,
+		Args: vendorsPredicate,
+		Scan: scanVendorRow,
+	})
 }

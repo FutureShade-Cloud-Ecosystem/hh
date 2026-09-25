@@ -133,23 +133,31 @@ func (r *Repository) ListUsers(ctx context.Context, customerID string) ([]User, 
 	return out, rows.Err()
 }
 
+// teamSeqCTE is the data-modifying CTE the team-member writes prepend to
+// draw a fresh team-scope seq atomically in the same statement (the 0213
+// convention; the team manifest scope's projection is this table, so an
+// online role or status change reappears in the tenant's pull feed).
+const teamSeqCTE = `WITH seq AS (INSERT INTO scope_sequences (scope) VALUES ('team')
+	              ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
+	              RETURNING next_value) `
+
 // UpdateRole sets a user's role. When enforceLastAdmin is set (the caller is
 // demoting an account_admin) the count + update run atomically under a per-customer
 // lock so concurrent demotions cannot race the tenant to zero admins (M-1).
 func (r *Repository) UpdateRole(ctx context.Context, id, role string, enforceLastAdmin bool) error {
 	if !enforceLastAdmin {
-		return r.exec(ctx, `UPDATE portal_users SET role = $2, updated_at = now() WHERE id = $1`, id, role)
+		return r.exec(ctx, teamSeqCTE+`UPDATE portal_users SET role = $2, updated_at = now(), seq = (SELECT next_value FROM seq) WHERE id = $1`, id, role)
 	}
-	return r.guardedAdminUpdate(ctx, id, `UPDATE portal_users SET role = $2, updated_at = now() WHERE id = $1`, role)
+	return r.guardedAdminUpdate(ctx, id, teamSeqCTE+`UPDATE portal_users SET role = $2, updated_at = now(), seq = (SELECT next_value FROM seq) WHERE id = $1`, role)
 }
 
 // UpdateStatus sets a user's status, with the same atomic last-admin guard when
 // deactivating an admin (M-1).
 func (r *Repository) UpdateStatus(ctx context.Context, id, status string, enforceLastAdmin bool) error {
 	if !enforceLastAdmin {
-		return r.exec(ctx, `UPDATE portal_users SET status = $2, updated_at = now() WHERE id = $1`, id, status)
+		return r.exec(ctx, teamSeqCTE+`UPDATE portal_users SET status = $2, updated_at = now(), seq = (SELECT next_value FROM seq) WHERE id = $1`, id, status)
 	}
-	return r.guardedAdminUpdate(ctx, id, `UPDATE portal_users SET status = $2, updated_at = now() WHERE id = $1`, status)
+	return r.guardedAdminUpdate(ctx, id, teamSeqCTE+`UPDATE portal_users SET status = $2, updated_at = now(), seq = (SELECT next_value FROM seq) WHERE id = $1`, status)
 }
 
 // guardedAdminUpdate applies updateSQL(id, arg) only if AT LEAST ONE OTHER active
