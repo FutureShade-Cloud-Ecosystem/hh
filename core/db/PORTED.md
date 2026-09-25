@@ -104,6 +104,15 @@ One entry per ERP migration landing on `master` above the baseline, each a human
 | 0219 `0219_an_invoice_with_no_journal_behind_it_asks_for_one.sql` | `05809a25` | Ported | Verbatim. Queues outbox posting events for finalized invoices and received payments with no GL journal, and requeues DEAD events whose documents still lack one. Ruling condition 3 met: core's `events_outbox` matches the ERP's on the `status`, `attempts` and `last_error` columns, verified by comparing the carried baseline DDL at `core/db/migrations/0013_audit_outbox.sql:22` against the ERP's `backend/migrations/0013_audit_outbox.sql:22` at `05809a25` (identical, no later ALTER in either tree). On core's from-zero apply it queued 2 PENDING `ar.invoice.finalized` rows, the two demo invoices 0055 carries. | 0222 `0222_an_invoice_with_no_journal_behind_it_asks_for_one.sql` |
 | 0220 `0220_pos_counter_layout.sql` | `05809a25` | Ported | Pure DDL: `counter_layout` on `pos_policy` and `pos_user_workspace`, both NOT NULL with a default that preserves what existing users already see; both tables are carried. | 0223 `0223_pos_counter_layout.sql` |
 
+The freeze marker names 441bfbe, the commit holding 0220's final D45
+content, not the port commit 6b92d21: the merge-condition fix rewrote
+0220's predicates after the port commit landed, and a marker naming the
+port commit would leave every later pull request reporting 0220 as an
+uncovered change forever. The diff from the named commit to main under
+core/db/migrations/ is empty, so any later migration change needs its
+own ledger coverage again. Moved in the housekeeping pull request that
+also restates 0220's ground in check-shape.
+
 First entry, per D33: refreshing `core/api/erp-routes.txt` from `master` (the snapshot vendored under D22 was taken from a `Demo` commit ahead of `master`); the route difference the refresh reports measures how far the snapshot was off. Done in this run: the refresh renamed the provenance header to `05809a25` and added exactly one route line (`PUT /api/v1/purchasing/pos/{id}/delivery-method`).
 
 ## Drift measurement (the erp-routes hold's precondition)
