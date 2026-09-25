@@ -200,17 +200,24 @@ VALUES ($1, NULLIF($2,'')::uuid, $3, $4, $5, TRUE) RETURNING id::text`,
 // runSelect resolves the truck code and driver name in the same read the board renders from: the
 // board shows "TRK-1 · Wade Prentice", and making the client fetch two registries to turn two UUIDs
 // into two words is how a board ends up rendering UUIDs.
-const runSelect = `
+const runSelectColumns = `
 SELECT r.id::text, r.run_no, r.branch_id::text, to_char(r.scheduled_date,'YYYY-MM-DD'),
        COALESCE(r.truck_id::text,''), COALESCE(r.driver_id::text,''),
        COALESCE(t.code::text,''), COALESCE(d.name,''),
        r.status, r.notes, r.dispatched_at, r.completed_at,
        (SELECT count(*) FROM delivery_stops s WHERE s.run_id = r.id)::int,
        r.created_at, r.commit_state, COALESCE(to_char(r.reopened_at,'YYYY-MM-DD"T"HH24:MI:SSOF:00'),''),
-       r.reopen_reason
+       r.reopen_reason`
+
+// runSelectFrom is the FROM half; the sync adapter (syncscope_runs.go)
+// composes it with the same columns plus the sync legs, so one column
+// list serves the board and the device.
+const runSelectFrom = `
   FROM delivery_runs r
   LEFT JOIN dispatch_trucks  t ON t.id = r.truck_id
   LEFT JOIN dispatch_drivers d ON d.id = r.driver_id`
+
+const runSelect = runSelectColumns + runSelectFrom
 
 func scanRun(row pgx.Row) (Run, error) {
 	var r Run
@@ -228,9 +235,14 @@ func (r *Repository) InsertRun(ctx context.Context, in Run, createdBy string) (R
 		return Run{}, err
 	}
 	var id string
-	err = pool.QueryRow(ctx, `
-INSERT INTO delivery_runs (run_no, branch_id, scheduled_date, truck_id, driver_id, notes, created_by)
-VALUES (next_run_no($1), $1, $2::date, NULLIF($3,'')::uuid, NULLIF($4,'')::uuid, $5, NULLIF($6,'')::uuid)
+	// The sync legs (0213) stamp beside the row: the org from the
+	// branch, the seq drawn from the runs scope's allocator inside the
+	// same statement, so a run the desk opens is visible to a device's
+	// pull the moment it lands.
+	err = pool.QueryRow(ctx, fmt.Sprintf(syncSeqCTE, runsSyncScope)+`
+INSERT INTO delivery_runs (run_no, branch_id, scheduled_date, truck_id, driver_id, notes, created_by, org_id, seq)
+SELECT next_run_no($1), $1, $2::date, NULLIF($3,'')::uuid, NULLIF($4,'')::uuid, $5, NULLIF($6,'')::uuid,
+       (SELECT org_id FROM locations WHERE id = $1::uuid), (SELECT next_value FROM seq)
 RETURNING id::text`,
 		in.BranchID, in.ScheduledDate, in.TruckID, in.DriverID, in.Notes, createdBy).Scan(&id)
 	if err != nil {
@@ -324,9 +336,10 @@ func (r *Repository) AssignRunCrew(ctx context.Context, runID, truckID, driverID
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, `
+	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, runsSyncScope)+`
 UPDATE delivery_runs
-   SET truck_id = NULLIF($2,'')::uuid, driver_id = NULLIF($3,'')::uuid, updated_at = now()
+   SET truck_id = NULLIF($2,'')::uuid, driver_id = NULLIF($3,'')::uuid, updated_at = now(),
+       seq = (SELECT next_value FROM seq)
  WHERE id = $1 AND status = 'PLANNED'`, runID, truckID, driverID)
 	if err != nil {
 		return false, err
@@ -341,12 +354,13 @@ func (r *Repository) UpdateRunStatus(ctx context.Context, runID, from, to string
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, `
+	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, runsSyncScope)+`
 UPDATE delivery_runs
    SET status = $3,
        dispatched_at = CASE WHEN $3 = 'DISPATCHED' THEN $4 ELSE dispatched_at END,
        completed_at  = CASE WHEN $3 IN ('COMPLETED','CANCELLED') THEN $4 ELSE completed_at END,
-       updated_at = now()
+       updated_at = now(),
+       seq = (SELECT next_value FROM seq)
  WHERE id = $1 AND status = $2`, runID, from, to, at)
 	if err != nil {
 		return false, err
@@ -375,7 +389,7 @@ func (r *Repository) OpenStopCount(ctx context.Context, runID string) (int, erro
 // seam (module.go). The join is here rather than behind the seam because order.Repository.OrderBrief
 // is a FROZEN four-field authority seam that deliberately carries no display fields, and widening
 // another module's frozen seam for a label is not a trade this module gets to make.
-const stopSelect = `
+const stopSelectColumns = `
 SELECT s.id::text, s.branch_id::text, s.order_id::text, COALESCE(o.order_no::text,''),
        COALESCE(c.name,''), COALESCE(s.run_id::text,''), COALESCE(r.run_no,''),
        s.stop_no, to_char(s.scheduled_date,'YYYY-MM-DD'), s.status, s.time_window,
@@ -390,11 +404,18 @@ SELECT s.id::text, s.branch_id::text, s.order_id::text, COALESCE(o.order_no::tex
        s.weight_kg, s.volume_m3, s.pallet_positions, s.value_cents, s.freight_cents,
        s.freight_is_override, s.load_seq, s.load_count,
        COALESCE(to_char(s.requested_date,'YYYY-MM-DD'),''), s.commit_state, s.committed_at,
-       s.reopened_at, s.reopen_reason
+       s.reopened_at, s.reopen_reason`
+
+// stopSelectFrom is the FROM half, split for the same reason
+// runSelectFrom exists: the sync adapter (syncscope_stops.go) composes
+// the identical columns plus the sync legs over it.
+const stopSelectFrom = `
   FROM delivery_stops s
   LEFT JOIN orders       o ON o.id = s.order_id
   LEFT JOIN customers    c ON c.id = o.customer_id
   LEFT JOIN delivery_runs r ON r.id = s.run_id`
+
+const stopSelect = stopSelectColumns + stopSelectFrom
 
 func scanStop(row pgx.Row) (Stop, error) {
 	var s Stop
@@ -417,19 +438,23 @@ func (r *Repository) InsertStop(ctx context.Context, in Stop, createdBy string, 
 		return Stop{}, err
 	}
 	var id string
-	err = pool.QueryRow(ctx, `
+	// The sync legs stamp beside the row exactly as InsertRun's do: the
+	// org from the branch, the seq from the stops scope's allocator,
+	// one statement.
+	err = pool.QueryRow(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
 INSERT INTO delivery_stops (branch_id, order_id, scheduled_date, time_window, contact_name,
                             contact_phone, address_line, city, postal_code, latitude, longitude,
                             instructions, created_by,
                             weight_kg, volume_m3, pallet_positions, value_cents,
-                            requested_date, commit_state, committed_at, committed_by)
-VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULLIF($13,'')::uuid,
+                            requested_date, commit_state, committed_at, committed_by, org_id, seq)
+SELECT $1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULLIF($13,'')::uuid,
         $14, $15, $16, $17, NULLIF($18,'')::date, $19,
         -- A COMMITTED row carries its stamp or the 0184 CHECK refuses it. The stamp is the clock and
         -- the caller the SERVICE resolved, never anything the request supplied. The service refuses
         -- the whole write for a caller without the commit capability (0185, item D).
         CASE WHEN $19 = 'COMMITTED' THEN $20::timestamptz ELSE NULL END,
-        CASE WHEN $19 = 'COMMITTED' THEN NULLIF($13,'')::uuid ELSE NULL END)
+        CASE WHEN $19 = 'COMMITTED' THEN NULLIF($13,'')::uuid ELSE NULL END,
+        (SELECT org_id FROM locations WHERE id = $1::uuid), (SELECT next_value FROM seq)
 RETURNING id::text`,
 		in.BranchID, in.OrderID, in.ScheduledDate, in.TimeWindow, in.ContactName, in.ContactPhone,
 		in.AddressLine, in.City, in.PostalCode, in.Latitude, in.Longitude, in.Instructions, createdBy,
@@ -534,9 +559,10 @@ func (r *Repository) AssignStop(ctx context.Context, stopID, runID string, stopN
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, `
+	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
 UPDATE delivery_stops
-   SET run_id = NULLIF($2,'')::uuid, stop_no = $3, updated_at = now()
+   SET run_id = NULLIF($2,'')::uuid, stop_no = $3, updated_at = now(),
+       seq = (SELECT next_value FROM seq)
  WHERE id = $1 AND status = 'READY'`, stopID, runID, stopNo)
 	if err != nil {
 		return false, err
@@ -563,14 +589,15 @@ func (r *Repository) UpdateStopStatus(ctx context.Context, stopID, from, to, fai
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, `
+	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
 UPDATE delivery_stops
    SET status = $3,
        loaded_at    = CASE WHEN $3 = 'LOADED'    THEN $5 ELSE loaded_at END,
        en_route_at  = CASE WHEN $3 = 'EN_ROUTE'  THEN $5 ELSE en_route_at END,
        delivered_at = CASE WHEN $3 = 'DELIVERED' THEN $5 ELSE delivered_at END,
        failure_reason = CASE WHEN $3 = 'FAILED' THEN $4 ELSE failure_reason END,
-       updated_at = now()
+       updated_at = now(),
+       seq = (SELECT next_value FROM seq)
  WHERE id = $1 AND status = $2`, stopID, from, to, failureReason, at)
 	if err != nil {
 		return false, err
@@ -589,10 +616,11 @@ func (r *Repository) SetPOD(ctx context.Context, stopID, from, sigRef, receivedB
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, `
+	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, stopsSyncScope)+`
 UPDATE delivery_stops
    SET pod_signature_ref = $3, pod_received_by = $4, pod_at = $6, pod_by = NULLIF($5,'')::uuid,
-       status = 'DELIVERED', delivered_at = $6, updated_at = now()
+       status = 'DELIVERED', delivered_at = $6, updated_at = now(),
+       seq = (SELECT next_value FROM seq)
  WHERE id = $1 AND status = $2`, stopID, from, sigRef, receivedBy, podBy, at)
 	if err != nil {
 		return false, err
@@ -609,7 +637,9 @@ func (r *Repository) MarkHandoff(ctx context.Context, stopID string, at time.Tim
 		return err
 	}
 	_, err = pool.Exec(ctx,
-		`UPDATE delivery_stops SET handoff_at = $2, updated_at = now() WHERE id = $1 AND handoff_at IS NULL`,
+		fmt.Sprintf(syncSeqCTE, stopsSyncScope)+
+			`UPDATE delivery_stops SET handoff_at = $2, updated_at = now(), seq = (SELECT next_value FROM seq)
+			 WHERE id = $1 AND handoff_at IS NULL`,
 		stopID, at)
 	return err
 }
@@ -626,9 +656,11 @@ func (r *Repository) InsertPhoto(ctx context.Context, stopID, branchID, contentT
 		return "", err
 	}
 	var id string
-	err = pool.QueryRow(ctx, `
-INSERT INTO delivery_pod_photos (stop_id, branch_id, content_type, byte_size, image_bytes, caption, captured_by)
-VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7,'')::uuid) RETURNING id::text`,
+	// The pod scope's seq stamps beside the row, so a photo the desk
+	// uploads is visible to a device's pull the moment it lands.
+	err = pool.QueryRow(ctx, fmt.Sprintf(syncSeqCTE, podSyncScope)+`
+INSERT INTO delivery_pod_photos (stop_id, branch_id, content_type, byte_size, image_bytes, caption, captured_by, seq)
+SELECT $1, $2, $3, $4, $5, $6, NULLIF($7,'')::uuid, (SELECT next_value FROM seq) RETURNING id::text`,
 		stopID, branchID, contentType, len(data), data, caption, by).Scan(&id)
 	return id, err
 }

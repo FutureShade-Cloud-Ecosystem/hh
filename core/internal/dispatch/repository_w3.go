@@ -311,9 +311,9 @@ func (r *Repository) AttachPODPhotos(ctx context.Context, stopID, sigRef string,
 		// The 0107 CHECK would refuse this anyway; refusing here names the bug instead of the constraint.
 		return 0, fmt.Errorf("dispatch: cannot attach photos to a blank attestation ref")
 	}
-	tag, err := pool.Exec(ctx, `
+	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, podSyncScope)+`
 UPDATE delivery_pod_photos
-   SET pod_attached_at = $3, pod_signature_ref = $2
+   SET pod_attached_at = $3, pod_signature_ref = $2, seq = (SELECT next_value FROM seq)
  WHERE stop_id = $1 AND pod_attached_at IS NULL`, stopID, sigRef, at)
 	if err != nil {
 		return 0, err
