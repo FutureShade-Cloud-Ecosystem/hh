@@ -137,7 +137,12 @@ func (h *Handler) push(w http.ResponseWriter, r *http.Request, caller guards.Syn
 		httpx.Error(w, http.StatusBadRequest, "invalid_json")
 		return
 	}
-	resp := h.engine.Push(r.Context(), info, f, req.Ops)
+	resp, err := h.engine.Push(r.Context(), info, f, req.Ops)
+	if err != nil {
+		h.log.Error("sync: push failed", "scope", info.Name, "err", err)
+		httpx.Error(w, http.StatusServiceUnavailable, "sync unavailable")
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 

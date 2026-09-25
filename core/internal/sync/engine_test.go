@@ -245,7 +245,11 @@ var testFilter = ScopeFilter{OrgID: "3ef10000-0000-4000-8000-000000000001", Acto
 
 func push(t *testing.T, e *Engine, info ScopeInfo, ops ...apigen.SyncPushOperation) []apigen.SyncPushResult {
 	t.Helper()
-	return e.Push(context.Background(), info, testFilter, ops).Results
+	resp, err := e.Push(context.Background(), info, testFilter, ops)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	return resp.Results
 }
 
 // The pull page legs: ordering by seq, the high-water mark, the cursor on
@@ -337,7 +341,10 @@ func TestEngineScopeFilterIsolatesOrgs(t *testing.T) {
 	res := push(t, e, info, apigen.SyncPushOperation{ClientId: key(2), Op: "delete", Payload: map[string]any{"id": rowID(1)}})
 	// The delete is the owner's row; through the other org's filter it
 	// must not be: the engine's filter travels with every store call.
-	otherEngine := e.Push(context.Background(), info, other, []apigen.SyncPushOperation{{ClientId: key(2), Op: "delete", Payload: map[string]any{"id": rowID(1)}}})
+	otherEngine, otherErr := e.Push(context.Background(), info, other, []apigen.SyncPushOperation{{ClientId: key(2), Op: "delete", Payload: map[string]any{"id": rowID(1)}}})
+	if otherErr != nil {
+		t.Fatalf("other org push failed: %v", otherErr)
+	}
 	if len(otherEngine.Results) != 1 || otherEngine.Results[0].Status != "rejected" {
 		t.Fatalf("another org's delete was not rejected: %+v", otherEngine.Results[0])
 	}
@@ -545,13 +552,24 @@ func TestEngineFreshBaseApplies(t *testing.T) {
 	}
 }
 
-// A store fault surfaces as the operation's rejected result, not a panic.
-func TestEngineStoreFaultRejected(t *testing.T) {
+// An unclassified store fault fails the whole push (the 503 family at
+// the route), while the seam's declared refusals stay per-operation
+// rejected results.
+func TestEngineStoreFaultFailsThePush(t *testing.T) {
 	e, store, info, _ := newEngineFixture(t, PolicyServerWins)
 	store.inject(errors.New("boom"))
-	res := push(t, e, info, apigen.SyncPushOperation{ClientId: key(1), Op: "create", Payload: map[string]any{"id": rowID(1)}})
-	if len(res) != 1 || res[0].Status != "rejected" || res[0].Error == nil {
-		t.Fatalf("fault push: %+v", res[0])
+	_, err := e.Push(context.Background(), info, testFilter, []apigen.SyncPushOperation{{ClientId: key(1), Op: "create", Payload: map[string]any{"id": rowID(1)}}})
+	if err == nil {
+		t.Fatalf("an unclassified store fault did not fail the push")
+	}
+	// A declared refusal stays per-operation.
+	store.inject(ErrOpRefused)
+	resp, err := e.Push(context.Background(), info, testFilter, []apigen.SyncPushOperation{{ClientId: key(1), Op: "create", Payload: map[string]any{"id": rowID(1)}}})
+	if err != nil {
+		t.Fatalf("a declared refusal failed the whole push: %v", err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Status != "rejected" {
+		t.Fatalf("declined push: %+v", resp.Results[0])
 	}
 }
 

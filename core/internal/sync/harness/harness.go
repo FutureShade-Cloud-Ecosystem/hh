@@ -79,7 +79,11 @@ func pullOf(t *testing.T, e *sync.Engine, k Kit, since int64, limit int) apigen.
 // pushOf pushes one outbox under the kit's filter.
 func pushOf(t *testing.T, e *sync.Engine, k Kit, ops []apigen.SyncPushOperation) apigen.SyncPushResponse {
 	t.Helper()
-	return e.Push(context.Background(), k.Scope, k.Filter, ops)
+	resp, err := e.Push(context.Background(), k.Scope, k.Filter, ops)
+	if err != nil {
+		t.Fatalf("harness: push: %v", err)
+	}
+	return resp
 }
 
 // op builds one push operation.

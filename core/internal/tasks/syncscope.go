@@ -29,6 +29,14 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
 
+// refused wraps one of the module's invariant refusals in the Store
+// seam's classified marker (sync.ErrOpRefused), so the engine reports
+// the refusal as the operation's rejected result with the module's own
+// words, never as an operational fault that fails the whole push.
+func refused(err error) error {
+	return fmt.Errorf("%w: %w", sync.ErrOpRefused, err)
+}
+
 // idemNotePrefix heads the task_events note that records one applied sync
 // operation's idempotency key: the module's append-only transition audit
 // is the pilot's full applied-key history, so an outbox holding several
@@ -415,10 +423,10 @@ func (s *SyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key strin
 	to := from
 	if hasStatus {
 		if from == status {
-			return sync.RowState{}, ErrNoTransition
+			return sync.RowState{}, refused(ErrNoTransition)
 		}
 		if !canTransition(from, status) {
-			return sync.RowState{}, ErrIllegalTransition
+			return sync.RowState{}, refused(ErrIllegalTransition)
 		}
 		to = status
 	}

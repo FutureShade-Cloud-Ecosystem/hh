@@ -508,7 +508,10 @@ func pushOps(t *testing.T, f *pilotFixture, ops []syncOp) []apigen.SyncPushResul
 	for _, o := range ops {
 		out = append(out, apigen.SyncPushOperation{ClientId: o.client, Op: o.kind, Payload: o.payload, BaseSeq: o.base})
 	}
-	resp := f.engine.Push(context.Background(), f.info, f.filter, out)
+	resp, err := f.engine.Push(context.Background(), f.info, f.filter, out)
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
 	return resp.Results
 }
 
