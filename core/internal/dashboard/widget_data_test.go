@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -14,7 +15,11 @@ import (
 
 // recordingSeries answers a fixed series and records the Scope it was handed, so a test can assert
 // what the SERVER decided to measure rather than what the client asked for.
+// recordingSeries answers a fixed series and records the Scope it was handed, so a test can assert
+// what the provider saw. WidgetDataFor queries providers concurrently, so the recording is guarded:
+// an unsynchronized fake is a data race that loses calls under load and fails CI at random.
 type recordingSeries struct {
+	mu     sync.Mutex
 	points []Point
 	err    error
 	calls  int
@@ -23,6 +28,8 @@ type recordingSeries struct {
 }
 
 func (r *recordingSeries) Series(_ context.Context, sc Scope, dim string) ([]Point, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.calls++
 	r.scopes = append(r.scopes, sc)
 	r.dims = append(r.dims, dim)
