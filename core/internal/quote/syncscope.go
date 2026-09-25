@@ -359,9 +359,16 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 		// from a missing one: both answer not-found.
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
-	validUntil, err := parseSyncValidity(fmt.Sprint(fields["valid_until"]))
-	if err != nil {
-		return sync.RowState{}, err
+	// An absent validity leg means never-expires (the module's own ""
+	// semantics, D2a); a declared one may carry the plain date or the
+	// projection's own serialized form.
+	validUntil := ""
+	if v, has := fields["valid_until"]; has && v != nil {
+		parsed, perr := parseSyncValidity(fmt.Sprint(v))
+		if perr != nil {
+			return sync.RowState{}, perr
+		}
+		validUntil = parsed
 	}
 	id, hasID := fields["id"].(string)
 	if hasID && id != "" && !looksLikeUUID(id) {

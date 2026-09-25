@@ -15,7 +15,14 @@
 // of the three scopes and from the module's own REST paths, draws from
 // the stops stream's one counter. A load fact a dispatcher writes is
 // visible to a driver's stops pull and the other way round, which is
-// the honest behavior: the row moved.
+// the honest behavior: the row moved. The table's ONE D30
+// idempotency_key column is shared the same way: a write from any of
+// the three scopes displaces the latest key, so a replayed operation
+// whose key a LATER write from another scope displaced re-applies its
+// declared fields, converging on the same values through fresh seqs
+// (the attachments lane's documented single-key posture, now across
+// three scopes; GATE-7's one-update-per-row shape and the batteries'
+// constant-update posture keep the strict replay legs strict).
 //
 // THE WRITE WINDOWS, each the module's own vocabulary and nothing
 // beyond it:

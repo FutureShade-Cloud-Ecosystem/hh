@@ -23,6 +23,15 @@
 // primary key), so a pushed create NAMES its product: the server
 // cannot invent an anchor for a product nobody named, and a product
 // outside the caller's org answers not-found, never a foreign row.
+//
+// THE PRODUCTS READ, stated plainly: the module's own shipped apply
+// statement already derives the anchor's unit from products
+// (ApplyBatch's SELECT price_uom FROM products, the ported code), and
+// this adapter reads products.org_id beside it for the org fence and
+// stamps it on the row. A product-reader seam would be the right door
+// if the module grows one; until then the fence follows the module's
+// own established posture on the same table, fail closed on a NULL or
+// foreign org.
 package pricing
 
 import (
