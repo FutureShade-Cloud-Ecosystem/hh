@@ -94,7 +94,10 @@ type Store interface {
 	Pull(ctx context.Context, f ScopeFilter, since int64, limit int) ([]Entity, []Tombstone, error)
 
 	// FindApplied resolves one idempotency key to the row it applied, if
-	// any, under the caller's scope filter.
+	// any, under the caller's scope filter. The returned RowState is the
+	// row's live state: the dedup result reports the row's current seq
+	// (the truth a resuming device needs), while the never-applies-twice
+	// half is the engine's to guarantee.
 	FindApplied(ctx context.Context, f ScopeFilter, key string) (RowState, bool, error)
 
 	// Load reads one row by id under the caller's scope filter.
