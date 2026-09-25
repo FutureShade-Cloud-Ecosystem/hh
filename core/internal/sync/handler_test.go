@@ -306,4 +306,3 @@ type patternRecorder struct {
 func (p *patternRecorder) Handle(pattern string, h http.Handler) {
 	p.patterns = append(p.patterns, pattern)
 }
-

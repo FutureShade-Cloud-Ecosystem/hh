@@ -204,6 +204,15 @@ func newKit(t *testing.T, scopeName string) (*sync.Engine, Kit) {
 		Update: func(row map[string]any) map[string]any {
 			return map[string]any{"id": row["id"], "v": toInt(row["v"]) + 1}
 		},
+		Chain: func(row map[string]any, n int) []map[string]any {
+			out := make([]map[string]any, 0, n)
+			v := toInt(row["v"])
+			for i := 0; i < n; i++ {
+				v++
+				out = append(out, map[string]any{"id": row["id"], "v": v})
+			}
+			return out
+		},
 		Desk: func(ctx context.Context, row map[string]any) error {
 			return store.deskEdit(fmt.Sprint(row["id"]), map[string]any{"desk": "moved"})
 		},

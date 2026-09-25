@@ -34,7 +34,9 @@ import (
 // is the pilot's full applied-key history, so an outbox holding several
 // operations on one row replays without re-applying the earlier ones (the
 // row's single idempotency_key column records only the latest, the D30
-// shape; the events carry the set).
+// shape; the events carry the set). An idem row is not a transition: its
+// to_status carries the row's status when the operation applied (the
+// column is NOT NULL), which is what makes the row honest to read back.
 const idemNotePrefix = "sync idem "
 
 // idemNote builds the note that records one key.
@@ -201,10 +203,12 @@ func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key str
 	if !ok {
 		return sync.RowState{}, false, nil
 	}
-	q := fmt.Sprintf(`SELECT %s FROM tasks t
+	// No table alias: the projection's shortage-count subqueries
+	// reference tasks.id unqualified, which an alias would hide.
+	q := fmt.Sprintf(`SELECT %s FROM tasks
 		WHERE %s
-		  AND (t.idempotency_key = $2::uuid
-		       OR EXISTS (SELECT 1 FROM task_events e WHERE e.task_id = t.id AND e.note = $3))
+		  AND (idempotency_key = $2::uuid
+		       OR EXISTS (SELECT 1 FROM task_events e WHERE e.task_id = tasks.id AND e.note = $3))
 		LIMIT 1`, syncColumns, where)
 	args = append(args, key, idemNote(key))
 	r, err := scanSyncRow(s.pool.QueryRow(ctx, q, args...))
@@ -360,8 +364,8 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO task_events (task_id, from_status, to_status, actor_id, note)
-		VALUES ($1::uuid, NULL, NULL, NULLIF($2,'')::uuid, $3)`,
-		r.task.ID, actor, idemNote(key)); err != nil {
+		VALUES ($1::uuid, NULL, $2, NULLIF($3,'')::uuid, $4)`,
+		r.task.ID, r.task.Status, actor, idemNote(key)); err != nil {
 		return sync.RowState{}, fmt.Errorf("tasks: sync idem event: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -450,8 +454,8 @@ func (s *SyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key strin
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO task_events (task_id, from_status, to_status, actor_id, note)
-		VALUES ($1::uuid, NULL, NULL, NULLIF($2,'')::uuid, $3)`,
-		id, actor, idemNote(key)); err != nil {
+		VALUES ($1::uuid, NULL, $2, NULLIF($3,'')::uuid, $4)`,
+		id, to, actor, idemNote(key)); err != nil {
 		return sync.RowState{}, fmt.Errorf("tasks: sync idem event: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -494,8 +498,8 @@ func (s *SyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key stri
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO task_events (task_id, from_status, to_status, actor_id, note)
-		VALUES ($1::uuid, NULL, NULL, NULLIF($2,'')::uuid, $3)`,
-		id, actor, idemNote(key)); err != nil {
+		VALUES ($1::uuid, NULL, $2, NULLIF($3,'')::uuid, $4)`,
+		id, r.task.Status, actor, idemNote(key)); err != nil {
 		return sync.RowState{}, fmt.Errorf("tasks: sync idem event: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {

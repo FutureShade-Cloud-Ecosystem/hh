@@ -38,6 +38,13 @@ type Kit struct {
 	// Update builds one valid update payload for a row whose current
 	// projection is row (the module's own rules decide what may move).
 	Update func(row map[string]any) map[string]any
+	// Chain builds n sequential valid update payloads for one outbox,
+	// each valid against the row as the operations before it leave it:
+	// a state-machine module's device queue holds exactly this shape
+	// (claim, start, finish), and the ordering leg pushes them as ONE
+	// outbox. May be nil when Update is commutative (the battery then
+	// repeats Update).
+	Chain func(row map[string]any, n int) []map[string]any
 	// Desk performs one server-side write on the row whose current
 	// projection is row: the write path a desk caller drives, the one a
 	// stale device write must meet. It must bump the row's seq, exactly
@@ -234,11 +241,20 @@ func Contract(t *testing.T, e *sync.Engine, k Kit) {
 		t.Fatalf("resume after the cursor: %+v, want exactly the follower row", page2.Items)
 	}
 	// Push ordering: an outbox applies in order, one result per op, the
-	// seqs ascending, the final state the last op's.
+	// seqs ascending, the final state the last op's. The chain hook
+	// builds the sequential payloads a state-machine module's real
+	// outbox holds.
+	row := rowOf(t, k, id)
+	payloads := []map[string]any{k.Update(row.Data), k.Update(row.Data), k.Update(row.Data)}
+	if k.Chain != nil {
+		payloads = k.Chain(row.Data, 3)
+	}
+	if len(payloads) != 3 {
+		t.Fatalf("chain hook built %d payloads, want 3", len(payloads))
+	}
 	ops := []apigen.SyncPushOperation{}
-	for i := 0; i < 3; i++ {
-		row := rowOf(t, k, id)
-		ops = append(ops, op(OpUpdate, uuid.NewString(), k.Update(row.Data), nil))
+	for _, payload := range payloads {
+		ops = append(ops, op(OpUpdate, uuid.NewString(), payload, nil))
 	}
 	chain := pushOf(t, e, k, ops)
 	if len(chain.Results) != 3 {
@@ -265,12 +281,12 @@ func Contract(t *testing.T, e *sync.Engine, k Kit) {
 	// past the previous mark carries the tombstone (never an item), and
 	// a second delete under a new key is the no-op the retained row
 	// already satisfies.
-	row := rowOf(t, k, id)
+	before := rowOf(t, k, id)
 	del := pushOf(t, e, k, []apigen.SyncPushOperation{op(OpDelete, uuid.NewString(), map[string]any{"id": id}, nil)})
-	if len(del.Results) != 1 || del.Results[0].Status != StatusApplied || *del.Results[0].Seq <= row.Seq {
-		t.Fatalf("delete result: %+v (row seq was %d)", del.Results[0], row.Seq)
+	if len(del.Results) != 1 || del.Results[0].Status != StatusApplied || *del.Results[0].Seq <= before.Seq {
+		t.Fatalf("delete result: %+v (row seq was %d)", del.Results[0], before.Seq)
 	}
-	feed = pullOf(t, e, k, row.Seq, 200)
+	feed = pullOf(t, e, k, before.Seq, 200)
 	if len(feed.Tombstones) != 1 || feed.Tombstones[0].Id != id || feed.Tombstones[0].Seq != *del.Results[0].Seq {
 		t.Fatalf("tombstone pull: %+v", feed.Tombstones)
 	}
