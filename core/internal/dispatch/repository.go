@@ -792,16 +792,18 @@ func scanPickup(row pgx.Row) (WillCall, error) {
 }
 
 // InsertPickup mints a token row. The unique partial index (one ACTIVE per order) is what makes a
-// duplicate mint a conflict rather than two live QR squares on two tags in the same yard.
+// duplicate mint a conflict rather than two live QR squares on two tags in the same yard. The
+// will_call scope's seq stamps beside the row (0213), so a tag the desk prints is visible to a
+// device's pull the moment it lands.
 func (r *Repository) InsertPickup(ctx context.Context, orderID, branchID, tokenHash, createdBy string, expires time.Time) (WillCall, error) {
 	pool, err := r.db()
 	if err != nil {
 		return WillCall{}, err
 	}
 	var id string
-	err = pool.QueryRow(ctx, `
-INSERT INTO will_call_pickups (order_id, branch_id, token_hash, expires_at, created_by)
-VALUES ($1, $2, $3, $4, NULLIF($5,'')::uuid) RETURNING id::text`,
+	err = pool.QueryRow(ctx, fmt.Sprintf(syncSeqCTE, willCallSyncScope)+`
+INSERT INTO will_call_pickups (order_id, branch_id, token_hash, expires_at, created_by, seq)
+VALUES ($1, $2, $3, $4, NULLIF($5,'')::uuid, (SELECT next_value FROM seq)) RETURNING id::text`,
 		orderID, branchID, tokenHash, expires, createdBy).Scan(&id)
 	if err != nil {
 		return WillCall{}, err
@@ -850,15 +852,17 @@ func (r *Repository) ListPickups(ctx context.Context, orderID string) ([]WillCal
 }
 
 // ConfirmPickup records the collection. Guarded on ACTIVE, so a second scan of the same square cannot
-// produce a second confirmation (and the caller learns the token is spent, 410).
+// produce a second confirmation (and the caller learns the token is spent, 410). The will_call
+// scope's seq rides the confirmation so the device that minted the tag learns it was used.
 func (r *Repository) ConfirmPickup(ctx context.Context, id, sigRef, collectedBy string, at time.Time) (bool, error) {
 	pool, err := r.db()
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx, `
+	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, willCallSyncScope)+`
 UPDATE will_call_pickups
-   SET status = 'CONFIRMED', signature_ref = $2, collected_by = $3, confirmed_at = $4
+   SET status = 'CONFIRMED', signature_ref = $2, collected_by = $3, confirmed_at = $4,
+       seq = (SELECT next_value FROM seq)
  WHERE id = $1 AND status = 'ACTIVE'`, id, sigRef, collectedBy, at)
 	if err != nil {
 		return false, err
@@ -866,14 +870,16 @@ UPDATE will_call_pickups
 	return tag.RowsAffected() == 1, nil
 }
 
-// RevokePickup kills a live token (a reprinted tag, a cancelled order).
+// RevokePickup kills a live token (a reprinted tag, a cancelled order). The will_call scope's seq
+// rides the revoke for the same reason ConfirmPickup's does.
 func (r *Repository) RevokePickup(ctx context.Context, id string, at time.Time) (bool, error) {
 	pool, err := r.db()
 	if err != nil {
 		return false, err
 	}
-	tag, err := pool.Exec(ctx,
-		`UPDATE will_call_pickups SET status = 'REVOKED', revoked_at = $2 WHERE id = $1 AND status = 'ACTIVE'`, id, at)
+	tag, err := pool.Exec(ctx, fmt.Sprintf(syncSeqCTE, willCallSyncScope)+
+		`UPDATE will_call_pickups SET status = 'REVOKED', revoked_at = $2, seq = (SELECT next_value FROM seq)
+		 WHERE id = $1 AND status = 'ACTIVE'`, id, at)
 	if err != nil {
 		return false, err
 	}
