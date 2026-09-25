@@ -1107,3 +1107,54 @@ func TestSyncReviewRound1Fixes(t *testing.T) {
 	}
 	t.Logf("F2: the second live stop for a served order answered rejected (%s)", *res[0].Error)
 }
+
+// TestValueEqualWriteKeepsStandingSeq pins the value-equal write arm deterministically
+// (the independent review's P2 on this pull request: the arm was reached only by the
+// property test's random rounds before). A write whose declared values the row already
+// carries must answer applied with the standing row and draw NO fresh seq, under a
+// fresh idempotency key; and a different-valued write under its own fresh key must
+// still draw one, so this pin cannot pass by never allocating at all.
+func TestValueEqualWriteKeepsStandingSeq(t *testing.T) {
+	f := newSyncFixture(t)
+	run := syncOpenRun(t, f)
+	ctx := globalCtx(t, f.pool)
+
+	runsInfo, ok := sync.Lookup("runs")
+	if !ok {
+		t.Fatalf("runs scope missing from the registry")
+	}
+	pull, err := f.engine.Pull(ctx, runsInfo, f.north, 0, 50)
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	var base int64
+	for _, it := range pull.Items {
+		if it.Id == run.ID {
+			base = it.Seq
+		}
+	}
+	if base == 0 {
+		t.Fatalf("the fixture run never reached the feed")
+	}
+
+	// A different-valued note lands and draws a seq.
+	first := syncApplied(t, f, "runs", f.north, "update", syncFreshKey(),
+		map[string]any{"id": run.ID, "notes": "value equal pin first"}, &base)
+	if *first.Seq <= base {
+		t.Fatalf("the first write drew seq %d at base %d; a fresh fact must draw a fresh seq", *first.Seq, base)
+	}
+
+	// The SAME declared values under a FRESH key: applied at the standing seq, nothing drawn.
+	same := syncApplied(t, f, "runs", f.north, "update", syncFreshKey(),
+		map[string]any{"id": run.ID, "notes": "value equal pin first"}, first.Seq)
+	if *same.Seq != *first.Seq {
+		t.Fatalf("the value-equal write answered seq %d, want the standing %d (a superseded replay must not move the row's feed position)", *same.Seq, *first.Seq)
+	}
+
+	// A different value under its own fresh key draws again.
+	next := syncApplied(t, f, "runs", f.north, "update", syncFreshKey(),
+		map[string]any{"id": run.ID, "notes": "value equal pin second"}, same.Seq)
+	if *next.Seq <= *same.Seq {
+		t.Fatalf("the second fresh fact drew seq %d after %d; only equal values stand still", *next.Seq, *same.Seq)
+	}
+}
