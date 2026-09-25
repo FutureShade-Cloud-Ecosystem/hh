@@ -1,24 +1,33 @@
 -- 0220, ported from the ERP's 0217 under the HH-3.7 MID ruling (Plane #25, D39):
 -- the two seeded finance notes are rewritten to the ERP's clean replacement
--- wording, with the predicates adapted to core's own carried text.
+-- wording, with the predicates matching the carried rows by LIKE pattern per
+-- the merge condition on the port, recorded as D45.
 --
 -- WHAT THIS CORRECTS. The carried seed rows at 0032:55 (gl_policy.notes) and
 -- 0035:63 (nsf_policy.notes) hold the D32-scrubbed variant of the ERP's
--- retired sentence: the personal identifier was removed before the first
--- commit, but the scrub classes did not cover the workstream code, the stale
--- amount or the availability phrase, and those still sit in two strings a
--- client reads (the GL Policy card body and the NSF policy editor's Notes
+-- retired sentence: the scrub replaced the personal identifier's first token
+-- with a patterned placeholder, and what remained in the carried text is the
+-- surname beside that placeholder, a dash character, the workstream code, the
+-- stale amount and the availability phrase (the D45 finding, recorded against
+-- both files in core/db/PORTED.md by reason class). Those sit in two strings
+-- a client reads (the GL Policy card body and the NSF policy editor's Notes
 -- field). The ERP retired that sentence in 0217 with clean provisional
--- wording; this port applies the same wording here.
+-- wording; this port applies the same wording here, which retires the
+-- remaining identifying value from live data.
 --
--- THE PREDICATES ARE CORE'S OWN TEXT. Each WHERE clause is byte-identical to
--- the value core already carries at 0032:55 and 0035:63 respectively, so the
--- update matches exactly the seeded rows and no row a person has edited (the
--- NSF field is editable; a dealer who typed their own note has said something
--- and is not overwritten). The ERP's original sentence never enters core, in
+-- THE PREDICATES ARE LIKE PATTERNS, NOT THE CARRIED TEXT. Each WHERE clause
+-- anchors on the patterned placeholder token, the workstream code and the
+-- surrounding program words, with wildcards where the surname and the dash
+-- sit: the same single seeded row per table matches (proven by a direct LIKE
+-- check and on the from-zero apply), no row a person has edited is touched
+-- (the NSF field is editable; a dealer who typed their own note has said
+-- something and is not overwritten), and neither the surname nor the dash
+-- enters this file. The ERP's original sentence never enters core either, in
 -- this file or anywhere else (ruling condition 2): it appears zero times in
--- the carried baseline, and this file's predicates were extracted from core's
--- own migrations, not from the ERP's.
+-- the carried baseline. By D45 the baseline files stay byte-for-byte as
+-- carried (frozen migrations are never edited, history is never rewritten);
+-- the text remains in git history as a known exposure in a private
+-- repository.
 --
 -- SAFETY, following the ERP's 0217 properties. Two scoped UPDATEs inside one
 -- transaction; nothing added, dropped or renamed. Idempotent: a second run
@@ -32,11 +41,11 @@ BEGIN;
 
 UPDATE gl_policy
    SET notes = 'These settings are provisional until the accountant confirms them.'
- WHERE notes = 'PLACEHOLDER — pending external-accountant confirmation (Scrubname0001 Holt on leave, Q-021)';
+ WHERE notes LIKE 'PLACEHOLDER % pending external-accountant confirmation (Scrubname0001 % on leave, Q-021)';
 
 UPDATE nsf_policy
    SET notes = 'This fee is provisional until the accountant confirms it.'
- WHERE notes = 'PLACEHOLDER $45 — pending external-accountant confirmation (Scrubname0001 Holt on leave, Q-021)';
+ WHERE notes LIKE 'PLACEHOLDER $45 % pending external-accountant confirmation (Scrubname0001 % on leave, Q-021)';
 
 COMMENT ON COLUMN gl_policy.notes IS
   'Seeded default body text for the GL Policy card. The seeded value reads: These settings are provisional until the accountant confirms them. '

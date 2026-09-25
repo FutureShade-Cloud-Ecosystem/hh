@@ -10,6 +10,18 @@ Source: `hardscapeos_dibbits`, branch `master`, commit `6eaea3ec`, the head of `
 
 One row per baseline file whose committed text differs from its ERP blob at `6eaea3ec`. The hash is the ERP original's, so the tracking lane diffs against the recorded original, not the scrubbed text (D32). Reasons are reason classes, never values. The pre-carry classification names `0029`, `0046`, `0049`, `0055` and `0057` as the minimum set; the attribution sweep across the whole carried set may add files. Rows are filled by the carry pass.
 
+D45 finding (the PR 14 merge condition): the two rows above understate what
+the carried text retains. The D32 pass replaced the personal identifier's
+first token only; a surname remains beside the patterned placeholder in both
+seed values (reason class name), beside a dash character and workstream text
+the scrub classes never covered. Recorded by reason class only, never the
+value. The baseline files stay byte-for-byte as carried: frozen migrations
+are never edited and history is never rewritten, and the text remains in git
+history as a known exposure in a private repository. The HH-3.7 port (core
+0220) retires the value from live data by rewriting both rows to the clean
+replacement wording, matching them with LIKE predicates that carry no name
+and no dash. Decision: `docs/analysis/DECISIONS.md` D45.
+
 | File | ERP blob hash | Reason class |
 | :--- | :------------ | :----------- |
 | File | ERP blob hash | Reason class |
@@ -20,9 +32,9 @@ One row per baseline file whose committed text differs from its ERP blob at `6ea
 | `0024_pricing_seed.sql` | `5ac725cc06867350c7b4fe0c0610525c213b7f90` | first_name |
 | `0026_quantity_break_adjustments.sql` | `49f14f96e09b69c71ce8a1f0c3d68f6f187fd4de` | first_name |
 | `0029_pos_counter_sales.sql` | `ca5d6d0ee5f96b2a7029bab28c43ea29bac7cc34` | first_name, name |
-| `0032_gl_module.sql` | `19bbecb86e2255b7b085703568dbc7a9bca248ab` | first_name |
+| `0032_gl_module.sql` | `19bbecb86e2255b7b085703568dbc7a9bca248ab` | first_name, name |
 | `0033_bank_recon.sql` | `8f71a6408f662574f465de25d5848db7692ed64a` | first_name |
-| `0035_nsf_credit_hold.sql` | `cbcde97c7fe2c0ab23609a63cacc37fe04598eef` | first_name |
+| `0035_nsf_credit_hold.sql` | `cbcde97c7fe2c0ab23609a63cacc37fe04598eef` | first_name, name |
 | `0038_lien_holdback_compliance.sql` | `55d2429488754857b346b039b667bf0f9e5f9469` | first_name |
 | `0039_price_change_log.sql` | `f4e234cac49a76dfe7c734a258c17606367365b0` | first_name |
 | `0043_super_admin_platform_role.sql` | `e5baee15ec813683aa3a68dadc9abab75a4cfc1b` | first_name |
@@ -89,7 +101,7 @@ One entry per ERP migration landing on `master` above the baseline, each a human
 | 0214 `0214_purchasing_delivery_method.sql` | `05809a25` | Ported | Adds `purchasing_pos.delivery_method`; ported paired with the 0216 port so core never carries the uncorrected default. | 0217 `0217_purchasing_delivery_method.sql` |
 | 0215 `0215_a_widget_title_that_was_never_chosen_stops_speaking_for_the_catalog.sql` | `05809a25` | Ported | Guarded byte-identity rewrites of seeded widget titles with `updated_by IS NULL` guards; idempotent. Count-verified on core's from-zero apply: matched 6 rows in `dashboard_profile_widgets`, 5 in `dashboard_gallery_entries`, 0 in `dashboard_user_widgets`; a second run matches 0. | 0218 `0218_a_widget_title_that_was_never_chosen_stops_speaking_for_the_catalog.sql` |
 | 0216 `0216_purchasing_delivery_method_can_be_unrecorded.sql` | `05809a25` | Ported | Second half of the 0214 pair: third CHECK value, corrected default, guarded backfill. Ruling condition 1 met: the backfill cut's bookkeeping lookup pattern was adapted from the ERP's 0214 file number to core's 0217 file number (the 0214 port), the one adaptation in an otherwise byte-identical body; core's runner records the same filename-stem versions in the same `schema_migrations` shape, so the guarded lookup resolves identically on core's from-zero path. | 0219 `0219_purchasing_delivery_method_can_be_unrecorded.sql` |
-| 0217 `0217_a_finance_note_a_client_reads_names_nobody.sql` | `05809a25` | Ported | Adapted port. Rewrites `gl_policy.notes` and `nsf_policy.notes` to the ERP's clean replacement sentences. Ruling condition 2 met: the WHERE predicates are byte-identical to core's own scrubbed literals carried at `0032_gl_module.sql:55` and `0035_nsf_credit_hold.sql:63`, extracted by script from those files; the ERP's original sentence never entered core, in code or in commit text. Same safety properties as the ERP's 0217: no `updated_at` bump, no `schema_migrations` reference, idempotent (from-zero apply rewrote 1 row per table; a second run matches 0). | 0220 `0220_a_finance_note_a_client_reads_names_nobody.sql` |
+| 0217 `0217_a_finance_note_a_client_reads_names_nobody.sql` | `05809a25` | Ported | Adapted port. Rewrites `gl_policy.notes` and `nsf_policy.notes` to the ERP's clean replacement sentences. Ruling condition 2 met, and the PR 14 merge condition (D45) with it: the WHERE predicates are LIKE patterns anchored on the patterned placeholder token, the workstream code and the surrounding program words, with wildcards where the surname and the dash sit, so the same single seeded row per table matches (proven by a direct LIKE check and on the from-zero apply) and neither the surname nor the dash enters this file; the ERP's original sentence never entered core either, in code or in commit text. Same safety properties as the ERP's 0217: no `updated_at` bump, no `schema_migrations` reference, idempotent (from-zero apply rewrote 1 row per table; a second run matches 0). | 0220 `0220_a_finance_note_a_client_reads_names_nobody.sql` |
 | 0218 `0218_the_setup_entries_behind_no_customer_document_come_back_out.sql` | `05809a25` | Ported | Verbatim. Balanced reversing journals with fixed UUIDs and idempotency keys for the four demonstration journals 0056 posted; triple-guarded no-op where 0056 is absent, and core carried 0056 verbatim. | 0221 `0221_the_setup_entries_behind_no_customer_document_come_back_out.sql` |
 | 0219 `0219_an_invoice_with_no_journal_behind_it_asks_for_one.sql` | `05809a25` | Ported | Verbatim. Queues outbox posting events for finalized invoices and received payments with no GL journal, and requeues DEAD events whose documents still lack one. Ruling condition 3 met: core's `events_outbox` matches the ERP's on the `status`, `attempts` and `last_error` columns, verified by comparing the carried baseline DDL at `core/db/migrations/0013_audit_outbox.sql:22` against the ERP's `backend/migrations/0013_audit_outbox.sql:22` at `05809a25` (identical, no later ALTER in either tree). On core's from-zero apply it queued 2 PENDING `ar.invoice.finalized` rows, the two demo invoices 0055 carries. | 0222 `0222_an_invoice_with_no_journal_behind_it_asks_for_one.sql` |
 | 0220 `0220_pos_counter_layout.sql` | `05809a25` | Ported | Pure DDL: `counter_layout` on `pos_policy` and `pos_user_workspace`, both NOT NULL with a default that preserves what existing users already see; both tables are carried. | 0223 `0223_pos_counter_layout.sql` |
