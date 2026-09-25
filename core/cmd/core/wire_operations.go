@@ -20,6 +20,9 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/attachments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dashboard"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
@@ -32,9 +35,14 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messagingprovider"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/planflow"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/printing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/procurement"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
@@ -104,6 +112,11 @@ type operationsSpine struct {
 	unionGateway  payments.PaymentGateway
 	purchasingSvc *purchasing.Service
 	landedcostSvc *landedcost.Service
+	// syncEngine is the sync core (HH-3.5): returned so the scopes
+	// whose owning service the operations wiring does not build (the
+	// customer-quote surface, constructed in main after the spines) can
+	// register beside their own module's construction.
+	syncEngine *sync.Engine
 }
 
 func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, spine *moneySpine, streamTicketKey string, smsOutbox *messagingprovider.Outbox) *operationsSpine {
@@ -326,6 +339,84 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("cycle_counts", invcount.NewSyncStore(pool, invCountAdapter{svc: inventorySvc}, link)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
+
+	// The contractor outbox scopes (HH-3.5 #169), the plan-flow grain:
+	// orders and scope_items over the planflow module's plan and
+	// plan_line tables (the board card and its lines; see the module's
+	// doc for the scope-name bridge), and delivery_instructions over
+	// the card's instruction pair, sharing the plan table's one feed
+	// counter. team over the portal module's portal_users (manual, the
+	// last-owner guard holding through sync), pickups over dispatch's
+	// will_call_pickups (manual, the typed-name attestation sealing
+	// through the same provider the public confirm path uses).
+	if err := syncEngine.RegisterScope("orders", planflow.NewOrdersSyncStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("scope_items", planflow.NewItemsSyncStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("delivery_instructions", planflow.NewInstructionsSyncStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("team", portal.NewTeamSyncStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	// The pull-only scopes (Colton's START ruling on undeclared scopes,
+	// HH-3.5 #169): GET implemented over the owning module's own read,
+	// POST refused in the contract's own shape at the route. products
+	// and catalog are the one products table read through each caller
+	// class's org; trucks and drivers fence through the branch; the
+	// warranty pair is two projections over the one claims feed;
+	// widget_measures is the caller's own Home configuration; projects,
+	// payment_methods and aging are the tenant's reads. channels and
+	// tracking_events stay unwired: the D26 schema-shaped stops the lane
+	// reported (msg_channels carries no org column under a
+	// derived-membership model; no table carries the contractor's
+	// tracking events). tracking_events answers 501 on both routes;
+	// channels is pull-only in the registry and unwired, so its GET
+	// answers 501 while its POST meets the pull-only 400 first.
+	if err := syncEngine.RegisterScope("products", product.NewProductsStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("catalog", product.NewCatalogStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("customers", customer.NewCustomersStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("inventory_lookup", inventory.NewInventoryLookupStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("trucks", dispatch.NewTrucksStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("drivers", dispatch.NewDriversStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("vendors", purchasing.NewVendorsStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("parked_tickets", pos.NewParkedTicketsStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("warranty_claims", warranty.NewWarrantyClaimsStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("warranty_board", warranty.NewWarrantyBoardStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("widget_measures", dashboard.NewWidgetMeasuresStore(pool, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("projects", procurement.NewProjectsStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("payment_methods", payments.NewPaymentMethodsStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("aging", billing.NewAgingStore(pool, nil)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
 	syncRoutes, err := sync.NewHandler(syncEngine, log)
 	if err != nil {
 		panic("sync: handler construction refused to boot: " + err.Error())
@@ -438,6 +529,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		tillRepo:      tillRepo,
 		purchasingSvc: purchasingSvc,
 		landedcostSvc: landedcostSvc,
+		syncEngine:    syncEngine,
 	}
 }
 
@@ -604,6 +696,24 @@ func (a dispatchOrderAdapter) Brief(ctx context.Context, orderID string) (dispat
 		return dispatch.OrderBrief{}, err
 	}
 	return dispatch.OrderBrief{ID: b.ID, BranchID: b.BranchID, Fulfillment: b.Fulfillment, Status: b.Status}, nil
+}
+
+// dispatchTenantOrders satisfies dispatch.TenantOrderReader over the
+// order Repository's tenant-scoped reads (the pickups sync adapter's
+// only order access: the tenant's brief for a will-call request, the
+// tenant's order id set for the feed predicate).
+type dispatchTenantOrders struct{ repo *order.Repository }
+
+func (a dispatchTenantOrders) TenantBrief(ctx context.Context, tenantID, orderID string) (dispatch.OrderBrief, bool, error) {
+	b, ok, err := a.repo.OrderBriefForTenant(ctx, tenantID, orderID)
+	if err != nil || !ok {
+		return dispatch.OrderBrief{}, false, err
+	}
+	return dispatch.OrderBrief{ID: b.ID, BranchID: b.BranchID, Fulfillment: b.Fulfillment, Status: b.Status}, true, nil
+}
+
+func (a dispatchTenantOrders) TenantOrderIDs(ctx context.Context, tenantID string) ([]string, error) {
+	return a.repo.OrderIDsByCustomer(ctx, tenantID)
 }
 
 // ResolveOrderID completes dispatch.OrderReader (DIB-483): pure

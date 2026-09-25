@@ -530,7 +530,13 @@ micro_apps:
     shell: hh-work
     offline:
       mode: read_cache_only
-      scopes: [customers, products, price_matrix, parked_tickets, invoices, warranty_claims]
+      scopes:
+        - customers # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
+        - products # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
+        - price_matrix
+        - parked_tickets # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
+        - invoices
+        - warranty_claims # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
       conflict_policy: {}
       note: "DECISIONS.md D5: the till has no outbox; tenders, payments and every money-moving action resolve online."
     three_jobs:
@@ -562,7 +568,11 @@ micro_apps:
     shell: hh-work
     offline:
       mode: read_cache_plus_outbox
-      scopes: [products, price_matrix, customers, quotes]
+      scopes:
+        - products # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
+        - price_matrix
+        - customers # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
+        - quotes
       conflict_policy:
         quotes: last_write_wins_by_field
         price_matrix: server_wins
@@ -594,7 +604,13 @@ micro_apps:
     shell: hh-field
     offline:
       mode: full
-      scopes: [pick_tasks, shortages, receiving, inventory_lookup, weights, attachments]
+      scopes:
+        - pick_tasks
+        - shortages
+        - receiving
+        - inventory_lookup # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
+        - weights
+        - attachments
       conflict_policy:
         pick_tasks: server_wins
         shortages: manual
@@ -661,7 +677,12 @@ micro_apps:
     shell: hh-work
     offline:
       mode: read_cache_plus_outbox
-      scopes: [loads, delivery_stops, trucks, drivers, will_call]
+      scopes:
+        - loads
+        - delivery_stops
+        - trucks # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
+        - drivers # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
+        - will_call
       conflict_policy:
         loads: server_wins
         delivery_stops: server_wins
@@ -693,7 +714,11 @@ micro_apps:
     shell: hh-work
     offline:
       mode: read_cache_plus_outbox
-      scopes: [purchase_orders, vendors, inventory_lookup, cycle_counts]
+      scopes:
+        - purchase_orders
+        - vendors # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
+        - inventory_lookup # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
+        - cycle_counts
       conflict_policy:
         purchase_orders: server_wins
         cycle_counts: manual
@@ -753,7 +778,10 @@ micro_apps:
     shell: hh-work
     offline:
       mode: read_cache_only
-      scopes: [widget_measures, approvals, warranty_board]
+      scopes:
+        - widget_measures # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
+        - approvals
+        - warranty_board # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
       conflict_policy:
         approvals: server_wins
     three_jobs:
@@ -784,7 +812,11 @@ micro_apps:
     shell: [hh-work, hh-field]
     offline:
       mode: read_cache_plus_outbox
-      scopes: [channels, messages, acks, notify_prefs]
+      scopes:
+        - channels # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
+        - messages
+        - acks
+        - notify_prefs
       conflict_policy:
         messages: server_wins
         acks: server_wins
@@ -847,7 +879,14 @@ micro_apps:
     shell: hh-pro
     offline:
       mode: read_cache_plus_outbox
-      scopes: [projects, orders, scope_items, price_matrix, catalog, customer_quotes, team]
+      scopes:
+        - projects # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
+        - orders
+        - scope_items
+        - price_matrix
+        - catalog # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
+        - customer_quotes
+        - team
       conflict_policy:
         orders: server_wins
         scope_items: last_write_wins_by_field
@@ -882,7 +921,11 @@ micro_apps:
     shell: hh-pro
     offline:
       mode: read_cache_only
-      scopes: [invoices, payments, payment_methods, aging]
+      scopes:
+        - invoices
+        - payments
+        - payment_methods # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
+        - aging # pull-only: Colton's START ruling on undeclared scopes (the client never writes it; GET serves it, the sync POST refuses)
       conflict_policy:
         invoices: server_wins
         payments: server_wins

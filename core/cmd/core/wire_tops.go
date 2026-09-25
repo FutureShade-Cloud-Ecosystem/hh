@@ -32,6 +32,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/config"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dashboard"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/export"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/feedback"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/finstmt"
@@ -341,6 +342,18 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// default (one wired default, named here).
 	posSvc.WithSignatureProvider(pos.NewTypedNameSignatureProvider(payVault))
 	posHandler.RegisterTypedSignatureRoutes(r, g)
+
+	// The pickups sync scope (HH-3.5 #169, manual policy) registers here,
+	// beside the typed-name provider its confirms seal through: the store
+	// takes the same dispatch.SignatureCapturer the public will-call
+	// confirm path takes, and the tenant order seam the order module's
+	// tenant-scoped reads serve. Unwired provider would refuse confirms
+	// exactly as the public path's ErrNoSignatureProvider does; wired
+	// here, both paths seal through one provider.
+	if err := ops.syncEngine.RegisterScope("pickups", dispatch.NewPickupsSyncStore(
+		pool, dispatchTenantOrders{repo: orderRepo}, dispatchSignatureAdapter{svc: posSvc}, linkedUserID(pool))); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
 
 	// The quote automation's comms seams (W3-D): the notice queue over the
 	// SMS outbox and the consent resolver, the contact reader over customer.

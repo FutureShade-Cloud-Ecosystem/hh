@@ -161,6 +161,57 @@ func (r *Repository) GetOrder(ctx context.Context, customerID, orderID string) (
 	return d, nil
 }
 
+// OrderBriefForTenant reads one order's brief under the tenant scope
+// (the contractor-facing adapters' read: a cross-tenant id is the same
+// absent as a missing one, ok false). It is the pickups sync adapter's
+// authority read for a will-call request's branch and fulfillment.
+func (r *Repository) OrderBriefForTenant(ctx context.Context, customerID, orderID string) (Brief, bool, error) {
+	if r.pool == nil {
+		return Brief{}, false, errNoDB
+	}
+	if !looksLikeUUID(orderID) || !looksLikeUUID(customerID) {
+		return Brief{}, false, nil
+	}
+	var b Brief
+	err := r.pool.QueryRow(ctx,
+		`SELECT id::text, branch_id::text, fulfillment, status FROM orders
+		 WHERE id = $1 AND customer_id = $2`, orderID, customerID).
+		Scan(&b.ID, &b.BranchID, &b.Fulfillment, &b.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Brief{}, false, nil
+	}
+	if err != nil {
+		return Brief{}, false, err
+	}
+	return b, true, nil
+}
+
+// OrderIDsByCustomer returns every order id of the named tenant, live
+// and tombstoned, the id set a tenant-scoped feed predicate needs.
+func (r *Repository) OrderIDsByCustomer(ctx context.Context, customerID string) ([]string, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	if !looksLikeUUID(customerID) {
+		return []string{}, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT id::text FROM orders WHERE customer_id = $1`, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("order: ids by customer: %w", err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("order: ids by customer scan: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // SetDeliveryInstructions updates the note ONLY when the order belongs to the tenant.
 // RowsAffected == 0 (missing or cross-tenant) maps to ErrNotFound.
 func (r *Repository) SetDeliveryInstructions(ctx context.Context, customerID, orderID, text string) error {
