@@ -34,6 +34,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/printing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tasks"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/warranty"
@@ -231,6 +232,25 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithChatNotifier(taskChatNotifier{svc: messagingSvc}).
 		WithLogger(log)
 	tasks.NewHandler(tasksSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+
+	// The sync core (HH-3.5 #165): the engine with the pilot scope
+	// pick_tasks wired over the tasks module's own adapter (the module
+	// owns the tables; the adapter validates creates through the same
+	// order-read seam the REST create uses and attributes actors through
+	// the same linker). The route half of the G4 rule rides the guards'
+	// RequireSync inside RegisterRoutes; the per-operation audit rows
+	// ride the carried audit service through the seam adapter below.
+	// Later Phase D items register their scopes beside this block, one
+	// RegisterScope per owning module.
+	syncEngine := sync.NewEngine().WithAudit(syncAuditSeam{svc: spine.auditSvc, link: link}, log)
+	if err := syncEngine.RegisterScope("pick_tasks", tasks.NewSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	syncRoutes, err := sync.NewHandler(syncEngine, log)
+	if err != nil {
+		panic("sync: handler construction refused to boot: " + err.Error())
+	}
+	syncRoutes.RegisterRoutes(r, g)
 
 	// WTY-01 (DIB-153): warranty claims. The settlement journal posts
 	// through the GL poster; the SLA notifier posts breaches into

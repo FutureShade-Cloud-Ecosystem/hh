@@ -85,8 +85,10 @@ func (rec *Recorder) Entries() []Reached {
 // RegisterRoutes registers the shim surface the real modules have not yet
 // replaced: the sliding-refresh tenant operation (the D38 mint leave-behind:
 // no real module registers it, and the shim is the reached-recorder proof
-// vehicle for its guard class, never a minting surface) and the two
-// dual-bearer sync operations. The representative tenant set
+// vehicle for its guard class, never a minting surface). The two
+// dual-bearer sync operations were this registrar's until the sync core
+// module (HH-3.5 #165) registered the real surface; their proof shims
+// moved to RegisterSupersededProofRoutes in the same change. The representative tenant set
 // (tenantGetMe, tenantUpdateMe) and the capability-qualified invoices read
 // (tenantListInvoices) were this registrar's until the Phase C integration
 // re-homed the portal module onto their documented paths: the real module
@@ -139,32 +141,37 @@ func tenantRecorder(rec *Recorder, operation string) guards.TenantHandler {
 // at the old home after the interface promoted to httpx.
 type Registrar = httpx.Registrar
 
-func RegisterRoutes(r httpx.Registrar, g *guards.Guards, rec *Recorder) {
-	sync := func(operation string) guards.SyncHandler {
-		return func(w http.ResponseWriter, r *http.Request, caller guards.SyncCaller) {
-			entry := Reached{Operation: operation}
-			if caller.Staff != nil {
-				entry.Staff = &StaffFacts{
-					PlatformUserID: caller.Staff.PlatformUserID,
-					OrgSlug:        caller.Staff.OrgSlug,
-					OrgID:          caller.Staff.OrgID,
-					RoleID:         caller.Staff.RoleID,
-					Tier:           caller.Staff.Tier,
-					Scope:          caller.Staff.Scope,
-				}
+// syncRecorder is the reached-recorder factory for the two dual-bearer
+// sync operations; a package-level factory since the sync pair moved to
+// the proof registrar below (the sync core module owns the served pair
+// now, HH-3.5 #165).
+func syncRecorder(rec *Recorder, operation string) guards.SyncHandler {
+	return func(w http.ResponseWriter, r *http.Request, caller guards.SyncCaller) {
+		entry := Reached{Operation: operation}
+		if caller.Staff != nil {
+			entry.Staff = &StaffFacts{
+				PlatformUserID: caller.Staff.PlatformUserID,
+				OrgSlug:        caller.Staff.OrgSlug,
+				OrgID:          caller.Staff.OrgID,
+				RoleID:         caller.Staff.RoleID,
+				Tier:           caller.Staff.Tier,
+				Scope:          caller.Staff.Scope,
 			}
-			if caller.Tenant != nil {
-				entry.Tenant = &TenantFacts{
-					PlatformUserID: caller.Tenant.PlatformUserID,
-					OrgSlug:        caller.Tenant.OrgSlug,
-					OrgID:          caller.Tenant.OrgID,
-					TenantID:       caller.Tenant.TenantID,
-				}
-			}
-			rec.record(entry)
-			writeOK(w)
 		}
+		if caller.Tenant != nil {
+			entry.Tenant = &TenantFacts{
+				PlatformUserID: caller.Tenant.PlatformUserID,
+				OrgSlug:        caller.Tenant.OrgSlug,
+				OrgID:          caller.Tenant.OrgID,
+				TenantID:       caller.Tenant.TenantID,
+			}
+		}
+		rec.record(entry)
+		writeOK(w)
 	}
+}
+
+func RegisterRoutes(r httpx.Registrar, g *guards.Guards, rec *Recorder) {
 	// The sliding refresh, x-role tenant. A MINT leg the portal module
 	// deliberately does not register (the D38 sign-in-methods leave-behind:
 	// no portal mint surface exists in core until HH-4.2 lands one); this
@@ -173,10 +180,6 @@ func RegisterRoutes(r httpx.Registrar, g *guards.Guards, rec *Recorder) {
 	// comes out whole when HH-4.2 registers the real surface.
 	r.Handle("POST /api/v1/tenant/token/refresh", g.RequireTenant(tenantRecorder(rec, "tenantRefreshToken")))
 
-	// The two dual-bearer sync operations, x-role scope-member; the G4
-	// rule is bearer-conditioned inside the guard.
-	r.Handle("GET /api/v1/sync/{scope}", g.RequireSync(sync("syncPull")))
-	r.Handle("POST /api/v1/sync/{scope}", g.RequireSync(sync("syncPush")))
 }
 
 // RegisterSupersededProofRoutes registers the operationIds whose shims the
@@ -215,6 +218,14 @@ func RegisterSupersededProofRoutes(r httpx.Registrar, g *guards.Guards, rec *Rec
 	r.Handle("GET /api/v1/tenant/me", g.RequireTenant(tenantRecorder(rec, "tenantGetMe")))
 	r.Handle("PUT /api/v1/tenant/me", g.RequireTenant(tenantRecorder(rec, "tenantUpdateMe")))
 	r.Handle("GET /api/v1/tenant/invoices", g.RequireCapability(identity.CapViewBilling, tenantRecorder(rec, "tenantListInvoices")))
+
+	// The two dual-bearer sync operations, x-role scope-member; the G4
+	// rule is bearer-conditioned inside the guard. They were the served
+	// registrar's until the sync core module (HH-3.5 #165) registered the
+	// real surface: the served mux answers the engine now, and this proof
+	// pair keeps the DB-free G4 sweeps their reached-recorder vehicle.
+	r.Handle("GET /api/v1/sync/{scope}", g.RequireSync(syncRecorder(rec, "syncPull")))
+	r.Handle("POST /api/v1/sync/{scope}", g.RequireSync(syncRecorder(rec, "syncPush")))
 }
 
 // writeOK answers 200 with the minimal shim body. It reads nothing and

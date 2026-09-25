@@ -203,7 +203,8 @@ func TestRegisterRoutesExercised(t *testing.T) {
 		t.Fatalf("tenant X-Org: %d", got)
 	}
 
-	// The two sync operations under both bearers.
+	// The two sync operations under both bearers, through the superseded
+	// proof registrar (the sync core module owns the served pair).
 	if got := f.do(t, http.MethodGet, "/api/v1/sync/orders", staff, xorg).Code; got != http.StatusOK {
 		t.Fatalf("syncPull staff: %d", got)
 	}
@@ -312,6 +313,23 @@ func TestRegisterRoutes_ServedSetExcludesSuperseded(t *testing.T) {
 		served.ServeHTTP(rec, req)
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("%s: served shim set still answers %d, want 404 (the portal module owns the pattern)", c.op, rec.Code)
+		}
+	}
+	// The sync pair (staff leg with X-Org, tenant leg without): the sync
+	// core module owns the served pattern.
+	for _, c := range []struct{ method, path, op string }{
+		{http.MethodGet, "/api/v1/sync/orders", "syncPull"},
+		{http.MethodPost, "/api/v1/sync/orders", "syncPush"},
+	} {
+		req := httptest.NewRequest(c.method, c.path, nil)
+		req.Header.Set("Authorization", "Bearer "+staff)
+		for k, v := range xorg {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		served.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: served shim set still answers %d, want 404 (the sync core module owns the pattern)", c.op, rec.Code)
 		}
 	}
 }

@@ -143,6 +143,7 @@ func (s *Service) CreateFromOrder(ctx context.Context, in CreateInput) (Task, er
 		Source:          source,
 		CreatedBy:       in.CreatedBy,
 		SourceMessageID: in.SourceMessageID,
+		OrgID:           in.OrgID,
 	})
 	if err != nil {
 		return Task{}, err

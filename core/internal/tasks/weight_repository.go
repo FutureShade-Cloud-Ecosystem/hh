@@ -134,7 +134,12 @@ func (r *Repository) RecordWeight(ctx context.Context, in WeightWrite) (Task, er
 
 	// The weight and the terminal status land in ONE statement. claimed_by/claimed_at are stamped
 	// here too when the chain passed through ACCEPTED, the person who typed the weight IS the person
-	// who did the work, and a DONE task with no claimant reads like nobody touched it.
+	// who did the work, and a DONE task with no claimant reads like nobody touched it. The row draws
+	// a fresh pick_tasks seq beside the write (the sync-feed re-appearance every tasks write owes).
+	seq, err := allocatePickSeqTx(ctx, tx)
+	if err != nil {
+		return Task{}, err
+	}
 	t, err := scanYardTask(tx.QueryRow(ctx, `
 		UPDATE tasks
 		   SET status         = 'DONE',
@@ -143,10 +148,11 @@ func (r *Repository) RecordWeight(ctx context.Context, in WeightWrite) (Task, er
 		       done_at        = now(),
 		       claimed_by     = COALESCE(claimed_by, NULLIF($4,'')::uuid),
 		       claimed_at     = COALESCE(claimed_at, now()),
-		       updated_at     = now()
+		       updated_at     = now(),
+		       seq            = $5
 		 WHERE id = $1
 		RETURNING `+yardColumns,
-		in.TaskID, in.Weight, in.UOM, in.ActorID))
+		in.TaskID, in.Weight, in.UOM, in.ActorID, seq))
 	if err != nil {
 		return Task{}, fmt.Errorf("tasks: record weight %q: %w", in.TaskID, err)
 	}
@@ -173,10 +179,24 @@ func (r *Repository) MarkWeightSync(ctx context.Context, taskID string, at *time
 	if len(errText) > 400 {
 		errText = errText[:400]
 	}
-	_, err := r.pool.Exec(ctx,
-		`UPDATE tasks SET weight_synced_at = $2, weight_sync_error = $3, updated_at = now() WHERE id = $1`,
-		taskID, at, errText)
-	return err
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("tasks: begin weight sync stamp: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	seq, err := allocatePickSeqTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE tasks SET weight_synced_at = $2, weight_sync_error = $3, updated_at = now(), seq = $4 WHERE id = $1`,
+		taskID, at, errText, seq); err != nil {
+		return fmt.Errorf("tasks: weight sync stamp %q: %w", taskID, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("tasks: commit weight sync stamp: %w", err)
+	}
+	return nil
 }
 
 // AdvanceRule reads one task type's order-advance ruling (0108).

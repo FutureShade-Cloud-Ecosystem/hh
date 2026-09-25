@@ -77,6 +77,14 @@ const (
 	// action rather than a reused one because this is the row a CASL question is answered from: "who
 	// recorded that this customer agreed, and when", filtered on action alone.
 	ActConsentChanged = "CONSENT_CHANGED" // customer_sms_prefs consent granted or withdrawn by staff
+	// offline sync (context 4.5): one pushed outbox operation, and the
+	// manual policy's review marker. The audit invariant covers every
+	// privileged action, and a replayed outbox write is one: the row
+	// carries the scope, the operation's client id, and the outcome, the
+	// inputs a sync-question ("who completed this task offline") is
+	// answered from, filtered on action alone.
+	ActSyncPush           = "SYNC_PUSH"            // one applied or rejected outbox operation
+	ActSyncConflictReview = "SYNC_CONFLICT_REVIEW" // a manual conflict left waiting on a review card
 )
 
 // sensitiveActions are badged in the viewer and follow the masked-only contract.

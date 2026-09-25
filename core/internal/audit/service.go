@@ -407,6 +407,15 @@ var allowedExtraKeys = map[string]bool{
 	"alg":           true, // the artifact signature algorithm constant
 	"key_id":        true, // the acceptance signing key id (shape-bounded)
 	"token_hash":    true, // separator-encoded sha256 of the share token
+	// The offline sync per-operation rows (context 4.5): scope and op are
+	// enum vocabulary (the SyncScope enum and the create/update/delete
+	// set), conflict_policy the SyncConflict.policy enum, and client_id the
+	// client-generated idempotency key, a uuid, code-shaped by the
+	// contract's own format pin. None can carry a cleartext identifier.
+	"scope":           true, // the sync scope name (SyncScope enum)
+	"op":              true, // create, update or delete
+	"client_id":       true, // the operation's idempotency key (uuid)
+	"conflict_policy": true, // the conflict policy that resolved a stale write
 }
 
 // redactCleartext returns the value with cleartext-looking identifiers stripped. A value is treated as

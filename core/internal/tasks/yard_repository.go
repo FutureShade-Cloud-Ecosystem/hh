@@ -117,16 +117,21 @@ func (r *Repository) Stage(ctx context.Context, in StageInput) (Task, error) {
 		return Task{}, ErrIllegalTransition
 	}
 
+	seq, err := allocatePickSeqTx(ctx, tx)
+	if err != nil {
+		return Task{}, err
+	}
 	t, err := scanYardTask(tx.QueryRow(ctx, `
 		UPDATE tasks SET
 			status         = 'STAGED',
 			staged_at      = now(),
 			stage_location = $2,
 			stage_ref      = $3,
-			updated_at     = now()
+			updated_at     = now(),
+			seq            = $4
 		WHERE id = $1
 		RETURNING `+yardColumns,
-		in.TaskID, in.Location, in.Ref))
+		in.TaskID, in.Location, in.Ref, seq))
 	if err != nil {
 		return Task{}, fmt.Errorf("tasks: stage %q: %w", in.TaskID, err)
 	}

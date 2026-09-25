@@ -136,7 +136,9 @@ type Task struct {
 
 // NewTaskInput is the create write the repository persists (the tasks row + its birth task_events row,
 // from_status NULL → to_status QUEUED, in one tx). The service fills TaskType/Priority/Source defaults
-// and copies BranchID from the validated order before calling.
+// and copies BranchID from the validated order before calling. OrgID is the caller's resolved org (the
+// staff caller's X-Org anchor, or the sync caller's stamped scope): the row's org stamp and the
+// predicate every pick_tasks pull filters on; empty writes SQL NULL (the scaffold and carried writers).
 type NewTaskInput struct {
 	OrderID         string
 	OrderLineNo     *int
@@ -146,6 +148,7 @@ type NewTaskInput struct {
 	Source          string
 	CreatedBy       string // "" = system
 	SourceMessageID string
+	OrgID           string
 }
 
 // TransitionInput is one status move the repository applies atomically (locked pre-image → legality
@@ -177,12 +180,14 @@ type TaskFilter struct {
 }
 
 // CreateInput is the service-level create-from-order request (POST /api/v1/tasks body). v1 always
-// produces a PICK task at QUEUED; Source defaults to CHAT. CreatedBy is the resolved staff caller.
+// produces a PICK task at QUEUED; Source defaults to CHAT. CreatedBy is the resolved staff caller;
+// OrgID is the caller's stamped org anchor (the row's org stamp, the pick_tasks pull predicate).
 type CreateInput struct {
 	OrderID         string
 	Source          string
 	CreatedBy       string
 	SourceMessageID string
+	OrgID           string
 }
 
 // OrderBrief is the narrow order projection the tasks module consumes to validate an order exists and
