@@ -468,6 +468,7 @@ var Routes = []Route{
 	{Method: "POST", Path: "/api/v1/purchasing/pos", OperationID: "purchasingCreatePO", Tag: "staff-purchasing", XRole: "requireManager", Bearer: "staff", Addition: false},
 	{Method: "GET", Path: "/api/v1/purchasing/pos/{id}", OperationID: "purchasingGetPO", Tag: "staff-purchasing", XRole: "requireStaff", Bearer: "staff", Addition: false},
 	{Method: "GET", Path: "/api/v1/purchasing/pos/{id}/costs", OperationID: "purchasingGetPOCosts", Tag: "staff-purchasing", XRole: "requireStaff", Bearer: "staff", Addition: false},
+	{Method: "PUT", Path: "/api/v1/purchasing/pos/{id}/delivery-method", OperationID: "purchasingSetDeliveryMethod", Tag: "staff-purchasing", XRole: "requireManager", Bearer: "staff", Addition: false},
 	{Method: "GET", Path: "/api/v1/purchasing/pos/{id}/document", OperationID: "purchasingGetPODocumentHTML", Tag: "staff-purchasing", XRole: "requireStaff", Bearer: "staff", Addition: false},
 	{Method: "GET", Path: "/api/v1/purchasing/pos/{id}/document.csv", OperationID: "purchasingGetPODocumentCSV", Tag: "staff-purchasing", XRole: "requireStaff", Bearer: "staff", Addition: false},
 	{Method: "PUT", Path: "/api/v1/purchasing/pos/{id}/expected-date", OperationID: "purchasingSetExpectedDate", Tag: "staff-purchasing", XRole: "requireManager", Bearer: "staff", Addition: false},

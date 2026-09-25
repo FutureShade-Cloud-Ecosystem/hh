@@ -223,6 +223,45 @@ func toCAD(cents int64, fx float64) int64 {
 	return round(float64(cents) * fx)
 }
 
+// DeliveryPickup / DeliveryDelivered are the two ANSWERS to "how do these goods reach the yard".
+// DeliveryUnknown is the absence of an answer, and it is a real third state rather than a hole.
+// (Ported from the ERP with DIB-572; the values are the ones the 0217/0219 CHECK constraint
+// accepts.)
+const (
+	DeliveryPickup    = "PICKUP"
+	DeliveryDelivered = "DELIVERY"
+	// DeliveryUnknown means NOBODY RECORDED IT, not "we are still deciding" and not "neither".
+	// It is what every order raised before the correction path existed carries, and what a buyer
+	// who leaves the question alone carries.
+	DeliveryUnknown = "UNKNOWN"
+)
+
+// normalizeDeliveryMethod folds the request's value to one of the three the column accepts.
+//
+// EMPTY MEANS UNKNOWN, at this layer: a caller that predates DIB-572 omits the field, and folding
+// those to DELIVERY would print an arrival on the receiving worklist that no person ever stated.
+// In the ERP that caller is the CREATE path; in core the create half is not yet ported (a recorded
+// residual), so the fold's only caller today is the correction route, which refuses an explicit
+// empty body BEFORE calling here (SetDeliveryMethod): on a correction a request that says nothing
+// is malformed, never an unrecord. The branch stays because it is the ported contract of this
+// function and the create half lands against it. An unrecognised value is a different thing and
+// IS refused: "PICK UP" silently becoming DELIVERY would put a wrong word on the worklist, which
+// is worse than a 400 that names the values.
+func normalizeDeliveryMethod(m string) (string, error) {
+	switch strings.ToUpper(strings.TrimSpace(m)) {
+	case "":
+		return DeliveryUnknown, nil
+	case DeliveryPickup:
+		return DeliveryPickup, nil
+	case DeliveryDelivered:
+		return DeliveryDelivered, nil
+	case DeliveryUnknown:
+		return DeliveryUnknown, nil
+	}
+	return "", badReq("purchasing: delivery_method must be %s, %s or %s",
+		DeliveryPickup, DeliveryDelivered, DeliveryUnknown)
+}
+
 func normalizeCurrency(currency string, fx float64) (string, float64, error) {
 	c := strings.ToUpper(strings.TrimSpace(currency))
 	if c == "" {

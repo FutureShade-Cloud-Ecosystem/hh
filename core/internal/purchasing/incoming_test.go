@@ -29,6 +29,10 @@ type fakeIncoming struct {
 	gotExpectedPO   string
 	gotExpectedDate string
 	updated         bool
+
+	gotDeliveryPO     string
+	gotDeliveryMethod string
+	deliveryUpdated   bool
 }
 
 func (f *fakeIncoming) OpenPOLinesForProduct(_ context.Context, productID string, reach BranchReach) ([]IncomingPOLine, error) {
@@ -38,6 +42,11 @@ func (f *fakeIncoming) OpenPOLinesForProduct(_ context.Context, productID string
 
 func (f *fakeIncoming) UpdateExpectedAt(_ context.Context, poID, expectedAt string) error {
 	f.gotExpectedPO, f.gotExpectedDate, f.updated = poID, expectedAt, true
+	return f.err
+}
+
+func (f *fakeIncoming) UpdateDeliveryMethod(_ context.Context, poID, method string) error {
+	f.gotDeliveryPO, f.gotDeliveryMethod, f.deliveryUpdated = poID, method, true
 	return f.err
 }
 

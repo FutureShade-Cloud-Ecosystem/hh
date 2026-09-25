@@ -15428,6 +15428,40 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/purchasing/pos/{id}/delivery-method:
+    put:
+      operationId: purchasingSetDeliveryMethod
+      tags:
+        - staff-purchasing
+      summary: Record or correct how a purchase order's goods reach the yard
+      description: "Sets the arrival the purchase order carries, readable on GET /api/v1/purchasing/pos/{id}. delivery_method is required: on a correction an empty value is a malformed request, not an unrecord, and sending UNKNOWN is how an arrival is unrecorded. Refused on a RECEIVED, CLOSED or CANCELLED order, the same finished statuses the expected-date route refuses. Core's receiving worklist does not render the column yet; the DIB-573 read half is unported."
+      x-role: requireManager
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingSetDeliveryMethodRequest"
+      responses:
+        "200":
+          description: The purchase order after the edit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPODetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/purchasing/pos/{id}/document:
     get:
       operationId: purchasingGetPODocumentHTML
@@ -40120,6 +40154,13 @@ components:
         fx_rate:
           type: number
           description: The document rate; subtotal_cad_cents is subtotal_cents after conversion
+        delivery_method:
+          type: string
+          enum:
+            - PICKUP
+            - DELIVERY
+            - UNKNOWN
+          description: How the goods reach the yard; UNKNOWN means nobody recorded it, not that the question is still open
         subtotal_cents:
           type: integer
           format: int64
@@ -40764,6 +40805,18 @@ components:
         expected_at:
           type: string
           description: The promised receiving date; the empty string clears it
+    PurchasingSetDeliveryMethodRequest:
+      type: object
+      required:
+        - delivery_method
+      properties:
+        delivery_method:
+          type: string
+          enum:
+            - PICKUP
+            - DELIVERY
+            - UNKNOWN
+          description: "PICKUP or DELIVERY record the arrival; UNKNOWN unrecords it. The empty string is refused: a correction that says nothing must not silently erase what a buyer recorded. An unrecognized word is refused rather than folded to a value nobody said."
     PurchasingTransitionRequest:
       type: object
       required:

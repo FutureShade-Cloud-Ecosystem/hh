@@ -59,12 +59,12 @@ func nullStr(s string) any {
 
 const poCols = `p.id::text, p.po_no::text, p.vendor_id::text, p.branch_id::text, p.status,
 	COALESCE(to_char(p.expected_at,'YYYY-MM-DD'),''), p.ordered_at,
-	p.notes, p.created_at, p.updated_at, p.currency::text, p.fx_rate::float8`
+	p.notes, p.created_at, p.updated_at, p.currency::text, p.fx_rate::float8, p.delivery_method`
 
 func scanPO(row pgx.Row) (PO, error) {
 	var p PO
 	err := row.Scan(&p.ID, &p.PONo, &p.VendorID, &p.BranchID, &p.Status,
-		&p.ExpectedAt, &p.OrderedAt, &p.Notes, &p.CreatedAt, &p.UpdatedAt, &p.Currency, &p.FXRate)
+		&p.ExpectedAt, &p.OrderedAt, &p.Notes, &p.CreatedAt, &p.UpdatedAt, &p.Currency, &p.FXRate, &p.DeliveryMethod)
 	return p, err
 }
 
@@ -171,7 +171,7 @@ func (r *Repository) ListPOs(ctx context.Context, branchID, status string) ([]PO
 	for rows.Next() {
 		var p PO
 		if err := rows.Scan(&p.ID, &p.PONo, &p.VendorID, &p.BranchID, &p.Status,
-			&p.ExpectedAt, &p.OrderedAt, &p.Notes, &p.CreatedAt, &p.UpdatedAt, &p.Currency, &p.FXRate,
+			&p.ExpectedAt, &p.OrderedAt, &p.Notes, &p.CreatedAt, &p.UpdatedAt, &p.Currency, &p.FXRate, &p.DeliveryMethod,
 			&p.LineCount, &p.SubtotalCents, &p.SubtotalCadCents); err != nil {
 			return nil, fmt.Errorf("purchasing: scan po: %w", err)
 		}

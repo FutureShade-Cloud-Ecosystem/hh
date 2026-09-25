@@ -155,3 +155,26 @@ func (r *Repository) UpdateExpectedAt(ctx context.Context, poID, expectedAt stri
 	}
 	return nil
 }
+
+// UpdateDeliveryMethod writes purchasing_pos.delivery_method, DIB-572's correction path (ported
+// from the ERP).
+//
+// The value is ALWAYS one the service normalised (normalizeDeliveryMethod); the CHECK the 0219
+// port carries is the floor under that, not the first line of defence. Unlike expected_at there
+// is no NULL to write: "nobody recorded it" is the UNKNOWN value, so the column has one
+// representation of not knowing rather than two.
+func (r *Repository) UpdateDeliveryMethod(ctx context.Context, poID, method string) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE purchasing_pos SET delivery_method = $2, updated_at = now() WHERE id = $1`,
+		poID, method)
+	if err != nil {
+		return fmt.Errorf("purchasing: set delivery_method: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return errNotFound
+	}
+	return nil
+}

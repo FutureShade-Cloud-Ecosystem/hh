@@ -363,7 +363,7 @@ func (r *Repository) POByVendorRef(ctx context.Context, ref string) (PO, error) 
 		var p PO
 		if err := rows.Scan(&p.ID, &p.PONo, &p.VendorID, &p.BranchID, &p.Status,
 			&p.ExpectedAt, &p.OrderedAt, &p.Notes, &p.CreatedAt, &p.UpdatedAt,
-			&p.Currency, &p.FXRate); err != nil {
+			&p.Currency, &p.FXRate, &p.DeliveryMethod); err != nil {
 			return PO{}, fmt.Errorf("purchasing: scan po by vendor ref: %w", err)
 		}
 		found = append(found, p)

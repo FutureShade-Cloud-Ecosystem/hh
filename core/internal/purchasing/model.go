@@ -97,6 +97,10 @@ type PO struct {
 	// Everything downstream of the boundary, receipts, stock, the match, the GL, is CAD.
 	Currency string  `json:"currency"`
 	FXRate   float64 `json:"fx_rate"`
+	// DeliveryMethod is PICKUP, DELIVERY or UNKNOWN: how the goods are expected to arrive at the
+	// yard, or the fact that nobody has recorded it (the 0217 and 0219 ports of the ERP's 0214 and
+	// 0216). Correctable through PUT /purchasing/pos/{id}/delivery-method (DIB-572).
+	DeliveryMethod string `json:"delivery_method"`
 	// SubtotalCadCents is the same total AFTER toCAD, carried alongside rather than instead of,
 	// because both numbers are real and a reader who cannot see both cannot check the rate.
 	//
@@ -295,6 +299,14 @@ type AddLineParams struct {
 // stale one left on the record is a screen that lies to the person planning around it.
 type SetExpectedDateRequest struct {
 	ExpectedAt string `json:"expected_at"`
+}
+
+// SetDeliveryMethodRequest is the PUT /purchasing/pos/{id}/delivery-method body, DIB-572's
+// correction path (ported from the ERP). An EMPTY value is REFUSED rather than folded to a
+// default: on a correction it is a request that would silently erase what a buyer recorded.
+// UNKNOWN is set by NAMING it.
+type SetDeliveryMethodRequest struct {
+	DeliveryMethod string `json:"delivery_method"`
 }
 
 // TransitionRequest is the POST /purchasing/pos/{id}/transition body: an OPERATOR-driven lifecycle move.
