@@ -266,6 +266,22 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("attachments", attachments.NewSyncStore(pool)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
+
+	// The drive-run scopes (HH-3.5 #167) over the dispatch module's
+	// own tables: runs and stops server_wins (runs per Colton's
+	// ruling, written at end-of-run close), pod manual. The stops
+	// adapter validates creates through the same order-read seam the
+	// module's REST surface reads; all three attribute actors through
+	// the same linker the pilot uses.
+	if err := syncEngine.RegisterScope("runs", dispatch.NewRunsSyncStore(pool, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("stops", dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("pod", dispatch.NewPODSyncStore(pool, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
 	syncRoutes, err := sync.NewHandler(syncEngine, log)
 	if err != nil {
 		panic("sync: handler construction refused to boot: " + err.Error())
