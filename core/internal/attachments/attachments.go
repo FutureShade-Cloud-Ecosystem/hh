@@ -170,8 +170,12 @@ func linksOf(raw any) ([]Link, error) {
 		l.OwnerKind, _ = m["owner_kind"].(string)
 		l.OwnerID, _ = m["owner_id"].(string)
 		l.Role, _ = m["role"].(string)
-		if strings.TrimSpace(l.OwnerKind) == "" || strings.TrimSpace(l.OwnerID) == "" {
-			return nil, fmt.Errorf("attachments: owner_kind and owner_id are required on every link")
+		// The contract's AttachmentLink carries owner_kind, owner_id and
+		// role as required legs; an empty role would also dodge the
+		// (attachment_id, owner_kind, owner_id, role) unique index, which
+		// treats NULL roles as distinct.
+		if strings.TrimSpace(l.OwnerKind) == "" || strings.TrimSpace(l.OwnerID) == "" || strings.TrimSpace(l.Role) == "" {
+			return nil, fmt.Errorf("attachments: owner_kind, owner_id and role are required on every link")
 		}
 		out = append(out, l)
 	}

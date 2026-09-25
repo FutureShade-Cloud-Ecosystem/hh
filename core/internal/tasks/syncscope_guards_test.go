@@ -82,13 +82,14 @@ func TestShortageValidateReport(t *testing.T) {
 
 func TestWeightWritableSets(t *testing.T) {
 	if err := weightWritableCreate(map[string]any{
-		"order_id": "o", "order_line_no": 1, "weight_uom": "TONNE", "priority": "HIGH", "id": "i",
+		"order_id": "o", "order_line_no": 1, "weight_uom": "TONNE", "id": "i",
 	}); err != nil {
 		t.Fatalf("a full valid create set: %v", err)
 	}
 	// A create cannot declare the weight or the status: the birth row is
-	// QUEUED, exactly as the pick adapter's rule holds.
-	for _, field := range []string{"weight_entered", "status", "photo_url", "branch_id", "source"} {
+	// QUEUED, exactly as the pick adapter's rule holds. Priority refuses
+	// too: RequestWeight rules the birth row HIGH, not negotiable.
+	for _, field := range []string{"weight_entered", "status", "photo_url", "branch_id", "source", "priority"} {
 		err := weightWritableCreate(map[string]any{field: "x"})
 		if !errors.Is(err, sync.ErrOpRefused) {
 			t.Fatalf("create field %q: %v, want the classified refusal", field, err)

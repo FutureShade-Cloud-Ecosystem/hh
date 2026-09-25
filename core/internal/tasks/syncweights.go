@@ -158,7 +158,7 @@ func (s *WeightSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id strin
 func weightWritableCreate(fields map[string]any) error {
 	for k := range fields {
 		switch k {
-		case "id", "order_id", "order_line_no", "weight_uom", "priority":
+		case "id", "order_id", "order_line_no", "weight_uom":
 		default:
 			return fmt.Errorf("tasks: field %q is not writable through sync: %w", k, sync.ErrOpRefused)
 		}
@@ -212,13 +212,10 @@ func (s *WeightSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key st
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("tasks: %w: %v", sync.ErrOpRefused, err)
 	}
-	priority, _ := fields["priority"].(string)
-	if priority == "" {
-		priority = PriorityHigh
-	}
-	if !validPriority(priority) {
-		return sync.RowState{}, fmt.Errorf("tasks: unknown priority %q: %w", priority, sync.ErrOpRefused)
-	}
+	// Priority is HIGH, always, exactly as RequestWeight rules: somebody
+	// is waiting on this number. The birth row is not negotiable through
+	// sync, so the field is not in the writable create set either.
+	priority := PriorityHigh
 	uom, _ := fields["weight_uom"].(string)
 	id, hasID := fields["id"].(string)
 	if hasID && !looksLikeUUID(id) {

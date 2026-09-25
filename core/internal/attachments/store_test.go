@@ -52,13 +52,20 @@ func TestLooksLikeUUID(t *testing.T) {
 func TestLinksOf(t *testing.T) {
 	links, err := linksOf([]any{
 		map[string]any{"owner_kind": "order", "owner_id": "3ef10000-0000-4000-8000-000000000073", "role": "evidence"},
-		map[string]any{"owner_kind": "quote", "owner_id": "3ef10000-0000-4000-8000-000000000075", "role": ""},
+		map[string]any{"owner_kind": "quote", "owner_id": "3ef10000-0000-4000-8000-000000000075", "role": "pod"},
 	})
 	if err != nil {
 		t.Fatalf("valid link set: %v", err)
 	}
-	if len(links) != 2 || links[0].OwnerKind != OwnerOrder || links[1].Role != "" {
+	if len(links) != 2 || links[0].OwnerKind != OwnerOrder || links[1].Role != "pod" {
 		t.Fatalf("link set: %+v", links)
+	}
+	// An empty role refuses: the contract requires it, and a NULL role
+	// would dodge the unique index.
+	if _, err := linksOf([]any{
+		map[string]any{"owner_kind": "order", "owner_id": "3ef10000-0000-4000-8000-000000000073", "role": ""},
+	}); err == nil {
+		t.Fatal("an empty role must refuse")
 	}
 	if _, err := linksOf(map[string]any{}); err == nil {
 		t.Fatal("a non-array links leg must be refused")
