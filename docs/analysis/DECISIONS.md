@@ -238,6 +238,10 @@ Touches: `core/db/PORTED.md` (scrub record and port ledger), `core/db/migrations
 
 Touches: the sync scope registry (receiving, manual, unwired), the 501 route test, `docs/sessions/HH-3.md` (Phase D scope), HH-5's brief.
 
+**D47 (the remaining five stopped sync scopes ride to HH-5 with D46; the schema work is one block).** Recorded from Colton's answers in chat, extending D46 (DECISIONS.md is live for this entry under D27). The conditions, per scope: the messaging trio (`messages`, `acks`, `notify_prefs`) and `channels` lack an org or feed column under the derived-membership model (the only available org predicate runs through `msg_channels.branch_id`, which is NULL for every GLOBAL channel, and `msg_acks` and `msg_notification_prefs` carry composite primary keys with no uuid row id the engine's update and delete legs can address); `tracking_events` has no table in the frozen schema carrying the contractor's tracking events at all. Two options were put per scope: A, open a narrow door inside HH-3 for core-authored additive migrations; B, ride to HH-5. The ruling is B for all five. The five routes keep their tested 501s, and the registry rows keep their declared policies. The HH-5 brief carries the schema work as ONE block, designed together: the receiving feed column (D46), the messaging-side columns, and the tracking_events table.
+
+Touches: the sync scope registry (the five scopes, declared policies, unwired), the 501 route tests, `docs/sessions/HH-3.md` (Phase D scope), HH-5's brief.
+
 ## Carried as verification, not decided
 
 Whether Appwrite Team memberships surface as OIDC claims stays a S2 check. D3 stands either way: if claims are absent, a Function enriches userinfo and the engine resolves the coarse gate from Team membership by lookup.

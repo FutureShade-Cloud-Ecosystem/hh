@@ -234,8 +234,9 @@ func (r *Repository) MarkSent(ctx context.Context, quoteID, actorID string, hook
 	if lineCount == 0 {
 		return ErrEmptyQuote
 	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE quotes SET status='SENT', updated_by = NULLIF($2,'')::uuid, updated_at = now()
+	if _, err := tx.Exec(ctx, quoteSeqCTE+`
+		UPDATE quotes SET status='SENT', updated_by = NULLIF($2,'')::uuid, updated_at = now(),
+		                   seq = (SELECT next_value FROM qseq)
 		  WHERE id = $1`, quoteID, actorID); err != nil {
 		return fmt.Errorf("mark quote sent: %w", err)
 	}
@@ -309,8 +310,9 @@ func (r *Repository) AcceptQuoteGuarded(ctx context.Context, in acceptWrite, hoo
 	// be dragged backwards to ACCEPTED, the quote's family of orders is the record of what it became,
 	// and this transaction's quote_acceptances row is the record of the repeat attestation.
 	if !repeat {
-		if _, err := tx.Exec(ctx,
-			`UPDATE quotes SET status='ACCEPTED', updated_at = now() WHERE id = $1`, in.QuoteID); err != nil {
+		if _, err := tx.Exec(ctx, quoteSeqCTE+`
+			UPDATE quotes SET status='ACCEPTED', updated_at = now(), seq = (SELECT next_value FROM qseq)
+			 WHERE id = $1`, in.QuoteID); err != nil {
 			return out, fmt.Errorf("accept quote: %w", err)
 		}
 	}

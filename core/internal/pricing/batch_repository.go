@@ -428,17 +428,14 @@ func (r *Repository) ApplyBatch(ctx context.Context, batchID, userID string) (in
 
 	applied := 0
 	for _, l := range lines {
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO pricing_list_prices (product_id, list_price_cents, price_uom)
-			 VALUES ($1, $2, (SELECT price_uom FROM products WHERE id = $1))
-			 ON CONFLICT (product_id) DO UPDATE SET list_price_cents = EXCLUDED.list_price_cents, updated_at = now()`,
-			l.productID, *l.afterRetail); err != nil {
-			return 0, err
-		}
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO price_change_log (product_id, batch_id, field, before_cents, after_cents, effective_date, changed_by)
-			 VALUES ($1, $2, 'retail_cents', $3, $4, $5, $6)`,
-			l.productID, batchID, l.beforeRetail, *l.afterRetail, derefTimePtr(eff), nullStr(userID)); err != nil {
+		// The retail anchor lands through the module's one list-price
+		// write path (applyMatrixPrice, shared with the sync store),
+		// trail and upsert in the same transaction.
+		batch := batchID
+		if err := applyMatrixPrice(ctx, tx, matrixPriceWrite{
+			ProductID: l.productID, Cents: *l.afterRetail, Before: l.beforeRetail,
+			BatchID: &batch, Effective: eff, Actor: userID,
+		}); err != nil {
 			return 0, err
 		}
 		if l.afterCost != nil {

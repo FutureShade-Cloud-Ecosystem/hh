@@ -33,8 +33,10 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/printing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tasks"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
@@ -280,6 +282,48 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("pod", dispatch.NewPODSyncStore(pool, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+
+	// The internal frontends' outbox scopes (HH-3.5 #168), one
+	// RegisterScope per owning module: quotes and price_matrix over the
+	// quote and pricing modules' own tables (the matrix's every write,
+	// pushed or desk-published, running the pricing module's one
+	// list-price path), loads, delivery_stops and will_call over the
+	// dispatch module's own tables (the two board scopes riding the
+	// stops adapter's own reads and the shared delivery_stops seq
+	// stream; the will-call mint hashing the device-generated token at
+	// rest exactly as the module hashes its own), purchase_orders over
+	// the purchasing module's own purchasing_pos (the contract's PO
+	// surface), cycle_counts over the invcount module's own
+	// count_sheets (manual, never overwriting). The messaging trio
+	// (messages, acks, notify_prefs) stays unwired: the frozen schema
+	// gives those tables no org column (an org fence cannot be proven,
+	// and the GLOBAL channels cross orgs) and the two per-user tables
+	// composite keys with no uuid row id the engine's update and
+	// delete legs address, which is the D26 schema-shaped stop
+	// condition reported to the supervisor rather than routed around;
+	// all three routes answer the honest 501, pinned by test.
+	boardStops := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link)
+	if err := syncEngine.RegisterScope("quotes", quote.NewSyncStore(pool, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("price_matrix", pricing.NewSyncStore(pool, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("loads", dispatch.NewLoadsSyncStore(boardStops)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("delivery_stops", dispatch.NewDeliveryStopsSyncStore(boardStops)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("will_call", dispatch.NewWillCallSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, dispatchPickStateAdapter{repo: tasks.NewRepository(pool)}, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("purchase_orders", purchasing.NewSyncStore(pool, w4cVendorDirectory{pool: pool}, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("cycle_counts", invcount.NewSyncStore(pool, invCountAdapter{svc: inventorySvc}, link)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	syncRoutes, err := sync.NewHandler(syncEngine, log)

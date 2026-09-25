@@ -217,6 +217,11 @@ var dayAllowlisted = map[string]dayExemption{
 		"DEFERRED · the reschedule guard refuses a date earlier than the UTC 'today', so after 8pm it " +
 			"rejects moving a delivery to LATER THE SAME DAY with 'that date has already passed', a " +
 			"refusal the dispatcher cannot argue with and cannot work around."},
+	"internal/dispatch/syncscope_board.go": {[]string{kindDayText},
+		"DEFERRED · the delivery_stops sync adapter mirrors service_w3.go's reschedule guard verbatim " +
+			"(the same sentence, the same UTC 'today'), so the device's refusal and the desk's refusal " +
+			"disagree with the yard's evening in exactly the same way; when the module's guard takes " +
+			"the dealer's day, the adapter takes it with it."},
 	"internal/dispatch/handler_loadboard.go": {[]string{kindTruncate},
 		"DEFERRED · defaultCalendarRange starts the calendar week on the UTC day, so the week the " +
 			"calendar opens on rolls forward at 8pm."},

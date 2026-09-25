@@ -206,7 +206,7 @@ func (r *Repository) Reject(ctx context.Context, customerID, quoteID string) (Qu
 // disambiguates so a wrong-state quote never leaks as a 404 nor a foreign quote as a 409.
 func (r *Repository) transition(ctx context.Context, customerID, quoteID, newStatus, fromPredicate string) (Quote, error) {
 	q := fmt.Sprintf(
-		`UPDATE quotes SET status=$3, updated_at=now()
+		quoteSeqCTE+`UPDATE quotes SET status=$3, updated_at=now(), seq = (SELECT next_value FROM qseq)
 		 WHERE id=$2 AND customer_id=$1 AND %s
 		 RETURNING %s`, fromPredicate, quoteColumns)
 	qt, err := scanQuote(r.pool.QueryRow(ctx, q, customerID, quoteID, newStatus))
@@ -332,8 +332,9 @@ func (r *Repository) Convert(ctx context.Context, customerID, quoteID string, op
 
 	// Mark the quote converted. On a multi-accept re-convert the status is already CONVERTED and this
 	// re-asserts it, the updated_at bump is the honest part (the quote's family just grew).
-	if _, err := tx.Exec(ctx,
-		`UPDATE quotes SET status='CONVERTED', updated_at=now() WHERE id=$2 AND customer_id=$1`,
+	if _, err := tx.Exec(ctx, quoteSeqCTE+`
+		UPDATE quotes SET status='CONVERTED', updated_at=now(), seq = (SELECT next_value FROM qseq)
+		 WHERE id=$2 AND customer_id=$1`,
 		customerID, quoteID); err != nil {
 		return ConvertResult{}, fmt.Errorf("convert quote %q: mark converted: %w", quoteID, err)
 	}
