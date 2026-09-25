@@ -78,18 +78,17 @@ carried_baseline='^core/db/migrations/(0[01][0-9]{2}|020[0-9]|021[0-2])_'
 # (Plane #25, D39) from the same pre-rule source, and scrubbing their comment
 # text would break the byte-identity the ruling and the port ledger demand
 # (0219's one permitted adaptation is its bookkeeping lookup pattern, which is
-# not prose). The eighth, 0220, is a core-authored rewrite whose only dashes
-# sit inside its two WHERE literals, copied byte-identical from core's own
-# carried baseline at 0032_gl_module.sql and 0035_nsf_credit_hold.sql, which
-# the carried_baseline range already excepts; rewriting them would break the
-# ruling's condition 2. The same byte-identity ground excepts the eight files
+# not prose). The eighth, 0220, was rewritten under D45: its WHERE clauses
+# are LIKE patterns and it carries no dash at all, so it stays under the rule
+# like every core-authored file. The same byte-identity ground excepts the
+# seven verbatim files
 # from the date house rule: their carried comment prose contains calendar
 # references from the pre-rule source, and scrubbing them would break the
 # byte-identity the ruling and the ledger demand. This script scans dashes
 # only, so the date ground is recorded here rather than configured. The
-# exception is a closed list of exactly the eight ported files, so every later
+# exception is a closed list of exactly the seven verbatim files, so every later
 # migration and every other file stays under both rules.
-ported_carry='^core/db/migrations/(0216_a_saved_sort_is_curation_too|0217_purchasing_delivery_method|0218_a_widget_title_that_was_never_chosen_stops_speaking_for_the_catalog|0219_purchasing_delivery_method_can_be_unrecorded|0220_a_finance_note_a_client_reads_names_nobody|0221_the_setup_entries_behind_no_customer_document_come_back_out|0222_an_invoice_with_no_journal_behind_it_asks_for_one|0223_pos_counter_layout)\.sql$'
+ported_carry='^core/db/migrations/(0216_a_saved_sort_is_curation_too|0217_purchasing_delivery_method|0218_a_widget_title_that_was_never_chosen_stops_speaking_for_the_catalog|0219_purchasing_delivery_method_can_be_unrecorded|0221_the_setup_entries_behind_no_customer_document_come_back_out|0222_an_invoice_with_no_journal_behind_it_asks_for_one|0223_pos_counter_layout)\.sql$'
 
 if git ls-files -z | xargs -0 -r grep -IlP '[\x{2013}\x{2014}]' \
   | grep -Ev "$carried_baseline" | grep -Ev "$ported_carry" | grep .; then

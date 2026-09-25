@@ -23,8 +23,6 @@ replacement wording, matching them with LIKE predicates that carry no name
 and no dash. Decision: `docs/analysis/DECISIONS.md` D45.
 
 | File | ERP blob hash | Reason class |
-| :--- | :------------ | :----------- |
-| File | ERP blob hash | Reason class |
 | :--- | :--- | :--- |
 | `0007_gl_block.sql` | `327fdea484defa52fb6493e19d0b8bfe402e4e40` | first_name |
 | `0015_rbac_roles.sql` | `f67fcbf82c2f3ec0409d9d5dcae33285750b549c` | first_name |
