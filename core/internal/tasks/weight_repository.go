@@ -135,8 +135,9 @@ func (r *Repository) RecordWeight(ctx context.Context, in WeightWrite) (Task, er
 	// The weight and the terminal status land in ONE statement. claimed_by/claimed_at are stamped
 	// here too when the chain passed through ACCEPTED, the person who typed the weight IS the person
 	// who did the work, and a DONE task with no claimant reads like nobody touched it. The row draws
-	// a fresh pick_tasks seq beside the write (the sync-feed re-appearance every tasks write owes).
-	seq, err := allocatePickSeqTx(ctx, tx)
+	// a fresh weights seq beside the write (the sync-feed re-appearance every tasks write owes; the
+	// row is NEED_WEIGHT, so its scope's counter is the weights one).
+	seq, err := allocateTaskSeqTx(ctx, tx, TypeNeedWeight)
 	if err != nil {
 		return Task{}, err
 	}
@@ -184,7 +185,18 @@ func (r *Repository) MarkWeightSync(ctx context.Context, taskID string, at *time
 		return fmt.Errorf("tasks: begin weight sync stamp: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	seq, err := allocatePickSeqTx(ctx, tx)
+	// The stamp runs on a NEED_WEIGHT row (the service only calls it from
+	// the weight round trip), so its seq draw is the weights scope's; the
+	// type is read from the locked row rather than assumed, the same
+	// belt-and-braces every other allocator call site pays.
+	var taskType string
+	if err := tx.QueryRow(ctx, `SELECT task_type FROM tasks WHERE id = $1 FOR UPDATE`, taskID).Scan(&taskType); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("tasks: lock %q for weight sync stamp: %w", taskID, err)
+	}
+	seq, err := allocateTaskSeqTx(ctx, tx, taskType)
 	if err != nil {
 		return err
 	}

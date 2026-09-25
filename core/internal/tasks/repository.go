@@ -53,7 +53,7 @@ func (r *Repository) CreateTask(ctx context.Context, in NewTaskInput) (Task, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	seq, err := allocatePickSeqTx(ctx, tx)
+	seq, err := allocateTaskSeqTx(ctx, tx, in.TaskType)
 	if err != nil {
 		return Task{}, err
 	}
@@ -179,8 +179,8 @@ func (r *Repository) Transition(ctx context.Context, in TransitionInput) (Task, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var from string
-	if err := tx.QueryRow(ctx, `SELECT status FROM tasks WHERE id = $1 FOR UPDATE`, in.TaskID).Scan(&from); err != nil {
+	var from, taskType string
+	if err := tx.QueryRow(ctx, `SELECT status, task_type FROM tasks WHERE id = $1 FOR UPDATE`, in.TaskID).Scan(&from, &taskType); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Task{}, ErrNotFound
 		}
@@ -193,7 +193,7 @@ func (r *Repository) Transition(ctx context.Context, in TransitionInput) (Task, 
 		return Task{}, ErrIllegalTransition
 	}
 
-	seq, err := allocatePickSeqTx(ctx, tx)
+	seq, err := allocateTaskSeqTx(ctx, tx, taskType)
 	if err != nil {
 		return Task{}, err
 	}
@@ -246,11 +246,16 @@ func looksLikeUUID(s string) bool {
 	return true
 }
 
-// pickTasksSeqScope names the scope_sequences counter row every tasks-row
-// write draws from: the manifest's pick_tasks scope, the one sync scope
-// whose projection is the tasks table (context 4.5; the 0213 convention:
-// one counter row per scope, the order_no_sequences precedent of 0087).
-const pickTasksSeqScope = "pick_tasks"
+// pickTasksSeqScope names the scope_sequences counter row every PICK-tasks
+// row write draws from: the manifest's pick_tasks scope, one of the two
+// sync scopes whose projection is the tasks table (context 4.5; the 0213
+// convention: one counter row per scope, the order_no_sequences precedent
+// of 0087). weightsSeqScope is the other: the weights scope projects the
+// NEED_WEIGHT rows of the same table.
+const (
+	pickTasksSeqScope = "pick_tasks"
+	weightsSeqScope   = "weights"
+)
 
 // allocatePickSeqTx draws the next pick_tasks seq on the caller's business
 // transaction, exactly the recipe the 0213 comment records and the
@@ -261,12 +266,36 @@ const pickTasksSeqScope = "pick_tasks"
 // the server_wins conflict story reads (a stale client write meets a row
 // whose seq moved).
 func allocatePickSeqTx(ctx context.Context, tx pgx.Tx) (int64, error) {
+	return allocateScopeSeqTx(ctx, tx, pickTasksSeqScope)
+}
+
+// allocateTaskSeqTx draws the next seq for one tasks row from the counter
+// its task type's sync scope owns. The two tasks-table feeds partition rows
+// exactly (a row is PICK or NEED_WEIGHT, never both), so each row's seq
+// only ever comes from its own scope's counter and each feed stays
+// monotonic on the column it orders by. NEED_WEIGHT rows draw the weights
+// counter (the weights scope, HH-3.5 #166); every other type keeps the
+// pick_tasks counter unchanged, and because the pick_tasks feed filters
+// task_type = 'PICK', a NEED_WEIGHT row's seq was never pick-feed-visible
+// and the counter it draws from is not observable there.
+func allocateTaskSeqTx(ctx context.Context, tx pgx.Tx, taskType string) (int64, error) {
+	scope := pickTasksSeqScope
+	if taskType == TypeNeedWeight {
+		scope = weightsSeqScope
+	}
+	return allocateScopeSeqTx(ctx, tx, scope)
+}
+
+// allocateScopeSeqTx is the shared upsert behind the two named allocators:
+// the scope_sequences draw returning next_value, gaps allowed, never
+// reused, the 0213 convention one counter row per scope.
+func allocateScopeSeqTx(ctx context.Context, tx pgx.Tx, scope string) (int64, error) {
 	var next int64
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO scope_sequences (scope) VALUES ($1)
 		 ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
-		 RETURNING next_value`, pickTasksSeqScope).Scan(&next); err != nil {
-		return 0, fmt.Errorf("tasks: seq allocate for scope %s: %w", pickTasksSeqScope, err)
+		 RETURNING next_value`, scope).Scan(&next); err != nil {
+		return 0, fmt.Errorf("tasks: seq allocate for scope %s: %w", scope, err)
 	}
 	return next, nil
 }

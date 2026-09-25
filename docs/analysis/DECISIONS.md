@@ -234,6 +234,10 @@ Touches: `core/api/CONVENTIONS.md` (the Pagination section's position-cursor sen
 
 Touches: `core/db/PORTED.md` (scrub record and port ledger), `core/db/migrations/0220_a_finance_note_a_client_reads_names_nobody.sql`, HH-3.7's first run.
 
+**D46 (receiving rides to HH-5; no cursor from the receipt number).** Recorded from Colton's answers in chat ruling on the HH-3.5 yard-pick stop condition (DECISIONS.md is live for this entry under D27). The condition found: `purchasing_receipts` carries no column a per-scope sync feed can use. The table's own `seq` is the per-order receipt event number (unique with `po_id`, embedded in the human GRN a person reads), and 0213's additive feed-sequence column was a silent no-op there because the name already existed; reusing the receipt number as a cursor would break since-cursor pulls (per-order numbers repeat across orders), and renumbering it would break the GRN. Two options were put: A, open a narrow door inside HH-3 for one core-authored additive migration, a receiving feed-sequence column; B, let receiving ride to HH-5. The ruling is B. The two receiving routes keep their tested 501, the registry row keeps its declared manual policy, and the receipt number is never reused as a cursor and never renumbered. The additive feed-sequence migration is the first item of the HH-5 brief.
+
+Touches: the sync scope registry (receiving, manual, unwired), the 501 route test, `docs/sessions/HH-3.md` (Phase D scope), HH-5's brief.
+
 ## Carried as verification, not decided
 
 Whether Appwrite Team memberships surface as OIDC claims stays a S2 check. D3 stands either way: if claims are absent, a Function enriches userinfo and the engine resolves the coarse gate from Team membership by lookup.

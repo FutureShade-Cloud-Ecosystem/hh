@@ -103,8 +103,8 @@ func (r *Repository) Stage(ctx context.Context, in StageInput) (Task, error) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var from string
-	if err := tx.QueryRow(ctx, `SELECT status FROM tasks WHERE id = $1 FOR UPDATE`, in.TaskID).Scan(&from); err != nil {
+	var from, taskType string
+	if err := tx.QueryRow(ctx, `SELECT status, task_type FROM tasks WHERE id = $1 FOR UPDATE`, in.TaskID).Scan(&from, &taskType); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Task{}, ErrNotFound
 		}
@@ -117,7 +117,7 @@ func (r *Repository) Stage(ctx context.Context, in StageInput) (Task, error) {
 		return Task{}, ErrIllegalTransition
 	}
 
-	seq, err := allocatePickSeqTx(ctx, tx)
+	seq, err := allocateTaskSeqTx(ctx, tx, taskType)
 	if err != nil {
 		return Task{}, err
 	}
@@ -208,23 +208,38 @@ func (r *Repository) InsertShortage(ctx context.Context, in ShortageInput) (Shor
 
 	// Lock the task first: it both proves the task exists (FK would say so, but with a 23503 the
 	// caller cannot tell "no such task" from a real failure) and serialises concurrent reports.
-	var status string
-	if err := tx.QueryRow(ctx, `SELECT status FROM tasks WHERE id = $1 FOR UPDATE`, in.TaskID).Scan(&status); err != nil {
+	var status, taskType string
+	if err := tx.QueryRow(ctx, `SELECT status, task_type FROM tasks WHERE id = $1 FOR UPDATE`, in.TaskID).Scan(&status, &taskType); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Shortage{}, Task{}, ErrNotFound
 		}
 		return Shortage{}, Task{}, fmt.Errorf("tasks: lock %q for shortage: %w", in.TaskID, err)
 	}
 
+	// The shortage row draws a shortages-scope seq (0213: the column exists
+	// for exactly this feed) and the parent task draws its own scope's seq
+	// beside it, because the task's projection carries the shortage counts
+	// and a device holding the task row must see the counts move.
+	shortageSeq, err := allocateScopeSeqTx(ctx, tx, shortagesSeqScope)
+	if err != nil {
+		return Shortage{}, Task{}, err
+	}
 	sh, err := scanShortage(tx.QueryRow(ctx, `
 		INSERT INTO task_shortages
-			(task_id, order_line_no, product_id, sku, description, qty_short, uom, note, reported_by)
-		VALUES ($1::uuid, $2, NULLIF($3,'')::uuid, $4, $5, $6::numeric, $7, $8, NULLIF($9,'')::uuid)
+			(task_id, order_line_no, product_id, sku, description, qty_short, uom, note, reported_by, seq)
+		VALUES ($1::uuid, $2, NULLIF($3,'')::uuid, $4, $5, $6::numeric, $7, $8, NULLIF($9,'')::uuid, $10)
 		RETURNING `+shortageColumns,
 		in.TaskID, in.OrderLineNo, in.ProductID, in.SKU, in.Description,
-		in.QtyShort, in.UOM, in.Note, in.ReportedBy))
+		in.QtyShort, in.UOM, in.Note, in.ReportedBy, shortageSeq))
 	if err != nil {
 		return Shortage{}, Task{}, fmt.Errorf("tasks: insert shortage: %w", err)
+	}
+	taskSeq, err := allocateTaskSeqTx(ctx, tx, taskType)
+	if err != nil {
+		return Shortage{}, Task{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE tasks SET seq = $2 WHERE id = $1`, in.TaskID, taskSeq); err != nil {
+		return Shortage{}, Task{}, fmt.Errorf("tasks: bump task after shortage: %w", err)
 	}
 
 	t, err := scanYardTask(tx.QueryRow(ctx, `SELECT `+yardColumns+` FROM tasks WHERE id = $1`, in.TaskID))
@@ -282,14 +297,23 @@ func (r *Repository) ResolveShortage(ctx context.Context, in ResolveShortageInpu
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// The resolve draws a fresh shortages seq (the desk's correction is the
+	// write a stale device replay must meet) and bumps the parent task's
+	// own seq beside it, the same two-draw shape InsertShortage pays,
+	// because the task's projection carries the shortage counts.
+	shortageSeq, err := allocateScopeSeqTx(ctx, tx, shortagesSeqScope)
+	if err != nil {
+		return Shortage{}, Task{}, err
+	}
 	sh, err := scanShortage(tx.QueryRow(ctx, `
 		UPDATE task_shortages SET
 			resolved_at = now(),
 			resolved_by = NULLIF($3,'')::uuid,
-			resolution  = $4
+			resolution  = $4,
+			seq         = $5
 		WHERE id = $1::uuid AND task_id = $2::uuid AND resolved_at IS NULL
 		RETURNING `+shortageColumns,
-		in.ShortageID, in.TaskID, in.ActorID, in.Resolution))
+		in.ShortageID, in.TaskID, in.ActorID, in.Resolution, shortageSeq))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Either it is not this task's shortage / does not exist, or it is already closed. One
@@ -304,6 +328,17 @@ func (r *Repository) ResolveShortage(ctx context.Context, in ResolveShortageInpu
 			return Shortage{}, Task{}, ErrShortageNotFound
 		}
 		return Shortage{}, Task{}, fmt.Errorf("tasks: resolve shortage: %w", err)
+	}
+	var taskType string
+	if err := tx.QueryRow(ctx, `SELECT task_type FROM tasks WHERE id = $1 FOR UPDATE`, in.TaskID).Scan(&taskType); err != nil {
+		return Shortage{}, Task{}, fmt.Errorf("tasks: lock %q after resolve: %w", in.TaskID, err)
+	}
+	taskSeq, err := allocateTaskSeqTx(ctx, tx, taskType)
+	if err != nil {
+		return Shortage{}, Task{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE tasks SET seq = $2 WHERE id = $1`, in.TaskID, taskSeq); err != nil {
+		return Shortage{}, Task{}, fmt.Errorf("tasks: bump task after resolve: %w", err)
 	}
 
 	t, err := scanYardTask(tx.QueryRow(ctx, `SELECT `+yardColumns+` FROM tasks WHERE id = $1`, in.TaskID))

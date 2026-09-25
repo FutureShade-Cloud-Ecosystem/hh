@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/attachments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
@@ -244,6 +245,25 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// RegisterScope per owning module.
 	syncEngine := sync.NewEngine().WithAudit(syncAuditSeam{svc: spine.auditSvc, link: link}, log)
 	if err := syncEngine.RegisterScope("pick_tasks", tasks.NewSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	// The yard-pick item's scopes (HH-3.5 #166): shortages and weights
+	// over the tasks module's own tables (task_shortages; the
+	// NEED_WEIGHT rows of tasks, each drawing its own scope's counter),
+	// and attachments over the D10 module the attachment entity owns.
+	// Receiving stays unwired: the frozen schema gives purchasing_receipts
+	// no column a per-scope monotonic feed seq can live in (its seq
+	// column is the per-PO receiving number, NOT NULL, and carried rows
+	// carry the ERP's own per-PO values), which is the D26 schema-shaped
+	// stop condition reported to the supervisor rather than routed
+	// around; both routes answer the honest 501 for it.
+	if err := syncEngine.RegisterScope("shortages", tasks.NewShortageSyncStore(pool, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("weights", tasks.NewWeightSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("attachments", attachments.NewSyncStore(pool)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	syncRoutes, err := sync.NewHandler(syncEngine, log)
