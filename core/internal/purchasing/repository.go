@@ -99,10 +99,15 @@ func (r *Repository) InsertPO(ctx context.Context, tx pgx.Tx, in insertPOParams)
 		return "", errNoDB
 	}
 	var id string
-	err := r.q(tx).QueryRow(ctx, `
-		INSERT INTO purchasing_pos (po_no, vendor_id, branch_id, status, expected_at, notes, created_by,
-		                            currency, fx_rate)
-		VALUES ($1,$2,$3,'DRAFT',$4::date,$5,$6,$7,$8) RETURNING id::text`,
+	// The sync leg (0213, syncscope.go) stamps beside the row: the seq
+	// from the purchase_orders scope's allocator, one statement, so a
+	// PO the desk drafts is visible to a device's pull the moment it
+	// lands. purchasing_pos carries no org column (the fence is the
+	// branch's, the adapter's own predicate).
+	err := r.q(tx).QueryRow(ctx, poSeqCTE+`
+		INSERT INTO purchasing_pos AS p (po_no, vendor_id, branch_id, status, expected_at, notes, created_by,
+		                                 currency, fx_rate, seq)
+		SELECT $1,$2,$3,'DRAFT',$4::date,$5,$6,$7,$8, (SELECT next_value FROM poseq) RETURNING p.id::text`,
 		in.PONo, in.VendorID, in.BranchID, nullStr(in.ExpectedAt), in.Notes,
 		nullStr(in.CreatedBy), in.Currency, in.FXRate).Scan(&id)
 	if err != nil {
@@ -238,7 +243,23 @@ func (r *Repository) InsertPOLine(ctx context.Context, tx pgx.Tx, poID string, l
 	if err != nil {
 		return "", fmt.Errorf("purchasing: insert po line: %w", err)
 	}
+	if err := bumpPOHeaderSeq(ctx, r.q(tx), poID); err != nil {
+		return "", err
+	}
 	return id, nil
+}
+
+// bumpPOHeaderSeq stamps the purchase_orders scope's seq on the PO's
+// header row (0213): a line change changes the order's meaning (its
+// line count, its totals), and a device's pull must see the header
+// move even though the lines themselves are not a synced table.
+func bumpPOHeaderSeq(ctx context.Context, q querier, poID string) error {
+	if _, err := q.Exec(ctx, poSeqCTE+`
+		UPDATE purchasing_pos SET updated_at = now(), seq = (SELECT next_value FROM poseq) WHERE id = $1`,
+		poID); err != nil {
+		return fmt.Errorf("purchasing: bump po header seq: %w", err)
+	}
+	return nil
 }
 
 func (r *Repository) NextLineNo(ctx context.Context, tx pgx.Tx, poID string) (int, error) {
@@ -264,21 +285,26 @@ func (r *Repository) DeletePOLine(ctx context.Context, tx pgx.Tx, poID, lineID s
 	if tag.RowsAffected() == 0 {
 		return errNotFound
 	}
+	if err := bumpPOHeaderSeq(ctx, r.q(tx), poID); err != nil {
+		return err
+	}
 	return nil
 }
 
 // SetPOStatus writes a lifecycle status. stampOrdered sets ordered_at (the DRAFT→ORDERED moment); stampClosed
-// sets closed_at.
+// sets closed_at. The purchase_orders scope's seq rides the move (0213), so a desk transition is visible
+// to a device's pull the moment it lands.
 func (r *Repository) SetPOStatus(ctx context.Context, tx pgx.Tx, poID, status string, stampOrdered, stampClosed bool) error {
 	if r.pool == nil {
 		return errNoDB
 	}
-	_, err := r.q(tx).Exec(ctx, `
+	_, err := r.q(tx).Exec(ctx, poSeqCTE+`
 		UPDATE purchasing_pos
 		   SET status = $2,
 		       ordered_at = CASE WHEN $3 THEN now() ELSE ordered_at END,
 		       closed_at  = CASE WHEN $4 THEN now() ELSE closed_at  END,
-		       updated_at = now()
+		       updated_at = now(),
+		       seq = (SELECT next_value FROM poseq)
 		 WHERE id = $1`, poID, status, stampOrdered, stampClosed)
 	if err != nil {
 		return fmt.Errorf("purchasing: set po status: %w", err)

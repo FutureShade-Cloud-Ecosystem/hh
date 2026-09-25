@@ -139,13 +139,15 @@ func nullStrings(ids []string) any {
 }
 
 // UpdateExpectedAt writes (or clears) purchasing_pos.expected_at. An empty string stores NULL, one
-// representation of "no promised date" in the database rather than two.
+// representation of "no promised date" in the database rather than two. The purchase_orders scope's
+// seq rides the correction (0213), so a desk correction is visible to a device's pull.
 func (r *Repository) UpdateExpectedAt(ctx context.Context, poID, expectedAt string) error {
 	if r.pool == nil {
 		return errNoDB
 	}
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE purchasing_pos SET expected_at = $2::date, updated_at = now() WHERE id = $1`,
+	tag, err := r.pool.Exec(ctx, poSeqCTE+`
+		UPDATE purchasing_pos SET expected_at = $2::date, updated_at = now(), seq = (SELECT next_value FROM poseq)
+		 WHERE id = $1`,
 		poID, nullStr(expectedAt))
 	if err != nil {
 		return fmt.Errorf("purchasing: set expected_at: %w", err)
@@ -167,8 +169,9 @@ func (r *Repository) UpdateDeliveryMethod(ctx context.Context, poID, method stri
 	if r.pool == nil {
 		return errNoDB
 	}
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE purchasing_pos SET delivery_method = $2, updated_at = now() WHERE id = $1`,
+	tag, err := r.pool.Exec(ctx, poSeqCTE+`
+		UPDATE purchasing_pos SET delivery_method = $2, updated_at = now(), seq = (SELECT next_value FROM poseq)
+		 WHERE id = $1`,
 		poID, method)
 	if err != nil {
 		return fmt.Errorf("purchasing: set delivery_method: %w", err)
