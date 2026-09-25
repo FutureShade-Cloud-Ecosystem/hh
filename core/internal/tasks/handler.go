@@ -65,6 +65,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, caller guards.S
 		Source:          req.Source,
 		CreatedBy:       identity.StaffUserIDFromContext(r.Context()),
 		SourceMessageID: req.SourceMessageID,
+		OrgID:           caller.StaffScope.OrgID,
 	})
 	if err != nil {
 		h.writeErr(w, r, err)

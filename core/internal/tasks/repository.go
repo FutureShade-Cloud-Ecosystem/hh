@@ -40,7 +40,9 @@ type rowScanner interface{ Scan(dest ...any) error }
 
 // CreateTask inserts one task (status QUEUED) and its birth task_events row (from_status NULL →
 // to_status QUEUED) in a single tx, returning the persisted task. order_id is required; branch_id /
-// created_by / source_message_id are nullable (empty string → SQL NULL).
+// created_by / source_message_id are nullable (empty string → SQL NULL). The row draws a pick_tasks
+// seq and carries the caller's org stamp, so the write is sync-visible from the moment it lands
+// (context 4.5: the core owns this write path, unlike the ERP-carried rows 0213 left seq-NULL).
 func (r *Repository) CreateTask(ctx context.Context, in NewTaskInput) (Task, error) {
 	if r.pool == nil {
 		return Task{}, errNoDB
@@ -51,11 +53,15 @@ func (r *Repository) CreateTask(ctx context.Context, in NewTaskInput) (Task, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	seq, err := allocatePickSeqTx(ctx, tx)
+	if err != nil {
+		return Task{}, err
+	}
 	t, err := scanYardTask(tx.QueryRow(ctx, `
-		INSERT INTO tasks (task_type, order_id, order_line_no, branch_id, priority, status, created_by, source, source_message_id)
-		VALUES ($1, $2::uuid, $3, NULLIF($4,'')::uuid, $5, 'QUEUED', NULLIF($6,'')::uuid, $7, NULLIF($8,'')::uuid)
+		INSERT INTO tasks (task_type, order_id, order_line_no, branch_id, priority, status, created_by, source, source_message_id, org_id, seq)
+		VALUES ($1, $2::uuid, $3, NULLIF($4,'')::uuid, $5, 'QUEUED', NULLIF($6,'')::uuid, $7, NULLIF($8,'')::uuid, NULLIF($9,'')::uuid, $10)
 		RETURNING `+yardColumns,
-		in.TaskType, in.OrderID, in.OrderLineNo, in.BranchID, in.Priority, in.CreatedBy, in.Source, in.SourceMessageID))
+		in.TaskType, in.OrderID, in.OrderLineNo, in.BranchID, in.Priority, in.CreatedBy, in.Source, in.SourceMessageID, in.OrgID, seq))
 	if err != nil {
 		return Task{}, fmt.Errorf("tasks: insert task: %w", err)
 	}
@@ -187,6 +193,10 @@ func (r *Repository) Transition(ctx context.Context, in TransitionInput) (Task, 
 		return Task{}, ErrIllegalTransition
 	}
 
+	seq, err := allocatePickSeqTx(ctx, tx)
+	if err != nil {
+		return Task{}, err
+	}
 	t, err := scanYardTask(tx.QueryRow(ctx, `
 		UPDATE tasks SET
 			status     = $2,
@@ -194,10 +204,11 @@ func (r *Repository) Transition(ctx context.Context, in TransitionInput) (Task, 
 			claimed_at = CASE WHEN $2 = 'ACCEPTED' THEN now() ELSE claimed_at END,
 			done_at    = CASE WHEN $2 = 'DONE' THEN now() ELSE done_at END,
 			photo_url  = CASE WHEN $2 = 'DONE' AND $4 <> '' THEN $4 ELSE photo_url END,
-			updated_at = now()
+			updated_at = now(),
+			seq        = $5
 		WHERE id = $1
 		RETURNING `+yardColumns,
-		in.TaskID, in.To, in.ActorID, in.PhotoURL))
+		in.TaskID, in.To, in.ActorID, in.PhotoURL, seq))
 	if err != nil {
 		return Task{}, fmt.Errorf("tasks: update %q: %w", in.TaskID, err)
 	}
@@ -233,4 +244,29 @@ func looksLikeUUID(s string) bool {
 		}
 	}
 	return true
+}
+
+// pickTasksSeqScope names the scope_sequences counter row every tasks-row
+// write draws from: the manifest's pick_tasks scope, the one sync scope
+// whose projection is the tasks table (context 4.5; the 0213 convention:
+// one counter row per scope, the order_no_sequences precedent of 0087).
+const pickTasksSeqScope = "pick_tasks"
+
+// allocatePickSeqTx draws the next pick_tasks seq on the caller's business
+// transaction, exactly the recipe the 0213 comment records and the
+// customerquote module already follows: the scope_sequences upsert
+// returning next_value, gaps allowed, never reused. Every write path that
+// changes a tasks row draws one, so a row a device has pulled reappears in
+// the pull feed the moment the desk moves it: that re-appearance is what
+// the server_wins conflict story reads (a stale client write meets a row
+// whose seq moved).
+func allocatePickSeqTx(ctx context.Context, tx pgx.Tx) (int64, error) {
+	var next int64
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO scope_sequences (scope) VALUES ($1)
+		 ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
+		 RETURNING next_value`, pickTasksSeqScope).Scan(&next); err != nil {
+		return 0, fmt.Errorf("tasks: seq allocate for scope %s: %w", pickTasksSeqScope, err)
+	}
+	return next, nil
 }
