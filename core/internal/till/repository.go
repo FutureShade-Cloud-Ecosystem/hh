@@ -89,14 +89,26 @@ func (r *Repository) FindPaymentByKey(ctx context.Context, tx pgx.Tx, key string
 // InsertPayment writes the OWNED payments row. It is replay-safe: ON CONFLICT (idempotency_key) DO
 // NOTHING RETURNING; on a conflict (DO NOTHING returns no row) it SELECTs the existing id. payment_no
 // is generated from the 0010 sequence. The raw token is NEVER written, only the opaque gateway_ref.
+// The row also stamps the 0213 sync legs (the payments feed seq, the org off the branch's
+// location): a counter-taken payment FOR a customer's account is that payer's history, and a
+// payment path no pull can see is a feed that lies by omission, the posture the payments
+// module's own settle carries on the same legs.
 func (r *Repository) InsertPayment(ctx context.Context, tx pgx.Tx, p PaymentRow) (string, string, bool, error) {
 	const q = `
+		WITH pseq AS (
+			INSERT INTO scope_sequences (scope) VALUES ('payments')
+			ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
+			RETURNING next_value
+		)
 		INSERT INTO payments
 		  (payment_no, customer_id, method, amount_cents, status, branch_id, till_session_id,
-		   gateway_ref, card_type, received_by, idempotency_key, offline_captured, signature_ref)
+		   gateway_ref, card_type, received_by, idempotency_key, offline_captured, signature_ref,
+		   org_id, seq)
 		VALUES
 		  ('PMT-' || lpad(nextval('payment_no_seq')::text, 6, '0'),
-		   $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		   $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+		   (SELECT org_id FROM locations WHERE id = $5::uuid),
+		   (SELECT next_value FROM pseq))
 		ON CONFLICT (idempotency_key) WHERE idempotency_key <> '' DO NOTHING
 		RETURNING id::text, payment_no::text`
 	var id, paymentNo string
@@ -594,13 +606,23 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 		return nsfReverseResult{}, err
 	}
 	for _, a := range allocs {
+		// The re-open stamps the invoices feed seq beside the move
+		// (the settle's own posture in the payments module): a bounced
+		// cheque re-opening the payer's invoice is the change the
+		// payer's device must see.
 		if _, err := tx.Exec(ctx,
-			`UPDATE invoices
+			`WITH iseq AS (
+				INSERT INTO scope_sequences (scope) VALUES ('invoices')
+				ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
+				RETURNING next_value
+			)
+			UPDATE invoices
 			 SET balance_cents = balance_cents + $2,
 			     status = CASE WHEN status = 'VOID' THEN status
 			                   WHEN balance_cents + $2 >= total_cents THEN 'FINALIZED'
 			                   ELSE 'PARTIALLY_PAID' END,
-			     updated_at = now()
+			     updated_at = now(),
+			     seq = (SELECT next_value FROM iseq)
 			 WHERE id = $1`, a.inv, a.amt); err != nil {
 			return nsfReverseResult{}, fmt.Errorf("till: reopen invoice: %w", err)
 		}

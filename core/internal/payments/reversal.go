@@ -178,11 +178,17 @@ func (r *Repository) ReversePayment(ctx context.Context, in ReverseInput, now ti
 	// the amount stays POSITIVE because payments.amount_cents has a CHECK (> 0) and the direction is
 	// carried by reverses_payment_id and by the negative subledger rows below. Encoding direction in
 	// the sign of a column that cannot be negative is how a ledger acquires a lie.
+	// The reversing row carries the payments feed seq and the org off
+	// the customer beside it (the settle's own stamp posture), so the
+	// reversal is visible on the payer's payments feed from the moment
+	// it lands.
 	var revID, revNo string
-	err = tx.QueryRow(ctx,
-		`INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, branch_id,
-		                       reverses_payment_id, reversal_reason)
-		 VALUES ('REV-'||nextval('payment_no_seq')::text, $1::uuid, $2, $3, 'VOID', $4::uuid, $5::uuid, $6)
+	err = tx.QueryRow(ctx, paymentsFeedSeqCTE+`
+INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, branch_id,
+                       reverses_payment_id, reversal_reason, org_id, seq)
+		 VALUES ('REV-'||nextval('payment_no_seq')::text, $1::uuid, $2, $3, 'VOID', $4::uuid, $5::uuid, $6,
+		         (SELECT org_id FROM customers WHERE id = $1::uuid),
+		         (SELECT next_value FROM pseq))
 		 RETURNING id::text, payment_no::text`,
 		nullableUUID(customerID), method, amount, branchID, in.PaymentID, in.Reason).Scan(&revID, &revNo)
 	if err != nil {
@@ -190,8 +196,12 @@ func (r *Repository) ReversePayment(ctx context.Context, in ReverseInput, now ti
 	}
 
 	// 2. Stamp the original. The guarded WHERE is the second half of the one-reversal-only rule.
-	tag, err := tx.Exec(ctx,
-		`UPDATE payments SET reversed_at = $2, reversed_by_payment_id = $3::uuid, updated_at = now()
+	// The stamp draws a fresh payments feed seq beside it: the
+	// original's reversal is the change the payer's cached payment row
+	// must see.
+	tag, err := tx.Exec(ctx, paymentsFeedSeqCTE+`
+		UPDATE payments SET reversed_at = $2, reversed_by_payment_id = $3::uuid, updated_at = now(),
+		                    seq = (SELECT next_value FROM pseq)
 		  WHERE id = $1::uuid AND reversed_at IS NULL`, in.PaymentID, now, revID)
 	if err != nil {
 		return Reversal{}, fmt.Errorf("reverse: stamp original: %w", err)
@@ -220,14 +230,17 @@ func (r *Repository) ReversePayment(ctx context.Context, in ReverseInput, now ti
 		// The invoice re-opens to FINALIZED when the whole balance comes back, PARTIALLY_PAID when
 		// some other payment still covers part of it. A VOID invoice is NOT re-opened, voiding an
 		// invoice is a separate act with its own reasons, and a payment reversal must not undo it.
-		if _, err := tx.Exec(ctx,
-			`UPDATE invoices
+		// The re-open stamps the invoices feed seq beside the move (the settle's own recorded
+		// posture): a reversal is an invoice change the payer's device must see.
+		if _, err := tx.Exec(ctx, invoicesFeedSeqCTE+`
+UPDATE invoices
 			    SET balance_cents = balance_cents + $2,
 			        status = CASE
 			                   WHEN balance_cents + $2 >= total_cents - holdback_cents THEN 'FINALIZED'
 			                   ELSE 'PARTIALLY_PAID'
 			                 END,
-			        updated_at = now()
+			        updated_at = now(),
+			        seq = (SELECT next_value FROM iseq)
 			  WHERE id = $1::uuid AND status <> 'VOID'`, a.invoiceID, a.cents); err != nil {
 			return Reversal{}, fmt.Errorf("reverse: re-open invoice %s: %w", a.invoiceID, err)
 		}

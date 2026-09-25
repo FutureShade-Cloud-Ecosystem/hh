@@ -38,6 +38,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/finstmt"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messagingprovider"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
@@ -528,6 +529,23 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithCreditMemoPoster(w6cCreditMemoPoster{svc: spine.glSvc, rules: gl.NewRepository(pool)})
 	orderSvc.WithMultiShipInvoicer(w6cMultiShipInvoicer{w: w6cInvoiceWriter})
 	ops.warrantySvc.WithCustomerCredit(w6cWarrantyCreditIssuer{w: w6cInvoiceWriter})
+
+	// The invoices and payments sync scopes (HH-3.5 follow-up, both
+	// server_wins) register here, beside the collaborators their doors
+	// run through: the invoices Store settles documents through the
+	// money tail's ONE writer value (the same order source, the same
+	// tax engine the desk button drives, so the desk's double-click
+	// and a device's replayed outbox converge on one document), and
+	// the payments Store pays through the portal pay service over the
+	// SELECTED gateway (the DIB-415 intent guard and the stamped
+	// settle both holding on the replayed path).
+	if err := ops.syncEngine.RegisterScope("invoices", billing.NewInvoicesSyncStore(
+		pool, w6cInvoiceWriter, identity.NewApprovalRepository(pool))); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := ops.syncEngine.RegisterScope("payments", payments.NewPaymentsSyncStore(pool, portalPaySvc)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
 
 	// W5-C statement notices, flag-off unless the environment says so (the
 	// queue-only posture: delivery is still gated by the SMS provider).

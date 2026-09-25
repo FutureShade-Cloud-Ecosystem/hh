@@ -219,6 +219,39 @@ func (s *Service) ListPayments(ctx context.Context, customerID string) ([]Paymen
 //	           that ambiguity by charging again spends the customer's money to save us a phone call.
 //	FAILED   → re-claimable; a decline left no money anywhere, so a genuine retry is allowed.
 func (s *Service) Pay(ctx context.Context, customerID string, req PayRequest) (Payment, error) {
+	return s.pay(ctx, customerID, req, settleStamps{})
+}
+
+// PaySynced is the sync door's Pay (HH-3.5): the SAME choreography,
+// one body, with the offline replay's stamps carried onto the settled
+// row (the client-chosen payment id and the client idempotency key
+// the engine's dedup resolves). The stamps change NOTHING about the
+// money: the charge still runs under the server-bound intent key, the
+// amount is still derived server-side, and the settle still re-valid
+// balances under lock. A settle store that cannot carry the stamps
+// refuses rather than falling back to an unstamped row (the
+// intentStore posture: an optional seam that silently drops its guard
+// is the bug the optionality was supposed to prevent).
+func (s *Service) PaySynced(ctx context.Context, customerID string, req PayRequest, rowID, clientKey string) (Payment, error) {
+	return s.pay(ctx, customerID, req, settleStamps{RowID: rowID, ClientKey: clientKey})
+}
+
+// stampedSettler is the optional settle seam the sync stamps ride on:
+// the production *Repository carries it (the compile-time assertion
+// below), a test fake may not, and PaySynced over a store that does
+// not refuses the charge rather than settling a row the replay cannot
+// dedup, the intentStore doctrine applied to the second optional
+// interface this package declares.
+type stampedSettler interface {
+	PayWithStamps(ctx context.Context, customerID, method, gatewayRef string, allocs []Allocation, intentID string, stamps settleStamps) (Payment, error)
+}
+
+// The production store MUST carry the stamped settle.
+var _ stampedSettler = (*Repository)(nil)
+
+// pay is the one pay choreography both doors run; the stamps alter
+// only the settled row's sync legs.
+func (s *Service) pay(ctx context.Context, customerID string, req PayRequest, stamps settleStamps) (Payment, error) {
 	if customerID == "" {
 		return Payment{}, httpx.BadRequestf("customer id is required")
 	}
@@ -349,7 +382,15 @@ func (s *Service) Pay(ctx context.Context, customerID string, req PayRequest) (P
 	}
 
 	// Atomic settle: payment row + N allocations + N customer_transactions + balance recompute + the
-	// intent's SETTLED stamp, all in ONE transaction (invoices re-validated FOR UPDATE).
+	// intent's SETTLED stamp, all in ONE transaction (invoices re-validated FOR UPDATE). The sync
+	// stamps ride the same settle when the door carries them.
+	if stamps.RowID != "" || stamps.ClientKey != "" {
+		settler, ok := s.store.(stampedSettler)
+		if !ok {
+			return Payment{}, errors.New("payments: this service was built over a store with no stamped settle, refusing to charge a replay it cannot dedup")
+		}
+		return settler.PayWithStamps(ctx, customerID, method, res.GatewayRef, allocs, intent.ID, stamps)
+	}
 	return s.intents.PayWithIntent(ctx, customerID, method, res.GatewayRef, allocs, intent.ID)
 }
 

@@ -114,8 +114,9 @@ type operationsSpine struct {
 	landedcostSvc *landedcost.Service
 	// syncEngine is the sync core (HH-3.5): returned so the scopes
 	// whose owning service the operations wiring does not build (the
-	// customer-quote surface, constructed in main after the spines) can
-	// register beside their own module's construction.
+	// customer-quote surface, constructed in main after the spines; the
+	// invoice writer and the portal pay service, constructed in the
+	// tops batch) can register beside their own module's construction.
 	syncEngine *sync.Engine
 }
 
@@ -415,6 +416,17 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("aging", billing.NewAgingStore(pool, nil)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+
+	// The approvals scope (HH-3.5 follow-up, server_wins, an org
+	// scope) over the approvals rail's own table: the pushed decision
+	// runs the rail's own authority rules and CAS stamp, the pushed
+	// filing is the caller's own, and the desk's rail writes stamp the
+	// feed seq so a device's stale replay meets the decided row. The
+	// org fence derives off the request's NOT NULL branch (the
+	// adapter's header states the total-derivation argument).
+	if err := syncEngine.RegisterScope("approvals", identity.NewApprovalsSyncStore(pool, link)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	syncRoutes, err := sync.NewHandler(syncEngine, log)

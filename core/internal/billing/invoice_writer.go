@@ -88,6 +88,17 @@ const (
 // borrow a string would be a module dependency bought for nothing.
 const TaxStdON13 = "STD_ON_HST_13"
 
+// invoiceWriterSeqCTE is the data-modifying CTE the writer's INSERT
+// prepends to draw a fresh invoices feed seq atomically in the same
+// statement (scope_sequences, the 0213 convention every sync-visible
+// write path uses). Gaps from the reuse arm are allowed by the
+// convention.
+const invoiceWriterSeqCTE = `WITH iseq AS (
+	INSERT INTO scope_sequences (scope) VALUES ('invoices')
+	ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
+	RETURNING next_value
+) `
+
 // defaultTermsDays is the fallback payment terms when the caller resolves none. It matches the
 // customer module's own default; a wrong due date on an invoice is a collections problem, so this is
 // deliberately the SHORT end rather than a generous guess.
@@ -302,7 +313,7 @@ func (w *InvoiceWriter) InvoiceOrderGroups(ctx context.Context, orderID string, 
 	if len(facts.GroupIDs) == 0 {
 		facts.GroupIDs = groupIDs
 	}
-	doc, err := w.write(ctx, facts, SourceMultiShip, multiShipKey(orderID, facts.GroupIDs))
+	doc, err := w.write(ctx, facts, SourceMultiShip, multiShipKey(orderID, facts.GroupIDs), "")
 	if err != nil {
 		return InvoiceDoc{}, err
 	}
@@ -325,6 +336,23 @@ func (w *InvoiceWriter) InvoiceOrderGroups(ctx context.Context, orderID string, 
 // InvoiceOrder bills a whole delivered order, the non-POS, non-multi-ship case (a quoted order
 // confirmed, picked, delivered on terms). No groups, closes_order TRUE.
 func (w *InvoiceWriter) InvoiceOrder(ctx context.Context, orderID string) (InvoiceDoc, error) {
+	return w.InvoiceOrderNamed(ctx, orderID, "")
+}
+
+// InvoiceOrderNamed is InvoiceOrder with an optional client-chosen row id,
+// the door the invoices sync scope's pushed create takes (HH-3.5): a device
+// replaying "bill this order" names the document id it queued offline, and
+// the document is raised by THIS writer's own path (facts resolved
+// server-side, the writer's own idempotency key), so the desk's
+// double-clicked button and the device's replayed outbox converge on ONE
+// document: both doors are this one door. docID "" behaves exactly like
+// InvoiceOrder (the server mints the id).
+//
+// The sync legs stamp in the same INSERT (0213's additive columns): the org
+// read off the branch's location (the fence every dispatch create uses) and
+// the seq from the invoices scope's allocator, so the document is visible
+// to a device's pull the moment it lands.
+func (w *InvoiceWriter) InvoiceOrderNamed(ctx context.Context, orderID, docID string) (InvoiceDoc, error) {
 	if w.source == nil {
 		return InvoiceDoc{}, ErrOrderSourceUnwired
 	}
@@ -334,7 +362,7 @@ func (w *InvoiceWriter) InvoiceOrder(ctx context.Context, orderID string) (Invoi
 	}
 	facts.ClosesOrder = true
 	facts.GroupIDs = nil
-	return w.write(ctx, facts, SourceOrder, "order-invoice:"+orderID)
+	return w.write(ctx, facts, SourceOrder, "order-invoice:"+orderID, docID)
 }
 
 // multiShipKey is the retry key for a group invoice: the order plus the EXACT group set, sorted so
@@ -352,8 +380,13 @@ func multiShipKey(orderID string, groupIDs []string) string {
 }
 
 // write is the shared body: totals, tax, and the one transaction. Both entry points land here so
-// there is exactly ONE place in this package that inserts an invoice header.
-func (w *InvoiceWriter) write(ctx context.Context, f OrderInvoiceFacts, sourceKind, idemKey string) (InvoiceDoc, error) {
+// there is exactly ONE place in this package that inserts an invoice header. docID is the
+// client-chosen row id the sync door may name ("" mints one); the INSERT also stamps the two
+// 0213 sync legs, the org off the branch's location and the seq from the invoices scope's
+// allocator, so every document this writer raises is visible on the invoices feed from the
+// moment it lands (the additive columns stay NULL on writers that predate them, ERP-carried
+// rows included).
+func (w *InvoiceWriter) write(ctx context.Context, f OrderInvoiceFacts, sourceKind, idemKey, docID string) (InvoiceDoc, error) {
 	if w.pool == nil {
 		return InvoiceDoc{}, errNoDB
 	}
@@ -415,15 +448,18 @@ func (w *InvoiceWriter) write(ctx context.Context, f OrderInvoiceFacts, sourceKi
 		var invoiceID, invoiceNo string
 		// FINALIZED, not DRAFT. The order was delivered; the document is real the moment it exists,
 		// and a DRAFT invoice is a promise to remember to finalize it that nobody keeps.
-		err := tx.QueryRow(ctx, `
-INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, due_date,
+		err := tx.QueryRow(ctx, invoiceWriterSeqCTE+`
+INSERT INTO invoices (id, invoice_no, customer_id, order_id, branch_id, status, due_date,
                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
-                      doc_type, source_kind, idempotency_key, closes_order)
-VALUES ('#INV-' || nextval('invoice_no_seq'), $1, $2, $3, 'FINALIZED', $4,
-        $5, $6, $7, $8, now(), 'INVOICE', $9, $10, $11)
+                      doc_type, source_kind, idempotency_key, closes_order, org_id, seq)
+VALUES (COALESCE(NULLIF($1,'')::uuid, gen_random_uuid()), '#INV-' || nextval('invoice_no_seq'),
+        $2, $3, $4, 'FINALIZED', $5,
+        $6, $7, $8, $8, now(), 'INVOICE', $9, $10, $11,
+        (SELECT org_id FROM locations WHERE id = $4::uuid),
+        (SELECT next_value FROM iseq))
 RETURNING id::text, invoice_no`,
-			f.CustomerID, nullUUID(f.OrderID), f.BranchID, dueDate,
-			subtotal, quote.TaxCents, total, total, sourceKind, idemKey, f.ClosesOrder,
+			docID, f.CustomerID, nullUUID(f.OrderID), f.BranchID, dueDate,
+			subtotal, quote.TaxCents, total, sourceKind, idemKey, f.ClosesOrder,
 		).Scan(&invoiceID, &invoiceNo)
 		if err != nil {
 			return fmt.Errorf("insert invoice: %w", err)
