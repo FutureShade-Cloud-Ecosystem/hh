@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -537,5 +538,30 @@ func assertEq(t *testing.T, name string, want, got map[string]any) {
 	t.Helper()
 	if fmt.Sprint(want) != fmt.Sprint(got) {
 		t.Fatalf("%s: server state changed on replay: %v, want %v", name, got, want)
+	}
+}
+
+// TestPilotCrossScopeCreateDoesNotLeakExistence: a create naming another
+// org's row id answers not-found, indistinguishable from a free id that
+// never existed, so the scope boundary leaks no existence (round 2).
+func TestPilotCrossScopeCreateDoesNotLeakExistence(t *testing.T) {
+	f := newPilot(t)
+	ctx := context.Background()
+	foreign, err := f.svc.CreateFromOrder(ctx, tasks.CreateInput{
+		OrderID: testkit.OrderGammaDraftID, Source: tasks.SourceManual,
+		CreatedBy: testkit.UserInsideSalesID, OrgID: testkit.OrgSouthID,
+	})
+	if err != nil {
+		t.Fatalf("south create: %v", err)
+	}
+	res := pushOps(t, f, []syncOp{
+		{client: newKey(9), kind: "create", payload: map[string]any{"id": foreign.ID, "order_id": testkit.OrderAlphaPickID}},
+	})
+	if len(res) != 1 || res[0].Status != "rejected" {
+		t.Fatalf("cross-scope create answered %+v", res[0])
+	}
+	msg := *res[0].Error
+	if !strings.Contains(msg, "row not found") || strings.Contains(msg, "exists") {
+		t.Fatalf("cross-scope create error %q, want the not-found refusal that leaks nothing", msg)
 	}
 }

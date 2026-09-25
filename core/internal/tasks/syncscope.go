@@ -358,8 +358,15 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 		id, ob.ID, ob.BranchID, priority, actor, f.OrgID, seq, key))
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The ON CONFLICT DO NOTHING arm answered no row: the
-		// client-chosen id already exists.
-		return sync.RowState{}, sync.ErrRowExists
+		// client-chosen id is taken. Which refusal answers depends on
+		// WHERE it is taken: inside the caller's org the collision is
+		// the caller's own fact (the row is visible to it), outside it
+		// the answer is not-found so existence never leaks across the
+		// scope boundary.
+		if _, own, _ := s.Load(ctx, f, id); own {
+			return sync.RowState{}, sync.ErrRowExists
+		}
+		return sync.RowState{}, sync.ErrRowNotFound
 	}
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("tasks: sync create insert: %w", err)
