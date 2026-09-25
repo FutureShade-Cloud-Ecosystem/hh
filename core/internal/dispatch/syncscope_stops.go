@@ -241,16 +241,22 @@ func (s *StopsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key str
 	}
 	brief, err := s.orders.Brief(ctx, orderID)
 	if err != nil {
-		return sync.RowState{}, fmt.Errorf("dispatch: %w: %v", sync.ErrOpRefused, err)
+		// Schedule's own posture: a missing or garbage order id never
+		// distinguishes itself, and neither does a foreign one below,
+		// so all three answer the same not-found.
+		return sync.RowState{}, sync.ErrRowNotFound
+	}
+	// THE ORG FENCE RUNS BEFORE ANY STATUS SENTENCE: a foreign order's
+	// status is not the caller's fact to learn, and the refusal must
+	// never distinguish a foreign order from a missing one.
+	if !branchInOrg(ctx, s.pool, brief.BranchID, f.OrgID) {
+		return sync.RowState{}, sync.ErrRowNotFound
 	}
 	switch brief.Status {
 	case "DRAFT":
 		return sync.RowState{}, refused(fmt.Errorf("confirm the order before scheduling a delivery for it"))
 	case "CANCELLED", "CLOSED":
 		return sync.RowState{}, refused(fmt.Errorf("order is %s and cannot be scheduled", brief.Status))
-	}
-	if !branchInOrg(ctx, s.pool, brief.BranchID, f.OrgID) {
-		return sync.RowState{}, fmt.Errorf("dispatch: the order's branch is not in this organisation: %w", sync.ErrOpRefused)
 	}
 	date := strings.TrimSpace(fmt.Sprint(fields["scheduled_date"]))
 	if date == "" || !validDate(date) {

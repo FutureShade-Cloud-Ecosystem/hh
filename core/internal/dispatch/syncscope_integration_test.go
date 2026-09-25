@@ -1019,12 +1019,26 @@ func TestSyncModuleInvariantsHold(t *testing.T) {
 	}
 	t.Logf("module invariant: the close over an open stop answered rejected (%s)", *res[0].Error)
 
-	res = syncPush(t, f, "stops", f.north, syncOp("create", syncFreshKey(), map[string]any{
+	// A create naming an unknown order and one naming another org's
+	// order answer byte-identical not-founds, so existence never leaks
+	// across the scope boundary (the round-2 finding, the pilot's
+	// cross-scope posture).
+	unknown := syncPush(t, f, "stops", f.north, syncOp("create", syncFreshKey(), map[string]any{
 		"order_id": "3ef10000-0000-4000-8000-0f0000000002", "scheduled_date": syncToday(),
 	}, nil))
-	if len(res) != 1 || res[0].Status != "rejected" {
-		t.Fatalf("the unknown order create answered %+v", res[0])
+	foreign := syncPush(t, f, "stops", f.north, syncOp("create", syncFreshKey(), map[string]any{
+		"order_id": testkit.OrderGammaDraftID, "scheduled_date": syncToday(),
+	}, nil))
+	if len(unknown) != 1 || unknown[0].Status != "rejected" || unknown[0].Error == nil {
+		t.Fatalf("the unknown order create answered %+v", unknown[0])
 	}
+	if len(foreign) != 1 || foreign[0].Status != "rejected" || foreign[0].Error == nil {
+		t.Fatalf("the foreign org order create answered %+v", foreign[0])
+	}
+	if *unknown[0].Error != *foreign[0].Error {
+		t.Fatalf("the unknown (%s) and foreign (%s) order refusals differ: existence leaks", *unknown[0].Error, *foreign[0].Error)
+	}
+	t.Logf("module invariant: the unknown and the foreign-org order creates answer one refusal (%s)", *unknown[0].Error)
 }
 
 // TestSyncReviewRound1Fixes: the two round-1 review findings, each
