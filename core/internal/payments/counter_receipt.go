@@ -117,12 +117,16 @@ func (r *Repository) RecordReceipt(ctx context.Context, in ReceiptRequest) (Rece
 		receivedBy = in.ReceivedBy
 	}
 	// ON CONFLICT DO NOTHING against ux_payments_idempotency_key (0028). RETURNING yields no row when
-	// the key was already used, which is the whole guard, see the file header.
-	row := tx.QueryRow(ctx,
-		`INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, branch_id,
-		                       gateway_ref, received_by, idempotency_key, metadata)
+	// the key was already used, which is the whole guard, see the file header. The row also stamps
+	// the 0213 sync legs (the payments feed seq, the org off the branch's location), the settle's
+	// own posture: a counter receipt FOR a customer's account is that payer's history.
+	row := tx.QueryRow(ctx, paymentsFeedSeqCTE+`
+INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, branch_id,
+                       gateway_ref, received_by, idempotency_key, metadata, org_id, seq)
 		 VALUES (nextval('payment_no_seq')::text, $1, $2, $3, 'RECEIVED', $4, '', $5::uuid, $6,
-		         jsonb_build_object('reference', $7::text, 'source', 'AR_REGISTER'))
+		         jsonb_build_object('reference', $7::text, 'source', 'AR_REGISTER'),
+		         (SELECT org_id FROM locations WHERE id = $4::uuid),
+		         (SELECT next_value FROM pseq))
 		 ON CONFLICT (idempotency_key) WHERE idempotency_key <> '' DO NOTHING
 		 RETURNING id::text, payment_no::text, customer_id::text, method, amount_cents, status, received_at`,
 		in.CustomerID, in.Method, total, branchID, receivedBy, in.IdempotencyKey, in.Reference)

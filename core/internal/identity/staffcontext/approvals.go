@@ -287,8 +287,13 @@ var errNoDB = errors.New("identity: database not configured")
 
 // ApprovalRepository is the rail's persistence: the rail half of the ERP
 // identity Repository, owning permission_approval_requests exactly as at
-// the pin (the session-path halves of the ERP Repository stay behind). Its
-// SQL is carried byte-identical.
+// the pin (the session-path halves of the ERP Repository stay behind).
+// Its SQL is carried byte-identical except the three write statements,
+// which now draw a per-scope feed seq from the approvals counter
+// (scope_sequences, the 0213 convention) beside the write: a desk filing
+// or decision is the row change a device's stale replay must meet, so
+// every write path the rail owns stamps the seq the sync feed orders on
+// (the tasks and dispatch modules' own recorded posture).
 //
 // DUAL-SOURCE NOTE (a recorded finding, not a silent choice): the rail's
 // candidate pool and caller resolution read the ERP identity scaffold
@@ -327,9 +332,9 @@ func (r *ApprovalRepository) CreateApproval(ctx context.Context, req ApprovalReq
 		}
 	}
 	var id string
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO permission_approval_requests (requested_by, branch_id, policy_type, detail, subject_ref, data, status)
-		VALUES ($1, $2, $3, $4, $5, $6, 'PENDING') RETURNING id::text`,
+	err := r.pool.QueryRow(ctx, approvalsSeqCTE+`
+		INSERT INTO permission_approval_requests (requested_by, branch_id, policy_type, detail, subject_ref, data, status, seq)
+		VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', (SELECT next_value FROM aseq)) RETURNING id::text`,
 		req.RequestedBy, req.BranchID, string(req.Policy), req.Detail, subject, data).Scan(&id)
 	if err != nil {
 		return ApprovalRequest{}, fmt.Errorf("create approval: %w", err)
@@ -416,9 +421,10 @@ func (r *ApprovalRepository) SaveDecision(ctx context.Context, id, decidedBy str
 	if r.pool == nil {
 		return false, errNoDB
 	}
-	ct, err := r.pool.Exec(ctx, `
+	ct, err := r.pool.Exec(ctx, approvalsSeqCTE+`
 		UPDATE permission_approval_requests
-		SET status = $2, decided_by = $3, decided_at = now(), rejection_reason = $4
+		SET status = $2, decided_by = $3, decided_at = now(), rejection_reason = $4,
+		    seq = (SELECT next_value FROM aseq)
 		WHERE id = $1 AND status = 'PENDING'`, id, string(status), decidedBy, reason)
 	if err != nil {
 		return false, err
@@ -441,9 +447,10 @@ func (r *ApprovalRepository) BeginTx(ctx context.Context) (pgx.Tx, error) {
 // decide on the same request blocks until this tx commits/rolls back and then sees the new status,
 // serializing deciders and preventing the "one approves + posts while another rejects" divergence.
 func (r *ApprovalRepository) SaveDecisionTx(ctx context.Context, tx pgx.Tx, id, decidedBy string, status ApprovalStatus, reason string) (bool, error) {
-	ct, err := tx.Exec(ctx, `
+	ct, err := tx.Exec(ctx, approvalsSeqCTE+`
 		UPDATE permission_approval_requests
-		SET status = $2, decided_by = $3, decided_at = now(), rejection_reason = $4
+		SET status = $2, decided_by = $3, decided_at = now(), rejection_reason = $4,
+		    seq = (SELECT next_value FROM aseq)
 		WHERE id = $1 AND status = 'PENDING'`, id, string(status), decidedBy, reason)
 	if err != nil {
 		return false, err
@@ -547,6 +554,106 @@ func (r *ApprovalRepository) ResolveStaff(ctx context.Context, userID string) (S
 		out.Scope = ScopeBranch
 	}
 	return out, nil
+}
+
+// ResolveStaffInOrg is ResolveStaff with the winning-grant read scoped
+// to ONE org: the per-org authority resolution the request path's
+// guard carries (D3), which the rail's sync door needs because its
+// caller arrives as the middleware-stamped org filter rather than a
+// guard-resolved caller. A user whose grants all sit in another org
+// resolves to NO authority here (the empty context), exactly as the
+// guard answers the RBAC-403 for no active grant in the org; the
+// caller keeps the branch grants read unscoped, which only widens the
+// branch-reachability facts CanApprove re-checks.
+func (r *ApprovalRepository) ResolveStaffInOrg(ctx context.Context, userID, orgID string) (StaffContext, error) {
+	if r.pool == nil {
+		return StaffContext{}, errNoDB
+	}
+	var status, platformID string
+	err := r.pool.QueryRow(ctx,
+		`SELECT u.status, COALESCE(u.platform_user_id,'') FROM users u WHERE u.id = $1 AND u.deleted_at IS NULL`,
+		userID).Scan(&status, &platformID)
+	if err != nil {
+		return StaffContext{}, fmt.Errorf("resolve staff %q: %w", userID, err)
+	}
+	out := StaffContext{UserID: userID, Status: status, Branches: map[string]bool{}}
+	if platformID == "" {
+		// No platform link: no canonical grants exist, and the
+		// projection resolves an unlinked person to no authority
+		// rather than to the scaffold's stale copy (fail closed, the
+		// same rule ResolveStaff carries).
+		return out, nil
+	}
+	var roleCode, scope string
+	var tier int
+	err = r.pool.QueryRow(ctx, `
+		SELECT COALESCE(sr.origin_code,''), COALESCE(sr.tier,0), COALESCE(sr.scope,'branch')
+		FROM staff_role_grant g
+		JOIN staff_role sr ON sr.id = g.role_id
+		WHERE g.platform_user_id = $1 AND g.org_id = $2::uuid
+		  AND g.deleted_at IS NULL AND sr.deleted_at IS NULL
+		ORDER BY sr.tier, sr.id
+		LIMIT 1`, platformID, orgID).Scan(&roleCode, &tier, &scope)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// No active grant in this org: no authority, fail closed (the
+		// empty context CanApprove refuses everything).
+		return out, nil
+	}
+	if err != nil {
+		return StaffContext{}, fmt.Errorf("resolve staff in org %s: %w", orgID, err)
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT ubg.branch_id::text
+		FROM user_branch_grants ubg
+		WHERE ubg.user_id = $1 AND ubg.deleted_at IS NULL
+		ORDER BY ubg.branch_id`, userID)
+	if err != nil {
+		return StaffContext{}, fmt.Errorf("resolve staff %q: %w", userID, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var b string
+		if err := rows.Scan(&b); err != nil {
+			return StaffContext{}, fmt.Errorf("resolve staff %q: %w", userID, err)
+		}
+		out.Branches[b] = true
+	}
+	if err := rows.Err(); err != nil {
+		return StaffContext{}, fmt.Errorf("resolve staff %q: %w", userID, err)
+	}
+	out.RoleCode = roleCode
+	out.Tier = Tier(tier)
+	switch scope {
+	case "global":
+		out.Scope = ScopeGlobal
+	default:
+		out.Scope = ScopeBranch
+	}
+	return out, nil
+}
+
+// ManagerInOrg answers whether one platform subject holds an active
+// manager-or-leadership grant (tier 1 or 2, the guard's IsManager) in
+// one org: the billing sync door's narrow authority check, declared by
+// the consuming module and answered by this one because the identity
+// scaffold reads belong here.
+func (r *ApprovalRepository) ManagerInOrg(ctx context.Context, platformUserID, orgID string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var ok bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM staff_role_grant g
+			JOIN staff_role sr ON sr.id = g.role_id
+			WHERE g.platform_user_id = $1 AND g.org_id = $2::uuid
+			  AND g.deleted_at IS NULL AND sr.deleted_at IS NULL
+			  AND sr.tier <= 2
+		)`, platformUserID, orgID).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("check manager in org: %w", err)
+	}
+	return ok, nil
 }
 
 // ListApproverCandidates returns every ACTIVE staff member WITH an assigned role (an unassigned user can

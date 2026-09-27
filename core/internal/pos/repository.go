@@ -306,10 +306,21 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id::text`
 }
 
 func (r *Repository) InsertInvoice(ctx context.Context, tx pgx.Tx, inv invoiceRow) (string, string, error) {
+	// The 0213 sync legs stamp in the same INSERT (the invoices feed
+	// seq, the org off the branch's location): the ring's document is
+	// the payer's document, and a sale no pull can see is a feed that
+	// lies by omission, the posture the billing writer carries on the
+	// same legs.
 	const q = `
+WITH iseq AS (INSERT INTO scope_sequences (scope) VALUES ('invoices')
+              ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
+              RETURNING next_value)
 INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, due_date,
-                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, created_by)
-VALUES ('#INV-' || nextval('invoice_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, $9, now(), $10)
+                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, created_by,
+                      org_id, seq)
+VALUES ('#INV-' || nextval('invoice_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, $9, now(), $10,
+        (SELECT org_id FROM locations WHERE id = $3::uuid),
+        (SELECT next_value FROM iseq))
 RETURNING id::text, invoice_no`
 	var id, no string
 	err := tx.QueryRow(ctx, q, inv.CustomerID, nullStr(inv.OrderID), inv.BranchID, inv.Status, inv.DueDate,

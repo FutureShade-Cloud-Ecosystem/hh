@@ -392,6 +392,52 @@ func (r *Repository) Pay(ctx context.Context, customerID, method, gatewayRef str
 // hand back a payment that is sitting right there. One transaction means the intent and the money it
 // describes can never disagree.
 func (r *Repository) PayWithIntent(ctx context.Context, customerID, method, gatewayRef string, allocs []Allocation, intentID string) (Payment, error) {
+	return r.PayWithStamps(ctx, customerID, method, gatewayRef, allocs, intentID, settleStamps{})
+}
+
+// settleStamps are the sync legs a settled payment row may carry
+// (HH-3.5): the client-chosen row id and the client idempotency key
+// the offline replay dedups on. Zero values behave exactly like the
+// desk's settle (the id minted, the key column left empty), so ONE
+// settle body serves both doors and they cannot drift.
+type settleStamps struct {
+	RowID     string
+	ClientKey string
+}
+
+// paymentsFeedSeqCTE draws a fresh payments feed seq atomically in
+// the same statement as the settle's INSERT (scope_sequences, the
+// 0213 convention), so a payment is visible on the payer's feed the
+// moment it lands.
+const paymentsFeedSeqCTE = `WITH pseq AS (
+	INSERT INTO scope_sequences (scope) VALUES ('payments')
+	ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
+	RETURNING next_value
+) `
+
+// invoicesFeedSeqCTE is the same CTE over the INVOICES counter, the
+// billing scope's own feed: every money move this module makes on an
+// invoice (a settle's allocation, a reversal's re-open) stamps the
+// invoice's seq beside the balance move, so the payer's invoices feed
+// carries the change. Cross-module column stamp on a table this
+// module already writes in the same transaction: the recorded
+// cross-table reach of the atomic pay, pointed at the sync leg.
+const invoicesFeedSeqCTE = `WITH iseq AS (
+	INSERT INTO scope_sequences (scope) VALUES ('invoices')
+	ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
+	RETURNING next_value
+) `
+
+// PayWithStamps is PayWithIntent carrying the sync stamps. The
+// INSERT additionally stamps the 0213 legs beside them: the org read
+// off the customer (the tenant's org anchor, the same stamp every
+// tenant-owned row carries) and the feed seq. The id honors the
+// client-chosen row id when the replay named one, and the 0028
+// idempotency_key column carries the client key: that column is the
+// table's own recorded replay guard ("client-generated UUID; the
+// partial-unique index makes the write replay-safe", 0028), so the
+// offline outbox's key lands in exactly the column built for it.
+func (r *Repository) PayWithStamps(ctx context.Context, customerID, method, gatewayRef string, allocs []Allocation, intentID string, stamps settleStamps) (Payment, error) {
 	if r.pool == nil {
 		return Payment{}, errNoDB
 	}
@@ -413,11 +459,15 @@ func (r *Repository) PayWithIntent(ctx context.Context, customerID, method, gate
 	// Insert the payment header, drawing a fresh payment_no from the sequence.
 	var p Payment
 	var pCustomerID, pGatewayRef *string
-	err = tx.QueryRow(ctx,
-		`INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, branch_id, gateway_ref)
-		 VALUES (nextval('payment_no_seq')::text, $1, $2, $3, 'RECEIVED', $4, $5)
-		 RETURNING id::text, payment_no::text, customer_id::text, method, amount_cents, status, gateway_ref, received_at`,
-		customerID, method, total, branchID, gatewayRef).Scan(
+	err = tx.QueryRow(ctx, paymentsFeedSeqCTE+`
+INSERT INTO payments (id, payment_no, customer_id, method, amount_cents, status, branch_id,
+                      gateway_ref, org_id, seq, idempotency_key)
+VALUES (COALESCE(NULLIF($1,'')::uuid, gen_random_uuid()), nextval('payment_no_seq')::text, $2, $3, $4,
+        'RECEIVED', $5, $6,
+        (SELECT org_id FROM customers WHERE id = $2::uuid),
+        (SELECT next_value FROM pseq), $7)
+RETURNING id::text, payment_no::text, customer_id::text, method, amount_cents, status, gateway_ref, received_at`,
+		stamps.RowID, customerID, method, total, branchID, gatewayRef, stamps.ClientKey).Scan(
 		&p.ID, &p.PaymentNo, &pCustomerID, &p.Method, &p.AmountCents, &p.Status, &pGatewayRef, &p.ReceivedAt)
 	if err != nil {
 		return Payment{}, fmt.Errorf("pay: insert payment: %w", err)
@@ -538,11 +588,19 @@ func applyAllocations(ctx context.Context, tx pgx.Tx, p *Payment, customerID, me
 		}
 		a.AllocatedBy = allocatedBy
 
-		if _, err := tx.Exec(ctx,
-			`UPDATE invoices
+		// The invoice's balance move also draws a fresh INVOICES feed
+		// seq beside the write (billing's own counter, the 0213
+		// convention): a payment landing is the invoice change the
+		// payer's device must see on its invoices feed, and a money
+		// move that no pull can see is a feed that lies by omission.
+		// The reach is the same cross-table one this settle already
+		// takes on invoices (the file's own recorded posture).
+		if _, err := tx.Exec(ctx, invoicesFeedSeqCTE+`
+UPDATE invoices
 			 SET balance_cents = balance_cents - $3,
 				 status = CASE WHEN balance_cents - $3 <= 0 THEN 'PAID' ELSE 'PARTIALLY_PAID' END,
-				 updated_at = now()
+				 updated_at = now(),
+				 seq = (SELECT next_value FROM iseq)
 			 WHERE id = $2 AND customer_id = $1`,
 			customerID, a.InvoiceID, a.AmountCents); err != nil {
 			return fmt.Errorf("pay: update invoice balance: %w", err)

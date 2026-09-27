@@ -275,14 +275,20 @@ func (r *Repository) SetReturnRefundPayment(ctx context.Context, tx pgx.Tx, retu
 // ApplyCreditToInvoice reduces the invoice balance by up to amountCents (floor 0), flipping status →
 // PAID only when the balance is fully offset. It returns the cents actually applied (0 when the
 // invoice carries no balance). The invoice row is locked by the UPDATE itself, no separate SELECT.
+// The move stamps the invoices feed seq beside it (the payments settle's own posture): a credit
+// landing on the payer's document is the change the payer's device must see.
 func (r *Repository) ApplyCreditToInvoice(ctx context.Context, tx pgx.Tx, invoiceID string, amountCents int64) (int64, error) {
 	// RETURNING sees the NEW row, so the applied amount derives from the OLD balance via the CTE.
 	const q = `
-WITH old AS (SELECT id, balance_cents FROM invoices WHERE id::text = $1 FOR UPDATE)
+WITH old AS (SELECT id, balance_cents FROM invoices WHERE id::text = $1 FOR UPDATE),
+iseq AS (INSERT INTO scope_sequences (scope) VALUES ('invoices')
+         ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
+         RETURNING next_value)
 UPDATE invoices i
    SET balance_cents = old.balance_cents - LEAST(old.balance_cents, $2),
        status = CASE WHEN old.balance_cents <= $2 THEN 'PAID' ELSE i.status END,
-       updated_at = now()
+       updated_at = now(),
+       seq = (SELECT next_value FROM iseq)
   FROM old
  WHERE i.id = old.id
 RETURNING LEAST(old.balance_cents, $2)`
