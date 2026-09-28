@@ -5,174 +5,216 @@
 
 import type { TaxConfig, TaxEvidence, TaxEvidenceCapture, TaxEvidencePage, TaxRate, TaxRatePage, TaxRecomputeRequest, TaxRecomputeResult, TaxReconReport, TaxReliefEligibility, TaxStatusCardProfile, TaxStatusCardProfilePage } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function taxGetConfig(
   client: ApiClient,
-  opts?: { branch_id?: string }
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<TaxConfig>> {
   return client.request<TaxConfig>({
     method: "GET",
     path: "/api/v1/tax/config",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "taxGetConfig",
   });
 }
 
 export async function taxUpdateConfig(
   client: ApiClient,
-  body: TaxConfig
+  body: TaxConfig,
+  call?: ApiCallOptions
 ): Promise<Result<TaxConfig>> {
   return client.request<TaxConfig>({
     method: "POST",
     path: "/api/v1/tax/config",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "taxUpdateConfig",
   });
 }
 
 export async function taxListEvidence(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; order_id?: string; profile_id?: string }
+  opts?: { cursor?: string; limit?: number; order_id?: string; profile_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<TaxEvidencePage>> {
   return client.request<TaxEvidencePage>({
     method: "GET",
     path: "/api/v1/tax/evidence",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "taxListEvidence",
   });
 }
 
 export async function taxCaptureEvidence(
   client: ApiClient,
-  body: TaxEvidenceCapture
+  body: TaxEvidenceCapture,
+  call?: ApiCallOptions
 ): Promise<Result<TaxEvidence>> {
   return client.request<TaxEvidence>({
     method: "POST",
     path: "/api/v1/tax/evidence",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "taxCaptureEvidence",
   });
 }
 
 export async function taxViewEvidence(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TaxEvidence>> {
   return client.request<TaxEvidence>({
     method: "GET",
     path: "/api/v1/tax/evidence/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "taxViewEvidence",
   });
 }
 
 export async function taxDownloadEvidence(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TaxEvidence>> {
   return client.request<TaxEvidence>({
     method: "POST",
     path: "/api/v1/tax/evidence/{id}/download",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "taxDownloadEvidence",
   });
 }
 
 export async function taxValidateEvidence(
   client: ApiClient,
-  id: string,
-  opts?: { as_of?: string }
+  id: string | number,
+  opts?: { as_of?: string },
+  call?: ApiCallOptions
 ): Promise<Result<TaxReliefEligibility>> {
   return client.request<TaxReliefEligibility>({
     method: "POST",
     path: "/api/v1/tax/evidence/{id}/validate",
     pathParams: { id },
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "taxValidateEvidence",
   });
 }
 
 export async function taxListProfiles(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<TaxStatusCardProfilePage>> {
   return client.request<TaxStatusCardProfilePage>({
     method: "GET",
     path: "/api/v1/tax/profiles",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "taxListProfiles",
   });
 }
 
 export async function taxUpsertProfile(
   client: ApiClient,
-  body: TaxStatusCardProfile
+  body: TaxStatusCardProfile,
+  call?: ApiCallOptions
 ): Promise<Result<TaxStatusCardProfile>> {
   return client.request<TaxStatusCardProfile>({
     method: "POST",
     path: "/api/v1/tax/profiles",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "taxUpsertProfile",
   });
 }
 
 export async function taxListRates(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<TaxRatePage>> {
   return client.request<TaxRatePage>({
     method: "GET",
     path: "/api/v1/tax/rates",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "taxListRates",
   });
 }
 
 export async function taxCreateRate(
   client: ApiClient,
-  body: TaxRate
+  body: TaxRate,
+  call?: ApiCallOptions
 ): Promise<Result<TaxRate>> {
   return client.request<TaxRate>({
     method: "POST",
     path: "/api/v1/tax/rates",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "taxCreateRate",
   });
 }
 
 export async function taxRecompute(
   client: ApiClient,
-  body: TaxRecomputeRequest
+  body: TaxRecomputeRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TaxRecomputeResult>> {
   return client.request<TaxRecomputeResult>({
     method: "POST",
     path: "/api/v1/tax/recompute",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "taxRecompute",
   });
 }
 
 export async function taxReconcile(
   client: ApiClient,
-  opts: { year: number; month?: number; branch_id?: string }
+  opts: { year: number; month?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<TaxReconReport>> {
   return client.request<TaxReconReport>({
     method: "GET",
     path: "/api/v1/tax/recon",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "taxReconcile",
   });
 }
 
 export async function taxReviewQueue(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<TaxStatusCardProfilePage>> {
   return client.request<TaxStatusCardProfilePage>({
     method: "GET",
     path: "/api/v1/tax/review-queue",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "taxReviewQueue",
   });
 }

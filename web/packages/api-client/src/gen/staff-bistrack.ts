@@ -5,14 +5,17 @@
 
 import type { BistrackStatus } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function bistrackStatus(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<BistrackStatus>> {
   return client.request<BistrackStatus>({
     method: "GET",
     path: "/api/v1/bistrack/status",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "bistrackStatus",
   });
 }

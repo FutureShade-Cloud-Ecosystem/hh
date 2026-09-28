@@ -5,211 +5,259 @@
 
 import type { Task, TaskAdvanceRule, TaskCancelRequest, TaskCreateRequest, TaskDoneRequest, TaskPage, TaskPendingTicketPage, TaskPickQueueEntry, TaskPickQueuePage, TaskRecordPickRequest, TaskRecordPickResult, TaskShortage, TaskShortageRequest, TaskShortageResolveRequest, TaskStageRequest, TaskWeightRequestBody, TaskWeightResult, TaskWeightSubmitBody } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function tasksCreate(
   client: ApiClient,
-  body: TaskCreateRequest
+  body: TaskCreateRequest,
+  call?: ApiCallOptions
 ): Promise<Result<Task>> {
   return client.request<Task>({
     method: "POST",
     path: "/api/v1/tasks",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tasksCreate",
   });
 }
 
 export async function tasksList(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; status?: "QUEUED" | "PUSHED" | "ACCEPTED" | "IN_PROGRESS" | "STAGED" | "DONE" | "CANCELLED"; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; status?: "QUEUED" | "PUSHED" | "ACCEPTED" | "IN_PROGRESS" | "STAGED" | "DONE" | "CANCELLED"; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<TaskPage>> {
   return client.request<TaskPage>({
     method: "GET",
     path: "/api/v1/tasks",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tasksList",
   });
 }
 
 export async function tasksAccept(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<Task>> {
   return client.request<Task>({
     method: "POST",
     path: "/api/v1/tasks/{id}/accept",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tasksAccept",
   });
 }
 
 export async function tasksCancel(
   client: ApiClient,
-  id: string,
-  body: TaskCancelRequest
+  id: string | number,
+  body: TaskCancelRequest,
+  call?: ApiCallOptions
 ): Promise<Result<Task>> {
   return client.request<Task>({
     method: "POST",
     path: "/api/v1/tasks/{id}/cancel",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tasksCancel",
   });
 }
 
 export async function tasksClaim(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<Task>> {
   return client.request<Task>({
     method: "POST",
     path: "/api/v1/tasks/{id}/claim",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tasksClaim",
   });
 }
 
 export async function tasksDone(
   client: ApiClient,
-  id: string,
-  body: TaskDoneRequest
+  id: string | number,
+  body: TaskDoneRequest,
+  call?: ApiCallOptions
 ): Promise<Result<Task>> {
   return client.request<Task>({
     method: "POST",
     path: "/api/v1/tasks/{id}/done",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tasksDone",
   });
 }
 
 export async function yardGetAdvanceRule(
   client: ApiClient,
-  taskType: "PICK" | "DISPATCH" | "NEED_WEIGHT" | "OTHER"
+  taskType: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TaskAdvanceRule>> {
   return client.request<TaskAdvanceRule>({
     method: "GET",
     path: "/api/v1/yard/advance-rules/{taskType}",
     pathParams: { taskType },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "yardGetAdvanceRule",
   });
 }
 
 export async function yardListPendingTickets(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<TaskPendingTicketPage>> {
   return client.request<TaskPendingTicketPage>({
     method: "GET",
     path: "/api/v1/yard/pending-tickets",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "yardListPendingTickets",
   });
 }
 
 export async function yardListPickQueue(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; status?: "QUEUED" | "PUSHED" | "ACCEPTED" | "IN_PROGRESS" | "STAGED" | "DONE" | "CANCELLED"; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; status?: "QUEUED" | "PUSHED" | "ACCEPTED" | "IN_PROGRESS" | "STAGED" | "DONE" | "CANCELLED"; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<TaskPickQueuePage>> {
   return client.request<TaskPickQueuePage>({
     method: "GET",
     path: "/api/v1/yard/pick-queue",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "yardListPickQueue",
   });
 }
 
 export async function yardGetPick(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TaskPickQueueEntry>> {
   return client.request<TaskPickQueueEntry>({
     method: "GET",
     path: "/api/v1/yard/picks/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "yardGetPick",
   });
 }
 
 export async function yardRecordPick(
   client: ApiClient,
-  id: string,
-  body: TaskRecordPickRequest
+  id: string | number,
+  body: TaskRecordPickRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TaskRecordPickResult>> {
   return client.request<TaskRecordPickResult>({
     method: "PUT",
     path: "/api/v1/yard/picks/{id}/lines",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "yardRecordPick",
   });
 }
 
 export async function yardReportShortage(
   client: ApiClient,
-  id: string,
-  body: TaskShortageRequest
+  id: string | number,
+  body: TaskShortageRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TaskShortage>> {
   return client.request<TaskShortage>({
     method: "POST",
     path: "/api/v1/yard/picks/{id}/shortages",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "yardReportShortage",
   });
 }
 
 export async function yardResolveShortage(
   client: ApiClient,
-  id: string,
-  sid: string,
-  body: TaskShortageResolveRequest
+  id: string | number,
+  sid: string | number,
+  body: TaskShortageResolveRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TaskShortage>> {
   return client.request<TaskShortage>({
     method: "POST",
     path: "/api/v1/yard/picks/{id}/shortages/{sid}/resolve",
     pathParams: { id, sid },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "yardResolveShortage",
   });
 }
 
 export async function yardStagePick(
   client: ApiClient,
-  id: string,
-  body: TaskStageRequest
+  id: string | number,
+  body: TaskStageRequest,
+  call?: ApiCallOptions
 ): Promise<Result<Task>> {
   return client.request<Task>({
     method: "POST",
     path: "/api/v1/yard/picks/{id}/stage",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "yardStagePick",
   });
 }
 
 export async function yardSubmitWeight(
   client: ApiClient,
-  id: string,
-  body: TaskWeightSubmitBody
+  id: string | number,
+  body: TaskWeightSubmitBody,
+  call?: ApiCallOptions
 ): Promise<Result<TaskWeightResult>> {
   return client.request<TaskWeightResult>({
     method: "POST",
     path: "/api/v1/yard/picks/{id}/weight",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "yardSubmitWeight",
   });
 }
 
 export async function yardRequestWeight(
   client: ApiClient,
-  body: TaskWeightRequestBody
+  body: TaskWeightRequestBody,
+  call?: ApiCallOptions
 ): Promise<Result<Task>> {
   return client.request<Task>({
     method: "POST",
     path: "/api/v1/yard/weight-requests",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "yardRequestWeight",
   });
 }

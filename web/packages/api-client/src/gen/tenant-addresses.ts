@@ -5,26 +5,32 @@
 
 import type { TenantAddress, TenantAddressListResponse } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function tenantListAddresses(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<TenantAddressListResponse>> {
   return client.request<TenantAddressListResponse>({
     method: "GET",
     path: "/api/v1/tenant/addresses",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantListAddresses",
   });
 }
 
 export async function tenantGetAddress(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TenantAddress>> {
   return client.request<TenantAddress>({
     method: "GET",
     path: "/api/v1/tenant/addresses/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantGetAddress",
   });
 }

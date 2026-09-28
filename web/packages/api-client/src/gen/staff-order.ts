@@ -5,316 +5,388 @@
 
 import type { Attachment, AttachmentCreate, AttachmentLink, OrderActivity, OrderCancelRequest, OrderChange, OrderChangeNoteRequest, OrderChangeRaiseRequest, OrderChangesResponse, OrderDuplicateCheck, OrderDuplicatePreview, OrderDuplicateRequest, OrderDuplicateResult, OrderEditHistory, OrderEditResult, OrderGroupStatusRequest, OrderHeaderEditRequest, OrderHistory, OrderInvoicePolicyRequest, OrderLineAddRequest, OrderLineQtyEditRequest, OrderNote, OrderNoteCreateRequest, OrderNoteEditRequest, OrderReservationsResponse, OrderResyncResult, OrderShipmentGroup, OrderShipmentInvoiceResult, OrderShipmentPlan, OrderShipmentPlanRequest, OrderTransitionResult, OrderView } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function createAttachment(
   client: ApiClient,
-  body: AttachmentCreate
+  body: AttachmentCreate,
+  call?: ApiCallOptions
 ): Promise<Result<Attachment>> {
   return client.request<Attachment>({
     method: "POST",
     path: "/api/v1/attachments",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "createAttachment",
   });
 }
 
 export async function getAttachment(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<Attachment>> {
   return client.request<Attachment>({
     method: "GET",
     path: "/api/v1/attachments/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "getAttachment",
   });
 }
 
 export async function createAttachmentLink(
   client: ApiClient,
-  id: string,
-  body: AttachmentLink
+  id: string | number,
+  body: AttachmentLink,
+  call?: ApiCallOptions
 ): Promise<Result<AttachmentLink>> {
   return client.request<AttachmentLink>({
     method: "POST",
     path: "/api/v1/attachments/{id}/links",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "createAttachmentLink",
   });
 }
 
 export async function orderGetChange(
   client: ApiClient,
-  changeId: string
+  changeId: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderChange>> {
   return client.request<OrderChange>({
     method: "GET",
     path: "/api/v1/order-changes/{changeId}",
     pathParams: { changeId },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderGetChange",
   });
 }
 
 export async function orderChangeApply(
   client: ApiClient,
-  changeId: string
+  changeId: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderChange>> {
   return client.request<OrderChange>({
     method: "POST",
     path: "/api/v1/order-changes/{changeId}/apply",
     pathParams: { changeId },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderChangeApply",
   });
 }
 
 export async function orderChangeCancel(
   client: ApiClient,
-  changeId: string,
-  body: OrderChangeNoteRequest
+  changeId: string | number,
+  body: OrderChangeNoteRequest,
+  call?: ApiCallOptions
 ): Promise<Result<OrderChange>> {
   return client.request<OrderChange>({
     method: "POST",
     path: "/api/v1/order-changes/{changeId}/cancel",
     pathParams: { changeId },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderChangeCancel",
   });
 }
 
 export async function orderChangeFinanceApprove(
   client: ApiClient,
-  changeId: string,
-  body: OrderChangeNoteRequest
+  changeId: string | number,
+  body: OrderChangeNoteRequest,
+  call?: ApiCallOptions
 ): Promise<Result<OrderChange>> {
   return client.request<OrderChange>({
     method: "POST",
     path: "/api/v1/order-changes/{changeId}/finance-approve",
     pathParams: { changeId },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderChangeFinanceApprove",
   });
 }
 
 export async function orderChangeReject(
   client: ApiClient,
-  changeId: string,
-  body: OrderChangeNoteRequest
+  changeId: string | number,
+  body: OrderChangeNoteRequest,
+  call?: ApiCallOptions
 ): Promise<Result<OrderChange>> {
   return client.request<OrderChange>({
     method: "POST",
     path: "/api/v1/order-changes/{changeId}/reject",
     pathParams: { changeId },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderChangeReject",
   });
 }
 
 export async function orderChangeYardAck(
   client: ApiClient,
-  changeId: string,
-  body: OrderChangeNoteRequest
+  changeId: string | number,
+  body: OrderChangeNoteRequest,
+  call?: ApiCallOptions
 ): Promise<Result<OrderChange>> {
   return client.request<OrderChange>({
     method: "POST",
     path: "/api/v1/order-changes/{changeId}/yard-ack",
     pathParams: { changeId },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderChangeYardAck",
   });
 }
 
 export async function orderRead(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderView>> {
   return client.request<OrderView>({
     method: "GET",
     path: "/api/v1/orders/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderRead",
   });
 }
 
 export async function orderEditHeader(
   client: ApiClient,
-  id: string,
-  body: OrderHeaderEditRequest
+  id: string | number,
+  body: OrderHeaderEditRequest,
+  call?: ApiCallOptions
 ): Promise<Result<OrderEditResult>> {
   return client.request<OrderEditResult>({
     method: "PATCH",
     path: "/api/v1/orders/{id}",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderEditHeader",
   });
 }
 
 export async function orderGetActivity(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderActivity>> {
   return client.request<OrderActivity>({
     method: "GET",
     path: "/api/v1/orders/{id}/activity",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderGetActivity",
   });
 }
 
 export async function orderCancel(
   client: ApiClient,
-  id: string,
-  body: OrderCancelRequest
+  id: string | number,
+  body: OrderCancelRequest,
+  call?: ApiCallOptions
 ): Promise<Result<OrderTransitionResult>> {
   return client.request<OrderTransitionResult>({
     method: "POST",
     path: "/api/v1/orders/{id}/cancel",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderCancel",
   });
 }
 
 export async function orderListChanges(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderChangesResponse>> {
   return client.request<OrderChangesResponse>({
     method: "GET",
     path: "/api/v1/orders/{id}/changes",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderListChanges",
   });
 }
 
 export async function orderRaiseChange(
   client: ApiClient,
-  id: string,
-  body: OrderChangeRaiseRequest
+  id: string | number,
+  body: OrderChangeRaiseRequest,
+  call?: ApiCallOptions
 ): Promise<Result<OrderChange>> {
   return client.request<OrderChange>({
     method: "POST",
     path: "/api/v1/orders/{id}/changes",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderRaiseChange",
   });
 }
 
 export async function orderConfirm(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderTransitionResult>> {
   return client.request<OrderTransitionResult>({
     method: "POST",
     path: "/api/v1/orders/{id}/confirm",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderConfirm",
   });
 }
 
 export async function orderDuplicateCreate(
   client: ApiClient,
-  id: string,
-  body: OrderDuplicateRequest
+  id: string | number,
+  body: OrderDuplicateRequest,
+  call?: ApiCallOptions
 ): Promise<Result<OrderDuplicateResult>> {
   return client.request<OrderDuplicateResult>({
     method: "POST",
     path: "/api/v1/orders/{id}/duplicate",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderDuplicateCreate",
   });
 }
 
 export async function orderDuplicateCheck(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderDuplicateCheck>> {
   return client.request<OrderDuplicateCheck>({
     method: "GET",
     path: "/api/v1/orders/{id}/duplicate-check",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderDuplicateCheck",
   });
 }
 
 export async function orderDuplicatePreview(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderDuplicatePreview>> {
   return client.request<OrderDuplicatePreview>({
     method: "GET",
     path: "/api/v1/orders/{id}/duplicate-preview",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderDuplicatePreview",
   });
 }
 
 export async function orderEditHistory(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderEditHistory>> {
   return client.request<OrderEditHistory>({
     method: "GET",
     path: "/api/v1/orders/{id}/edits",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderEditHistory",
   });
 }
 
 export async function orderHistory(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderHistory>> {
   return client.request<OrderHistory>({
     method: "GET",
     path: "/api/v1/orders/{id}/history",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderHistory",
   });
 }
 
 export async function orderAddLine(
   client: ApiClient,
-  id: string,
-  body: OrderLineAddRequest
+  id: string | number,
+  body: OrderLineAddRequest,
+  call?: ApiCallOptions
 ): Promise<Result<OrderEditResult>> {
   return client.request<OrderEditResult>({
     method: "POST",
     path: "/api/v1/orders/{id}/lines",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderAddLine",
   });
 }
 
 export async function orderEditLineQty(
   client: ApiClient,
-  id: string,
-  lineNo: number,
-  body: OrderLineQtyEditRequest
+  id: string | number,
+  lineNo: string | number,
+  body: OrderLineQtyEditRequest,
+  call?: ApiCallOptions
 ): Promise<Result<OrderEditResult>> {
   return client.request<OrderEditResult>({
     method: "PATCH",
     path: "/api/v1/orders/{id}/lines/{lineNo}",
     pathParams: { id, lineNo },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderEditLineQty",
   });
 }
 
 export async function orderRemoveLine(
   client: ApiClient,
-  id: string,
-  lineNo: number
+  id: string | number,
+  lineNo: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderEditResult>> {
   return client.request<OrderEditResult>({
     method: "DELETE",
     path: "/api/v1/orders/{id}/lines/{lineNo}",
     pathParams: { id, lineNo },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderRemoveLine",
   });
 }
@@ -323,143 +395,176 @@ export async function orderRemoveLine(
 // types the lowest declared success code (200).
 export async function orderAddNote(
   client: ApiClient,
-  id: string,
-  body: OrderNoteCreateRequest
+  id: string | number,
+  body: OrderNoteCreateRequest,
+  call?: ApiCallOptions
 ): Promise<Result<OrderNote>> {
   return client.request<OrderNote>({
     method: "POST",
     path: "/api/v1/orders/{id}/notes",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderAddNote",
   });
 }
 
 export async function orderEditNote(
   client: ApiClient,
-  id: string,
-  noteId: string,
-  body: OrderNoteEditRequest
+  id: string | number,
+  noteId: string | number,
+  body: OrderNoteEditRequest,
+  call?: ApiCallOptions
 ): Promise<Result<OrderNote>> {
   return client.request<OrderNote>({
     method: "PATCH",
     path: "/api/v1/orders/{id}/notes/{noteId}",
     pathParams: { id, noteId },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderEditNote",
   });
 }
 
 export async function orderMarkPicking(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderTransitionResult>> {
   return client.request<OrderTransitionResult>({
     method: "POST",
     path: "/api/v1/orders/{id}/picking",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderMarkPicking",
   });
 }
 
 export async function orderMarkReady(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderTransitionResult>> {
   return client.request<OrderTransitionResult>({
     method: "POST",
     path: "/api/v1/orders/{id}/ready",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderMarkReady",
   });
 }
 
 export async function orderGetReservations(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderReservationsResponse>> {
   return client.request<OrderReservationsResponse>({
     method: "GET",
     path: "/api/v1/orders/{id}/reservations",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderGetReservations",
   });
 }
 
 export async function orderResyncReservations(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderResyncResult>> {
   return client.request<OrderResyncResult>({
     method: "POST",
     path: "/api/v1/orders/{id}/reservations/resync",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderResyncReservations",
   });
 }
 
 export async function orderGetShipmentPlan(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderShipmentPlan>> {
   return client.request<OrderShipmentPlan>({
     method: "GET",
     path: "/api/v1/orders/{id}/shipments",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderGetShipmentPlan",
   });
 }
 
 export async function orderPlanShipments(
   client: ApiClient,
-  id: string,
-  body: OrderShipmentPlanRequest
+  id: string | number,
+  body: OrderShipmentPlanRequest,
+  call?: ApiCallOptions
 ): Promise<Result<OrderShipmentPlan>> {
   return client.request<OrderShipmentPlan>({
     method: "PUT",
     path: "/api/v1/orders/{id}/shipments",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderPlanShipments",
   });
 }
 
 export async function orderInvoiceShipments(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<OrderShipmentInvoiceResult>> {
   return client.request<OrderShipmentInvoiceResult>({
     method: "POST",
     path: "/api/v1/orders/{id}/shipments/invoice",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderInvoiceShipments",
   });
 }
 
 export async function orderSetInvoicePolicy(
   client: ApiClient,
-  id: string,
-  body: OrderInvoicePolicyRequest
+  id: string | number,
+  body: OrderInvoicePolicyRequest,
+  call?: ApiCallOptions
 ): Promise<Result<OrderShipmentPlan>> {
   return client.request<OrderShipmentPlan>({
     method: "POST",
     path: "/api/v1/orders/{id}/shipments/invoice-policy",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderSetInvoicePolicy",
   });
 }
 
 export async function orderTransitionShipmentGroup(
   client: ApiClient,
-  groupId: string,
-  body: OrderGroupStatusRequest
+  groupId: string | number,
+  body: OrderGroupStatusRequest,
+  call?: ApiCallOptions
 ): Promise<Result<OrderShipmentGroup>> {
   return client.request<OrderShipmentGroup>({
     method: "POST",
     path: "/api/v1/shipment-groups/{groupId}/status",
     pathParams: { groupId },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "orderTransitionShipmentGroup",
   });
 }

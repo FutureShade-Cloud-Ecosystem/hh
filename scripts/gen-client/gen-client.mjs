@@ -40,19 +40,59 @@
 //                                       skipped)
 //   anyOf / oneOf: exactly one $ref     the named type | null (the document's
 //     leg plus one null leg             nullable reference)
-//   any other oneOf / anyOf, and the    unknown
+//   anyOf / oneOf whose legs are        the union of the named types, with the
+//     all $ref legs (two or more)       matching union descriptor (a real
+//                                       discriminated-by-shape union, for
+//                                       example MessagingMessage.ref and the
+//                                       two finstmt report unions); any other
+//                                       oneOf / anyOf fails generation naming
+//                                       the schema where it sits, never a
+//                                       silently weakened unknown
+//   any other unmapped shape, and the   unknown
 //   empty schema
 //   enum                                a union of the values as JSON literals
+//   a string schema with format:        bytes: the success type is Uint8Array
+//     binary on a success response      and the transport reads the body as
+//                                       bytes (arrayBuffer), never text; the
+//                                       plain string formats (text/csv,
+//                                       text/html, text/event-stream) stay
+//                                       the wire string
+//   a string schema with format:        the raw request body accepts
+//     binary on a request body          string | Uint8Array and rides the
+//                                       wire verbatim with the declared
+//                                       content type
+//   deprecated: true on a property      a /** @deprecated */ note on the
+//     of a named wire type              emitted property, carrying the
+//                                       description as its text
+//
+// Tag namespaces: camel() folds a tag to one identifier, and a namespace that
+// would collide with a reserved word is suffixed Api so the generated export
+// stays legal (the document's "public" tag becomes publicApi). The full tag
+// to namespace mapping is emitted as TAG_NAMESPACES in manifest.ts; nothing
+// re-derives it.
+//
+// Event streams: an operation whose success is a live text/event-stream feed
+// (the document's messagingStream) is NOT emitted as an operation function. A
+// fetch-based call resolves one Result, which cannot represent an open stream;
+// typing it Promise<Result<string>> would silently read only the first body
+// chunk and call it the value. The route stays in the manifest census marked
+// excluded (STREAM_OPERATIONS below); the caller mints a ticket with
+// messagingMintStreamTicket and opens the stream with an EventSource in the
+// shell. Documented in web/packages/api-client/README.md.
 //
 // Operation functions: one per documented operation, named with the contract's
 // operationId verbatim, grouped one file per tag. Each takes the ApiClient,
-// then the path parameters in template order, then the JSON body (when the
-// operation carries one), then an opts object typed from the query parameters.
-// Every function returns Promise<Result<success type>>: the success schema is
-// the lowest declared 2xx response; a response whose content is not JSON (or
-// whose success schema maps to the wire string) resolves the raw text. The
-// contract's shared org header (X-Org) is deliberately not an operation
-// parameter: it arrives through the transport's caller-set header provider
+// then the path parameters in template order (every path parameter is typed
+// string | number, and the transport converts it with String() when it builds
+// the request URL: the wire spelling is text either way, and a missing
+// parameter stays visible to the transport, which refuses it as a Result), then the JSON body (when the operation carries
+// one), then an opts object typed from the query parameters, then an optional
+// call object ({ signal, timeoutMs }) handed to the transport. Every function
+// returns Promise<Result<success type>>: the success schema is the lowest
+// declared 2xx response; a response whose content is not JSON resolves the raw
+// text (plain string formats) or the bytes (format: binary). The contract's
+// shared org header (X-Org) is deliberately not an operation parameter: it
+// arrives through the transport's caller-set header provider
 // (see web/packages/api-client/README.md).
 //
 // Request bodies: when application/json is among the declared content types it
@@ -61,15 +101,18 @@
 // schema and the transport serializes it as FormData (a format: binary field
 // keeps the pinned string spelling and rides as one part); otherwise, when
 // every declared content type carries a type: string schema (the binary and
-// CSV uploads), the body is typed string and sent with the first declared
-// content type, the alternatives noted in a comment on the operation. Anything
-// else fails generation loudly.
+// CSV uploads), the body is typed string, or string | Uint8Array when the
+// schemas say format: binary, and sent with the first declared content type,
+// the alternatives noted in a comment on the operation. Anything else fails
+// generation loudly.
 //
 // Alongside the types and operations the generator emits descriptors.ts (a
 // structural descriptor per wire type, the data a test-time interpreter
 // validates captures against, mirroring the contract tools' fixture check
-// with formats unchecked) and manifest.ts (the schema name list and the route
-// table, the inputs of the package's gates).
+// with formats unchecked) and manifest.ts (the schema name list, the route
+// table, the tag namespace mapping, and the per-operation success schema
+// name table the fixture gate validates captures against: an operation's own
+// declared success type, never a test-picked one).
 //
 // YAML parsing uses the yaml package from the contract tools' own dependency
 // set (core/api/tools/package.json, the lockfile ci.yml installs); this
@@ -104,6 +147,9 @@ try {
 
 const MARKER = "// Generated by scripts/gen-client/gen-client.mjs from core/api/openapi.yaml. DO NOT EDIT.";
 const HTTP_METHODS = ["get", "put", "post", "delete", "patch"];
+// Live event-stream operations: excluded from the generated surface, kept in
+// the manifest census marked excluded. See the header comment and the README.
+const STREAM_OPERATIONS = new Set(["messagingStream"]);
 
 const doc = YAML.parse(readFileSync(join(repoRoot, "core", "api", "openapi.yaml"), "utf8"));
 const schemas = doc.components?.schemas ?? {};
@@ -142,6 +188,8 @@ function tsType(s, where) {
     const refs = legs.map(refName).filter(Boolean);
     const nullLegs = legs.filter(isNullLeg);
     if (legs.length === 2 && refs.length === 1 && nullLegs.length === 1) return `${refs[0]} | null`;
+    if (legs.length >= 2 && refs.length === legs.length) return dedupe(refs).join(" | ");
+    problems.push(`${where}: oneOf/anyOf the mapping does not cover (legs: ${legs.map((l) => JSON.stringify(l?.$ref ?? l?.type ?? l)).join(", ")})`);
     return "unknown";
   }
   if (s.allOf) {
@@ -223,7 +271,10 @@ function descriptor(s, where) {
     if (legs.length === 2 && refs.length === 1 && nullLegs.length === 1) {
       return { k: "union", of: [{ k: "ref", name: refs[0] }, { k: "null" }] };
     }
-    return { k: "unknown" };
+    if (legs.length >= 2 && refs.length === legs.length) {
+      return { k: "union", of: dedupe(refs).map((name) => ({ k: "ref", name })) };
+    }
+    return { k: "unknown" }; // tsType already filed the problem and fails generation
   }
   if (s.allOf) {
     const of = s.allOf.filter((leg) => leg !== true).map((leg) => descriptor(leg, `${where}&`));
@@ -316,7 +367,11 @@ function namedTypeBody(s, name) {
     const required = new Set(s.required ?? []);
     const lines = Object.entries(s.properties).map(([pName, p]) => {
       const t = tsType(p, `${name}.${pName}`);
-      return `  ${key(pName)}${required.has(pName) ? "" : "?"}: ${t};`;
+      const dep = p && typeof p === "object" && p.deprecated === true;
+      const note = dep
+        ? `  /** @deprecated${p.description ? ` ${String(p.description).replace(/\s+/g, " ").trim()}` : ""} */\n`
+        : "";
+      return `${note}  ${key(pName)}${required.has(pName) ? "" : "?"}: ${t};`;
     });
     return `{\n${lines.join("\n")}\n};`;
   }
@@ -338,6 +393,8 @@ manifestOut.push("  method: string;");
 manifestOut.push("  path: string;");
 manifestOut.push("  operationId: string;");
 manifestOut.push("  tag: string;");
+manifestOut.push("  /** Set when the route is a live event stream, excluded from the generated surface. */");
+manifestOut.push("  excluded?: boolean;");
 manifestOut.push("}");
 manifestOut.push("");
 
@@ -359,7 +416,13 @@ function resolveParam(p, where) {
 }
 
 // successOf pins the success response: the lowest declared 2xx code, its
-// schema, and whether the client resolves the raw text instead of JSON.
+// schema, and how the client reads it: JSON, the raw text (plain string
+// content such as text/csv and text/html), or the raw bytes (format: binary
+// content: images, workbooks). schemaName carries the $ref name when the
+// success is a single named schema; manifest.ts emits it as the entry the
+// fixture gate validates captures against.
+const isBinarySchema = (s) => s !== null && typeof s === "object" && s.type === "string" && s.format === "binary";
+
 function successOf(op, where) {
   const codes = Object.keys(op.responses ?? {})
     .filter((c) => /^2..$/.test(c))
@@ -376,16 +439,24 @@ function successOf(op, where) {
   const json = content["application/json"];
   let out;
   if (json?.schema) {
-    out = { typeSpelling: tsType(json.schema, `${where} ${code}`), textResponse: false };
+    out = {
+      typeSpelling: tsType(json.schema, `${where} ${code}`),
+      textResponse: false,
+      bytesResponse: false,
+      schemaName: refName(json.schema) ?? undefined,
+    };
   } else if (contentTypes.length === 0) {
     // A success code with no declared content: nothing to parse.
-    out = { typeSpelling: "unknown", textResponse: true };
+    out = { typeSpelling: "unknown", textResponse: true, bytesResponse: false };
+  } else if (contentTypes.every((ct) => isBinarySchema(content[ct].schema))) {
+    // Bytes on the wire (an image, a workbook): read them as bytes, never text.
+    out = { typeSpelling: "Uint8Array", textResponse: false, bytesResponse: true, binaryContentTypes: contentTypes };
   } else if (contentTypes.every((ct) => content[ct].schema?.type === "string")) {
-    // Non-JSON content (a document, a receipt, bytes): the wire string.
-    out = { typeSpelling: "string", textResponse: true };
+    // Non-JSON string content (a document, a receipt): the wire string.
+    out = { typeSpelling: "string", textResponse: true, bytesResponse: false };
   } else {
     problems.push(`${where}: success ${code} carries content the mapping does not cover`);
-    out = { typeSpelling: "unknown", textResponse: true };
+    out = { typeSpelling: "unknown", textResponse: true, bytesResponse: false };
   }
   return { ...out, others: codes.slice(1), code };
 }
@@ -408,7 +479,12 @@ function bodyOf(op, where) {
   }
   const allString = contentTypes.length > 0 && contentTypes.every((ct) => content[ct].schema?.type === "string");
   if (allString) {
-    return { kind: "raw", typeSpelling: "string", raw: { contentType: contentTypes[0], alternatives: contentTypes.slice(1) } };
+    const allBinary = contentTypes.every((ct) => isBinarySchema(content[ct].schema));
+    return {
+      kind: "raw",
+      typeSpelling: allBinary ? "string | Uint8Array" : "string",
+      raw: { contentType: contentTypes[0], alternatives: contentTypes.slice(1), binary: allBinary },
+    };
   }
   problems.push(`${where}: requestBody content types the mapping does not cover: ${contentTypes.join(", ")}`);
   return null;
@@ -418,6 +494,7 @@ function bodyOf(op, where) {
 // within each path (the gen-types route-table order).
 const opsByTag = new Map(tagNames.map((t) => [t, []]));
 const routes = [];
+const successSchemaNames = [];
 let opCount = 0;
 for (const path of Object.keys(doc.paths).sort()) {
   const item = doc.paths[path];
@@ -434,7 +511,8 @@ for (const path of Object.keys(doc.paths).sort()) {
       problems.push(`${where}: tag ${JSON.stringify(op.tags)} is not one declared document tag`);
       continue;
     }
-    opCount++;
+    const excluded = STREAM_OPERATIONS.has(op.operationId);
+    if (!excluded) opCount++;
     const pathParams = [...path.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]);
     const declared = [];
     for (const p of op.parameters ?? []) {
@@ -452,42 +530,89 @@ for (const path of Object.keys(doc.paths).sort()) {
     }
     const success = successOf(op, where);
     const body = bodyOf(op, where);
-    opsByTag.get(op.tags[0]).push({
+    if (success.schemaName !== undefined) {
+      successSchemaNames.push({ operationId: op.operationId, schema: success.schemaName });
+    }
+    if (!excluded) {
+      opsByTag.get(op.tags[0]).push({
+        method: method.toUpperCase(),
+        path,
+        operationId: op.operationId,
+        pathParams,
+        pathSchemas,
+        queryParams,
+        body,
+        success,
+      });
+    }
+    routes.push({
       method: method.toUpperCase(),
       path,
       operationId: op.operationId,
-      pathParams,
-      pathSchemas,
-      queryParams,
-      body,
-      success,
+      tag: op.tags[0],
+      ...(excluded ? { excluded: true } : {}),
     });
-    routes.push({ method: method.toUpperCase(), path, operationId: op.operationId, tag: op.tags[0] });
   }
 }
 
-manifestOut.push("export const ROUTES: readonly ManifestRoute[] = [");
-for (const r of routes) {
-  manifestOut.push(`  { "method": ${JSON.stringify(r.method)}, "path": ${JSON.stringify(r.path)}, "operationId": ${JSON.stringify(r.operationId)}, "tag": ${JSON.stringify(r.tag)} },`);
-}
-manifestOut.push("];");
-manifestOut.push("");
-
-// paramTsTypes collects the TypeScript spellings a query or path schema needs.
-// A $ref query parameter uses the named type; anything else maps inline.
-function paramType(schema, where) {
-  return tsType(schema, where);
-}
-
+// camel folds a tag to its namespace identifier; a namespace that would
+// collide with a reserved word is suffixed Api so the generated export stays
+// legal. The mapping is emitted as TAG_NAMESPACES and never re-derived.
+const RESERVED_WORDS = new Set([
+  "abstract", "arguments", "as", "asserts", "async", "await", "boolean", "break", "byte", "case", "catch",
+  "char", "class", "const", "constructor", "continue", "debugger", "declare", "default", "delete", "do",
+  "double", "else", "enum", "export", "extends", "false", "final", "finally", "float", "for", "from",
+  "function", "get", "global", "goto", "if", "implements", "import", "in", "infer", "instanceof", "int",
+  "interface", "is", "let", "long", "module", "namespace", "native", "new", "null", "number", "object",
+  "package", "private", "protected", "public", "readonly", "require", "return", "satisfies", "set",
+  "short", "static", "string", "super", "switch", "synchronized", "this", "throw", "throws", "transient",
+  "true", "try", "type", "typeof", "undefined", "unique", "unknown", "var", "void", "volatile", "while",
+  "with", "yield",
+]);
 const camel = (tag) => {
   const c = tag
     .split("-")
     .filter(Boolean)
     .map((seg, i) => (i === 0 ? seg : seg[0].toUpperCase() + seg.slice(1)))
     .join("");
-  if (!IDENT.test(c)) problems.push(`tag ${tag} maps to the unusable namespace ${c}`);
-  return c;
+  const safe = RESERVED_WORDS.has(c) ? `${c}Api` : c;
+  if (!IDENT.test(safe)) problems.push(`tag ${tag} maps to the unusable namespace ${safe}`);
+  return safe;
 };
+
+manifestOut.push("export const ROUTES: readonly ManifestRoute[] = [");
+for (const r of routes) {
+  const excluded = r.excluded === true ? ', "excluded": true' : "";
+  manifestOut.push(`  { "method": ${JSON.stringify(r.method)}, "path": ${JSON.stringify(r.path)}, "operationId": ${JSON.stringify(r.operationId)}, "tag": ${JSON.stringify(r.tag)}${excluded} },`);
+}
+manifestOut.push("];");
+manifestOut.push("");
+manifestOut.push("// The document tag to generated namespace mapping, camel with reserved");
+manifestOut.push("// words suffixed Api (the document's public tag maps to publicApi).");
+manifestOut.push("export const TAG_NAMESPACES: Readonly<Record<string, string>> = {");
+for (const tag of tagNames) manifestOut.push(`  ${JSON.stringify(tag)}: ${JSON.stringify(camel(tag))},`);
+manifestOut.push("};");
+manifestOut.push("");
+manifestOut.push("// The operation's own success schema name, when the lowest declared 2xx is a");
+manifestOut.push("// single named schema; the fixture gate validates each capture against the");
+manifestOut.push("// entry of the operation it replays, never a test-picked schema. Operations");
+manifestOut.push("// whose success is a union, a plain string, bytes, or undeclared have no");
+manifestOut.push("// entry here.");
+manifestOut.push("export const SUCCESS_SCHEMAS: Readonly<Record<string, string>> = {");
+for (const named of successSchemaNames) {
+  manifestOut.push(`  ${JSON.stringify(named.operationId)}: ${JSON.stringify(named.schema)},`);
+}
+manifestOut.push("};");
+manifestOut.push("");
+
+// paramTsTypes collects the TypeScript spelling a query parameter schema
+// needs. A $ref query parameter uses the named type; anything else maps
+// inline. Path parameters are not mapped here: every one is typed
+// string | number (see the header comment) and converted with String() at
+// request build.
+function paramType(schema, where) {
+  return tsType(schema, where);
+}
 
 const generatedFiles = new Map();
 generatedFiles.set("types.ts", typesOut.join("\n"));
@@ -499,7 +624,9 @@ indexOut.push("// The generated surface: every wire type, the descriptor and man
 indexOut.push("// data, and the operations grouped one namespace per document tag.");
 indexOut.push("");
 indexOut.push('export * from "./types.js";');
-indexOut.push('export * from "./descriptors.js";');
+indexOut.push("// The descriptors stay off the generated entry: they are the test-time");
+indexOut.push("// validation data (312 KB of it), re-exported by the package's test entry");
+indexOut.push("// (src/testing.ts) and never needed by a runtime caller.");
 indexOut.push('export * from "./manifest.js";');
 
 for (const tag of tagNames) {
@@ -527,8 +654,7 @@ for (const tag of tagNames) {
 
     const args = ["client: ApiClient"];
     for (const pName of op.pathParams) {
-      const schema = op.pathSchemas.find((p) => p.name === pName)?.schema;
-      args.push(`${pName}: ${paramType(schema ?? { type: "string" }, `${where} ${pName}`)}`);
+      args.push(`${pName}: string | number`);
     }
     if (op.body) args.push(`body: ${op.body.typeSpelling}`);
     const queryRequired = op.queryParams.some((p) => p.required);
@@ -540,6 +666,7 @@ for (const tag of tagNames) {
       );
       args.push(`opts${queryRequired ? "" : "?"}: ${literal}`);
     }
+    args.push("call?: ApiCallOptions");
 
     const requestProps = [`method: ${JSON.stringify(op.method)}`, `path: ${JSON.stringify(op.path)}`];
     if (op.pathParams.length > 0) {
@@ -549,16 +676,29 @@ for (const tag of tagNames) {
     if (op.body?.kind === "json") requestProps.push("body");
     if (op.body?.kind === "form") requestProps.push("form: body");
     if (op.body?.kind === "raw") {
-      requestProps.push(`rawBody: { contentType: ${JSON.stringify(op.body.raw.contentType)}, text: body }`);
+      requestProps.push(`rawBody: { contentType: ${JSON.stringify(op.body.raw.contentType)}, content: body }`);
     }
     if (op.success.textResponse) requestProps.push("textResponse: true");
+    if (op.success.bytesResponse) requestProps.push("bytesResponse: true");
+    requestProps.push("signal: call?.signal");
+    requestProps.push("timeoutMs: call?.timeoutMs");
     requestProps.push(`operationId: ${JSON.stringify(op.operationId)}`);
 
     // Notes the document itself forces onto the operation.
     const notes = [];
-    if (op.body?.kind === "raw" && op.body.raw.alternatives.length > 0) {
-      notes.push(`// The document also declares this upload as ${op.body.raw.alternatives.join(", ")}; the`);
-      notes.push(`// client sends the first declared type (${op.body.raw.contentType}).`);
+    if (op.body?.kind === "raw") {
+      if (op.body.raw.alternatives.length > 0) {
+        notes.push(`// The document also declares this upload as ${op.body.raw.alternatives.join(", ")}; the`);
+        notes.push(`// client sends the first declared type (${op.body.raw.contentType}).`);
+      }
+      if (op.body.raw.binary) {
+        notes.push("// The document declares the body format: binary: the body is the raw bytes");
+        notes.push("// (a string rides its UTF-8 bytes verbatim).");
+      }
+    }
+    if (op.success.bytesResponse) {
+      notes.push(`// The document declares the success content as ${op.success.binaryContentTypes.join(", ")}`);
+      notes.push("// (format: binary); the client resolves the raw bytes.");
     }
     if (op.success.others.length > 0) {
       notes.push(`// The document also declares success as ${op.success.others.join(" and ")}; the client`);
@@ -582,7 +722,7 @@ for (const tag of tagNames) {
 
   if (usedTypes.size > 0) out.push(`import type { ${[...usedTypes].sort().join(", ")} } from "./types.js";`);
   out.push('import type { Result } from "../result.js";');
-  out.push('import { ApiClient } from "../http.js";');
+  out.push('import { ApiClient, type ApiCallOptions } from "../http.js";');
   out.push("");
   out.push(...bodyLines);
   generatedFiles.set(file, out.join("\n"));
@@ -612,4 +752,6 @@ mkdirSync(outDir, { recursive: true });
 for (const [name, content] of [...generatedFiles].sort(([a], [b]) => (a < b ? -1 : 1))) {
   writeFileSync(join(outDir, name), content.replace(/\s+$/, "\n"));
 }
-console.log(`gen-client: ${opCount} operations in ${tagNames.length} tags, ${schemaNames.length} wire types -> ${outDir}`);
+console.log(
+  `gen-client: ${opCount} operations (${routes.length} routes, ${routes.filter((r) => r.excluded).length} stream excluded) in ${tagNames.length} tags, ${schemaNames.length} wire types -> ${outDir}`,
+);

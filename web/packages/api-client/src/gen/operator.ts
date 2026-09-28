@@ -5,55 +5,67 @@
 
 import type { DealerCredentialWrite, PlatformKeyRosterEntry, PlatformKeyRosterPage, PlatformKeyWrite, UsageCounterPage } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function putDealerCredential(
   client: ApiClient,
-  body: DealerCredentialWrite
+  body: DealerCredentialWrite,
+  call?: ApiCallOptions
 ): Promise<Result<unknown>> {
   return client.request<unknown>({
     method: "PUT",
     path: "/api/v1/operator/dealer-credential",
     body,
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "putDealerCredential",
   });
 }
 
 export async function listPlatformKeys(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<PlatformKeyRosterPage>> {
   return client.request<PlatformKeyRosterPage>({
     method: "GET",
     path: "/api/v1/operator/platform-keys",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "listPlatformKeys",
   });
 }
 
 export async function putPlatformKey(
   client: ApiClient,
-  key: string,
-  body: PlatformKeyWrite
+  key: string | number,
+  body: PlatformKeyWrite,
+  call?: ApiCallOptions
 ): Promise<Result<PlatformKeyRosterEntry>> {
   return client.request<PlatformKeyRosterEntry>({
     method: "PUT",
     path: "/api/v1/operator/platform-keys/{key}",
     pathParams: { key },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "putPlatformKey",
   });
 }
 
 export async function getOperatorUsage(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<UsageCounterPage>> {
   return client.request<UsageCounterPage>({
     method: "GET",
     path: "/api/v1/operator/usage",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "getOperatorUsage",
   });
 }

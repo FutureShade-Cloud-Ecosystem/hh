@@ -5,326 +5,410 @@
 
 import type { DashboardCatalogView, DashboardEffectiveActionConfig, DashboardGallery, DashboardGalleryBody, DashboardHomeConfig, DashboardLayout, DashboardLayoutBody, DashboardLayoutReset, DashboardMetricCatalogView, DashboardNeedsQueue, DashboardProfile, DashboardProfileDetail, DashboardProfileGallery, DashboardProfileTabs, DashboardProfileWidgets, DashboardProfilesView, DashboardQuickActionConfigBody, DashboardQuickActionConfigView, DashboardQuickActionsMine, DashboardTabStrip, DashboardTabsBody, DashboardTabsReset, DashboardVizResponse, DashboardWidgetCatalog, DashboardWidgetDataResponse, DashboardWidgetLayout, DashboardWidgetsBody, DashboardWidgetsReset } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function dashboardGetHome(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardLayout>> {
   return client.request<DashboardLayout>({
     method: "GET",
     path: "/api/v1/dashboard",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardGetHome",
   });
 }
 
 export async function dashboardGetCatalog(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardCatalogView>> {
   return client.request<DashboardCatalogView>({
     method: "GET",
     path: "/api/v1/dashboard/catalog",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardGetCatalog",
   });
 }
 
 export async function dashboardPutLayout(
   client: ApiClient,
-  body: DashboardLayoutBody
+  body: DashboardLayoutBody,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardLayoutBody>> {
   return client.request<DashboardLayoutBody>({
     method: "PUT",
     path: "/api/v1/dashboard/layout",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardPutLayout",
   });
 }
 
 export async function dashboardDeleteLayout(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardLayoutReset>> {
   return client.request<DashboardLayoutReset>({
     method: "DELETE",
     path: "/api/v1/dashboard/layout",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardDeleteLayout",
   });
 }
 
 export async function dashboardGetMetrics(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardMetricCatalogView>> {
   return client.request<DashboardMetricCatalogView>({
     method: "GET",
     path: "/api/v1/dashboard/metrics",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardGetMetrics",
   });
 }
 
 export async function dashboardGetNeeds(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardNeedsQueue>> {
   return client.request<DashboardNeedsQueue>({
     method: "GET",
     path: "/api/v1/dashboard/needs",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardGetNeeds",
   });
 }
 
 export async function dashboardListProfiles(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardProfilesView>> {
   return client.request<DashboardProfilesView>({
     method: "GET",
     path: "/api/v1/dashboard/profiles",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardListProfiles",
   });
 }
 
 export async function dashboardGetProfile(
   client: ApiClient,
-  profile: DashboardProfile
+  profile: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardProfileDetail>> {
   return client.request<DashboardProfileDetail>({
     method: "GET",
     path: "/api/v1/dashboard/profiles/{profile}",
     pathParams: { profile },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardGetProfile",
   });
 }
 
 export async function dashboardPutProfile(
   client: ApiClient,
-  profile: DashboardProfile,
-  body: DashboardLayoutBody
+  profile: string | number,
+  body: DashboardLayoutBody,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardLayoutBody>> {
   return client.request<DashboardLayoutBody>({
     method: "PUT",
     path: "/api/v1/dashboard/profiles/{profile}",
     pathParams: { profile },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardPutProfile",
   });
 }
 
 export async function dashboardGetProfileGallery(
   client: ApiClient,
-  profile: DashboardProfile
+  profile: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardProfileGallery>> {
   return client.request<DashboardProfileGallery>({
     method: "GET",
     path: "/api/v1/dashboard/profiles/{profile}/gallery",
     pathParams: { profile },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardGetProfileGallery",
   });
 }
 
 export async function dashboardPutProfileGallery(
   client: ApiClient,
-  profile: DashboardProfile,
-  body: DashboardGalleryBody
+  profile: string | number,
+  body: DashboardGalleryBody,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardGalleryBody>> {
   return client.request<DashboardGalleryBody>({
     method: "PUT",
     path: "/api/v1/dashboard/profiles/{profile}/gallery",
     pathParams: { profile },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardPutProfileGallery",
   });
 }
 
 export async function dashboardPutProfileHome(
   client: ApiClient,
-  profile: DashboardProfile,
-  body: DashboardHomeConfig
+  profile: string | number,
+  body: DashboardHomeConfig,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardHomeConfig>> {
   return client.request<DashboardHomeConfig>({
     method: "PUT",
     path: "/api/v1/dashboard/profiles/{profile}/home",
     pathParams: { profile },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardPutProfileHome",
   });
 }
 
 export async function dashboardGetProfileTabs(
   client: ApiClient,
-  profile: DashboardProfile
+  profile: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardProfileTabs>> {
   return client.request<DashboardProfileTabs>({
     method: "GET",
     path: "/api/v1/dashboard/profiles/{profile}/tabs",
     pathParams: { profile },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardGetProfileTabs",
   });
 }
 
 export async function dashboardPutProfileTabs(
   client: ApiClient,
-  profile: DashboardProfile,
-  body: DashboardTabsBody
+  profile: string | number,
+  body: DashboardTabsBody,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardTabsBody>> {
   return client.request<DashboardTabsBody>({
     method: "PUT",
     path: "/api/v1/dashboard/profiles/{profile}/tabs",
     pathParams: { profile },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardPutProfileTabs",
   });
 }
 
 export async function dashboardGetProfileWidgets(
   client: ApiClient,
-  profile: DashboardProfile
+  profile: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardProfileWidgets>> {
   return client.request<DashboardProfileWidgets>({
     method: "GET",
     path: "/api/v1/dashboard/profiles/{profile}/widgets",
     pathParams: { profile },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardGetProfileWidgets",
   });
 }
 
 export async function dashboardPutProfileWidgets(
   client: ApiClient,
-  profile: DashboardProfile,
-  body: DashboardWidgetsBody
+  profile: string | number,
+  body: DashboardWidgetsBody,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardWidgetsBody>> {
   return client.request<DashboardWidgetsBody>({
     method: "PUT",
     path: "/api/v1/dashboard/profiles/{profile}/widgets",
     pathParams: { profile },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardPutProfileWidgets",
   });
 }
 
 export async function dashboardPutTabs(
   client: ApiClient,
-  body: DashboardTabsBody
+  body: DashboardTabsBody,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardTabStrip>> {
   return client.request<DashboardTabStrip>({
     method: "PUT",
     path: "/api/v1/dashboard/tabs",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardPutTabs",
   });
 }
 
 export async function dashboardDeleteTabs(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardTabsReset>> {
   return client.request<DashboardTabsReset>({
     method: "DELETE",
     path: "/api/v1/dashboard/tabs",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardDeleteTabs",
   });
 }
 
 export async function dashboardGetViz(
   client: ApiClient,
-  opts?: { tile?: string[] }
+  opts?: { tile?: string[] },
+  call?: ApiCallOptions
 ): Promise<Result<DashboardVizResponse>> {
   return client.request<DashboardVizResponse>({
     method: "GET",
     path: "/api/v1/dashboard/viz",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardGetViz",
   });
 }
 
 export async function dashboardGetWidgets(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardWidgetLayout>> {
   return client.request<DashboardWidgetLayout>({
     method: "GET",
     path: "/api/v1/dashboard/widgets",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardGetWidgets",
   });
 }
 
 export async function dashboardPutWidgets(
   client: ApiClient,
-  body: DashboardWidgetsBody
+  body: DashboardWidgetsBody,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardWidgetsBody>> {
   return client.request<DashboardWidgetsBody>({
     method: "PUT",
     path: "/api/v1/dashboard/widgets",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardPutWidgets",
   });
 }
 
 export async function dashboardDeleteWidgets(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardWidgetsReset>> {
   return client.request<DashboardWidgetsReset>({
     method: "DELETE",
     path: "/api/v1/dashboard/widgets",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardDeleteWidgets",
   });
 }
 
 export async function dashboardGetWidgetCatalog(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardWidgetCatalog>> {
   return client.request<DashboardWidgetCatalog>({
     method: "GET",
     path: "/api/v1/dashboard/widgets/catalog",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardGetWidgetCatalog",
   });
 }
 
 export async function dashboardGetWidgetData(
   client: ApiClient,
-  opts?: { key?: string[] }
+  opts?: { key?: string[] },
+  call?: ApiCallOptions
 ): Promise<Result<DashboardWidgetDataResponse>> {
   return client.request<DashboardWidgetDataResponse>({
     method: "GET",
     path: "/api/v1/dashboard/widgets/data",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardGetWidgetData",
   });
 }
 
 export async function dashboardGetWidgetGallery(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardGallery>> {
   return client.request<DashboardGallery>({
     method: "GET",
     path: "/api/v1/dashboard/widgets/gallery",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardGetWidgetGallery",
   });
 }
 
 export async function dashboardGetQuickActions(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardQuickActionsMine>> {
   return client.request<DashboardQuickActionsMine>({
     method: "GET",
     path: "/api/v1/quick-actions",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardGetQuickActions",
   });
 }
 
 export async function dashboardGetQuickActionConfig(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardQuickActionConfigView>> {
   return client.request<DashboardQuickActionConfigView>({
     method: "GET",
     path: "/api/v1/quick-actions/config",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardGetQuickActionConfig",
   });
 }
 
 export async function dashboardPutQuickActionConfig(
   client: ApiClient,
-  action: string,
-  body: DashboardQuickActionConfigBody
+  action: string | number,
+  body: DashboardQuickActionConfigBody,
+  call?: ApiCallOptions
 ): Promise<Result<DashboardEffectiveActionConfig>> {
   return client.request<DashboardEffectiveActionConfig>({
     method: "PUT",
     path: "/api/v1/quick-actions/config/{action}",
     pathParams: { action },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dashboardPutQuickActionConfig",
   });
 }

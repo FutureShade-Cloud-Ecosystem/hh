@@ -5,72 +5,90 @@
 
 import type { TenantAddPaymentMethodRequest, TenantPayRequest, TenantPayment, TenantPaymentMethod, TenantStatusResponse } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function tenantListPaymentMethods(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<TenantPaymentMethod[]>> {
   return client.request<TenantPaymentMethod[]>({
     method: "GET",
     path: "/api/v1/tenant/payment-methods",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantListPaymentMethods",
   });
 }
 
 export async function tenantAddPaymentMethod(
   client: ApiClient,
-  body: TenantAddPaymentMethodRequest
+  body: TenantAddPaymentMethodRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantPaymentMethod>> {
   return client.request<TenantPaymentMethod>({
     method: "POST",
     path: "/api/v1/tenant/payment-methods",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantAddPaymentMethod",
   });
 }
 
 export async function tenantRemovePaymentMethod(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TenantStatusResponse>> {
   return client.request<TenantStatusResponse>({
     method: "DELETE",
     path: "/api/v1/tenant/payment-methods/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantRemovePaymentMethod",
   });
 }
 
 export async function tenantSetDefaultPaymentMethod(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TenantStatusResponse>> {
   return client.request<TenantStatusResponse>({
     method: "PUT",
     path: "/api/v1/tenant/payment-methods/{id}/default",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantSetDefaultPaymentMethod",
   });
 }
 
 export async function tenantListPayments(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<TenantPayment[]>> {
   return client.request<TenantPayment[]>({
     method: "GET",
     path: "/api/v1/tenant/payments",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantListPayments",
   });
 }
 
 export async function tenantCreatePayment(
   client: ApiClient,
-  body: TenantPayRequest
+  body: TenantPayRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantPayment>> {
   return client.request<TenantPayment>({
     method: "POST",
     path: "/api/v1/tenant/payments",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantCreatePayment",
   });
 }

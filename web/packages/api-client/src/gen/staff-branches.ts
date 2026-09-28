@@ -5,14 +5,17 @@
 
 import type { Branch } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function branchesList(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<Branch[]>> {
   return client.request<Branch[]>({
     method: "GET",
     path: "/api/v1/branches",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "branchesList",
   });
 }

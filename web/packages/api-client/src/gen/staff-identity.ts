@@ -5,16 +5,19 @@
 
 import type { IdentityApproval, IdentityApprovalCreateRequest, IdentityApprovalDecideRequest, IdentityApprovalPage, IdentityApprovalStatus, IdentityAssignRoleRequest, IdentityAssignRoleResponse, IdentityChangePasswordRequest, IdentityCreateStaffRequest, IdentityLoginRequest, IdentityLoginResponse, IdentityPasswordResetConfirmRequest, IdentityPasswordResetLink, IdentityPing, IdentityPolicyCheckRequest, IdentityPolicyCheckResponse, IdentityRolePage, IdentityStaffMember, IdentityStaffMemberPage, IdentityStatusResponse } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function identityChangePassword(
   client: ApiClient,
-  body: IdentityChangePasswordRequest
+  body: IdentityChangePasswordRequest,
+  call?: ApiCallOptions
 ): Promise<Result<IdentityStatusResponse>> {
   return client.request<IdentityStatusResponse>({
     method: "POST",
     path: "/api/v1/auth/change-password",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "identityChangePassword",
   });
 }
@@ -23,13 +26,16 @@ export async function identityChangePassword(
 // resolves the raw response text.
 export async function identityGoogleCallback(
   client: ApiClient,
-  opts: { state: string; code: string }
+  opts: { state: string; code: string },
+  call?: ApiCallOptions
 ): Promise<Result<unknown>> {
   return client.request<unknown>({
     method: "GET",
     path: "/api/v1/auth/google/callback",
     query: opts,
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "identityGoogleCallback",
   });
 }
@@ -37,158 +43,197 @@ export async function identityGoogleCallback(
 // The document declares no success response for this operation; the client
 // resolves the raw response text.
 export async function identityGoogleStart(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<unknown>> {
   return client.request<unknown>({
     method: "GET",
     path: "/api/v1/auth/google/start",
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "identityGoogleStart",
   });
 }
 
 export async function identityLogin(
   client: ApiClient,
-  body: IdentityLoginRequest
+  body: IdentityLoginRequest,
+  call?: ApiCallOptions
 ): Promise<Result<IdentityLoginResponse>> {
   return client.request<IdentityLoginResponse>({
     method: "POST",
     path: "/api/v1/auth/login",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "identityLogin",
   });
 }
 
 export async function identityConfirmPasswordReset(
   client: ApiClient,
-  body: IdentityPasswordResetConfirmRequest
+  body: IdentityPasswordResetConfirmRequest,
+  call?: ApiCallOptions
 ): Promise<Result<IdentityStatusResponse>> {
   return client.request<IdentityStatusResponse>({
     method: "POST",
     path: "/api/v1/auth/password-reset/confirm",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "identityConfirmPasswordReset",
   });
 }
 
 export async function identityPing(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<IdentityPing>> {
   return client.request<IdentityPing>({
     method: "GET",
     path: "/api/v1/identity/ping",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "identityPing",
   });
 }
 
 export async function identityListStaff(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<IdentityStaffMemberPage>> {
   return client.request<IdentityStaffMemberPage>({
     method: "GET",
     path: "/api/v1/staff",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "identityListStaff",
   });
 }
 
 export async function identityCreateStaff(
   client: ApiClient,
-  body: IdentityCreateStaffRequest
+  body: IdentityCreateStaffRequest,
+  call?: ApiCallOptions
 ): Promise<Result<IdentityStaffMember>> {
   return client.request<IdentityStaffMember>({
     method: "POST",
     path: "/api/v1/staff",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "identityCreateStaff",
   });
 }
 
 export async function identityCreateApproval(
   client: ApiClient,
-  body: IdentityApprovalCreateRequest
+  body: IdentityApprovalCreateRequest,
+  call?: ApiCallOptions
 ): Promise<Result<IdentityApproval>> {
   return client.request<IdentityApproval>({
     method: "POST",
     path: "/api/v1/staff/approvals",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "identityCreateApproval",
   });
 }
 
 export async function identityListApprovals(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; status?: IdentityApprovalStatus }
+  opts?: { cursor?: string; limit?: number; status?: IdentityApprovalStatus },
+  call?: ApiCallOptions
 ): Promise<Result<IdentityApprovalPage>> {
   return client.request<IdentityApprovalPage>({
     method: "GET",
     path: "/api/v1/staff/approvals",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "identityListApprovals",
   });
 }
 
 export async function identityDecideApproval(
   client: ApiClient,
-  id: string,
-  body: IdentityApprovalDecideRequest
+  id: string | number,
+  body: IdentityApprovalDecideRequest,
+  call?: ApiCallOptions
 ): Promise<Result<IdentityStatusResponse>> {
   return client.request<IdentityStatusResponse>({
     method: "POST",
     path: "/api/v1/staff/approvals/{id}/decide",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "identityDecideApproval",
   });
 }
 
 export async function identityCheckPolicy(
   client: ApiClient,
-  body: IdentityPolicyCheckRequest
+  body: IdentityPolicyCheckRequest,
+  call?: ApiCallOptions
 ): Promise<Result<IdentityPolicyCheckResponse>> {
   return client.request<IdentityPolicyCheckResponse>({
     method: "POST",
     path: "/api/v1/staff/policy/check",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "identityCheckPolicy",
   });
 }
 
 export async function identityListRoles(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<IdentityRolePage>> {
   return client.request<IdentityRolePage>({
     method: "GET",
     path: "/api/v1/staff/roles",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "identityListRoles",
   });
 }
 
 export async function identityGeneratePasswordReset(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<IdentityPasswordResetLink>> {
   return client.request<IdentityPasswordResetLink>({
     method: "POST",
     path: "/api/v1/staff/{id}/password-reset",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "identityGeneratePasswordReset",
   });
 }
 
 export async function identityAssignRole(
   client: ApiClient,
-  id: string,
-  body: IdentityAssignRoleRequest
+  id: string | number,
+  body: IdentityAssignRoleRequest,
+  call?: ApiCallOptions
 ): Promise<Result<IdentityAssignRoleResponse>> {
   return client.request<IdentityAssignRoleResponse>({
     method: "PUT",
     path: "/api/v1/staff/{id}/role",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "identityAssignRole",
   });
 }

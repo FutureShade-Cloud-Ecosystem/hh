@@ -5,26 +5,32 @@
 
 import type { PaymentConfigResult, PaymentConfigStatus, PaymentConfigWrite } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function paymentGetConfig(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<PaymentConfigStatus>> {
   return client.request<PaymentConfigStatus>({
     method: "GET",
     path: "/api/v1/payments/config",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "paymentGetConfig",
   });
 }
 
 export async function paymentPutConfig(
   client: ApiClient,
-  body: PaymentConfigWrite
+  body: PaymentConfigWrite,
+  call?: ApiCallOptions
 ): Promise<Result<PaymentConfigResult>> {
   return client.request<PaymentConfigResult>({
     method: "PUT",
     path: "/api/v1/payments/config",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "paymentPutConfig",
   });
 }

@@ -5,667 +5,827 @@
 
 import type { DispatchAdvanceStopInput, DispatchAssignInput, DispatchBoard, DispatchCalendarDayPage, DispatchCommitInput, DispatchCreateRunInput, DispatchCreatedRef, DispatchCrewInput, DispatchDriver, DispatchDriverPage, DispatchFreightRaiseView, DispatchGapPage, DispatchLoadBoardView, DispatchLoadFactsInput, DispatchLoadOutcomeList, DispatchMTOInput, DispatchMarkLoadedInput, DispatchMintedPickup, DispatchPODInput, DispatchPaymentHoldPage, DispatchPhotoMeta, DispatchPolicy, DispatchPolicyChangePage, DispatchPrintJobRef, DispatchReopenInput, DispatchRescheduleInput, DispatchReschedulePage, DispatchRescheduleResult, DispatchRun, DispatchRunDetail, DispatchRunDetailPage, DispatchRunPage, DispatchScanCheckpoint, DispatchScanInput, DispatchScanTrail, DispatchScheduleInput, DispatchSplitInput, DispatchSplitResult, DispatchStop, DispatchStopDetail, DispatchStopPaymentHold, DispatchTruck, DispatchTruckPage, DispatchWillCallMintInput, DispatchWillCallPage, DispatchWillCallRevokeResult } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 // The document declares no success response for this operation; the client
 // resolves the raw response text.
 export async function dispatchAutoAssign(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<unknown>> {
   return client.request<unknown>({
     method: "POST",
     path: "/api/v1/dispatch/auto-assign",
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchAutoAssign",
   });
 }
 
 export async function dispatchGetBoard(
   client: ApiClient,
-  opts?: { branch_id?: string; date?: string }
+  opts?: { branch_id?: string; date?: string },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchBoard>> {
   return client.request<DispatchBoard>({
     method: "GET",
     path: "/api/v1/dispatch/board",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchGetBoard",
   });
 }
 
 export async function dispatchListDrivers(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string; include_inactive?: boolean }
+  opts?: { cursor?: string; limit?: number; branch_id?: string; include_inactive?: boolean },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchDriverPage>> {
   return client.request<DispatchDriverPage>({
     method: "GET",
     path: "/api/v1/dispatch/drivers",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchListDrivers",
   });
 }
 
 export async function dispatchCreateDriver(
   client: ApiClient,
-  body: DispatchDriver
+  body: DispatchDriver,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchCreatedRef>> {
   return client.request<DispatchCreatedRef>({
     method: "POST",
     path: "/api/v1/dispatch/drivers",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchCreateDriver",
   });
 }
 
 export async function dispatchGetFreightRaise(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchFreightRaiseView>> {
   return client.request<DispatchFreightRaiseView>({
     method: "GET",
     path: "/api/v1/dispatch/freight-raises/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchGetFreightRaise",
   });
 }
 
 export async function dispatchSplitFreight(
   client: ApiClient,
-  body: DispatchSplitInput
+  body: DispatchSplitInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchSplitResult>> {
   return client.request<DispatchSplitResult>({
     method: "POST",
     path: "/api/v1/dispatch/freight-split",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchSplitFreight",
   });
 }
 
 export async function dispatchGetLoadBoard(
   client: ApiClient,
-  opts?: { branch_id?: string; date?: string }
+  opts?: { branch_id?: string; date?: string },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchLoadBoardView>> {
   return client.request<DispatchLoadBoardView>({
     method: "GET",
     path: "/api/v1/dispatch/loadboard",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchGetLoadBoard",
   });
 }
 
 export async function dispatchGetLoadBoardCalendar(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string; from?: string; to?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string; from?: string; to?: string },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchCalendarDayPage>> {
   return client.request<DispatchCalendarDayPage>({
     method: "GET",
     path: "/api/v1/dispatch/loadboard/calendar",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchGetLoadBoardCalendar",
   });
 }
 
 export async function dispatchGetLoadBoardGaps(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string; date?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string; date?: string },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchGapPage>> {
   return client.request<DispatchGapPage>({
     method: "GET",
     path: "/api/v1/dispatch/loadboard/gaps",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchGetLoadBoardGaps",
   });
 }
 
 export async function dispatchMarkLoaded(
   client: ApiClient,
-  body: DispatchMarkLoadedInput
+  body: DispatchMarkLoadedInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchLoadOutcomeList>> {
   return client.request<DispatchLoadOutcomeList>({
     method: "POST",
     path: "/api/v1/dispatch/loads/mark-loaded",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchMarkLoaded",
   });
 }
 
 export async function dispatchListMyRuns(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; date?: string }
+  opts?: { cursor?: string; limit?: number; date?: string },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchRunDetailPage>> {
   return client.request<DispatchRunDetailPage>({
     method: "GET",
     path: "/api/v1/dispatch/my-runs",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchListMyRuns",
   });
 }
 
 export async function dispatchGetOrderGaps(
   client: ApiClient,
-  id: string,
-  opts?: { cursor?: string; limit?: number; branch_id?: string }
+  id: string | number,
+  opts?: { cursor?: string; limit?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchGapPage>> {
   return client.request<DispatchGapPage>({
     method: "GET",
     path: "/api/v1/dispatch/orders/{id}/gaps",
     pathParams: { id },
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchGetOrderGaps",
   });
 }
 
+// The document declares the success content as image/jpeg, image/png, image/webp
+// (format: binary); the client resolves the raw bytes.
 export async function dispatchGetPhoto(
   client: ApiClient,
-  id: string
-): Promise<Result<string>> {
-  return client.request<string>({
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<Uint8Array>> {
+  return client.request<Uint8Array>({
     method: "GET",
     path: "/api/v1/dispatch/photos/{id}",
     pathParams: { id },
-    textResponse: true,
+    bytesResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchGetPhoto",
   });
 }
 
 export async function dispatchGetPolicy(
   client: ApiClient,
-  opts?: { branch_id?: string }
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchPolicy>> {
   return client.request<DispatchPolicy>({
     method: "GET",
     path: "/api/v1/dispatch/policy",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchGetPolicy",
   });
 }
 
 export async function dispatchPutPolicy(
   client: ApiClient,
-  body: DispatchPolicy
+  body: DispatchPolicy,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchPolicy>> {
   return client.request<DispatchPolicy>({
     method: "PUT",
     path: "/api/v1/dispatch/policy",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchPutPolicy",
   });
 }
 
 export async function dispatchGetPolicyHistory(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchPolicyChangePage>> {
   return client.request<DispatchPolicyChangePage>({
     method: "GET",
     path: "/api/v1/dispatch/policy/history",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchGetPolicyHistory",
   });
 }
 
 export async function dispatchGetRunByNo(
   client: ApiClient,
-  runNo: string
+  runNo: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchRunDetail>> {
   return client.request<DispatchRunDetail>({
     method: "GET",
     path: "/api/v1/dispatch/run-by-no/{runNo}",
     pathParams: { runNo },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchGetRunByNo",
   });
 }
 
 export async function dispatchListRuns(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string; date?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string; date?: string },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchRunPage>> {
   return client.request<DispatchRunPage>({
     method: "GET",
     path: "/api/v1/dispatch/runs",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchListRuns",
   });
 }
 
 export async function dispatchCreateRun(
   client: ApiClient,
-  body: DispatchCreateRunInput
+  body: DispatchCreateRunInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchRun>> {
   return client.request<DispatchRun>({
     method: "POST",
     path: "/api/v1/dispatch/runs",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchCreateRun",
   });
 }
 
 export async function dispatchGetRun(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchRunDetail>> {
   return client.request<DispatchRunDetail>({
     method: "GET",
     path: "/api/v1/dispatch/runs/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchGetRun",
   });
 }
 
 export async function dispatchCancelRun(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchRun>> {
   return client.request<DispatchRun>({
     method: "POST",
     path: "/api/v1/dispatch/runs/{id}/cancel",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchCancelRun",
   });
 }
 
 export async function dispatchCompleteRun(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchRun>> {
   return client.request<DispatchRun>({
     method: "POST",
     path: "/api/v1/dispatch/runs/{id}/complete",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchCompleteRun",
   });
 }
 
 export async function dispatchAssignCrew(
   client: ApiClient,
-  id: string,
-  body: DispatchCrewInput
+  id: string | number,
+  body: DispatchCrewInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchRun>> {
   return client.request<DispatchRun>({
     method: "POST",
     path: "/api/v1/dispatch/runs/{id}/crew",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchAssignCrew",
   });
 }
 
 export async function dispatchDispatchRun(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchRunDetail>> {
   return client.request<DispatchRunDetail>({
     method: "POST",
     path: "/api/v1/dispatch/runs/{id}/dispatch",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchDispatchRun",
   });
 }
 
 export async function dispatchGetRunManifest(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<string>> {
   return client.request<string>({
     method: "GET",
     path: "/api/v1/dispatch/runs/{id}/manifest",
     pathParams: { id },
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchGetRunManifest",
   });
 }
 
 export async function dispatchPrintRunManifest(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchPrintJobRef>> {
   return client.request<DispatchPrintJobRef>({
     method: "POST",
     path: "/api/v1/dispatch/runs/{id}/manifest/print",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchPrintRunManifest",
   });
 }
 
 export async function dispatchListRunPaymentHolds(
   client: ApiClient,
-  id: string,
-  opts?: { cursor?: string; limit?: number }
+  id: string | number,
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchPaymentHoldPage>> {
   return client.request<DispatchPaymentHoldPage>({
     method: "GET",
     path: "/api/v1/dispatch/runs/{id}/payment-holds",
     pathParams: { id },
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchListRunPaymentHolds",
   });
 }
 
 export async function dispatchReopenRun(
   client: ApiClient,
-  id: string,
-  body: DispatchReopenInput
+  id: string | number,
+  body: DispatchReopenInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchRun>> {
   return client.request<DispatchRun>({
     method: "POST",
     path: "/api/v1/dispatch/runs/{id}/reopen",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchReopenRun",
   });
 }
 
 export async function dispatchClearRunReopen(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchRun>> {
   return client.request<DispatchRun>({
     method: "POST",
     path: "/api/v1/dispatch/runs/{id}/reopen/clear",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchClearRunReopen",
   });
 }
 
 export async function dispatchRescheduleRun(
   client: ApiClient,
-  id: string,
-  body: DispatchRescheduleInput
+  id: string | number,
+  body: DispatchRescheduleInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchRescheduleResult>> {
   return client.request<DispatchRescheduleResult>({
     method: "POST",
     path: "/api/v1/dispatch/runs/{id}/reschedule",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchRescheduleRun",
   });
 }
 
 export async function dispatchListRunReschedules(
   client: ApiClient,
-  id: string,
-  opts?: { cursor?: string; limit?: number }
+  id: string | number,
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchReschedulePage>> {
   return client.request<DispatchReschedulePage>({
     method: "GET",
     path: "/api/v1/dispatch/runs/{id}/reschedules",
     pathParams: { id },
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchListRunReschedules",
   });
 }
 
 export async function dispatchGetScanTrail(
   client: ApiClient,
-  opts: { order_id: string }
+  opts: { order_id: string },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchScanTrail>> {
   return client.request<DispatchScanTrail>({
     method: "GET",
     path: "/api/v1/dispatch/scan-trail",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchGetScanTrail",
   });
 }
 
 export async function dispatchRecordScan(
   client: ApiClient,
-  body: DispatchScanInput
+  body: DispatchScanInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchScanCheckpoint>> {
   return client.request<DispatchScanCheckpoint>({
     method: "POST",
     path: "/api/v1/dispatch/scans",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchRecordScan",
   });
 }
 
 export async function dispatchScheduleStop(
   client: ApiClient,
-  body: DispatchScheduleInput
+  body: DispatchScheduleInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchStop>> {
   return client.request<DispatchStop>({
     method: "POST",
     path: "/api/v1/dispatch/stops",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchScheduleStop",
   });
 }
 
 export async function dispatchGetStop(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchStopDetail>> {
   return client.request<DispatchStopDetail>({
     method: "GET",
     path: "/api/v1/dispatch/stops/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchGetStop",
   });
 }
 
 export async function dispatchAssignStop(
   client: ApiClient,
-  id: string,
-  body: DispatchAssignInput
+  id: string | number,
+  body: DispatchAssignInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchStop>> {
   return client.request<DispatchStop>({
     method: "POST",
     path: "/api/v1/dispatch/stops/{id}/assign",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchAssignStop",
   });
 }
 
 export async function dispatchAttachStopPhotos(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchStopDetail>> {
   return client.request<DispatchStopDetail>({
     method: "POST",
     path: "/api/v1/dispatch/stops/{id}/attach-photos",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchAttachStopPhotos",
   });
 }
 
 export async function dispatchCommitStop(
   client: ApiClient,
-  id: string,
-  body: DispatchCommitInput
+  id: string | number,
+  body: DispatchCommitInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchStop>> {
   return client.request<DispatchStop>({
     method: "POST",
     path: "/api/v1/dispatch/stops/{id}/commit",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchCommitStop",
   });
 }
 
 export async function dispatchSetLoadFacts(
   client: ApiClient,
-  id: string,
-  body: DispatchLoadFactsInput
+  id: string | number,
+  body: DispatchLoadFactsInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchStop>> {
   return client.request<DispatchStop>({
     method: "POST",
     path: "/api/v1/dispatch/stops/{id}/load-facts",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchSetLoadFacts",
   });
 }
 
 export async function dispatchSetStopMto(
   client: ApiClient,
-  id: string,
-  body: DispatchMTOInput
+  id: string | number,
+  body: DispatchMTOInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchStopDetail>> {
   return client.request<DispatchStopDetail>({
     method: "POST",
     path: "/api/v1/dispatch/stops/{id}/mto",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchSetStopMto",
   });
 }
 
 export async function dispatchGetStopPaymentHold(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchStopPaymentHold>> {
   return client.request<DispatchStopPaymentHold>({
     method: "GET",
     path: "/api/v1/dispatch/stops/{id}/payment-hold",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchGetStopPaymentHold",
   });
 }
 
 // The document also declares this upload as image/png, image/webp; the
 // client sends the first declared type (image/jpeg).
+// The document declares the body format: binary: the body is the raw bytes
+// (a string rides its UTF-8 bytes verbatim).
 export async function dispatchUploadStopPhoto(
   client: ApiClient,
-  id: string,
-  body: string,
-  opts?: { caption?: string }
+  id: string | number,
+  body: string | Uint8Array,
+  opts?: { caption?: string },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchPhotoMeta>> {
   return client.request<DispatchPhotoMeta>({
     method: "POST",
     path: "/api/v1/dispatch/stops/{id}/photos",
     pathParams: { id },
     query: opts,
-    rawBody: { contentType: "image/jpeg", text: body },
+    rawBody: { contentType: "image/jpeg", content: body },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchUploadStopPhoto",
   });
 }
 
 export async function dispatchCapturePod(
   client: ApiClient,
-  id: string,
-  body: DispatchPODInput
+  id: string | number,
+  body: DispatchPODInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchStopDetail>> {
   return client.request<DispatchStopDetail>({
     method: "POST",
     path: "/api/v1/dispatch/stops/{id}/pod",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchCapturePod",
   });
 }
 
 export async function dispatchReopenStop(
   client: ApiClient,
-  id: string,
-  body: DispatchReopenInput
+  id: string | number,
+  body: DispatchReopenInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchStop>> {
   return client.request<DispatchStop>({
     method: "POST",
     path: "/api/v1/dispatch/stops/{id}/reopen",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchReopenStop",
   });
 }
 
 export async function dispatchRescheduleStop(
   client: ApiClient,
-  id: string,
-  body: DispatchRescheduleInput
+  id: string | number,
+  body: DispatchRescheduleInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchRescheduleResult>> {
   return client.request<DispatchRescheduleResult>({
     method: "POST",
     path: "/api/v1/dispatch/stops/{id}/reschedule",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchRescheduleStop",
   });
 }
 
 export async function dispatchListStopReschedules(
   client: ApiClient,
-  id: string,
-  opts?: { cursor?: string; limit?: number }
+  id: string | number,
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchReschedulePage>> {
   return client.request<DispatchReschedulePage>({
     method: "GET",
     path: "/api/v1/dispatch/stops/{id}/reschedules",
     pathParams: { id },
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchListStopReschedules",
   });
 }
 
 export async function dispatchAdvanceStop(
   client: ApiClient,
-  id: string,
-  body: DispatchAdvanceStopInput
+  id: string | number,
+  body: DispatchAdvanceStopInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchStop>> {
   return client.request<DispatchStop>({
     method: "POST",
     path: "/api/v1/dispatch/stops/{id}/status",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchAdvanceStop",
   });
 }
 
 export async function dispatchListTrucks(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string; include_inactive?: boolean }
+  opts?: { cursor?: string; limit?: number; branch_id?: string; include_inactive?: boolean },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchTruckPage>> {
   return client.request<DispatchTruckPage>({
     method: "GET",
     path: "/api/v1/dispatch/trucks",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchListTrucks",
   });
 }
 
 export async function dispatchCreateTruck(
   client: ApiClient,
-  body: DispatchTruck
+  body: DispatchTruck,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchCreatedRef>> {
   return client.request<DispatchCreatedRef>({
     method: "POST",
     path: "/api/v1/dispatch/trucks",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchCreateTruck",
   });
 }
 
 export async function dispatchMintWillCall(
   client: ApiClient,
-  body: DispatchWillCallMintInput
+  body: DispatchWillCallMintInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchMintedPickup>> {
   return client.request<DispatchMintedPickup>({
     method: "POST",
     path: "/api/v1/dispatch/will-call",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchMintWillCall",
   });
 }
 
 export async function dispatchListWillCall(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; order_id?: string }
+  opts?: { cursor?: string; limit?: number; order_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<DispatchWillCallPage>> {
   return client.request<DispatchWillCallPage>({
     method: "GET",
     path: "/api/v1/dispatch/will-call",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchListWillCall",
   });
 }
 
 export async function dispatchRevokeWillCall(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchWillCallRevokeResult>> {
   return client.request<DispatchWillCallRevokeResult>({
     method: "POST",
     path: "/api/v1/dispatch/will-call/{id}/revoke",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchRevokeWillCall",
   });
 }

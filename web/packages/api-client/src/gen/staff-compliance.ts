@@ -5,52 +5,64 @@
 
 import type { ComplianceDeadlinePage, ComplianceReviewStatus, ComplianceReviewStatusInput } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function complianceListCalendar(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; status?: "OPEN" | "SATISFIED" | "WAIVED" | "OVERDUE" }
+  opts?: { cursor?: string; limit?: number; status?: "OPEN" | "SATISFIED" | "WAIVED" | "OVERDUE" },
+  call?: ApiCallOptions
 ): Promise<Result<ComplianceDeadlinePage>> {
   return client.request<ComplianceDeadlinePage>({
     method: "GET",
     path: "/api/v1/compliance/calendar",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "complianceListCalendar",
   });
 }
 
 export async function complianceGetReviewStatus(
   client: ApiClient,
-  opts: { subject_type: "LIEN_JOB" | "LIEN_DOCUMENT" | "HOLDBACK" | "OTHER"; subject_id: string }
+  opts: { subject_type: "LIEN_JOB" | "LIEN_DOCUMENT" | "HOLDBACK" | "OTHER"; subject_id: string },
+  call?: ApiCallOptions
 ): Promise<Result<ComplianceReviewStatus>> {
   return client.request<ComplianceReviewStatus>({
     method: "GET",
     path: "/api/v1/compliance/review-status",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "complianceGetReviewStatus",
   });
 }
 
 export async function complianceUpsertReviewStatus(
   client: ApiClient,
-  body: ComplianceReviewStatusInput
+  body: ComplianceReviewStatusInput,
+  call?: ApiCallOptions
 ): Promise<Result<ComplianceReviewStatus>> {
   return client.request<ComplianceReviewStatus>({
     method: "PUT",
     path: "/api/v1/compliance/review-status",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "complianceUpsertReviewStatus",
   });
 }
 
 export async function complianceListUpcoming(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; horizon_days?: number }
+  opts?: { cursor?: string; limit?: number; horizon_days?: number },
+  call?: ApiCallOptions
 ): Promise<Result<ComplianceDeadlinePage>> {
   return client.request<ComplianceDeadlinePage>({
     method: "GET",
     path: "/api/v1/compliance/upcoming",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "complianceListUpcoming",
   });
 }

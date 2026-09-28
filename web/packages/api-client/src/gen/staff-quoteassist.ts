@@ -5,52 +5,64 @@
 
 import type { QuoteAssistExtractRequest, QuoteAssistExtraction, QuoteAssistScopeGaps, QuoteAssistScopeRule, QuoteAssistScopeRuleList, QuoteAssistScopeRulePatch } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function quoteAssistExtract(
   client: ApiClient,
-  body: QuoteAssistExtractRequest
+  body: QuoteAssistExtractRequest,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteAssistExtraction>> {
   return client.request<QuoteAssistExtraction>({
     method: "POST",
     path: "/api/v1/quote-assist/extract",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteAssistExtract",
   });
 }
 
 export async function quoteAssistScopeGaps(
   client: ApiClient,
-  opts: { quote_id: string }
+  opts: { quote_id: string },
+  call?: ApiCallOptions
 ): Promise<Result<QuoteAssistScopeGaps>> {
   return client.request<QuoteAssistScopeGaps>({
     method: "GET",
     path: "/api/v1/quote-assist/scope-gaps",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteAssistScopeGaps",
   });
 }
 
 export async function quoteAssistListScopeRules(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteAssistScopeRuleList>> {
   return client.request<QuoteAssistScopeRuleList>({
     method: "GET",
     path: "/api/v1/quote-assist/scope-rules",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteAssistListScopeRules",
   });
 }
 
 export async function quoteAssistPatchScopeRule(
   client: ApiClient,
-  code: string,
-  body: QuoteAssistScopeRulePatch
+  code: string | number,
+  body: QuoteAssistScopeRulePatch,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteAssistScopeRule>> {
   return client.request<QuoteAssistScopeRule>({
     method: "PATCH",
     path: "/api/v1/quote-assist/scope-rules/{code}",
     pathParams: { code },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteAssistPatchScopeRule",
   });
 }

@@ -5,32 +5,38 @@
 
 import type { SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncScope } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function syncPull(
   client: ApiClient,
-  scope: SyncScope,
-  opts?: { since?: number; limit?: number }
+  scope: string | number,
+  opts?: { since?: number; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<SyncPullResponse>> {
   return client.request<SyncPullResponse>({
     method: "GET",
     path: "/api/v1/sync/{scope}",
     pathParams: { scope },
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "syncPull",
   });
 }
 
 export async function syncPush(
   client: ApiClient,
-  scope: SyncScope,
-  body: SyncPushRequest
+  scope: string | number,
+  body: SyncPushRequest,
+  call?: ApiCallOptions
 ): Promise<Result<SyncPushResponse>> {
   return client.request<SyncPushResponse>({
     method: "POST",
     path: "/api/v1/sync/{scope}",
     pathParams: { scope },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "syncPush",
   });
 }

@@ -5,90 +5,111 @@
 
 import type { LandedCostAllocationPreview, LandedCostBasis, LandedCostCreateRequest, LandedCostCreateResult, LandedCostDetail, LandedCostPage, LandedCostStatus, LandedCostStatusResult } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function landedCostList(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string; status?: LandedCostStatus }
+  opts?: { cursor?: string; limit?: number; branch_id?: string; status?: LandedCostStatus },
+  call?: ApiCallOptions
 ): Promise<Result<LandedCostPage>> {
   return client.request<LandedCostPage>({
     method: "GET",
     path: "/api/v1/landed-costs",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "landedCostList",
   });
 }
 
 export async function landedCostCreate(
   client: ApiClient,
-  body: LandedCostCreateRequest
+  body: LandedCostCreateRequest,
+  call?: ApiCallOptions
 ): Promise<Result<LandedCostCreateResult>> {
   return client.request<LandedCostCreateResult>({
     method: "POST",
     path: "/api/v1/landed-costs",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "landedCostCreate",
   });
 }
 
 export async function landedCostGet(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<LandedCostDetail>> {
   return client.request<LandedCostDetail>({
     method: "GET",
     path: "/api/v1/landed-costs/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "landedCostGet",
   });
 }
 
 export async function landedCostApply(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<LandedCostStatusResult>> {
   return client.request<LandedCostStatusResult>({
     method: "POST",
     path: "/api/v1/landed-costs/{id}/apply",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "landedCostApply",
   });
 }
 
 export async function landedCostPreview(
   client: ApiClient,
-  id: string,
-  opts?: { basis?: LandedCostBasis }
+  id: string | number,
+  opts?: { basis?: LandedCostBasis },
+  call?: ApiCallOptions
 ): Promise<Result<LandedCostAllocationPreview>> {
   return client.request<LandedCostAllocationPreview>({
     method: "GET",
     path: "/api/v1/landed-costs/{id}/preview",
     pathParams: { id },
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "landedCostPreview",
   });
 }
 
 export async function landedCostRetro(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<LandedCostStatusResult>> {
   return client.request<LandedCostStatusResult>({
     method: "POST",
     path: "/api/v1/landed-costs/{id}/retro",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "landedCostRetro",
   });
 }
 
 export async function landedCostVoid(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<LandedCostStatusResult>> {
   return client.request<LandedCostStatusResult>({
     method: "POST",
     path: "/api/v1/landed-costs/{id}/void",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "landedCostVoid",
   });
 }

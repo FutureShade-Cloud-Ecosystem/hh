@@ -3095,7 +3095,7 @@ export type MessagingMessage = {
   author_name?: string;
   kind: "TEXT" | "EVENT" | "APPROVAL";
   body: string;
-  ref?: unknown;
+  ref?: MessagingEventRef | MessagingApprovalRef;
   thread_root_id?: string;
   reply_count: number;
   requires_ack?: boolean;
@@ -6377,7 +6377,9 @@ export type TenantInvoicePage = {
   items: TenantInvoice[];
   next_cursor?: string | null;
   limit?: number;
+  /** @deprecated Legacy offset field present only in recorded captures; the new core paginates by cursor */
   total?: number;
+  /** @deprecated Legacy offset field present only in recorded captures; the new core paginates by cursor */
   offset?: number;
 };
 export type TenantOrder = {
@@ -6411,7 +6413,9 @@ export type TenantOrderPage = {
   items: TenantOrder[];
   next_cursor?: string | null;
   limit?: number;
+  /** @deprecated Legacy offset field present only in recorded captures; the new core paginates by cursor */
   total?: number;
+  /** @deprecated Legacy offset field present only in recorded captures; the new core paginates by cursor */
   offset?: number;
 };
 export type TenantDeliveryInstructionsRequest = {
@@ -6532,7 +6536,9 @@ export type TenantQuotePage = {
   items: TenantQuote[];
   next_cursor?: string | null;
   limit?: number;
+  /** @deprecated Legacy offset field present only in recorded captures; the new core paginates by cursor */
   total?: number;
+  /** @deprecated Legacy offset field present only in recorded captures; the new core paginates by cursor */
   offset?: number;
 };
 export type TenantQuoteConvertRequest = {

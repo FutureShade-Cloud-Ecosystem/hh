@@ -5,275 +5,341 @@
 
 import type { ReportingAccrual, ReportingAttributionCheck, ReportingCommissionComputeRequest, ReportingCommissionPeriod, ReportingCommissionPeriodPage, ReportingCommissionRule, ReportingCommissionRulePage, ReportingPrintRequest, ReportingResult, ReportingRun, ReportingRunPage, ReportingSavedView, ReportingSavedViewPage, ReportingSavedViewWrite, ReportingTemplate, ReportingTemplateCatalog } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function reportingListCommissionAccruals(
   client: ApiClient,
-  opts?: { from?: string; to?: string }
+  opts?: { from?: string; to?: string },
+  call?: ApiCallOptions
 ): Promise<Result<ReportingAccrual>> {
   return client.request<ReportingAccrual>({
     method: "GET",
     path: "/api/v1/reporting/commission/accruals",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingListCommissionAccruals",
   });
 }
 
 export async function reportingAttributionCheck(
   client: ApiClient,
-  opts?: { from?: string; to?: string; branch_id?: string }
+  opts?: { from?: string; to?: string; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<ReportingAttributionCheck>> {
   return client.request<ReportingAttributionCheck>({
     method: "GET",
     path: "/api/v1/reporting/commission/attribution-check",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingAttributionCheck",
   });
 }
 
 export async function reportingCommissionPreview(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; rep_user_id?: string; from?: string; to?: string; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; rep_user_id?: string; from?: string; to?: string; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<ReportingCommissionPeriodPage>> {
   return client.request<ReportingCommissionPeriodPage>({
     method: "GET",
     path: "/api/v1/reporting/commission/preview",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingCommissionPreview",
   });
 }
 
 export async function reportingListCommissionRules(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; rep_user_id?: string }
+  opts?: { cursor?: string; limit?: number; rep_user_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<ReportingCommissionRulePage>> {
   return client.request<ReportingCommissionRulePage>({
     method: "GET",
     path: "/api/v1/reporting/commission/rules",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingListCommissionRules",
   });
 }
 
 export async function reportingCreateCommissionRule(
   client: ApiClient,
-  body: ReportingCommissionRule
+  body: ReportingCommissionRule,
+  call?: ApiCallOptions
 ): Promise<Result<ReportingCommissionRule>> {
   return client.request<ReportingCommissionRule>({
     method: "POST",
     path: "/api/v1/reporting/commission/rules",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingCreateCommissionRule",
   });
 }
 
 export async function reportingRetireCommissionRule(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<unknown>> {
   return client.request<unknown>({
     method: "DELETE",
     path: "/api/v1/reporting/commission/rules/{id}",
     pathParams: { id },
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingRetireCommissionRule",
   });
 }
 
 export async function reportingListCommissionRuns(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; from?: string; to?: string; rep_user_id?: string }
+  opts?: { cursor?: string; limit?: number; from?: string; to?: string; rep_user_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<ReportingCommissionPeriodPage>> {
   return client.request<ReportingCommissionPeriodPage>({
     method: "GET",
     path: "/api/v1/reporting/commission/runs",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingListCommissionRuns",
   });
 }
 
 export async function reportingComputeCommissionRun(
   client: ApiClient,
-  body: ReportingCommissionComputeRequest
+  body: ReportingCommissionComputeRequest,
+  call?: ApiCallOptions
 ): Promise<Result<ReportingCommissionPeriod>> {
   return client.request<ReportingCommissionPeriod>({
     method: "POST",
     path: "/api/v1/reporting/commission/runs",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingComputeCommissionRun",
   });
 }
 
 export async function reportingGetCommissionRun(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<ReportingCommissionPeriod>> {
   return client.request<ReportingCommissionPeriod>({
     method: "GET",
     path: "/api/v1/reporting/commission/runs/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingGetCommissionRun",
   });
 }
 
 export async function reportingExportCommissionRunCsv(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<string>> {
   return client.request<string>({
     method: "GET",
     path: "/api/v1/reporting/commission/runs/{id}/export.csv",
     pathParams: { id },
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingExportCommissionRunCsv",
   });
 }
 
 export async function reportingPrintCommissionRun(
   client: ApiClient,
-  id: string,
-  body: ReportingPrintRequest
+  id: string | number,
+  body: ReportingPrintRequest,
+  call?: ApiCallOptions
 ): Promise<Result<ReportingRun>> {
   return client.request<ReportingRun>({
     method: "POST",
     path: "/api/v1/reporting/commission/runs/{id}/print",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingPrintCommissionRun",
   });
 }
 
 export async function reportingListRuns(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<ReportingRunPage>> {
   return client.request<ReportingRunPage>({
     method: "GET",
     path: "/api/v1/reporting/runs",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingListRuns",
   });
 }
 
 export async function reportingGetRun(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<ReportingRun>> {
   return client.request<ReportingRun>({
     method: "GET",
     path: "/api/v1/reporting/runs/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingGetRun",
   });
 }
 
 export async function reportingGetRunDocument(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<string>> {
   return client.request<string>({
     method: "GET",
     path: "/api/v1/reporting/runs/{id}/document",
     pathParams: { id },
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingGetRunDocument",
   });
 }
 
 export async function reportingListSavedViews(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; template_code?: string }
+  opts?: { cursor?: string; limit?: number; template_code?: string },
+  call?: ApiCallOptions
 ): Promise<Result<ReportingSavedViewPage>> {
   return client.request<ReportingSavedViewPage>({
     method: "GET",
     path: "/api/v1/reporting/saved-views",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingListSavedViews",
   });
 }
 
 export async function reportingSaveView(
   client: ApiClient,
-  body: ReportingSavedViewWrite
+  body: ReportingSavedViewWrite,
+  call?: ApiCallOptions
 ): Promise<Result<ReportingSavedView>> {
   return client.request<ReportingSavedView>({
     method: "POST",
     path: "/api/v1/reporting/saved-views",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingSaveView",
   });
 }
 
 export async function reportingDeleteSavedView(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<unknown>> {
   return client.request<unknown>({
     method: "DELETE",
     path: "/api/v1/reporting/saved-views/{id}",
     pathParams: { id },
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingDeleteSavedView",
   });
 }
 
 export async function reportingListTemplates(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<ReportingTemplateCatalog>> {
   return client.request<ReportingTemplateCatalog>({
     method: "GET",
     path: "/api/v1/reporting/templates",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingListTemplates",
   });
 }
 
 export async function reportingGetTemplate(
   client: ApiClient,
-  code: string
+  code: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<ReportingTemplate>> {
   return client.request<ReportingTemplate>({
     method: "GET",
     path: "/api/v1/reporting/templates/{code}",
     pathParams: { code },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingGetTemplate",
   });
 }
 
 export async function reportingExportTemplateCsv(
   client: ApiClient,
-  code: string
+  code: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<string>> {
   return client.request<string>({
     method: "GET",
     path: "/api/v1/reporting/templates/{code}/export.csv",
     pathParams: { code },
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingExportTemplateCsv",
   });
 }
 
 export async function reportingPrintTemplate(
   client: ApiClient,
-  code: string,
-  body: ReportingPrintRequest
+  code: string | number,
+  body: ReportingPrintRequest,
+  call?: ApiCallOptions
 ): Promise<Result<ReportingRun>> {
   return client.request<ReportingRun>({
     method: "POST",
     path: "/api/v1/reporting/templates/{code}/print",
     pathParams: { code },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingPrintTemplate",
   });
 }
 
 export async function reportingRunTemplate(
   client: ApiClient,
-  code: string
+  code: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<ReportingResult>> {
   return client.request<ReportingResult>({
     method: "GET",
     path: "/api/v1/reporting/templates/{code}/run",
     pathParams: { code },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "reportingRunTemplate",
   });
 }

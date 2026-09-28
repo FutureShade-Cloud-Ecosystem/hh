@@ -5,40 +5,49 @@
 
 import type { BankRecAccountPage, BankRecImportInput, BankRecImportResult, BankRecMatchInput, BankRecMatchPage, BankRecMatchRule, BankRecMatchRulePage, BankRecMatchSummary, BankRecReconInput, BankRecReconciliation, BankRecReconciliationPage, BankRecRuleInput, BankRecStatementLinePage, BankRecUnmatchInput, BankRecUnmatchResult } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function bankrecListAccounts(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<BankRecAccountPage>> {
   return client.request<BankRecAccountPage>({
     method: "GET",
     path: "/api/v1/bankrec/accounts",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "bankrecListAccounts",
   });
 }
 
 export async function bankrecCreateImport(
   client: ApiClient,
-  body: BankRecImportInput
+  body: BankRecImportInput,
+  call?: ApiCallOptions
 ): Promise<Result<BankRecImportResult>> {
   return client.request<BankRecImportResult>({
     method: "POST",
     path: "/api/v1/bankrec/imports",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "bankrecCreateImport",
   });
 }
 
 export async function bankrecListLines(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; bank_account_id?: string; status?: "UNMATCHED" | "MATCHED" | "EXCLUDED" }
+  opts?: { cursor?: string; limit?: number; bank_account_id?: string; status?: "UNMATCHED" | "MATCHED" | "EXCLUDED" },
+  call?: ApiCallOptions
 ): Promise<Result<BankRecStatementLinePage>> {
   return client.request<BankRecStatementLinePage>({
     method: "GET",
     path: "/api/v1/bankrec/lines",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "bankrecListLines",
   });
 }
@@ -47,96 +56,120 @@ export async function bankrecListLines(
 // types the lowest declared success code (200).
 export async function bankrecMatch(
   client: ApiClient,
-  body: BankRecMatchInput
+  body: BankRecMatchInput,
+  call?: ApiCallOptions
 ): Promise<Result<BankRecMatchSummary>> {
   return client.request<BankRecMatchSummary>({
     method: "POST",
     path: "/api/v1/bankrec/match",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "bankrecMatch",
   });
 }
 
 export async function bankrecListMatches(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; statement_line_id?: string }
+  opts?: { cursor?: string; limit?: number; statement_line_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<BankRecMatchPage>> {
   return client.request<BankRecMatchPage>({
     method: "GET",
     path: "/api/v1/bankrec/matches",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "bankrecListMatches",
   });
 }
 
 export async function bankrecListReconciliations(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; bank_account_id?: string }
+  opts?: { cursor?: string; limit?: number; bank_account_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<BankRecReconciliationPage>> {
   return client.request<BankRecReconciliationPage>({
     method: "GET",
     path: "/api/v1/bankrec/reconciliations",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "bankrecListReconciliations",
   });
 }
 
 export async function bankrecOpenReconciliation(
   client: ApiClient,
-  body: BankRecReconInput
+  body: BankRecReconInput,
+  call?: ApiCallOptions
 ): Promise<Result<BankRecReconciliation>> {
   return client.request<BankRecReconciliation>({
     method: "POST",
     path: "/api/v1/bankrec/reconciliations",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "bankrecOpenReconciliation",
   });
 }
 
 export async function bankrecCompleteReconciliation(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<BankRecReconciliation>> {
   return client.request<BankRecReconciliation>({
     method: "POST",
     path: "/api/v1/bankrec/reconciliations/{id}/complete",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "bankrecCompleteReconciliation",
   });
 }
 
 export async function bankrecListRules(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; live?: boolean }
+  opts?: { cursor?: string; limit?: number; live?: boolean },
+  call?: ApiCallOptions
 ): Promise<Result<BankRecMatchRulePage>> {
   return client.request<BankRecMatchRulePage>({
     method: "GET",
     path: "/api/v1/bankrec/rules",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "bankrecListRules",
   });
 }
 
 export async function bankrecCreateRule(
   client: ApiClient,
-  body: BankRecRuleInput
+  body: BankRecRuleInput,
+  call?: ApiCallOptions
 ): Promise<Result<BankRecMatchRule>> {
   return client.request<BankRecMatchRule>({
     method: "POST",
     path: "/api/v1/bankrec/rules",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "bankrecCreateRule",
   });
 }
 
 export async function bankrecUnmatch(
   client: ApiClient,
-  body: BankRecUnmatchInput
+  body: BankRecUnmatchInput,
+  call?: ApiCallOptions
 ): Promise<Result<BankRecUnmatchResult>> {
   return client.request<BankRecUnmatchResult>({
     method: "POST",
     path: "/api/v1/bankrec/unmatch",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "bankrecUnmatch",
   });
 }

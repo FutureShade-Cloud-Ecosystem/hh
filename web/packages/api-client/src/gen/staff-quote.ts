@@ -5,407 +5,503 @@
 
 import type { QuoteAcceptanceSettings, QuoteAcceptanceSettingsWrite, QuoteBranchStockList, QuoteConvertRequest, QuoteConvertResult, QuoteCreateRequest, QuoteEditHistory, QuoteEditResult, QuoteFollowUpHistory, QuoteHoldExpiryView, QuoteHoldList, QuoteHoldReleaseResult, QuoteHoldResyncResult, QuoteLineAddRequest, QuoteLineAvailabilityList, QuoteLineCompareRequest, QuoteLineComparison, QuoteLinePatchRequest, QuoteMargin, QuoteMintedShareLink, QuotePolicy, QuoteRelatedDocumentList, QuoteSMSShareRequest, QuoteSMSShareResult, QuoteShareLinkList, QuoteShareLinkMintRequest, QuoteSummaryPage, QuoteTerms, QuoteTermsInput, QuoteValidUntilWrite, QuoteView } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function quoteOrderRelatedDocuments(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteRelatedDocumentList>> {
   return client.request<QuoteRelatedDocumentList>({
     method: "GET",
     path: "/api/v1/orders/{id}/related-documents",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteOrderRelatedDocuments",
   });
 }
 
 export async function quoteAvailabilityBranches(
   client: ApiClient,
-  productId: string
+  productId: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteBranchStockList>> {
   return client.request<QuoteBranchStockList>({
     method: "GET",
     path: "/api/v1/quote-availability/{productId}/branches",
     pathParams: { productId },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteAvailabilityBranches",
   });
 }
 
 export async function quoteCreateQuote(
   client: ApiClient,
-  body: QuoteCreateRequest
+  body: QuoteCreateRequest,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteView>> {
   return client.request<QuoteView>({
     method: "POST",
     path: "/api/v1/quotes",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteCreateQuote",
   });
 }
 
 export async function quoteListQuotes(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; status?: "DRAFT" | "SENT" | "ACCEPTED" | "CONVERTED" | "EXPIRED" | "LOST" }
+  opts?: { cursor?: string; limit?: number; status?: "DRAFT" | "SENT" | "ACCEPTED" | "CONVERTED" | "EXPIRED" | "LOST" },
+  call?: ApiCallOptions
 ): Promise<Result<QuoteSummaryPage>> {
   return client.request<QuoteSummaryPage>({
     method: "GET",
     path: "/api/v1/quotes",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteListQuotes",
   });
 }
 
 export async function quoteReadQuotePolicy(
   client: ApiClient,
-  opts?: { branch_id?: string }
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<QuotePolicy>> {
   return client.request<QuotePolicy>({
     method: "GET",
     path: "/api/v1/quotes/policy",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteReadQuotePolicy",
   });
 }
 
 export async function quotePutQuotePolicy(
   client: ApiClient,
-  body: QuotePolicy
+  body: QuotePolicy,
+  call?: ApiCallOptions
 ): Promise<Result<QuotePolicy>> {
   return client.request<QuotePolicy>({
     method: "PUT",
     path: "/api/v1/quotes/policy",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quotePutQuotePolicy",
   });
 }
 
 export async function quoteGetAcceptanceSettings(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteAcceptanceSettings>> {
   return client.request<QuoteAcceptanceSettings>({
     method: "GET",
     path: "/api/v1/quotes/settings/acceptance",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteGetAcceptanceSettings",
   });
 }
 
 export async function quoteSetAcceptanceSettings(
   client: ApiClient,
-  body: QuoteAcceptanceSettingsWrite
+  body: QuoteAcceptanceSettingsWrite,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteAcceptanceSettings>> {
   return client.request<QuoteAcceptanceSettings>({
     method: "PUT",
     path: "/api/v1/quotes/settings/acceptance",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteSetAcceptanceSettings",
   });
 }
 
 export async function quoteReadQuote(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteView>> {
   return client.request<QuoteView>({
     method: "GET",
     path: "/api/v1/quotes/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteReadQuote",
   });
 }
 
 export async function quoteSetValidUntil(
   client: ApiClient,
-  id: string,
-  body: QuoteValidUntilWrite
+  id: string | number,
+  body: QuoteValidUntilWrite,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteEditResult>> {
   return client.request<QuoteEditResult>({
     method: "PATCH",
     path: "/api/v1/quotes/{id}",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteSetValidUntil",
   });
 }
 
 export async function quoteQuoteAvailability(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteLineAvailabilityList>> {
   return client.request<QuoteLineAvailabilityList>({
     method: "GET",
     path: "/api/v1/quotes/{id}/availability",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteQuoteAvailability",
   });
 }
 
 export async function quoteConvertQuote(
   client: ApiClient,
-  id: string,
-  body: QuoteConvertRequest
+  id: string | number,
+  body: QuoteConvertRequest,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteConvertResult>> {
   return client.request<QuoteConvertResult>({
     method: "POST",
     path: "/api/v1/quotes/{id}/convert",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteConvertQuote",
   });
 }
 
 export async function quoteQuoteEditHistory(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteEditHistory>> {
   return client.request<QuoteEditHistory>({
     method: "GET",
     path: "/api/v1/quotes/{id}/edits",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteQuoteEditHistory",
   });
 }
 
 export async function quoteFollowUpHistory(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteFollowUpHistory>> {
   return client.request<QuoteFollowUpHistory>({
     method: "GET",
     path: "/api/v1/quotes/{id}/followups",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteFollowUpHistory",
   });
 }
 
 export async function quoteDisableFollowUps(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteFollowUpHistory>> {
   return client.request<QuoteFollowUpHistory>({
     method: "POST",
     path: "/api/v1/quotes/{id}/followups/disable",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteDisableFollowUps",
   });
 }
 
 export async function quoteEnableFollowUps(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteFollowUpHistory>> {
   return client.request<QuoteFollowUpHistory>({
     method: "POST",
     path: "/api/v1/quotes/{id}/followups/enable",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteEnableFollowUps",
   });
 }
 
 export async function quoteQuoteHoldExpiry(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteHoldExpiryView>> {
   return client.request<QuoteHoldExpiryView>({
     method: "GET",
     path: "/api/v1/quotes/{id}/hold-expiry",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteQuoteHoldExpiry",
   });
 }
 
 export async function quoteListQuoteHolds(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteHoldList>> {
   return client.request<QuoteHoldList>({
     method: "GET",
     path: "/api/v1/quotes/{id}/holds",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteListQuoteHolds",
   });
 }
 
 export async function quoteReleaseQuoteHolds(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteHoldReleaseResult>> {
   return client.request<QuoteHoldReleaseResult>({
     method: "POST",
     path: "/api/v1/quotes/{id}/holds/release",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteReleaseQuoteHolds",
   });
 }
 
 export async function quoteResyncQuoteHolds(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteHoldResyncResult>> {
   return client.request<QuoteHoldResyncResult>({
     method: "POST",
     path: "/api/v1/quotes/{id}/holds/resync",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteResyncQuoteHolds",
   });
 }
 
 export async function quoteAddQuoteLine(
   client: ApiClient,
-  id: string,
-  body: QuoteLineAddRequest
+  id: string | number,
+  body: QuoteLineAddRequest,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteEditResult>> {
   return client.request<QuoteEditResult>({
     method: "POST",
     path: "/api/v1/quotes/{id}/lines",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteAddQuoteLine",
   });
 }
 
 export async function quoteEditQuoteLine(
   client: ApiClient,
-  id: string,
-  lineNo: number,
-  body: QuoteLinePatchRequest
+  id: string | number,
+  lineNo: string | number,
+  body: QuoteLinePatchRequest,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteEditResult>> {
   return client.request<QuoteEditResult>({
     method: "PATCH",
     path: "/api/v1/quotes/{id}/lines/{lineNo}",
     pathParams: { id, lineNo },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteEditQuoteLine",
   });
 }
 
 export async function quoteRemoveQuoteLine(
   client: ApiClient,
-  id: string,
-  lineNo: number
+  id: string | number,
+  lineNo: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteEditResult>> {
   return client.request<QuoteEditResult>({
     method: "DELETE",
     path: "/api/v1/quotes/{id}/lines/{lineNo}",
     pathParams: { id, lineNo },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteRemoveQuoteLine",
   });
 }
 
 export async function quoteCompareQuoteLine(
   client: ApiClient,
-  id: string,
-  lineNo: number,
-  body: QuoteLineCompareRequest
+  id: string | number,
+  lineNo: string | number,
+  body: QuoteLineCompareRequest,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteLineComparison>> {
   return client.request<QuoteLineComparison>({
     method: "POST",
     path: "/api/v1/quotes/{id}/lines/{lineNo}/compare",
     pathParams: { id, lineNo },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteCompareQuoteLine",
   });
 }
 
 export async function quoteMarginGlance(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteMargin>> {
   return client.request<QuoteMargin>({
     method: "GET",
     path: "/api/v1/quotes/{id}/margin-glance",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteMarginGlance",
   });
 }
 
 export async function quoteQuoteRelatedDocuments(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteRelatedDocumentList>> {
   return client.request<QuoteRelatedDocumentList>({
     method: "GET",
     path: "/api/v1/quotes/{id}/related-documents",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteQuoteRelatedDocuments",
   });
 }
 
 export async function quoteMintShareLink(
   client: ApiClient,
-  id: string,
-  body: QuoteShareLinkMintRequest
+  id: string | number,
+  body: QuoteShareLinkMintRequest,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteMintedShareLink>> {
   return client.request<QuoteMintedShareLink>({
     method: "POST",
     path: "/api/v1/quotes/{id}/share-links",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteMintShareLink",
   });
 }
 
 export async function quoteListShareLinks(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteShareLinkList>> {
   return client.request<QuoteShareLinkList>({
     method: "GET",
     path: "/api/v1/quotes/{id}/share-links",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteListShareLinks",
   });
 }
 
 export async function quoteRevokeShareLink(
   client: ApiClient,
-  id: string,
-  linkId: string
+  id: string | number,
+  linkId: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<unknown>> {
   return client.request<unknown>({
     method: "DELETE",
     path: "/api/v1/quotes/{id}/share-links/{linkId}",
     pathParams: { id, linkId },
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteRevokeShareLink",
   });
 }
 
 export async function quoteShareBySMS(
   client: ApiClient,
-  id: string,
-  body: QuoteSMSShareRequest
+  id: string | number,
+  body: QuoteSMSShareRequest,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteSMSShareResult>> {
   return client.request<QuoteSMSShareResult>({
     method: "POST",
     path: "/api/v1/quotes/{id}/sms-share",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteShareBySMS",
   });
 }
 
 export async function quoteReadQuoteTerms(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteTerms>> {
   return client.request<QuoteTerms>({
     method: "GET",
     path: "/api/v1/quotes/{id}/terms",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quoteReadQuoteTerms",
   });
 }
 
 export async function quotePutQuoteTerms(
   client: ApiClient,
-  id: string,
-  body: QuoteTermsInput
+  id: string | number,
+  body: QuoteTermsInput,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteTerms>> {
   return client.request<QuoteTerms>({
     method: "PUT",
     path: "/api/v1/quotes/{id}/terms",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quotePutQuoteTerms",
   });
 }

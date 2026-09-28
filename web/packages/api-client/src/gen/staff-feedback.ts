@@ -5,16 +5,19 @@
 
 import type { FeedbackResult, FeedbackSubmission } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function feedbackCreate(
   client: ApiClient,
-  body: FeedbackSubmission
+  body: FeedbackSubmission,
+  call?: ApiCallOptions
 ): Promise<Result<FeedbackResult>> {
   return client.request<FeedbackResult>({
     method: "POST",
     path: "/api/v1/feedback",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "feedbackCreate",
   });
 }

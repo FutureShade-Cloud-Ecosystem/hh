@@ -5,138 +5,171 @@
 
 import type { InvCountCancelResult, InvCountCreateSheetRequest, InvCountNegativeStockPage, InvCountReasonCodePage, InvCountReconResult, InvCountSheet, InvCountSheetDetail, InvCountSheetPage, InvCountSubmitCountsRequest } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function invcountListNegativeStock(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<InvCountNegativeStockPage>> {
   return client.request<InvCountNegativeStockPage>({
     method: "GET",
     path: "/api/v1/counts/negative-stock",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "invcountListNegativeStock",
   });
 }
 
 export async function invcountListReasonCodes(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<InvCountReasonCodePage>> {
   return client.request<InvCountReasonCodePage>({
     method: "GET",
     path: "/api/v1/counts/reason-codes",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "invcountListReasonCodes",
   });
 }
 
 export async function invcountRecon(
   client: ApiClient,
-  opts: { cursor?: string; limit?: number; branch_id: string; year?: number; month?: number }
+  opts: { cursor?: string; limit?: number; branch_id: string; year?: number; month?: number },
+  call?: ApiCallOptions
 ): Promise<Result<InvCountReconResult>> {
   return client.request<InvCountReconResult>({
     method: "GET",
     path: "/api/v1/counts/recon",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "invcountRecon",
   });
 }
 
 export async function invcountListSheets(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string; status?: "OPEN" | "FROZEN" | "COUNTED" | "POSTED" | "CANCELLED" }
+  opts?: { cursor?: string; limit?: number; branch_id?: string; status?: "OPEN" | "FROZEN" | "COUNTED" | "POSTED" | "CANCELLED" },
+  call?: ApiCallOptions
 ): Promise<Result<InvCountSheetPage>> {
   return client.request<InvCountSheetPage>({
     method: "GET",
     path: "/api/v1/counts/sheets",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "invcountListSheets",
   });
 }
 
 export async function invcountCreateSheet(
   client: ApiClient,
-  body: InvCountCreateSheetRequest
+  body: InvCountCreateSheetRequest,
+  call?: ApiCallOptions
 ): Promise<Result<InvCountSheet>> {
   return client.request<InvCountSheet>({
     method: "POST",
     path: "/api/v1/counts/sheets",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "invcountCreateSheet",
   });
 }
 
 export async function invcountGetSheet(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<InvCountSheetDetail>> {
   return client.request<InvCountSheetDetail>({
     method: "GET",
     path: "/api/v1/counts/sheets/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "invcountGetSheet",
   });
 }
 
 export async function invcountApproveSheet(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<InvCountSheet>> {
   return client.request<InvCountSheet>({
     method: "POST",
     path: "/api/v1/counts/sheets/{id}/approve",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "invcountApproveSheet",
   });
 }
 
 export async function invcountCancelSheet(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<InvCountCancelResult>> {
   return client.request<InvCountCancelResult>({
     method: "POST",
     path: "/api/v1/counts/sheets/{id}/cancel",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "invcountCancelSheet",
   });
 }
 
 export async function invcountSubmitCounts(
   client: ApiClient,
-  id: string,
-  body: InvCountSubmitCountsRequest
+  id: string | number,
+  body: InvCountSubmitCountsRequest,
+  call?: ApiCallOptions
 ): Promise<Result<InvCountSheet>> {
   return client.request<InvCountSheet>({
     method: "POST",
     path: "/api/v1/counts/sheets/{id}/counts",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "invcountSubmitCounts",
   });
 }
 
 export async function invcountFreezeSheet(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<InvCountSheet>> {
   return client.request<InvCountSheet>({
     method: "POST",
     path: "/api/v1/counts/sheets/{id}/freeze",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "invcountFreezeSheet",
   });
 }
 
 export async function invcountPostSheet(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<InvCountSheetDetail>> {
   return client.request<InvCountSheetDetail>({
     method: "POST",
     path: "/api/v1/counts/sheets/{id}/post",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "invcountPostSheet",
   });
 }

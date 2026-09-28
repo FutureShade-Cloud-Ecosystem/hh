@@ -5,130 +5,163 @@
 
 import type { AssistAnswer, AssistBudgetBody, AssistChatRequest, AssistCommandList, AssistCommandRequest, AssistLimitsView, AssistMe, AssistResult, AssistRoleLimitResult, AssistSettingBody, AssistSettingResult, AssistSettingsResponse, AssistSpendReport, AssistUserLimitResetResult, AssistUserLimitResult } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function assistAdminLimits(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<AssistLimitsView>> {
   return client.request<AssistLimitsView>({
     method: "GET",
     path: "/api/v1/assist/admin/limits",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "assistAdminLimits",
   });
 }
 
 export async function assistPutRoleLimit(
   client: ApiClient,
-  role: string,
-  body: AssistBudgetBody
+  role: string | number,
+  body: AssistBudgetBody,
+  call?: ApiCallOptions
 ): Promise<Result<AssistRoleLimitResult>> {
   return client.request<AssistRoleLimitResult>({
     method: "PUT",
     path: "/api/v1/assist/admin/limits/role/{role}",
     pathParams: { role },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "assistPutRoleLimit",
   });
 }
 
 export async function assistPutUserLimit(
   client: ApiClient,
-  user: string,
-  body: AssistBudgetBody
+  user: string | number,
+  body: AssistBudgetBody,
+  call?: ApiCallOptions
 ): Promise<Result<AssistUserLimitResult>> {
   return client.request<AssistUserLimitResult>({
     method: "PUT",
     path: "/api/v1/assist/admin/limits/user/{user}",
     pathParams: { user },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "assistPutUserLimit",
   });
 }
 
 export async function assistResetUserLimit(
   client: ApiClient,
-  user: string
+  user: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<AssistUserLimitResetResult>> {
   return client.request<AssistUserLimitResetResult>({
     method: "DELETE",
     path: "/api/v1/assist/admin/limits/user/{user}",
     pathParams: { user },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "assistResetUserLimit",
   });
 }
 
 export async function assistGetSettings(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<AssistSettingsResponse>> {
   return client.request<AssistSettingsResponse>({
     method: "GET",
     path: "/api/v1/assist/admin/settings",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "assistGetSettings",
   });
 }
 
 export async function assistPutSetting(
   client: ApiClient,
-  body: AssistSettingBody
+  body: AssistSettingBody,
+  call?: ApiCallOptions
 ): Promise<Result<AssistSettingResult>> {
   return client.request<AssistSettingResult>({
     method: "PUT",
     path: "/api/v1/assist/admin/settings",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "assistPutSetting",
   });
 }
 
 export async function assistAdminSpend(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<AssistSpendReport>> {
   return client.request<AssistSpendReport>({
     method: "GET",
     path: "/api/v1/assist/admin/spend",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "assistAdminSpend",
   });
 }
 
 export async function assistChat(
   client: ApiClient,
-  body: AssistChatRequest
+  body: AssistChatRequest,
+  call?: ApiCallOptions
 ): Promise<Result<AssistAnswer>> {
   return client.request<AssistAnswer>({
     method: "POST",
     path: "/api/v1/assist/chat",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "assistChat",
   });
 }
 
 export async function assistRunCommand(
   client: ApiClient,
-  body: AssistCommandRequest
+  body: AssistCommandRequest,
+  call?: ApiCallOptions
 ): Promise<Result<AssistResult>> {
   return client.request<AssistResult>({
     method: "POST",
     path: "/api/v1/assist/command",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "assistRunCommand",
   });
 }
 
 export async function assistListCommands(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<AssistCommandList>> {
   return client.request<AssistCommandList>({
     method: "GET",
     path: "/api/v1/assist/commands",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "assistListCommands",
   });
 }
 
 export async function assistGetMe(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<AssistMe>> {
   return client.request<AssistMe>({
     method: "GET",
     path: "/api/v1/assist/me",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "assistGetMe",
   });
 }

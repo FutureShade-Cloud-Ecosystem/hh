@@ -5,133 +5,167 @@
 
 import type { CustomerQuoteAcceptanceRequest, CustomerQuoteAcceptanceResult, CustomerQuotePublicView, DispatchPublicWillCall, DispatchWillCallConfirmInput, QuoteAcceptanceResult, QuotePublicAcceptRequest, QuotePublicView, WarrantyPublicIntakeInput, WarrantyPublicIntakeResult } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
+// The document declares the success content as image/gif
+// (format: binary); the client resolves the raw bytes.
 export async function billingTrackInvoiceOpened(
   client: ApiClient,
-  deliveryID: string
-): Promise<Result<string>> {
-  return client.request<string>({
+  deliveryID: string | number,
+  call?: ApiCallOptions
+): Promise<Result<Uint8Array>> {
+  return client.request<Uint8Array>({
     method: "GET",
     path: "/api/public/v1/ar/invoice-opened/{deliveryID}",
     pathParams: { deliveryID },
-    textResponse: true,
+    bytesResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingTrackInvoiceOpened",
   });
 }
 
 export async function billingTrackReminderClick(
   client: ApiClient,
-  token: string
+  token: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<unknown>> {
   return client.request<unknown>({
     method: "GET",
     path: "/api/public/v1/ar/track/{token}/click",
     pathParams: { token },
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingTrackReminderClick",
   });
 }
 
+// The document declares the success content as image/gif
+// (format: binary); the client resolves the raw bytes.
 export async function billingTrackReminderOpen(
   client: ApiClient,
-  token: string
-): Promise<Result<string>> {
-  return client.request<string>({
+  token: string | number,
+  call?: ApiCallOptions
+): Promise<Result<Uint8Array>> {
+  return client.request<Uint8Array>({
     method: "GET",
     path: "/api/public/v1/ar/track/{token}/open",
     pathParams: { token },
-    textResponse: true,
+    bytesResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingTrackReminderOpen",
   });
 }
 
 export async function customerQuotePublicView(
   client: ApiClient,
-  token: string
+  token: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<CustomerQuotePublicView>> {
   return client.request<CustomerQuotePublicView>({
     method: "GET",
     path: "/api/public/v1/customer-quotes/{token}",
     pathParams: { token },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "customerQuotePublicView",
   });
 }
 
 export async function customerQuotePublicAccept(
   client: ApiClient,
-  token: string,
-  body: CustomerQuoteAcceptanceRequest
+  token: string | number,
+  body: CustomerQuoteAcceptanceRequest,
+  call?: ApiCallOptions
 ): Promise<Result<CustomerQuoteAcceptanceResult>> {
   return client.request<CustomerQuoteAcceptanceResult>({
     method: "POST",
     path: "/api/public/v1/customer-quotes/{token}/accept",
     pathParams: { token },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "customerQuotePublicAccept",
   });
 }
 
 export async function quotePublicViewQuote(
   client: ApiClient,
-  token: string
+  token: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<QuotePublicView>> {
   return client.request<QuotePublicView>({
     method: "GET",
     path: "/api/public/v1/quotes/{token}",
     pathParams: { token },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quotePublicViewQuote",
   });
 }
 
 export async function quotePublicAcceptQuote(
   client: ApiClient,
-  token: string,
-  body: QuotePublicAcceptRequest
+  token: string | number,
+  body: QuotePublicAcceptRequest,
+  call?: ApiCallOptions
 ): Promise<Result<QuoteAcceptanceResult>> {
   return client.request<QuoteAcceptanceResult>({
     method: "POST",
     path: "/api/public/v1/quotes/{token}/accept",
     pathParams: { token },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "quotePublicAcceptQuote",
   });
 }
 
 export async function warrantySubmitPublicIntake(
   client: ApiClient,
-  body: WarrantyPublicIntakeInput
+  body: WarrantyPublicIntakeInput,
+  call?: ApiCallOptions
 ): Promise<Result<WarrantyPublicIntakeResult>> {
   return client.request<WarrantyPublicIntakeResult>({
     method: "POST",
     path: "/api/public/v1/warranty/intake",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "warrantySubmitPublicIntake",
   });
 }
 
 export async function dispatchPublicGetWillCall(
   client: ApiClient,
-  token: string
+  token: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchPublicWillCall>> {
   return client.request<DispatchPublicWillCall>({
     method: "GET",
     path: "/api/public/v1/will-call/{token}",
     pathParams: { token },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchPublicGetWillCall",
   });
 }
 
 export async function dispatchPublicConfirmWillCall(
   client: ApiClient,
-  token: string,
-  body: DispatchWillCallConfirmInput
+  token: string | number,
+  body: DispatchWillCallConfirmInput,
+  call?: ApiCallOptions
 ): Promise<Result<DispatchPublicWillCall>> {
   return client.request<DispatchPublicWillCall>({
     method: "POST",
     path: "/api/public/v1/will-call/{token}/confirm",
     pathParams: { token },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "dispatchPublicConfirmWillCall",
   });
 }

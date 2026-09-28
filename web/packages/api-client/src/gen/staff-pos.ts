@@ -5,415 +5,517 @@
 
 import type { PosAccountStanding, PosAddonSuggestions, PosCounterPriceInput, PosCounterPrices, PosHotkeys, PosMarginGlance, PosMarginGlanceInput, PosParkInput, PosParkedDiscard, PosParkedTicket, PosParkedTicketPage, PosPickupAdvance, PosPolicy, PosPolicyChangePage, PosPricingOrder, PosPricingOrderInput, PosPricingOrderPage, PosQuickPicks, PosReliefAssessInput, PosReliefOutcome, PosReturn, PosReturnInput, PosReturnLookup, PosReturnPickup, PosReturnPickupPage, PosReturnRequest, PosReturnRequestPage, PosReturnRequestReject, PosSale, PosSaleInput, PosSaleSummaryPage, PosSaleView, PosSalespersonPage, PosSignatureCapture, PosSignatureRef, PosStockGlance, PosTypedAttestation, PosTypedSignatureRef, PosWorkspacePrefs, PosWorkspaceSaveInput } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function posAccountStanding(
   client: ApiClient,
-  opts: { branch_id: string; customer_id?: string }
+  opts: { branch_id: string; customer_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<PosAccountStanding>> {
   return client.request<PosAccountStanding>({
     method: "GET",
     path: "/api/v1/pos/account-standing",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posAccountStanding",
   });
 }
 
 export async function posAddonSuggestions(
   client: ApiClient,
-  opts?: { product_ids?: string }
+  opts?: { product_ids?: string },
+  call?: ApiCallOptions
 ): Promise<Result<PosAddonSuggestions>> {
   return client.request<PosAddonSuggestions>({
     method: "GET",
     path: "/api/v1/pos/addon-suggestions",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posAddonSuggestions",
   });
 }
 
 export async function posAssessRelief(
   client: ApiClient,
-  body: PosReliefAssessInput
+  body: PosReliefAssessInput,
+  call?: ApiCallOptions
 ): Promise<Result<PosReliefOutcome>> {
   return client.request<PosReliefOutcome>({
     method: "POST",
     path: "/api/v1/pos/assess-relief",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posAssessRelief",
   });
 }
 
 export async function posCounterPrices(
   client: ApiClient,
-  body: PosCounterPriceInput
+  body: PosCounterPriceInput,
+  call?: ApiCallOptions
 ): Promise<Result<PosCounterPrices>> {
   return client.request<PosCounterPrices>({
     method: "POST",
     path: "/api/v1/pos/counter-prices",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posCounterPrices",
   });
 }
 
 export async function posHotkeys(
   client: ApiClient,
-  opts?: { branch_id?: string }
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<PosHotkeys>> {
   return client.request<PosHotkeys>({
     method: "GET",
     path: "/api/v1/pos/hotkeys",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posHotkeys",
   });
 }
 
 export async function posMarginGlance(
   client: ApiClient,
-  body: PosMarginGlanceInput
+  body: PosMarginGlanceInput,
+  call?: ApiCallOptions
 ): Promise<Result<PosMarginGlance>> {
   return client.request<PosMarginGlance>({
     method: "POST",
     path: "/api/v1/pos/margin-glance",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posMarginGlance",
   });
 }
 
 export async function posParkTicket(
   client: ApiClient,
-  body: PosParkInput
+  body: PosParkInput,
+  call?: ApiCallOptions
 ): Promise<Result<PosParkedTicket>> {
   return client.request<PosParkedTicket>({
     method: "POST",
     path: "/api/v1/pos/parked",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posParkTicket",
   });
 }
 
 export async function posListParked(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<PosParkedTicketPage>> {
   return client.request<PosParkedTicketPage>({
     method: "GET",
     path: "/api/v1/pos/parked",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posListParked",
   });
 }
 
 export async function posDiscardParked(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<PosParkedDiscard>> {
   return client.request<PosParkedDiscard>({
     method: "DELETE",
     path: "/api/v1/pos/parked/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posDiscardParked",
   });
 }
 
 export async function posResumeParked(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<PosParkedTicket>> {
   return client.request<PosParkedTicket>({
     method: "POST",
     path: "/api/v1/pos/parked/{id}/resume",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posResumeParked",
   });
 }
 
 export async function posGetPolicy(
   client: ApiClient,
-  opts?: { branch_id?: string }
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<PosPolicy>> {
   return client.request<PosPolicy>({
     method: "GET",
     path: "/api/v1/pos/policy",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posGetPolicy",
   });
 }
 
 export async function posPutPolicy(
   client: ApiClient,
-  body: PosPolicy
+  body: PosPolicy,
+  call?: ApiCallOptions
 ): Promise<Result<PosPolicy>> {
   return client.request<PosPolicy>({
     method: "PUT",
     path: "/api/v1/pos/policy",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posPutPolicy",
   });
 }
 
 export async function posPolicyHistory(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<PosPolicyChangePage>> {
   return client.request<PosPolicyChangePage>({
     method: "GET",
     path: "/api/v1/pos/policy/history",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posPolicyHistory",
   });
 }
 
 export async function posCreatePricingOrder(
   client: ApiClient,
-  body: PosPricingOrderInput
+  body: PosPricingOrderInput,
+  call?: ApiCallOptions
 ): Promise<Result<PosPricingOrder>> {
   return client.request<PosPricingOrder>({
     method: "POST",
     path: "/api/v1/pos/pricing-orders",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posCreatePricingOrder",
   });
 }
 
 export async function posListPricingOrders(
   client: ApiClient,
-  opts: { cursor?: string; limit?: number; branch_id: string }
+  opts: { cursor?: string; limit?: number; branch_id: string },
+  call?: ApiCallOptions
 ): Promise<Result<PosPricingOrderPage>> {
   return client.request<PosPricingOrderPage>({
     method: "GET",
     path: "/api/v1/pos/pricing-orders",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posListPricingOrders",
   });
 }
 
 export async function posGetPricingOrder(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<PosPricingOrder>> {
   return client.request<PosPricingOrder>({
     method: "GET",
     path: "/api/v1/pos/pricing-orders/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posGetPricingOrder",
   });
 }
 
 export async function posQuickPicks(
   client: ApiClient,
-  opts?: { branch_id?: string; customer_id?: string }
+  opts?: { branch_id?: string; customer_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<PosQuickPicks>> {
   return client.request<PosQuickPicks>({
     method: "GET",
     path: "/api/v1/pos/quick-picks",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posQuickPicks",
   });
 }
 
 export async function posListReturnRequests(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; status?: "PENDING" | "APPROVED" | "REJECTED" }
+  opts?: { cursor?: string; limit?: number; status?: "PENDING" | "APPROVED" | "REJECTED" },
+  call?: ApiCallOptions
 ): Promise<Result<PosReturnRequestPage>> {
   return client.request<PosReturnRequestPage>({
     method: "GET",
     path: "/api/v1/pos/return-requests",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posListReturnRequests",
   });
 }
 
 export async function posApproveReturnRequest(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<PosReturnRequest>> {
   return client.request<PosReturnRequest>({
     method: "POST",
     path: "/api/v1/pos/return-requests/{id}/approve",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posApproveReturnRequest",
   });
 }
 
 export async function posRejectReturnRequest(
   client: ApiClient,
-  id: string,
-  body: PosReturnRequestReject
+  id: string | number,
+  body: PosReturnRequestReject,
+  call?: ApiCallOptions
 ): Promise<Result<PosReturnRequest>> {
   return client.request<PosReturnRequest>({
     method: "POST",
     path: "/api/v1/pos/return-requests/{id}/reject",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posRejectReturnRequest",
   });
 }
 
 export async function posCreateReturn(
   client: ApiClient,
-  body: PosReturnInput
+  body: PosReturnInput,
+  call?: ApiCallOptions
 ): Promise<Result<PosReturn>> {
   return client.request<PosReturn>({
     method: "POST",
     path: "/api/v1/pos/returns",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posCreateReturn",
   });
 }
 
 export async function posLookupReturn(
   client: ApiClient,
-  opts?: { order_id?: string; order_no?: string }
+  opts?: { order_id?: string; order_no?: string },
+  call?: ApiCallOptions
 ): Promise<Result<PosReturnLookup>> {
   return client.request<PosReturnLookup>({
     method: "GET",
     path: "/api/v1/pos/returns/lookup",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posLookupReturn",
   });
 }
 
 export async function posListReturnPickups(
   client: ApiClient,
-  opts: { cursor?: string; limit?: number; branch_id: string }
+  opts: { cursor?: string; limit?: number; branch_id: string },
+  call?: ApiCallOptions
 ): Promise<Result<PosReturnPickupPage>> {
   return client.request<PosReturnPickupPage>({
     method: "GET",
     path: "/api/v1/pos/returns/pickups",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posListReturnPickups",
   });
 }
 
 export async function posAdvanceReturnPickup(
   client: ApiClient,
-  id: string,
-  body: PosPickupAdvance
+  id: string | number,
+  body: PosPickupAdvance,
+  call?: ApiCallOptions
 ): Promise<Result<PosReturnPickup>> {
   return client.request<PosReturnPickup>({
     method: "POST",
     path: "/api/v1/pos/returns/{id}/pickup",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posAdvanceReturnPickup",
   });
 }
 
 export async function posCreateSale(
   client: ApiClient,
-  body: PosSaleInput
+  body: PosSaleInput,
+  call?: ApiCallOptions
 ): Promise<Result<PosSale>> {
   return client.request<PosSale>({
     method: "POST",
     path: "/api/v1/pos/sales",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posCreateSale",
   });
 }
 
 export async function posLookupSales(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string; till_session_id?: string; q?: string; from?: string; to?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string; till_session_id?: string; q?: string; from?: string; to?: string },
+  call?: ApiCallOptions
 ): Promise<Result<PosSaleSummaryPage>> {
   return client.request<PosSaleSummaryPage>({
     method: "GET",
     path: "/api/v1/pos/sales",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posLookupSales",
   });
 }
 
 export async function posGetSale(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<PosSaleView>> {
   return client.request<PosSaleView>({
     method: "GET",
     path: "/api/v1/pos/sales/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posGetSale",
   });
 }
 
 export async function posListSalespeople(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<PosSalespersonPage>> {
   return client.request<PosSalespersonPage>({
     method: "GET",
     path: "/api/v1/pos/salespeople",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posListSalespeople",
   });
 }
 
 export async function posCaptureSignature(
   client: ApiClient,
-  body: PosSignatureCapture
+  body: PosSignatureCapture,
+  call?: ApiCallOptions
 ): Promise<Result<PosSignatureRef>> {
   return client.request<PosSignatureRef>({
     method: "POST",
     path: "/api/v1/pos/signatures",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posCaptureSignature",
   });
 }
 
 export async function posCaptureTypedSignature(
   client: ApiClient,
-  body: PosTypedAttestation
+  body: PosTypedAttestation,
+  call?: ApiCallOptions
 ): Promise<Result<PosTypedSignatureRef>> {
   return client.request<PosTypedSignatureRef>({
     method: "POST",
     path: "/api/v1/pos/signatures/typed",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posCaptureTypedSignature",
   });
 }
 
 export async function posStockGlance(
   client: ApiClient,
-  opts: { product_id: string }
+  opts: { product_id: string },
+  call?: ApiCallOptions
 ): Promise<Result<PosStockGlance>> {
   return client.request<PosStockGlance>({
     method: "GET",
     path: "/api/v1/pos/stock-glance",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posStockGlance",
   });
 }
 
 export async function posGetWorkspace(
   client: ApiClient,
-  opts?: { branch_id?: string }
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<PosWorkspacePrefs>> {
   return client.request<PosWorkspacePrefs>({
     method: "GET",
     path: "/api/v1/pos/workspace",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posGetWorkspace",
   });
 }
 
 export async function posPutWorkspace(
   client: ApiClient,
-  body: PosWorkspaceSaveInput
+  body: PosWorkspaceSaveInput,
+  call?: ApiCallOptions
 ): Promise<Result<PosWorkspacePrefs>> {
   return client.request<PosWorkspacePrefs>({
     method: "PUT",
     path: "/api/v1/pos/workspace",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posPutWorkspace",
   });
 }
 
 export async function posResetWorkspace(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<unknown>> {
   return client.request<unknown>({
     method: "DELETE",
     path: "/api/v1/pos/workspace",
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "posResetWorkspace",
   });
 }

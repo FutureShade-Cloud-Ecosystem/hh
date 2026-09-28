@@ -5,130 +5,160 @@
 
 import type { LienAgingRowPage, LienDocument, LienDocumentInput, LienDocumentPage, LienJob, LienJobInput, LienJobPage, LienReleaseApproval, LienReleaseResult, LienSyncResult, LienTriageItemPage } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function lienCreateDocument(
   client: ApiClient,
-  body: LienDocumentInput
+  body: LienDocumentInput,
+  call?: ApiCallOptions
 ): Promise<Result<LienDocument>> {
   return client.request<LienDocument>({
     method: "POST",
     path: "/api/v1/lien/documents",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "lienCreateDocument",
   });
 }
 
 export async function lienListDocumentVersions(
   client: ApiClient,
-  id: string,
-  opts?: { cursor?: string; limit?: number }
+  id: string | number,
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<LienDocumentPage>> {
   return client.request<LienDocumentPage>({
     method: "GET",
     path: "/api/v1/lien/documents/{id}/versions",
     pathParams: { id },
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "lienListDocumentVersions",
   });
 }
 
 export async function lienGetHoldbackAging(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<LienAgingRowPage>> {
   return client.request<LienAgingRowPage>({
     method: "GET",
     path: "/api/v1/lien/holdback/aging",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "lienGetHoldbackAging",
   });
 }
 
 export async function lienReleaseHoldback(
   client: ApiClient,
-  jobID: string,
-  body: LienReleaseApproval
+  jobID: string | number,
+  body: LienReleaseApproval,
+  call?: ApiCallOptions
 ): Promise<Result<LienReleaseResult>> {
   return client.request<LienReleaseResult>({
     method: "POST",
     path: "/api/v1/lien/holdback/{jobID}/release",
     pathParams: { jobID },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "lienReleaseHoldback",
   });
 }
 
 export async function lienListJobs(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<LienJobPage>> {
   return client.request<LienJobPage>({
     method: "GET",
     path: "/api/v1/lien/jobs",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "lienListJobs",
   });
 }
 
 export async function lienCreateJob(
   client: ApiClient,
-  body: LienJobInput
+  body: LienJobInput,
+  call?: ApiCallOptions
 ): Promise<Result<LienJob>> {
   return client.request<LienJob>({
     method: "POST",
     path: "/api/v1/lien/jobs",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "lienCreateJob",
   });
 }
 
 export async function lienGetJob(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<LienJob>> {
   return client.request<LienJob>({
     method: "GET",
     path: "/api/v1/lien/jobs/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "lienGetJob",
   });
 }
 
 export async function lienListJobDocuments(
   client: ApiClient,
-  id: string,
-  opts?: { cursor?: string; limit?: number }
+  id: string | number,
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<LienDocumentPage>> {
   return client.request<LienDocumentPage>({
     method: "GET",
     path: "/api/v1/lien/jobs/{id}/documents",
     pathParams: { id },
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "lienListJobDocuments",
   });
 }
 
 export async function lienSyncJobHoldbacks(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<LienSyncResult>> {
   return client.request<LienSyncResult>({
     method: "POST",
     path: "/api/v1/lien/jobs/{id}/sync",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "lienSyncJobHoldbacks",
   });
 }
 
 export async function lienGetTriage(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<LienTriageItemPage>> {
   return client.request<LienTriageItemPage>({
     method: "GET",
     path: "/api/v1/lien/triage",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "lienGetTriage",
   });
 }

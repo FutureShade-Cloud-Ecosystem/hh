@@ -5,106 +5,133 @@
 
 import type { TenantAcceptInviteRequest, TenantLoginRequest, TenantLoginResponse, TenantMe, TenantPasswordChangeRequest, TenantPasswordResetConfirm, TenantPasswordResetRequest, TenantPublicConfig, TenantRefreshResponse, TenantStatusResponse, TenantUpdateMeRequest, TenantUser } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function tenantAcceptInvite(
   client: ApiClient,
-  body: TenantAcceptInviteRequest
+  body: TenantAcceptInviteRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantUser>> {
   return client.request<TenantUser>({
     method: "POST",
     path: "/api/v1/tenant/accept-invite",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantAcceptInvite",
   });
 }
 
 export async function tenantGetConfig(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<TenantPublicConfig>> {
   return client.request<TenantPublicConfig>({
     method: "GET",
     path: "/api/v1/tenant/config",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantGetConfig",
   });
 }
 
 export async function tenantLogin(
   client: ApiClient,
-  body: TenantLoginRequest
+  body: TenantLoginRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantLoginResponse>> {
   return client.request<TenantLoginResponse>({
     method: "POST",
     path: "/api/v1/tenant/login",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantLogin",
   });
 }
 
 export async function tenantGetMe(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<TenantMe>> {
   return client.request<TenantMe>({
     method: "GET",
     path: "/api/v1/tenant/me",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantGetMe",
   });
 }
 
 export async function tenantUpdateMe(
   client: ApiClient,
-  body: TenantUpdateMeRequest
+  body: TenantUpdateMeRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantUser>> {
   return client.request<TenantUser>({
     method: "PUT",
     path: "/api/v1/tenant/me",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantUpdateMe",
   });
 }
 
 export async function tenantChangePassword(
   client: ApiClient,
-  body: TenantPasswordChangeRequest
+  body: TenantPasswordChangeRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantStatusResponse>> {
   return client.request<TenantStatusResponse>({
     method: "POST",
     path: "/api/v1/tenant/me/password",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantChangePassword",
   });
 }
 
 export async function tenantConfirmPasswordReset(
   client: ApiClient,
-  body: TenantPasswordResetConfirm
+  body: TenantPasswordResetConfirm,
+  call?: ApiCallOptions
 ): Promise<Result<TenantStatusResponse>> {
   return client.request<TenantStatusResponse>({
     method: "POST",
     path: "/api/v1/tenant/password-reset/confirm",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantConfirmPasswordReset",
   });
 }
 
 export async function tenantRequestPasswordReset(
   client: ApiClient,
-  body: TenantPasswordResetRequest
+  body: TenantPasswordResetRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantStatusResponse>> {
   return client.request<TenantStatusResponse>({
     method: "POST",
     path: "/api/v1/tenant/password-reset/request",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantRequestPasswordReset",
   });
 }
 
 export async function tenantRefreshToken(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<TenantRefreshResponse>> {
   return client.request<TenantRefreshResponse>({
     method: "POST",
     path: "/api/v1/tenant/token/refresh",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantRefreshToken",
   });
 }

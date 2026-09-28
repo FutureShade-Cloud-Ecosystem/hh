@@ -5,64 +5,79 @@
 
 import type { TourPolicyEdit, TourProgressEdit, TourRestartedResult, TourSavedResult, TourStepEdit, TourView } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function tourPutPolicy(
   client: ApiClient,
-  body: TourPolicyEdit
+  body: TourPolicyEdit,
+  call?: ApiCallOptions
 ): Promise<Result<TourSavedResult>> {
   return client.request<TourSavedResult>({
     method: "PUT",
     path: "/api/v1/platform/tour/policy",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tourPutPolicy",
   });
 }
 
 export async function tourPutStepCopy(
   client: ApiClient,
-  body: TourStepEdit
+  body: TourStepEdit,
+  call?: ApiCallOptions
 ): Promise<Result<TourSavedResult>> {
   return client.request<TourSavedResult>({
     method: "PUT",
     path: "/api/v1/platform/tour/steps",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tourPutStepCopy",
   });
 }
 
 export async function tourGet(
   client: ApiClient,
-  opts?: { branch_id?: string }
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<TourView>> {
   return client.request<TourView>({
     method: "GET",
     path: "/api/v1/tour",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tourGet",
   });
 }
 
 export async function tourPutProgress(
   client: ApiClient,
-  body: TourProgressEdit
+  body: TourProgressEdit,
+  call?: ApiCallOptions
 ): Promise<Result<TourSavedResult>> {
   return client.request<TourSavedResult>({
     method: "PUT",
     path: "/api/v1/tour/progress",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tourPutProgress",
   });
 }
 
 export async function tourRestartChapter(
   client: ApiClient,
-  chapter_key: string
+  chapter_key: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TourRestartedResult>> {
   return client.request<TourRestartedResult>({
     method: "DELETE",
     path: "/api/v1/tour/progress/{chapter_key}",
     pathParams: { chapter_key },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tourRestartChapter",
   });
 }

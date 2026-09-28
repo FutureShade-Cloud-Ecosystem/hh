@@ -3,7 +3,9 @@
 // data, and the operations grouped one namespace per document tag.
 
 export * from "./types.js";
-export * from "./descriptors.js";
+// The descriptors stay off the generated entry: they are the test-time
+// validation data (312 KB of it), re-exported by the package's test entry
+// (src/testing.ts) and never needed by a runtime caller.
 export * from "./manifest.js";
 export * as tenantAuth from "./tenant-auth.js";
 export * as tenantTeam from "./tenant-team.js";
@@ -16,7 +18,7 @@ export * as tenantProcurement from "./tenant-procurement.js";
 export * as tenantProjects from "./tenant-projects.js";
 export * as tenantCatalog from "./tenant-catalog.js";
 export * as tenantAddresses from "./tenant-addresses.js";
-export * as public from "./public.js";
+export * as publicApi from "./public.js";
 export * as sync from "./sync.js";
 export * as operator from "./operator.js";
 export * as staffAssist from "./staff-assist.js";

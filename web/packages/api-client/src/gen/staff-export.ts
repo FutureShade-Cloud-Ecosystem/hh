@@ -4,56 +4,76 @@
 // resolves a Result and never throws on a refusal or a transport error.
 
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
+// The document declares the success content as application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+// (format: binary); the client resolves the raw bytes.
 export async function exportAuditXlsx(
   client: ApiClient,
-  opts?: { entity_type?: string; action?: string; actor_id?: string; since?: string; limit?: number }
-): Promise<Result<string>> {
-  return client.request<string>({
+  opts?: { entity_type?: string; action?: string; actor_id?: string; since?: string; limit?: number },
+  call?: ApiCallOptions
+): Promise<Result<Uint8Array>> {
+  return client.request<Uint8Array>({
     method: "GET",
     path: "/api/v1/exports/audit.xlsx",
     query: opts,
-    textResponse: true,
+    bytesResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "exportAuditXlsx",
   });
 }
 
+// The document declares the success content as application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+// (format: binary); the client resolves the raw bytes.
 export async function exportCatalogueXlsx(
   client: ApiClient,
-  opts?: { finish?: string; color_family?: string; application?: string; color?: string; manufacturer?: string; collection?: string; category_id?: string; q?: string; active?: boolean; in_stock_only?: boolean; branch_id?: string; sort?: "name" | "manufacturer" | "color" | "application" | "on_hand" | "available" | "list_price"; dir?: "asc" | "desc"; filter_summary?: string }
-): Promise<Result<string>> {
-  return client.request<string>({
+  opts?: { finish?: string; color_family?: string; application?: string; color?: string; manufacturer?: string; collection?: string; category_id?: string; q?: string; active?: boolean; in_stock_only?: boolean; branch_id?: string; sort?: "name" | "manufacturer" | "color" | "application" | "on_hand" | "available" | "list_price"; dir?: "asc" | "desc"; filter_summary?: string },
+  call?: ApiCallOptions
+): Promise<Result<Uint8Array>> {
+  return client.request<Uint8Array>({
     method: "GET",
     path: "/api/v1/exports/catalogue.xlsx",
     query: opts,
-    textResponse: true,
+    bytesResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "exportCatalogueXlsx",
   });
 }
 
+// The document declares the success content as application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+// (format: binary); the client resolves the raw bytes.
 export async function exportStatementXlsx(
   client: ApiClient,
-  opts?: { report?: "income-statement" | "balance-sheet" | "trial-balance" | "ar-aging" | "gl-detail"; year?: number; month?: number; branch_id?: string; branch_name?: string }
-): Promise<Result<string>> {
-  return client.request<string>({
+  opts?: { report?: "income-statement" | "balance-sheet" | "trial-balance" | "ar-aging" | "gl-detail"; year?: number; month?: number; branch_id?: string; branch_name?: string },
+  call?: ApiCallOptions
+): Promise<Result<Uint8Array>> {
+  return client.request<Uint8Array>({
     method: "GET",
     path: "/api/v1/exports/statement.xlsx",
     query: opts,
-    textResponse: true,
+    bytesResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "exportStatementXlsx",
   });
 }
 
+// The document declares the success content as application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+// (format: binary); the client resolves the raw bytes.
 export async function exportTransactionsXlsx(
   client: ApiClient,
-  opts?: { year?: number; month?: number; account_code?: string; branch_id?: string; branch_name?: string }
-): Promise<Result<string>> {
-  return client.request<string>({
+  opts?: { year?: number; month?: number; account_code?: string; branch_id?: string; branch_name?: string },
+  call?: ApiCallOptions
+): Promise<Result<Uint8Array>> {
+  return client.request<Uint8Array>({
     method: "GET",
     path: "/api/v1/exports/transactions.xlsx",
     query: opts,
-    textResponse: true,
+    bytesResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "exportTransactionsXlsx",
   });
 }

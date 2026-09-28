@@ -5,16 +5,19 @@
 
 import type { CustomerQuote } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function customerQuoteSend(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<CustomerQuote>> {
   return client.request<CustomerQuote>({
     method: "POST",
     path: "/api/v1/customer-quotes/{id}/send",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "customerQuoteSend",
   });
 }

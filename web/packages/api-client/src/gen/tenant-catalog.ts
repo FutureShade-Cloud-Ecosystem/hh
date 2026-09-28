@@ -5,28 +5,34 @@
 
 import type { TenantCatalogProduct, TenantCatalogSearchResponse } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function tenantGetCatalogProduct(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TenantCatalogProduct>> {
   return client.request<TenantCatalogProduct>({
     method: "GET",
     path: "/api/v1/tenant/catalog/products/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantGetCatalogProduct",
   });
 }
 
 export async function tenantSearchCatalog(
   client: ApiClient,
-  opts?: { q?: string; limit?: number }
+  opts?: { q?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<TenantCatalogSearchResponse>> {
   return client.request<TenantCatalogSearchResponse>({
     method: "GET",
     path: "/api/v1/tenant/catalog/search",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantSearchCatalog",
   });
 }

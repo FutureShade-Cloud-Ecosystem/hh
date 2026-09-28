@@ -5,64 +5,79 @@
 
 import type { TenantInvite, TenantInviteCreateRequest, TenantRoleUpdateRequest, TenantStatusResponse, TenantStatusUpdateRequest, TenantUser } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function tenantListInvites(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<TenantInvite[]>> {
   return client.request<TenantInvite[]>({
     method: "GET",
     path: "/api/v1/tenant/invites",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantListInvites",
   });
 }
 
 export async function tenantCreateInvite(
   client: ApiClient,
-  body: TenantInviteCreateRequest
+  body: TenantInviteCreateRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantInvite>> {
   return client.request<TenantInvite>({
     method: "POST",
     path: "/api/v1/tenant/invites",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantCreateInvite",
   });
 }
 
 export async function tenantListUsers(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<TenantUser[]>> {
   return client.request<TenantUser[]>({
     method: "GET",
     path: "/api/v1/tenant/users",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantListUsers",
   });
 }
 
 export async function tenantUpdateUserRole(
   client: ApiClient,
-  id: string,
-  body: TenantRoleUpdateRequest
+  id: string | number,
+  body: TenantRoleUpdateRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantStatusResponse>> {
   return client.request<TenantStatusResponse>({
     method: "PUT",
     path: "/api/v1/tenant/users/{id}/role",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantUpdateUserRole",
   });
 }
 
 export async function tenantUpdateUserStatus(
   client: ApiClient,
-  id: string,
-  body: TenantStatusUpdateRequest
+  id: string | number,
+  body: TenantStatusUpdateRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantStatusResponse>> {
   return client.request<TenantStatusResponse>({
     method: "PUT",
     path: "/api/v1/tenant/users/{id}/status",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantUpdateUserStatus",
   });
 }

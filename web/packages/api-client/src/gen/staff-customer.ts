@@ -5,68 +5,83 @@
 
 import type { CustomerAccount, CustomerBillingAddress, CustomerCreate, CustomerSMSConsent, CustomerSMSConsentUpdate, CustomerSearchResult } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function customerCreate(
   client: ApiClient,
-  body: CustomerCreate
+  body: CustomerCreate,
+  call?: ApiCallOptions
 ): Promise<Result<CustomerAccount>> {
   return client.request<CustomerAccount>({
     method: "POST",
     path: "/api/v1/customers",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "customerCreate",
   });
 }
 
 export async function customerSearch(
   client: ApiClient,
-  opts: { q: string; limit?: number; branch_id?: string }
+  opts: { q: string; limit?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<CustomerSearchResult[]>> {
   return client.request<CustomerSearchResult[]>({
     method: "GET",
     path: "/api/v1/customers/search",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "customerSearch",
   });
 }
 
 export async function customerUpdateBillingAddress(
   client: ApiClient,
-  id: string,
-  body: CustomerBillingAddress
+  id: string | number,
+  body: CustomerBillingAddress,
+  call?: ApiCallOptions
 ): Promise<Result<CustomerAccount>> {
   return client.request<CustomerAccount>({
     method: "PUT",
     path: "/api/v1/customers/{id}/billing-address",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "customerUpdateBillingAddress",
   });
 }
 
 export async function customerGetSMSConsent(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<CustomerSMSConsent>> {
   return client.request<CustomerSMSConsent>({
     method: "GET",
     path: "/api/v1/customers/{id}/sms-consent",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "customerGetSMSConsent",
   });
 }
 
 export async function customerSetSMSConsent(
   client: ApiClient,
-  id: string,
-  body: CustomerSMSConsentUpdate
+  id: string | number,
+  body: CustomerSMSConsentUpdate,
+  call?: ApiCallOptions
 ): Promise<Result<CustomerSMSConsent>> {
   return client.request<CustomerSMSConsent>({
     method: "PUT",
     path: "/api/v1/customers/{id}/sms-consent",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "customerSetSMSConsent",
   });
 }

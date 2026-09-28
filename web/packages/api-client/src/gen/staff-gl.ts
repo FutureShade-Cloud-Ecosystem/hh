@@ -5,248 +5,308 @@
 
 import type { GlAccount, GlAccountCreate, GlAccountPage, GlBisTrackTieoutReport, GlCloseYearBody, GlExportBody, GlExportResult, GlJournal, GlJournalCreate, GlJournalPage, GlPeriod, GlPeriodPage, GlPeriodReopenBody, GlPolicy, GlReasonBody, GlRecurringTemplatePage, GlTieoutStatePage, GlTrialBalanceResult, GlYearCloseResult } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function glListAccounts(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<GlAccountPage>> {
   return client.request<GlAccountPage>({
     method: "GET",
     path: "/api/v1/gl/accounts",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glListAccounts",
   });
 }
 
 export async function glCreateAccount(
   client: ApiClient,
-  body: GlAccountCreate
+  body: GlAccountCreate,
+  call?: ApiCallOptions
 ): Promise<Result<GlAccount>> {
   return client.request<GlAccount>({
     method: "POST",
     path: "/api/v1/gl/accounts",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glCreateAccount",
   });
 }
 
 export async function glDeactivateAccount(
   client: ApiClient,
-  code: string
+  code: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<GlAccount>> {
   return client.request<GlAccount>({
     method: "POST",
     path: "/api/v1/gl/accounts/{code}/deactivate",
     pathParams: { code },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glDeactivateAccount",
   });
 }
 
 export async function glExport(
   client: ApiClient,
-  body: GlExportBody
+  body: GlExportBody,
+  call?: ApiCallOptions
 ): Promise<Result<GlExportResult>> {
   return client.request<GlExportResult>({
     method: "POST",
     path: "/api/v1/gl/export",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glExport",
   });
 }
 
 export async function glListJournals(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; status?: "DRAFT" | "POSTED" | "VOID" | "PENDING_APPROVAL"; branch_id?: string; source_ref_id?: string; date_from?: string; date_to?: string }
+  opts?: { cursor?: string; limit?: number; status?: "DRAFT" | "POSTED" | "VOID" | "PENDING_APPROVAL"; branch_id?: string; source_ref_id?: string; date_from?: string; date_to?: string },
+  call?: ApiCallOptions
 ): Promise<Result<GlJournalPage>> {
   return client.request<GlJournalPage>({
     method: "GET",
     path: "/api/v1/gl/journals",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glListJournals",
   });
 }
 
 export async function glCreateJournal(
   client: ApiClient,
-  body: GlJournalCreate
+  body: GlJournalCreate,
+  call?: ApiCallOptions
 ): Promise<Result<GlJournal>> {
   return client.request<GlJournal>({
     method: "POST",
     path: "/api/v1/gl/journals",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glCreateJournal",
   });
 }
 
 export async function glGetJournal(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<GlJournal>> {
   return client.request<GlJournal>({
     method: "GET",
     path: "/api/v1/gl/journals/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glGetJournal",
   });
 }
 
 export async function glApproveJournal(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<GlJournal>> {
   return client.request<GlJournal>({
     method: "POST",
     path: "/api/v1/gl/journals/{id}/approve",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glApproveJournal",
   });
 }
 
 export async function glReverseJournal(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<GlJournal>> {
   return client.request<GlJournal>({
     method: "POST",
     path: "/api/v1/gl/journals/{id}/reverse",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glReverseJournal",
   });
 }
 
 export async function glVoidJournal(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<GlJournal>> {
   return client.request<GlJournal>({
     method: "POST",
     path: "/api/v1/gl/journals/{id}/void",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glVoidJournal",
   });
 }
 
 export async function glListPeriods(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<GlPeriodPage>> {
   return client.request<GlPeriodPage>({
     method: "GET",
     path: "/api/v1/gl/periods",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glListPeriods",
   });
 }
 
 export async function glCloseYear(
   client: ApiClient,
-  body: GlCloseYearBody
+  body: GlCloseYearBody,
+  call?: ApiCallOptions
 ): Promise<Result<GlYearCloseResult>> {
   return client.request<GlYearCloseResult>({
     method: "POST",
     path: "/api/v1/gl/periods/close-year",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glCloseYear",
   });
 }
 
 export async function glClosePeriod(
   client: ApiClient,
-  id: string,
-  body: GlReasonBody
+  id: string | number,
+  body: GlReasonBody,
+  call?: ApiCallOptions
 ): Promise<Result<GlPeriod>> {
   return client.request<GlPeriod>({
     method: "POST",
     path: "/api/v1/gl/periods/{id}/close",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glClosePeriod",
   });
 }
 
 export async function glReopenPeriod(
   client: ApiClient,
-  id: string,
-  body: GlPeriodReopenBody
+  id: string | number,
+  body: GlPeriodReopenBody,
+  call?: ApiCallOptions
 ): Promise<Result<GlPeriod>> {
   return client.request<GlPeriod>({
     method: "POST",
     path: "/api/v1/gl/periods/{id}/reopen",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glReopenPeriod",
   });
 }
 
 export async function glGetPolicy(
   client: ApiClient,
-  opts?: { branch_id?: string }
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<GlPolicy>> {
   return client.request<GlPolicy>({
     method: "GET",
     path: "/api/v1/gl/policy",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glGetPolicy",
   });
 }
 
 export async function glListRecurring(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<GlRecurringTemplatePage>> {
   return client.request<GlRecurringTemplatePage>({
     method: "GET",
     path: "/api/v1/gl/recurring",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glListRecurring",
   });
 }
 
 export async function glRunRecurring(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<GlJournal>> {
   return client.request<GlJournal>({
     method: "POST",
     path: "/api/v1/gl/recurring/{id}/run",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glRunRecurring",
   });
 }
 
 export async function glTieOut(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; as_of?: string; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; as_of?: string; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<GlTieoutStatePage>> {
   return client.request<GlTieoutStatePage>({
     method: "GET",
     path: "/api/v1/gl/tie-out",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glTieOut",
   });
 }
 
 export async function glBisTrackTieOut(
   client: ApiClient,
-  opts: { year?: number; month: number; branch_id?: string; tolerance_cents?: number }
+  opts: { year?: number; month: number; branch_id?: string; tolerance_cents?: number },
+  call?: ApiCallOptions
 ): Promise<Result<GlBisTrackTieoutReport>> {
   return client.request<GlBisTrackTieoutReport>({
     method: "GET",
     path: "/api/v1/gl/tieout/bistrack",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glBisTrackTieOut",
   });
 }
 
 export async function glTrialBalance(
   client: ApiClient,
-  opts?: { year?: number; month?: number; branch_id?: string }
+  opts?: { year?: number; month?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<GlTrialBalanceResult>> {
   return client.request<GlTrialBalanceResult>({
     method: "GET",
     path: "/api/v1/gl/trial-balance",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "glTrialBalance",
   });
 }

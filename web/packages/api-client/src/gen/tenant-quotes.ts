@@ -5,66 +5,81 @@
 
 import type { TenantQuote, TenantQuoteConvertRequest, TenantQuoteConvertResult, TenantQuoteDetail, TenantQuotePage } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function tenantListQuotes(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; status?: "DRAFT" | "SENT" | "ACCEPTED" | "CONVERTED" | "EXPIRED" | "LOST" }
+  opts?: { cursor?: string; limit?: number; status?: "DRAFT" | "SENT" | "ACCEPTED" | "CONVERTED" | "EXPIRED" | "LOST" },
+  call?: ApiCallOptions
 ): Promise<Result<TenantQuotePage>> {
   return client.request<TenantQuotePage>({
     method: "GET",
     path: "/api/v1/tenant/quotes",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantListQuotes",
   });
 }
 
 export async function tenantGetQuote(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TenantQuoteDetail>> {
   return client.request<TenantQuoteDetail>({
     method: "GET",
     path: "/api/v1/tenant/quotes/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantGetQuote",
   });
 }
 
 export async function tenantAcceptQuote(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TenantQuote>> {
   return client.request<TenantQuote>({
     method: "POST",
     path: "/api/v1/tenant/quotes/{id}/accept",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantAcceptQuote",
   });
 }
 
 export async function tenantConvertQuote(
   client: ApiClient,
-  id: string,
-  body: TenantQuoteConvertRequest
+  id: string | number,
+  body: TenantQuoteConvertRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantQuoteConvertResult>> {
   return client.request<TenantQuoteConvertResult>({
     method: "POST",
     path: "/api/v1/tenant/quotes/{id}/convert",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantConvertQuote",
   });
 }
 
 export async function tenantRejectQuote(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TenantQuote>> {
   return client.request<TenantQuote>({
     method: "POST",
     path: "/api/v1/tenant/quotes/{id}/reject",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantRejectQuote",
   });
 }

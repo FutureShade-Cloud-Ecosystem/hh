@@ -5,26 +5,32 @@
 
 import type { TenantProjectDashboard, TenantProjectRollupList } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function tenantListProjectRollup(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<TenantProjectRollupList>> {
   return client.request<TenantProjectRollupList>({
     method: "GET",
     path: "/api/v1/tenant/projects",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantListProjectRollup",
   });
 }
 
 export async function tenantGetProjectRollup(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TenantProjectDashboard>> {
   return client.request<TenantProjectDashboard>({
     method: "GET",
     path: "/api/v1/tenant/projects/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantGetProjectRollup",
   });
 }

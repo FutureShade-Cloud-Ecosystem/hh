@@ -5,18 +5,21 @@
 
 import type { PaymentsReversalResult, PaymentsReverseRequest } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function paymentsReversePayment(
   client: ApiClient,
-  id: string,
-  body: PaymentsReverseRequest
+  id: string | number,
+  body: PaymentsReverseRequest,
+  call?: ApiCallOptions
 ): Promise<Result<PaymentsReversalResult>> {
   return client.request<PaymentsReversalResult>({
     method: "POST",
     path: "/api/v1/ar/payments/{id}/reverse",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "paymentsReversePayment",
   });
 }

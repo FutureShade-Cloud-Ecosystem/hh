@@ -5,180 +5,222 @@
 
 import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingAgingPage, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreditHoldPage, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderInput, BillingReminderResult, BillingReminderSend, BillingReminderSendPage, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementRunRequest, BillingStatementRunResult } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function billingGetAging(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string; as_of?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string; as_of?: string },
+  call?: ApiCallOptions
 ): Promise<Result<BillingAgingPage>> {
   return client.request<BillingAgingPage>({
     method: "GET",
     path: "/api/v1/ar/aging",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingGetAging",
   });
 }
 
 export async function billingGetAutoHold(
   client: ApiClient,
-  opts?: { branch_id?: string }
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<BillingAutoHoldSetting>> {
   return client.request<BillingAutoHoldSetting>({
     method: "GET",
     path: "/api/v1/ar/auto-hold",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingGetAutoHold",
   });
 }
 
 export async function billingPutAutoHold(
   client: ApiClient,
-  body: BillingAutoHoldRequest
+  body: BillingAutoHoldRequest,
+  call?: ApiCallOptions
 ): Promise<Result<BillingAutoHoldSetting>> {
   return client.request<BillingAutoHoldSetting>({
     method: "PUT",
     path: "/api/v1/ar/auto-hold",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingPutAutoHold",
   });
 }
 
 export async function billingRunCreditSweep(
   client: ApiClient,
-  opts?: { branch_id?: string }
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<BillingEvaluationResult>> {
   return client.request<BillingEvaluationResult>({
     method: "POST",
     path: "/api/v1/ar/credit-sweep",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingRunCreditSweep",
   });
 }
 
 export async function billingGetAPContact(
   client: ApiClient,
-  customerID: string
+  customerID: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<BillingAPContactRead>> {
   return client.request<BillingAPContactRead>({
     method: "GET",
     path: "/api/v1/ar/customers/{customerID}/ap-contact",
     pathParams: { customerID },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingGetAPContact",
   });
 }
 
 export async function billingPutAPContact(
   client: ApiClient,
-  customerID: string,
-  body: BillingAPContact
+  customerID: string | number,
+  body: BillingAPContact,
+  call?: ApiCallOptions
 ): Promise<Result<BillingAPContactRead>> {
   return client.request<BillingAPContactRead>({
     method: "PUT",
     path: "/api/v1/ar/customers/{customerID}/ap-contact",
     pathParams: { customerID },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingPutAPContact",
   });
 }
 
 export async function billingDeleteAPContact(
   client: ApiClient,
-  customerID: string
+  customerID: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<BillingAPContactRead>> {
   return client.request<BillingAPContactRead>({
     method: "DELETE",
     path: "/api/v1/ar/customers/{customerID}/ap-contact",
     pathParams: { customerID },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingDeleteAPContact",
   });
 }
 
 export async function billingGetCustomerStatement(
   client: ApiClient,
-  customerID: string,
-  opts?: { format?: "html" }
+  customerID: string | number,
+  opts?: { format?: "html" },
+  call?: ApiCallOptions
 ): Promise<Result<BillingStatement>> {
   return client.request<BillingStatement>({
     method: "GET",
     path: "/api/v1/ar/customers/{customerID}/statement",
     pathParams: { customerID },
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingGetCustomerStatement",
   });
 }
 
 export async function billingGetDispatchGate(
   client: ApiClient,
-  orderID: string
+  orderID: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<BillingDispatchGateResult>> {
   return client.request<BillingDispatchGateResult>({
     method: "GET",
     path: "/api/v1/ar/dispatch-gate/{orderID}",
     pathParams: { orderID },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingGetDispatchGate",
   });
 }
 
 export async function billingListHolds(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; status?: "ACTIVE" | "RELEASED" }
+  opts?: { cursor?: string; limit?: number; status?: "ACTIVE" | "RELEASED" },
+  call?: ApiCallOptions
 ): Promise<Result<BillingCreditHoldPage>> {
   return client.request<BillingCreditHoldPage>({
     method: "GET",
     path: "/api/v1/ar/holds",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingListHolds",
   });
 }
 
 export async function billingReleaseHold(
   client: ApiClient,
-  id: string,
-  body: BillingHoldReleaseRequest
+  id: string | number,
+  body: BillingHoldReleaseRequest,
+  call?: ApiCallOptions
 ): Promise<Result<{ ok: boolean }>> {
   return client.request<{ ok: boolean }>({
     method: "POST",
     path: "/api/v1/ar/holds/{id}/ar-release",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingReleaseHold",
   });
 }
 
 export async function billingOverrideHold(
   client: ApiClient,
-  id: string,
-  body: BillingHoldOverrideRequest
+  id: string | number,
+  body: BillingHoldOverrideRequest,
+  call?: ApiCallOptions
 ): Promise<Result<BillingHoldOverrideResult>> {
   return client.request<BillingHoldOverrideResult>({
     method: "POST",
     path: "/api/v1/ar/holds/{id}/override",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingOverrideHold",
   });
 }
 
 export async function billingGetARLanding(
   client: ApiClient,
-  opts?: { branch_id?: string; as_of?: string }
+  opts?: { branch_id?: string; as_of?: string },
+  call?: ApiCallOptions
 ): Promise<Result<BillingARLanding>> {
   return client.request<BillingARLanding>({
     method: "GET",
     path: "/api/v1/ar/landing",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingGetARLanding",
   });
 }
 
 export async function billingGetARLandingPolicy(
   client: ApiClient,
-  opts?: { branch_id?: string }
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<BillingLandingPolicy>> {
   return client.request<BillingLandingPolicy>({
     method: "GET",
     path: "/api/v1/ar/landing/policy",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingGetARLandingPolicy",
   });
 }
@@ -186,289 +228,358 @@ export async function billingGetARLandingPolicy(
 export async function billingPutARLandingPolicy(
   client: ApiClient,
   body: BillingLandingPolicy,
-  opts?: { branch_id?: string }
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<BillingLandingPolicy>> {
   return client.request<BillingLandingPolicy>({
     method: "PUT",
     path: "/api/v1/ar/landing/policy",
     query: opts,
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingPutARLandingPolicy",
   });
 }
 
 export async function billingGetARLandingPolicyHistory(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<BillingPolicyChangePage>> {
   return client.request<BillingPolicyChangePage>({
     method: "GET",
     path: "/api/v1/ar/landing/policy/history",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingGetARLandingPolicyHistory",
   });
 }
 
 export async function billingListPaperPath(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<BillingPaperPathPage>> {
   return client.request<BillingPaperPathPage>({
     method: "GET",
     path: "/api/v1/ar/paper-path",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingListPaperPath",
   });
 }
 
 export async function billingSweepPaperPath(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<BillingPaperPathSweepResult>> {
   return client.request<BillingPaperPathSweepResult>({
     method: "POST",
     path: "/api/v1/ar/paper-path/sweep",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingSweepPaperPath",
   });
 }
 
 export async function billingResolvePaperPath(
   client: ApiClient,
-  id: string,
-  body: BillingPaperPathResolveRequest
+  id: string | number,
+  body: BillingPaperPathResolveRequest,
+  call?: ApiCallOptions
 ): Promise<Result<{ ok: boolean }>> {
   return client.request<{ ok: boolean }>({
     method: "POST",
     path: "/api/v1/ar/paper-path/{id}/resolve",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingResolvePaperPath",
   });
 }
 
 export async function billingListRegister(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; q?: string; chip?: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT"; branch_id?: string; customer_id?: string; salesperson_id?: string; show_credits?: boolean; issued_from?: string; issued_to?: string }
+  opts?: { cursor?: string; limit?: number; q?: string; chip?: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT"; branch_id?: string; customer_id?: string; salesperson_id?: string; show_credits?: boolean; issued_from?: string; issued_to?: string },
+  call?: ApiCallOptions
 ): Promise<Result<BillingRegisterPage>> {
   return client.request<BillingRegisterPage>({
     method: "GET",
     path: "/api/v1/ar/register",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingListRegister",
   });
 }
 
 export async function billingExportRegister(
   client: ApiClient,
-  opts?: { q?: string; chip?: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT"; branch_id?: string; customer_id?: string; salesperson_id?: string; show_credits?: boolean }
+  opts?: { q?: string; chip?: "OPEN" | "DUE_SOON" | "OVERDUE" | "PARTIALLY_PAID" | "PAID" | "DISPUTED" | "CREDIT_HOLD" | "DRAFT" | "VOID" | "CREDIT"; branch_id?: string; customer_id?: string; salesperson_id?: string; show_credits?: boolean },
+  call?: ApiCallOptions
 ): Promise<Result<string>> {
   return client.request<string>({
     method: "GET",
     path: "/api/v1/ar/register/export",
     query: opts,
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingExportRegister",
   });
 }
 
 export async function billingGetRegisterInvoice(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<BillingInvoiceDetail>> {
   return client.request<BillingInvoiceDetail>({
     method: "GET",
     path: "/api/v1/ar/register/invoices/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingGetRegisterInvoice",
   });
 }
 
 export async function billingOpenDispute(
   client: ApiClient,
-  id: string,
-  body: BillingDisputeInput
+  id: string | number,
+  body: BillingDisputeInput,
+  call?: ApiCallOptions
 ): Promise<Result<BillingDisputeView>> {
   return client.request<BillingDisputeView>({
     method: "POST",
     path: "/api/v1/ar/register/invoices/{id}/dispute",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingOpenDispute",
   });
 }
 
 export async function billingResolveDispute(
   client: ApiClient,
-  id: string,
-  body: BillingDisputeResolveRequest
+  id: string | number,
+  body: BillingDisputeResolveRequest,
+  call?: ApiCallOptions
 ): Promise<Result<{ resolved: boolean }>> {
   return client.request<{ resolved: boolean }>({
     method: "POST",
     path: "/api/v1/ar/register/invoices/{id}/dispute/resolve",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingResolveDispute",
   });
 }
 
 export async function billingGetRegisterInvoiceDocument(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<string>> {
   return client.request<string>({
     method: "GET",
     path: "/api/v1/ar/register/invoices/{id}/document",
     pathParams: { id },
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingGetRegisterInvoiceDocument",
   });
 }
 
 export async function billingRecordInvoicePayment(
   client: ApiClient,
-  id: string,
-  body: BillingReceiptInput
+  id: string | number,
+  body: BillingReceiptInput,
+  call?: ApiCallOptions
 ): Promise<Result<BillingReceiptResult>> {
   return client.request<BillingReceiptResult>({
     method: "POST",
     path: "/api/v1/ar/register/invoices/{id}/payments",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingRecordInvoicePayment",
   });
 }
 
 export async function billingAddPromise(
   client: ApiClient,
-  id: string,
-  body: BillingPromiseInput
+  id: string | number,
+  body: BillingPromiseInput,
+  call?: ApiCallOptions
 ): Promise<Result<BillingPromiseView>> {
   return client.request<BillingPromiseView>({
     method: "POST",
     path: "/api/v1/ar/register/invoices/{id}/promise",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingAddPromise",
   });
 }
 
 export async function billingSendInvoice(
   client: ApiClient,
-  id: string,
-  body: BillingInvoiceSendRequest
+  id: string | number,
+  body: BillingInvoiceSendRequest,
+  call?: ApiCallOptions
 ): Promise<Result<BillingReminderResult>> {
   return client.request<BillingReminderResult>({
     method: "POST",
     path: "/api/v1/ar/register/invoices/{id}/send",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingSendInvoice",
   });
 }
 
 export async function billingGetRegisterPolicy(
   client: ApiClient,
-  opts?: { branch_id?: string }
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<BillingRegisterPolicy>> {
   return client.request<BillingRegisterPolicy>({
     method: "GET",
     path: "/api/v1/ar/register/policy",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingGetRegisterPolicy",
   });
 }
 
 export async function billingPutRegisterPolicy(
   client: ApiClient,
-  body: BillingRegisterPolicy
+  body: BillingRegisterPolicy,
+  call?: ApiCallOptions
 ): Promise<Result<{ saved: boolean }>> {
   return client.request<{ saved: boolean }>({
     method: "PUT",
     path: "/api/v1/ar/register/policy",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingPutRegisterPolicy",
   });
 }
 
 export async function billingSendRegisterReminders(
   client: ApiClient,
-  body: BillingReminderInput
+  body: BillingReminderInput,
+  call?: ApiCallOptions
 ): Promise<Result<BillingReminderResult>> {
   return client.request<BillingReminderResult>({
     method: "POST",
     path: "/api/v1/ar/register/reminders",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingSendRegisterReminders",
   });
 }
 
 export async function billingRegisterSelection(
   client: ApiClient,
-  body: BillingRegisterSelectionRequest
+  body: BillingRegisterSelectionRequest,
+  call?: ApiCallOptions
 ): Promise<Result<BillingRegisterSelectionResult>> {
   return client.request<BillingRegisterSelectionResult>({
     method: "POST",
     path: "/api/v1/ar/register/selection",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingRegisterSelection",
   });
 }
 
 export async function billingCreateRegisterStatements(
   client: ApiClient,
-  body: BillingRegisterStatementsRequest
+  body: BillingRegisterStatementsRequest,
+  call?: ApiCallOptions
 ): Promise<Result<BillingStatementBatch>> {
   return client.request<BillingStatementBatch>({
     method: "POST",
     path: "/api/v1/ar/register/statements",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingCreateRegisterStatements",
   });
 }
 
 export async function billingSendARReminder(
   client: ApiClient,
-  body: BillingSendReminderInput
+  body: BillingSendReminderInput,
+  call?: ApiCallOptions
 ): Promise<Result<BillingReminderSend>> {
   return client.request<BillingReminderSend>({
     method: "POST",
     path: "/api/v1/ar/reminders",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingSendARReminder",
   });
 }
 
 export async function billingListARReminders(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; customer_id?: string }
+  opts?: { cursor?: string; limit?: number; customer_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<BillingReminderSendPage>> {
   return client.request<BillingReminderSendPage>({
     method: "GET",
     path: "/api/v1/ar/reminders",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingListARReminders",
   });
 }
 
 export async function billingCreateStatementRun(
   client: ApiClient,
-  body: BillingStatementRunRequest
+  body: BillingStatementRunRequest,
+  call?: ApiCallOptions
 ): Promise<Result<BillingStatementRunResult>> {
   return client.request<BillingStatementRunResult>({
     method: "POST",
     path: "/api/v1/ar/statement-runs",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingCreateStatementRun",
   });
 }
 
 export async function billingGetStatementRun(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<BillingStatementRunResult>> {
   return client.request<BillingStatementRunResult>({
     method: "GET",
     path: "/api/v1/ar/statement-runs/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "billingGetStatementRun",
   });
 }

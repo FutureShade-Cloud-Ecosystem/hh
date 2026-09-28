@@ -3,117 +3,144 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { FinStmtAgingSummary, FinStmtGLDetailResponse, FinStmtSchedule, FinStmtScheduleInput, FinStmtSchedulePage, FinStmtTrialBalanceReport } from "./types.js";
+import type { FinStmtAgingSummary, FinStmtBalanceSheetReport, FinStmtComparativeRows, FinStmtGLDetailResponse, FinStmtIncomeStatementReport, FinStmtSchedule, FinStmtScheduleInput, FinStmtSchedulePage, FinStmtTrialBalanceReport } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function finstmtARAging(
   client: ApiClient,
-  opts?: { branch_id?: string; branch_name?: string; format?: "csv" | "xlsx" }
+  opts?: { branch_id?: string; branch_name?: string; format?: "csv" | "xlsx" },
+  call?: ApiCallOptions
 ): Promise<Result<FinStmtAgingSummary>> {
   return client.request<FinStmtAgingSummary>({
     method: "GET",
     path: "/api/v1/finstmt/ar-aging",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "finstmtARAging",
   });
 }
 
 export async function finstmtBalanceSheet(
   client: ApiClient,
-  opts: { year: number; branch_id?: string; branch_name?: string; compare?: "1"; format?: "csv" | "xlsx" }
-): Promise<Result<unknown>> {
-  return client.request<unknown>({
+  opts: { year: number; branch_id?: string; branch_name?: string; compare?: "1"; format?: "csv" | "xlsx" },
+  call?: ApiCallOptions
+): Promise<Result<FinStmtBalanceSheetReport | FinStmtComparativeRows>> {
+  return client.request<FinStmtBalanceSheetReport | FinStmtComparativeRows>({
     method: "GET",
     path: "/api/v1/finstmt/balance-sheet",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "finstmtBalanceSheet",
   });
 }
 
 export async function finstmtGLDetail(
   client: ApiClient,
-  opts?: { year?: number; month?: number; account_code?: string; account_type?: "ASSET" | "LIABILITY" | "EQUITY" | "REVENUE" | "EXPENSE"; branch_id?: string; branch_name?: string; format?: "csv" | "xlsx" }
+  opts?: { year?: number; month?: number; account_code?: string; account_type?: "ASSET" | "LIABILITY" | "EQUITY" | "REVENUE" | "EXPENSE"; branch_id?: string; branch_name?: string; format?: "csv" | "xlsx" },
+  call?: ApiCallOptions
 ): Promise<Result<FinStmtGLDetailResponse>> {
   return client.request<FinStmtGLDetailResponse>({
     method: "GET",
     path: "/api/v1/finstmt/gl-detail",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "finstmtGLDetail",
   });
 }
 
 export async function finstmtIncomeStatement(
   client: ApiClient,
-  opts: { year: number; month?: number; branch_id?: string; branch_name?: string; compare?: "1"; format?: "csv" | "xlsx" }
-): Promise<Result<unknown>> {
-  return client.request<unknown>({
+  opts: { year: number; month?: number; branch_id?: string; branch_name?: string; compare?: "1"; format?: "csv" | "xlsx" },
+  call?: ApiCallOptions
+): Promise<Result<FinStmtIncomeStatementReport | FinStmtComparativeRows>> {
+  return client.request<FinStmtIncomeStatementReport | FinStmtComparativeRows>({
     method: "GET",
     path: "/api/v1/finstmt/income-statement",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "finstmtIncomeStatement",
   });
 }
 
 export async function finstmtListSchedules(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<FinStmtSchedulePage>> {
   return client.request<FinStmtSchedulePage>({
     method: "GET",
     path: "/api/v1/finstmt/schedules",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "finstmtListSchedules",
   });
 }
 
 export async function finstmtCreateSchedule(
   client: ApiClient,
-  body: FinStmtScheduleInput
+  body: FinStmtScheduleInput,
+  call?: ApiCallOptions
 ): Promise<Result<FinStmtSchedule>> {
   return client.request<FinStmtSchedule>({
     method: "POST",
     path: "/api/v1/finstmt/schedules",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "finstmtCreateSchedule",
   });
 }
 
 export async function finstmtUpdateSchedule(
   client: ApiClient,
-  id: string,
-  body: FinStmtScheduleInput
+  id: string | number,
+  body: FinStmtScheduleInput,
+  call?: ApiCallOptions
 ): Promise<Result<FinStmtSchedule>> {
   return client.request<FinStmtSchedule>({
     method: "PUT",
     path: "/api/v1/finstmt/schedules/{id}",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "finstmtUpdateSchedule",
   });
 }
 
 export async function finstmtDeleteSchedule(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<unknown>> {
   return client.request<unknown>({
     method: "DELETE",
     path: "/api/v1/finstmt/schedules/{id}",
     pathParams: { id },
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "finstmtDeleteSchedule",
   });
 }
 
 export async function finstmtTrialBalance(
   client: ApiClient,
-  opts: { year: number; format?: "csv" | "xlsx" }
+  opts: { year: number; format?: "csv" | "xlsx" },
+  call?: ApiCallOptions
 ): Promise<Result<FinStmtTrialBalanceReport>> {
   return client.request<FinStmtTrialBalanceReport>({
     method: "GET",
     path: "/api/v1/finstmt/trial-balance",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "finstmtTrialBalance",
   });
 }

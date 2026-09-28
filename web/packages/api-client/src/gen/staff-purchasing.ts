@@ -5,441 +5,543 @@
 
 import type { PurchasingAddLineRequest, PurchasingAttachLandedCostRequest, PurchasingBillDetail, PurchasingBillPage, PurchasingBillStatus, PurchasingCreateBillRequest, PurchasingCreatePORequest, PurchasingIncomingLinePage, PurchasingMatchState, PurchasingPO, PurchasingPOCosts, PurchasingPODetail, PurchasingPOPage, PurchasingPOSend, PurchasingPOSendPage, PurchasingPOStatus, PurchasingPolicy, PurchasingPostBillRequest, PurchasingReceipt, PurchasingReceiveRequest, PurchasingSendPORequest, PurchasingSetDeliveryMethodRequest, PurchasingSetExpectedDateRequest, PurchasingSetPolicyRequest, PurchasingSetToleranceRequest, PurchasingTolerance, PurchasingTransitionRequest, PurchasingVendorContactResult, PurchasingVendorContactWrite, PurchasingVendorPage, PurchasingVendorSKU, PurchasingVendorSKUPage, PurchasingVendorSKUWrite, PurchasingWorklistItemPage } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function purchasingListBills(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string; status?: PurchasingBillStatus; match_state?: PurchasingMatchState }
+  opts?: { cursor?: string; limit?: number; branch_id?: string; status?: PurchasingBillStatus; match_state?: PurchasingMatchState },
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingBillPage>> {
   return client.request<PurchasingBillPage>({
     method: "GET",
     path: "/api/v1/purchasing/bills",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingListBills",
   });
 }
 
 export async function purchasingCreateBill(
   client: ApiClient,
-  body: PurchasingCreateBillRequest
+  body: PurchasingCreateBillRequest,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingBillDetail>> {
   return client.request<PurchasingBillDetail>({
     method: "POST",
     path: "/api/v1/purchasing/bills",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingCreateBill",
   });
 }
 
 export async function purchasingGetBill(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingBillDetail>> {
   return client.request<PurchasingBillDetail>({
     method: "GET",
     path: "/api/v1/purchasing/bills/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingGetBill",
   });
 }
 
 export async function purchasingPostBill(
   client: ApiClient,
-  id: string,
-  body: PurchasingPostBillRequest
+  id: string | number,
+  body: PurchasingPostBillRequest,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingBillDetail>> {
   return client.request<PurchasingBillDetail>({
     method: "POST",
     path: "/api/v1/purchasing/bills/{id}/post",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingPostBill",
   });
 }
 
 export async function purchasingListIncoming(
   client: ApiClient,
-  opts: { product_id: string; branch_id?: string; cursor?: string; limit?: number }
+  opts: { product_id: string; branch_id?: string; cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingIncomingLinePage>> {
   return client.request<PurchasingIncomingLinePage>({
     method: "GET",
     path: "/api/v1/purchasing/incoming",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingListIncoming",
   });
 }
 
 export async function purchasingGetPolicy(
   client: ApiClient,
-  opts?: { branch_id?: string }
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingPolicy>> {
   return client.request<PurchasingPolicy>({
     method: "GET",
     path: "/api/v1/purchasing/policy",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingGetPolicy",
   });
 }
 
 export async function purchasingSetPolicy(
   client: ApiClient,
-  body: PurchasingSetPolicyRequest
+  body: PurchasingSetPolicyRequest,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingPolicy>> {
   return client.request<PurchasingPolicy>({
     method: "PUT",
     path: "/api/v1/purchasing/policy",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingSetPolicy",
   });
 }
 
 export async function purchasingListPOs(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string; status?: PurchasingPOStatus }
+  opts?: { cursor?: string; limit?: number; branch_id?: string; status?: PurchasingPOStatus },
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingPOPage>> {
   return client.request<PurchasingPOPage>({
     method: "GET",
     path: "/api/v1/purchasing/pos",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingListPOs",
   });
 }
 
 export async function purchasingCreatePO(
   client: ApiClient,
-  body: PurchasingCreatePORequest
+  body: PurchasingCreatePORequest,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingPODetail>> {
   return client.request<PurchasingPODetail>({
     method: "POST",
     path: "/api/v1/purchasing/pos",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingCreatePO",
   });
 }
 
 export async function purchasingGetPO(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingPODetail>> {
   return client.request<PurchasingPODetail>({
     method: "GET",
     path: "/api/v1/purchasing/pos/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingGetPO",
   });
 }
 
 export async function purchasingGetPOCosts(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingPOCosts>> {
   return client.request<PurchasingPOCosts>({
     method: "GET",
     path: "/api/v1/purchasing/pos/{id}/costs",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingGetPOCosts",
   });
 }
 
 export async function purchasingSetDeliveryMethod(
   client: ApiClient,
-  id: string,
-  body: PurchasingSetDeliveryMethodRequest
+  id: string | number,
+  body: PurchasingSetDeliveryMethodRequest,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingPODetail>> {
   return client.request<PurchasingPODetail>({
     method: "PUT",
     path: "/api/v1/purchasing/pos/{id}/delivery-method",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingSetDeliveryMethod",
   });
 }
 
 export async function purchasingGetPODocumentHTML(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<string>> {
   return client.request<string>({
     method: "GET",
     path: "/api/v1/purchasing/pos/{id}/document",
     pathParams: { id },
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingGetPODocumentHTML",
   });
 }
 
 export async function purchasingGetPODocumentCSV(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<string>> {
   return client.request<string>({
     method: "GET",
     path: "/api/v1/purchasing/pos/{id}/document.csv",
     pathParams: { id },
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingGetPODocumentCSV",
   });
 }
 
 export async function purchasingSetExpectedDate(
   client: ApiClient,
-  id: string,
-  body: PurchasingSetExpectedDateRequest
+  id: string | number,
+  body: PurchasingSetExpectedDateRequest,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingPODetail>> {
   return client.request<PurchasingPODetail>({
     method: "PUT",
     path: "/api/v1/purchasing/pos/{id}/expected-date",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingSetExpectedDate",
   });
 }
 
 export async function purchasingAddLine(
   client: ApiClient,
-  id: string,
-  body: PurchasingAddLineRequest
+  id: string | number,
+  body: PurchasingAddLineRequest,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingPODetail>> {
   return client.request<PurchasingPODetail>({
     method: "POST",
     path: "/api/v1/purchasing/pos/{id}/lines",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingAddLine",
   });
 }
 
 export async function purchasingRemoveLine(
   client: ApiClient,
-  id: string,
-  lineID: string
+  id: string | number,
+  lineID: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingPODetail>> {
   return client.request<PurchasingPODetail>({
     method: "DELETE",
     path: "/api/v1/purchasing/pos/{id}/lines/{lineID}",
     pathParams: { id, lineID },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingRemoveLine",
   });
 }
 
 export async function purchasingReceivePO(
   client: ApiClient,
-  id: string,
-  body: PurchasingReceiveRequest
+  id: string | number,
+  body: PurchasingReceiveRequest,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingReceipt>> {
   return client.request<PurchasingReceipt>({
     method: "POST",
     path: "/api/v1/purchasing/pos/{id}/receive",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingReceivePO",
   });
 }
 
 export async function purchasingSendPO(
   client: ApiClient,
-  id: string,
-  body: PurchasingSendPORequest
+  id: string | number,
+  body: PurchasingSendPORequest,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingPOSend>> {
   return client.request<PurchasingPOSend>({
     method: "POST",
     path: "/api/v1/purchasing/pos/{id}/send",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingSendPO",
   });
 }
 
 export async function purchasingListPOSends(
   client: ApiClient,
-  id: string,
-  opts?: { cursor?: string; limit?: number }
+  id: string | number,
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingPOSendPage>> {
   return client.request<PurchasingPOSendPage>({
     method: "GET",
     path: "/api/v1/purchasing/pos/{id}/sends",
     pathParams: { id },
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingListPOSends",
   });
 }
 
 export async function purchasingTransitionPO(
   client: ApiClient,
-  id: string,
-  body: PurchasingTransitionRequest
+  id: string | number,
+  body: PurchasingTransitionRequest,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingPODetail>> {
   return client.request<PurchasingPODetail>({
     method: "POST",
     path: "/api/v1/purchasing/pos/{id}/transition",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingTransitionPO",
   });
 }
 
 export async function purchasingGetReceipt(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingReceipt>> {
   return client.request<PurchasingReceipt>({
     method: "GET",
     path: "/api/v1/purchasing/receipts/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingGetReceipt",
   });
 }
 
 export async function purchasingAttachLandedCost(
   client: ApiClient,
-  id: string,
-  body: PurchasingAttachLandedCostRequest
+  id: string | number,
+  body: PurchasingAttachLandedCostRequest,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingReceipt>> {
   return client.request<PurchasingReceipt>({
     method: "POST",
     path: "/api/v1/purchasing/receipts/{id}/landed-cost",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingAttachLandedCost",
   });
 }
 
 export async function purchasingListReceivingWorklist(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingWorklistItemPage>> {
   return client.request<PurchasingWorklistItemPage>({
     method: "GET",
     path: "/api/v1/purchasing/receiving",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingListReceivingWorklist",
   });
 }
 
 export async function purchasingGetTolerance(
   client: ApiClient,
-  opts?: { branch_id?: string }
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingTolerance>> {
   return client.request<PurchasingTolerance>({
     method: "GET",
     path: "/api/v1/purchasing/tolerance",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingGetTolerance",
   });
 }
 
 export async function purchasingSetTolerance(
   client: ApiClient,
-  body: PurchasingSetToleranceRequest
+  body: PurchasingSetToleranceRequest,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingTolerance>> {
   return client.request<PurchasingTolerance>({
     method: "PUT",
     path: "/api/v1/purchasing/tolerance",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingSetTolerance",
   });
 }
 
 export async function purchasingResolveVendorRef(
   client: ApiClient,
-  opts: { ref: string }
+  opts: { ref: string },
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingPO>> {
   return client.request<PurchasingPO>({
     method: "GET",
     path: "/api/v1/purchasing/vendor-ref",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingResolveVendorRef",
   });
 }
 
 export async function purchasingListVendors(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingVendorPage>> {
   return client.request<PurchasingVendorPage>({
     method: "GET",
     path: "/api/v1/purchasing/vendors",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingListVendors",
   });
 }
 
 export async function purchasingGetVendorContact(
   client: ApiClient,
-  vendorID: string
+  vendorID: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingVendorContactResult>> {
   return client.request<PurchasingVendorContactResult>({
     method: "GET",
     path: "/api/v1/purchasing/vendors/{vendorID}/contact",
     pathParams: { vendorID },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingGetVendorContact",
   });
 }
 
 export async function purchasingSetVendorContact(
   client: ApiClient,
-  vendorID: string,
-  body: PurchasingVendorContactWrite
+  vendorID: string | number,
+  body: PurchasingVendorContactWrite,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingVendorContactResult>> {
   return client.request<PurchasingVendorContactResult>({
     method: "PUT",
     path: "/api/v1/purchasing/vendors/{vendorID}/contact",
     pathParams: { vendorID },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingSetVendorContact",
   });
 }
 
 export async function purchasingDeleteVendorContact(
   client: ApiClient,
-  vendorID: string
+  vendorID: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingVendorContactResult>> {
   return client.request<PurchasingVendorContactResult>({
     method: "DELETE",
     path: "/api/v1/purchasing/vendors/{vendorID}/contact",
     pathParams: { vendorID },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingDeleteVendorContact",
   });
 }
 
 export async function purchasingListVendorSKUs(
   client: ApiClient,
-  vendorID: string,
-  opts?: { cursor?: string; limit?: number }
+  vendorID: string | number,
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingVendorSKUPage>> {
   return client.request<PurchasingVendorSKUPage>({
     method: "GET",
     path: "/api/v1/purchasing/vendors/{vendorID}/skus",
     pathParams: { vendorID },
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingListVendorSKUs",
   });
 }
 
 export async function purchasingSetVendorSKU(
   client: ApiClient,
-  vendorID: string,
-  body: PurchasingVendorSKUWrite
+  vendorID: string | number,
+  body: PurchasingVendorSKUWrite,
+  call?: ApiCallOptions
 ): Promise<Result<PurchasingVendorSKU>> {
   return client.request<PurchasingVendorSKU>({
     method: "PUT",
     path: "/api/v1/purchasing/vendors/{vendorID}/skus",
     pathParams: { vendorID },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingSetVendorSKU",
   });
 }
 
 export async function purchasingDeleteVendorSKU(
   client: ApiClient,
-  vendorID: string,
-  productID: string
+  vendorID: string | number,
+  productID: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<unknown>> {
   return client.request<unknown>({
     method: "DELETE",
     path: "/api/v1/purchasing/vendors/{vendorID}/skus/{productID}",
     pathParams: { vendorID, productID },
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "purchasingDeleteVendorSKU",
   });
 }

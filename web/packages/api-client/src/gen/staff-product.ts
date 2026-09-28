@@ -5,145 +5,182 @@
 
 import type { Product, ProductAttributeUpdate, ProductCounterHit, ProductCounterSearchResults, ProductCoverageResults, ProductFacet, ProductImageDeleteResult, ProductImagePutResult, ProductPage, ProductSearchResults } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function productList(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; finish?: string; color_family?: string; application?: string; color?: string; manufacturer?: string; collection?: string; category_id?: string; q?: string; active?: boolean; in_stock_only?: boolean; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; finish?: string; color_family?: string; application?: string; color?: string; manufacturer?: string; collection?: string; category_id?: string; q?: string; active?: boolean; in_stock_only?: boolean; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<ProductPage>> {
   return client.request<ProductPage>({
     method: "GET",
     path: "/api/v1/products",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "productList",
   });
 }
 
 export async function productCounterSearch(
   client: ApiClient,
-  opts: { q: string; branch_id?: string; limit?: number }
+  opts: { q: string; branch_id?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<ProductCounterSearchResults>> {
   return client.request<ProductCounterSearchResults>({
     method: "GET",
     path: "/api/v1/products/counter-search",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "productCounterSearch",
   });
 }
 
 export async function productCoverage(
   client: ApiClient,
-  opts?: { ids?: string }
+  opts?: { ids?: string },
+  call?: ApiCallOptions
 ): Promise<Result<ProductCoverageResults>> {
   return client.request<ProductCoverageResults>({
     method: "GET",
     path: "/api/v1/products/coverage",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "productCoverage",
   });
 }
 
 export async function productFacets(
   client: ApiClient,
-  opts?: { finish?: string; color_family?: string; application?: string; color?: string; manufacturer?: string; collection?: string; category_id?: string; q?: string; active?: boolean; in_stock_only?: boolean; branch_id?: string }
+  opts?: { finish?: string; color_family?: string; application?: string; color?: string; manufacturer?: string; collection?: string; category_id?: string; q?: string; active?: boolean; in_stock_only?: boolean; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<ProductFacet[]>> {
   return client.request<ProductFacet[]>({
     method: "GET",
     path: "/api/v1/products/facets",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "productFacets",
   });
 }
 
 export async function productScan(
   client: ApiClient,
-  opts: { code: string; branch_id?: string }
+  opts: { code: string; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<ProductCounterHit>> {
   return client.request<ProductCounterHit>({
     method: "GET",
     path: "/api/v1/products/scan",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "productScan",
   });
 }
 
 export async function productSearch(
   client: ApiClient,
-  opts: { q: string; limit?: number }
+  opts: { q: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<ProductSearchResults>> {
   return client.request<ProductSearchResults>({
     method: "GET",
     path: "/api/v1/products/search",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "productSearch",
   });
 }
 
 export async function productGet(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<Product>> {
   return client.request<Product>({
     method: "GET",
     path: "/api/v1/products/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "productGet",
   });
 }
 
 export async function productUpdate(
   client: ApiClient,
-  id: string,
-  body: ProductAttributeUpdate
+  id: string | number,
+  body: ProductAttributeUpdate,
+  call?: ApiCallOptions
 ): Promise<Result<Product>> {
   return client.request<Product>({
     method: "PUT",
     path: "/api/v1/products/{id}",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "productUpdate",
   });
 }
 
+// The document declares the success content as image/jpeg, image/png, image/webp
+// (format: binary); the client resolves the raw bytes.
 export async function productGetImage(
   client: ApiClient,
-  id: string
-): Promise<Result<string>> {
-  return client.request<string>({
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<Uint8Array>> {
+  return client.request<Uint8Array>({
     method: "GET",
     path: "/api/v1/products/{id}/image",
     pathParams: { id },
-    textResponse: true,
+    bytesResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "productGetImage",
   });
 }
 
 // The document also declares this upload as image/png, image/webp; the
 // client sends the first declared type (image/jpeg).
+// The document declares the body format: binary: the body is the raw bytes
+// (a string rides its UTF-8 bytes verbatim).
 export async function productPutImage(
   client: ApiClient,
-  id: string,
-  body: string,
-  opts?: { alt?: string }
+  id: string | number,
+  body: string | Uint8Array,
+  opts?: { alt?: string },
+  call?: ApiCallOptions
 ): Promise<Result<ProductImagePutResult>> {
   return client.request<ProductImagePutResult>({
     method: "PUT",
     path: "/api/v1/products/{id}/image",
     pathParams: { id },
     query: opts,
-    rawBody: { contentType: "image/jpeg", text: body },
+    rawBody: { contentType: "image/jpeg", content: body },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "productPutImage",
   });
 }
 
 export async function productDeleteImage(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<ProductImageDeleteResult>> {
   return client.request<ProductImageDeleteResult>({
     method: "DELETE",
     path: "/api/v1/products/{id}/image",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "productDeleteImage",
   });
 }

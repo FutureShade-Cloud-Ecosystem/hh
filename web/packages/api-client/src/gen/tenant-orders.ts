@@ -5,104 +5,128 @@
 
 import type { TenantDeliveryInstructionsRequest, TenantOrderDetail, TenantOrderPage, TenantReorderPreview, TenantReorderRequest, TenantReorderResult, TenantReturnEligibility, TenantReturnRequest, TenantReturnRequestCreate, TenantStatusResponse } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function tenantListOrders(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; status?: "DRAFT" | "CONFIRMED" | "PICKING" | "READY" | "PARTIALLY_FULFILLED" | "FULFILLED" | "INVOICED" | "CLOSED" | "CANCELLED" }
+  opts?: { cursor?: string; limit?: number; status?: "DRAFT" | "CONFIRMED" | "PICKING" | "READY" | "PARTIALLY_FULFILLED" | "FULFILLED" | "INVOICED" | "CLOSED" | "CANCELLED" },
+  call?: ApiCallOptions
 ): Promise<Result<TenantOrderPage>> {
   return client.request<TenantOrderPage>({
     method: "GET",
     path: "/api/v1/tenant/orders",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantListOrders",
   });
 }
 
 export async function tenantGetOrder(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TenantOrderDetail>> {
   return client.request<TenantOrderDetail>({
     method: "GET",
     path: "/api/v1/tenant/orders/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantGetOrder",
   });
 }
 
 export async function tenantSetDeliveryInstructions(
   client: ApiClient,
-  id: string,
-  body: TenantDeliveryInstructionsRequest
+  id: string | number,
+  body: TenantDeliveryInstructionsRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantStatusResponse>> {
   return client.request<TenantStatusResponse>({
     method: "PUT",
     path: "/api/v1/tenant/orders/{id}/delivery-instructions",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantSetDeliveryInstructions",
   });
 }
 
 export async function tenantCreateReorder(
   client: ApiClient,
-  id: string,
-  body: TenantReorderRequest
+  id: string | number,
+  body: TenantReorderRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantReorderResult>> {
   return client.request<TenantReorderResult>({
     method: "POST",
     path: "/api/v1/tenant/orders/{id}/reorder",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantCreateReorder",
   });
 }
 
 export async function tenantGetReorderPreview(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TenantReorderPreview>> {
   return client.request<TenantReorderPreview>({
     method: "GET",
     path: "/api/v1/tenant/orders/{id}/reorder-preview",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantGetReorderPreview",
   });
 }
 
 export async function tenantGetReturnEligibility(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TenantReturnEligibility>> {
   return client.request<TenantReturnEligibility>({
     method: "GET",
     path: "/api/v1/tenant/orders/{id}/return-eligibility",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantGetReturnEligibility",
   });
 }
 
 export async function tenantCreateReturnRequest(
   client: ApiClient,
-  id: string,
-  body: TenantReturnRequestCreate
+  id: string | number,
+  body: TenantReturnRequestCreate,
+  call?: ApiCallOptions
 ): Promise<Result<TenantReturnRequest>> {
   return client.request<TenantReturnRequest>({
     method: "POST",
     path: "/api/v1/tenant/orders/{id}/return-requests",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantCreateReturnRequest",
   });
 }
 
 export async function tenantListReturnRequests(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<TenantReturnRequest[]>> {
   return client.request<TenantReturnRequest[]>({
     method: "GET",
     path: "/api/v1/tenant/return-requests",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantListReturnRequests",
   });
 }

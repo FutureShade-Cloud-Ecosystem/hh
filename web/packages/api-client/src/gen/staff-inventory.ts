@@ -5,340 +5,424 @@
 
 import type { InventoryAllocationPolicy, InventoryBootstrapRequest, InventoryBootstrapResult, InventoryBranchStockPage, InventoryBrowsePage, InventoryCreatePOFromShortfallRequest, InventoryCreatePOResult, InventoryCreateTransferInput, InventoryExpireResult, InventoryInTransitLinePage, InventoryMovePage, InventoryNudgeRequest, InventoryNudgeResult, InventoryOnHandPage, InventoryPendingFulfilmentPage, InventoryReceiptResult, InventoryReceiveRequest, InventoryReleaseRequest, InventoryReleaseResult, InventoryReorderPoint, InventoryReorderPointPage, InventoryReorderRequest, InventoryReorderResult, InventoryReservationPage, InventoryReserveInput, InventoryReserveResult, InventorySetTransitDaysInput, InventoryShipTransferRequest, InventoryShortfallPage, InventoryTransfer, InventoryTransferPage, InventoryTransitDaysPair, InventoryTransitDaysPairPage } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function inventoryGetAllocationPolicy(
   client: ApiClient,
-  opts?: { branch_id?: string }
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<InventoryAllocationPolicy>> {
   return client.request<InventoryAllocationPolicy>({
     method: "GET",
     path: "/api/v1/inventory/allocation-policy",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryGetAllocationPolicy",
   });
 }
 
 export async function inventoryPutAllocationPolicy(
   client: ApiClient,
-  body: InventoryAllocationPolicy
+  body: InventoryAllocationPolicy,
+  call?: ApiCallOptions
 ): Promise<Result<InventoryAllocationPolicy>> {
   return client.request<InventoryAllocationPolicy>({
     method: "PUT",
     path: "/api/v1/inventory/allocation-policy",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryPutAllocationPolicy",
   });
 }
 
 export async function inventoryBranchStock(
   client: ApiClient,
-  opts: { cursor?: string; limit?: number; product_id: string; branch_id?: string }
+  opts: { cursor?: string; limit?: number; product_id: string; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<InventoryBranchStockPage>> {
   return client.request<InventoryBranchStockPage>({
     method: "GET",
     path: "/api/v1/inventory/branch-stock",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryBranchStock",
   });
 }
 
 export async function inventoryBrowse(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; text?: string; branch_id?: string; color_family?: string; texture?: string; product_size?: string; sold_by?: string; manufacturer?: string; collection?: string; color?: string; finish?: string; application?: string; is_featured?: boolean; is_special_order?: boolean; in_stock_only?: boolean }
+  opts?: { cursor?: string; limit?: number; text?: string; branch_id?: string; color_family?: string; texture?: string; product_size?: string; sold_by?: string; manufacturer?: string; collection?: string; color?: string; finish?: string; application?: string; is_featured?: boolean; is_special_order?: boolean; in_stock_only?: boolean },
+  call?: ApiCallOptions
 ): Promise<Result<InventoryBrowsePage>> {
   return client.request<InventoryBrowsePage>({
     method: "GET",
     path: "/api/v1/inventory/browse",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryBrowse",
   });
 }
 
 export async function inventoryListIncomingTransfers(
   client: ApiClient,
-  opts: { cursor?: string; limit?: number; product_id: string }
+  opts: { cursor?: string; limit?: number; product_id: string },
+  call?: ApiCallOptions
 ): Promise<Result<InventoryInTransitLinePage>> {
   return client.request<InventoryInTransitLinePage>({
     method: "GET",
     path: "/api/v1/inventory/incoming-transfers",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryListIncomingTransfers",
   });
 }
 
 export async function inventoryListMoves(
   client: ApiClient,
-  opts: { cursor?: string; limit?: number; product_id: string; branch_id?: string }
+  opts: { cursor?: string; limit?: number; product_id: string; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<InventoryMovePage>> {
   return client.request<InventoryMovePage>({
     method: "GET",
     path: "/api/v1/inventory/moves",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryListMoves",
   });
 }
 
 export async function inventoryNudgeProcurement(
   client: ApiClient,
-  body: InventoryNudgeRequest
+  body: InventoryNudgeRequest,
+  call?: ApiCallOptions
 ): Promise<Result<InventoryNudgeResult>> {
   return client.request<InventoryNudgeResult>({
     method: "POST",
     path: "/api/v1/inventory/nudge-procurement",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryNudgeProcurement",
   });
 }
 
 export async function inventoryOnHand(
   client: ApiClient,
-  opts: { cursor?: string; limit?: number; product_id: string }
+  opts: { cursor?: string; limit?: number; product_id: string },
+  call?: ApiCallOptions
 ): Promise<Result<InventoryOnHandPage>> {
   return client.request<InventoryOnHandPage>({
     method: "GET",
     path: "/api/v1/inventory/on-hand",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryOnHand",
   });
 }
 
 export async function inventoryListPendingFulfilment(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<InventoryPendingFulfilmentPage>> {
   return client.request<InventoryPendingFulfilmentPage>({
     method: "GET",
     path: "/api/v1/inventory/pending-fulfilment",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryListPendingFulfilment",
   });
 }
 
 export async function inventoryReceivePO(
   client: ApiClient,
-  body: InventoryReceiveRequest
+  body: InventoryReceiveRequest,
+  call?: ApiCallOptions
 ): Promise<Result<InventoryReceiptResult>> {
   return client.request<InventoryReceiptResult>({
     method: "POST",
     path: "/api/v1/inventory/receive",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryReceivePO",
   });
 }
 
 export async function inventoryReorderPO(
   client: ApiClient,
-  body: InventoryReorderRequest
+  body: InventoryReorderRequest,
+  call?: ApiCallOptions
 ): Promise<Result<InventoryReorderResult>> {
   return client.request<InventoryReorderResult>({
     method: "POST",
     path: "/api/v1/inventory/reorder-po",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryReorderPO",
   });
 }
 
 export async function inventoryListReorderPoints(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<InventoryReorderPointPage>> {
   return client.request<InventoryReorderPointPage>({
     method: "GET",
     path: "/api/v1/inventory/reorder-points",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryListReorderPoints",
   });
 }
 
 export async function inventoryPutReorderPoint(
   client: ApiClient,
-  body: InventoryReorderPoint
+  body: InventoryReorderPoint,
+  call?: ApiCallOptions
 ): Promise<Result<InventoryReorderPoint>> {
   return client.request<InventoryReorderPoint>({
     method: "PUT",
     path: "/api/v1/inventory/reorder-points",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryPutReorderPoint",
   });
 }
 
 export async function inventoryBootstrapReorderPoints(
   client: ApiClient,
-  body: InventoryBootstrapRequest
+  body: InventoryBootstrapRequest,
+  call?: ApiCallOptions
 ): Promise<Result<InventoryBootstrapResult>> {
   return client.request<InventoryBootstrapResult>({
     method: "POST",
     path: "/api/v1/inventory/reorder-points/bootstrap",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryBootstrapReorderPoints",
   });
 }
 
 export async function inventoryListReservations(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string; product_id?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string; product_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<InventoryReservationPage>> {
   return client.request<InventoryReservationPage>({
     method: "GET",
     path: "/api/v1/inventory/reservations",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryListReservations",
   });
 }
 
 export async function inventoryCreateReservation(
   client: ApiClient,
-  body: InventoryReserveInput
+  body: InventoryReserveInput,
+  call?: ApiCallOptions
 ): Promise<Result<InventoryReserveResult>> {
   return client.request<InventoryReserveResult>({
     method: "POST",
     path: "/api/v1/inventory/reservations",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryCreateReservation",
   });
 }
 
 export async function inventoryExpireReservations(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<InventoryExpireResult>> {
   return client.request<InventoryExpireResult>({
     method: "POST",
     path: "/api/v1/inventory/reservations/expire",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryExpireReservations",
   });
 }
 
 export async function inventoryReleaseReservation(
   client: ApiClient,
-  body: InventoryReleaseRequest
+  body: InventoryReleaseRequest,
+  call?: ApiCallOptions
 ): Promise<Result<InventoryReleaseResult>> {
   return client.request<InventoryReleaseResult>({
     method: "POST",
     path: "/api/v1/inventory/reservations/release",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryReleaseReservation",
   });
 }
 
 export async function inventoryShortfall(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string }
+  opts?: { cursor?: string; limit?: number; branch_id?: string },
+  call?: ApiCallOptions
 ): Promise<Result<InventoryShortfallPage>> {
   return client.request<InventoryShortfallPage>({
     method: "GET",
     path: "/api/v1/inventory/shortfall",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryShortfall",
   });
 }
 
 export async function inventoryCreatePOFromShortfall(
   client: ApiClient,
-  body: InventoryCreatePOFromShortfallRequest
+  body: InventoryCreatePOFromShortfallRequest,
+  call?: ApiCallOptions
 ): Promise<Result<InventoryCreatePOResult>> {
   return client.request<InventoryCreatePOResult>({
     method: "POST",
     path: "/api/v1/inventory/shortfall/create-po",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryCreatePOFromShortfall",
   });
 }
 
 export async function inventoryListTransfers(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; branch_id?: string; status?: "DRAFT" | "IN_TRANSIT" | "RECEIVED" | "CANCELLED" }
+  opts?: { cursor?: string; limit?: number; branch_id?: string; status?: "DRAFT" | "IN_TRANSIT" | "RECEIVED" | "CANCELLED" },
+  call?: ApiCallOptions
 ): Promise<Result<InventoryTransferPage>> {
   return client.request<InventoryTransferPage>({
     method: "GET",
     path: "/api/v1/inventory/transfers",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryListTransfers",
   });
 }
 
 export async function inventoryCreateTransfer(
   client: ApiClient,
-  body: InventoryCreateTransferInput
+  body: InventoryCreateTransferInput,
+  call?: ApiCallOptions
 ): Promise<Result<InventoryTransfer>> {
   return client.request<InventoryTransfer>({
     method: "POST",
     path: "/api/v1/inventory/transfers",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryCreateTransfer",
   });
 }
 
 export async function inventoryGetTransfer(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<InventoryTransfer>> {
   return client.request<InventoryTransfer>({
     method: "GET",
     path: "/api/v1/inventory/transfers/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryGetTransfer",
   });
 }
 
 export async function inventoryCancelTransfer(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<InventoryTransfer>> {
   return client.request<InventoryTransfer>({
     method: "POST",
     path: "/api/v1/inventory/transfers/{id}/cancel",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryCancelTransfer",
   });
 }
 
 export async function inventoryReceiveTransfer(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<InventoryTransfer>> {
   return client.request<InventoryTransfer>({
     method: "POST",
     path: "/api/v1/inventory/transfers/{id}/receive",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryReceiveTransfer",
   });
 }
 
 export async function inventoryShipTransfer(
   client: ApiClient,
-  id: string,
-  body: InventoryShipTransferRequest
+  id: string | number,
+  body: InventoryShipTransferRequest,
+  call?: ApiCallOptions
 ): Promise<Result<InventoryTransfer>> {
   return client.request<InventoryTransfer>({
     method: "POST",
     path: "/api/v1/inventory/transfers/{id}/ship",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryShipTransfer",
   });
 }
 
 export async function inventoryListTransitDays(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number }
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<InventoryTransitDaysPairPage>> {
   return client.request<InventoryTransitDaysPairPage>({
     method: "GET",
     path: "/api/v1/inventory/transit-days",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryListTransitDays",
   });
 }
 
 export async function inventoryPutTransitDays(
   client: ApiClient,
-  body: InventorySetTransitDaysInput
+  body: InventorySetTransitDaysInput,
+  call?: ApiCallOptions
 ): Promise<Result<InventoryTransitDaysPair>> {
   return client.request<InventoryTransitDaysPair>({
     method: "PUT",
     path: "/api/v1/inventory/transit-days",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "inventoryPutTransitDays",
   });
 }

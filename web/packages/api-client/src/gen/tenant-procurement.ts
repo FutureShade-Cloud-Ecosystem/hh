@@ -5,120 +5,147 @@
 
 import type { TenantProject, TenantProjectBoard, TenantProjectCreateRequest, TenantProjectDetail, TenantProjectLine, TenantProjectLineAddRequest, TenantProjectLineUpdateRequest, TenantProjectUpdateRequest } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function tenantListProcurementProjects(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<TenantProjectBoard>> {
   return client.request<TenantProjectBoard>({
     method: "GET",
     path: "/api/v1/tenant/procurement/projects",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantListProcurementProjects",
   });
 }
 
 export async function tenantCreateProcurementProject(
   client: ApiClient,
-  body: TenantProjectCreateRequest
+  body: TenantProjectCreateRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantProject>> {
   return client.request<TenantProject>({
     method: "POST",
     path: "/api/v1/tenant/procurement/projects",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantCreateProcurementProject",
   });
 }
 
 export async function tenantGetProcurementProject(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TenantProjectDetail>> {
   return client.request<TenantProjectDetail>({
     method: "GET",
     path: "/api/v1/tenant/procurement/projects/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantGetProcurementProject",
   });
 }
 
 export async function tenantUpdateProcurementProject(
   client: ApiClient,
-  id: string,
-  body: TenantProjectUpdateRequest
+  id: string | number,
+  body: TenantProjectUpdateRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantProject>> {
   return client.request<TenantProject>({
     method: "PUT",
     path: "/api/v1/tenant/procurement/projects/{id}",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantUpdateProcurementProject",
   });
 }
 
 export async function tenantDeleteProcurementProject(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<unknown>> {
   return client.request<unknown>({
     method: "DELETE",
     path: "/api/v1/tenant/procurement/projects/{id}",
     pathParams: { id },
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantDeleteProcurementProject",
   });
 }
 
 export async function tenantAddProcurementLine(
   client: ApiClient,
-  id: string,
-  body: TenantProjectLineAddRequest
+  id: string | number,
+  body: TenantProjectLineAddRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantProjectLine>> {
   return client.request<TenantProjectLine>({
     method: "POST",
     path: "/api/v1/tenant/procurement/projects/{id}/lines",
     pathParams: { id },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantAddProcurementLine",
   });
 }
 
 export async function tenantUpdateProcurementLine(
   client: ApiClient,
-  id: string,
-  lineId: string,
-  body: TenantProjectLineUpdateRequest
+  id: string | number,
+  lineId: string | number,
+  body: TenantProjectLineUpdateRequest,
+  call?: ApiCallOptions
 ): Promise<Result<TenantProjectLine>> {
   return client.request<TenantProjectLine>({
     method: "PUT",
     path: "/api/v1/tenant/procurement/projects/{id}/lines/{lineId}",
     pathParams: { id, lineId },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantUpdateProcurementLine",
   });
 }
 
 export async function tenantRemoveProcurementLine(
   client: ApiClient,
-  id: string,
-  lineId: string
+  id: string | number,
+  lineId: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<unknown>> {
   return client.request<unknown>({
     method: "DELETE",
     path: "/api/v1/tenant/procurement/projects/{id}/lines/{lineId}",
     pathParams: { id, lineId },
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantRemoveProcurementLine",
   });
 }
 
 export async function tenantSubmitProcurementRFQ(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TenantProjectDetail>> {
   return client.request<TenantProjectDetail>({
     method: "POST",
     path: "/api/v1/tenant/procurement/projects/{id}/submit-rfq",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantSubmitProcurementRFQ",
   });
 }

@@ -5,24 +5,30 @@
 
 import type { TenantBillingSummary, TenantDashboard } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function tenantGetBillingSummary(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<TenantBillingSummary>> {
   return client.request<TenantBillingSummary>({
     method: "GET",
     path: "/api/v1/tenant/billing/summary",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantGetBillingSummary",
   });
 }
 
 export async function tenantGetDashboard(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<TenantDashboard>> {
   return client.request<TenantDashboard>({
     method: "GET",
     path: "/api/v1/tenant/dashboard",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantGetDashboard",
   });
 }

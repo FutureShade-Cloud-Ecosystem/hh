@@ -5,28 +5,34 @@
 
 import type { TenantInvoiceDetail, TenantInvoicePage } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function tenantListInvoices(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; status?: "DRAFT" | "FINALIZED" | "PARTIALLY_PAID" | "PAID" | "VOID" }
+  opts?: { cursor?: string; limit?: number; status?: "DRAFT" | "FINALIZED" | "PARTIALLY_PAID" | "PAID" | "VOID" },
+  call?: ApiCallOptions
 ): Promise<Result<TenantInvoicePage>> {
   return client.request<TenantInvoicePage>({
     method: "GET",
     path: "/api/v1/tenant/invoices",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantListInvoices",
   });
 }
 
 export async function tenantGetInvoice(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TenantInvoiceDetail>> {
   return client.request<TenantInvoiceDetail>({
     method: "GET",
     path: "/api/v1/tenant/invoices/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "tenantGetInvoice",
   });
 }

@@ -5,26 +5,32 @@
 
 import type { DemoFlowList, DemoSessionRequest, DemoSessionResponse } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function demoListFlows(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<DemoFlowList>> {
   return client.request<DemoFlowList>({
     method: "GET",
     path: "/api/v1/demo/flows",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "demoListFlows",
   });
 }
 
 export async function demoCreateSession(
   client: ApiClient,
-  body: DemoSessionRequest
+  body: DemoSessionRequest,
+  call?: ApiCallOptions
 ): Promise<Result<DemoSessionResponse>> {
   return client.request<DemoSessionResponse>({
     method: "POST",
     path: "/api/v1/demo/session",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "demoCreateSession",
   });
 }

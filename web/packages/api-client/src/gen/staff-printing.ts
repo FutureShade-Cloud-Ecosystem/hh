@@ -5,29 +5,35 @@
 
 import type { PrintingJobList } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function printingGetReceipt(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<string>> {
   return client.request<string>({
     method: "GET",
     path: "/api/v1/pos/sales/{id}/receipt",
     pathParams: { id },
     textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "printingGetReceipt",
   });
 }
 
 export async function printingListJobs(
   client: ApiClient,
-  opts: { doc_type: "RECEIPT" | "LABEL_ZPL" | "DELIVERY_DOC"; ref_id: string }
+  opts: { doc_type: "RECEIPT" | "LABEL_ZPL" | "DELIVERY_DOC"; ref_id: string },
+  call?: ApiCallOptions
 ): Promise<Result<PrintingJobList>> {
   return client.request<PrintingJobList>({
     method: "GET",
     path: "/api/v1/printing/jobs",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "printingListJobs",
   });
 }

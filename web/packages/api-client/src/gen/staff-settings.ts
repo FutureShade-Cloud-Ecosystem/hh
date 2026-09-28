@@ -5,148 +5,181 @@
 
 import type { DashboardProfile, SettingsItemKind, SettingsMyItemsBody, SettingsPlatformHotkeyView, SettingsPlatformRosterBody, SettingsResetResponse, SettingsRoleItemsBody, SettingsSavedResponse, SettingsSurfaceConfig, SettingsWorkspaceSaveInput, SettingsWorkspaceView, TenantBrand } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function settingsGetPlatformHotkeys(
-  client: ApiClient
+  client: ApiClient,
+  call?: ApiCallOptions
 ): Promise<Result<SettingsPlatformHotkeyView>> {
   return client.request<SettingsPlatformHotkeyView>({
     method: "GET",
     path: "/api/v1/platform/hotkeys",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "settingsGetPlatformHotkeys",
   });
 }
 
 export async function settingsPutPlatformHotkeys(
   client: ApiClient,
-  surface: "app.shell" | "pos.counter",
-  body: SettingsPlatformRosterBody
+  surface: string | number,
+  body: SettingsPlatformRosterBody,
+  call?: ApiCallOptions
 ): Promise<Result<SettingsSavedResponse>> {
   return client.request<SettingsSavedResponse>({
     method: "PUT",
     path: "/api/v1/platform/hotkeys/{surface}",
     pathParams: { surface },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "settingsPutPlatformHotkeys",
   });
 }
 
 export async function settingsGetSurfaceConfig(
   client: ApiClient,
-  surface: string,
-  opts?: { branch_id?: string; profile?: DashboardProfile }
+  surface: string | number,
+  opts?: { branch_id?: string; profile?: DashboardProfile },
+  call?: ApiCallOptions
 ): Promise<Result<SettingsSurfaceConfig>> {
   return client.request<SettingsSurfaceConfig>({
     method: "GET",
     path: "/api/v1/surfaces/{surface}/config",
     pathParams: { surface },
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "settingsGetSurfaceConfig",
   });
 }
 
 export async function settingsPutRoleItems(
   client: ApiClient,
-  surface: string,
-  body: SettingsRoleItemsBody
+  surface: string | number,
+  body: SettingsRoleItemsBody,
+  call?: ApiCallOptions
 ): Promise<Result<SettingsSavedResponse>> {
   return client.request<SettingsSavedResponse>({
     method: "PUT",
     path: "/api/v1/surfaces/{surface}/items",
     pathParams: { surface },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "settingsPutRoleItems",
   });
 }
 
 export async function settingsDeleteRoleItems(
   client: ApiClient,
-  surface: string,
-  opts: { profile: DashboardProfile; kind: SettingsItemKind }
+  surface: string | number,
+  opts: { profile: DashboardProfile; kind: SettingsItemKind },
+  call?: ApiCallOptions
 ): Promise<Result<SettingsResetResponse>> {
   return client.request<SettingsResetResponse>({
     method: "DELETE",
     path: "/api/v1/surfaces/{surface}/items",
     pathParams: { surface },
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "settingsDeleteRoleItems",
   });
 }
 
 export async function settingsPutMyItems(
   client: ApiClient,
-  surface: string,
-  body: SettingsMyItemsBody
+  surface: string | number,
+  body: SettingsMyItemsBody,
+  call?: ApiCallOptions
 ): Promise<Result<SettingsSavedResponse>> {
   return client.request<SettingsSavedResponse>({
     method: "PUT",
     path: "/api/v1/surfaces/{surface}/my-items",
     pathParams: { surface },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "settingsPutMyItems",
   });
 }
 
 export async function settingsDeleteMyItems(
   client: ApiClient,
-  surface: string
+  surface: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<SettingsResetResponse>> {
   return client.request<SettingsResetResponse>({
     method: "DELETE",
     path: "/api/v1/surfaces/{surface}/my-items",
     pathParams: { surface },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "settingsDeleteMyItems",
   });
 }
 
 export async function settingsPutMyWorkspace(
   client: ApiClient,
-  surface: string,
-  body: SettingsWorkspaceSaveInput
+  surface: string | number,
+  body: SettingsWorkspaceSaveInput,
+  call?: ApiCallOptions
 ): Promise<Result<SettingsWorkspaceView>> {
   return client.request<SettingsWorkspaceView>({
     method: "PUT",
     path: "/api/v1/surfaces/{surface}/my-workspace",
     pathParams: { surface },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "settingsPutMyWorkspace",
   });
 }
 
 export async function settingsDeleteMyWorkspace(
   client: ApiClient,
-  surface: string
+  surface: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<SettingsResetResponse>> {
   return client.request<SettingsResetResponse>({
     method: "DELETE",
     path: "/api/v1/surfaces/{surface}/my-workspace",
     pathParams: { surface },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "settingsDeleteMyWorkspace",
   });
 }
 
 export async function getTenantBrand(
   client: ApiClient,
-  tenantId: string
+  tenantId: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<TenantBrand>> {
   return client.request<TenantBrand>({
     method: "GET",
     path: "/api/v1/tenants/{tenantId}/brand",
     pathParams: { tenantId },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "getTenantBrand",
   });
 }
 
 export async function putTenantBrand(
   client: ApiClient,
-  tenantId: string,
-  body: TenantBrand
+  tenantId: string | number,
+  body: TenantBrand,
+  call?: ApiCallOptions
 ): Promise<Result<TenantBrand>> {
   return client.request<TenantBrand>({
     method: "PUT",
     path: "/api/v1/tenants/{tenantId}/brand",
     pathParams: { tenantId },
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "putTenantBrand",
   });
 }

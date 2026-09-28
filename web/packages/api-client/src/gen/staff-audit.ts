@@ -5,43 +5,52 @@
 
 import type { AuditEntry, AuditEntryPage } from "./types.js";
 import type { Result } from "../result.js";
-import { ApiClient } from "../http.js";
+import { ApiClient, type ApiCallOptions } from "../http.js";
 
 export async function auditListEntries(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; entity_type?: string; action?: string; actor_id?: string; since?: string }
+  opts?: { cursor?: string; limit?: number; entity_type?: string; action?: string; actor_id?: string; since?: string },
+  call?: ApiCallOptions
 ): Promise<Result<AuditEntryPage>> {
   return client.request<AuditEntryPage>({
     method: "GET",
     path: "/api/v1/audit",
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "auditListEntries",
   });
 }
 
 export async function auditReopenTransaction(
   client: ApiClient,
-  entityType: string,
-  entityId: string,
-  opts?: { cursor?: string; limit?: number }
+  entityType: string | number,
+  entityId: string | number,
+  opts?: { cursor?: string; limit?: number },
+  call?: ApiCallOptions
 ): Promise<Result<AuditEntryPage>> {
   return client.request<AuditEntryPage>({
     method: "GET",
     path: "/api/v1/audit/transaction/{entityType}/{entityId}",
     pathParams: { entityType, entityId },
     query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "auditReopenTransaction",
   });
 }
 
 export async function auditGetEntry(
   client: ApiClient,
-  id: string
+  id: string | number,
+  call?: ApiCallOptions
 ): Promise<Result<AuditEntry>> {
   return client.request<AuditEntry>({
     method: "GET",
     path: "/api/v1/audit/{id}",
     pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
     operationId: "auditGetEntry",
   });
 }
