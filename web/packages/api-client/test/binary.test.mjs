@@ -210,7 +210,7 @@ test("a file name that is empty, a dot segment, path-like, or control carrying i
   assert.equal(rec.calls.length, 0, "not one refused name dialed");
 });
 
-test("the longest accepted file name is 160 characters, one more is refused", async () => {
+test("the longest accepted file name is 160 bytes, one more is refused", async () => {
   const rec = recorder({ "POST /api/v1/pricing/price-file/apply": { status: 201, body: {} } });
   const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch, headers: () => ({ "X-Org": "dibbits" }) });
   const tooLong = await api.staffPricing.pricingApplyPriceFile(
@@ -276,12 +276,18 @@ test("the 160 bound counts UTF-8 bytes: a name of 160 CJK characters the old cod
   assert.equal(rec.calls.length, 1, "the 162 byte name dialed nothing");
 });
 
-test("a bidirectional control character in a file name is refused before anything is sent, each of the nine tested", async () => {
+test("a bidirectional control character in a file name is refused before anything is sent, each of the twelve tested", async () => {
   // The marks that reorder how text displays: an extension can be made to
-  // appear reversed. The core's sanitizer strips only the C0 controls and
-  // DEL and would store these; the client refuses them (the README carries
-  // that record). Each character is asserted by its own name.
+  // appear reversed. The whole \p{Bidi_Control} class is refused: the nine
+  // strong marks and isolates, plus the three reorder neutrals (U+061C ALM,
+  // U+200E LRM, U+200F RLM) the first cut let through. The core's sanitizer
+  // strips only the C0 controls and DEL and would store all twelve; the
+  // client refuses them (the README carries that record). Each character is
+  // asserted by its own name.
   const bidi = [
+    ["\u061c", "U+061C ALM"],
+    ["\u200e", "U+200E LRM"],
+    ["\u200f", "U+200F RLM"],
     ["\u202a", "U+202A LRE"],
     ["\u202b", "U+202B RLE"],
     ["\u202c", "U+202C PDF"],
@@ -306,7 +312,42 @@ test("a bidirectional control character in a file name is refused before anythin
   assert.equal(rec.calls.length, 0, "not one bidi carrying name dialed");
 });
 
-test("a name that is only spaces, or edged with a space or a dot, is refused before anything is sent", async () => {
+test("an invisible formatting or control character in a file name is refused before anything is sent", async () => {
+  // The \p{Cf} format characters and the \p{Cc} control characters the byte
+  // loop cannot see (the C1 range U+0080 to U+009F): an invisible character
+  // in a stored name makes names that display identically but differ in
+  // bytes. A name made of nothing but one of them is refused too.
+  const invisible = [
+    ["\u00ad", "U+00AD SOFT HYPHEN", /invisible formatting character/],
+    ["\u200b", "U+200B ZERO WIDTH SPACE", /invisible formatting character/],
+    ["\u200c", "U+200C ZWNJ", /invisible formatting character/],
+    ["\u200d", "U+200D ZWJ", /invisible formatting character/],
+    ["\u2060", "U+2060 WORD JOINER", /invisible formatting character/],
+    ["\ufeff", "U+FEFF BOM", /invisible formatting character/],
+    ["\u0085", "U+0085 NEL", /carries a control character/],
+    ["\u009f", "U+009F", /carries a control character/],
+  ];
+  const rec = recorder({ "POST /api/v1/pricing/price-file/apply": { status: 201, body: {} } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
+  for (const [mark, named, pattern] of invisible) {
+    const result = await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+      { fileFilename: `price${mark}list.xlsx` },
+    );
+    assert.equal(result.ok, false, `a name carrying the invisible character ${named} is refused`);
+    if (!result.ok) assert.match(result.error, pattern, `the refusal names the class, for ${named}`);
+    const only = await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+      { fileFilename: mark },
+    );
+    assert.equal(only.ok, false, `a name made of nothing but ${named} is refused`);
+  }
+  assert.equal(rec.calls.length, 0, "not one invisible-character carrying name dialed");
+});
+
+test("a name that is only spaces, or edged with any white space or a dot, is refused before anything is sent", async () => {
   const rec = recorder({ "POST /api/v1/pricing/price-file/apply": { status: 201, body: {} } });
   const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
   const refusals = [
@@ -315,6 +356,11 @@ test("a name that is only spaces, or edged with a space or a dot, is refused bef
     ["price-list.xlsx ", /begins or ends with a space or a dot/, "a trailing space"],
     [".price-list.xlsx", /begins or ends with a space or a dot/, "a leading dot"],
     ["price-list.xlsx.", /begins or ends with a space or a dot/, "a trailing dot"],
+    ["\u00a0price-list.xlsx", /begins or ends with a space or a dot/, "a leading NBSP"],
+    ["price-list.xlsx\u00a0", /begins or ends with a space or a dot/, "a trailing NBSP"],
+    ["price-list.xlsx\u3000", /begins or ends with a space or a dot/, "a trailing ideographic space"],
+    ["price-list.xlsx\u2028", /begins or ends with a space or a dot/, "a trailing line separator"],
+    ["\u2028price-list.xlsx", /begins or ends with a space or a dot/, "a leading line separator"],
   ];
   for (const [name, pattern, named] of refusals) {
     const result = await api.staffPricing.pricingApplyPriceFile(
@@ -327,7 +373,9 @@ test("a name that is only spaces, or edged with a space or a dot, is refused bef
   }
   assert.equal(rec.calls.length, 0, "not one refused name dialed");
 
-  // Interior spaces and interior dot runs stay fine, and arrive whole.
+  // Interior spaces and interior dot runs stay fine, and arrive whole: the
+  // edge rule is about the edges, and an interior NBSP the core's final
+  // TrimSpace keeps is the name the caller said.
   unwrap(
     await api.staffPricing.pricingApplyPriceFile(
       client,
@@ -342,11 +390,20 @@ test("a name that is only spaces, or edged with a space or a dot, is refused bef
       { fileFilename: "price..list.xlsx" },
     ),
   );
-  assert.equal(rec.calls.length, 2, "both interior shaped names dialed");
+  unwrap(
+    await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+      { fileFilename: "price\u00a0list.xlsx" },
+    ),
+  );
+  assert.equal(rec.calls.length, 3, "every interior shaped name dialed");
   const first = await new Request(rec.calls[0].url, { method: rec.calls[0].method, body: rec.calls[0].form }).formData();
   assert.equal(first.get("file").name, "price list v2.xlsx", "an interior space arrives whole");
   const second = await new Request(rec.calls[1].url, { method: rec.calls[1].method, body: rec.calls[1].form }).formData();
   assert.equal(second.get("file").name, "price..list.xlsx", "an interior dot run arrives whole");
+  const third = await new Request(rec.calls[2].url, { method: rec.calls[2].method, body: rec.calls[2].form }).formData();
+  assert.equal(third.get("file").name, "price\u00a0list.xlsx", "an interior NBSP arrives whole");
 });
 
 // The guard lives in the transport, so it holds on every multipart operation;

@@ -97,8 +97,11 @@ export interface OperationRequest {
    * guarded like a path value: empty, one of the dot segments (`.` or `..`),
    * carrying a path separator (`/` or `\`), carrying a NUL or any other
    * control character, carrying a Unicode bidirectional control character
-   * (U+202A through U+202E, U+2066 through U+2069), made of nothing but
-   * spaces, beginning or ending with a space or a dot, or longer than 160
+   * (the whole \p{Bidi_Control} class), carrying an invisible format
+   * character (\p{Cf}) or a control character \p{Cc} names that the byte
+   * loop misses (the C1 range among them), made of nothing but
+   * spaces, beginning or ending with any white space or a dot, or longer
+   * than 160
    * UTF-8 bytes (the bound the core's own stored name keeps, counted in the
    * same unit the core counts) resolves an error Result before anything
    * dials. A field with no name here (or no entry) rides under the
@@ -145,27 +148,44 @@ const INVALID_HEADER_VALUE = /[^\t\x20-\x7e\x80-\xff]/;
 // CJK characters pass here (480 bytes) and the core cut it to 54 characters.
 const MAX_FILENAME_BYTES = 160;
 
-// The Unicode bidirectional control characters (U+202A through U+202E, and
-// U+2066 through U+2069): the marks that reorder how text displays. A file
-// name carrying one can be made to display as something it is not (an
-// extension appearing reversed is the classic), so they are refused outright.
-const BIDI_CONTROL = /[\u202a-\u202e\u2066-\u2069]/;
+// The Unicode bidirectional control characters, the WHOLE class (the
+// binary property \p{Bidi_Control}: U+061C ALM, U+200E LRM, U+200F RLM,
+// U+202A through U+202E, and U+2066 through U+2069): the marks that reorder
+// how text displays. A file name carrying one can be made to display as
+// something it is not (an extension appearing reversed is the classic), so
+// they are refused outright; the first cut refused only nine of the twelve
+// and let the three reorder neutrals through.
+const BIDI_CONTROL = /\p{Bidi_Control}/u;
+
+// The format characters (\p{Cf}: the zero width marks, the joiners, the
+// soft hyphen, and the byte order mark among them) and the remaining
+// control characters (\p{Cc}: the C0 range and DEL that the byte loop in
+// filenameProblem refuses first, plus the C1 range U+0080 to U+009F the
+// loop's per code unit comparison cannot see). An invisible character in a
+// stored name makes names that display identically but differ in bytes, so
+// both classes are refused outright.
+const FORMAT_CHARACTER = /\p{Cf}/u;
+const CONTROL_CHARACTER = /\p{Cc}/u;
 
 // A file name rides the multipart part's Content-Disposition as given, so it
 // gets the care fillPath gives a path parameter: refused here, as data,
 // before anything is sent. Refused: empty, one of the dot segments, a path
 // separator (either platform's), a NUL, any other control character, a
-// bidirectional control character (see BIDI_CONTROL), a name made of nothing
-// but spaces, a name that begins or ends with a space or a dot (the core's
-// sanitizer trims edge spaces off the stored name, a Windows reader strips
-// edge spaces and a trailing dot, and a leading dot hides the file on a
-// Unix-like reader, so the name would not stay the name the caller said),
-// and anything past MAX_FILENAME_BYTES. The platform percent-encodes a quote
-// or a line break inside the quoted parameter, so framing itself cannot be
-// split, but a separator would hand a path to whatever stores the name and a
-// control character would ride the wire raw. The bound counts UTF-8 bytes,
-// not code points and not code units, because the core's cap counts bytes
-// (see MAX_FILENAME_BYTES).
+// bidirectional control character, an invisible format character, or a
+// control character the byte loop missed (see BIDI_CONTROL,
+// FORMAT_CHARACTER, CONTROL_CHARACTER), a name made of nothing but spaces, a
+// name that begins or ends with ANY white space or a dot (the core's
+// sanitizer trims edge white space off the stored name with TrimSpace, a
+// Unicode trim, so an accepted NBSP, ideographic space, or line separator
+// at an edge would arrive as a name the core stores changed; a Windows
+// reader strips edge spaces and a trailing dot, and a leading dot hides the
+// file on a Unix-like reader, so the name would not stay the name the
+// caller said), and anything past MAX_FILENAME_BYTES. The platform
+// percent-encodes a quote or a line break inside the quoted parameter, so
+// framing itself cannot be split, but a separator would hand a path to
+// whatever stores the name and a control character would ride the wire raw.
+// The bound counts UTF-8 bytes, not code points and not code units, because
+// the core's cap counts bytes (see MAX_FILENAME_BYTES).
 function filenameProblem(name: string): string | undefined {
   if (name === "") return "is empty";
   if (name === "." || name === "..") return `is the path segment ${name}`;
@@ -175,10 +195,10 @@ function filenameProblem(name: string): string | undefined {
     if (code < 0x20 || code === 0x7f) return "carries a control character";
   }
   if (BIDI_CONTROL.test(name)) return "carries a bidirectional control character";
+  if (FORMAT_CHARACTER.test(name)) return "carries an invisible formatting character";
+  if (CONTROL_CHARACTER.test(name)) return "carries a control character";
   if (name.trim() === "") return "is nothing but spaces";
-  const first = name[0];
-  const last = name[name.length - 1];
-  if (first === " " || first === "." || last === " " || last === ".") {
+  if (/^[\s.]|[\s.]$/u.test(name)) {
     return "begins or ends with a space or a dot";
   }
   const bytes = new TextEncoder().encode(name).length;
