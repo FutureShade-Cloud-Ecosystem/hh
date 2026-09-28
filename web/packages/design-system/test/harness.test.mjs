@@ -106,6 +106,20 @@ const startServer = (port) =>
 
 const freePort = () => 41000 + Math.floor(Math.random() * 2000);
 
+// The serve smoke spawns real servers and awaits them, and bun (CI's drift
+// gate) interleaves one file's running async tests with the next file's module
+// evaluation, so top-level test() calls made during that overlap throw
+// ERR_NOT_IMPLEMENTED (oven-sh/bun#5090) and take innocent files down with
+// them. The two server tests therefore register on node only, which is this
+// package's authoritative runner; under bun one statement test registers in
+// their place so the skip is visible in the count rather than silent.
+const underBun = typeof globalThis.Bun !== 'undefined';
+
+if (underBun) {
+  test('the serve smoke is a node-suite leg: bun skips the real-server tests', () => {
+    assert.ok(underBun, 'this branch registers only under bun');
+  });
+} else {
 test('the harness server serves this package, and a rerun after a clean stop serves again', async () => {
   const port = freePort();
   const first = await startServer(port);
@@ -140,3 +154,4 @@ test('a second server refuses an occupied port, loudly', async () => {
     holder.child.kill('SIGKILL');
   }
 });
+}
