@@ -22,11 +22,16 @@ under `web/packages/`.
   (`src/state.ts`). Element tags are the Penpot names, one to one.
 - `src/render.ts`: the kits' rendering layer, written by this package. It is a
   small hand-written layer, not Lit and not vendored from anything; the draft
-  decision record that proposes owning it instead of taking the real library is
-  `docs/adr/0023` (status draft, for Colton). Markup can only be produced by
+  decision record that lays out the substrate options for Colton is
+  `docs/adr/0023` (status draft, choice open). Markup can only be produced by
   the package's own `html()` behind a module-private symbol, so a caller's
   object or string is always text and never markup, and icon geometry is bound
-  as escaped attribute values.
+  as escaped attribute values. The factory also refuses what escaping cannot
+  make safe, each by a named `HHRenderError`: a first argument that is not a
+  real template strings array, a binding in an unquoted attribute, a value in
+  an event attribute, and an address whose scheme is not http, https or
+  absent. An unknown state throws the same named error at render, in Node and
+  in the browser, and a failed browser render never leaves an empty element.
 - `src/primitives.ts`: the Ionic seam: `button`, `chip`, `spinner` and `row`
   with the call sites the `ion-*` primitives will occupy. The disabled rule and
   the focus ring live here, once, so no kit can get them wrong.
@@ -49,11 +54,14 @@ under `web/packages/`.
 - The harness: `harness/index.html` is the committed static page (built by
   `harness/build.mjs` from the same render functions the elements paint), every
   kit in every state at the two walkthrough widths, 1440 and 1920, with no
-  build step at view time and no client scripts; it opens from the file
-  itself. `harness/serve.mjs` serves the theme and brand variants from the
-  same builder (`/?theme=light`, `/?brand=hh-pro`), refuses to serve over an
-  occupied port, and grades its own page before announcing. The suite holds
-  the committed file byte-equal to a fresh build.
+  build step at view time and no client scripts; each cell paints inside its
+  own declarative shadow root, so every kit is styled under its own sheet, and
+  the build writes each kit's sheet once to `harness/sheets/<tag>.css`, which
+  the page opens beside. `harness/serve.mjs` serves the theme and brand
+  variants from the same builder (`/?theme=light`, `/?brand=hh-pro`) plus the
+  sheets, refuses to serve over an occupied port, and grades its own page
+  before announcing. The suite holds the committed page and every sheet
+  byte-equal to a fresh build.
 
 ## Running the suite and the harness
 
@@ -70,12 +78,16 @@ npm run build:harness                                            # rebuild the c
 ```
 
 The headless-browser leg registers the real custom elements in headless
-Chromium and asserts each kit in each state in the live DOM, plus the harness
-layout at 1440, 1920 and 400. It drives the browser over the DevTools
-protocol with Node 22's own WebSocket (`test/_lib/cdp.mjs`): no Playwright, no
-new dependency. It finds a browser at `$HH_DS_BROWSER`, then the usual PATH
-names, then the Playwright cache; when none exists the leg skips with a loud,
-named reason instead of passing silently.
+Chromium and asserts each kit in each state in the live DOM, asserts what a
+person would see (each state's word and icon with a real box, visible, at
+least 12 pixels, in an opaque colour; every disabled control at computed
+opacity 1 with an opaque colour), and holds the harness layout at 1920, 1440,
+1280, 768 and 400. It drives the browser over the DevTools protocol with
+Node 22's own WebSocket (`test/_lib/cdp.mjs`): no Playwright, no new
+dependency. It finds a browser at `$HH_DS_BROWSER`, then the usual PATH names,
+then the Playwright cache. When none exists the leg fails loudly if `CI` is
+set (a skipped gate is a failed gate; the workflow step names google-chrome
+for exactly this reason) and skips with a loud, named reason otherwise.
 
 ## Measured notes the sheet's readers asked for
 
@@ -132,5 +144,12 @@ carries no dependencies and this lane may add none, so:
 
 Both are the locked spec's sanctioned vendor-minimal path, recorded rather than
 silent. The kits' interaction wiring is intentionally absent: these are pattern
-renders with real `<button>` elements carrying `data-action`, and the shells
-that adopt them attach the listeners.
+renders with real `<button>` elements carrying `data-action`. The way to wire
+them is NOT to attach listeners to content inside a kit: the layer's measured
+limit is that every update replaces the whole shadow root, so a listener
+attached to kit content (and focus with it) is gone at the next render, even a
+re-render to the same state. The supported pattern is delegation on the HOST
+element: attach one listener to the `<hh-*>` element itself and read
+`event.target.closest('[data-action]')` inside it. The host is never replaced
+by a render, so host listeners survive. The same limit is stated in
+`docs/adr/0023`, and it stands whatever Colton later rules on the substrate.
