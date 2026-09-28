@@ -466,6 +466,43 @@ test("a sign-in begun while sign-out's own deleteSession is pending adopts nothi
   assert.deepEqual(staff(), { "X-Org": ORG }, "the staff provider sends X-Org and no Authorization");
 });
 
+test("a resume in flight when sign-out is called resolves cancelled even while deleteSession is still pending", async () => {
+  // The first bump's case: the resume began BEFORE the sign-out, and its
+  // answer lands during the sign-out's own await. The bump that precedes the
+  // await is what cancels it here; the post-await bump alone would let it
+  // adopt and only wipe the adoption afterwards.
+  const { recorded, sessions } = custody();
+  const account = new DeferredAccountSurface();
+  const controller = new AuthController({ account, sessions });
+
+  const pending = controller.resume(); // the resume is in flight when the user signs out
+  const getSession = await untilHandoff(account, "getSession");
+
+  const signingOut = controller.signOut(); // deleteSession is in flight, unresolved
+  getSession.complete({ ...FAKE_ACCOUNT }); // the platform answers while the sign-out waits
+  await flush();
+  assert.equal(
+    account.handoff("createJWT"),
+    null,
+    "the mint was never asked: the bump before the await superseded the resume before its answer landed",
+  );
+  const result = await pending;
+  assert.equal(result.ok, false, "the resume resolves an error Result: the sign-out had already been called");
+  assert.match(result.error, /cancelled/);
+  assert.equal(sessions.current, null, "custody is empty while deleteSession is still in flight");
+  assert.equal(sessions.profile, null, "storage holds no profile while deleteSession is still in flight");
+  assert.equal(recorded.size, 0, "nothing was written while deleteSession is still in flight");
+
+  await signingOut;
+  assert.equal(account.deleteCount, 1);
+  assert.equal(sessions.current, null);
+  assert.equal(recorded.size, 0);
+  const tenant = authHeaderProvider({ callerClass: "tenant", sessions });
+  assert.deepEqual(tenant(), {}, "the tenant provider sends no Authorization");
+  const staff = authHeaderProvider({ callerClass: "staff", sessions, activeOrg: () => ORG });
+  assert.deepEqual(staff(), { "X-Org": ORG }, "the staff provider sends X-Org and no Authorization");
+});
+
 test("a sign-out landing between getSession and createJWT cancels the resume's mint", async () => {
   // The resume is parked at its SECOND await: the first check has already
   // passed when the sign-out lands, so this is the second check's case.
