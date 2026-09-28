@@ -8,21 +8,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { contrast } from './_lib/sheet.mjs';
-import { HARNESS_STATES, HARNESS_TITLE, KITS, WIDTHS, buildHarnessPage } from '../src/harness-page.js';
+import { HARNESS_STATES, HARNESS_TITLE, KITS, WIDTHS, buildHarnessPage, harnessSheets } from '../src/harness-page.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgDir = join(here, '..');
 
-test('the committed static harness is a fresh build of the page, byte for byte', () => {
-  // The static file is the deliverable the design sync opens; a stale one
+test('the committed static harness is a fresh build of the page and its sheets, byte for byte', () => {
+  // The static files are the deliverable the design sync opens; a stale one
   // shows kits the sources no longer render. The lock is exact equality with
-  // the default build (dark, base brand), so the file cannot drift.
+  // the default build (dark, base brand), page and per-kit sheets both, so
+  // neither can drift. A sheet left behind for a kit that no longer exists
+  // fails the same lock: the directory must be exactly what the build writes.
   const committed = readFileSync(join(pkgDir, 'harness', 'index.html'), 'utf8');
   assert.equal(
     committed,
@@ -30,6 +32,34 @@ test('the committed static harness is a fresh build of the page, byte for byte',
     'harness/index.html is stale: run npm run build:harness and commit the result',
   );
   assert.ok(!/<script/i.test(committed), 'the static harness must stay script-free');
+
+  // Each cell paints inside its own declarative shadow root, so every kit is
+  // under its own styles: one open shadow root per cell, each linking the
+  // kit's sheet.
+  const cells = committed.match(/data-cell="[^"]+"/g)?.length ?? 0;
+  const roots = committed.match(/<template shadowrootmode="open">/g)?.length ?? 0;
+  assert.ok(cells > 0, 'the page carries no cells');
+  assert.equal(roots, cells, 'every cell must paint inside its own declarative shadow root');
+
+  const sheetsDir = join(pkgDir, 'harness', 'sheets');
+  const onDisk = existsSync(sheetsDir) ? readdirSync(sheetsDir).sort() : [];
+  const expected = harnessSheets().map((s) => `${s.tag}.css`).sort();
+  assert.deepEqual(onDisk, expected, 'harness/sheets must hold exactly one sheet per kit, nothing else');
+  for (const { tag, css } of harnessSheets()) {
+    assert.equal(
+      readFileSync(join(sheetsDir, `${tag}.css`), 'utf8'),
+      css,
+      `harness/sheets/${tag}.css is stale: run npm run build:harness and commit the result`,
+    );
+    // A cell without its link would paint an unstyled kit in the committed
+    // page: each kit's cells must link the sheet the build ships.
+    const links = [...committed.matchAll(new RegExp(`<link rel="stylesheet" href="./sheets/${tag}\\.css">`, 'g'))].length;
+    assert.ok(
+      links >= HARNESS_STATES.length * WIDTHS.length,
+      `${tag}: only ${links} cells link the kit sheet; expected one per cell of the kit`,
+    );
+  }
+  assert.ok(statSync(join(pkgDir, 'harness', 'index.html')).isFile(), 'the committed page must stay a file');
 });
 
 test('the harness page carries every kit in every state at both walkthrough widths', () => {
@@ -145,6 +175,8 @@ test('the harness server serves this package, and a rerun after a clean stop ser
   assert.match(variants, /data-theme="light" data-brand="hh-pro"/, 'the served variants must flip the html attributes');
   const sheet = await (await fetch(`http://127.0.0.1:${port}/tokens.css`)).text();
   assert.match(sheet, /--hh-page:/, 'the server must serve the raw sheet beside the page');
+  const kitSheet = await (await fetch(`http://127.0.0.1:${port}/sheets/hh-inbox.css`)).text();
+  assert.match(kitSheet, /\.kit-root/, 'the server must serve the per-kit sheets the page links');
 
   first.child.kill('SIGKILL');
   await delay(500);

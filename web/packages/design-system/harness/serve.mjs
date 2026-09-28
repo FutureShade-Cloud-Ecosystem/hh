@@ -17,7 +17,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import net from 'node:net';
 
-import { buildHarnessPage, HARNESS_TITLE } from '../src/harness-page.js';
+import { buildHarnessPage, harnessSheets, HARNESS_TITLE } from '../src/harness-page.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.HARNESS_PORT ?? 4173);
@@ -48,6 +48,16 @@ async function main() {
       res.writeHead(200, { 'content-type': 'text/css; charset=utf-8' });
       res.end(readFileSync(join(here, '..', 'src', 'tokens.css')));
       return;
+    }
+    // The per-kit sheets the page's declarative shadow roots link.
+    const sheet = url.pathname.match(/^\/sheets\/([a-z0-9-]+)\.css$/);
+    if (sheet) {
+      const kit = harnessSheets().find((s) => s.tag === sheet[1]);
+      if (kit) {
+        res.writeHead(200, { 'content-type': 'text/css; charset=utf-8' });
+        res.end(kit.css);
+        return;
+      }
     }
     if (url.pathname !== '/') {
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });

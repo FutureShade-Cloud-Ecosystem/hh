@@ -6,6 +6,15 @@
 // function (harness/build.mjs writes it), so the page opens from the file
 // itself; serve.mjs serves the theme and brand variants from the same source.
 //
+// Each cell renders into its own DECLARATIVE SHADOW ROOT
+// (<template shadowrootmode="open">): the page still has no script, and each
+// kit is painted under its own stylesheet, scoped by the shadow boundary, so
+// one kit's rules can no longer be overridden or clobbered by another's. Each
+// kit's sheet ships once, in harness/sheets/<tag>.css, and every cell of that
+// kit links it; the browser fetches and parses the URL once and shares the
+// sheet across the kit's shadow roots. The sheet files are written by the same
+// build (harnessSheets() below) and are held byte-fresh by the drift test.
+//
 // The theme and brand are served variants, not client toggles: the page has no
 // JavaScript at all. ?theme=light flips the html attribute; ?brand=hh-pro adds
 // the standalone shell's brand override. The contractor layer is shown by a
@@ -47,6 +56,7 @@ export interface KitElement {
 export interface KitElementCtor {
   new (): KitElement;
   renderToString(props?: Record<string, unknown>): string;
+  renderParts(props?: Record<string, unknown>): { styles: string; markup: string };
 }
 
 export interface KitEntry {
@@ -73,14 +83,30 @@ const PROPOSAL_CBRAND_ON = '#ffffff';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
+/** Each kit's full stylesheet, once per kit: the sheet the build writes to
+ * harness/sheets/<tag>.css and every cell of that kit links. The styles come
+ * from the same static member the real element paints, so the page and the
+ * element cannot drift apart. */
+export function harnessSheets(): ReadonlyArray<{ tag: string; css: string }> {
+  return KITS.map((kit) => ({ tag: kit.tag, css: kit.element.renderParts().styles }));
+}
+
 function kitFigures(): string {
   const figures: string[] = [];
   for (const kit of KITS) {
     for (const state of HARNESS_STATES) {
+      const { markup } = kit.element.renderParts({ state });
       figures.push(
         `<figure class="cell" data-cell="${kit.tag}/${state}">` +
           `<figcaption>${kit.title} / ${state}</figcaption>` +
-          `<div class="cell-body">${kit.element.renderToString({ state })}</div>` +
+          `<div class="cell-body">` +
+          `<${kit.tag} state="${state}">` +
+          `<template shadowrootmode="open">` +
+          `<link rel="stylesheet" href="./sheets/${kit.tag}.css">` +
+          `${markup}` +
+          `</template>` +
+          `</${kit.tag}>` +
+          `</div>` +
           `</figure>`,
       );
     }
@@ -117,6 +143,10 @@ export function buildHarnessPage(opts: { theme?: HarnessTheme; brand?: HarnessBr
 ${tokens}
 </style>
 <style>
+  /* The page's own chrome styles itself here, and ONLY here: the kits' sheets
+     are scoped to their shadow roots, so nothing leaks onto the page any more
+     (the kit sheets' box-sizing used to reach these elements by accident). */
+  *, *::before, *::after { box-sizing: border-box; }
   html, body { margin: 0; background: var(--hh-page); color: var(--hh-text); font-family: var(--hh-font-ui); }
   body { padding: var(--hh-s-24); }
   h1 { font-size: var(--hh-s-24); }
@@ -140,16 +170,19 @@ ${tokens}
 <h1>${HARNESS_TITLE}</h1>
 <p class="lede">Static page, no build and no scripts: every kit in its ready state and its five
 designed states (empty, loading, offline, conflict, error), at the two walkthrough widths.
-Rendered by Node from the kit render functions themselves. The committed
+Rendered by Node from the kit render functions themselves, each cell into its own declarative
+shadow root, so every kit is painted under its own stylesheet. The committed
 <code>harness/index.html</code> is exactly this page (dark, base brand) and opens from the file
-itself; <code>node --import ./src/_ts-js-loader.mjs harness/serve.mjs</code> serves the variants:
+itself, with the per-kit sheets the build writes under <code>harness/sheets/</code> beside it;
+<code>node --import ./src/_ts-js-loader.mjs harness/serve.mjs</code> serves the variants:
 add <code>?theme=light</code> for the light half and <code>?brand=hh-pro</code> for the standalone
-shell's brand override. Each width frame caps at its walkthrough width and never exceeds the
-window, so the page never scrolls sideways.</p>
+shell's brand override. Each width frame is its walkthrough width capped to the window, so the
+page never scrolls sideways; in a window narrower than a walkthrough width the capped frames
+show at the window width and look the same, which is what their labels say.</p>
 ${proposalSection()}
 ${WIDTHS.map(
     (w) => `<section class="width-frame" data-width="${w}" style="width:min(${w}px, 100%)">
-<h2>width ${w}px</h2>
+<h2>walkthrough width ${w}px, capped to the window</h2>
 <div class="grid">
 ${kitFigures()}
 </div>

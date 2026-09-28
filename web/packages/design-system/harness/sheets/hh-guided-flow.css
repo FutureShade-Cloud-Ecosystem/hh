@@ -1,0 +1,265 @@
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: 44px;
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+  .kit-root {
+    background: var(--hh-page);
+    color: var(--hh-text);
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-card);
+    padding: var(--hh-s-24);
+    display: grid;
+    gap: var(--hh-s-16);
+    /* The kit is its own layout container, so a kit's sheets can query the
+       width the KIT actually gets, not the window's; min-width 0 keeps the
+       grid child from refusing to shrink below its content. */
+    container-type: inline-size;
+    min-width: 0;
+    overflow-wrap: break-word;
+  }
+  /* Grid and flex items default to min-width: auto, which lets a body's
+     min-content width push past the kit card; the scaffold refuses on behalf
+     of every kit. */
+  .kit-root > * { min-width: 0; }
+  .kit-actions {
+    display: flex;
+    gap: var(--hh-s-12);
+    flex-wrap: wrap;
+  }
+
+  .state-block {
+    background: var(--hh-card);
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-card);
+    padding: var(--hh-s-32);
+    display: grid;
+    justify-items: center;
+    gap: var(--hh-s-12);
+    text-align: center;
+  }
+  .state-note {
+    margin: 0;
+    color: var(--hh-text-dim);
+    max-width: var(--hh-measure);
+  }
+
+  .state-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  .state-indicator .icon { width: 20px; height: 20px; }
+  .state-empty .state-indicator { color: var(--hh-state-watch); }
+  .state-loading .state-indicator { color: var(--hh-info); }
+  .state-error .state-indicator { color: var(--hh-danger); }
+
+  .banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    border-radius: var(--hh-radius-control);
+    background: var(--hh-card);
+    min-width: 0;
+  }
+  .banner-offline { color: var(--hh-info); border: 1px solid var(--hh-info); }
+  .banner .icon { width: 18px; height: 18px; flex: none; }
+  .banner-text { color: var(--hh-text); font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+
+  .review-card {
+    background: var(--hh-card);
+    border: 1px solid var(--hh-state-watch);
+    border-radius: var(--hh-radius-card);
+    padding: var(--hh-s-16);
+    display: grid;
+    gap: var(--hh-s-12);
+  }
+  .review-head { display: flex; align-items: center; gap: var(--hh-s-8); color: var(--hh-state-watch); font-weight: 600; }
+  .review-head .icon { width: 18px; height: 18px; }
+  .review-title { color: var(--hh-text); }
+  .review-rows { margin: 0; display: grid; gap: var(--hh-s-8); }
+  .review-row { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--hh-s-16); }
+  .review-row dt { color: var(--hh-text-dim); }
+  .review-row dd { margin: 0; color: var(--hh-text); overflow-wrap: anywhere; }
+
+  .flow {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--hh-s-24);
+    align-items: start;
+  }
+  @container (max-width: 519px) {
+    .flow { grid-template-columns: minmax(0, 1fr); }
+  }
+  ol.rail { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--hh-s-12); }
+  .rail-step {
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    background: var(--hh-card);
+    padding: var(--hh-s-8) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+  }
+  .rail-step > span:not(.marker):not(.visually-hidden) { min-width: 0; overflow-wrap: anywhere; }
+  .rail-step .marker {
+    width: 24px;
+    height: 24px;
+    border-radius: var(--hh-radius-pill);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    font-size: var(--hh-s-12);
+    border: 2px solid var(--hh-line);
+  }
+  .rail-step .marker .icon { width: 14px; height: 14px; }
+  .rail-step-current { color: var(--hh-text); border: 1px solid var(--hh-focus-ring); }
+  .rail-step-current .marker { border-color: var(--hh-focus-ring); color: var(--hh-text); }
+  .rail-step-done { color: var(--hh-state-good); }
+  .rail-step-done .marker { border-color: var(--hh-state-good); color: var(--hh-state-good); }
+  .step-card {
+    background: var(--hh-card);
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-card);
+    padding: var(--hh-s-24);
+    display: grid;
+    gap: var(--hh-s-12);
+    min-width: 0;
+  }
+  .step-card h3 { margin: 0; color: var(--hh-text); font-size: var(--hh-s-20); }
+  .step-card p { margin: 0; color: var(--hh-text-dim); max-width: var(--hh-measure); }
+  .field-label { color: var(--hh-text); font-weight: 600; }
+  .field-value {
+    font-family: var(--hh-font-mono);
+    color: var(--hh-text);
+    background: var(--hh-card);
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    padding: var(--hh-s-12);
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+  .field-value:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
