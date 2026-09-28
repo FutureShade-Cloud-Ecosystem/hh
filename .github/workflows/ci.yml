@@ -80,9 +80,20 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.12
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Test and manifest drift gate
         run: |
           set -euo pipefail
+          # The web workspace is installed BEFORE the gate runs: the web
+          # packages' suites import @hh/api-client by its bare name, and on a
+          # fresh checkout there is no web/node_modules to resolve it from
+          # until npm ci has linked the workspace. Without this install the
+          # gate goes red on every fresh runner while passing on a
+          # workstation that still holds the last install.
+          npm --prefix web ci
           # Pre-install the one npm package the gate needs, pinned to the exact
           # version the contract tools' lockfile installs, so the gate never
           # relies on bun's on-demand auto-install (which resolves unpinned).
@@ -95,10 +106,6 @@ jobs:
           bun add --exact yaml@2.9.1
           bun test
           bun scripts/generate-manifest.ts --check
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - name: OpenAPI contract checks (repo-local)
         run: |
           npm --prefix core/api/tools ci
