@@ -97,6 +97,24 @@ jobs:
         run: npm --prefix web ci
       - name: Test and manifest drift gate
         run: |
+          set -euo pipefail
+          # The web workspace is installed by the step above: the web
+          # packages' suites import @hh/api-client by its bare name, and on a
+          # fresh checkout there is no web/node_modules to resolve it from
+          # until npm ci has linked the workspace. Without that install the
+          # gate goes red on every fresh runner while passing on a
+          # workstation that still holds the last install. This gate does not
+          # install; it consumes the install the step above made.
+          # Pre-install the one npm package the gate needs, pinned to the exact
+          # version the contract tools' lockfile installs, so the gate never
+          # relies on bun's on-demand auto-install (which resolves unpinned).
+          # The install needs a package.json at the tree's root, which this
+          # repository deliberately does not carry, so bun writes one along
+          # with bun.lock; the trap removes both (and the installed
+          # node_modules) when the step ends, leaving the tree clean on a
+          # runner and on a workstation alike.
+          trap 'rm -rf package.json bun.lock node_modules' EXIT
+          bun add --exact yaml@2.9.1
           bun test
           bun scripts/generate-manifest.ts --check
       - name: OpenAPI contract checks (repo-local)
