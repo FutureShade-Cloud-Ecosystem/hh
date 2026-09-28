@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { renderTemplate } from './lit.js';
+import { type Template } from './lit.js';
 import { KIT_STATES, type KitState } from './state.js';
 import { ScanConfirmKit } from './kits/scan-and-confirm.js';
 import { ListDetailKit } from './kits/list-detail.js';
@@ -28,10 +28,29 @@ export const WIDTHS = [1440, 1920] as const;
 export type HarnessTheme = 'dark' | 'light';
 export type HarnessBrand = 'base' | 'hh-pro';
 
+/**
+ * The instance contract a kit element satisfies. Structural, so each kit class
+ * keeps its private body and action specs private: the map never sees a
+ * concrete kit type, and no kit names another.
+ */
+export interface KitElement {
+  render(): Template;
+}
+
+/**
+ * The constructor contract the kit map holds: the class object itself. The
+ * harness touches one static member on it, the Node-side renderToString the
+ * page string is built from.
+ */
+export interface KitElementCtor {
+  new (): KitElement;
+  renderToString(props?: Record<string, unknown>): string;
+}
+
 export interface KitEntry {
   tag: string;
   title: string;
-  element: typeof ScanConfirmKit;
+  element: KitElementCtor;
 }
 
 export const KITS: ReadonlyArray<KitEntry> = [
@@ -59,7 +78,7 @@ function kitFigures(): string {
       figures.push(
         `<figure class="cell" data-cell="${kit.tag}/${state}">` +
           `<figcaption>${kit.title} / ${state}</figcaption>` +
-          `<div class="cell-body">${(kit.element as unknown as { renderToString: (p: object) => string }).renderToString({ state })}</div>` +
+          `<div class="cell-body">${kit.element.renderToString({ state })}</div>` +
           `</figure>`,
       );
     }

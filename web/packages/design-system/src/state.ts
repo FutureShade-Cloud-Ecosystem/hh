@@ -10,6 +10,10 @@
 
 import { css, html, type Template } from './lit.js';
 import { button, chip, spinner, type ButtonSpec } from './primitives.js';
+
+// The kits take their action specs through ShellSpec, so they import the spec
+// type from this module; re-exported here, declared once in primitives.ts.
+export type { ButtonSpec };
 import { icon, type StateIconName } from './state-icons.js';
 
 export const KIT_STATES = ['empty', 'loading', 'offline', 'conflict', 'error'] as const;

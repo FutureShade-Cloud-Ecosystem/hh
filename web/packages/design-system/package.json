@@ -5,6 +5,11 @@
   "type": "module",
   "scripts": {
     "test": "node --import ./src/_ts-js-loader.mjs --test 'test/*.test.mjs'",
-    "serve": "node --import ./src/_ts-js-loader.mjs harness/serve.mjs"
+    "serve": "node --import ./src/_ts-js-loader.mjs harness/serve.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.3",
+    "typescript": "5.9.3"
   }
 }
