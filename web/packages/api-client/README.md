@@ -49,6 +49,12 @@ so the generator needs its install first: `npm --prefix core/api/tools ci`.
   echoes the value. Redirects are refused (`redirect: "error"`): a redirect
   could replay a request's headers and body against another origin, so a
   redirected request resolves a transport error Result instead of following.
+  The dial is raced against the armed deadline and abort, so a custom
+  FetchLike that ignores its signal still resolves an error Result at the
+  deadline (see "What a custom FetchLike must honour" below), and a caller's
+  multipart file name is guarded like a path value: refused as an error
+  Result before anything dials when it is empty, a dot segment, path-like,
+  control carrying, or over 160 characters.
 - `src/pagination.ts` is the cursor page walker. A cursor is the previous
   page's `next_cursor` verbatim; the walk ends at `next_cursor: null`. The
   yard pending-tickets feed's position cursor (see
@@ -120,9 +126,22 @@ the caller's bytes, byte for byte. A multipart operation with a binary field
 takes a filename option per field, so the caller names the part:
 `pricingApplyPriceFile(client, form, { fileFilename: "price-list.xlsx" })`,
 `feedbackCreateMultipart(client, form, { imageFilename: "board-frozen.png" })`.
-A Blob named by no option rides as `blob`, the fetch standard's default part
-name (Node 22 and the browsers; bun's deviates and sends an empty name), so
-that is what the core stores when the caller says nothing. When an operation
+A caller's name is guarded like a path value: a name that is empty, is one of
+the dot segments (`.` or `..`), carries a path separator (`/` or `\`),
+carries a NUL or any other control character, or is longer than 160
+characters resolves an error Result before anything dials. 160 is the bound
+the core's own stored name keeps (`core/internal/pricing/pricefile_service.go`,
+`sanitizeFileName`, caps the name it stores on the import run), so a name
+that passes here is one the core can store whole. A name outside ASCII rides
+as UTF-8 bytes inside the quoted `filename` parameter, which is the HTML
+standard's own multipart encoding; a receiver that still decodes the
+parameter as ISO-8859-1 (the older RFCs' default, `busboy`'s included) shows
+it mangled. The client does not add the RFC 5987 `filename*` form, because
+the platform's `FormData` owns the part headers; a caller that needs a
+guaranteed round trip can keep its names to ASCII. A Blob named by no option
+rides as `blob`, the fetch standard's default part name (Node 22 and the
+browsers; bun's deviates and sends an empty name), so that is what the core
+stores when the caller says nothing. When an operation
 declares both `application/json` and `multipart/form-data` (that is
 `feedbackCreate`), the client emits one function per declared type: the first
 declared keeps the operationId, and the multipart form takes a `Multipart`
@@ -142,9 +161,12 @@ carries then depends on the body the caller held, because the platform's
 fetch supplies its own default for a string body: bytes (`Uint8Array`) go out
 with no `Content-Type` header at all, while a string body goes out with the
 fetch standard's default, `text/plain;charset=UTF-8` (Node 22's undici and
-the browsers alike). Neither default is ever an image type, so an unsaid
-image upload is still refused by the core, never mislabeled: a PNG is never
-sent as a JPEG.
+the browsers alike). Bun diverges for a string body: it sends no
+Content-Type header at all where Node 22 and the browsers send the
+text/plain default, so the same unlabeled string upload is labeled differently
+by the runtime the caller builds for. Neither default is ever an image type,
+so an unsaid image upload is still refused by the core, never mislabeled: a
+PNG is never sent as a JPEG.
 
 The success type is the lowest declared 2xx response. Where that response's
 content is plain string formats (`text/csv`, `text/html`) the operation
@@ -161,6 +183,30 @@ milliseconds, and either resolves an error Result naming which one fired.
 Both stay armed until the response body has been read: a fetch resolves at
 the headers, and a body that stalls after them is still a pending request, so
 an abort or a deadline that expired at the headers would miss it.
+
+## What a custom FetchLike must honour
+
+The transport is injectable (`new ApiClient({ baseUrl, fetch })`), and a
+caller such as auth passes its own. The deadline, the caller's abort and the
+redirect refusal all rest on the replacement honouring two fields of the
+`RequestInitLike` it receives:
+
+- `init.signal`: pass it to the underlying fetch, so a deadline or an abort
+  actually cuts the connection and rejects a pending body read. The client
+  also races the fetch promise against the armed deadline and abort, so a
+  transport that ignores its signal and never settles still resolves an
+  error Result at the deadline instead of hanging the caller; but the race
+  cannot cut the connection, only the signal can. A transport whose response
+  body ignores the signal can still strand a body read past the deadline.
+- `init.redirect`: it is always `"error"`, and a replacement must refuse a
+  redirect the way the platform's fetch does under that setting. The client
+  cannot enforce this one: it sees only the response it is handed, and the
+  `ResponseLike` contract carries no final URL to check, so a replacement
+  that follows redirects silently defeats the replay refusal.
+
+The client enforces what it can (the deadline race) and states the rest; a
+replacement that honours both fields behaves like the platform's fetch for
+every gate this package tests.
 
 ## Tests and gates
 
@@ -201,11 +247,17 @@ The gates, as tests:
   header), the three binary-bodied uploads send exactly the bytes the caller
   held with the content type the caller said, and the multipart binary
   fields (the price file and the feedback screenshot) arrive byte for byte
-  through a real multipart parse of the emitted body.
+  through a real multipart parse of the emitted body. The caller's file name
+  is guarded there too: every refusal class (empty, dot segments, either
+  path separator, NUL, control characters, past the 160 character bound)
+  resolves an error Result with the recorder empty, nothing dialed, and a
+  name of exactly the bound arrives whole.
 - `test/transport.test.mjs` is the one place the suite dials, and it dials
   only a loopback server bound for the duration of one test: a body that
-  stalls after its headers still lands the timeout and the caller's abort,
-  and a redirect is refused, never followed.
+  stalls after its headers still lands the timeout and the caller's abort, a
+  redirect is refused, never followed (cross origin and same origin alike,
+  each on the receiving server's own request count), and a custom FetchLike
+  that never settles is cut off by the deadline and by the caller's abort.
 - `test/pagination.test.mjs` walks a synthetic multi-page cursor sequence,
   proves termination at the documented end condition, surfaces the
   position cursor opaquely, and proves the walk cancellable by signal.
