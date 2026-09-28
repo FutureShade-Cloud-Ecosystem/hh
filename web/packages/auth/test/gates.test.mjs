@@ -73,6 +73,25 @@ test("the browser-session storage is touched only by the throw-safe mirror", () 
   assert.deepEqual(touching, ["session.ts"], "every other module goes through the mirror or injected doubles");
 });
 
+test("the api-client is imported through its exports map, never by a relative path into its src", () => {
+  // The scan matches import specifiers (static and dynamic), not prose: a
+  // comment naming an api-client source path documents, it does not import.
+  const offenders = sources().filter((file) =>
+    /(?:from|import)\s*\(?\s*["'][^"']*api-client\/src/.test(file.text),
+  );
+  assert.deepEqual(
+    offenders.map((file) => file.name),
+    [],
+    "a relative import into the api-client's src walks past its exports map: import from @hh/api-client",
+  );
+  const importers = sources().filter((file) => file.text.includes(`from "@hh/api-client"`));
+  assert.deepEqual(
+    importers.map((file) => file.name),
+    ["client.ts", "lock.ts"],
+    "the Result convention and the HeaderProvider type come from the workspace sibling by its bare name",
+  );
+});
+
 test("the only X- header the package can mint is the one it owns", () => {
   const allowed = new Set(["X-Org"]);
   for (const file of sources()) {

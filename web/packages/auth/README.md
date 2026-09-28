@@ -6,13 +6,17 @@ for staff and tenant callers (HH-4.2). Sign-in methods for the first
 release, confirmed: Google plus the house sign-in through the Console
 bridge; device unlock is in scope.
 
-The package has zero runtime dependencies and takes no npm dependency at
-all: every collaborator arrives as a narrow injected interface. The
-workspace's `Result` convention and `HeaderProvider` type are reused from
-the api-client by type-level import (`src/client.ts` imports them from
-`../api-client/src/result.ts` and `../api-client/src/http.ts`); the shell
-wires the two packages together at run time, and the test suite imports the
-real `ApiClient` to prove that wiring.
+The package takes no dependency from any registry: every collaborator
+arrives as a narrow injected interface. Its one dependency is the workspace
+sibling `@hh/api-client` (declared in package.json, linked by the web
+workspace, never installed from a registry): the `Result` convention
+(`err`, `ok`, `Result`) and the `HeaderProvider` type are imported from
+`@hh/api-client` through its exports map, at run time and type level alike
+(`src/client.ts` and `src/lock.ts` import them by the bare package name,
+never by a relative path into the api-client's src, and a gate in
+`test/gates.test.mjs` keeps it that way); the shell wires the two packages
+together, and the test suite imports the real `ApiClient` the same way to
+prove that wiring.
 
 ## Custody: the token lives in memory, and storage holds nothing
 
