@@ -55,6 +55,19 @@ honest behaviour for that posture. The degradation is observable:
 Node test process has no browser storage and therefore runs degraded, which
 keeps the degraded path exercised on every `npm test`.
 
+### Sign-out goes through signOut()
+
+The shell must sign out through `AuthController.signOut()`, never by
+calling `SessionStore.clear()` directly. The generation counter that
+cancels a sign-in or a resume in flight lives in the controller, so a
+direct `sessions.clear()` empties the custody but does not bump it: a
+resume that is already running is not cancelled, and when the platform
+answers it adopts a token into a custody the user asked to sign out.
+`signOut()` ends the platform session, bumps the generation on both sides
+of that await, and wipes custody; the deferred-fake tests in
+`test/client.test.mjs` hold that ordering against a resume and a sign-in
+begun before and during the sign-out.
+
 ### The throw-safe mirror's provenance
 
 The mirror carries the ERP storage shim's rationale from
