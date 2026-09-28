@@ -218,6 +218,32 @@ test("the controller adopts an out-of-band session and signs out", async () => {
   assert.equal(recorded.size, 0, "the mirror holds nothing after sign-out");
 });
 
+test("adopt with a null user returns false instead of throwing", () => {
+  const { sessions } = custody();
+  const controller = new AuthController({ account: new FakeAccountSurface(), sessions });
+  assert.equal(
+    controller.adopt({ token: FAKE_JWT, tokenExpiresAtMs: START_MS + 60_000, user: null }),
+    false,
+    "a null user is unusable input, resolved as data",
+  );
+  assert.equal(sessions.current, null, "nothing was adopted");
+  assert.equal(sessions.profile, null, "no profile was mirrored");
+});
+
+test("a failed resume clears the stale profile it failed from", async () => {
+  const { recorded, sessions } = custody();
+  sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: START_MS + 60_000, user: { ...FAKE_ACCOUNT } });
+  assert.notEqual(sessions.profile, null, "the stale display profile is what a failed resume must not leave behind");
+
+  const account = new FakeAccountSurface(); // no platform session: getSession throws
+  const refused = await new AuthController({ account, sessions }).resume();
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /no platform session/);
+  assert.equal(sessions.current, null);
+  assert.equal(sessions.profile, null, "the stale profile went with the failed resume");
+  assert.equal(recorded.size, 0, "storage holds nothing after the failed resume");
+});
+
 test("resume re-signs in through the issuer after a reload, holding nothing to trade", async () => {
   let nowMs = START_MS;
   const account = new FakeAccountSurface();

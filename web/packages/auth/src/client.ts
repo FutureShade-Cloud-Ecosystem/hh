@@ -41,7 +41,7 @@
 // platform answers for the sign-in while this package holds nothing to
 // trade.
 import { err, ok, type HeaderProvider, type Result } from "@hh/api-client";
-import type { SessionStore, SessionUser } from "./session.js";
+import type { SessionStore } from "./session.js";
 
 function asMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -219,14 +219,17 @@ export class AuthController {
    * Adopt a session established out of band (the Google callback through the
    * Console bridge, or a resume's minted token), the ERP's adoptSession
    * posture: custody takes the token into private memory and the display
-   * profile into the mirror, nothing else.
+   * profile into the mirror, nothing else. A null or non-object user is
+   * unusable input like any other: adopt returns false and adopts nothing,
+   * never a throw.
    */
   adopt(input: AdoptSessionInput): boolean {
-    const user: SessionUser = { userId: input.user.userId, email: input.user.email, name: input.user.name };
+    const user: AccountUser | null = input.user;
+    if (user === null || typeof user !== "object") return false;
     return this.#sessions.adopt({
       token: input.token,
       tokenExpiresAtMs: input.tokenExpiresAtMs,
-      user,
+      user: { userId: user.userId, email: user.email, name: user.name },
     });
   }
 
@@ -237,10 +240,16 @@ export class AuthController {
    * issuer's cookie, a fresh JWT is minted, and custody adopts it into
    * memory. Nothing this package stored is needed or read to do it; the
    * mirror holds the display profile only. Refused as data when the
-   * platform holds no session or mints nothing usable. The generation guard
-   * runs across every await: a sign-out that lands mid resume cancels it as
-   * data and nothing is adopted, so the late platform answer can never
-   * re-sign a custody the user signed out.
+   * platform holds no session or mints nothing usable, and a failed resume
+   * clears the custody it failed from: a stale display profile must not sit
+   * in storage and in memory beside a resume that produced nothing, or the
+   * shell would render the previous user's name over a signed-out custody.
+   * (The one exception is the generation guard's cancellation: a resume
+   * that lands after a sign-out writes nothing at all, because the sign-out
+   * already wiped the custody it would clear.) The generation guard runs
+   * across every await: a sign-out that lands mid resume cancels it as data
+   * and nothing is adopted, so the late platform answer can never re-sign a
+   * custody the user signed out.
    */
   async resume(): Promise<Result<AccountUser>> {
     const generation = this.#generation;
@@ -248,6 +257,7 @@ export class AuthController {
     try {
       user = await this.#account.getSession();
     } catch (error) {
+      this.#sessions.clear();
       return err(`no platform session to resume: ${asMessage(error)}`);
     }
     if (this.#generation !== generation) {
@@ -257,6 +267,7 @@ export class AuthController {
     try {
       minted = await this.#account.createJWT();
     } catch (error) {
+      this.#sessions.clear();
       return err(`the token refresh failed: ${asMessage(error)}`);
     }
     if (this.#generation !== generation) {
@@ -267,7 +278,10 @@ export class AuthController {
       tokenExpiresAtMs: minted.expiresAtMs,
       user,
     });
-    if (!adopted) return err("the platform returned an unusable session");
+    if (!adopted) {
+      this.#sessions.clear();
+      return err("the platform returned an unusable session");
+    }
     return ok({ ...user });
   }
 
