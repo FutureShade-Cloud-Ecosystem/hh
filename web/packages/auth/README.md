@@ -58,15 +58,22 @@ keeps the degraded path exercised on every `npm test`.
 ### Sign-out goes through signOut()
 
 The shell must sign out through `AuthController.signOut()`, never by
-calling `SessionStore.clear()` directly. The generation counter that
-cancels a sign-in or a resume in flight lives in the controller, so a
-direct `sessions.clear()` empties the custody but does not bump it: a
-resume that is already running is not cancelled, and when the platform
-answers it adopts a token into a custody the user asked to sign out.
-`signOut()` ends the platform session, bumps the generation on both sides
-of that await, and wipes custody; the deferred-fake tests in
-`test/client.test.mjs` hold that ordering against a resume and a sign-in
-begun before and during the sign-out.
+calling `SessionStore.clear()` directly. Two counters live in the
+controller. The generation counter cancels a resume in flight (and is
+bumped by every successful adoption, so of two overlapping resumes with no
+sign-out between them only the first adoption lands). The sign-out counter
+cancels an explicit sign-in: only a sign-out bumps it, on both sides of
+its own await, because a sign-in is the person's own act. An adoption that
+lands first (a resume, an out-of-band callback) does not cancel it, and a
+double submit of the sign-in form does not resolve an error while the
+person is signed in. A direct `sessions.clear()` empties the custody but
+bumps neither counter: a resume that is already running is not cancelled,
+and when the platform answers it adopts a token into a custody the user
+asked to sign out. `signOut()` ends the platform session, bumps both
+counters on the two sides of that await, and wipes custody; the
+deferred-fake tests in `test/client.test.mjs` hold that ordering against a
+resume and a sign-in begun before and during the sign-out, a resume that
+adopts first, a double submit, and the two adoption bumps.
 
 ### The throw-safe mirror's provenance
 

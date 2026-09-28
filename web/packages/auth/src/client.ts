@@ -171,17 +171,30 @@ export interface AdoptSessionInput {
  * two overlapping resumes with no sign-out between them, only the first
  * adoption lands, and the older one's late failure clears nothing and its
  * late success adopts nothing, so the newer session is neither wiped nor
- * replaced. Without the guard, a resume or a sign-in begun before the user
- * signed out would re-sign the custody in when the platform answered after
- * the sign-out, and a resume or a sign-in begun during the sign-out's own
- * await (it reads the already bumped generation) would do the same once the
- * platform answered after the sign-out returned; the profile would be
- * written back to storage either way.
+ * replaced. Without the guard, a resume begun before the user signed out
+ * would re-sign the custody in when the platform answered after the
+ * sign-out, and a resume begun during the sign-out's own await (it reads
+ * the already bumped generation) would do the same once the platform
+ * answered after the sign-out returned; the profile would be written back
+ * to storage either way.
+ *
+ * The sign-in answers to a different master: it is an explicit act by the
+ * person at the keyboard, so it checks a sign-out counter, not the shared
+ * generation. Only signOut() bumps that counter, on both sides of its own
+ * await. An adoption that lands first (a resume answering for whoever the
+ * issuer still holds, or an out-of-band callback) does not cancel the
+ * person's explicit sign-in: the sign-in carries on and its own adoption
+ * wins custody, so the person who signed in is the person the tablet shows.
+ * And one sign-in's own adoption does not cancel a second submit of the
+ * same form: a double submit lands twice and no error is resolved while
+ * the person is signed in. A sign-out cancels a sign-in, from both sides
+ * of the sign-out's await, exactly as the generation guard does.
  */
 export class AuthController {
   readonly #account: AccountSurface;
   readonly #sessions: SessionStore;
   #generation = 0;
+  #signOuts = 0;
 
   constructor(deps: { account: AccountSurface; sessions: SessionStore }) {
     this.#account = deps.account;
@@ -191,20 +204,24 @@ export class AuthController {
   /**
    * The house sign-in: establish the platform session, mint the JWT, adopt
    * it. Custody keeps the token in memory and the display profile in the
-   * mirror; no credential is stored. The generation guard runs across every
-   * await: a sign-out that lands mid sign-in cancels it as data and nothing
-   * is adopted.
+   * mirror; no credential is stored. The guard across every await checks a
+   * sign-out counter, not the shared generation: an explicit sign-in is the
+   * person's own act, so a resume or an adoption that lands first does not
+   * cancel it (the sign-in carries on and its adoption wins custody), and a
+   * double submit does not resolve an error while the person is signed in.
+   * Only a sign-out cancels it, from both sides of the sign-out's own
+   * await, and nothing is adopted once it has.
    */
   async signInWithPassword(email: string, password: string): Promise<Result<AccountUser>> {
-    const generation = this.#generation;
+    const signOuts = this.#signOuts;
     let user: AccountUser;
     try {
       user = await this.#account.createEmailPasswordSession(email, password);
     } catch (error) {
       return err(`sign-in failed: ${asMessage(error)}`);
     }
-    if (this.#generation !== generation) {
-      return err("sign-in cancelled: sign-out or another adoption landed while the sign-in was in flight, so nothing was adopted");
+    if (this.#signOuts !== signOuts) {
+      return err("sign-in cancelled: sign-out landed while the sign-in was in flight, so nothing was adopted");
     }
     let minted: { jwt: string; expiresAtMs: number };
     try {
@@ -212,8 +229,8 @@ export class AuthController {
     } catch (error) {
       return err(`sign-in failed minting the token: ${asMessage(error)}`);
     }
-    if (this.#generation !== generation) {
-      return err("sign-in cancelled: sign-out or another adoption landed while the sign-in was in flight, so nothing was adopted");
+    if (this.#signOuts !== signOuts) {
+      return err("sign-in cancelled: sign-out landed while the sign-in was in flight, so nothing was adopted");
     }
     const adopted = this.#sessions.adopt({
       token: minted.jwt,
@@ -319,6 +336,7 @@ export class AuthController {
    */
   async signOut(): Promise<void> {
     this.#generation += 1;
+    this.#signOuts += 1;
     try {
       await this.#account.deleteSession();
     } catch {
@@ -326,8 +344,10 @@ export class AuthController {
     }
     // The hole on the far side of the await: anything that began while
     // deleteSession was pending captured the first bump and would adopt a
-    // late platform answer. The second bump closes it.
+    // late platform answer. The second bump closes it, for the generation
+    // guard and for the sign-in's sign-out counter alike.
     this.#generation += 1;
+    this.#signOuts += 1;
     this.#sessions.clear();
   }
 }
