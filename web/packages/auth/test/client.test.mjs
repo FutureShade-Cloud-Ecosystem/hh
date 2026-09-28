@@ -630,6 +630,69 @@ test("a failed mint with no sign-out in between still clears the custody it fail
   assert.equal(recorded.size, 0, "storage holds nothing after the failed refresh");
 });
 
+// Two overlapping resumes with NO sign-out between them: both begin from the
+// same custody and the same generation, so the guard that keeps a stale
+// answer from wiping a newer session is the adoption bump. The newer
+// session's mint is named MINT-NEWER so the assertions can tell the two
+// adoptions apart; every value stays an obvious fake.
+async function twoOverlappingResumes() {
+  const { recorded, sessions } = custody();
+  sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: START_MS + 60_000, user: { ...FAKE_ACCOUNT } });
+  const account = new DeferredAccountSurface();
+  const controller = new AuthController({ account, sessions });
+
+  const older = controller.resume();
+  const olderSession = await untilHandoff(account, "getSession"); // the older resume's answer, parked
+  const newer = controller.resume();
+  const newerSession = await untilNextHandoff(account, "getSession", olderSession); // the newer's, parked too
+  newerSession.complete({ ...FAKE_ACCOUNT });
+  const newerMint = await untilHandoff(account, "createJWT");
+  newerMint.complete({ jwt: `${FAKE_JWT}-MINT-NEWER`, expiresAtMs: START_MS + 900_000 });
+  assert.equal((await newer).ok, true, "the newer resume succeeded and adopted");
+  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-NEWER`, "the newer session is the one in custody");
+  return { account, controller, older, olderSession, recorded, sessions };
+}
+
+test("two overlapping resumes, no sign-out: the older resume's late failure wipes nothing of the newer session", async () => {
+  const { older, olderSession, recorded, sessions } = await twoOverlappingResumes();
+
+  olderSession.fail(new Error("platform: session gone")); // the older resume's answer FAILS, after the newer adopted
+  const stale = await older;
+  assert.equal(stale.ok, false, "the older resume still resolves an error Result");
+  assert.match(stale.error, /no platform session to resume/);
+  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-NEWER`, "the newer session was not wiped by the older resume's late failure");
+  assert.deepEqual(sessions.profile, { ...FAKE_ACCOUNT }, "the newer profile is untouched");
+  assert.equal(
+    recorded.getItem(SESSION_MIRROR_KEY)?.includes(FAKE_ACCOUNT.userId),
+    true,
+    "storage still holds the newer profile",
+  );
+  const staff = authHeaderProvider({ callerClass: "staff", sessions, activeOrg: () => ORG });
+  assert.deepEqual(
+    staff(),
+    { "X-Org": ORG, Authorization: `Bearer ${FAKE_JWT}-MINT-NEWER` },
+    "the wire still carries the newer session's token",
+  );
+});
+
+test("two overlapping resumes, no sign-out: the older resume's late success replaces nothing of the newer session", async () => {
+  const { account, older, olderSession, sessions } = await twoOverlappingResumes();
+
+  const mintBefore = account.handoff("createJWT"); // the newer resume's mint is the latest createJWT call
+  olderSession.complete({ ...FAKE_ACCOUNT }); // the older resume's answer lands late, after the newer adopted
+  await flush();
+  assert.equal(
+    account.handoff("createJWT"),
+    mintBefore,
+    "the older resume asked for no mint: it was superseded before it could carry on",
+  );
+  const stale = await older;
+  assert.equal(stale.ok, false, "the older resume resolves an error Result instead of replacing the newer session");
+  assert.match(stale.error, /cancelled/);
+  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-NEWER`, "the newer session was not replaced by the older resume's late success");
+  assert.deepEqual(sessions.profile, { ...FAKE_ACCOUNT }, "the newer profile is untouched");
+});
+
 test("the public surface exposes no role state at all", async () => {
   const auth = await import("../src/index.ts");
   const keys = Object.keys(auth);
