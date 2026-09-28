@@ -2,5 +2,23 @@
   "name": "@hh/auth",
   "version": "0.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "description": "The web auth package: memory-only JWT custody whose mirror carries the display profile only, a device lock that is a screen courtesy, and the header wiring into the api-client for staff and tenant callers",
+  "sideEffects": false,
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "test": "node --import ./test/_ts-js-loader.mjs --test test/custody.test.mjs test/unlock.test.mjs test/client.test.mjs test/gates.test.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hh/api-client": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "typescript": "5.9.3"
+  }
 }
