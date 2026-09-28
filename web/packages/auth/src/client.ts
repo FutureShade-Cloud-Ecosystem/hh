@@ -162,12 +162,16 @@ export interface AdoptSessionInput {
  * wrong credential is data, never a throw.
  *
  * The generation guard: sign-out must win against a platform answer that
- * lands late. signOut() bumps a generation counter first; signInWithPassword
- * and resume capture the counter before their first await and compare it
- * after every await, and on a mismatch they adopt nothing and resolve an
- * error Result. Without the guard, a resume or a sign-in begun before the
- * user signed out would re-sign the custody in when the platform answered
- * after the sign-out, and the profile would be written back to storage.
+ * lands late. signOut() bumps a generation counter before its await and
+ * again after it, just before the clear; signInWithPassword and resume
+ * capture the counter before their first await and compare it after every
+ * await, and on a mismatch they adopt nothing and resolve an error Result.
+ * Without the guard, a resume or a sign-in begun before the user signed out
+ * would re-sign the custody in when the platform answered after the
+ * sign-out, and a resume or a sign-in begun during the sign-out's own await
+ * (it reads the already bumped generation) would do the same once the
+ * platform answered after the sign-out returned; the profile would be
+ * written back to storage either way.
  */
 export class AuthController {
   readonly #account: AccountSurface;
@@ -288,9 +292,13 @@ export class AuthController {
   /**
    * Sign out: end the platform session (best effort; it may already be
    * gone) and wipe custody either way. The generation is bumped before
-   * anything is awaited, so a sign-in or a resume that is in flight adopts
-   * nothing when its platform answer lands after this call: the sign-out
-   * wins, always.
+   * anything is awaited AND again after the await, just before the clear:
+   * a sign-in or a resume that is already in flight adopts nothing when its
+   * platform answer lands after this call, and a sign-in or a resume that
+   * STARTS while deleteSession is still in flight reads the already bumped
+   * generation, passes its check, and would adopt once the platform answers
+   * after this method has returned; the second bump supersedes it too. The
+   * sign-out wins, always, from both sides of its own await.
    */
   async signOut(): Promise<void> {
     this.#generation += 1;
@@ -299,6 +307,10 @@ export class AuthController {
     } catch {
       // the platform session was already gone; custody is cleared regardless
     }
+    // The hole on the far side of the await: anything that began while
+    // deleteSession was pending captured the first bump and would adopt a
+    // late platform answer. The second bump closes it.
+    this.#generation += 1;
     this.#sessions.clear();
   }
 }

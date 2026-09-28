@@ -376,6 +376,107 @@ test("sign out wins over a sign-in in flight: the late credential and mint adopt
   assert.equal("Authorization" in staff(), false, "the staff provider sends no Authorization");
 });
 
+// One scheduler turn: enough for a resolved platform promise's continuation
+// (the controller code that decides) to have run.
+function flush() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+test("a resume begun while sign-out's own deleteSession is pending adopts nothing once sign-out has returned", async () => {
+  // The far side of the await: the resume STARTS during deleteSession, so it
+  // captures the generation the sign-out bumped before its await and passes
+  // its check unless the sign-out bumps again after the await.
+  const { recorded, sessions } = custody();
+  const account = new DeferredAccountSurface();
+  const controller = new AuthController({ account, sessions });
+
+  const signingOut = controller.signOut(); // deleteSession is in flight
+  const pending = controller.resume(); // the resume starts during that await
+  const getSession = await untilHandoff(account, "getSession");
+  await signingOut; // deleteSession resolves at once; the sign-out completes
+  assert.equal(account.deleteCount, 1);
+  assert.equal(sessions.current, null, "sign-out wiped the custody");
+  assert.equal(recorded.size, 0, "sign-out left nothing in storage");
+
+  getSession.complete({ ...FAKE_ACCOUNT }); // the platform answers late
+  await flush();
+  assert.equal(
+    account.handoff("createJWT"),
+    null,
+    "the mint was never asked: the sign-out's post-await bump superseded the resume",
+  );
+  const result = await pending;
+  assert.equal(result.ok, false, "the resume resolves an error Result after sign-out");
+  assert.match(result.error, /cancelled/);
+  assert.equal(sessions.current, null, "custody is empty: the late answer was not adopted");
+  assert.equal(sessions.profile, null, "storage holds no profile after the late answer");
+  assert.equal(recorded.size, 0, "nothing was written back to the mirror after sign-out");
+  const tenant = authHeaderProvider({ callerClass: "tenant", sessions });
+  assert.deepEqual(tenant(), {}, "the tenant provider sends no Authorization");
+  const staff = authHeaderProvider({ callerClass: "staff", sessions, activeOrg: () => ORG });
+  assert.deepEqual(staff(), { "X-Org": ORG }, "the staff provider sends X-Org and no Authorization");
+});
+
+test("a sign-in begun while sign-out's own deleteSession is pending adopts nothing once sign-out has returned", async () => {
+  const { recorded, sessions } = custody();
+  const account = new DeferredAccountSurface();
+  const controller = new AuthController({ account, sessions });
+
+  const signingOut = controller.signOut(); // deleteSession is in flight
+  const pending = controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD); // starts during that await
+  const created = await untilHandoff(account, "createEmailPasswordSession");
+  await signingOut;
+  assert.equal(account.deleteCount, 1);
+  assert.equal(sessions.current, null);
+  assert.equal(recorded.size, 0);
+
+  created.complete({ ...FAKE_ACCOUNT }); // the platform accepts the credential late
+  await flush();
+  assert.equal(
+    account.handoff("createJWT"),
+    null,
+    "the mint was never asked: the sign-out's post-await bump superseded the sign-in",
+  );
+  const result = await pending;
+  assert.equal(result.ok, false, "the sign-in resolves an error Result after sign-out");
+  assert.match(result.error, /cancelled/);
+  assert.equal(sessions.current, null, "custody is empty: the late credential was not adopted");
+  assert.equal(sessions.profile, null, "storage holds no profile after the late credential");
+  assert.equal(recorded.size, 0, "nothing was written back to the mirror after sign-out");
+  const tenant = authHeaderProvider({ callerClass: "tenant", sessions });
+  assert.deepEqual(tenant(), {}, "the tenant provider sends no Authorization");
+  const staff = authHeaderProvider({ callerClass: "staff", sessions, activeOrg: () => ORG });
+  assert.deepEqual(staff(), { "X-Org": ORG }, "the staff provider sends X-Org and no Authorization");
+});
+
+test("a sign-out landing between getSession and createJWT cancels the resume's mint", async () => {
+  // The resume is parked at its SECOND await: the first check has already
+  // passed when the sign-out lands, so this is the second check's case.
+  const { recorded, sessions } = custody();
+  const account = new DeferredAccountSurface();
+  const controller = new AuthController({ account, sessions });
+
+  const pending = controller.resume();
+  (await untilHandoff(account, "getSession")).complete({ ...FAKE_ACCOUNT });
+  const minted = await untilHandoff(account, "createJWT"); // the token mint is in flight
+  await controller.signOut(); // the sign-out lands between the two awaits and completes
+  assert.equal(account.deleteCount, 1);
+  assert.equal(sessions.current, null);
+  assert.equal(recorded.size, 0);
+
+  minted.complete({ jwt: `${FAKE_JWT}-MINT-9`, expiresAtMs: START_MS + 900_000 }); // the mint answers late
+  const result = await pending;
+  assert.equal(result.ok, false, "the resume resolves an error Result after sign-out");
+  assert.match(result.error, /cancelled/);
+  assert.equal(sessions.current, null, "custody is empty: the late mint was not adopted");
+  assert.equal(sessions.profile, null, "storage holds no profile after the late mint");
+  assert.equal(recorded.size, 0, "nothing was written back to the mirror after sign-out");
+  const tenant = authHeaderProvider({ callerClass: "tenant", sessions });
+  assert.deepEqual(tenant(), {}, "the tenant provider sends no Authorization");
+  const staff = authHeaderProvider({ callerClass: "staff", sessions, activeOrg: () => ORG });
+  assert.deepEqual(staff(), { "X-Org": ORG }, "the staff provider sends X-Org and no Authorization");
+});
+
 test("the public surface exposes no role state at all", async () => {
   const auth = await import("../src/index.ts");
   const keys = Object.keys(auth);
