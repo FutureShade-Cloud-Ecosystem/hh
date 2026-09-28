@@ -14,6 +14,9 @@
 // timeoutMs (ApiCallOptions, what the generated operations accept as their
 // optional trailing call argument). The transport aborts the fetch on either
 // and resolves an error Result naming which one fired; it never rejects. Both
+// are armed before the header provider is called, so the provider's call sits
+// inside the deadline: a provider that never settles (a wedged auth lookup)
+// resolves the timeout Result instead of hanging the caller past it. Both
 // stay armed until the response body has been read, because a fetch resolves
 // at the headers and a body that stalls after them is still a pending
 // request. Redirects are refused (redirect: "error"): a redirect could replay
@@ -201,46 +204,12 @@ export class ApiClient {
     }
     const url = appendQuery(`${this.baseUrl}${path}`, req.query);
 
-    let providedHeaders: Record<string, string>;
-    try {
-      providedHeaders = await this.resolveHeaders();
-    } catch (error) {
-      return err(`${id}: the header provider failed: ${asMessage(error)}`);
-    }
-    const headers: Record<string, string> = { ...providedHeaders };
-    let body: string | FormData | Uint8Array | ArrayBuffer | undefined;
-    if (req.rawBody !== undefined) {
-      body = req.rawBody.content;
-      // No contentType says no Content-Type at all: a raw upload declaring
-      // several types is refused for not saying, never mislabeled.
-      if (req.rawBody.contentType !== undefined) headers["Content-Type"] = req.rawBody.contentType;
-    } else if (req.form !== undefined) {
-      const form = new FormData();
-      for (const [name, value] of Object.entries(req.form)) {
-        if (value === undefined || value === null) continue;
-        form.append(name, value instanceof Blob ? value : String(value));
-      }
-      body = form; // fetch sets the multipart content type and its boundary
-    } else if (req.body !== undefined) {
-      body = JSON.stringify(req.body);
-      headers["Content-Type"] = JSON_CONTENT_TYPE;
-    }
-    // A header value the platform would refuse must never reach fetch: the
-    // platform's own refusal message echoes the value, and header values are
-    // where tokens travel, so the transport refuses here first and names the
-    // header, never its value.
-    for (const [name, value] of Object.entries(headers)) {
-      if (INVALID_HEADER_VALUE.test(value)) {
-        return err(`${id}: the ${name} header value is not a valid header value`);
-      }
-    }
-    const init: RequestInitLike = { method: req.method, headers, redirect: "error", ...(body !== undefined ? { body } : {}) };
-
-    // The caller's signal and the timeout drive one controller, and both stay
-    // armed until the body has been read: a fetch resolves at the headers,
-    // and a body that stalls after them is still a pending request. An abort
-    // during the read resolves the same timeout or aborted Result an abort
-    // before the headers would have.
+    // The caller's signal and the timeout drive one controller, armed before
+    // the header provider runs, and both stay armed until the body has been
+    // read: a fetch resolves at the headers, and a body that stalls after
+    // them is still a pending request. An abort during the provider's call or
+    // the read resolves the same timeout or aborted Result an abort before
+    // the headers would have.
     const controller = new AbortController();
     let abortKind: "timeout" | "caller" | undefined;
     const onCallerAbort = () => {
@@ -263,8 +232,66 @@ export class ApiClient {
       if (abortKind === "caller") return err(`${id}: the request was aborted`);
       return undefined;
     };
+    // The provider's call is raced against the armed controller, so a header
+    // provider that never settles cannot outrun the deadline or the caller's
+    // abort: this matters for auth, whose provider it is.
+    const abortWait = new Promise<{ kind: "abort" }>((resolve) => {
+      if (controller.signal.aborted) resolve({ kind: "abort" });
+      else controller.signal.addEventListener("abort", () => resolve({ kind: "abort" }), { once: true });
+    });
 
     try {
+      let providedHeaders: Record<string, string>;
+      const raced = await Promise.race([
+        this.resolveHeaders().then(
+          (headers) => ({ kind: "headers" as const, headers }),
+          (error) => ({ kind: "providerFailed" as const, error }),
+        ),
+        abortWait,
+      ]);
+      if (raced.kind === "abort") {
+        return aborted() ?? err(`${id}: the request was aborted`);
+      }
+      if (raced.kind === "providerFailed") {
+        return err(`${id}: the header provider failed: ${asMessage(raced.error)}`);
+      }
+      providedHeaders = raced.headers;
+      const headers: Record<string, string> = { ...providedHeaders };
+      let body: string | FormData | Uint8Array | ArrayBuffer | undefined;
+      if (req.rawBody !== undefined) {
+        body = req.rawBody.content;
+        // No contentType says no Content-Type at all: a raw upload declaring
+        // several types is refused for not saying, never mislabeled.
+        if (req.rawBody.contentType !== undefined) headers["Content-Type"] = req.rawBody.contentType;
+      } else if (req.form !== undefined) {
+        const form = new FormData();
+        for (const [name, value] of Object.entries(req.form)) {
+          if (value === undefined || value === null) continue;
+          form.append(name, value instanceof Blob ? value : String(value));
+        }
+        body = form; // fetch sets the multipart content type and its boundary
+      } else if (req.body !== undefined) {
+        body = JSON.stringify(req.body);
+        headers["Content-Type"] = JSON_CONTENT_TYPE;
+      }
+      // A header value the platform would refuse must never reach fetch: the
+      // platform's own refusal message echoes the value, and header values are
+      // where tokens travel, so the transport refuses here first and names the
+      // header, never its value.
+      for (const [name, value] of Object.entries(headers)) {
+        if (INVALID_HEADER_VALUE.test(value)) {
+          return err(`${id}: the ${name} header value is not a valid header value`);
+        }
+      }
+      const init: RequestInitLike = { method: req.method, headers, redirect: "error", ...(body !== undefined ? { body } : {}) };
+
+      // An abort that landed while the request was parked at the provider
+      // (or a signal dead on arrival) must not wait on a fetch that can no
+      // longer observe it: check the armed controller once more before
+      // dialing.
+      const beforeDial = aborted();
+      if (beforeDial !== undefined) return beforeDial;
+
       let response: ResponseLike;
       try {
         response = await this.fetchLike(url, { ...init, signal: controller.signal });

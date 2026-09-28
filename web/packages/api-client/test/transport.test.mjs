@@ -95,3 +95,31 @@ test("a redirect is refused, never followed", { timeout: 5000 }, async () => {
     await shutdown(target);
   }
 });
+
+// The header provider's call sits inside the deadline (it matters for auth,
+// whose provider it is): a provider that never settles resolves the timeout
+// Result at the deadline instead of hanging the caller past it, and a
+// caller's abort lands while the provider is still pending. Neither test
+// dials: the provider hangs before the transport would.
+test("a header provider that never settles still lands the timeout", { timeout: 5000 }, async () => {
+  const client = new api.ApiClient({
+    baseUrl: "https://hh-core.example",
+    headers: () => new Promise(() => {}),
+  });
+  const result = await api.tenantAuth.tenantGetMe(client, { timeoutMs: 50 });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /the request timed out after 50 ms/);
+});
+
+test("a caller's abort lands while the header provider is still pending", { timeout: 5000 }, async () => {
+  const controller = new AbortController();
+  const client = new api.ApiClient({
+    baseUrl: "https://hh-core.example",
+    headers: () => new Promise(() => {}),
+  });
+  const pending = api.tenantAuth.tenantGetMe(client, { signal: controller.signal });
+  setTimeout(() => controller.abort(), 30);
+  const result = await pending;
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /the request was aborted/);
+});
