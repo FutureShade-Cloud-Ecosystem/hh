@@ -325,7 +325,7 @@
   --hh-color-scheme: light;
 
   /* The base brand's on-ink flips because the IDENTITY flips: in light the brand
-     identity is dark-gold #8A6500, and the ink that sits ON it is white (5.63:1).
+     identity is dark-gold #8A6500, and the ink that sits ON it is white (5.33:1).
      The FILL's ink does NOT follow: --brand-fill-on stays the invariant accent
      ink, declared in :root and re-valued by no block. */
   --brand-on: #FFFFFF;
