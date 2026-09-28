@@ -152,6 +152,7 @@ export class FakeAccountSurface implements AccountSurface {
   oauthCount = 0;
   deleteCount = 0;
   jwtCount = 0;
+  getSessionCount = 0;
   jwtLifetimeMs = 900_000;
   user: AccountUser = { ...FAKE_ACCOUNT };
 
@@ -183,13 +184,16 @@ export class FakeAccountSurface implements AccountSurface {
   }
 
   async getSession(): Promise<AccountUser> {
+    this.getSessionCount += 1;
     if (!this.#hasPlatformSession) throw new Error("fake: no platform session");
     return { ...this.user };
   }
 
   async createJWT(): Promise<{ jwt: string; expiresAtMs: number }> {
     this.jwtCount += 1;
-    return { jwt: FAKE_JWT, expiresAtMs: this.#now() + this.jwtLifetimeMs };
+    // Each mint is distinct, so a test can tell a fresh token from the one it
+    // replaces; the value stays an obvious fake.
+    return { jwt: `${FAKE_JWT}-MINT-${this.jwtCount}`, expiresAtMs: this.#now() + this.jwtLifetimeMs };
   }
 
   async deleteSession(): Promise<void> {

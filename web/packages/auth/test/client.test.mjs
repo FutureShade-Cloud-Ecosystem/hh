@@ -52,10 +52,14 @@ function adoptedSessions({ now = () => START_MS } = {}) {
   return { recorded, sessions };
 }
 
-async function staffRig({ activeOrg = () => ORG, withSession = true, lockOpen = false } = {}) {
+async function staffRig({ activeOrg = () => ORG, withSession = true, lockOpen = false, lockEngaged = false } = {}) {
   const { recorded, sessions } = withSession ? adoptedSessions() : custody();
   const credentials = new FakeCredentialProvider();
   const lock = new DeviceLock({ credentials, sessions, mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded) });
+  if (lockEngaged) {
+    assert.equal((await lock.engage()).ok, true);
+    assert.equal(lock.state, "locked", "the lock is engaged and closed");
+  }
   if (lockOpen) {
     assert.equal((await lock.engage()).ok, true);
     credentials.present(FAKE_PIN);
@@ -91,10 +95,24 @@ test("a staff request carries exactly Authorization and X-Org, even with the loc
 });
 
 test("a staff request with the lock engaged but closed carries exactly Authorization and X-Org", async () => {
-  const { calls, client } = await staffRig();
+  const { calls, client, lock } = await staffRig({ lockEngaged: true });
+  assert.equal(lock.state, "locked", "the lock really is engaged and closed for this request");
   const result = await client.request({ method: "GET", path: "/api/v1/identity/ping", operationId: "identityPing" });
   assert.equal(result.ok, true);
   assert.deepEqual(calls[0].init.headers, { Authorization: `Bearer ${FAKE_JWT}`, "X-Org": ORG });
+});
+
+test("a staff request with no live session sends X-Org and no Authorization", async () => {
+  const { calls, client, sessions } = await staffRig({ withSession: false });
+  assert.equal(sessions.current, null, "no live session is held");
+  const result = await client.request({ method: "GET", path: "/api/v1/identity/ping", operationId: "identityPing" });
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1, "exactly one request left");
+  assert.deepEqual(
+    calls[0].init.headers,
+    { "X-Org": ORG },
+    "the staff rule is X-Org always, Authorization only while a live session exists",
+  );
 });
 
 test("a tenant request sends no X-Org: the core refuses that header on tenant routes", async () => {
@@ -161,7 +179,7 @@ test("the controller signs in through the fake account surface and custody holds
   const result = await controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD);
   assert.equal(result.ok, true, `sign-in resolves a Result: ${result.ok ? "" : result.error}`);
   assert.deepEqual(result.value, { ...FAKE_ACCOUNT });
-  assert.equal(sessions.current.token, FAKE_JWT, "the fake JWT (documented fake) lives in memory");
+  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-1`, "the fake surface's first mint (documented fake) lives in memory");
 
   const payload = JSON.parse(recorded.writes.find((w) => w.key === SESSION_MIRROR_KEY).value);
   assert.deepEqual(
@@ -224,7 +242,7 @@ test("resume re-signs in through the issuer after a reload, holding nothing to t
   const resumed = await controller.resume();
   assert.equal(resumed.ok, true, `resume resolves a Result: ${resumed.ok ? "" : resumed.error}`);
   assert.deepEqual(resumed.value, { ...FAKE_ACCOUNT }, "the issuer's cookie-backed session answered");
-  assert.equal(reloaded.current.token, FAKE_JWT, "a fresh token rides memory again");
+  assert.equal(reloaded.current.token, `${FAKE_JWT}-MINT-2`, "a fresh mint, distinct from the sign-in's first, rides memory again");
 });
 
 test("resume mints a fresh token after the old one expired: the refresh path is the same seam", async () => {
@@ -234,13 +252,17 @@ test("resume mints a fresh token after the old one expired: the refresh path is 
   const { sessions } = custody({ now: () => nowMs });
   const controller = new AuthController({ account, sessions });
   assert.equal((await controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD)).ok, true);
+  const oldToken = sessions.current.token;
+  assert.equal(oldToken, `${FAKE_JWT}-MINT-1`, "the sign-in's mint is in custody");
 
   nowMs += 900_000 + 1; // past the minted token's lifetime
   assert.equal(sessions.current, null, "the token expired");
   const resumed = await controller.resume();
   assert.equal(resumed.ok, true);
-  assert.equal(sessions.current.token, FAKE_JWT, "the fake surface mints the same fake value; the custody contract is what is under test");
-  assert.equal(account.getSession.length, 0, "resume goes through the platform session seam");
+  assert.equal(account.getSessionCount, 1, "resume answered through the platform session seam exactly once");
+  assert.equal(account.jwtCount, 2, "the refresh minted a second token");
+  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-2`, "custody now holds the FRESH mint, not the expired one");
+  assert.notEqual(sessions.current.token, oldToken, "the fresh token is distinguishable from the old one");
 });
 
 test("resume is refused as data when the platform holds no session", async () => {
