@@ -331,6 +331,68 @@ test('html() refuses an address that is not http, https or relative, by name', (
   }
 });
 
+// The r3 review's five probes: each ran script through the previous position
+// check, which read only the static text immediately before a value and so
+// saw a plain attribute wherever the binding did not sit directly after the
+// opening quote. One refusal per probe below.
+
+test('html() refuses a binding anywhere inside an event attribute, not only directly after the quote', () => {
+  // Probe B2: a value after other text inside the handler. Escaping cannot
+  // save it: whatever lands in an event attribute is code.
+  const prefixed = () => html`<button onclick="void 0;${'window.__pwn=1'}">go</button>`;
+  assert.throws(prefixed, HHRenderError, 'a value after a static prefix inside onclick must be refused');
+  assert.throws(prefixed, /event attribute onclick/, 'the refusal must name the event attribute');
+  // A second binding later in the same handler is refused with the first.
+  const second = () => html`<span onmouseover="${'a'};void 0;${'b'}">x</span>`;
+  assert.throws(second, HHRenderError, 'the later binding inside the same handler must be refused');
+  // The direct form keeps its refusal too.
+  assert.throws(() => html`<button onclick="${'window.__pwn=1'}">go</button>`, HHRenderError);
+});
+
+test('html() refuses a value in srcdoc: the parser entity-decodes it back into a document', () => {
+  // Probe B4: an escaped value inside srcdoc is unescaped again when the
+  // iframe's document is parsed, so the script tags come back to life.
+  const frame = () => html`<iframe srcdoc="${'<script>window.__pwn=1</script>'}"></iframe>`;
+  assert.throws(frame, HHRenderError, 'a binding inside srcdoc must be refused');
+  assert.throws(frame, /srcdoc/, 'the refusal must name srcdoc');
+  // A static prefix inside the attribute does not save it either.
+  const prefixed = () => html`<iframe srcdoc="<p>static ${'<img src=x onerror=window.__pwn=1>'}"></iframe>`;
+  assert.throws(prefixed, HHRenderError, 'a value after a static prefix inside srcdoc must be refused');
+});
+
+test('html() refuses an address attribute whose value is not wholly one binding', () => {
+  // Probe B1: the scheme split over two bindings reassembles in the browser,
+  // where no per-value check can ever see it.
+  const split = () => html`<a href="${'java'}${'script:alert(1)'}">x</a>`;
+  assert.throws(split, HHRenderError, 'an address split over two bindings must be refused');
+  assert.throws(split, /not wholly one value/, 'the refusal must say the value must be whole');
+  // Probe B6: a binding after a literal prefix inside the address.
+  const prefixed = () => html`<a href="javascript:${'alert(1)'}">x</a>`;
+  assert.throws(prefixed, HHRenderError, 'a value after a static prefix inside an address must be refused');
+  assert.throws(prefixed, /not wholly one value/, 'the refusal must say the value must be whole');
+  // A suffix after the binding is refused the same way.
+  const suffixed = () => html`<a href="${'/x'}?next">x</a>`;
+  assert.throws(suffixed, HHRenderError, 'an address with a static suffix after the binding must be refused');
+  // The whole address as one binding keeps rendering, scheme checked as before.
+  assert.equal(renderTemplate(html`<a href="${'/x?next'}">x</a>`), '<a href="/x?next">x</a>');
+});
+
+test('html() refuses a binding in an unquoted attribute even after a static prefix', () => {
+  // Probe B3: the old tail read saw title=x and no name=quote pattern at the
+  // end, so the value rode through: a space ends an unquoted value and the
+  // next word becomes a new attribute, here an event handler.
+  const afterLetter = () => html`<div title=x${' onmouseover=window.__pwn=1'}>text</div>`;
+  assert.throws(afterLetter, HHRenderError, 'a value riding after an unquoted prefix must be refused');
+  assert.throws(afterLetter, /unquoted attribute title/, 'the refusal must name the unquoted attribute');
+  // The sanctioned whole-attribute composition (the button spec's pattern:
+  // closed-union constants and trusted sub-templates between attributes) keeps
+  // rendering, attributes and all.
+  assert.equal(
+    renderTemplate(html`<button type="button" class="btn"${' disabled'}${html` data-x="1"`}>go</button>`),
+    '<button type="button" class="btn" disabled data-x="1">go</button>',
+  );
+});
+
 
 test('an unknown state fails loudly, never renders a quietly empty kit', () => {
   // A typo'd state name is a defect at the call site; an empty region would

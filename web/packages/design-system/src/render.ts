@@ -14,11 +14,13 @@
 //               and arrays compose, and a caller's object or a caller's string
 //               is always rendered as text, never as markup. The factory also
 //               refuses what escaping cannot make safe: a first argument that
-//               is not a real template strings array, a binding in an unquoted
-//               attribute, a value in an event attribute, and an address whose
-//               scheme is not http, https or absent. There is no raw markup
-//               escape hatch anywhere in the package; the icon module builds
-//               its geometry through the same escaped attribute path.
+//               is not a real template strings array, a binding anywhere
+//               inside an event attribute or srcdoc, a binding in an unquoted
+//               attribute value, an address attribute whose value is not
+//               wholly one binding, and an address whose scheme is not http,
+//               https or absent. There is no raw markup escape hatch anywhere
+//               in the package; the icon module builds its geometry through
+//               the same escaped attribute path.
 //   css         a style string. No resolving, no shims.
 //   HHElement   reactive properties from `static properties` (attribute
 //               reflected), a render() into an open shadow root in the browser,
@@ -71,7 +73,8 @@ export class HHRenderError extends Error {
 // today; the refusal is here so the first caller cannot be the incident.
 const ADDRESS_ATTRIBUTES = new Set(['href', 'src', 'action', 'formaction', 'xlink:href', 'poster', 'cite']);
 const EVENT_ATTRIBUTE = /^on[a-z]+$/i;
-const ATTRIBUTE_TAIL = /([^\s=/>"'()]+)\s*=\s*(["']?)$/;
+const NAME_BOUNDARY = /[\s=/>"'()]/;
+const WHITESPACE = /\s/;
 
 /** An address is safe when it carries no scheme other than http or https, or
  * no scheme at all (relative, rooted, fragment, protocol relative). The probe
@@ -83,40 +86,211 @@ function isSafeAddress(value: string): boolean {
   return m === null || /^https?:$/i.test(m[0]);
 }
 
-/** The position checks, run at the factory against the template's own static
- * text: what sits immediately before each value tells the binding's position.
- *   directly after = (no quote)          refused: the value would be parsed as
- *                                        part of the attribute's unquoted value,
- *                                        where escaping cannot save it;
- *   inside an event attribute (on*)      refused: an escaped string inside an
- *                                        event handler is still code;
- *   inside an address attribute          refused unless the value is http,
- *                                        https or scheme-free (relative).
- * Everything else is the documented text path. */
+/** Where a binding sits, as the HTML parser would see it. `region` is the
+ * parser state the binding lands in; `name` and `quote` carry the attribute
+ * when the binding is inside a value; `valuePrefix` says whether static text
+ * already precedes the binding inside that value. */
+interface BindingContext {
+  region: 'text' | 'comment' | 'tag' | 'quoted' | 'unquoted';
+  name: string;
+  quote: string;
+  valuePrefix: boolean;
+}
+
+/** The attribute name that ends just before the value opening at index `at`
+ * (an empty string when the quote does not follow `name =`, so it is not an
+ * attribute value opening at all). */
+function attributeNameEndingAt(text: string, at: number): string {
+  let i = at - 1;
+  while (i >= 0 && WHITESPACE.test(text[i])) i--;
+  if (i < 0 || text[i] !== '=') return '';
+  i--;
+  while (i >= 0 && WHITESPACE.test(text[i])) i--;
+  const end = i;
+  while (i >= 0 && !NAME_BOUNDARY.test(text[i])) i--;
+  return text.slice(i + 1, end + 1);
+}
+
+/** A small forward scanner over a template's static text, carried ACROSS the
+ * values (an interpolated value emits escaped text or a nested template's own
+ * static text, never structure of its own), so it knows what the HTML parser
+ * would be parsing at each binding: text, a comment, a tag between attributes,
+ * or inside a quoted or unquoted attribute value. The r3 review's probes ran
+ * script through the previous check, which read only the tail of the text
+ * immediately before a value and so missed a binding anywhere else inside an
+ * event attribute, inside srcdoc, an address split over more than one binding,
+ * or a value riding after a static prefix in an unquoted attribute. */
+function makeBindingScanner() {
+  let region: BindingContext['region'] = 'text';
+  let name = '';
+  let quote = '';
+  let valuePrefix = false;
+
+  const feed = (text: string): void => {
+    const n = text.length;
+    let i = 0;
+    while (i < n) {
+      const ch = text[i];
+      if (region === 'text') {
+        if (ch === '<') {
+          if (text.startsWith('<!--', i)) {
+            const end = text.indexOf('-->', i + 4);
+            if (end === -1) {
+              region = 'comment';
+              break;
+            }
+            i = end + 3;
+            continue;
+          }
+          region = 'tag';
+          name = '';
+        }
+        i++;
+      } else if (region === 'comment') {
+        const end = text.indexOf('-->', i);
+        if (end === -1) break;
+        region = 'text';
+        i = end + 3;
+      } else if (region === 'tag') {
+        if (ch === '>') {
+          region = 'text';
+        } else if (ch === '"' || ch === "'") {
+          quote = ch;
+          name = attributeNameEndingAt(text, i);
+          valuePrefix = false;
+          region = 'quoted';
+        } else if (ch === '=') {
+          let j = i + 1;
+          while (j < n && WHITESPACE.test(text[j])) j++;
+          if (j >= n) {
+            // The static text ends at or just after the '=': the binding lands
+            // in this attribute's value position, unquoted.
+            name = attributeNameEndingAt(text, n);
+            quote = '';
+            valuePrefix = false;
+            region = 'unquoted';
+            break;
+          }
+          const valueChar = text[j];
+          name = attributeNameEndingAt(text, j);
+          quote = valueChar === '"' || valueChar === "'" ? valueChar : '';
+          valuePrefix = false;
+          region = quote ? 'quoted' : 'unquoted';
+          i = quote ? j + 1 : j;
+          continue;
+        }
+        i++;
+      } else if (region === 'quoted') {
+        if (ch === quote) {
+          region = 'tag';
+          quote = '';
+          name = '';
+        } else {
+          valuePrefix = true;
+        }
+        i++;
+      } else {
+        // unquoted value: ends at whitespace or the tag's '>'
+        if (ch === '>' || WHITESPACE.test(ch)) {
+          region = ch === '>' ? 'text' : 'tag';
+          name = '';
+        } else {
+          valuePrefix = true;
+        }
+        i++;
+      }
+    }
+  };
+
+  // A value advances the scanner only when it is a trusted template, whose own
+  // static text feeds through (its own values are escaped text, recursed the
+  // same way). Any other value emits escaped text: no structure.
+  const skipValue = (v: unknown): void => {
+    if (v == null || v === false) return;
+    if (Array.isArray(v)) {
+      for (const item of v) skipValue(item);
+      return;
+    }
+    if (isTrusted(v)) {
+      for (let i = 0; i < v.strings.length; i++) {
+        feed(v.strings[i]);
+        if (i < v.values.length) skipValue(v.values[i]);
+      }
+    }
+  };
+
+  return { feed, skipValue, context: (): BindingContext => ({ region, name, quote, valuePrefix }) };
+}
+
+/** The position checks, run at the factory across the whole template: what the
+ * parser would be parsing at each binding decides. Refused:
+ *   anywhere inside an event attribute (on*)   an escaped string inside an
+ *                                              event handler is still code;
+ *   anywhere inside srcdoc                     the parser entity-decodes the
+ *                                              value back into a document, so
+ *                                              escaping cannot make it safe;
+ *   inside an unquoted attribute value         the value can close and escape
+ *                                              into markup, however escaped;
+ *   inside an address attribute                refused unless the binding IS
+ *                                              the whole value, and then only
+ *                                              when the value is http, https
+ *                                              or scheme-free (relative).
+ * A binding between attributes (the primitives' whole-attribute composition,
+ * closed-union constants and trusted sub-templates) and everything else is the
+ * documented text path. */
 function checkBindingPositions(strings: readonly string[], values: readonly unknown[]): void {
+  const scan = makeBindingScanner();
   for (let i = 0; i < values.length; i++) {
-    const before = strings[i] ?? '';
-    const m = before.match(ATTRIBUTE_TAIL);
-    if (!m) continue;
-    const [, name, quote] = m;
-    if (quote === '') {
+    scan.feed(strings[i] ?? '');
+    const ctx = scan.context();
+    if (ctx.region === 'text' || ctx.region === 'comment' || ctx.region === 'tag') {
+      scan.skipValue(values[i]);
+      continue;
+    }
+    if (EVENT_ATTRIBUTE.test(ctx.name)) {
+      throw new HHRenderError(`html(): refusing a value in the event attribute ${ctx.name}: these kits take no inline handlers`);
+    }
+    if (ctx.name.toLowerCase() === 'srcdoc') {
       throw new HHRenderError(
-        `html(): refusing a binding in the unquoted attribute ${name}: quote the attribute, or pass the value as text`,
+        `html(): refusing a value in the srcdoc attribute: the parser entity-decodes srcdoc back into a document, so escaping cannot make a binding there safe`,
       );
     }
-    if (EVENT_ATTRIBUTE.test(name)) {
-      throw new HHRenderError(`html(): refusing a value in the event attribute ${name}: these kits take no inline handlers`);
-    }
-    if (ADDRESS_ATTRIBUTES.has(name.toLowerCase())) {
-      const v = values[i];
-      if (v == null || v === false) continue;
-      if (typeof v === 'string' && isSafeAddress(v)) continue;
-      if (typeof v === 'number') continue;
+    if (ctx.region === 'unquoted') {
       throw new HHRenderError(
-        `html(): refusing ${typeof v === 'string' ? JSON.stringify(v) : `a ${typeof v} value`} as the ${name} address: ` +
+        `html(): refusing a binding in the unquoted attribute ${ctx.name || '(name position)'}: quote the attribute, or pass the value as text`,
+      );
+    }
+    if (ADDRESS_ATTRIBUTES.has(ctx.name.toLowerCase())) {
+      // Wholly one value: nothing static before the binding inside the value,
+      // and the static text after it opens with the closing quote. An address
+      // split over a static prefix or a second binding reassembles a scheme
+      // (java + script:) the per-value scheme check can never see.
+      const after = strings[i + 1] ?? '';
+      if (ctx.valuePrefix || !after.startsWith(ctx.quote)) {
+        throw new HHRenderError(
+          `html(): refusing a binding inside the address attribute ${ctx.name} that is not wholly one value: ` +
+            `bind the whole address as one value, or write the attribute statically`,
+        );
+      }
+      const v = values[i];
+      if (v == null || v === false) {
+        scan.skipValue(v);
+        continue;
+      }
+      if (typeof v === 'string' && isSafeAddress(v)) {
+        scan.skipValue(v);
+        continue;
+      }
+      if (typeof v === 'number') {
+        scan.skipValue(v);
+        continue;
+      }
+      throw new HHRenderError(
+        `html(): refusing ${typeof v === 'string' ? JSON.stringify(v) : `a ${typeof v} value`} as the ${ctx.name} address: ` +
           `only http, https and scheme-free (relative) addresses render`,
       );
     }
+    scan.skipValue(values[i]);
   }
 }
 
