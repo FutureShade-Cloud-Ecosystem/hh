@@ -86,6 +86,20 @@ test("engage is refused without a signed-in user: there is nobody to bind to", a
   assert.equal((await lock.engage()).ok, true, "once a user is signed in, engage binds to them");
 });
 
+test("engage takes no identity argument: a caller-supplied id is never stored", async () => {
+  // The untyped call is deliberate: the signature takes no argument, so this
+  // compiles and runs, and whatever a caller passes must not become the
+  // bound identity. A mutation giving engage an optional caller id that the
+  // lock stored would turn this red.
+  const { recorded, lock } = await rig();
+  const engaged = await lock.engage("someone-else");
+  assert.equal(engaged.ok, true, "engage still works; the argument is simply not part of the signature");
+  const payload = JSON.parse(recorded.writes.find((w) => w.key === LOCK_MIRROR_KEY).value);
+  assert.equal(payload.userId, FAKE_ACCOUNT.userId, "the lock binds to the signed-in user's id from custody");
+  assert.notEqual(payload.userId, "someone-else", "no caller-named identity is stored");
+  assert.equal("name" in payload, false, "and no display name either");
+});
+
 test("no audit pair exists on the lock, in the open state or any other", async () => {
   const { credentials, lock } = await rig();
   await lock.engage();

@@ -127,6 +127,23 @@ test("a staff request without an active organisation is refused before it leaves
   }
 });
 
+test("the staff provider's own control-character rule on X-Org, asserted on the provider directly", () => {
+  // Directly on the provider, deliberately not through the ApiClient: the
+  // transport's own header-value rule would mask the removal of this check,
+  // so the package's rule is asserted where only it is under test.
+  const { sessions } = adoptedSessions();
+  for (const org of ["bad\norg", "bad\rorg", "bad\u0000org"]) {
+    const provider = authHeaderProvider({ callerClass: "staff", sessions, activeOrg: () => org });
+    assert.throws(() => provider(), /X-Org is malformed/, `org ${JSON.stringify(org)} is refused by the package's own rule`);
+  }
+  const clean = authHeaderProvider({ callerClass: "staff", sessions, activeOrg: () => ORG });
+  assert.deepEqual(
+    clean(),
+    { "X-Org": ORG, Authorization: `Bearer ${FAKE_JWT}` },
+    "a normal organisation passes the package's rule and sends both headers",
+  );
+});
+
 test("the tenant provider type carries no organisation input to misconfigure", async () => {
   const { sessions } = adoptedSessions();
   const provider = authHeaderProvider({ callerClass: "tenant", sessions });
