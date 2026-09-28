@@ -1,8 +1,11 @@
 // scan-and-confirm: point a scanner at a load ticket, read the lines back, and
 // confirm the load is what came off the truck. One job: check the physical
 // load against the ticket, with gloves on, in one hand.
+//
+// Penpot mapping: the Penpot component named hh-scan-and-confirm, one-to-one
+// with the element tag below.
 
-import { css, defineElement, html, HHElement, type Template } from '../lit.js';
+import { css, defineElement, html, HHElement, type Template } from '../render.js';
 import { baseStyles, chip } from '../primitives.js';
 import { kitShell, stateStyles, type ButtonSpec, type KitState } from '../state.js';
 
@@ -14,14 +17,12 @@ const styles = baseStyles + stateStyles + css`
     padding: var(--hh-s-20);
     display: grid;
     gap: var(--hh-s-12);
-  }
-  .scan-frame:focus-visible {
-    outline: 2px solid var(--hh-focus-ring);
-    outline-offset: 2px;
+    min-width: 0;
   }
   ul.lines { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--hh-s-8); }
   .line {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     gap: var(--hh-s-16);
     padding: var(--hh-s-12);
@@ -29,14 +30,16 @@ const styles = baseStyles + stateStyles + css`
     border-bottom: 1px solid var(--hh-line);
     color: var(--hh-text);
   }
+  .line .name { min-width: 0; overflow-wrap: anywhere; }
   .line .qty { font-family: var(--hh-font-mono); color: var(--hh-text-dim); }
   .summary {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
+    gap: var(--hh-s-8);
     padding-top: var(--hh-s-12);
     border-top: 1px solid var(--hh-line);
     color: var(--hh-text);
-    background: var(--hh-card);
   }
 `;
 
@@ -55,7 +58,7 @@ export class ScanConfirmKit extends HHElement {
     const rows = LINES.map(
       ([name, qty]) => html`<li class="line"><span class="name">${name}</span><span class="qty">${qty}</span></li>`,
     );
-    return html`<div class="scan-frame" tabindex="0">
+    return html`<div class="scan-frame">
       ${chip('scanned: load ticket 4417', 'neutral')}
       <ul class="lines">${rows}</ul>
       <div class="summary"><span>3 lines on the ticket</span><span>all priced</span></div>

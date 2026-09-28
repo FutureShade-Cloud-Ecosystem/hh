@@ -60,6 +60,14 @@
   --hh-card: #0B2338;
   --hh-line: #253441;
 
+  /* ── control boundary ──────────────────────────────────────────────────────
+     The outline a NON-FILLED control is seen by: WCAG 1.4.11 judges a control's
+     boundary as a shape at 3:1, and --hh-line above is a hairline (1.41:1 on
+     the dark page), not a boundary. --hh-control-line is declared in BOTH
+     halves to clear 3:1 against the page AND the card (dark: 3.50 and 3.12;
+     light: 4.31 and 4.62); the secondary button's border takes it. */
+  --hh-control-line: #5A7086;
+
   /* ── inks ──────────────────────────────────────────────────────────────────
      Text, and the dimmed ink under it. The light half of --hh-text-dim is the
      ERP's DIB-409 finding: the most-used dimmed text was under AA on its own
@@ -280,6 +288,7 @@
   --hh-page: #F5F7FA;
   --hh-card: #FFFFFF;
   --hh-line: #DBE3EA;
+  --hh-control-line: #6B7683;
   --hh-text: #0B1725;
   --hh-text-dim: #5C6B7A;
   --hh-row: transparent;

@@ -8,7 +8,7 @@
 // a word, and a pattern change (the data-pattern marker on the root), so a
 // reader with the colour removed can still tell which state they are in.
 
-import { css, html, type Template } from './lit.js';
+import { css, html, type Template } from './render.js';
 import { button, chip, spinner, type ButtonSpec } from './primitives.js';
 
 // The kits take their action specs through ShellSpec, so they import the spec
@@ -61,11 +61,13 @@ export const STATE_META: Record<DesignedState, StateMeta> = {
   },
 };
 
-/** The state's own indicator: the icon, the word, and the pattern marker. */
+/** The state's own indicator: the icon, the word, and the pattern marker. The
+ * icon renders BARE (hidden from assistive tech) because the word sits beside
+ * it; a labelled icon would announce the label twice. */
 export function stateIndicator(state: DesignedState): Template {
   const meta = STATE_META[state];
   return html`<div class="state-indicator" data-state="${state}" data-pattern="${meta.pattern}">
-    ${icon(meta.icon, meta.label)}
+    ${icon(meta.icon)}
     <span class="state-label">${meta.label}</span>
   </div>`;
 }
@@ -86,14 +88,14 @@ function stateTop(state: DesignedState): Template {
       </div>`;
     case 'offline':
       return html`<div class="banner banner-offline" role="status" data-pattern="cached">
-        ${icon(meta.icon, meta.label)}
+        ${icon(meta.icon)}
         <span class="banner-text">${meta.label}</span>
         ${chip('cached copy', 'neutral')}
       </div>`;
     case 'conflict':
       return html`<div class="review-card" role="alert" data-pattern="review">
         <div class="review-head">
-          ${icon(meta.icon, meta.label)}
+          ${icon(meta.icon)}
           <span class="review-title">${meta.label}</span>
         </div>
         <dl class="review-rows">
@@ -133,6 +135,15 @@ export interface ShellSpec {
  * replace the body are empty, loading and error.
  */
 export function kitShell(spec: ShellSpec): Template {
+  // An unknown state must fail loudly, never render as a quietly empty kit:
+  // a typo'd state name is a defect at the call site, and an empty region
+  // would hide it from everyone but the person using the screen.
+  if (!(KIT_STATES as readonly string[]).includes(spec.state) && spec.state !== 'ready') {
+    throw new Error(
+      `kitShell: kit ${spec.kit} was asked for the unknown state ${JSON.stringify(spec.state)}; ` +
+        `expected ready or one of: ${KIT_STATES.join(', ')}`,
+    );
+  }
   const designed = spec.state === 'ready' ? undefined : (spec.state as DesignedState);
   const meta = designed ? STATE_META[designed] : undefined;
   const bodyHeld = spec.state === 'offline' || spec.state === 'conflict';
@@ -180,7 +191,17 @@ export const stateStyles = css`
     padding: var(--hh-s-24);
     display: grid;
     gap: var(--hh-s-16);
+    /* The kit is its own layout container, so a kit's sheets can query the
+       width the KIT actually gets, not the window's; min-width 0 keeps the
+       grid child from refusing to shrink below its content. */
+    container-type: inline-size;
+    min-width: 0;
+    overflow-wrap: break-word;
   }
+  /* Grid and flex items default to min-width: auto, which lets a body's
+     min-content width push past the kit card; the scaffold refuses on behalf
+     of every kit. */
+  .kit-root > * { min-width: 0; }
   .kit-actions {
     display: flex;
     gap: var(--hh-s-12);
@@ -217,15 +238,17 @@ export const stateStyles = css`
 
   .banner {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--hh-s-12);
     padding: var(--hh-s-12) var(--hh-s-16);
     border-radius: var(--hh-radius-control);
     background: var(--hh-card);
+    min-width: 0;
   }
   .banner-offline { color: var(--hh-info); border: 1px solid var(--hh-info); }
-  .banner .icon { width: 18px; height: 18px; }
-  .banner-text { color: var(--hh-text); font-weight: 600; }
+  .banner .icon { width: 18px; height: 18px; flex: none; }
+  .banner-text { color: var(--hh-text); font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 
   .review-card {
     background: var(--hh-card);
@@ -239,7 +262,7 @@ export const stateStyles = css`
   .review-head .icon { width: 18px; height: 18px; }
   .review-title { color: var(--hh-text); }
   .review-rows { margin: 0; display: grid; gap: var(--hh-s-8); }
-  .review-row { display: grid; grid-template-columns: max-content 1fr; gap: var(--hh-s-16); }
+  .review-row { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--hh-s-16); }
   .review-row dt { color: var(--hh-text-dim); }
-  .review-row dd { margin: 0; color: var(--hh-text); }
+  .review-row dd { margin: 0; color: var(--hh-text); overflow-wrap: anywhere; }
 `;

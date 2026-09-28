@@ -30,17 +30,23 @@ export const ICON_REGISTRY: Readonly<Record<string, TileIcon>> = Object.freeze({
 - **Ids are namespaced by source**: `lucide:<name>` from the vendored
   lucide-static tree, `pencil:<name>` from the vendored Penpot controls. The
   libraries are vendored read only, with VERSION, LICENCE and a sha256 manifest
-  beside each tree; nothing is fetched at runtime or build time.
+  beside each tree; nothing is fetched at runtime or build time. Pencil's
+  controls are drawn on the native 16 grid at 1px stroke, and the import
+  pipeline scales every coordinate by exactly 1.5 into the house 24 grid at 2px
+  stroke, rounding to 3 decimals, the precision the sources themselves use.
+- **The fallback lives in `app/src/_tile-icons.ts`, not in the registry**: the
+  neutral `_fallback` square (its `FALLBACK_ICON_ID` is exported from that
+  module for the drift test), with the accessor in the same module resolving an
+  unmapped id to it. The generated registry holds only real entries.
 - **The fallback-to-module-default rule**: a consumer asks for an id it does not
   find and it still gets an icon, never a codepoint and never an empty box: the
-  module's neutral default (the ERP's `_fallback` square, exported under
-  `FALLBACK_ICON_ID`). An unmapped id is visible to whoever added it without
-  ever being illegible to the person using the screen. Mapping a specific route
-  or tile to its default icon is the consumer module's concern, not the
-  registry's; Colton's approved defaults per unit and module from checkpoint A
-  live in the ERP's DEFAULTS-PROPOSAL, and the one recorded substitution there
-  (the runtime hide control maps to `lucide:eye-off` rather than `pencil:hide`)
-  is likewise a mapping entry, not a gap in the tree.
+  module's neutral default. An unmapped id is visible to whoever added it
+  without ever being illegible to the person using the screen. Mapping a
+  specific route or tile to its default icon is the consumer module's concern,
+  not the registry's; Colton's approved defaults per unit and module from
+  checkpoint A live in the ERP's DEFAULTS-PROPOSAL, and the one recorded
+  substitution there (the runtime hide control maps to `lucide:eye-off` rather
+  than `pencil:hide`) is likewise a mapping entry, not a gap in the tree.
 - **The non-geometry gate**: the import REJECTS anything that is not path
   geometry (a script, an event attribute, a style, an external reference, an
   embedded image, an animation element), naming the offending file. The same
@@ -51,6 +57,35 @@ export const ICON_REGISTRY: Readonly<Record<string, TileIcon>> = Object.freeze({
   reproduces the registry's bytes exactly. Key order is deterministic (the
   lucide block, then the pencil block, alphabetical within each), so a
   regenerated registry that diffs is a real change, never churn.
+
+## What this package's own marks are
+
+The five state marks plus the guided flow's done check in `../state-icons.ts`
+are this package's hand-written inventory, on the house 24 grid at stroke 2.
+Their keys are the design system's own camelCase names (`inbox`, `wifiOff`,
+`alertOctagon`, `loader`, `diverge`, `check`), which is NOT the registry's
+namespaced id format and is not pretended to be: when the icon package lands,
+these marks move into registry entries and consumers reach them by id through
+the `tileIcon(id)`-shaped accessor below.
+
+## How the two inventories stay in step
+
+Nothing keeps a README and a registry in step by itself, so the division is
+stated instead of implied. When the registry is shared:
+
+- **Regenerated**: the registry itself (`_icon-registry.ts` and its successor
+  in the icon package), always produced by the import pipeline over the two
+  vendored libraries, under the idempotence and non-geometry gates. Hand edits
+  to a generated registry are the thing the idempotence gate exists to catch.
+- **Hand-written**: the five-plus-one marks in `state-icons.ts` and their word
+  pairings at their use sites; the per-tile and per-route default mappings
+  (Colton's approved defaults, recorded in the ERP's DEFAULTS-PROPOSAL); and
+  this README, which is documentation, not generated output.
+- **The seam that keeps them honest**: the marks are held to the registry's
+  rules NOW (path data only, 24 grid, stroke 2, currentColor), so a mark moves
+  into a registry entry unchanged; `test/kits.test.mjs` pins the geometry per
+  state, so if a regenerated registry ever disagrees with what the design
+  system shows, a gate fails rather than a tile quietly changing shape.
 
 ## What this package promises
 

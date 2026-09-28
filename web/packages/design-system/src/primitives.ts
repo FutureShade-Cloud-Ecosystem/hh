@@ -20,14 +20,36 @@
 //      the :focus-visible ring from --hh-focus-ring, because a shadow root does
 //      not inherit the document's ring rule.
 
-import { css, html, type Template, type UnsafeHtml } from './lit.js';
+import { css, html, type Template } from './render.js';
 
 export type ButtonKind = 'primary' | 'secondary' | 'danger';
 
 /** The shared stylesheet every kit adopts. Token-only: no literal colours. */
 export const baseStyles = css`
-  :host { display: block; font-family: var(--hh-font-ui); }
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+  }
   * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
 
   button {
     font-family: inherit;
@@ -52,7 +74,11 @@ export const baseStyles = css`
   .btn-secondary {
     background: transparent;
     color: var(--hh-text);
-    border-color: var(--hh-line);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
   }
   .btn-danger {
     background: var(--hh-danger-fill);
@@ -105,6 +131,7 @@ export const baseStyles = css`
   ul.rows { list-style: none; margin: 0; padding: 0; }
   .row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--hh-s-12);
     padding: var(--hh-s-12) var(--hh-s-16);
@@ -113,7 +140,7 @@ export const baseStyles = css`
     color: var(--hh-text);
   }
   .row-alt { background: var(--hh-row-alt); }
-  .row-selected { border-left: 3px solid var(--hh-focus-ring); font-weight: 600; }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
 
   @keyframes hh-spin { to { transform: rotate(360deg); } }
 `;
@@ -143,7 +170,7 @@ export function spinner(): Template {
 
 export type ChipTone = 'neutral' | 'good' | 'watch' | 'stop';
 
-export function chip(text: string, tone: ChipTone = 'neutral', iconMarkup?: Template | UnsafeHtml): Template {
+export function chip(text: string, tone: ChipTone = 'neutral', iconMarkup?: Template): Template {
   const toneClass = tone === 'neutral' ? 'chip-neutral' : `chip-${tone}`;
   return html`<span class="chip ${toneClass}">${iconMarkup ?? ''}<span class="chip-text">${text}</span></span>`;
 }

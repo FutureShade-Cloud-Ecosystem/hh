@@ -1,23 +1,33 @@
 // list-detail: a striped master list and the detail pane beside it. The work
 // pattern for registers, catalogues and queues: pick from the list, read or
 // act on the detail.
+//
+// Penpot mapping: the Penpot component named hh-list-detail, one-to-one with
+// the element tag below.
 
-import { css, defineElement, html, HHElement, type Template } from '../lit.js';
+import { css, defineElement, html, HHElement, type Template } from '../render.js';
 import { baseStyles, row } from '../primitives.js';
 import { kitShell, stateStyles, type ButtonSpec, type KitState } from '../state.js';
 
 const styles = baseStyles + stateStyles + css`
   .split {
     display: grid;
-    grid-template-columns: minmax(240px, 5fr) 7fr;
+    /* minmax(0, ..) so the panes shrink and wrap instead of pushing past the
+       card they sit on; the container query stacks them when the kit itself
+       is too narrow to carry both panes. */
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
     gap: var(--hh-s-16);
     align-items: start;
+  }
+  @container (max-width: 519px) {
+    .split { grid-template-columns: minmax(0, 1fr); }
   }
   .master {
     background: var(--hh-card);
     border: 1px solid var(--hh-line);
     border-radius: var(--hh-radius-card);
     overflow: hidden;
+    min-width: 0;
   }
   ul.rows { list-style: none; margin: 0; padding: 0; }
   .detail {
@@ -27,13 +37,14 @@ const styles = baseStyles + stateStyles + css`
     padding: var(--hh-s-20);
     display: grid;
     gap: var(--hh-s-12);
+    min-width: 0;
   }
-  .detail h3 { margin: 0; color: var(--hh-text); background: var(--hh-card); font-size: var(--hh-s-20); }
-  dl.facts { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: var(--hh-s-8) var(--hh-s-24); }
+  .detail h3 { margin: 0; color: var(--hh-text); font-size: var(--hh-s-20); }
+  dl.facts { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--hh-s-8) var(--hh-s-24); }
   dl.facts dt { color: var(--hh-text-dim); }
-  dl.facts dd { margin: 0; color: var(--hh-text); }
-  .row .cell-main { color: var(--hh-text); }
-  .row .cell-sub { color: var(--hh-text-dim); margin-inline-start: auto; }
+  dl.facts dd { margin: 0; color: var(--hh-text); overflow-wrap: anywhere; }
+  .row .cell-main { color: var(--hh-text); min-width: 0; overflow-wrap: anywhere; }
+  .row .cell-sub { color: var(--hh-text-dim); margin-inline-start: auto; min-width: 0; overflow-wrap: anywhere; }
 `;
 
 const ITEMS: ReadonlyArray<readonly [string, string]> = [

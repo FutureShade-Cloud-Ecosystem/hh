@@ -1,15 +1,20 @@
-// The minimal Lit pattern, vendored. The source brief names Lit as the kit
-// substrate; the web workspace carries no dependencies and this package may add
-// none, so the small part of Lit's model the kits actually use is implemented
-// here, dependency-free, with the same surface names. This is the recorded
-// deviation the locked spec sanctions: when the real Lit lands as a workspace
-// dependency, this file is deleted and the imports re-point at it; the kits'
-// render functions do not change.
+// A SMALL HAND-WRITTEN RENDERING LAYER, owned by this package. This file is
+// not Lit and does not claim to be: it carries no Lit code, no version, no
+// licence and no upstream. The source brief names Lit as the kit substrate;
+// taking the real library is a dependency decision, and the proposal to make
+// it is written up as a draft decision record (docs/adr/0023, status draft)
+// for Colton. If the real Lit lands as a workspace dependency, this file is
+// deleted and the imports re-point at it; the kits' render functions do not
+// change.
 //
 // What is here, and deliberately what is not:
-//   html        the tagged template. Builds DOM strings; text values are
-//               escaped, nested templates and arrays compose, and raw markup
-//               exists only through unsafeSvg, which the icon module owns.
+//   html        the tagged template. It returns a Template branded by a
+//               MODULE-PRIVATE SYMBOL, and nothing without that brand is ever
+//               emitted as markup: text values are escaped, nested templates
+//               and arrays compose, and a caller's object or a caller's string
+//               is always rendered as text, never as markup. There is no raw
+//               markup escape hatch anywhere in the package; the icon module
+//               builds its geometry through the same escaped attribute path.
 //   css         a style string. No resolving, no shims.
 //   HHElement   reactive properties from `static properties` (attribute
 //               reflected), a render() into an open shadow root in the browser,
@@ -22,13 +27,15 @@
 // customElements, so the base class degrades to a plain object there and only
 // the browser path registers elements.
 
-export interface Template {
-  strings: readonly string[];
-  values: readonly unknown[];
-}
+/** The module-private trust brand. A Template is the only markup this layer
+ * emits, and a Template can only be made by html() right here: the symbol is
+ * not exported, so no caller can forge one or smuggle one in parsed JSON. */
+const TRUSTED: unique symbol = Symbol('hh trusted template');
 
-export interface UnsafeHtml {
-  unsafe: string;
+export interface Template {
+  readonly [TRUSTED]: true;
+  readonly strings: readonly string[];
+  readonly values: readonly unknown[];
 }
 
 const ESCAPES: Record<string, string> = {
@@ -41,40 +48,41 @@ const ESCAPES: Record<string, string> = {
 
 const escapeText = (v: string): string => v.replace(/[&<>"']/g, (c) => ESCAPES[c]);
 
-/** Marks trusted markup. Only src/state-icons.ts hands geometry to this. */
-export function unsafeSvg(markup: string): UnsafeHtml {
-  return { unsafe: markup };
+export function html(strings: readonly string[], ...values: unknown[]): Template {
+  return { [TRUSTED]: true, strings, values };
 }
 
-export function html(strings: readonly string[], ...values: unknown[]): Template {
-  return { strings, values };
+const isTrusted = (v: unknown): v is Template =>
+  typeof v === 'object' && v !== null && (v as Record<symbol, unknown>)[TRUSTED] === true;
+
+/** Emits one interpolated value. Everything that is not a Template branded by
+ * the module-private symbol is escaped text, including arrays element-wise and
+ * including an object that happens to carry `strings`, `values` or `unsafe`
+ * keys: shape is never trust, the brand is. */
+function emitValue(v: unknown): string {
+  if (v == null || v === false) return '';
+  if (Array.isArray(v)) return v.map(emitValue).join('');
+  if (isTrusted(v)) return emitTemplate(v);
+  return escapeText(String(v));
+}
+
+function emitTemplate(tpl: Template): string {
+  let out = '';
+  for (let i = 0; i < tpl.strings.length; i++) {
+    out += tpl.strings[i];
+    if (i < tpl.values.length) out += emitValue(tpl.values[i]);
+  }
+  return out;
+}
+
+/** Renders a template to markup. A value that is not a branded template is
+ * escaped, never emitted raw. */
+export function renderTemplate(tpl: unknown): string {
+  return isTrusted(tpl) ? emitTemplate(tpl) : emitValue(tpl);
 }
 
 export function css(strings: readonly string[], ...values: unknown[]): string {
   return strings.reduce((out, s, i) => out + s + (i < values.length ? String(values[i]) : ''), '');
-}
-
-/** Renders a template (nested templates, arrays, unsafe marks, plain values). */
-export function renderTemplate(tpl: Template | UnsafeHtml | undefined | null): string {
-  if (tpl == null) return '';
-  if ((tpl as UnsafeHtml).unsafe !== undefined) return (tpl as UnsafeHtml).unsafe;
-  let out = '';
-  for (let i = 0; i < (tpl as Template).strings.length; i++) {
-    out += (tpl as Template).strings[i];
-    if (i >= (tpl as Template).values.length) continue;
-    const v = (tpl as Template).values[i];
-    if (v == null || v === false) continue;
-    if (Array.isArray(v)) {
-      for (const part of v) out += renderTemplate(part as Template);
-    } else if ((v as Template).strings !== undefined) {
-      out += renderTemplate(v as Template);
-    } else if ((v as UnsafeHtml).unsafe !== undefined) {
-      out += (v as UnsafeHtml).unsafe;
-    } else {
-      out += escapeText(String(v));
-    }
-  }
-  return out;
 }
 
 type PropertySpec = { attribute?: boolean | string } | undefined;

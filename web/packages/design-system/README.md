@@ -2,8 +2,10 @@
 
 Tokens (base plus per-brand overrides), primitives, patterns, and app kits, per
 context section 4.5. Tokens come from `tokens.css` exported out of Penpot;
-Penpot components map one-to-one to Lit components here. Framework-free domain
-rules in `AGENTS.md` apply to everything under `web/packages/`.
+Penpot components map one-to-one to the kit components here (each kit's doc
+comment carries its Penpot mapping name; the element tag is the Penpot
+component name). Framework-free domain rules in `AGENTS.md` apply to everything
+under `web/packages/`.
 
 ## What is here (cycle HH-4a, Plane HH-30)
 
@@ -18,49 +20,115 @@ rules in `AGENTS.md` apply to everything under `web/packages/`.
   `inbox` (`src/kits/`). Every kit renders its ready state and the five states
   designed once per pattern: empty, loading, offline, conflict, error
   (`src/state.ts`). Element tags are the Penpot names, one to one.
+- `src/render.ts`: the kits' rendering layer, written by this package. It is a
+  small hand-written layer, not Lit and not vendored from anything; the draft
+  decision record that proposes owning it instead of taking the real library is
+  `docs/adr/0023` (status draft, for Colton). Markup can only be produced by
+  the package's own `html()` behind a module-private symbol, so a caller's
+  object or string is always text and never markup, and icon geometry is bound
+  as escaped attribute values.
+- `src/primitives.ts`: the Ionic seam: `button`, `chip`, `spinner` and `row`
+  with the call sites the `ion-*` primitives will occupy. The disabled rule and
+  the focus ring live here, once, so no kit can get them wrong.
 - The gates, as package tests (`test/`): the measured-contrast gate over the
-  base vocabulary, each brand override, and each kit's state combinations
+  base vocabulary, each brand override, and each kit's own state combinations
   (4.5:1 for text, 3.0:1 for non-text boundaries, failures naming pair and
-  ratio), the phantom-token scan over every shipped source, the two carried
-  conduct rules (colour never encodes state alone, asserted structurally;
-  disabled changes colour, not opacity, asserted as a token swap with no
-  opacity or filter declaration anywhere), and per-kit per-state render
-  coverage.
+  ratio; the gate holds the focus ring, the state colours as borders, dimmed
+  text on the row stripe, the primary hover pair, and the secondary control's
+  boundary token), the phantom-token scan over every shipped source, the two
+  carried conduct rules (colour never encodes state alone, asserted on the
+  shown geometry and every place state is shown; disabled changes colour, not
+  opacity, asserted as a token swap with no opacity or filter declaration and
+  no inline fade in any rendered control), per-kit per-state render coverage,
+  and a headless-browser leg (see below) that registers the real custom
+  elements and asserts each kit in each state in a live page.
 - `src/icons/README.md`: the icon package seam. Documentation only; it records
   the registry format (DIB-ICONS-1) this package adopts when the ERP lane
-  lands. No code imports the ERP's registry here.
-- The harness: `harness/serve.mjs` serves a static page with every kit in every
-  state at the two walkthrough widths, 1440 and 1920, with no build step and no
-  client scripts. Theme and brand are served variants (`/?theme=light`,
-  `/?brand=hh-pro`).
+  lands, and how the two icon inventories stay in step. No code imports the
+  ERP's registry here.
+- The harness: `harness/index.html` is the committed static page (built by
+  `harness/build.mjs` from the same render functions the elements paint), every
+  kit in every state at the two walkthrough widths, 1440 and 1920, with no
+  build step at view time and no client scripts; it opens from the file
+  itself. `harness/serve.mjs` serves the theme and brand variants from the
+  same builder (`/?theme=light`, `/?brand=hh-pro`), refuses to serve over an
+  occupied port, and grades its own page before announcing. The suite holds
+  the committed file byte-equal to a fresh build.
 
 ## Running the suite and the harness
 
-Node 22 only: the system Node is 20 and cannot type-strip the sources.
+Node 22 only: the sources use type stripping, which is default-on from Node
+22.18 (this machine's Node 22 is `/snap/bin/node`; the system `node` may be
+older). Zero npm dependencies in the package itself; the dev-only typescript
+and type packages come from the workspace install at `web/`.
 
 ```
-/snap/bin/node --import ./src/_ts-js-loader.mjs --test 'test/*.test.mjs'   # the suite
-/snap/bin/node --import ./src/_ts-js-loader.mjs harness/serve.mjs          # the harness on 127.0.0.1:4173
+node --import ./src/_ts-js-loader.mjs --test 'test/*.test.mjs'   # the suite
+npm run typecheck                                                # strict tsc over the sources
+node --import ./src/_ts-js-loader.mjs harness/serve.mjs          # the harness on 127.0.0.1:4173
+npm run build:harness                                            # rebuild the committed harness/index.html
 ```
 
-Zero npm dependencies: the suite runs on the Node built-in test runner, and the
-`src/_ts-js-loader.mjs` hook (the api-client lane's pattern) maps the sources'
-`.js` specifiers onto their `.ts` files for Node's type stripping.
+The headless-browser leg registers the real custom elements in headless
+Chromium and asserts each kit in each state in the live DOM, plus the harness
+layout at 1440, 1920 and 400. It drives the browser over the DevTools
+protocol with Node 22's own WebSocket (`test/_lib/cdp.mjs`): no Playwright, no
+new dependency. It finds a browser at `$HH_DS_BROWSER`, then the usual PATH
+names, then the Playwright cache; when none exists the leg skips with a loud,
+named reason instead of passing silently.
+
+## Measured notes the sheet's readers asked for
+
+- The oklch conversion in the contrast tooling clips per channel when it lands
+  an out-of-sRGB colour on the sRGB cube. All four of HH Pro's brand values
+  are outside sRGB, so what the shells render for the hh-pro override is the
+  clipped neighbour of what HH Pro specifies, not the value itself. The lowest
+  hh-pro pair on this package's canvases measures 4.94:1 and passes AA, but
+  the rendered colour is not the one HH Pro's sheet names; the sheet carries
+  the oklch values verbatim so the ruling about them stays possible.
+- The oklch pairs in the gate are measured after the 8-bit clip, so two
+  tools measuring the declared values may differ from the gate by up to about
+  0.02; the hex pairs agree exactly.
+- `--hh-line` is a hairline, not a control boundary: the secondary button's
+  outline takes `--hh-control-line`, declared in both halves to clear 3:1
+  against the page and the card (the line token clears neither). WCAG exempts
+  disabled controls; this package holds its disabled pair to AA anyway.
+
+## Recorded scope decisions (fix-or-record round)
+
+- **Unused tokens are not gated.** The sheet carries the merged role
+  vocabulary of the two source sheets, role for role, because the shells that
+  adopt the kits will consume roles the five kits do not yet paint. Deleting
+  every role a kit does not reference would shrink the vocabulary to this
+  cycle's consumers and force the next lane to re-derive the rest. The gate
+  holds every pair a kit paints; the sheet keeps the roles.
+- **No type scale yet.** Font sizes today reference spacing tokens. A scale is
+  a design decision (how many steps, which ratios) that belongs to the Penpot
+  side of the seam, not to this package alone; recorded rather than invented
+  here.
+- **Pixel literals in component sources are recorded.** Layout spacing uses
+  the spacing grid; the literals that remain are component-intrinsic optical
+  sizes (control heights, icon boxes, stroke widths, the spinner ring) that
+  want the same scale decision as the type, not a scatter of new one-off
+  tokens.
+- **The kit sheets avoid scanner-only declarations.** Headings and summaries
+  do not re-declare the card they sit on just so a scanner finds a pair; the
+  ink-on-surface matrix holds those pairs instead.
 
 ## Recorded deviations
 
 The source brief names Lit and Ionic as the kit substrate. The web workspace
 carries no dependencies and this lane may add none, so:
 
-- `src/lit.ts` is the minimal Lit pattern vendored: the `html`/`css` tagged
-  templates, reactive properties, a shadow-root render in the browser, and
-  `renderToString` for Node, the tests and the harness. When the real Lit lands
-  as a workspace dependency, this file is deleted and the imports re-point at
-  it; the kits' render functions do not change.
-- `src/primitives.ts` is the Ionic seam: `button`, `chip`, `spinner` and `row`
-  with the call sites the `ion-*` primitives will occupy. The disabled rule and
-  the focus ring live here, once, so no kit can get them wrong. When Ionic
-  lands, the bodies of these helpers swap and the kits do not change.
+- `src/render.ts` is a small hand-written rendering layer, owned here, named
+  for what it is (see the header in the file). The decision to own it instead
+  of taking the real library, with the alternative and the reasons, is the
+  draft `docs/adr/0023` awaiting Colton's ruling; if the real Lit lands, the
+  file is deleted and the imports re-point at it, and the kits' render
+  functions do not change.
+- `src/primitives.ts` is the Ionic seam, as described above. When Ionic lands
+  as a workspace dependency, the bodies of these helpers swap and the kits do
+  not change.
 
 Both are the locked spec's sanctioned vendor-minimal path, recorded rather than
 silent. The kits' interaction wiring is intentionally absent: these are pattern

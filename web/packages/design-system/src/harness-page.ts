@@ -1,8 +1,10 @@
 // The harness page builder: every kit in its six states (ready plus the five
 // designed states), at the two walkthrough widths, 1440 and 1920. The page is a
-// STRING, built by Node at serve time from the same render functions the custom
-// elements paint, so what the design sync opens is what the kits render, with
-// no build toolchain between them.
+// STRING, built by Node from the same render functions the custom elements
+// paint, so what the design sync opens is what the kits render, with no build
+// toolchain between them. The committed harness/index.html is one build of this
+// function (harness/build.mjs writes it), so the page opens from the file
+// itself; serve.mjs serves the theme and brand variants from the same source.
 //
 // The theme and brand are served variants, not client toggles: the page has no
 // JavaScript at all. ?theme=light flips the html attribute; ?brand=hh-pro adds
@@ -15,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { type Template } from './lit.js';
+import { type Template } from './render.js';
 import { KIT_STATES, type KitState } from './state.js';
 import { ScanConfirmKit } from './kits/scan-and-confirm.js';
 import { ListDetailKit } from './kits/list-detail.js';
@@ -119,15 +121,16 @@ ${tokens}
   body { padding: var(--hh-s-24); }
   h1 { font-size: var(--hh-s-24); }
   p.lede { color: var(--hh-text-dim); max-width: var(--hh-measure); }
-  .width-frame { border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-16); margin-block-end: var(--hh-s-24); overflow-x: auto; }
+  .width-frame { border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-16); margin-block-end: var(--hh-s-24); }
   .width-frame > h2 { margin: 0 0 var(--hh-s-12); font-size: var(--hh-s-16); color: var(--hh-text-dim); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); gap: var(--hh-s-16); }
-  figure.cell { margin: 0; display: grid; gap: var(--hh-s-8); }
-  figure.cell figcaption { color: var(--hh-text-dim); font-size: var(--hh-s-12); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); gap: var(--hh-s-16); align-items: start; }
+  figure.cell { margin: 0; display: grid; gap: var(--hh-s-8); min-width: 0; align-content: start; }
+  figure.cell figcaption { color: var(--hh-text-dim); font-size: var(--hh-s-12); overflow-wrap: anywhere; }
+  .cell-body { min-width: 0; }
   section.proposal { border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-16); display: grid; gap: var(--hh-s-8); }
   section.proposal h2 { margin: 0; font-size: var(--hh-s-16); }
   section.proposal p { margin: 0; color: var(--hh-text-dim); max-width: var(--hh-measure); }
-  .proposal-accent { display: flex; align-items: center; justify-content: space-between; gap: var(--hh-s-12); padding: var(--hh-s-16); border-radius: var(--hh-radius-control); background: var(--cbrand); color: var(--cbrand-on); }
+  .proposal-accent { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--hh-s-12); padding: var(--hh-s-16); border-radius: var(--hh-radius-control); background: var(--cbrand); color: var(--cbrand-on); }
   .proposal-name { font-weight: 600; }
   .proposal-btn { border: 1px solid var(--cbrand-on); background: transparent; color: var(--cbrand-on); border-radius: var(--hh-radius-control); padding: var(--hh-s-8) var(--hh-s-16); min-height: 44px; }
   .proposal-btn:focus-visible { outline: 2px solid var(--cbrand-on); outline-offset: 2px; }
@@ -137,12 +140,15 @@ ${tokens}
 <h1>${HARNESS_TITLE}</h1>
 <p class="lede">Static page, no build and no scripts: every kit in its ready state and its five
 designed states (empty, loading, offline, conflict, error), at the two walkthrough widths.
-Rendered by Node from the kit render functions themselves. Serve with
-<code>node --import ./src/_ts-js-loader.mjs harness/serve.mjs</code>; add <code>?theme=light</code>
-for the light half and <code>?brand=hh-pro</code> for the standalone shell's brand override.</p>
+Rendered by Node from the kit render functions themselves. The committed
+<code>harness/index.html</code> is exactly this page (dark, base brand) and opens from the file
+itself; <code>node --import ./src/_ts-js-loader.mjs harness/serve.mjs</code> serves the variants:
+add <code>?theme=light</code> for the light half and <code>?brand=hh-pro</code> for the standalone
+shell's brand override. Each width frame caps at its walkthrough width and never exceeds the
+window, so the page never scrolls sideways.</p>
 ${proposalSection()}
 ${WIDTHS.map(
-    (w) => `<section class="width-frame" data-width="${w}" style="width:${w}px">
+    (w) => `<section class="width-frame" data-width="${w}" style="width:min(${w}px, 100%)">
 <h2>width ${w}px</h2>
 <div class="grid">
 ${kitFigures()}

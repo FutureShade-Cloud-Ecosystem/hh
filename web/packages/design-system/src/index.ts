@@ -2,7 +2,10 @@
 // kits, the state system, the primitives and the tokens entry; the icon seam is
 // documentation (src/icons/README.md) until the ERP icon registry lands.
 
-export { HHElement, html, css, renderTemplate, defineElement, unsafeSvg } from './lit.js';
+// There is deliberately no raw-markup export on this surface: markup can only
+// be made by html() inside the package (src/render.ts), whose trust brand is a
+// module-private symbol no caller can forge.
+export { HHElement, html, css, renderTemplate, defineElement } from './render.js';
 export {
   KIT_STATES,
   STATE_META,

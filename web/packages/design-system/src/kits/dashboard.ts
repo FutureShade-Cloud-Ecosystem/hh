@@ -1,8 +1,11 @@
 // dashboard: the yard's figures at a glance, on the widget layer. A widget sits
 // one step off the page on its own ground, which is why this kit carries the
 // ground/widget pair and not the card pair.
+//
+// Penpot mapping: the Penpot component named hh-dashboard, one-to-one with
+// the element tag below.
 
-import { css, defineElement, html, HHElement, type Template } from '../lit.js';
+import { css, defineElement, html, HHElement, type Template } from '../render.js';
 import { baseStyles, chip } from '../primitives.js';
 import { kitShell, stateStyles, type ButtonSpec, type KitState } from '../state.js';
 
@@ -15,6 +18,7 @@ const styles = baseStyles + stateStyles + css`
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(var(--hh-form-col), 100%), 1fr));
     gap: var(--hh-s-16);
+    min-width: 0;
   }
   .widget {
     background: var(--hh-widget);
@@ -24,6 +28,7 @@ const styles = baseStyles + stateStyles + css`
     padding: var(--hh-s-20);
     display: grid;
     gap: var(--hh-s-8);
+    min-width: 0;
   }
   .widget-label { color: var(--hh-text-dim); font-size: var(--hh-s-12); }
   .widget-figure {
