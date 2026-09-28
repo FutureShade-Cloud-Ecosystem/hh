@@ -41,6 +41,7 @@
 // platform answers for the sign-in while this package holds nothing to
 // trade.
 import { err, ok, type HeaderProvider, type Result } from "@hh/api-client";
+import type { DeviceLockHandle } from "./lock.js";
 import type { SessionStore } from "./session.js";
 
 function asMessage(error: unknown): string {
@@ -157,6 +158,33 @@ export interface AdoptSessionInput {
 }
 
 /**
+ * The sign-out counter, made shareable. The controller bumps it on both
+ * sides of signOut()'s await, exactly as its guard always has; the device
+ * lock reads it before and after every platform await of an engage or an
+ * unlock. A sign-out is an ACT, counted here; the engaged user's own token
+ * refreshing or expiring mid prompt is nobody's act and moves nothing, and
+ * that is how the lock tells the two apart (Colton's ruling C, relay
+ * message 048: the lock belongs to the signed-in person, or to nobody). The
+ * shell creates ONE counter and hands the same instance to the controller
+ * and to the lock; a lock constructed without one holds a private counter
+ * that nobody bumps, so its prompts see no sign-out and the expiry rule
+ * governs alone.
+ */
+export class SignOutCounter {
+  #count = 0;
+
+  /** Count one sign-out. The controller's sign-out path is the only caller. */
+  bump(): void {
+    this.#count += 1;
+  }
+
+  /** The count so far. */
+  get count(): number {
+    return this.#count;
+  }
+}
+
+/**
  * The sign-in orchestration over the seams: an AccountSurface for the
  * platform, a SessionStore for custody. Every path resolves a Result; a
  * wrong credential is data, never a throw.
@@ -198,17 +226,39 @@ export interface AdoptSessionInput {
  * sides of the sign-out's await, exactly as the generation guard does, and
  * the cancellation outranks the supersession: a sign-in parked under a
  * sign-out resolves cancelled, never superseded.
+ *
+ * The lock rides the same acts (Colton's ruling C, relay message 048: the
+ * lock is yours while you are signed in; a lock belongs to the signed-in
+ * person, or to nobody). When the shell wires a lock, signOut() disengages
+ * it beside the custody it clears, under the same guards, so a sign-out
+ * that fails part way leaves no lock behind; and every successful adoption
+ * reconciles the lock with the user it adopted, disengaging a lock bound to
+ * somebody else before the new session is shown, while the same user
+ * signing in again keeps their lock. The controller takes the lock as the
+ * narrow DeviceLockHandle and the counter as a shared SignOutCounter, so
+ * the lock can tell a sign-out (the counter moves) from the bound user's
+ * own token refreshing or expiring mid prompt (nothing moves).
  */
 export class AuthController {
   readonly #account: AccountSurface;
   readonly #sessions: SessionStore;
+  readonly #lock: DeviceLockHandle | null;
+  readonly #signOuts: SignOutCounter;
   #generation = 0;
-  #signOuts = 0;
   #signIns = 0;
 
-  constructor(deps: { account: AccountSurface; sessions: SessionStore }) {
+  constructor(deps: {
+    account: AccountSurface;
+    sessions: SessionStore;
+    /** The device lock, when the shell wires one; the sign-out and the adoptions disengage it as the ruling requires. */
+    lock?: DeviceLockHandle;
+    /** The sign-out counter the lock reads across its prompts; a fresh private one when omitted. */
+    signOuts?: SignOutCounter;
+  }) {
     this.#account = deps.account;
     this.#sessions = deps.sessions;
+    this.#lock = deps.lock ?? null;
+    this.#signOuts = deps.signOuts ?? new SignOutCounter();
   }
 
   /**
@@ -227,14 +277,14 @@ export class AuthController {
   async signInWithPassword(email: string, password: string): Promise<Result<AccountUser>> {
     this.#signIns += 1;
     const signIns = this.#signIns;
-    const signOuts = this.#signOuts;
+    const signOuts = this.#signOuts.count;
     let user: AccountUser;
     try {
       user = await this.#account.createEmailPasswordSession(email, password);
     } catch (error) {
       return err(`sign-in failed: ${asMessage(error)}`);
     }
-    if (this.#signOuts !== signOuts) {
+    if (this.#signOuts.count !== signOuts) {
       return err("sign-in cancelled: sign-out landed while the sign-in was in flight, so nothing was adopted");
     }
     if (this.#signIns !== signIns) return this.#staleSignIn(user);
@@ -244,7 +294,7 @@ export class AuthController {
     } catch (error) {
       return err(`sign-in failed minting the token: ${asMessage(error)}`);
     }
-    if (this.#signOuts !== signOuts) {
+    if (this.#signOuts.count !== signOuts) {
       return err("sign-in cancelled: sign-out landed while the sign-in was in flight, so nothing was adopted");
     }
     if (this.#signIns !== signIns) return this.#staleSignIn(user);
@@ -255,6 +305,7 @@ export class AuthController {
     });
     if (!adopted) return err("sign-in failed: the platform returned an unusable session");
     this.#generation += 1; // the adoption is a structural change: it supersedes anything already in flight
+    this.#lock?.disengageUnlessBoundTo(user.userId);
     return ok({ ...user });
   }
 
@@ -288,7 +339,10 @@ export class AuthController {
       tokenExpiresAtMs: input.tokenExpiresAtMs,
       user: { userId: user.userId, email: user.email, name: user.name },
     });
-    if (adopted) this.#generation += 1; // the adoption is a structural change: it supersedes anything already in flight
+    if (adopted) {
+      this.#generation += 1; // the adoption is a structural change: it supersedes anything already in flight
+      this.#lock?.disengageUnlessBoundTo(user.userId);
+    }
     return adopted;
   }
 
@@ -350,6 +404,7 @@ export class AuthController {
       return err("the platform returned an unusable session");
     }
     this.#generation += 1; // the adoption is a structural change: it supersedes anything already in flight
+    this.#lock?.disengageUnlessBoundTo(user.userId);
     return ok({ ...user });
   }
 
@@ -363,10 +418,19 @@ export class AuthController {
    * generation, passes its check, and would adopt once the platform answers
    * after this method has returned; the second bump supersedes it too. The
    * sign-out wins, always, from both sides of its own await.
+   *
+   * The lock goes with the session (Colton's ruling C, relay message 048:
+   * the lock is yours while you are signed in): the wired lock is
+   * disengaged right beside the custody clear, under the same guards, so a
+   * sign-out that fails part way (the catch above) still leaves no lock
+   * behind. The sign-out counter is bumped on both sides of the await as
+   * well, so an engage or an unlock prompt still open across the sign-out
+   * is refused by the lock the moment its platform answers, whatever the
+   * wiring.
    */
   async signOut(): Promise<void> {
     this.#generation += 1;
-    this.#signOuts += 1;
+    this.#signOuts.bump();
     try {
       await this.#account.deleteSession();
     } catch {
@@ -377,7 +441,8 @@ export class AuthController {
     // late platform answer. The second bump closes it, for the generation
     // guard and for the sign-in's sign-out counter alike.
     this.#generation += 1;
-    this.#signOuts += 1;
+    this.#signOuts.bump();
     this.#sessions.clear();
+    this.#lock?.disengage();
   }
 }
