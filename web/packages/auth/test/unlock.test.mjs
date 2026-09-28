@@ -296,12 +296,17 @@ test("the lock mirror payload carries no token, no PIN, no name, no secret", asy
 });
 
 test("a stored lock payload with unknown extra fields is rewritten to the known fields on read", async () => {
+  // A leftover from an older version: the payload validates, so the lock
+  // restores, but what it carries beyond the known fields (here a display
+  // name the current package would never write) must not stay in storage.
+  // The bound user is the signed-in user: a lock for anybody else is a
+  // different rule's case (the ruling's start-up check clears it).
   const recorded = new RecordedStorage();
   recorded.setItem(
     LOCK_MIRROR_KEY,
     JSON.stringify({
       v: 1,
-      userId: "u-1",
+      userId: FAKE_ACCOUNT.userId,
       credentialId: "leftover-credential",
       engagedAtMs: START_MS,
       name: "Leftover Display Name",
@@ -480,11 +485,14 @@ test("four concurrent wrong attempts all reach the verifier, and the newest fail
 });
 
 test("an unlock with no live session opens: the binding check has no user to compare", async () => {
-  // The recorded gap, stated as behaviour: the lock binds to the user who
-  // engaged, but that check compares against the LIVE session, and with no
-  // live session there is nothing to compare. The lock is a screen courtesy
-  // and the JWT is the authority, so the unlock proceeds. If this ever
-  // changes, it is a decision, not an accident.
+  // The recorded gap, stated as behaviour and now bounded by Colton's
+  // ruling C (relay message 048): the lock binds to the user who engaged,
+  // but that check compares against the LIVE session, and with no live
+  // session there is nothing to compare. A bare clear() is not a sign-out:
+  // no counter moves and the lock is not disengaged, so this custody is the
+  // expiry-shaped one, and the unlock proceeds. A sign-out is the act that
+  // refuses (the sign-out counter, test/lock-signout.test.mjs); if this
+  // acceptance ever narrows further, it is a decision, not an accident.
   const { credentials, lock, sessions } = await rig({ openWindowMs: 3_600_000 });
   assert.equal((await lock.engage()).ok, true);
   sessions.clear(); // the custody holds no live session

@@ -32,8 +32,14 @@
 // throw-safe mirror the session uses (which credential unlocks it, and the
 // id of the signed-in user who engaged it). An OPEN unlock does not survive
 // a reload: a reload re-locks. The mirror payload carries no token and no
-// secret; there is no PIN in this package's state at all.
+// secret; there is no PIN in this package's state at all. The lock's custody
+// follows the person (Colton's ruling C, relay message 048: the lock is
+// yours while you are signed in): signOut() disengages it, a different user
+// signing in disengages it before the new session is shown, a prompt that
+// answers after its owner signed out stores nothing and opens nothing, and
+// a lock found at start-up with no session is cleared, not shown.
 import { err, ok, type Result } from "@hh/api-client";
+import { SignOutCounter } from "./client.js";
 import { ThrowSafeMirror } from "./session.js";
 import type { SessionStore } from "./session.js";
 
@@ -155,6 +161,27 @@ export function webAuthnCredentialProvider(options?: WebAuthnProviderOptions): C
 
 export type LockState = "absent" | "locked" | "open";
 
+/**
+ * The narrow handle the controller takes on the device lock, so a sign-out
+ * and an adoption can disengage it without the controller ever touching the
+ * lock's state directly (the lock's own generation guard does the work,
+ * sending any platform prompt still in flight away empty handed). DeviceLock
+ * satisfies it structurally; the shell wires the SAME lock object into the
+ * controller and keeps it as the lock, so both see one mirror and one
+ * generation (Colton's ruling C, relay message 048).
+ */
+export interface DeviceLockHandle {
+  /** Remove the lock entirely, memory and mirror: the sign-out path. */
+  disengage(): void;
+  /**
+   * The adoption reconciliation: keep the lock only while it is bound to
+   * the user the controller just adopted; disengage it when custody adopted
+   * somebody else, before the new session is shown. A lock for nobody is a
+   * no-op.
+   */
+  disengageUnlessBoundTo(userId: string): void;
+}
+
 interface LockMirrorPayload {
   v: 1;
   userId: string;
@@ -204,24 +231,42 @@ function parseLockPayload(raw: unknown): { payload: LockMirrorPayload; clean: bo
  * disengage during a verification in flight ends closed or absent, and of
  * two concurrent attempts only the newer one's outcome lands. The session
  * itself is read again after each await too, on the success path and on the
- * failure path alike: a sign-out and another person's sign-in mid prompt
- * change neither the lock's generation nor its mirror, so the custody
- * comparison is what refuses to engage for, or open the lock for, or record
- * a failure against, a person who is now signed in instead of the person
- * these methods are bound to. The bound user's own token moving underneath
- * is not a change of person: a token refreshed or expired mid prompt leaves
- * the custody holding either no session at all or the same user's fresh
- * session, and both are accepted.
+ * failure path alike: another person's sign-in mid prompt leaves the custody
+ * holding a different user, and the custody comparison refuses to engage
+ * for, or open the lock for, or record a failure against, the person who is
+ * now signed in instead of the person these methods are bound to. The bound
+ * user's own token moving underneath is not a change of person: a token
+ * refreshed or expired mid prompt leaves the custody holding either no
+ * session at all or the same user's fresh session, and both are accepted.
+ *
+ * The sign-out is different from the expiry, and the difference is an act
+ * (Colton's ruling C, relay message 048: the lock is yours while you are
+ * signed in; a lock belongs to the signed-in person, or to nobody). A
+ * sign-out is counted by the sign-out counter (SignOutCounter, shared with
+ * the controller): engage and unlock capture that count before they await
+ * the platform and refuse when it has moved, storing nothing and opening
+ * nothing, because the person these methods were bound to signed out while
+ * the prompt was open. An expiry is not an act: the counter does not move,
+ * and the prompt's answer still lands. The controller's signOut() also
+ * disengages the lock outright beside the custody it clears, and its
+ * adoption paths call disengageUnlessBoundTo() with the user they adopted,
+ * so a different user signing in clears the lock before the new session is
+ * shown while the same user signing in again keeps theirs. At start-up a
+ * lock in the mirror whose person's display profile is gone (or is somebody
+ * else's) is cleared, not shown: the profile survives a reload and dies at
+ * a sign-out, so a lock without one is a lock whose session ended.
  */
 export class DeviceLock {
   readonly #credentials: CredentialProvider;
   /** The custody the lock binds to. engage() protects the signed-in user's session, never a caller-named identity. */
-  readonly #sessions: Pick<SessionStore, "current">;
+  readonly #sessions: Pick<SessionStore, "current" | "profile">;
   readonly #mirror: ThrowSafeMirror;
   readonly #now: () => number;
   readonly #backoffBaseMs: number;
   readonly #backoffCapMs: number;
   readonly #openWindowMs: number;
+  /** The sign-out counter shared with the controller; a private one nobody bumps when the shell omits it. */
+  readonly #signOuts: SignOutCounter;
   #generation = 0;
   #engaged: LockMirrorPayload | null = null;
   #openAtMs: number | null = null;
@@ -230,11 +275,18 @@ export class DeviceLock {
 
   constructor(options: {
     credentials: CredentialProvider;
-    sessions: Pick<SessionStore, "current">;
+    sessions: Pick<SessionStore, "current" | "profile">;
     mirror?: ThrowSafeMirror;
     now?: () => number;
     backoffBaseMs?: number;
     backoffCapMs?: number;
+    /**
+     * The sign-out counter the controller bumps, shared by instance. A
+     * sign-out is an act the lock must see across its prompts (Colton's
+     * ruling C, relay message 048); without it the lock sees no sign-out
+     * and the expiry rule governs its prompts alone.
+     */
+    signOuts?: SignOutCounter;
     /**
      * Configuration, not security: the screen hides again this many
      * milliseconds after the unlock, ABSOLUTELY. No activity is tracked and
@@ -250,12 +302,24 @@ export class DeviceLock {
     this.#backoffBaseMs = options.backoffBaseMs ?? 1_000;
     this.#backoffCapMs = options.backoffCapMs ?? 60_000;
     this.#openWindowMs = options.openWindowMs ?? 300_000;
+    this.#signOuts = options?.signOuts ?? new SignOutCounter();
     const restored = parseLockPayload(this.#mirror.read());
     if (restored !== null) {
       // The engaged lock survives a reload; the open unlock does not. A
       // payload with unknown extra fields is rewritten to the known fields.
-      this.#engaged = restored.payload;
-      if (!restored.clean) this.#mirror.write(this.#engaged);
+      // First the ruling's start-up check: the lock belongs to the
+      // signed-in person, or to nobody. The display profile survives a
+      // reload and dies at a sign-out (clear wipes it), so a lock in the
+      // mirror whose profile is gone, or names somebody else, is a lock
+      // whose session ended: cleared from the mirror, not shown.
+      const profile = this.#sessions.profile;
+      if (profile === null || profile.userId !== restored.payload.userId) {
+        this.#engaged = null;
+        this.#mirror.clear();
+      } else {
+        this.#engaged = restored.payload;
+        if (!restored.clean) this.#mirror.write(this.#engaged);
+      }
     } else {
       this.#mirror.clear();
     }
@@ -289,8 +353,13 @@ export class DeviceLock {
    * refreshed mid prompt (a new token, the same user) leaves the custody
    * holding the same user's session, and a token that expires mid prompt
    * leaves it holding no session at all, and both are accepted. What is
-   * refused is a session for a different user, which is what a sign-out and
-   * another person's sign-in during the prompt leave behind.
+   * refused is a session for a different user, which is what another
+   * person's sign-in during the prompt leaves behind. A sign-out during the
+   * prompt is not this check's case any more (Colton's ruling C, relay
+   * message 048): the sign-out counter check that runs beside this one
+   * refuses the prompt whose person signed out, and signOut() itself
+   * disengages the lock, so the acceptance of an absent custody is the
+   * expiry-shaped case only (no act, no counter movement).
    */
   #sessionIsAbsentOrFor(userId: string): boolean {
     const current = this.#sessions.current;
@@ -306,10 +375,16 @@ export class DeviceLock {
    * generation guard runs across every await: a disengage or another
    * structural change that lands mid engage cancels it as data and the
    * mirror is written by neither path. The custody is read again after each
-   * await as well: a sign-out and another person's sign-in while the
-   * platform's credential prompt is open leave the custody holding a
-   * different user, and the engage refuses instead of storing the lock for
-   * the person who is no longer signed in.
+   * await as well: another person's sign-in while the platform's credential
+   * prompt is open leaves the custody holding a different user, and the
+   * engage refuses instead of storing the lock for the person who is no
+   * longer signed in. The sign-out counter is captured before the first
+   * await and re-read after each: the person it saw signed in signing out
+   * mid prompt is an act the counter counts (Colton's ruling C, relay
+   * message 048), and the engage stores nothing when it has moved, even in
+   * the window where the sign-out's own await is still pending and the
+   * custody has not been cleared yet. The bound user's own token refreshing
+   * or expiring mid prompt moves no counter and still engages.
    */
   async engage(): Promise<Result<void>> {
     if (this.#engaged !== null) {
@@ -320,11 +395,15 @@ export class DeviceLock {
       return err("device unlock engages only for a signed-in user: no live session is held");
     }
     const generation = this.#generation;
+    const signOuts = this.#signOuts.count;
     let available: boolean;
     try {
       available = await this.#credentials.isAvailable();
     } catch (error) {
       return err(`device unlock could not ask the platform: ${asMessage(error)}`);
+    }
+    if (this.#signOuts.count !== signOuts) {
+      return err("device unlock is bound to the person it saw signed in, and that person signed out while engage was in flight, so nothing was engaged");
     }
     if (this.#generation !== generation) {
       return err("device unlock was superseded while engage was in flight, so nothing was engaged");
@@ -340,6 +419,9 @@ export class DeviceLock {
       credentialId = await this.#credentials.create();
     } catch (error) {
       return err(`device unlock could not create the credential: ${asMessage(error)}`);
+    }
+    if (this.#signOuts.count !== signOuts) {
+      return err("device unlock is bound to the person it saw signed in, and that person signed out while engage was in flight, so nothing was engaged");
     }
     if (this.#generation !== generation) {
       return err("device unlock was superseded while engage was in flight, so nothing was engaged");
@@ -371,14 +453,20 @@ export class DeviceLock {
    * that starts mid verification supersedes this one, and on a mismatch it
    * adopts nothing (no open unlock, and no backoff recorded from a failure
    * that no longer matters). The custody is read again after the prompt, on
-   * the success path and on the failure path alike: a sign-out and another
-   * person's sign-in while the platform prompt was open leave the custody
-   * holding a different user, and the attempt refuses instead of opening
-   * the lock for, or recording a failure's backoff against, the person who
-   * now is signed in. The bound user's own token moving underneath is not a
-   * refusal: a token refreshed or expired mid prompt leaves the custody
-   * holding no session at all or the same user's fresh session, and both
-   * are accepted.
+   * the success path and on the failure path alike: another person's
+   * sign-in while the platform prompt was open leaves the custody holding a
+   * different user, and the attempt refuses instead of opening the lock
+   * for, or recording a failure's backoff against, the person who now is
+   * signed in. The sign-out counter is captured before the prompt and
+   * re-read after it, on the success path and the failure path alike: the
+   * person who engaged signing out mid prompt is an act the counter counts
+   * (Colton's ruling C, relay message 048), the lock is already gone by
+   * then (signOut() disengages it), and the attempt stores nothing and
+   * opens nothing even in the window where the sign-out's own await is
+   * still pending. The bound user's own token moving underneath is not a
+   * refusal: a token refreshed or expired mid prompt moves no counter and
+   * leaves the custody holding no session at all or the same user's fresh
+   * session, and both are accepted.
    */
   async unlock(): Promise<Result<void>> {
     if (this.#engaged === null) {
@@ -397,10 +485,14 @@ export class DeviceLock {
       return err(`device unlock is rate limited: try again in ${this.#backoffUntilMs - nowMs} ms`);
     }
     const generation = ++this.#generation;
+    const signOuts = this.#signOuts.count;
     const credentialId = this.#engaged.credentialId;
     try {
       await this.#credentials.verify(credentialId);
     } catch (error) {
+      if (this.#signOuts.count !== signOuts) {
+        return err("device unlock is bound to the person it saw signed in, and that person signed out while the platform prompt was in flight, so nothing was recorded");
+      }
       if (this.#generation !== generation || this.#engaged === null) {
         return err("device unlock was superseded while the platform prompt was in flight");
       }
@@ -416,6 +508,9 @@ export class DeviceLock {
       const delayMs = Math.min(this.#backoffBaseMs * 2 ** (this.#failures - 1), this.#backoffCapMs);
       this.#backoffUntilMs = this.#now() + delayMs;
       return err(`device unlock failed: ${asMessage(error)} (failed attempts: ${this.#failures})`);
+    }
+    if (this.#signOuts.count !== signOuts) {
+      return err("device unlock is bound to the person it saw signed in, and that person signed out while the platform prompt was in flight, so nothing opened");
     }
     if (this.#generation !== generation || this.#engaged === null) {
       return err("device unlock was superseded while the platform prompt was in flight");
@@ -460,6 +555,21 @@ export class DeviceLock {
     this.#failures = 0;
     this.#backoffUntilMs = 0;
     this.#mirror.clear();
+  }
+
+  /**
+   * The adoption reconciliation (Colton's ruling C, relay message 048: the
+   * lock is yours while you are signed in; a lock belongs to the signed-in
+   * person, or to nobody). The controller calls this with the user of every
+   * session it adopts: a lock bound to a DIFFERENT user is disengaged here,
+   * before the new session is shown, and the same user signing in again
+   * (their own re-sign-in, or their refresh through resume) keeps their
+   * lock. A lock for nobody is a no-op.
+   */
+  disengageUnlessBoundTo(userId: string): void {
+    if (this.#engaged === null) return;
+    if (this.#engaged.userId === userId) return;
+    this.disengage();
   }
 
   /**
