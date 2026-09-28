@@ -61,55 +61,64 @@ test('the state system declares exactly the five designed states from the brief'
   }
 });
 
-for (const [tag, Kit] of KITS) {
-  for (const state of KIT_STATES) {
-    test(`kit coverage: ${tag} renders its ${state} state`, () => {
-      const markup = render(Kit, state);
-      assert.equal(attr(markup, 'data-kit'), tag, 'the root must name the kit');
-      assert.equal(attr(markup, 'data-state'), state, 'the root must name the state');
-      assert.equal(attr(markup, 'data-pattern'), STATE_META[state].pattern, 'the root must carry the state pattern');
-      assert.ok(markup.includes('state-label') || markup.includes('banner-text'), `${tag}/${state} lost its word`);
-      assert.ok(markup.includes('<svg'), `${tag}/${state} lost its icon`);
-    });
+// One test per matrix, loops inside: bun (CI's drift gate) refuses the second
+// and later test() calls made from a top-level for-of (oven-sh/bun#5090).
+test('kit coverage: every kit renders its every designed state and its ready state', () => {
+  const failures = [];
+  for (const [tag, Kit] of KITS) {
+    for (const state of KIT_STATES) {
+      try {
+        const markup = render(Kit, state);
+        assert.equal(attr(markup, 'data-kit'), tag, 'the root must name the kit');
+        assert.equal(attr(markup, 'data-state'), state, 'the root must name the state');
+        assert.equal(attr(markup, 'data-pattern'), STATE_META[state].pattern, 'the root must carry the state pattern');
+        assert.ok(markup.includes('state-label') || markup.includes('banner-text'), `${tag}/${state} lost its word`);
+        assert.ok(markup.includes('<svg'), `${tag}/${state} lost its icon`);
+      } catch (e) {
+        failures.push(`${tag}/${state}: ${e.message}`);
+      }
+    }
+    try {
+      const markup = render(Kit, 'ready');
+      assert.equal(attr(markup, 'data-state'), 'ready');
+      assert.equal(attr(markup, 'data-pattern'), 'ready');
+      assert.ok(markup.includes('data-live="true"'), 'ready actions must be live');
+    } catch (e) {
+      failures.push(`${tag}/ready: ${e.message}`);
+    }
   }
-
-  test(`kit coverage: ${tag} renders its ready state beside the designed five`, () => {
-    const markup = render(Kit, 'ready');
-    assert.equal(attr(markup, 'data-state'), 'ready');
-    assert.equal(attr(markup, 'data-pattern'), 'ready');
-    assert.ok(markup.includes('data-live="true"'), 'ready actions must be live');
-  });
-}
+  assert.deepEqual(failures, [], `kit coverage failures:\n  ${failures.join('\n  ')}`);
+});
 
 // ── colour never encodes state alone ─────────────────────────────────────────────
 
-for (const [tag, Kit] of KITS) {
-  test(`state indicators survive with colour removed: ${tag}`, () => {
-    const shapes = new Set();
-    for (const state of KIT_STATES) {
-      const markup = render(Kit, state);
-      // The word, with content.
-      const label = markup.match(/class="[^"]*(state-label|banner-text|review-title)[^"]*"\s*>([^<]+)</);
-      assert.ok(label && label[2].trim().length > 0, `${tag}/${state}: no word beside the colour`);
-      // The icon, with geometry (a path, not a glyph and not an image).
-      const svg = markup.match(/<svg[^>]*>[\s\S]*?<\/svg>/);
-      assert.ok(svg, `${tag}/${state}: no icon beside the colour`);
-      assert.match(svg[0], /<path d="/, `${tag}/${state}: the icon is not path geometry`);
-      assert.ok(!svg[0].includes('data:image'), `${tag}/${state}: the icon must not be an embedded image`);
-      // The pattern change, machine-checkable.
-      const pattern = attr(markup, 'data-pattern');
-      assert.ok(pattern && pattern !== 'ready', `${tag}/${state}: no pattern change marker`);
-      shapes.add(`${pattern}|${label[2]}`);
-    }
-    // No two states of a kit may present the same shape: five distinct
-    // pattern+word pairs, so the states are tellable apart with colour gone.
-    assert.equal(
-      shapes.size,
-      KIT_STATES.length,
-      `${tag}: two states present the same indicator shape (${[...shapes].join(' ; ')}), which means they are colour-only apart`,
-    );
-  });
-}
+test(`state indicators survive with colour removed: every kit`, () => {
+  for (const [tag, Kit] of KITS) {
+      const shapes = new Set();
+      for (const state of KIT_STATES) {
+        const markup = render(Kit, state);
+        // The word, with content.
+        const label = markup.match(/class="[^"]*(state-label|banner-text|review-title)[^"]*"\s*>([^<]+)</);
+        assert.ok(label && label[2].trim().length > 0, `${tag}/${state}: no word beside the colour`);
+        // The icon, with geometry (a path, not a glyph and not an image).
+        const svg = markup.match(/<svg[^>]*>[\s\S]*?<\/svg>/);
+        assert.ok(svg, `${tag}/${state}: no icon beside the colour`);
+        assert.match(svg[0], /<path d="/, `${tag}/${state}: the icon is not path geometry`);
+        assert.ok(!svg[0].includes('data:image'), `${tag}/${state}: the icon must not be an embedded image`);
+        // The pattern change, machine-checkable.
+        const pattern = attr(markup, 'data-pattern');
+        assert.ok(pattern && pattern !== 'ready', `${tag}/${state}: no pattern change marker`);
+        shapes.add(`${pattern}|${label[2]}`);
+      }
+      // No two states of a kit may present the same shape: five distinct
+      // pattern+word pairs, so the states are tellable apart with colour gone.
+      assert.equal(
+        shapes.size,
+        KIT_STATES.length,
+        `${tag}: two states present the same indicator shape (${[...shapes].join(' ; ')}), which means they are colour-only apart`,
+      );
+  }
+});
 
 test('the shared indicator helper is the one implementation every kit gets', () => {
   // Designed ONCE: every indicator on the page is this module's output, byte

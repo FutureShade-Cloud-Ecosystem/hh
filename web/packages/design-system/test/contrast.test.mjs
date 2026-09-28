@@ -85,27 +85,27 @@ const INKS = [
 
 const SURFACES = ['--hh-page', '--hh-card', '--hh-ground', '--hh-widget', '--hh-widget-raised'];
 
-for (const name of PALETTE_NAMES) {
-  test(`every state, text and identity ink clears AA on every surface it can land on: ${name}`, () => {
-    const v = palette(name);
-    const failures = [];
-    for (const ink of INKS) {
-      const fg = resolveColor(v[ink], v);
-      assert.ok(fg, `${ink} must resolve to a flat colour in ${name} (got ${v[ink]})`);
-      for (const surface of SURFACES) {
-        const bg = resolveColor(v[surface], v);
-        const ratio = contrast(fg, bg);
-      if (ratio < AA) failures.push(fail(`${ink} on ${surface}`, fg, bg, ratio, AA));
+test(`every state, text and identity ink clears AA on every surface it can land on: every palette`, () => {
+  for (const name of PALETTE_NAMES) {
+      const v = palette(name);
+      const failures = [];
+      for (const ink of INKS) {
+        const fg = resolveColor(v[ink], v);
+        assert.ok(fg, `${ink} must resolve to a flat colour in ${name} (got ${v[ink]})`);
+        for (const surface of SURFACES) {
+          const bg = resolveColor(v[surface], v);
+          const ratio = contrast(fg, bg);
+        if (ratio < AA) failures.push(fail(`${ink} on ${surface}`, fg, bg, ratio, AA));
+        }
       }
-    }
-    assert.deepEqual(
-      failures.sort(),
-      [],
-      `inks below AA ${AA}:1 in the ${name} palette. Darken the ink or, if the role is a FILL and not a ` +
-        `text ink, split the role the way D-077 did for red and DIB-468 for green:\n  ${failures.join('\n  ')}`,
-    );
-  });
-}
+      assert.deepEqual(
+        failures.sort(),
+        [],
+        `inks below AA ${AA}:1 in the ${name} palette. Darken the ink or, if the role is a FILL and not a ` +
+          `text ink, split the role the way D-077 did for red and DIB-468 for green:\n  ${failures.join('\n  ')}`,
+      );
+  }
+});
 
 test('every ink resolves in every palette (guards the matrix above)', () => {
   for (const name of PALETTE_NAMES) {
@@ -127,94 +127,94 @@ const FILL_PAIRS = [
   { fill: '--hh-success-fill', surfaces: ['--hh-page', '--hh-card'] },
 ];
 
-for (const name of PALETTE_NAMES) {
-  test(`solid fills stay visible against the surfaces they sit on (non-text 3:1): ${name}`, () => {
-    const v = palette(name);
-    const failures = [];
-    for (const { fill, surfaces } of FILL_PAIRS) {
-      const fg = resolveColor(v[fill], v);
-      for (const surface of surfaces) {
-        const bg = resolveColor(v[surface], v);
-        const ratio = contrast(fg, bg);
-        if (ratio < NON_TEXT) failures.push(fail(`${fill} vs ${surface}`, fg, bg, ratio, NON_TEXT));
+test(`solid fills stay visible against the surfaces they sit on (non-text 3:1): every palette`, () => {
+  for (const name of PALETTE_NAMES) {
+      const v = palette(name);
+      const failures = [];
+      for (const { fill, surfaces } of FILL_PAIRS) {
+        const fg = resolveColor(v[fill], v);
+        for (const surface of surfaces) {
+          const bg = resolveColor(v[surface], v);
+          const ratio = contrast(fg, bg);
+          if (ratio < NON_TEXT) failures.push(fail(`${fill} vs ${surface}`, fg, bg, ratio, NON_TEXT));
+        }
       }
-    }
-    assert.deepEqual(failures.sort(), [], `fills under the ${NON_TEXT}:1 non-text bar in ${name}:\n  ${failures.join('\n  ')}`);
-  });
-}
+      assert.deepEqual(failures.sort(), [], `fills under the ${NON_TEXT}:1 non-text bar in ${name}:\n  ${failures.join('\n  ')}`);
+  }
+});
 
 // ── the gold rule, in both directions, in every palette ─────────────────────────
 
-for (const name of PALETTE_NAMES) {
-  test(`D-078 gold rule: the gold fill carries only its near-black ink, and white on gold stays forbidden: ${name}`, () => {
-    const v = palette(name);
-    const gold = resolveColor(v['--hh-accent'], v);
-    const hover = resolveColor(v['--hh-accent-hover'], v);
-    const ink = resolveColor(v['--hh-accent-ink'], v);
-
-    const onGold = contrast(ink, gold);
-    assert.ok(onGold >= AA, fail('--hh-accent-ink on --hh-accent', ink, gold, onGold, AA));
-    const onHover = contrast(ink, hover);
-    assert.ok(onHover >= AA, fail('--hh-accent-ink on --hh-accent-hover', ink, hover, onHover, AA));
-
-    // The forbidden direction, ON PURPOSE. If white ever clears AA on the gold,
-    // the brand mark has changed and the rule that forbids it must be re-opened
-    // where it was ratified, not quietly edited here.
-    const whiteOnGold = contrast('#ffffff', gold);
-    assert.ok(
-      whiteOnGold < AA,
-      `white ink on the brand gold now measures ${whiteOnGold.toFixed(2)}:1 in ${name}. THE GOLD RULE: ` +
-        `gold is a surface and carries near-black, never white. Re-open the ruling, do not soften this test.`,
-    );
-
-    // The action fill pins the invariant ink WHENEVER the action fill IS the
-    // gold (the base vocabulary, both halves: the fill does not flip, so its
-    // ink must not either). A shell whose dealer layer re-valued the action to
-    // its own colour (hh-pro) is judged by the AA pair test instead, because a
-    // fill that is not gold is not who the gold rule speaks to.
-    const actionFill = resolveColor(v['--brand-fill'], v);
-    const fillOn = resolveColor(v['--brand-fill-on'], v);
-    if (actionFill === gold) {
-      assert.equal(
-        fillOn,
-        ink,
-        `--brand-fill-on must be the invariant accent ink in ${name}; got ${fillOn}. The gold FILL does not flip, so its ink must not either.`,
+test(`D-078 gold rule: the gold fill carries only its near-black ink, and white on gold stays forbidden: every palette`, () => {
+  for (const name of PALETTE_NAMES) {
+      const v = palette(name);
+      const gold = resolveColor(v['--hh-accent'], v);
+      const hover = resolveColor(v['--hh-accent-hover'], v);
+      const ink = resolveColor(v['--hh-accent-ink'], v);
+  
+      const onGold = contrast(ink, gold);
+      assert.ok(onGold >= AA, fail('--hh-accent-ink on --hh-accent', ink, gold, onGold, AA));
+      const onHover = contrast(ink, hover);
+      assert.ok(onHover >= AA, fail('--hh-accent-ink on --hh-accent-hover', ink, hover, onHover, AA));
+  
+      // The forbidden direction, ON PURPOSE. If white ever clears AA on the gold,
+      // the brand mark has changed and the rule that forbids it must be re-opened
+      // where it was ratified, not quietly edited here.
+      const whiteOnGold = contrast('#ffffff', gold);
+      assert.ok(
+        whiteOnGold < AA,
+        `white ink on the brand gold now measures ${whiteOnGold.toFixed(2)}:1 in ${name}. THE GOLD RULE: ` +
+          `gold is a surface and carries near-black, never white. Re-open the ruling, do not soften this test.`,
       );
-    } else {
-      const ratio = contrast(fillOn, actionFill);
-      assert.ok(ratio >= AA, fail('--brand-fill-on on --brand-fill', fillOn, actionFill, ratio, AA));
-    }
-  });
-}
+  
+      // The action fill pins the invariant ink WHENEVER the action fill IS the
+      // gold (the base vocabulary, both halves: the fill does not flip, so its
+      // ink must not either). A shell whose dealer layer re-valued the action to
+      // its own colour (hh-pro) is judged by the AA pair test instead, because a
+      // fill that is not gold is not who the gold rule speaks to.
+      const actionFill = resolveColor(v['--brand-fill'], v);
+      const fillOn = resolveColor(v['--brand-fill-on'], v);
+      if (actionFill === gold) {
+        assert.equal(
+          fillOn,
+          ink,
+          `--brand-fill-on must be the invariant accent ink in ${name}; got ${fillOn}. The gold FILL does not flip, so its ink must not either.`,
+        );
+      } else {
+        const ratio = contrast(fillOn, actionFill);
+        assert.ok(ratio >= AA, fail('--brand-fill-on on --brand-fill', fillOn, actionFill, ratio, AA));
+      }
+  }
+});
 
 // ── brand pairs: the identity as text, the action fill under its ink ────────────
 
-for (const name of PALETTE_NAMES) {
-  test(`brand identity and action pairs clear their bars: ${name}`, () => {
-    const v = palette(name);
-    const failures = [];
-    // The pairs the kit layer actually paints. --brand-on is NOT measured
-    // against --brand-fill in the base vocabulary, because there the identity
-    // (gold-as-ink, per theme) and the action fill (the invariant gold) are two
-    // roles by the gold rule, and no component paints one on the other; the
-    // hh-pro override collapses them onto one colour and the action row covers
-    // the pair there.
-    const rows = [
-      ['--brand-fill-on on --brand-fill (the action fill)', '--brand-fill-on', '--brand-fill', AA],
-      ['--cbrand-on on --cbrand (the contractor identity)', '--cbrand-on', '--cbrand', AA],
-      ['--brand-chrome-on on --brand-chrome (the frame)', '--brand-chrome-on', '--brand-chrome', AA],
-      ['--brand-chrome-muted on --brand-chrome-2', '--brand-chrome-muted', '--brand-chrome-2', AA],
-    ];
-    for (const [label, fgTok, bgTok, min] of rows) {
-      const fg = resolveColor(v[fgTok], v);
-      const bg = resolveColor(v[bgTok], v);
-      assert.ok(fg && bg, `${label}: ${fgTok}/${bgTok} must resolve in ${name}`);
-      const ratio = contrast(fg, bg);
-      if (ratio < min) failures.push(fail(label, fg, bg, ratio, min));
-    }
-    assert.deepEqual(failures.sort(), [], `brand pairs below their bar in ${name}:\n  ${failures.join('\n  ')}`);
-  });
-}
+test(`brand identity and action pairs clear their bars: every palette`, () => {
+  for (const name of PALETTE_NAMES) {
+      const v = palette(name);
+      const failures = [];
+      // The pairs the kit layer actually paints. --brand-on is NOT measured
+      // against --brand-fill in the base vocabulary, because there the identity
+      // (gold-as-ink, per theme) and the action fill (the invariant gold) are two
+      // roles by the gold rule, and no component paints one on the other; the
+      // hh-pro override collapses them onto one colour and the action row covers
+      // the pair there.
+      const rows = [
+        ['--brand-fill-on on --brand-fill (the action fill)', '--brand-fill-on', '--brand-fill', AA],
+        ['--cbrand-on on --cbrand (the contractor identity)', '--cbrand-on', '--cbrand', AA],
+        ['--brand-chrome-on on --brand-chrome (the frame)', '--brand-chrome-on', '--brand-chrome', AA],
+        ['--brand-chrome-muted on --brand-chrome-2', '--brand-chrome-muted', '--brand-chrome-2', AA],
+      ];
+      for (const [label, fgTok, bgTok, min] of rows) {
+        const fg = resolveColor(v[fgTok], v);
+        const bg = resolveColor(v[bgTok], v);
+        assert.ok(fg && bg, `${label}: ${fgTok}/${bgTok} must resolve in ${name}`);
+        const ratio = contrast(fg, bg);
+        if (ratio < min) failures.push(fail(label, fg, bg, ratio, min));
+      }
+      assert.deepEqual(failures.sort(), [], `brand pairs below their bar in ${name}:\n  ${failures.join('\n  ')}`);
+  }
+});
 
 test(`the primary action's boundary is tellable from the page in every palette`, () => {
   // The composite the design actually makes: a filled primary button reads its
@@ -306,29 +306,29 @@ test('the declared-pair scanner actually finds pairs (guards the gate below)', (
   assert.match(texts, /--brand-fill/, 'the scanner must see the brand action pair');
 });
 
-for (const name of PALETTE_NAMES) {
-  test(`every declared colour-on-background pair clears AA in shipped sources: ${name}`, () => {
-    const vars = palette(name);
-    const failures = [];
-    for (const p of declaredPairs()) {
-      const fg = resolveColor(p.color, vars);
-      const bg = resolveColor(p.background, vars);
-      if (!fg || !bg) continue; // tints and translucent layers: Chromium's problem, not a text fact
-      const ratio = contrast(fg, bg);
-      if (ratio < AA) {
-        failures.push(
-          `${p.file}:${p.line}: ${p.color} on ${p.background} is ${ratio.toFixed(2)}:1 (${fg} on ${bg}) in ${name}, below AA ${AA}:1`,
-        );
+test(`every declared colour-on-background pair clears AA in shipped sources: every palette`, () => {
+  for (const name of PALETTE_NAMES) {
+      const vars = palette(name);
+      const failures = [];
+      for (const p of declaredPairs()) {
+        const fg = resolveColor(p.color, vars);
+        const bg = resolveColor(p.background, vars);
+        if (!fg || !bg) continue; // tints and translucent layers: Chromium's problem, not a text fact
+        const ratio = contrast(fg, bg);
+        if (ratio < AA) {
+          failures.push(
+            `${p.file}:${p.line}: ${p.color} on ${p.background} is ${ratio.toFixed(2)}:1 (${fg} on ${bg}) in ${name}, below AA ${AA}:1`,
+          );
+        }
       }
-    }
-    assert.deepEqual(
-      failures.sort(),
-      [],
-      `declared text/background pairs below AA ${AA}:1 in the ${name} palette. Text on a gold fill must be ` +
-        `the invariant near-black; text on a flipping surface must flip with it:\n  ${failures.sort().join('\n  ')}`,
-    );
-  });
-}
+      assert.deepEqual(
+        failures.sort(),
+        [],
+        `declared text/background pairs below AA ${AA}:1 in the ${name} palette. Text on a gold fill must be ` +
+          `the invariant near-black; text on a flipping surface must flip with it:\n  ${failures.sort().join('\n  ')}`,
+      );
+  }
+});
 
 // ── the hh-pro override says what HH Pro's sheet says ────────────────────────────
 
