@@ -1,7 +1,8 @@
-// Session custody: the JWT lives in memory only, the mirror carries a
-// refresh handle and a profile (never the token), and the throw-safe mirror
-// degrades observably when the storage accessor throws, the ERP shim's
-// recorded finding carried with its rationale in src/session.ts.
+// Session custody: the JWT lives in memory only, the mirror carries the
+// display profile and nothing else (no token, no handle, no secret of any
+// kind, in any storage), and the throw-safe mirror degrades observably when
+// the storage accessor throws, the ERP shim's recorded finding carried with
+// its rationale in src/session.ts.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -17,7 +18,6 @@ import {
 } from "../src/testing.ts";
 
 const START_MS = 1_000_000_000_000;
-const HANDLE = "fake-refresh-handle-1";
 
 function rig() {
   const recorded = new RecordedStorage();
@@ -27,6 +27,7 @@ function rig() {
   const store = new SessionStore({ mirror, now });
   return {
     recorded,
+    mirror,
     store,
     now,
     advance: (ms) => {
@@ -36,12 +37,11 @@ function rig() {
       token: FAKE_JWT,
       tokenExpiresAtMs: nowMs + 60_000,
       user: { ...FAKE_ACCOUNT },
-      refreshHandle: { handle: HANDLE, expiresAtMs: nowMs + 3_600_000 },
     }),
   };
 }
 
-test("adopt holds the token in memory and mirrors the handle, never the token", () => {
+test("adopt holds the token in memory and mirrors the display profile, never the token", () => {
   const { recorded, store, sessionInput } = rig();
   assert.equal(store.degraded, false, "a working accessor is not degraded");
   assert.equal(store.current, null, "no session before adopt");
@@ -53,10 +53,11 @@ test("adopt holds the token in memory and mirrors the handle, never the token", 
   const payload = JSON.parse(writes[0].value);
   assert.deepEqual(
     Object.keys(payload).sort(),
-    ["email", "handle", "handleExpiresAtMs", "name", "userId", "v"],
-    "the mirrored payload carries the handle and the profile and nothing else",
+    ["email", "name", "userId", "v"],
+    "the mirrored payload carries the display profile and nothing else",
   );
   assert.equal("token" in payload, false, "no token field in the mirror");
+  assert.equal("handle" in payload, false, "no handle field in the mirror: no refresh handle exists");
   for (const write of recorded.writes) {
     assert.equal(
       write.value.includes(FAKE_JWT),
@@ -66,18 +67,52 @@ test("adopt holds the token in memory and mirrors the handle, never the token", 
   }
 });
 
-test("a reload restores the handle and the profile, never a token", () => {
+test("a reload restores the display profile and nothing else", () => {
   const { recorded, sessionInput } = rig();
   const first = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: () => START_MS });
   first.adopt(sessionInput());
 
   const reloaded = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: () => START_MS });
   assert.equal(reloaded.current, null, "a reload restores no token: none was ever stored");
+  assert.deepEqual(reloaded.profile, { ...FAKE_ACCOUNT }, "a reload restores the display profile");
+  const raw = recorded.writes.find((w) => w.key === SESSION_MIRROR_KEY).value;
+  assert.equal(raw.includes("handle"), false, "the payload names no handle: nothing in storage trades for a session");
+  assert.equal(raw.includes(FAKE_JWT), false, "the payload carries no token");
+});
+
+test("the custody holds nothing to trade: no storage write anywhere is bearer-capable", () => {
+  const { recorded, store, sessionInput } = rig();
+  store.adopt(sessionInput());
+  store.clear();
+  store.adopt(sessionInput());
+  for (const write of recorded.writes) {
+    const payload = JSON.parse(write.value);
+    for (const key of Object.keys(payload)) {
+      assert.equal(
+        /token|handle|secret|jwt/i.test(key),
+        false,
+        `the payload key ${key} is credential-shaped and must not be stored`,
+      );
+    }
+  }
+});
+
+test("the store serialises to nothing secret, and the private fields are private at run time", () => {
+  const { store, sessionInput } = rig();
+  store.adopt(sessionInput());
+  assert.equal(Object.keys(store).includes("token"), false, "the token is not an enumerable property");
+  assert.equal(store.token, undefined, "the token is not readable as a property");
+  assert.equal(store.mirror, undefined, "the mirror is not on the public surface");
+  const printed = JSON.stringify(store);
+  assert.equal(printed.includes(FAKE_JWT), false, "nothing secret serialises out of the store");
+  const parsed = JSON.parse(printed);
   assert.deepEqual(
-    reloaded.restorable,
-    { handle: HANDLE, expiresAtMs: START_MS + 3_600_000, user: { ...FAKE_ACCOUNT } },
-    "a reload restores the refresh handle and its profile",
+    Object.keys(parsed).sort(),
+    ["degraded", "profile", "signedIn"],
+    "the store serialises to the degradation flag, the live flag, and the display profile",
   );
+  assert.equal(parsed.signedIn, true);
+  assert.deepEqual(parsed.profile, { ...FAKE_ACCOUNT });
 });
 
 test("clear wipes memory and mirror", () => {
@@ -85,19 +120,17 @@ test("clear wipes memory and mirror", () => {
   store.adopt(sessionInput());
   store.clear();
   assert.equal(store.current, null);
-  assert.equal(store.restorable, null);
+  assert.equal(store.profile, null);
   assert.equal(recorded.size, 0, "the mirror holds nothing after clear");
 });
 
-test("an expired token reads as null while the handle stays; an expired handle is dropped", () => {
+test("an expired token reads as null while the display profile stays", () => {
   const { store, sessionInput, advance } = rig();
   store.adopt(sessionInput());
   assert.notEqual(store.current, null);
   advance(60_000);
   assert.equal(store.current, null, "an expired token is not a live session");
-  assert.notEqual(store.restorable, null, "the handle may outlive the token");
-  advance(3_600_000);
-  assert.equal(store.restorable, null, "an expired handle is dropped, never surfaced");
+  assert.notEqual(store.profile, null, "the display profile is not a live session and not a credential");
 });
 
 test("adopt refuses unusable input and changes nothing", () => {
@@ -106,19 +139,31 @@ test("adopt refuses unusable input and changes nothing", () => {
   assert.equal(store.adopt({ ...good, token: "" }), false, "an empty token is refused");
   assert.equal(store.adopt({ ...good, tokenExpiresAtMs: START_MS - 1 }), false, "an expired token is refused");
   assert.equal(store.adopt({ ...good, user: { ...FAKE_ACCOUNT, userId: "" } }), false, "a user without an id is refused");
-  assert.equal(store.adopt({ ...good, refreshHandle: { handle: "", expiresAtMs: START_MS + 1 } }), false, "an empty handle is refused");
   assert.equal(store.current, null, "nothing was adopted");
   assert.equal(recorded.writes.some((w) => w.key === SESSION_MIRROR_KEY), false, "nothing was mirrored");
 });
 
-test("adopt without a refresh handle leaves nothing restorable: a new identity inherits nobody's handle", () => {
-  const { recorded, store, sessionInput } = rig();
-  store.adopt(sessionInput());
-  assert.notEqual(store.restorable, null);
-  store.adopt({ ...sessionInput(), refreshHandle: null });
-  assert.notEqual(store.current, null, "the new token is live");
-  assert.equal(store.restorable, null, "the previous handle did not survive the new identity");
-  assert.equal(recorded.size, 0, "the mirror was cleared");
+test("an unusable mirror payload is dropped from storage, not merely unread", () => {
+  const cases = [
+    "not json at all",
+    // a version 1 payload carried a refresh handle; the rework stores no
+    // credential of any kind, so a leftover v1 payload is refused and wiped
+    JSON.stringify({ v: 1, handle: "leftover-handle", handleExpiresAtMs: START_MS + 1000, userId: "u", email: "x", name: "y" }),
+    JSON.stringify({ v: 2, userId: "", email: "x", name: "y" }),
+    JSON.stringify({ v: 2, email: "x", name: "y" }),
+    JSON.stringify({ v: 3, userId: "u", email: "x", name: "y" }),
+  ];
+  for (const raw of cases) {
+    const recorded = new RecordedStorage();
+    recorded.setItem(SESSION_MIRROR_KEY, raw);
+    const store = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: () => START_MS });
+    assert.equal(store.profile, null, `the payload ${raw} reads as absent`);
+    assert.equal(
+      recorded.size,
+      0,
+      `the payload ${raw} was dropped from storage, not kept where a later reader could trust it`,
+    );
+  }
 });
 
 test("the mirror degrades observably on a throwing accessor, and a degraded reload restores nothing", () => {
@@ -130,40 +175,18 @@ test("the mirror degrades observably on a throwing accessor, and a degraded relo
     token: FAKE_JWT,
     tokenExpiresAtMs: START_MS + 60_000,
     user: { ...FAKE_ACCOUNT },
-    refreshHandle: { handle: HANDLE, expiresAtMs: START_MS + 3_600_000 },
   });
   assert.notEqual(store.current, null, "custody works in a degraded browser: sign-in still works");
-  assert.notEqual(store.restorable, null, "within the process the handle still reads");
+  assert.notEqual(store.profile, null, "within the process the display profile still reads");
 
   const reloaded = new SessionStore({ mirror: throwing(), now: () => START_MS });
   assert.equal(reloaded.degraded, true);
-  assert.equal(reloaded.restorable, null, "a degraded reload restores nothing, which is the honest posture");
+  assert.equal(reloaded.profile, null, "a degraded reload restores nothing, which is the honest posture");
 });
 
-test("the default resolution degrades where no sessionStorage exists (the Node test process)", () => {
+test("the default resolution degrades where no browser storage exists (the Node test process)", () => {
   const store = new SessionStore();
   assert.equal(store.degraded, true);
-});
-
-test("a corrupt or hand-edited mirror payload is dropped, never trusted", () => {
-  const recorded = new RecordedStorage();
-  recorded.setItem(SESSION_MIRROR_KEY, "not json at all");
-  let store = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: () => START_MS });
-  assert.equal(store.restorable, null, "a corrupt payload reads as absent");
-
-  recorded.setItem(
-    SESSION_MIRROR_KEY,
-    JSON.stringify({ v: 1, handle: HANDLE, handleExpiresAtMs: START_MS + 1000, userId: "", email: "x", name: "y", token: FAKE_JWT }),
-  );
-  store = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: () => START_MS });
-  assert.equal(store.restorable, null, "a payload without a user id is dropped");
-
-  recorded.setItem(
-    SESSION_MIRROR_KEY,
-    JSON.stringify({ v: 2, handle: HANDLE, handleExpiresAtMs: START_MS + 1000, userId: "u", email: "x", name: "y" }),
-  );
-  store = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: () => START_MS });
-  assert.equal(store.restorable, null, "an unknown payload version is dropped");
 });
 
 test("mirror writes are throw-safe: a serialisation failure returns false and throws nothing", () => {
@@ -171,14 +194,14 @@ test("mirror writes are throw-safe: a serialisation failure returns false and th
   const circular = {};
   circular.self = circular;
   assert.equal(mirror.write(circular), false, "an unserialisable payload is refused as data");
-  assert.equal(mirror.write({ v: 1 }), true, "a plain payload writes");
+  assert.equal(mirror.write({ v: 2 }), true, "a plain payload writes");
 });
 
 test("mirror reads are throw-safe and validated rather than cast", () => {
   const mirror = new ThrowSafeMirror(SESSION_MIRROR_KEY, new RecordedStorage());
   assert.equal(mirror.read(), undefined, "an empty mirror reads as undefined");
-  mirror.write({ v: 1 });
-  assert.deepEqual(mirror.read(), { v: 1 });
+  mirror.write({ v: 2 });
+  assert.deepEqual(mirror.read(), { v: 2 });
   mirror.clear();
   assert.equal(mirror.read(), undefined);
 });

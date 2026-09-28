@@ -6,7 +6,7 @@
 // Every value these doubles mint is obviously fake and documented as fake;
 // no real credential, token, or secret exists anywhere in this package or
 // its fixtures.
-import type { AccountSession, AccountSurface, AccountUser, OAuth2Provider } from "./client.js";
+import type { AccountSurface, AccountUser, OAuth2Provider } from "./client.js";
 import type { CredentialProvider } from "./lock.js";
 import type { StorageLike } from "./session.js";
 
@@ -26,23 +26,23 @@ export const FAKE_ACCOUNT: AccountUser = {
 /** A fake storage accessor that works (a Map): the mirror attaches and is not degraded. Every write is recorded for the gates. */
 export class RecordedStorage implements StorageLike {
   readonly writes: { key: string; value: string }[] = [];
-  private readonly map = new Map<string, string>();
+  readonly #map = new Map<string, string>();
 
   getItem(key: string): string | null {
-    return this.map.has(key) ? (this.map.get(key) as string) : null;
+    return this.#map.has(key) ? (this.#map.get(key) as string) : null;
   }
 
   setItem(key: string, value: string): void {
     this.writes.push({ key, value });
-    this.map.set(key, value);
+    this.#map.set(key, value);
   }
 
   removeItem(key: string): void {
-    this.map.delete(key);
+    this.#map.delete(key);
   }
 
   get size(): number {
-    return this.map.size;
+    return this.#map.size;
   }
 }
 
@@ -77,47 +77,47 @@ export interface FakeCredentialProviderOptions {
  * platform's user verification would). All values are fake.
  */
 export class FakeCredentialProvider implements CredentialProvider {
-  private readonly expectedPin: string;
-  private readonly available: boolean;
-  private presented: string | null = null;
-  private createdCredentialId: string | null = null;
+  readonly #expectedPin: string;
+  readonly #available: boolean;
+  #presented: string | null = null;
+  #createdCredentialId: string | null = null;
 
   creationCount = 0;
   verificationCount = 0;
   rejectionCount = 0;
 
   constructor(options?: FakeCredentialProviderOptions) {
-    this.expectedPin = options?.pin ?? FAKE_PIN;
-    this.available = options?.available ?? true;
+    this.#expectedPin = options?.pin ?? FAKE_PIN;
+    this.#available = options?.available ?? true;
   }
 
   /** What the simulated user types into the next verification; null simulates a cancelled prompt. */
   present(pin: string | null): void {
-    this.presented = pin;
+    this.#presented = pin;
   }
 
   get credentialId(): string | null {
-    return this.createdCredentialId;
+    return this.#createdCredentialId;
   }
 
   async isAvailable(): Promise<boolean> {
-    return this.available;
+    return this.#available;
   }
 
   async create(): Promise<string> {
-    if (!this.available) throw new Error("fake: no platform credential is available");
+    if (!this.#available) throw new Error("fake: no platform credential is available");
     this.creationCount += 1;
-    this.createdCredentialId = `fake-credential-id-${this.creationCount}`;
-    return this.createdCredentialId;
+    this.#createdCredentialId = `fake-credential-id-${this.creationCount}`;
+    return this.#createdCredentialId;
   }
 
   async verify(credentialId: string): Promise<void> {
     this.verificationCount += 1;
-    if (this.createdCredentialId === null) throw new Error("fake: no credential was created");
-    if (credentialId !== this.createdCredentialId) {
+    if (this.#createdCredentialId === null) throw new Error("fake: no credential was created");
+    if (credentialId !== this.#createdCredentialId) {
       throw new Error("fake: the verification targeted a different credential");
     }
-    if (this.presented !== this.expectedPin) {
+    if (this.#presented !== this.#expectedPin) {
       this.rejectionCount += 1;
       throw new Error("fake: user verification failed (simulated wrong PIN or cancelled prompt)");
     }
@@ -137,62 +137,63 @@ export const FAKE_PASSWORD = "fake-password-not-real";
 /**
  * The fake of THIS package's AccountSurface (never a fake of Appwrite
  * itself): three scripted answers with obviously fake values, for the
- * controller and custody tests.
+ * controller and custody tests. The fake keeps no platform session beyond a
+ * counter: createEmailPasswordSession flips the counter (the platform's
+ * cookie-backed session exists), getSession answers while it does, and
+ * deleteSession clears it.
  */
 export class FakeAccountSurface implements AccountSurface {
-  private readonly acceptedEmail: string;
-  private readonly acceptedPassword: string;
-  private now: () => number;
+  readonly #acceptedEmail: string;
+  readonly #acceptedPassword: string;
+  #now: () => number;
+  #hasPlatformSession = false;
 
   creationCount = 0;
   oauthCount = 0;
   deleteCount = 0;
   jwtCount = 0;
-  sessionLifetimeMs = 3_600_000;
   jwtLifetimeMs = 900_000;
-  handle = "fake-refresh-handle";
   user: AccountUser = { ...FAKE_ACCOUNT };
 
   constructor(options?: FakeAccountSurfaceOptions) {
-    this.acceptedEmail = options?.email ?? FAKE_ACCOUNT.email;
-    this.acceptedPassword = options?.password ?? FAKE_PASSWORD;
-    this.now = Date.now;
+    this.#acceptedEmail = options?.email ?? FAKE_ACCOUNT.email;
+    this.#acceptedPassword = options?.password ?? FAKE_PASSWORD;
+    this.#now = Date.now;
   }
 
   /** Pin the fake's clock (tests advance it to prove expiry handling). */
   setClock(now: () => number): void {
-    this.now = now;
+    this.#now = now;
   }
 
-  async createEmailPasswordSession(email: string, password: string): Promise<AccountSession> {
-    if (email !== this.acceptedEmail || password !== this.acceptedPassword) {
+  async createEmailPasswordSession(email: string, password: string): Promise<AccountUser> {
+    if (email !== this.#acceptedEmail || password !== this.#acceptedPassword) {
       throw new Error("fake: invalid credentials");
     }
     this.creationCount += 1;
-    return {
-      user: { ...this.user },
-      handle: `${this.handle}-${this.creationCount}`,
-      expiresAtMs: this.now() + this.sessionLifetimeMs,
-    };
+    this.#hasPlatformSession = true;
+    return { ...this.user };
   }
 
   async createOAuth2Session(provider: OAuth2Provider, redirectTo: string): Promise<void> {
     if (provider !== "google") throw new Error("fake: unsupported provider");
     if (typeof redirectTo !== "string" || redirectTo === "") throw new Error("fake: no redirect target");
     this.oauthCount += 1;
+    this.#hasPlatformSession = true;
   }
 
   async getSession(): Promise<AccountUser> {
-    if (this.creationCount === 0) throw new Error("fake: no platform session");
+    if (!this.#hasPlatformSession) throw new Error("fake: no platform session");
     return { ...this.user };
   }
 
   async createJWT(): Promise<{ jwt: string; expiresAtMs: number }> {
     this.jwtCount += 1;
-    return { jwt: FAKE_JWT, expiresAtMs: this.now() + this.jwtLifetimeMs };
+    return { jwt: FAKE_JWT, expiresAtMs: this.#now() + this.jwtLifetimeMs };
   }
 
   async deleteSession(): Promise<void> {
     this.deleteCount += 1;
+    this.#hasPlatformSession = false;
   }
 }

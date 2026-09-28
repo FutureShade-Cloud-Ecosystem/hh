@@ -3,8 +3,9 @@
 // vite emit), and Node's native TypeScript type stripping loads the .ts
 // sources directly, so for the test process this hook rewrites a relative
 // './x.js' specifier to './x.ts' when that file exists. Package sources are
-// untouched; this file is used ONLY via
-//   node --import ./src/_ts-js-loader.mjs --test test/
+// untouched; this file lives in test/ (it is test-only and must not sit on
+// the package's src surface) and is used ONLY via
+//   node --import ./test/_ts-js-loader.mjs --test test/
 // following the ERP app's loader pattern (a minimal --import hook, no
 // dependencies), the same hook the api-client package carries.
 import { register } from "node:module";

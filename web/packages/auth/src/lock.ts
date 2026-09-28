@@ -1,12 +1,23 @@
-// Device unlock for shared devices: a cached session on a shared device is
-// locked behind the platform's user verification (the PIN or the biometric
-// the platform authenticator collects), through WebAuthn where the platform
-// exposes it. The lock records who unlocked and when, the header provider in
-// client.ts stamps that into the audit header on every request made under
-// the unlock, and failed attempts are rate-limited locally with exponential
-// backoff, in memory (a reload clears the backoff and re-locks, which is the
-// honest trade: the compensating control is that a reload also ends any
-// open unlock).
+// Device unlock for shared devices: a courtesy that hides the screen behind
+// the platform's user verification (the PIN or the biometric the platform
+// authenticator collects), through WebAuthn where the platform exposes it.
+//
+// THE LOCK IS NOT A SECURITY BOUNDARY, AND THIS PACKAGE NEVER CLAIMS IT IS
+// ONE. The token is presented for every request whether the lock is open,
+// locked, or absent, because the request must still work while the screen is
+// hidden. The lock sends no audit pair: the X-Unlocked-By and X-Unlocked-At
+// headers are removed until the core can verify an unlock. Nothing in core/
+// reads that pair, the authz middleware checks only Authorization and X-Org,
+// and the platform authenticator proves that someone who knows the device's
+// own lock was present, not which HH person it was. A header that claims a
+// fact the server cannot check poisons the audit trail the moment anything
+// trusts it. The README carries the open question for Colton: what a real
+// per-person unlock needs.
+//
+// engage() takes no identity from its caller. It binds to the signed-in
+// user's id, read from the custody (`sessions.current`), and no name is
+// stored anywhere: the mirror payload carries the bound user id and the
+// credential id, never a display name.
 //
 // The platform seam is the narrow CredentialProvider below (isAvailable,
 // create, verify): the same injected-interface discipline the api-client
@@ -17,12 +28,13 @@
 // the platform, and the fake models the user's typing with present().
 //
 // Custody discipline: the engaged lock survives a reload through the same
-// throw-safe mirror the session uses (who it protects, which credential
-// unlocks it, when it was engaged). An OPEN unlock does not survive a
-// reload: a reload re-locks. The mirror payload carries no token and no
+// throw-safe mirror the session uses (which credential unlocks it, and the
+// id of the signed-in user who engaged it). An OPEN unlock does not survive
+// a reload: a reload re-locks. The mirror payload carries no token and no
 // secret; there is no PIN in this package's state at all.
 import { err, ok, type Result } from "../../api-client/src/result.js";
 import { ThrowSafeMirror } from "./session.js";
+import type { SessionStore } from "./session.js";
 
 /**
  * The narrow credential surface this package needs, modelled on what the
@@ -142,16 +154,6 @@ export function webAuthnCredentialProvider(options?: WebAuthnProviderOptions): C
 
 export type LockState = "absent" | "locked" | "open";
 
-export interface OpenUnlock {
-  userId: string;
-  unlockedAtMs: number;
-}
-
-/** The audit header carrying who the open unlock belongs to. */
-export const AUDIT_USER_HEADER = "X-Unlocked-By";
-/** The audit header carrying the unlock instant, as unix epoch milliseconds. */
-export const AUDIT_AT_HEADER = "X-Unlocked-At";
-
 interface LockMirrorPayload {
   v: 1;
   userId: string;
@@ -177,69 +179,88 @@ function parseLockPayload(raw: unknown): LockMirrorPayload | null {
 }
 
 /**
- * The device lock. engage() registers the platform credential and writes the
- * engaged state to the mirror; unlock() runs one verification, rate-limited
- * on failure; lock() re-engages; disengage() removes the lock. The open
- * unlock lives in memory only, and auditHeaders() returns the audit pair
- * exactly while a lock is open (the client's header provider merges it).
+ * The device lock: a courtesy that hides the screen. engage() registers the
+ * platform credential for the signed-in user and writes the engaged state to
+ * the mirror; unlock() runs one verification, rate-limited on failure;
+ * lock() re-engages; disengage() removes the lock. The open unlock lives in
+ * memory only and re-locks itself after an idle window. No method here
+ * returns or sends an identity claim: the audit pair is gone until the core
+ * can verify an unlock.
  */
 export class DeviceLock {
-  private readonly credentials: CredentialProvider;
-  private readonly mirror: ThrowSafeMirror;
-  private readonly now: () => number;
-  private readonly backoffBaseMs: number;
-  private readonly backoffCapMs: number;
-  private engaged: LockMirrorPayload | null = null;
-  private open: OpenUnlock | null = null;
-  private failures = 0;
-  private backoffUntilMs = 0;
+  readonly #credentials: CredentialProvider;
+  /** The custody the lock binds to. engage() protects the signed-in user's session, never a caller-named identity. */
+  readonly #sessions: Pick<SessionStore, "current">;
+  readonly #mirror: ThrowSafeMirror;
+  readonly #now: () => number;
+  readonly #backoffBaseMs: number;
+  readonly #backoffCapMs: number;
+  readonly #idleRelockMs: number;
+  #engaged: LockMirrorPayload | null = null;
+  #openAtMs: number | null = null;
+  #failures = 0;
+  #backoffUntilMs = 0;
 
   constructor(options: {
     credentials: CredentialProvider;
+    sessions: Pick<SessionStore, "current">;
     mirror?: ThrowSafeMirror;
     now?: () => number;
     backoffBaseMs?: number;
     backoffCapMs?: number;
+    /** Configuration, not security: the screen hides again after this much idle time with the unlock open. */
+    idleRelockMs?: number;
   }) {
-    this.credentials = options.credentials;
-    this.mirror = options?.mirror ?? new ThrowSafeMirror(LOCK_MIRROR_KEY);
-    this.now = options.now ?? Date.now;
-    this.backoffBaseMs = options.backoffBaseMs ?? 1_000;
-    this.backoffCapMs = options.backoffCapMs ?? 60_000;
-    const restored = parseLockPayload(this.mirror.read());
+    this.#credentials = options.credentials;
+    this.#sessions = options.sessions;
+    this.#mirror = options?.mirror ?? new ThrowSafeMirror(LOCK_MIRROR_KEY);
+    this.#now = options.now ?? Date.now;
+    this.#backoffBaseMs = options.backoffBaseMs ?? 1_000;
+    this.#backoffCapMs = options.backoffCapMs ?? 60_000;
+    this.#idleRelockMs = options.idleRelockMs ?? 300_000;
+    const restored = parseLockPayload(this.#mirror.read());
     if (restored !== null) {
       // The engaged lock survives a reload; the open unlock does not.
-      this.engaged = restored;
+      this.#engaged = restored;
     } else {
-      this.mirror.clear();
+      this.#mirror.clear();
     }
   }
 
   get state(): LockState {
-    if (this.engaged === null) return "absent";
-    return this.open === null ? "locked" : "open";
-  }
-
-  get openUnlock(): OpenUnlock | null {
-    return this.open === null ? null : { ...this.open };
+    if (this.#engaged === null) return "absent";
+    this.#relockIfIdle();
+    return this.#openAtMs === null ? "locked" : "open";
   }
 
   /** True when the lock's mirror is degraded: a reload forgets the lock entirely. */
   get degraded(): boolean {
-    return this.mirror.degraded;
+    return this.#mirror.degraded;
   }
 
-  /** Register the platform credential and engage the lock for the named user's cached session. */
-  async engage(userId: string): Promise<Result<void>> {
-    if (this.engaged !== null) {
+  #relockIfIdle(): void {
+    if (this.#openAtMs === null) return;
+    if (this.#now() - this.#openAtMs >= this.#idleRelockMs) this.#openAtMs = null;
+  }
+
+  /**
+   * Register the platform credential and engage the lock for the signed-in
+   * user's session. Takes no identity argument on purpose: the user id comes
+   * from custody, so the lock cannot be pointed at a name the caller made
+   * up. Refused when no live session is held, when the platform offers no
+   * credential (WebAuthn absent), or when a lock is already engaged.
+   */
+  async engage(): Promise<Result<void>> {
+    if (this.#engaged !== null) {
       return err("device unlock is already engaged on this device: disengage it first");
     }
-    if (typeof userId !== "string" || userId === "") {
-      return err("device unlock needs the user id of the session it protects");
+    const session = this.#sessions.current;
+    if (session === null) {
+      return err("device unlock engages only for a signed-in user: no live session is held");
     }
     let available: boolean;
     try {
-      available = await this.credentials.isAvailable();
+      available = await this.#credentials.isAvailable();
     } catch (error) {
       return err(`device unlock could not ask the platform: ${asMessage(error)}`);
     }
@@ -248,12 +269,12 @@ export class DeviceLock {
     }
     let credentialId: string;
     try {
-      credentialId = await this.credentials.create();
+      credentialId = await this.#credentials.create();
     } catch (error) {
       return err(`device unlock could not create the credential: ${asMessage(error)}`);
     }
-    this.engaged = { v: 1, userId, credentialId, engagedAtMs: this.now() };
-    this.mirror.write(this.engaged);
+    this.#engaged = { v: 1, userId: session.user.userId, credentialId, engagedAtMs: this.#now() };
+    this.#mirror.write(this.#engaged);
     return ok(undefined);
   }
 
@@ -261,55 +282,58 @@ export class DeviceLock {
    * Run one unlock attempt. A failed attempt (wrong PIN, cancelled prompt,
    * platform refusal) feeds an in-memory exponential backoff before the next
    * attempt is even tried: one second after the first failure, doubling, and
-   * capped. A success resets the backoff and records who unlocked and when.
+   * capped. A success resets the backoff and opens the lock. The backoff
+   * lives in memory, so a reload clears it and re-locks: it is a courtesy
+   * against fat fingers, not a control. The platform authenticator's own
+   * lockout is the real limiter.
    */
-  async unlock(): Promise<Result<OpenUnlock>> {
-    if (this.engaged === null) {
+  async unlock(): Promise<Result<void>> {
+    if (this.#engaged === null) {
       return err("no device lock is engaged on this device");
     }
-    if (this.open !== null) {
-      return ok({ ...this.open }); // idempotent while open
+    this.#relockIfIdle();
+    if (this.#openAtMs !== null) {
+      return ok(undefined); // idempotent while open
     }
-    const nowMs = this.now();
-    if (nowMs < this.backoffUntilMs) {
-      return err(`device unlock is rate limited: try again in ${this.backoffUntilMs - nowMs} ms`);
+    const nowMs = this.#now();
+    if (nowMs < this.#backoffUntilMs) {
+      return err(`device unlock is rate limited: try again in ${this.#backoffUntilMs - nowMs} ms`);
     }
     try {
-      await this.credentials.verify(this.engaged.credentialId);
+      await this.#credentials.verify(this.#engaged.credentialId);
     } catch (error) {
-      this.failures += 1;
-      const delayMs = Math.min(this.backoffBaseMs * 2 ** (this.failures - 1), this.backoffCapMs);
-      this.backoffUntilMs = nowMs + delayMs;
-      return err(`device unlock failed: ${asMessage(error)} (failed attempts: ${this.failures})`);
+      this.#failures += 1;
+      const delayMs = Math.min(this.#backoffBaseMs * 2 ** (this.#failures - 1), this.#backoffCapMs);
+      this.#backoffUntilMs = nowMs + delayMs;
+      return err(`device unlock failed: ${asMessage(error)} (failed attempts: ${this.#failures})`);
     }
-    this.failures = 0;
-    this.backoffUntilMs = 0;
-    this.open = { userId: this.engaged.userId, unlockedAtMs: this.now() };
-    return ok({ ...this.open });
+    this.#failures = 0;
+    this.#backoffUntilMs = 0;
+    this.#openAtMs = this.#now();
+    return ok(undefined);
   }
 
-  /** Re-engage an open lock. The engaged credential and its mirror entry stay; the recorded unlock and the backoff are dropped. */
+  /** Re-engage an open lock. The engaged credential and its mirror entry stay; the open unlock and the backoff are dropped. */
   lock(): void {
-    this.open = null;
-    this.failures = 0;
-    this.backoffUntilMs = 0;
+    this.#openAtMs = null;
+    this.#failures = 0;
+    this.#backoffUntilMs = 0;
   }
 
-  /** Remove the lock entirely: memory and mirror. */
+  /** Remove the lock entirely: memory and mirror. The platform credential the engage ceremony created stays on the device; the platform owns its deletion. */
   disengage(): void {
-    this.engaged = null;
-    this.open = null;
-    this.failures = 0;
-    this.backoffUntilMs = 0;
-    this.mirror.clear();
+    this.#engaged = null;
+    this.#openAtMs = null;
+    this.#failures = 0;
+    this.#backoffUntilMs = 0;
+    this.#mirror.clear();
   }
 
-  /** The audit headers, exactly while a lock is open: empty otherwise. */
-  auditHeaders(): Record<string, string> {
-    if (this.open === null) return {};
-    return {
-      [AUDIT_USER_HEADER]: this.open.userId,
-      [AUDIT_AT_HEADER]: String(this.open.unlockedAtMs),
-    };
+  /**
+   * Serialises to nothing secret: the state and the degradation flag. No
+   * identity claim, no credential id, no unlock instant.
+   */
+  toJSON(): { state: LockState; degraded: boolean } {
+    return { state: this.state, degraded: this.#mirror.degraded };
   }
 }

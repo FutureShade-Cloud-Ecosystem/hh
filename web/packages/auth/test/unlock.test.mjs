@@ -1,18 +1,20 @@
 // The device unlock flow with the fake credential provider (the acceptance
-// line names it): engage, unlock, the wrong-PIN path, the local exponential
-// rate limiter, the mirror discipline across a reload, and the audit headers
-// present exactly while a lock is open.
+// line names it): engage bound to the signed-in user, unlock, the wrong-PIN
+// path, the local exponential rate limiter, the idle relock, the mirror
+// discipline across a reload, and the platform adapter's user-verification
+// options. The lock is a screen courtesy: no audit pair exists anywhere.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  AUDIT_AT_HEADER,
-  AUDIT_USER_HEADER,
   DeviceLock,
+  SessionStore,
   ThrowSafeMirror,
   LOCK_MIRROR_KEY,
+  SESSION_MIRROR_KEY,
 } from "../src/index.ts";
 import {
   FAKE_ACCOUNT,
+  FAKE_JWT,
   FAKE_PIN,
   FakeCredentialProvider,
   RecordedStorage,
@@ -33,59 +35,86 @@ function clock(startMs = START_MS) {
   };
 }
 
-async function rig() {
+async function rig({ idleRelockMs, withSession = true } = {}) {
   const recorded = new RecordedStorage();
   const time = clock();
+  const sessions = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: time.now });
+  if (withSession) {
+    sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: time.now() + 3_600_000, user: { ...FAKE_ACCOUNT } });
+  }
   const credentials = new FakeCredentialProvider();
   const lock = new DeviceLock({
     credentials,
+    sessions,
     mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded),
     now: time.now,
+    idleRelockMs,
   });
-  return { recorded, credentials, lock, time };
+  return { recorded, credentials, lock, sessions, time };
 }
 
-test("engage and unlock with the fake credential provider", async () => {
-  const { credentials, lock, time } = await rig();
+test("engage binds to the signed-in user's id and takes no identity from its caller", async () => {
+  const { recorded, credentials, lock } = await rig();
   assert.equal(lock.state, "absent");
-  assert.deepEqual(lock.auditHeaders(), {}, "no audit headers with no lock");
 
-  const engaged = await lock.engage(FAKE_ACCOUNT.userId);
+  const engaged = await lock.engage();
   assert.equal(engaged.ok, true, `engage resolves a Result: ${engaged.ok ? "" : engaged.error}`);
   assert.equal(credentials.creationCount, 1, "the platform credential was registered once");
   assert.equal(lock.state, "locked");
 
+  const payload = JSON.parse(recorded.writes.find((w) => w.key === LOCK_MIRROR_KEY).value);
+  assert.equal(
+    payload.userId,
+    FAKE_ACCOUNT.userId,
+    "the lock binds to the id of the signed-in user, not to any name a caller passed",
+  );
+  assert.equal("name" in payload, false, "no name is stored anywhere");
+});
+
+test("engage is refused without a signed-in user: there is nobody to bind to", async () => {
+  const { recorded, credentials, lock, sessions } = await rig({ withSession: false });
+  const refused = await lock.engage();
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /signed-in user/);
+  assert.equal(credentials.creationCount, 0, "no credential was created for nobody");
+  assert.equal(lock.state, "absent");
+  assert.equal(recorded.writes.some((w) => w.key === LOCK_MIRROR_KEY), false, "nothing was mirrored");
+
+  sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: START_MS + 60_000, user: { ...FAKE_ACCOUNT } });
+  assert.equal((await lock.engage()).ok, true, "once a user is signed in, engage binds to them");
+});
+
+test("no audit pair exists on the lock, in the open state or any other", async () => {
+  const { credentials, lock } = await rig();
+  await lock.engage();
+  assert.equal(lock.auditHeaders, undefined, "the lock carries no audit header method at all");
+  credentials.present(FAKE_PIN);
+  assert.equal((await lock.unlock()).ok, true);
+  assert.equal(lock.state, "open");
+  assert.equal(lock.openUnlock, undefined, "no open-unlock identity record exists");
+  const auth = await import("../src/index.ts");
+  assert.equal(auth.AUDIT_USER_HEADER, undefined, "X-Unlocked-By is gone until the core can verify an unlock");
+  assert.equal(auth.AUDIT_AT_HEADER, undefined, "X-Unlocked-At is gone until the core can verify an unlock");
+});
+
+test("unlock opens with the fake credential provider and is idempotent while open", async () => {
+  const { credentials, lock, time } = await rig();
+  await lock.engage();
   credentials.present(FAKE_PIN);
   const opened = await lock.unlock();
   assert.equal(opened.ok, true, `unlock resolves a Result: ${opened.ok ? "" : opened.error}`);
-  assert.deepEqual(opened.value, { userId: FAKE_ACCOUNT.userId, unlockedAtMs: time.time() });
   assert.equal(lock.state, "open");
-  assert.deepEqual(lock.openUnlock, { userId: FAKE_ACCOUNT.userId, unlockedAtMs: time.time() });
-});
 
-test("the audit headers are present exactly while a lock is open", async () => {
-  const { credentials, lock, time } = await rig();
-  assert.deepEqual(lock.auditHeaders(), {}, "absent: no audit headers");
-  await lock.engage(FAKE_ACCOUNT.userId);
-  assert.deepEqual(lock.auditHeaders(), {}, "locked: no audit headers");
-  credentials.present(FAKE_PIN);
-  await lock.unlock();
-  assert.deepEqual(
-    lock.auditHeaders(),
-    {
-      [AUDIT_USER_HEADER]: FAKE_ACCOUNT.userId,
-      [AUDIT_AT_HEADER]: String(time.time()),
-    },
-    "open: exactly the audit pair, exactly who and when",
-  );
-  lock.lock();
-  assert.equal(lock.state, "locked");
-  assert.deepEqual(lock.auditHeaders(), {}, "re-locked: the audit pair is gone");
+  credentials.present(null); // nobody at the device
+  const again = await lock.unlock();
+  assert.equal(again.ok, true, "an open lock stays open without running another prompt");
+  assert.equal(credentials.verificationCount, 1, "the idempotent unlock ran no verification");
+  assert.notEqual(time.time(), 0);
 });
 
 test("a wrong PIN is refused and feeds the exponential backoff, capped, reset by success", async () => {
-  const { credentials, lock, time } = await rig();
-  await lock.engage(FAKE_ACCOUNT.userId);
+  const { credentials, lock, time } = await rig({ idleRelockMs: 3_600_000 });
+  await lock.engage();
 
   credentials.present(WRONG_PIN);
   const first = await lock.unlock();
@@ -93,7 +122,6 @@ test("a wrong PIN is refused and feeds the exponential backoff, capped, reset by
   assert.match(first.error, /device unlock failed/);
   assert.match(first.error, /failed attempts: 1/);
   assert.equal(lock.state, "locked", "a failed attempt does not open the lock");
-  assert.deepEqual(lock.auditHeaders(), {}, "a failed attempt stamps no audit header");
 
   const backoffs = [];
   for (let attempt = 0; attempt < 7; attempt++) {
@@ -125,8 +153,8 @@ test("a wrong PIN is refused and feeds the exponential backoff, capped, reset by
 });
 
 test("a cancelled prompt counts as a failed attempt", async () => {
-  const { credentials, lock } = await rig();
-  await lock.engage(FAKE_ACCOUNT.userId);
+  const { credentials, lock } = await rig({ idleRelockMs: 3_600_000 });
+  await lock.engage();
   credentials.present(null);
   const cancelled = await lock.unlock();
   assert.equal(cancelled.ok, false);
@@ -135,24 +163,23 @@ test("a cancelled prompt counts as a failed attempt", async () => {
   assert.match(tooSoon.error, /rate limited/, "the backoff applies after a cancelled prompt too");
 });
 
-test("unlock and engage are refused outside an engaged lock", async () => {
+test("unlock is refused outside an engaged lock", async () => {
   const { lock } = await rig();
   const unlocked = await lock.unlock();
   assert.equal(unlocked.ok, false);
   assert.match(unlocked.error, /no device lock is engaged/);
-
-  const noUser = await lock.engage("");
-  assert.equal(noUser.ok, false);
-  assert.match(noUser.error, /user id/);
 });
 
 test("engage is refused when the platform offers no credential (WebAuthn absent)", async () => {
   const recorded = new RecordedStorage();
+  const sessions = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: () => START_MS });
+  sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: START_MS + 60_000, user: { ...FAKE_ACCOUNT } });
   const lock = new DeviceLock({
     credentials: new FakeCredentialProvider({ available: false }),
+    sessions,
     mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded),
   });
-  const engaged = await lock.engage(FAKE_ACCOUNT.userId);
+  const engaged = await lock.engage();
   assert.equal(engaged.ok, false);
   assert.match(engaged.error, /unavailable/);
   assert.equal(lock.state, "absent");
@@ -161,56 +188,79 @@ test("engage is refused when the platform offers no credential (WebAuthn absent)
 
 test("a second engage without disengage is refused", async () => {
   const { lock } = await rig();
-  assert.equal((await lock.engage(FAKE_ACCOUNT.userId)).ok, true);
-  const second = await lock.engage(FAKE_ACCOUNT.userId);
+  assert.equal((await lock.engage()).ok, true);
+  const second = await lock.engage();
   assert.equal(second.ok, false);
   assert.match(second.error, /already engaged/);
+});
+
+test("an open unlock relocks after the idle window, tested with the injected clock", async () => {
+  const { credentials, lock, time } = await rig({ idleRelockMs: 5_000 });
+  await lock.engage();
+  credentials.present(FAKE_PIN);
+  assert.equal((await lock.unlock()).ok, true);
+  assert.equal(lock.state, "open");
+
+  time.advance(4_999);
+  assert.equal(lock.state, "open", "inside the idle window the unlock stays open");
+
+  time.advance(1);
+  assert.equal(lock.state, "locked", "after the idle window the courtesy relocks itself");
+
+  credentials.present(FAKE_PIN);
+  assert.equal((await lock.unlock()).ok, true, "a relocked lock unlocks again with user verification");
 });
 
 test("the engaged lock survives a reload through the mirror; the open unlock does not", async () => {
   const recorded = new RecordedStorage();
   const time = clock();
+  const sessions = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: time.now });
+  sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: time.now() + 3_600_000, user: { ...FAKE_ACCOUNT } });
   const credentials = new FakeCredentialProvider(); // the platform persists across a reload
   const before = new DeviceLock({
     credentials,
+    sessions,
     mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded),
     now: time.now,
+    idleRelockMs: 3_600_000,
   });
-  await before.engage(FAKE_ACCOUNT.userId);
+  await before.engage();
   credentials.present(FAKE_PIN);
   await before.unlock();
   assert.equal(before.state, "open");
 
   const after = new DeviceLock({
     credentials,
+    sessions,
     mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded),
     now: time.now,
+    idleRelockMs: 3_600_000,
   });
   assert.equal(after.state, "locked", "a reload restores the engaged lock");
-  assert.equal(after.openUnlock, null, "a reload re-locks: the open unlock does not survive");
-  assert.deepEqual(after.auditHeaders(), {}, "a re-locked device stamps no audit header");
+  assert.deepEqual(after.auditHeaders, undefined, "a re-locked device carries no audit method");
 
   credentials.present(FAKE_PIN);
   const reopened = await after.unlock();
   assert.equal(reopened.ok, true, "the restored credential id is the one the verification targets");
-  assert.equal(reopened.value.userId, FAKE_ACCOUNT.userId, "the restored lock still protects the same user");
 });
 
 test("a degraded mirror forgets the lock across a reload, observably", async () => {
   const throwing = () => new ThrowSafeMirror(LOCK_MIRROR_KEY, new ThrowingStorage());
-  const before = new DeviceLock({ credentials: new FakeCredentialProvider(), mirror: throwing() });
+  const sessions = new SessionStore({ now: () => START_MS });
+  sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: START_MS + 60_000, user: { ...FAKE_ACCOUNT } });
+  const before = new DeviceLock({ credentials: new FakeCredentialProvider(), sessions, mirror: throwing() });
   assert.equal(before.degraded, true);
-  assert.equal((await before.engage(FAKE_ACCOUNT.userId)).ok, true, "the lock works in memory in a degraded browser");
+  assert.equal((await before.engage()).ok, true, "the lock works in memory in a degraded browser");
   assert.equal(before.state, "locked");
 
-  const after = new DeviceLock({ credentials: new FakeCredentialProvider(), mirror: throwing() });
+  const after = new DeviceLock({ credentials: new FakeCredentialProvider(), sessions, mirror: throwing() });
   assert.equal(after.degraded, true, "the degradation is observable");
   assert.equal(after.state, "absent", "a degraded reload restores no lock");
 });
 
-test("the lock mirror payload carries no token, no PIN, no secret", async () => {
+test("the lock mirror payload carries no token, no PIN, no name, no secret", async () => {
   const { recorded, lock } = await rig();
-  await lock.engage(FAKE_ACCOUNT.userId);
+  await lock.engage();
 
   const lockWrites = recorded.writes.filter((w) => w.key === LOCK_MIRROR_KEY);
   assert.equal(lockWrites.length, 1);
@@ -218,21 +268,71 @@ test("the lock mirror payload carries no token, no PIN, no secret", async () => 
   assert.deepEqual(
     Object.keys(payload).sort(),
     ["credentialId", "engagedAtMs", "userId", "v"],
-    "the lock mirror carries who, which credential, when: nothing else",
+    "the lock mirror carries the bound user id, which credential unlocks it, when: nothing else",
   );
-  for (const write of recorded.writes) {
+  for (const write of lockWrites) {
     assert.equal(write.value.includes(FAKE_PIN), false, "no lock-path write carries the PIN: the package never holds one");
+    assert.equal(write.value.includes(FAKE_ACCOUNT.name), false, "no lock-path write carries a display name");
   }
 });
 
 test("disengage removes the lock from memory and mirror", async () => {
-  const { recorded, lock } = await rig();
-  await lock.engage(FAKE_ACCOUNT.userId);
+  const { recorded, lock, sessions } = await rig();
+  await lock.engage();
   assert.equal(lock.state, "locked");
   lock.disengage();
   assert.equal(lock.state, "absent");
-  assert.equal(recorded.size, 0, "the mirror was cleared");
+  const mirrorNow = new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded);
+  assert.equal(mirrorNow.read(), undefined, "the lock's mirror entry was cleared, not left for a later reader");
 
-  const after = new DeviceLock({ credentials: new FakeCredentialProvider(), mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded) });
+  const after = new DeviceLock({ credentials: new FakeCredentialProvider(), sessions, mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded) });
   assert.equal(after.state, "absent", "a reload after disengage restores nothing");
+});
+
+test("the platform adapter demands user verification on create and on get", async () => {
+  const calls = [];
+  const stubCredentials = {
+    create: async (options) => {
+      calls.push(["create", options]);
+      return { rawId: new Uint8Array([1, 2, 3, 4]).buffer };
+    },
+    get: async (options) => {
+      calls.push(["get", options]);
+      return { rawId: new Uint8Array([1, 2, 3, 4]).buffer };
+    },
+  };
+  const injectedNavigator = { credentials: stubCredentials };
+  const realDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { value: injectedNavigator, configurable: true });
+  try {
+    const { webAuthnCredentialProvider } = await import("../src/lock.ts");
+    const provider = webAuthnCredentialProvider({ rpId: "edge.example.test" });
+    await provider.create();
+    await provider.verify("aGF3");
+  } finally {
+    Object.defineProperty(globalThis, "navigator", realDescriptor);
+  }
+
+  assert.equal(calls.length, 2, "one create ceremony and one get ceremony ran against the platform");
+  const [createName, createOptions] = calls[0];
+  assert.equal(createName, "create");
+  assert.equal(
+    createOptions.publicKey.authenticatorSelection.userVerification,
+    "required",
+    "registration pins userVerification to required: the discouraged spelling must turn this test red",
+  );
+  assert.equal(createOptions.publicKey.authenticatorSelection.residentKey, "required");
+  assert.equal(createOptions.publicKey.authenticatorSelection.authenticatorAttachment, "platform");
+  assert.equal(createOptions.publicKey.rp.id, "edge.example.test");
+  assert.ok(createOptions.publicKey.challenge instanceof Uint8Array, "the challenge is real random bytes");
+  assert.equal(createOptions.publicKey.challenge.length, 32);
+
+  const [getName, getOptions] = calls[1];
+  assert.equal(getName, "get");
+  assert.equal(
+    getOptions.publicKey.userVerification,
+    "required",
+    "verification pins userVerification to required: the discouraged spelling must turn this test red",
+  );
+  assert.equal(getOptions.publicKey.allowCredentials.length, 1, "the assertion targets exactly the registered credential");
 });
