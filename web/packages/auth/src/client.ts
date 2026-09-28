@@ -253,7 +253,11 @@ export class AuthController {
    * already wiped the custody it would clear.) The generation guard runs
    * across every await: a sign-out that lands mid resume cancels it as data
    * and nothing is adopted, so the late platform answer can never re-sign a
-   * custody the user signed out.
+   * custody the user signed out. The failure paths clear only the custody
+   * they began from: each clear is guarded by the same generation check, so
+   * a stale resume whose platform answer FAILS after the user signed out and
+   * someone else signed in resolves its error Result and leaves the new
+   * user's custody alone.
    */
   async resume(): Promise<Result<AccountUser>> {
     const generation = this.#generation;
@@ -261,7 +265,7 @@ export class AuthController {
     try {
       user = await this.#account.getSession();
     } catch (error) {
-      this.#sessions.clear();
+      if (this.#generation === generation) this.#sessions.clear();
       return err(`no platform session to resume: ${asMessage(error)}`);
     }
     if (this.#generation !== generation) {
@@ -271,7 +275,7 @@ export class AuthController {
     try {
       minted = await this.#account.createJWT();
     } catch (error) {
-      this.#sessions.clear();
+      if (this.#generation === generation) this.#sessions.clear();
       return err(`the token refresh failed: ${asMessage(error)}`);
     }
     if (this.#generation !== generation) {
@@ -283,7 +287,7 @@ export class AuthController {
       user,
     });
     if (!adopted) {
-      this.#sessions.clear();
+      if (this.#generation === generation) this.#sessions.clear();
       return err("the platform returned an unusable session");
     }
     return ok({ ...user });

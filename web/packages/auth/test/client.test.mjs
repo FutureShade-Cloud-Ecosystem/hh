@@ -382,6 +382,17 @@ function flush() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+// The deferred fake's handoff(name) returns the LATEST call of that name, so
+// a test that parks two of the same call must be able to wait for the one
+// that is not the parked previous call.
+async function untilNextHandoff(account, name, previous) {
+  for (;;) {
+    const call = account.handoff(name);
+    if (call !== null && call !== previous) return call;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
 test("a resume begun while sign-out's own deleteSession is pending adopts nothing once sign-out has returned", async () => {
   // The far side of the await: the resume STARTS during deleteSession, so it
   // captures the generation the sign-out bumped before its await and passes
@@ -475,6 +486,102 @@ test("a sign-out landing between getSession and createJWT cancels the resume's m
   assert.deepEqual(tenant(), {}, "the tenant provider sends no Authorization");
   const staff = authHeaderProvider({ callerClass: "staff", sessions, activeOrg: () => ORG });
   assert.deepEqual(staff(), { "X-Org": ORG }, "the staff provider sends X-Org and no Authorization");
+});
+
+// A second identity for the shared-tablet races: person B signs in while
+// person A's stale platform answer is still in flight.
+const OTHER_ACCOUNT = {
+  userId: "fake-user-2",
+  email: "other.user@example.invalid",
+  name: "Other User",
+};
+
+// Sign A out, sign B in through the same deferred surface, and hand back
+// once B's mint is completed: the state every stale-answer test below
+// asserts against. staleMint is A's parked mint handoff, if A reached it:
+// B's mint handoff is the next createJWT call that is not that one.
+async function signOutThenOtherSignIn(account, controller, sessions, staleMint = null) {
+  await controller.signOut(); // person A signs out (deleteSession resolves at once)
+  const signingIn = controller.signInWithPassword(OTHER_ACCOUNT.email, FAKE_PASSWORD);
+  const created = await untilHandoff(account, "createEmailPasswordSession");
+  created.complete({ ...OTHER_ACCOUNT });
+  const mint = await untilNextHandoff(account, "createJWT", staleMint);
+  mint.complete({ jwt: `${FAKE_JWT}-B`, expiresAtMs: START_MS + 900_000 });
+  assert.equal((await signingIn).ok, true, "person B's sign-in succeeded");
+  assert.equal(sessions.current.token, `${FAKE_JWT}-B`, "B's token is in custody");
+}
+
+function otherUserCustodyHolds(sessions, recorded) {
+  const tenant = authHeaderProvider({ callerClass: "tenant", sessions });
+  assert.deepEqual(tenant(), { Authorization: `Bearer ${FAKE_JWT}-B` }, "the tenant provider still sends B's token");
+  const staff = authHeaderProvider({ callerClass: "staff", sessions, activeOrg: () => ORG });
+  assert.deepEqual(
+    staff(),
+    { "X-Org": ORG, Authorization: `Bearer ${FAKE_JWT}-B` },
+    "the staff provider still sends B's token and the org",
+  );
+  const stored = recorded.getItem(SESSION_MIRROR_KEY);
+  assert.notEqual(stored, null, "B's profile is still in storage");
+  assert.equal(stored.includes(OTHER_ACCOUNT.userId), true, "storage holds B's profile, not A's");
+}
+
+test("a stale resume whose getSession FAILS after another user signed in leaves that user's custody alone", async () => {
+  const { recorded, sessions } = custody();
+  const account = new DeferredAccountSurface();
+  const controller = new AuthController({ account, sessions });
+
+  const pending = controller.resume(); // person A's resume, in flight
+  const staleSession = await untilHandoff(account, "getSession");
+  await signOutThenOtherSignIn(account, controller, sessions);
+
+  staleSession.fail(new Error("platform: session gone")); // A's stale answer FAILS late
+  const result = await pending;
+  assert.equal(result.ok, false, "the stale resume still resolves an error Result");
+  assert.match(result.error, /no platform session to resume/);
+  assert.equal(sessions.current.token, `${FAKE_JWT}-B`, "B's custody is untouched: the stale failure cleared nothing");
+  assert.deepEqual(sessions.profile, OTHER_ACCOUNT, "B's profile is untouched");
+  otherUserCustodyHolds(sessions, recorded);
+});
+
+test("a stale resume whose mint FAILS after another user signed in leaves that user's custody alone", async () => {
+  const { recorded, sessions } = custody();
+  const account = new DeferredAccountSurface();
+  const controller = new AuthController({ account, sessions });
+
+  const pending = controller.resume(); // person A's resume, in flight
+  (await untilHandoff(account, "getSession")).complete({ ...FAKE_ACCOUNT });
+  const staleMint = await untilHandoff(account, "createJWT"); // A's mint is parked
+  await signOutThenOtherSignIn(account, controller, sessions, staleMint);
+
+  staleMint.fail(new Error("platform: session gone")); // A's stale mint FAILS late
+  const result = await pending;
+  assert.equal(result.ok, false, "the stale resume still resolves an error Result");
+  assert.match(result.error, /the token refresh failed/);
+  assert.equal(sessions.current.token, `${FAKE_JWT}-B`, "B's custody is untouched: the stale failure cleared nothing");
+  assert.deepEqual(sessions.profile, OTHER_ACCOUNT, "B's profile is untouched");
+  otherUserCustodyHolds(sessions, recorded);
+});
+
+test("a failed mint with no sign-out in between still clears the custody it failed from", async () => {
+  // The generation guard on the failure paths must not overcorrect: when
+  // nothing superseded the resume, the failed refresh still clears the stale
+  // profile, exactly as the unguarded paths did.
+  const { recorded, sessions } = custody();
+  sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: START_MS + 60_000, user: { ...FAKE_ACCOUNT } });
+  assert.notEqual(sessions.profile, null, "the stale display profile is what a failed refresh must not leave behind");
+  const account = new DeferredAccountSurface();
+  const controller = new AuthController({ account, sessions });
+
+  const pending = controller.resume();
+  (await untilHandoff(account, "getSession")).complete({ ...FAKE_ACCOUNT });
+  const mint = await untilHandoff(account, "createJWT");
+  mint.fail(new Error("network down"));
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.match(result.error, /the token refresh failed/);
+  assert.equal(sessions.current, null, "the failed refresh cleared the custody it failed from");
+  assert.equal(sessions.profile, null, "the stale profile went with the failed refresh");
+  assert.equal(recorded.size, 0, "storage holds nothing after the failed refresh");
 });
 
 test("the public surface exposes no role state at all", async () => {
