@@ -2,10 +2,15 @@
 // server. A fetch resolves at the headers, so a deadline or a caller's abort
 // that expired at them would miss a body that stalls afterward; these tests
 // hold a body open mid-stream and prove both still land. The redirect gate
-// proves the transport refuses to follow one, on the server's own request
-// count. The recorded harness (test/_recorded.mjs) answers without a
+// proves the transport refuses to follow one, on the second server's own
+// request count. The recorded harness (test/_recorded.mjs) answers without a
 // network; this file is the one place the suite dials, and it dials only a
 // loopback server bound for the duration of one test.
+//
+// Every test carries its own timeout: a regression that leaves a request
+// pending forever (a deadline cleared at the headers, a header provider that
+// never settles) fails its one test at that timeout instead of hanging the
+// whole suite after it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -32,7 +37,7 @@ const shutdown = async (server) => {
   await new Promise((resolve) => server.close(resolve));
 };
 
-test("a body that stalls after the headers still lands the timeout", async () => {
+test("a body that stalls after the headers still lands the timeout", { timeout: 5000 }, async () => {
   const server = await stallServer();
   try {
     const client = new api.ApiClient({ baseUrl: baseUrlOf(server) });
@@ -44,7 +49,7 @@ test("a body that stalls after the headers still lands the timeout", async () =>
   }
 });
 
-test("a body that stalls after the headers still lands the caller's abort", async () => {
+test("a body that stalls after the headers still lands the caller's abort", { timeout: 5000 }, async () => {
   const server = await stallServer();
   try {
     const controller = new AbortController();
@@ -59,7 +64,7 @@ test("a body that stalls after the headers still lands the caller's abort", asyn
   }
 });
 
-test("a redirect is refused, never followed", async () => {
+test("a redirect is refused, never followed", { timeout: 5000 }, async () => {
   let requests = 0;
   const server = http.createServer((_req, res) => {
     requests++;
