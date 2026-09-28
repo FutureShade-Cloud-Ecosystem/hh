@@ -197,3 +197,100 @@ export class FakeAccountSurface implements AccountSurface {
     this.#hasPlatformSession = false;
   }
 }
+
+/**
+ * The completing face of one platform call held open for the test. The
+ * deferred surfaces below hand these out, so an in-flight sign-in, resume,
+ * or verification can be parked across a sign-out or a lock change and
+ * answered afterwards, exactly as a slow platform answers after the user has
+ * moved on. All values are fake.
+ */
+export interface DeferredHandoff<T> {
+  readonly promise: Promise<T>;
+  /** Complete the call the way the platform would on success. */
+  complete(value: T): void;
+  /** Complete the call the way the platform would on failure. */
+  fail(error: Error): void;
+}
+
+export class DeferredCall<T> implements DeferredHandoff<T> {
+  readonly promise: Promise<T>;
+  #resolve: (value: T) => void = () => {};
+  #reject: (error: Error) => void = () => {};
+
+  constructor() {
+    this.promise = new Promise<T>((resolve, reject) => {
+      this.#resolve = resolve;
+      this.#reject = reject;
+    });
+  }
+
+  /** Complete the call the way the platform would on success. */
+  complete(value: T): void {
+    this.#resolve(value);
+  }
+
+  /** Complete the call the way the platform would on failure. */
+  fail(error: Error): void {
+    this.#reject(error);
+  }
+}
+
+/** The AccountSurface methods the deferred account surface holds open. */
+export type DeferredMethodName = "createEmailPasswordSession" | "getSession" | "createJWT";
+
+/**
+ * A deferred fake of THIS package's AccountSurface: the three platform calls
+ * the controller's sign-in and resume paths make are handed to the test and
+ * do not resolve until the test completes them. This is the fake the
+ * in-flight races run against: begin a resume, sign out, then let the
+ * platform answer late, and assert the custody adopted nothing. All values
+ * are fake. deleteSession resolves immediately (sign-out is the event under
+ * test, never the deferred leg) and the OAuth2 ceremony is not deferred.
+ */
+export class DeferredAccountSurface implements AccountSurface {
+  user: AccountUser;
+  deleteCount = 0;
+  #createEmailPasswordSession: DeferredCall<AccountUser> | null = null;
+  #getSession: DeferredCall<AccountUser> | null = null;
+  #createJWT: DeferredCall<{ jwt: string; expiresAtMs: number }> | null = null;
+
+  constructor(options?: { user?: AccountUser }) {
+    this.user = options?.user ?? { ...FAKE_ACCOUNT };
+  }
+
+  /** The handoff for an in-flight call, or null until that call has been made. */
+  handoff(
+    name: DeferredMethodName,
+  ): DeferredHandoff<AccountUser | { jwt: string; expiresAtMs: number }> | null {
+    if (name === "createEmailPasswordSession") return this.#createEmailPasswordSession;
+    if (name === "getSession") return this.#getSession;
+    return this.#createJWT;
+  }
+
+  async createEmailPasswordSession(_email: string, _password: string): Promise<AccountUser> {
+    const call = new DeferredCall<AccountUser>();
+    this.#createEmailPasswordSession = call;
+    return call.promise;
+  }
+
+  async createOAuth2Session(_provider: OAuth2Provider, _redirectTo: string): Promise<void> {
+    throw new Error("fake: the deferred fake defers no OAuth2 ceremony");
+  }
+
+  async getSession(): Promise<AccountUser> {
+    const call = new DeferredCall<AccountUser>();
+    this.#getSession = call;
+    return call.promise;
+  }
+
+  async createJWT(): Promise<{ jwt: string; expiresAtMs: number }> {
+    const call = new DeferredCall<{ jwt: string; expiresAtMs: number }>();
+    this.#createJWT = call;
+    return call.promise;
+  }
+
+  async deleteSession(): Promise<void> {
+    this.deleteCount += 1;
+  }
+}

@@ -161,29 +161,51 @@ export interface AdoptSessionInput {
  * The sign-in orchestration over the seams: an AccountSurface for the
  * platform, a SessionStore for custody. Every path resolves a Result; a
  * wrong credential is data, never a throw.
+ *
+ * The generation guard: sign-out must win against a platform answer that
+ * lands late. signOut() bumps a generation counter first; signInWithPassword
+ * and resume capture the counter before their first await and compare it
+ * after every await, and on a mismatch they adopt nothing and resolve an
+ * error Result. Without the guard, a resume or a sign-in begun before the
+ * user signed out would re-sign the custody in when the platform answered
+ * after the sign-out, and the profile would be written back to storage.
  */
 export class AuthController {
   readonly #account: AccountSurface;
   readonly #sessions: SessionStore;
+  #generation = 0;
 
   constructor(deps: { account: AccountSurface; sessions: SessionStore }) {
     this.#account = deps.account;
     this.#sessions = deps.sessions;
   }
 
-  /** The house sign-in: establish the platform session, mint the JWT, adopt it. Custody keeps the token in memory and the display profile in the mirror; no credential is stored. */
+  /**
+   * The house sign-in: establish the platform session, mint the JWT, adopt
+   * it. Custody keeps the token in memory and the display profile in the
+   * mirror; no credential is stored. The generation guard runs across every
+   * await: a sign-out that lands mid sign-in cancels it as data and nothing
+   * is adopted.
+   */
   async signInWithPassword(email: string, password: string): Promise<Result<AccountUser>> {
+    const generation = this.#generation;
     let user: AccountUser;
     try {
       user = await this.#account.createEmailPasswordSession(email, password);
     } catch (error) {
       return err(`sign-in failed: ${asMessage(error)}`);
     }
+    if (this.#generation !== generation) {
+      return err("sign-in cancelled: sign-out happened while the sign-in was in flight, so nothing was adopted");
+    }
     let minted: { jwt: string; expiresAtMs: number };
     try {
       minted = await this.#account.createJWT();
     } catch (error) {
       return err(`sign-in failed minting the token: ${asMessage(error)}`);
+    }
+    if (this.#generation !== generation) {
+      return err("sign-in cancelled: sign-out happened while the sign-in was in flight, so nothing was adopted");
     }
     const adopted = this.#sessions.adopt({
       token: minted.jwt,
@@ -216,20 +238,30 @@ export class AuthController {
    * issuer's cookie, a fresh JWT is minted, and custody adopts it into
    * memory. Nothing this package stored is needed or read to do it; the
    * mirror holds the display profile only. Refused as data when the
-   * platform holds no session or mints nothing usable.
+   * platform holds no session or mints nothing usable. The generation guard
+   * runs across every await: a sign-out that lands mid resume cancels it as
+   * data and nothing is adopted, so the late platform answer can never
+   * re-sign a custody the user signed out.
    */
   async resume(): Promise<Result<AccountUser>> {
+    const generation = this.#generation;
     let user: AccountUser;
     try {
       user = await this.#account.getSession();
     } catch (error) {
       return err(`no platform session to resume: ${asMessage(error)}`);
     }
+    if (this.#generation !== generation) {
+      return err("resume cancelled: sign-out happened while the resume was in flight, so nothing was adopted");
+    }
     let minted: { jwt: string; expiresAtMs: number };
     try {
       minted = await this.#account.createJWT();
     } catch (error) {
       return err(`the token refresh failed: ${asMessage(error)}`);
+    }
+    if (this.#generation !== generation) {
+      return err("resume cancelled: sign-out happened while the resume was in flight, so nothing was adopted");
     }
     const adopted = this.#sessions.adopt({
       token: minted.jwt,
@@ -240,8 +272,15 @@ export class AuthController {
     return ok({ ...user });
   }
 
-  /** Sign out: end the platform session (best effort; it may already be gone) and wipe custody either way. */
+  /**
+   * Sign out: end the platform session (best effort; it may already be
+   * gone) and wipe custody either way. The generation is bumped before
+   * anything is awaited, so a sign-in or a resume that is in flight adopts
+   * nothing when its platform answer lands after this call: the sign-out
+   * wins, always.
+   */
   async signOut(): Promise<void> {
+    this.#generation += 1;
     try {
       await this.#account.deleteSession();
     } catch {

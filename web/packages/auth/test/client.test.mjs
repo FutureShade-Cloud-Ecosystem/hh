@@ -21,6 +21,7 @@ import {
   FAKE_JWT,
   FAKE_PASSWORD,
   FAKE_PIN,
+  DeferredAccountSurface,
   FakeAccountSurface,
   FakeCredentialProvider,
   RecordedStorage,
@@ -232,6 +233,82 @@ test("resume is refused as data when the platform holds no session", async () =>
   assert.equal(refused.ok, false);
   assert.match(refused.error, /no platform session/);
   assert.equal(sessions.current, null, "nothing was adopted");
+});
+
+// The deferred fakes hold one platform call open at a time; this loop waits
+// until the controller has actually made the named call.
+async function untilHandoff(account, name) {
+  for (;;) {
+    const call = account.handoff(name);
+    if (call !== null) return call;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+test("sign out wins over a resume in flight: the late platform answer adopts nothing", async () => {
+  const { recorded, sessions } = custody();
+  const account = new DeferredAccountSurface();
+  const controller = new AuthController({ account, sessions });
+
+  const pending = controller.resume(); // the refresh path is in flight
+  const getSession = await untilHandoff(account, "getSession");
+
+  await controller.signOut(); // the user signs out while the resume is mid flight
+  assert.equal(account.deleteCount, 1);
+  assert.equal(sessions.current, null, "sign-out wiped the custody");
+  assert.equal(recorded.size, 0, "sign-out left nothing in storage");
+
+  getSession.complete({ ...FAKE_ACCOUNT }); // the platform answers late
+  const result = await pending;
+  assert.equal(result.ok, false, "the resume resolves an error Result after sign-out");
+  assert.match(result.error, /cancelled/);
+  assert.equal(sessions.current, null, "custody is empty: the late answer was not adopted");
+  assert.equal(sessions.profile, null, "storage holds no profile after the late answer");
+  assert.equal(recorded.size, 0, "nothing was written back to the mirror after sign-out");
+
+  // The shared-tablet proof: the next person's request sends no Authorization.
+  const tenant = authHeaderProvider({ callerClass: "tenant", sessions });
+  assert.deepEqual(tenant(), {}, "the tenant provider sends no Authorization");
+  const staff = authHeaderProvider({ callerClass: "staff", sessions, activeOrg: () => ORG });
+  assert.deepEqual(staff(), { "X-Org": ORG }, "the staff provider sends X-Org and no Authorization");
+  const { calls, fetchLike } = recordingFetch();
+  const client = new ApiClient({
+    baseUrl: "https://edge.example.test",
+    fetch: fetchLike,
+    headers: authHeaderProvider({ callerClass: "tenant", sessions }),
+  });
+  const sent = await client.request({ method: "GET", path: "/api/v1/tenant/dashboard", operationId: "tenantDashboard" });
+  assert.equal(sent.ok, true);
+  assert.deepEqual(calls[0].init.headers, {}, "the wire carries no Authorization after the cancelled resume");
+});
+
+test("sign out wins over a sign-in in flight: the late credential and mint adopt nothing", async () => {
+  const { recorded, sessions } = custody();
+  const account = new DeferredAccountSurface();
+  const controller = new AuthController({ account, sessions });
+
+  const pending = controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD);
+  const created = await untilHandoff(account, "createEmailPasswordSession");
+  created.complete({ ...FAKE_ACCOUNT }); // the platform accepts the credential
+  const minted = await untilHandoff(account, "createJWT"); // the token mint is in flight
+
+  await controller.signOut(); // the user signs out while the mint is mid flight
+  assert.equal(account.deleteCount, 1);
+  assert.equal(sessions.current, null);
+  assert.equal(recorded.size, 0);
+
+  minted.complete({ jwt: `${FAKE_JWT}-MINT-9`, expiresAtMs: START_MS + 900_000 }); // the mint answers late
+  const result = await pending;
+  assert.equal(result.ok, false, "the sign-in resolves an error Result after sign-out");
+  assert.match(result.error, /cancelled/);
+  assert.equal(sessions.current, null, "custody is empty: the late mint was not adopted");
+  assert.equal(sessions.profile, null, "storage holds no profile after the late mint");
+  assert.equal(recorded.size, 0, "nothing was written back to the mirror after sign-out");
+
+  const tenant = authHeaderProvider({ callerClass: "tenant", sessions });
+  assert.deepEqual(tenant(), {}, "the tenant provider sends no Authorization");
+  const staff = authHeaderProvider({ callerClass: "staff", sessions, activeOrg: () => ORG });
+  assert.equal("Authorization" in staff(), false, "the staff provider sends no Authorization");
 });
 
 test("the public surface exposes no role state at all", async () => {
