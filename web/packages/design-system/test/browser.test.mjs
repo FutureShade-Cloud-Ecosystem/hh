@@ -12,11 +12,16 @@
 // (module.stripTypeScriptTypes): the same job src/_ts-js-loader.mjs does for
 // the Node process, done for a browser page. No build step, no new dependency.
 //
-// The skip is LOUD, and in CI it is not a skip at all: when no global
-// WebSocket, no stripping API (Node 22.13+), or no browser binary exists, the
-// reason is printed and a visible test registers in its place locally; when
-// CI is set, the leg FAILS naming what is missing, because a skipped gate is
-// a failed gate.
+// The skip is LOUD, and its accounting depends on where it lands. Under bun
+// the leg never runs (bun runs the drift gate; Node 22 is this leg's
+// authoritative runner), so one named statement registers in its place, in CI
+// or out, exactly as before the CI rule existed. Under Node, a runtime missing
+// a prerequisite (a global WebSocket, the stripping API of Node 22.13+, or a
+// browser binary) prints the reason and registers a SKIP carrying it, so no
+// summary counts the skipped leg as a pass; with CI set the same missing
+// prerequisite FAILS instead, naming what is missing, because a skipped gate
+// is a failed gate. The bun skip is never a failure: bun is not this leg's
+// runner by design, and failing there would go red on every runner.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -165,28 +170,46 @@ function startServer() {
 
 // ── the leg itself ───────────────────────────────────────────────────────────────
 
-// One statement test under bun (and under any runtime missing a prerequisite),
-// so the skip is visible in the count rather than silent. Under Node 22 the
-// real tests register in its place. The registration shape matches
-// test/harness.test.mjs: bun interleaves async tests across files
-// (oven-sh/bun#5090), so the async legs register on node only.
+// The leg's registration, by runner and by CI. Under bun: the one named
+// statement, as before, in CI or out (a skip there is by design, and bun's
+// node:test layer ignores a { skip } option, so the statement stays a plain
+// one). Under Node with CI set, a missing prerequisite is a FAILURE naming
+// what is missing. Under Node without CI, the same statement registers as a
+// SKIP carrying the reason, so the tally counts it under skipped and never
+// under pass. The registration shape matches test/harness.test.mjs: bun
+// interleaves async tests across files (oven-sh/bun#5090), so the async legs
+// register on node only.
 const reason = skipReason();
 const inCI = process.env.CI !== undefined && process.env.CI !== '';
 
-if (reason && inCI) {
-  // A skipped gate is a failed gate: on a runner (CI set) a missing browser
-  // FAILS the job and names what is missing, it never passes with a warning.
+if (reason && inCI && !underBun) {
+  // A skipped gate is a failed gate: on a runner (CI set, under Node) a
+  // missing browser FAILS the job and names what is missing, it never passes
+  // with a warning. The bun runtime is excluded: there the skip is by design
+  // (bun runs the drift gate, Node 22 runs this leg), and the statement below
+  // registers with CI set too, so the workflow's bun step stays green.
   test('the headless-browser leg refuses to skip when CI is set', () => {
     assert.fail(
       `CI is set and the headless-browser leg cannot run; it fails instead of skipping: ${reason}. ` +
         `Install the browser the leg uses (google-chrome) or point HH_DS_BROWSER at one.`,
     );
   });
-} else if (reason) {
+} else if (reason && underBun) {
+  // The by-design bun statement, registered as before, in CI or out.
   test('the headless-browser leg has a loud, named reason for not running here', () => {
     console.warn(`SKIPPING the headless-browser leg: ${reason}`);
     assert.ok(reason.length > 0, 'the skip reason must be stated, never silent');
   });
+} else if (reason) {
+  // Node without CI: the leg is skipped, and a skip is not a pass. The same
+  // statement registers as a SKIP carrying the named reason, so every tally
+  // the suite prints counts it under skipped, never under pass.
+  console.warn(`SKIPPING the headless-browser leg: ${reason}`);
+  test(
+    'the headless-browser leg has a loud, named reason for not running here',
+    { skip: reason },
+    () => assert.fail('the headless-browser leg must not run where it declared a named skip'),
+  );
 } else {
   test('the five custom elements register and render every kit in every state in a real page', async () => {
     const { port, close } = await startServer();
@@ -468,6 +491,70 @@ if (reason && inCI) {
         'a failed re-render must keep the last good paint, never an empty element',
       );
       assert.equal(out.paintedLengthAfterRerender, out.paintedLength, 'the kept paint must be the previous render, byte for byte');
+    } finally {
+      await cdp.close();
+      await close();
+    }
+  });
+
+  test('a consumer listener written as the README says receives the action: composedPath, not event.target', async () => {
+    // The README's delegation pattern is the one integration shape every shell
+    // writes against these kits, so the leg proves it in the browser, both
+    // halves: at the host the shadow boundary has already RETARGETED
+    // event.target (it arrives as the host itself, and closest finds nothing),
+    // and the action arrives off event.composedPath().
+    const { port, close } = await startServer();
+    const cdp = await launchBrowser(binary);
+    try {
+      await cdp.navigate(`http://127.0.0.1:${port}/`);
+      const out = await cdp.evaluate(
+        `(() => {
+          const host = document.querySelector('hh-scan-and-confirm[state="ready"]');
+          const received = [];
+          // The README's pattern, in shape: one listener on the host element,
+          // the control read off the composed path.
+          host.addEventListener('click', (event) => {
+            const control = event.composedPath().find((n) => n instanceof Element && n.hasAttribute('data-action'));
+            received.push(control ? control.getAttribute('data-action') : null);
+          });
+          // The measurement: what event.target is at the host, and what the
+          // old advice (event.target.closest) finds there.
+          let targetIsHost = false;
+          let targetTag = null;
+          let targetClosest = 'not measured';
+          host.addEventListener('click', (event) => {
+            targetIsHost = event.target === host;
+            targetTag = event.target.tagName;
+            targetClosest = event.target.closest('[data-action]');
+          });
+          const button = host.shadowRoot.querySelector('button[data-action]');
+          button.click();
+          return {
+            action: button.getAttribute('data-action'),
+            received,
+            targetIsHost,
+            targetTag,
+            targetClosestFound: targetClosest !== null,
+          };
+        })()`,
+      );
+      assert.ok(out.action, 'the ready kit must render a live data-action control to click');
+      assert.equal(out.received.length, 1, 'the host listener must fire exactly once for the click');
+      assert.equal(
+        out.received[0],
+        out.action,
+        'a listener written as the README says (composedPath) must receive the action',
+      );
+      assert.equal(
+        out.targetIsHost,
+        true,
+        `event.target at the host must be the host itself (got ${out.targetTag}): the shadow boundary retargets it`,
+      );
+      assert.equal(
+        out.targetClosestFound,
+        false,
+        "event.target.closest('[data-action]') at the host must find nothing, which is why the README says composedPath",
+      );
     } finally {
       await cdp.close();
       await close();
