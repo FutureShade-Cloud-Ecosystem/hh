@@ -97,8 +97,11 @@ dependency. It finds a browser at `$HH_DS_BROWSER`, then the usual PATH names,
 then the Playwright cache. When none exists the leg fails loudly if `CI` is
 set (a skipped gate is a failed gate; the workflow step names google-chrome
 for exactly this reason) and skips with a loud, named reason otherwise; under
-bun it never runs, and its skip registers as a skip in the tally, never as a
-pass.
+bun it never runs, and because bun's node:test layer ignores a `{ skip }`
+option, the loud statement registers there as a plain passing test: the tally
+counts it as a pass (the CI log shows it), with the named reason carried on
+its console output, while under Node the same statement registers as a skip
+carrying the reason, so no Node tally counts the skipped leg as a pass.
 
 ## Measured notes the sheet's readers asked for
 
