@@ -9,7 +9,11 @@
     "build:harness": "node --import ./src/_ts-js-loader.mjs harness/build.mjs",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "lit": "3.3.3"
+  },
   "devDependencies": {
+    "@lit-labs/ssr": "4.1.0",
     "@types/node": "22.20.4",
     "typescript": "5.9.3"
   }
