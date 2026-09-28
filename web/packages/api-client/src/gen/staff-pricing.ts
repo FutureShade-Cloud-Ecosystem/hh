@@ -345,25 +345,32 @@ export async function pricingDeleteOverride(
   });
 }
 
+// The binary part's name: the options argument names it on the wire (here:
+// file (fileFilename)); an unnamed Blob rides as "blob", the platform's default part name.
 export async function pricingApplyPriceFile(
   client: ApiClient,
   body: PricingPriceFileForm,
+  opts?: { fileFilename?: string },
   call?: ApiCallOptions
 ): Promise<Result<PricingPriceFileApplyResult>> {
   return client.request<PricingPriceFileApplyResult>({
     method: "POST",
     path: "/api/v1/pricing/price-file/apply",
     form: body,
+    filenames: { file: opts?.fileFilename },
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "pricingApplyPriceFile",
   });
 }
 
+// The binary part's name: the options argument names it on the wire (here:
+// file (fileFilename)); an unnamed Blob rides as "blob", the platform's default part name.
 export async function pricingPreviewPriceFile(
   client: ApiClient,
   body: PricingPriceFileForm,
   opts?: { limit?: number },
+  upload?: { fileFilename?: string },
   call?: ApiCallOptions
 ): Promise<Result<PricingPriceFilePreview>> {
   return client.request<PricingPriceFilePreview>({
@@ -371,6 +378,7 @@ export async function pricingPreviewPriceFile(
     path: "/api/v1/pricing/price-file/preview",
     query: opts,
     form: body,
+    filenames: { file: upload?.fileFilename },
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "pricingPreviewPriceFile",

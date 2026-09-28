@@ -114,6 +114,51 @@ test("the feedback screenshot multipart form rides as the caller's bytes, byte f
   assert.deepEqual(new Uint8Array(await image.arrayBuffer()), PNG, "byte for byte through a real multipart parse");
 });
 
+// The part's name: a plain Blob reaches the core under the platform's default
+// part name "blob" and the core stores that name, so the multipart operations
+// take a filename option per binary field and the transport lands it in the
+// part's Content-Disposition.
+test("the multipart binary parts carry the caller's filename", async (t) => {
+  const PRICE_FILE = Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 0xff, 0xfe, 0x7f, 0x80]);
+  const rec = recorder({
+    "POST /api/v1/pricing/price-file/apply": { status: 201, body: {} },
+    "POST /api/v1/feedback": { status: 201, body: { id: "fb-2" } },
+  });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch, headers: () => ({ "X-Org": "dibbits" }) });
+  unwrap(
+    await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PRICE_FILE]) },
+      { fileFilename: "price-list.xlsx" },
+    ),
+  );
+  unwrap(
+    await api.staffFeedback.feedbackCreateMultipart(
+      client,
+      { type: "bug", message: "the board froze on drop", image: new Blob([PNG]) },
+      { imageFilename: "board-frozen.png" },
+    ),
+  );
+  assert.equal(rec.calls.length, 2);
+  const applied = await new Request(rec.calls[0].url, { method: rec.calls[0].method, body: rec.calls[0].form }).formData();
+  const priced = applied.get("file");
+  assert.ok(priced instanceof Blob, "the file field still rides as a Blob part");
+  assert.equal(priced.name, "price-list.xlsx", "the caller's filename rides the part");
+  assert.deepEqual(new Uint8Array(await priced.arrayBuffer()), PRICE_FILE, "the bytes ride byte for byte under the given name");
+  const feedback = await new Request(rec.calls[1].url, { method: rec.calls[1].method, body: rec.calls[1].form }).formData();
+  const image = feedback.get("image");
+  assert.ok(image instanceof Blob, "the screenshot still rides as a Blob part");
+  assert.equal(image.name, "board-frozen.png", "the screenshot's filename rides the part");
+});
+
+test("a Blob named by no option keeps the platform's default part name", async (t) => {
+  const rec = recorder({ "POST /api/v1/pricing/price-file/preview": { body: {} } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch, headers: () => ({ "X-Org": "dibbits" }) });
+  unwrap(await api.staffPricing.pricingPreviewPriceFile(client, { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) }));
+  const parsed = await new Request(rec.calls[0].url, { method: rec.calls[0].method, body: rec.calls[0].form }).formData();
+  assert.equal(parsed.get("file").name, "blob", "saying nothing names the part as the platform always has");
+});
+
 test("the pricing CSV import accepts a string body and rides it verbatim", async (t) => {
   const csv = "sku,price_cents\nDBS-OAKS-VINTAGE,101700\n";
   const rec = recorder({ "POST /api/v1/pricing/batches/b1/import": { body: { lines: 1 } } });

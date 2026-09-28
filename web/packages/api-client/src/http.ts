@@ -85,6 +85,14 @@ export interface OperationRequest {
   /** A multipart request body, serialized as FormData by the transport. */
   form?: Record<string, unknown>;
   /**
+   * The multipart part name per form field, for the binary fields the caller
+   * holds as Blobs: the generated multipart operations expose it as their
+   * options argument (`{ fileFilename: "price-list.xlsx" }`). A field with
+   * no name here (or no entry) rides under the platform's default part name,
+   * "blob", which is what the core stores when the caller says nothing.
+   */
+  filenames?: Record<string, string | undefined>;
+  /**
    * A non-JSON request body (bytes, CSV), sent verbatim. The contentType is
    * the operation's declared wire type: present when the contract declares
    * exactly one (or the caller chose among several), absent when the caller
@@ -267,7 +275,15 @@ export class ApiClient {
         const form = new FormData();
         for (const [name, value] of Object.entries(req.form)) {
           if (value === undefined || value === null) continue;
-          form.append(name, value instanceof Blob ? value : String(value));
+          if (value instanceof Blob) {
+            // A caller-named part rides under the given filename; an unnamed
+            // Blob keeps the platform's own default part name, "blob".
+            const filename = req.filenames?.[name];
+            if (filename !== undefined) form.append(name, value, filename);
+            else form.append(name, value);
+          } else {
+            form.append(name, String(value));
+          }
         }
         body = form; // fetch sets the multipart content type and its boundary
       } else if (req.body !== undefined) {

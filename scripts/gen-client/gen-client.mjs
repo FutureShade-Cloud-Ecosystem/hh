@@ -74,7 +74,13 @@
 //     binary on a typed position        form body is the caller's bytes
 //                                       (a string field there would arrive
 //                                       decoded and re-encoded, never byte
-//                                       for byte); success responses and
+//                                       for byte); the operation takes a
+//                                       filename option per binary field
+//                                       (fileFilename for a file field) so
+//                                       the caller names the part, and an
+//                                       unnamed Blob rides as "blob", the
+//                                       platform's default part name;
+//                                       success responses and
 //                                       raw bodies are covered by their own
 //                                       mappings above, so this branch sees
 //                                       the multipart file fields only
@@ -503,6 +509,19 @@ function successOf(op, where) {
 // the body is kind "multi": one generated function per declared content type,
 // the first declared keeping the operationId and the rest taking the content
 // type's suffix (BODY_VARIANTS in manifest.ts records the mapping).
+
+// formBinaryFields names a multipart form schema's binary (format: binary)
+// fields, one level of $ref resolved: each becomes a filename option on the
+// generated operation (`fileFilename` for a `file` field), so the caller can
+// name the part instead of the platform's default "blob".
+function formBinaryFields(s) {
+  const resolved = schemas[refName(s) ?? ""] ?? s;
+  if (!resolved || typeof resolved !== "object" || !resolved.properties) return [];
+  return Object.entries(resolved.properties)
+    .filter(([, field]) => isBinarySchema(field))
+    .map(([name]) => name);
+}
+
 function bodyOf(op, where) {
   const rb = op.requestBody;
   if (!rb) return null;
@@ -517,7 +536,14 @@ function bodyOf(op, where) {
     variants.push({ kind: "json", suffix: "Json", contentType: "application/json", typeSpelling: tsType(content["application/json"].schema, `${where} body`) });
   }
   if (content["multipart/form-data"]?.schema) {
-    variants.push({ kind: "form", suffix: "Multipart", contentType: "multipart/form-data", typeSpelling: tsType(content["multipart/form-data"].schema, `${where} body`) });
+    const formSchema = content["multipart/form-data"].schema;
+    variants.push({
+      kind: "form",
+      suffix: "Multipart",
+      contentType: "multipart/form-data",
+      typeSpelling: tsType(formSchema, `${where} body`),
+      binaryFields: formBinaryFields(formSchema),
+    });
   }
   if (variants.length > 0 && variants.length === contentTypes.length) {
     if (variants.length === 1) return variants[0];
@@ -743,6 +769,18 @@ for (const tag of tagNames) {
         );
         args.push(`opts${queryRequired ? "" : "?"}: ${literal}`);
       }
+      // A multipart form with binary fields carries a filename option per
+      // field, so the caller names the part; with no option the part rides
+      // under the platform's default name, "blob".
+      const binaryFields = variant.body?.kind === "form" ? variant.body.binaryFields : [];
+      if (binaryFields.length > 0) {
+        const optionType = binaryFields.map((f) => `${key(f)}Filename?: string`).join("; ");
+        if (op.queryParams.length > 0) {
+          args.push(`upload?: { ${optionType} }`);
+        } else {
+          args.push(`opts?: { ${optionType} }`);
+        }
+      }
       args.push("call?: ApiCallOptions");
 
       const requestProps = [`method: ${JSON.stringify(op.method)}`, `path: ${JSON.stringify(op.path)}`];
@@ -752,6 +790,10 @@ for (const tag of tagNames) {
       if (op.queryParams.length > 0) requestProps.push("query: opts");
       if (variant.body?.kind === "json") requestProps.push("body");
       if (variant.body?.kind === "form") requestProps.push("form: body");
+      if (binaryFields.length > 0) {
+        const holder = op.queryParams.length > 0 ? "upload" : "opts";
+        requestProps.push(`filenames: { ${binaryFields.map((f) => `${key(f)}: ${holder}?.${key(f)}Filename`).join(", ")} }`);
+      }
       if (raw) {
         requestProps.push(
           raw.contentTypes.length > 1
@@ -773,6 +815,11 @@ for (const tag of tagNames) {
         notes.push(
           `// function per declared type, and this one sends ${variant.body?.kind === "json" ? "the JSON body" : "the multipart form"}.`,
         );
+      }
+      if (variant.body?.kind === "form" && variant.body.binaryFields.length > 0) {
+        const named = variant.body.binaryFields.map((f) => `${key(f)} (${key(f)}Filename)`).join(", ");
+        notes.push("// The binary part's name: the options argument names it on the wire (here:");
+        notes.push(`// ${named}); an unnamed Blob rides as "blob", the platform's default part name.`);
       }
       if (raw) {
         if (raw.contentTypes.length > 1) {

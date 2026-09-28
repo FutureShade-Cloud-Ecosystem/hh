@@ -116,12 +116,17 @@ stays with that caller.
 An `application/json` request body is typed from the document and sent as
 JSON; a `multipart/form-data` body is typed from its schema and sent as
 `FormData`, with a `format: binary` field typed `Blob` so the part arrives as
-the caller's bytes, byte for byte. When an operation declares both
-`application/json` and `multipart/form-data` (that is `feedbackCreate`), the
-client emits one function per declared type: the first declared keeps the
-operationId, and the multipart form takes a `Multipart` suffix
-(`feedbackCreateMultipart`, with the screenshot as an optional `Blob`). The
-mapping is emitted as `BODY_VARIANTS` in the manifest.
+the caller's bytes, byte for byte. A multipart operation with a binary field
+takes a filename option per field, so the caller names the part:
+`pricingApplyPriceFile(client, form, { fileFilename: "price-list.xlsx" })`,
+`feedbackCreateMultipart(client, form, { imageFilename: "board-frozen.png" })`.
+A Blob named by no option rides as `blob`, the platform's default part name,
+which is what the core stores when the caller says nothing. When an operation
+declares both `application/json` and `multipart/form-data` (that is
+`feedbackCreate`), the client emits one function per declared type: the first
+declared keeps the operationId, and the multipart form takes a `Multipart`
+suffix (`feedbackCreateMultipart`, with the screenshot as an optional `Blob`).
+The mapping is emitted as `BODY_VARIANTS` in the manifest.
 
 The three raw uploads the document declares `format: binary`
 (`productPutImage`, `dispatchUploadStopPhoto`, `pricingImportBatch`) accept

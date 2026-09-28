@@ -26,15 +26,19 @@ export async function feedbackCreate(
 
 // The document declares this body as application/json and multipart/form-data (feedbackCreateMultipart); the client emits one
 // function per declared type, and this one sends the multipart form.
+// The binary part's name: the options argument names it on the wire (here:
+// image (imageFilename)); an unnamed Blob rides as "blob", the platform's default part name.
 export async function feedbackCreateMultipart(
   client: ApiClient,
   body: { type: "bug" | "feedback" | "flag"; message: string; screen?: string; url?: string; user_agent?: string; image?: Blob },
+  opts?: { imageFilename?: string },
   call?: ApiCallOptions
 ): Promise<Result<FeedbackResult>> {
   return client.request<FeedbackResult>({
     method: "POST",
     path: "/api/v1/feedback",
     form: body,
+    filenames: { image: opts?.imageFilename },
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "feedbackCreate",
