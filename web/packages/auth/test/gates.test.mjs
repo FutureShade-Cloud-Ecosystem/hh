@@ -150,8 +150,11 @@ test("the runtime code paths write no token, no PIN, no password, no handle into
   const cookieWrites = [];
   const cacheWrites = [];
   const dbWrites = [];
-  const storageNames = ["sessionStorage", "localStorage"];
-  const saved = storageNames.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]);
+  // Every surface this test swaps is restored in the finally: the recording
+  // fakes and stubs must outlive the test no more than the storages do, or
+  // later tests in this file would run against this test's recordings.
+  const swappedNames = ["sessionStorage", "localStorage", "document", "caches", "indexedDB"];
+  const saved = swappedNames.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]);
   try {
     Object.defineProperty(globalThis, "sessionStorage", { value: sessionGlobal, configurable: true, writable: true });
     Object.defineProperty(globalThis, "localStorage", { value: localGlobal, configurable: true, writable: true });
