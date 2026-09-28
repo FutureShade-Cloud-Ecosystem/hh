@@ -80,14 +80,25 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.12
-      - name: Test and manifest drift gate
-        run: |
-          bun test
-          bun scripts/generate-manifest.ts --check
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Install the web workspace
+        # The web install precedes the bun drift gate: the gate's bun test
+        # discovers the web packages' suites under the workspace, and those
+        # suites (and the packages they run) resolve sibling and vendored
+        # packages by name through web/node_modules. Installing only inside
+        # the web loop left the gate first in line, so a fresh clone, which
+        # has no web/node_modules, failed the gate with "Cannot find module"
+        # once web packages imported each other by name. The loop below
+        # remains the ONE typecheck and test pass over every web package;
+        # it no longer installs, it consumes the install made here.
+        run: npm --prefix web ci
+      - name: Test and manifest drift gate
+        run: |
+          bun test
+          bun scripts/generate-manifest.ts --check
       - name: OpenAPI contract checks (repo-local)
         run: |
           npm --prefix core/api/tools ci
@@ -132,7 +143,9 @@ jobs:
             echo "google-chrome is missing from the runner image: the design system's browser leg requires it (that leg fails rather than skip in CI)" >&2
             exit 1
           fi
-          npm ci
+          # web/node_modules exists already: the install step above the bun
+          # drift gate made it. This loop stays the one typecheck and test
+          # pass over every web package.
           checked=0
           for dir in packages/*/ apps/*/; do
             [ -f "$dir/package.json" ] || continue
