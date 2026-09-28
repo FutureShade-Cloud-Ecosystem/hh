@@ -136,8 +136,14 @@ types: `pricingImportBatch` declares only `text/csv`, so that is the default;
 the two image uploads declare `image/jpeg`, `image/png` and `image/webp`, and
 there the caller must say, because the core checks the declared type against
 the file's first bytes and stores the declared type on the row. With no
-`contentType` they send no `Content-Type` header at all, so an unsaid upload
-is refused by the core, never mislabeled: a PNG is never sent as a JPEG.
+`contentType` the transport itself sets no Content-Type header; what the wire
+carries then depends on the body the caller held, because the platform's
+fetch supplies its own default for a string body: bytes (`Uint8Array`) go out
+with no `Content-Type` header at all, while a string body goes out with the
+fetch standard's default, `text/plain;charset=UTF-8` (Node 22's undici and
+the browsers alike). Neither default is ever an image type, so an unsaid
+image upload is still refused by the core, never mislabeled: a PNG is never
+sent as a JPEG.
 
 The success type is the lowest declared 2xx response. Where that response's
 content is plain string formats (`text/csv`, `text/html`) the operation
