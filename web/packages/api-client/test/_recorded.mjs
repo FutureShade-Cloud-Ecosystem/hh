@@ -22,7 +22,9 @@ export function respond(stub) {
       arrayBuffer: () => Promise.resolve(bytes.slice().buffer),
     };
   }
-  const text = stub.body === undefined ? "" : JSON.stringify(stub.body);
+  // stub.text carries the raw wire text (the plain string formats:
+  // text/csv, text/html); stub.body carries a JSON body.
+  const text = stub.text !== undefined ? stub.text : stub.body === undefined ? "" : JSON.stringify(stub.body);
   return {
     status,
     ok: status >= 200 && status < 300,
@@ -57,6 +59,7 @@ export function recorder(routes) {
       headers: { ...init.headers },
       body: typeof init.body === "string" ? init.body : undefined,
       bytes: init.body instanceof Uint8Array ? init.body : undefined,
+      form: init.body instanceof FormData ? init.body : undefined,
       signal: init.signal,
     });
 

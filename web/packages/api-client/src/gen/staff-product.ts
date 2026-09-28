@@ -147,14 +147,16 @@ export async function productGetImage(
   });
 }
 
-// The document also declares this upload as image/png, image/webp; the
-// client sends the first declared type (image/jpeg).
+// The document declares this upload as image/jpeg, image/png, image/webp; contentType says
+// which declared type rides the wire, and with no contentType no Content-Type
+// header is sent at all, so an unsaid upload is refused, never mislabeled.
 // The document declares the body format: binary: the body is the raw bytes
 // (a string rides its UTF-8 bytes verbatim).
 export async function productPutImage(
   client: ApiClient,
   id: string | number,
   body: string | Uint8Array,
+  contentType?: "image/jpeg" | "image/png" | "image/webp",
   opts?: { alt?: string },
   call?: ApiCallOptions
 ): Promise<Result<ProductImagePutResult>> {
@@ -163,7 +165,7 @@ export async function productPutImage(
     path: "/api/v1/products/{id}/image",
     pathParams: { id },
     query: opts,
-    rawBody: { contentType: "image/jpeg", content: body },
+    rawBody: { contentType, content: body },
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "productPutImage",

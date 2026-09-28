@@ -70,8 +70,15 @@ export interface OperationRequest {
   body?: unknown;
   /** A multipart request body, serialized as FormData by the transport. */
   form?: Record<string, unknown>;
-  /** A non-JSON request body (bytes, CSV), sent verbatim. */
-  rawBody?: { contentType: string; content: string | Uint8Array };
+  /**
+   * A non-JSON request body (bytes, CSV), sent verbatim. The contentType is
+   * the operation's declared wire type: present when the contract declares
+   * exactly one (or the caller chose among several), absent when the caller
+   * passed no contentType for an upload that declares more than one, which
+   * sends no Content-Type header at all so an unsaid upload is refused, never
+   * mislabeled.
+   */
+  rawBody?: { contentType?: string; content: string | Uint8Array };
   /** Set by the generator when the success response is the wire string. */
   textResponse?: boolean;
   /** Set by the generator when the success response is format: binary bytes. */
@@ -186,7 +193,9 @@ export class ApiClient {
     let body: string | FormData | Uint8Array | ArrayBuffer | undefined;
     if (req.rawBody !== undefined) {
       body = req.rawBody.content;
-      headers["Content-Type"] = req.rawBody.contentType;
+      // No contentType says no Content-Type at all: a raw upload declaring
+      // several types is refused for not saying, never mislabeled.
+      if (req.rawBody.contentType !== undefined) headers["Content-Type"] = req.rawBody.contentType;
     } else if (req.form !== undefined) {
       const form = new FormData();
       for (const [name, value] of Object.entries(req.form)) {

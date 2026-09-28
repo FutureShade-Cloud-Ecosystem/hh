@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as api from "../src/index.ts";
 import { allResults, isOk, mapResult } from "../src/result.ts";
-import { ROUTES, TAG_NAMESPACES } from "../src/gen/manifest.ts";
+import { BODY_VARIANTS, ROUTES, TAG_NAMESPACES } from "../src/gen/manifest.ts";
 import { recorder, respond, unwrap } from "./_recorded.mjs";
 
 const packageDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -46,10 +46,29 @@ test("every generated operation's signature returns Promise<Result<...>>", (t) =
     assert.equal(pending, null, `${file}: every declared operation closes its signature`);
   }
   const emitted = ROUTES.filter((r) => !r.excluded);
+  const variants = Object.values(BODY_VARIANTS).flat();
   assert.equal(operations, returnLines, "one checked return per operation");
-  assert.equal(operations, emitted.length, "one scanned operation per emitted manifest route");
-  assert.equal(operations, 671, "the document's operation count minus the excluded stream");
+  assert.equal(
+    operations,
+    emitted.length + variants.length,
+    "one scanned function per emitted manifest route and per declared body variant",
+  );
+  assert.equal(operations, 672, "the document's operation count minus the excluded stream, plus the declared body variant");
+  assert.equal(emitted.length, 671, "the document's operation count minus the excluded stream");
+  assert.deepEqual(variants, ["feedbackCreateMultipart"], "the only multi content type body is feedbackCreate's multipart form");
   assert.equal(ROUTES.length, 672, "the manifest census keeps the full route table");
+});
+
+test("each declared body variant resolves to a live generated function beside its operation", (t) => {
+  for (const [operationId, names] of Object.entries(BODY_VARIANTS)) {
+    const route = ROUTES.find((r) => r.operationId === operationId);
+    assert.notEqual(route, undefined, `${operationId} is a manifest route`);
+    const group = api[TAG_NAMESPACES[route.tag]];
+    assert.equal(typeof group[operationId], "function", `the primary ${operationId} is a function`);
+    for (const name of names) {
+      assert.equal(typeof group[name], "function", `${TAG_NAMESPACES[route.tag]}.${name} is a function`);
+    }
+  }
 });
 
 test("the only excluded route is the event stream, and it is absent from the surface", (t) => {
