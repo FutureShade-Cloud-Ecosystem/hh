@@ -1,4 +1,4 @@
-// @hh/design-system: the public surface of the package. Consumers import the
+// @hardscapehouse/design-system: the public surface of the package. Consumers import the
 // kits, the state system, the primitives and the tokens entry; the icon seam is
 // documentation (src/icons/README.md) until the ERP icon registry lands.
 

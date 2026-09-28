@@ -82,7 +82,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`@hh/design-system harness on http://${HOST}:${PORT}/`);
+  console.log(`@hardscapehouse/design-system harness on http://${HOST}:${PORT}/`);
   console.log('variants: /?theme=light  /?brand=hh-pro  /?theme=light&brand=hh-pro');
 }
 

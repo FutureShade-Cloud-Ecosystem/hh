@@ -82,9 +82,9 @@ test("the api-client is imported through its exports map, never by a relative pa
   assert.deepEqual(
     offenders.map((file) => file.name),
     [],
-    "a relative import into the api-client's src walks past its exports map: import from @hh/api-client",
+    "a relative import into the api-client's src walks past its exports map: import from @hardscapehouse/api-client",
   );
-  const importers = sources().filter((file) => file.text.includes(`from "@hh/api-client"`));
+  const importers = sources().filter((file) => file.text.includes(`from "@hardscapehouse/api-client"`));
   assert.deepEqual(
     importers.map((file) => file.name).sort(),
     ["client.ts", "lock.ts"].sort(),

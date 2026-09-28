@@ -1,4 +1,4 @@
-// Test-only module resolution hook for @hh/design-system, on the api-client
+// Test-only module resolution hook for @hardscapehouse/design-system, on the api-client
 // lane's pattern (a minimal --import hook, no dependencies). Package sources
 // import their siblings with the runtime-correct .js extension (what tsc and
 // vite emit), and Node 22's native type stripping loads the .ts sources
