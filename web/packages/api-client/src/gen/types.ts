@@ -4801,7 +4801,7 @@ export type PricingChangeLogRow = {
 };
 export type PricingPriceFileForm = {
   vendor_id: string;
-  file: string;
+  file: Blob;
   mapping?: string;
   digest?: string;
   effective_date?: string;

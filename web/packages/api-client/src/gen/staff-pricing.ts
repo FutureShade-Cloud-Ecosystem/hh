@@ -110,12 +110,14 @@ export async function pricingApproveBatch(
   });
 }
 
+// The document declares the body's content type as text/csv.
 // The document declares the body format: binary: the body is the raw bytes
 // (a string rides its UTF-8 bytes verbatim).
 export async function pricingImportBatch(
   client: ApiClient,
   id: string | number,
   body: string | Uint8Array,
+  contentType?: "text/csv",
   opts?: { source_ref?: string },
   call?: ApiCallOptions
 ): Promise<Result<PricingBatchImportResult>> {
@@ -124,7 +126,7 @@ export async function pricingImportBatch(
     path: "/api/v1/pricing/batches/{id}/import",
     pathParams: { id },
     query: opts,
-    rawBody: { contentType: "text/csv", content: body },
+    rawBody: { contentType: contentType ?? "text/csv", content: body },
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "pricingImportBatch",

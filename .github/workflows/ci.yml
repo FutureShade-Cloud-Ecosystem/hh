@@ -82,9 +82,16 @@ jobs:
           bun-version: 1.3.12
       - name: Test and manifest drift gate
         run: |
+          set -euo pipefail
           # Pre-install the one npm package the gate needs, pinned to the exact
           # version the contract tools' lockfile installs, so the gate never
           # relies on bun's on-demand auto-install (which resolves unpinned).
+          # The install needs a package.json at the tree's root, which this
+          # repository deliberately does not carry, so bun writes one along
+          # with bun.lock; the trap removes both (and the installed
+          # node_modules) when the step ends, leaving the tree clean on a
+          # runner and on a workstation alike.
+          trap 'rm -rf package.json bun.lock node_modules' EXIT
           bun add --exact yaml@2.9.1
           bun test
           bun scripts/generate-manifest.ts --check

@@ -7,6 +7,8 @@ import type { FeedbackResult, FeedbackSubmission } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
+// The document declares this body as application/json and multipart/form-data (feedbackCreateMultipart); the client emits one
+// function per declared type, and this one sends the JSON body.
 export async function feedbackCreate(
   client: ApiClient,
   body: FeedbackSubmission,
@@ -16,6 +18,23 @@ export async function feedbackCreate(
     method: "POST",
     path: "/api/v1/feedback",
     body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "feedbackCreate",
+  });
+}
+
+// The document declares this body as application/json and multipart/form-data (feedbackCreateMultipart); the client emits one
+// function per declared type, and this one sends the multipart form.
+export async function feedbackCreateMultipart(
+  client: ApiClient,
+  body: { type: "bug" | "feedback" | "flag"; message: string; screen?: string; url?: string; user_agent?: string; image?: Blob },
+  call?: ApiCallOptions
+): Promise<Result<FeedbackResult>> {
+  return client.request<FeedbackResult>({
+    method: "POST",
+    path: "/api/v1/feedback",
+    form: body,
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "feedbackCreate",

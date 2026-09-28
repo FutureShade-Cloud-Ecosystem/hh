@@ -2386,3 +2386,12 @@ export const SUCCESS_SCHEMAS: Readonly<Record<string, string>> = {
   "yardSubmitWeight": "TaskWeightResult",
   "yardRequestWeight": "Task",
 };
+
+// Request bodies declaring more than one mappable content type get one
+// generated function per declared type: the first declared keeps the
+// operationId, the rest take the content type suffix. Keyed by the primary
+// operationId; the values are the variant function names (the multipart form
+// of feedbackCreate is feedbackCreateMultipart).
+export const BODY_VARIANTS: Readonly<Record<string, readonly string[]>> = {
+  "feedbackCreate": ["feedbackCreateMultipart"],
+};

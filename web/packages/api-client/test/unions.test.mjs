@@ -68,7 +68,9 @@ test("the two finstmt operations resolve the report-or-comparative-rows union", 
 });
 
 // The required frame of a MessagingMessage, per the document: id, channel_id,
-// kind, body, reply_count, created_at.
+// kind, body, reply_count, created_at. The created_at value is the epoch,
+// computed rather than written as a literal: plainly a fixture, and no
+// calendar date in the source.
 function minimalMessage() {
   return {
     id: "0dd4ec29-9616-4754-9f5f-667da1722018",
@@ -76,6 +78,6 @@ function minimalMessage() {
     kind: "EVENT",
     body: "the event body",
     reply_count: 0,
-    created_at: "2026-01-01T00:00:00Z",
+    created_at: new Date(0).toISOString(),
   };
 }

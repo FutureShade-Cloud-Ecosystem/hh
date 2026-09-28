@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as api from "../src/index.ts";
 import { allResults, isOk, mapResult } from "../src/result.ts";
-import { ROUTES, TAG_NAMESPACES } from "../src/gen/manifest.ts";
+import { BODY_VARIANTS, ROUTES, TAG_NAMESPACES } from "../src/gen/manifest.ts";
 import { recorder, respond, unwrap } from "./_recorded.mjs";
 
 const packageDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -46,10 +46,29 @@ test("every generated operation's signature returns Promise<Result<...>>", (t) =
     assert.equal(pending, null, `${file}: every declared operation closes its signature`);
   }
   const emitted = ROUTES.filter((r) => !r.excluded);
+  const variants = Object.values(BODY_VARIANTS).flat();
   assert.equal(operations, returnLines, "one checked return per operation");
-  assert.equal(operations, emitted.length, "one scanned operation per emitted manifest route");
-  assert.equal(operations, 671, "the document's operation count minus the excluded stream");
+  assert.equal(
+    operations,
+    emitted.length + variants.length,
+    "one scanned function per emitted manifest route and per declared body variant",
+  );
+  assert.equal(operations, 672, "the document's operation count minus the excluded stream, plus the declared body variant");
+  assert.equal(emitted.length, 671, "the document's operation count minus the excluded stream");
+  assert.deepEqual(variants, ["feedbackCreateMultipart"], "the only multi content type body is feedbackCreate's multipart form");
   assert.equal(ROUTES.length, 672, "the manifest census keeps the full route table");
+});
+
+test("each declared body variant resolves to a live generated function beside its operation", (t) => {
+  for (const [operationId, names] of Object.entries(BODY_VARIANTS)) {
+    const route = ROUTES.find((r) => r.operationId === operationId);
+    assert.notEqual(route, undefined, `${operationId} is a manifest route`);
+    const group = api[TAG_NAMESPACES[route.tag]];
+    assert.equal(typeof group[operationId], "function", `the primary ${operationId} is a function`);
+    for (const name of names) {
+      assert.equal(typeof group[name], "function", `${TAG_NAMESPACES[route.tag]}.${name} is a function`);
+    }
+  }
 });
 
 test("the only excluded route is the event stream, and it is absent from the surface", (t) => {
@@ -152,6 +171,25 @@ test("a binaryResponse operation resolves the wire bytes byte for byte", async (
   }
 });
 
+// The text response path (the plain string formats: text/csv, text/html)
+// resolves the wire string verbatim, never a JSON parse of it. One replay per
+// declared format.
+test("a text/html success resolves the raw wire text", async (t) => {
+  const receipt = "<html><body>receipt for sale r-1</body></html>";
+  const rec = recorder({ "GET /api/v1/pos/sales/r-1/receipt": { text: receipt } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
+  const value = unwrap(await api.staffPrinting.printingGetReceipt(client, "r-1"));
+  assert.equal(value, receipt, "the receipt HTML, verbatim");
+});
+
+test("a text/csv success resolves the raw wire text", async (t) => {
+  const csv = "invoice_id,total_cents\nINV-1,101700\n";
+  const rec = recorder({ "GET /api/v1/ar/register/export": { text: csv } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
+  const value = unwrap(await api.staffBilling.billingExportRegister(client));
+  assert.equal(value, csv, "the register CSV, verbatim");
+});
+
 test("the Result helpers narrow, map, and collect as the convention says", (t) => {
   assert.ok(isOk(api.ok(3)));
   assert.equal(mapResult(api.ok(2), (n) => n * 10).value, 20);
@@ -239,6 +277,26 @@ test("a header provider that rejects resolves an error Result and never rejects"
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.error, /header provider failed: the org lookup refused/);
   assert.equal(rec.calls.length, 0);
+});
+
+// A header value the platform would refuse (a bare CR and LF here) is
+// refused by the transport before anything dials: the platform's own refusal
+// message echoes the value, and header values are where tokens travel, so
+// the error names the header, never its value.
+test("a refused header value resolves an error naming the header, never the value", async (t) => {
+  const rec = recorder({});
+  const client = new api.ApiClient({
+    baseUrl: "https://hh-core.example",
+    fetch: rec.fetch,
+    headers: () => ({ "X-Org": "dibbits", Authorization: "Bearer leaked\r\ninjected: 1" }),
+  });
+  const result = await api.tenantAuth.tenantGetMe(client);
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.match(result.error, /the Authorization header value is not a valid header value/);
+    assert.doesNotMatch(result.error, /leaked/, "the refused value never lands in the error string");
+  }
+  assert.equal(rec.calls.length, 0, "the poisoned request never dialed");
 });
 
 test("a request past its timeout resolves an error Result naming the timeout", async (t) => {
