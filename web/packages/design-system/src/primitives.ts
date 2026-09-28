@@ -178,5 +178,10 @@ export function chip(text: string, tone: ChipTone = 'neutral', iconMarkup?: Temp
 /** A list row on the striped pair, the role the row-stripe tokens exist for. */
 export function row(content: Template, opts: { alt?: boolean; selected?: boolean } = {}): Template {
   const cls = `row${opts.alt ? ' row-alt' : ''}${opts.selected ? ' row-selected' : ''}`;
-  return html`<li class="${cls}">${content}</li>`;
+  // The selection is more than a bar and a weight: aria-current tells assistive
+  // tech which row the detail pane is showing, on the element that carries the
+  // visual cue. The attribute is a TRUSTED sub-template (the button spec's
+  // pattern): a plain interpolated string would be escaped as text.
+  const aria = opts.selected ? html` aria-current="true"` : '';
+  return html`<li class="${cls}"${aria}>${content}</li>`;
 }

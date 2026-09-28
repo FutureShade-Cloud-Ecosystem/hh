@@ -18,7 +18,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderTemplate, html } from '../src/render.js';
+import { renderTemplate, html, HHRenderError } from '../src/render.js';
 import { KIT_STATES, STATE_META, kitShell, stateIndicator } from '../src/state.js';
 import { baseStyles } from '../src/primitives.js';
 import { STATE_ICONS, icon } from '../src/state-icons.js';
@@ -221,6 +221,27 @@ test('every place a kit shows state carries a non-colour cue', () => {
   assert.doesNotMatch(selected[0], /border-left/, 'the selection border must not be the physical left');
 });
 
+test('the selected row carries an ARIA state, and only it does', () => {
+  // The bar and the weight are for eyes; aria-current is the same fact for
+  // assistive tech. Exactly one row per list may carry it.
+  for (const state of ['ready', 'offline', 'conflict']) {
+    for (const tag of ['hh-list-detail', 'hh-inbox']) {
+      const Kit = KITS.find(([t]) => t === tag)[1];
+      const markup = render(Kit, state);
+      const lis = markup.match(/<li class="row[^"]*"[^>]*>/g) ?? [];
+      assert.ok(lis.length >= 3, `${tag}/${state}: expected the row list to render`);
+      const withAria = lis.filter((li) => li.includes('aria-current="true"'));
+      assert.equal(withAria.length, 1, `${tag}/${state}: exactly one row must carry aria-current`);
+      assert.match(withAria[0], /row-selected/, `${tag}/${state}: the ARIA row must be the visually selected one`);
+    }
+  }
+  // Unselected rows carry no aria-current, and the kits without row lists
+  // carry none at all.
+  const plain = render(KITS[0][1], 'ready');
+  assert.doesNotMatch(plain, /aria-current="true"/, 'scan-and-confirm has no row selection to mark');
+  assert.match(render(KITS[2][1], 'ready'), /aria-current="step"/, 'the rail keeps its own aria-current on the current step');
+});
+
 // ── trusted markup is a brand, never a shape ─────────────────────────────────────
 
 test('a caller object and a caller string are text, never markup', () => {
@@ -251,6 +272,63 @@ test('a caller object and a caller string are text, never markup', () => {
   // And no raw-markup escape hatch may return, under any name.
   assert.ok(!readPkg('src/index.ts').includes('unsafeSvg'), 'the public surface exports unsafeSvg again');
   assert.ok(!/export\s+(function|const|class)\s+unsafeSvg/.test(readPkg('src/render.ts')), 'src/render.ts exports an unsafeSvg escape hatch');
+});
+
+test('html() accepts only a real template strings array', () => {
+  // The engine hands a tagged call a TemplateStringsArray, which carries `raw`.
+  // A plain array (say parsed from JSON) has none, and its items would be
+  // emitted as literal markup: the reviewer's probe ran script through exactly
+  // this door. Both shapes are refused at the factory, by name.
+  const fromJsonArray = () => html(JSON.parse('["<img src=x onerror=window.__pwn=1>"]'));
+  assert.throws(fromJsonArray, HHRenderError, 'a plain array as the strings argument must be refused');
+  assert.throws(fromJsonArray, /template strings array/, 'the refusal must name what was wrong');
+  const fromJsonObject = () => html(JSON.parse('{"0":"<img src=x onerror=window.__pwn=1>","raw":["<img src=x onerror=window.__pwn=1>"]}'));
+  assert.throws(fromJsonObject, HHRenderError, 'a plain object shaped like a strings array must be refused');
+  assert.throws(() => html('<img src=x onerror=alert(1)>'), HHRenderError, 'a bare string must be refused');
+  // A real tagged call keeps working, branded and composable.
+  assert.equal(renderTemplate(html`<b>safe</b>`), '<b>safe</b>');
+});
+
+test('html() refuses a binding in an unquoted attribute, by name', () => {
+  // Escaping makes a QUOTED attribute value inert; an unquoted one the value
+  // can close and escape into. The factory reads the position from the static
+  // text before the binding.
+  const unquoted = () => html`<div class=${'x onmouseover=window.__pwn=1'}>text</div>`;
+  assert.throws(unquoted, HHRenderError);
+  assert.throws(unquoted, /unquoted attribute class/, 'the refusal must name the attribute');
+  // The same value in the SAME attribute, quoted, is the ordinary escaped path.
+  assert.equal(
+    renderTemplate(html`<div class="${'x onmouseover=window.__pwn=1'}">text</div>`),
+    '<div class="x onmouseover=window.__pwn=1">text</div>',
+  );
+});
+
+test('html() refuses a value in an event attribute, by name', () => {
+  const handler = () => html`<button onclick="${'window.__pwn=1'}">go</button>`;
+  assert.throws(handler, HHRenderError);
+  assert.throws(handler, /event attribute onclick/, 'the refusal must name the event attribute');
+  const mouseover = () => html`<span onmouseover='${'window.__pwn=1'}'>x</span>`;
+  assert.throws(mouseover, HHRenderError);
+});
+
+test('html() refuses an address that is not http, https or relative, by name', () => {
+  for (const bad of ['javascript:alert(1)', 'JAVASCRIPT:alert(1)', ' java\nscript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'vbscript:x']) {
+    const refuse = () => html`<a href="${bad}">x</a>`;
+    assert.throws(refuse, HHRenderError, `${JSON.stringify(bad)} must be refused as an address`);
+    assert.throws(refuse, /address/, 'the refusal must name it as an address');
+  }
+  // The other navigation attributes are held to the same rule.
+  assert.throws(() => html`<img src="${'javascript:alert(1)'}">`, HHRenderError);
+  assert.throws(() => html`<form action="${'javascript:alert(1)'}">`, HHRenderError);
+  // A value that is not an address-shaped string (a template, an object) is
+  // refused too: markup has no business inside a navigation target.
+  assert.throws(() => html`<a href="${html`<b>x</b>`}">x</a>`, HHRenderError);
+  assert.throws(() => html`<a href="${{ evil: 'yes' }}">x</a>`, HHRenderError);
+  // The safe set keeps working: http, https, scheme free, fragment, protocol
+  // relative, and the empty address.
+  for (const good of ['https://example.com/a', 'http://example.com/a', '/relative/path', 'rows/one', '#fragment', '//example.com/a', '']) {
+    assert.doesNotThrow(() => html`<a href="${good}">x</a>`, `${JSON.stringify(good)} must keep rendering`);
+  }
 });
 
 
