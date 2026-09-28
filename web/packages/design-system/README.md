@@ -86,12 +86,19 @@ Chromium and asserts each kit in each state in the live DOM, asserts what a
 person would see (each state's word and icon with a real box, visible, at
 least 12 pixels, in an opaque colour; every disabled control at computed
 opacity 1 with an opaque colour), and holds the harness layout at 1920, 1440,
-1280, 768 and 400. It drives the browser over the DevTools protocol with
+1280, 768 and 400. What that person-view gate does not catch: a break written
+through a PARENT selector, because the gate reads each element's own computed
+style and box, so a rule on an ancestor can clip the word out (clip-path),
+move it off screen, set its colour equal to the card it sits on, or collapse
+its container to zero height and still pass. It drives the browser over the
+DevTools protocol with
 Node 22's own WebSocket (`test/_lib/cdp.mjs`): no Playwright, no new
 dependency. It finds a browser at `$HH_DS_BROWSER`, then the usual PATH names,
 then the Playwright cache. When none exists the leg fails loudly if `CI` is
 set (a skipped gate is a failed gate; the workflow step names google-chrome
-for exactly this reason) and skips with a loud, named reason otherwise.
+for exactly this reason) and skips with a loud, named reason otherwise; under
+bun it never runs, and its skip registers as a skip in the tally, never as a
+pass.
 
 ## Measured notes the sheet's readers asked for
 
@@ -134,7 +141,8 @@ for exactly this reason) and skips with a loud, named reason otherwise.
 ## Recorded deviations
 
 The source brief names Lit and Ionic as the kit substrate. The web workspace
-carries no dependencies and this lane may add none, so:
+carries no run-time dependencies and this lane may add none (what it installs,
+typescript and the Node type packages, is dev-only), so:
 
 - `src/render.ts` is a small hand-written rendering layer, owned here, named
   for what it is (see the header in the file). The decision to own it instead
