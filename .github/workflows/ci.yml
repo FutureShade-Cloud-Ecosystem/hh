@@ -112,18 +112,29 @@ jobs:
       - name: Typecheck web packages
         run: |
           # The web packages' TypeScript gate: strict, noEmit, on every pull
-          # request. @hh/api-client owns a strict typecheck script and a
-          # pinned typescript devDependency (the zero-dependency claim covers
-          # the runtime only). @hh/design-system is typechecked by the same
-          # gate the moment its lane adds a tsconfig.json; today it carries no
-          # TypeScript sources, so there is nothing to check there yet.
+          # request. @hh/api-client and @hh/auth own strict typecheck scripts
+          # and pinned typescript devDependencies (the zero-dependency claim
+          # covers the runtime only). @hh/design-system is typechecked by the
+          # same gate the moment its lane adds a tsconfig.json; today it
+          # carries no TypeScript sources, so there is nothing to check there
+          # yet.
           npm --prefix web ci
           npm --prefix web run -w @hh/api-client typecheck
+          npm --prefix web run -w @hh/auth typecheck
           if [ -f web/packages/design-system/tsconfig.json ]; then
             web/node_modules/.bin/tsc --noEmit -p web/packages/design-system
           else
             echo "web/packages/design-system has no tsconfig.json yet; its lane owns its sources and will add the strict check with them."
           fi
+      - name: Test web packages on Node 22
+        run: |
+          # Every web package's own Node 22 suite runs here, not by accident:
+          # the root bun gate above is the drift gate, and bun test only
+          # discovers these suites because they sit under the workspace. A
+          # package's own test script is the contract; each suite runs on
+          # Node 22, exactly as a developer would run it.
+          npm --prefix web run -w @hh/api-client test
+          npm --prefix web run -w @hh/auth test
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
