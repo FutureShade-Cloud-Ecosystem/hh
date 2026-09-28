@@ -193,8 +193,8 @@ test("a file name that is empty, a dot segment, path-like, or control carrying i
     "a/b/price-list.xlsx", // a path riding the name
     "a\\b\\price-list.xlsx", // a Windows path riding the name
     "price\u0000list.xlsx", // a NUL byte
-    "price\nlist.xlsx", // a line break, a control character
-    "price\tlist.xlsx", // a tab, a control character
+    "price\nlist.xlsx", // a line break, named as one
+    "price\tlist.xlsx", // a tab, named as one
   ];
   for (const name of refusals) {
     const result = await api.staffPricing.pricingApplyPriceFile(
@@ -307,25 +307,35 @@ test("a bidirectional control character in a file name is refused before anythin
       { fileFilename: `price${mark}list.xlsx` },
     );
     assert.equal(result.ok, false, `a name carrying the bidirectional mark ${named} is refused`);
-    if (!result.ok) assert.match(result.error, /bidirectional control character/, `the refusal names the mark, for ${named}`);
+    if (!result.ok) {
+      // The refusal names the very character it found, so a person who
+      // pasted a direction mark with Arabic or Hebrew text sees which one.
+      const expected = `contains a hidden character (U+${mark.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")})`;
+      assert.equal(
+        result.error.includes(expected),
+        true,
+        `the refusal names the mark, for ${named}: ${result.error}`,
+      );
+    }
   }
   assert.equal(rec.calls.length, 0, "not one bidi carrying name dialed");
 });
 
 test("an invisible formatting or control character in a file name is refused before anything is sent", async () => {
-  // The \p{Cf} format characters and the \p{Cc} control characters the byte
-  // loop cannot see (the C1 range U+0080 to U+009F): an invisible character
-  // in a stored name makes names that display identically but differ in
-  // bytes. A name made of nothing but one of them is refused too.
+  // The \p{Cf} format characters and the \p{Cc} control characters the
+  // per-character loop names by code point (the C1 range U+0080 to U+009F
+  // among them): an invisible character in a stored name makes names that
+  // display identically but differ in bytes. The two allowed joiners
+  // U+200C and U+200D are format characters and are NOT here: they ride
+  // whole (their own test below). A name made of nothing but one of these
+  // is refused too.
   const invisible = [
-    ["\u00ad", "U+00AD SOFT HYPHEN", /invisible formatting character/],
-    ["\u200b", "U+200B ZERO WIDTH SPACE", /invisible formatting character/],
-    ["\u200c", "U+200C ZWNJ", /invisible formatting character/],
-    ["\u200d", "U+200D ZWJ", /invisible formatting character/],
-    ["\u2060", "U+2060 WORD JOINER", /invisible formatting character/],
-    ["\ufeff", "U+FEFF BOM", /invisible formatting character/],
-    ["\u0085", "U+0085 NEL", /carries a control character/],
-    ["\u009f", "U+009F", /carries a control character/],
+    ["\u00ad", "U+00AD SOFT HYPHEN", /contains a hidden character \(U\+00AD\)/],
+    ["\u200b", "U+200B ZERO WIDTH SPACE", /contains a hidden character \(U\+200B\)/],
+    ["\u2060", "U+2060 WORD JOINER", /contains a hidden character \(U\+2060\)/],
+    ["\ufeff", "U+FEFF BOM", /contains a hidden character \(U\+FEFF\)/],
+    ["\u0085", "U+0085 NEL", /contains a control character \(U\+0085\)/],
+    ["\u009f", "U+009F", /contains a control character \(U\+009F\)/],
   ];
   const rec = recorder({ "POST /api/v1/pricing/price-file/apply": { status: 201, body: {} } });
   const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
@@ -336,7 +346,7 @@ test("an invisible formatting or control character in a file name is refused bef
       { fileFilename: `price${mark}list.xlsx` },
     );
     assert.equal(result.ok, false, `a name carrying the invisible character ${named} is refused`);
-    if (!result.ok) assert.match(result.error, pattern, `the refusal names the class, for ${named}`);
+    if (!result.ok) assert.match(result.error, pattern, `the refusal names the character, for ${named}`);
     const only = await api.staffPricing.pricingApplyPriceFile(
       client,
       { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
@@ -345,6 +355,88 @@ test("an invisible formatting or control character in a file name is refused bef
     assert.equal(only.ok, false, `a name made of nothing but ${named} is refused`);
   }
   assert.equal(rec.calls.length, 0, "not one invisible-character carrying name dialed");
+});
+
+test("the two joiners are allowed in a file name: Persian with ZWNJ and an emoji ZWJ sequence ride whole", async () => {
+  // U+200C and U+200D are \p{Cf} format characters, but they join letters
+  // (Persian words are spelled with the non-joiner) and build emoji (the
+  // family and profession sequences are joiner chains), and they hide
+  // nothing. The first cut refused them with their class, and a rule that
+  // refuses ordinary names gets switched off: they ride whole now, while
+  // every other format character stays refused.
+  const rec = recorder({ "POST /api/v1/pricing/price-file/apply": { status: 201, body: {} } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch, headers: () => ({ "X-Org": "dibbits" }) });
+  const persian = "\u0642\u06cc\u0645\u062a\u200c\u0644\u06cc\u0633\u062a.xlsx"; // a Persian name spelled with a ZWNJ
+  unwrap(
+    await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+      { fileFilename: persian },
+    ),
+  );
+  const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}.png"; // the family emoji, a ZWJ chain
+  unwrap(
+    await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+      { fileFilename: family },
+    ),
+  );
+  assert.equal(rec.calls.length, 2, "both joiner carrying names dialed");
+  const first = await new Request(rec.calls[0].url, { method: rec.calls[0].method, body: rec.calls[0].form }).formData();
+  assert.equal(first.get("file").name, persian, "the Persian name with its ZWNJ arrives whole");
+  const second = await new Request(rec.calls[1].url, { method: rec.calls[1].method, body: rec.calls[1].form }).formData();
+  assert.equal(second.get("file").name, family, "the emoji ZWJ sequence arrives whole");
+});
+
+test("the refusal names what it refused in words a person can act on", async () => {
+  // The messages a person meets: a tab pasted from a spreadsheet cell, a
+  // line break at the end of one, a soft hyphen pasted from a document.
+  const rec = recorder({ "POST /api/v1/pricing/price-file/apply": { status: 201, body: {} } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
+  const cases = [
+    ["price\tlist.xlsx", /the file part's file name contains a tab$/, "a tab"],
+    ["price-list.xlsx\n", /the file part's file name ends with a line break$/, "a line break at the end"],
+    ["price\r\n", /the file part's file name contains a line break$/, "a line break inside"],
+    ["price\u00adlist.xlsx", /the file part's file name contains a hidden character \(U\+00AD\)$/, "a soft hyphen"],
+  ];
+  for (const [name, pattern, named] of cases) {
+    const result = await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+      { fileFilename: name },
+    );
+    assert.equal(result.ok, false, `the name with ${named} is refused`);
+    if (!result.ok) assert.match(result.error, pattern, `the refusal says ${named}, for ${JSON.stringify(name)}`);
+  }
+  assert.equal(rec.calls.length, 0, "not one refused name dialed");
+});
+
+test("an interior line separator or a Hangul filler in a file name is refused before anything is sent", async () => {
+  // Interior U+2028 and U+2029 (a line break inside a displayed name) and
+  // the Hangul fillers (letters no other rule sees) pass every other rule;
+  // a name of nothing but U+115F is invisible. Each is refused, and the
+  // refusal names the character.
+  const rec = recorder({ "POST /api/v1/pricing/price-file/apply": { status: 201, body: {} } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
+  const cases = [
+    ["price\u2028list.xlsx", /contains a line break \(U\+2028\)$/, "an interior line separator"],
+    ["price\u2029list.xlsx", /contains a line break \(U\+2029\)$/, "an interior paragraph separator"],
+    ["price\u115flist.xlsx", /contains a hidden character \(U\+115F\)$/, "the Hangul choseong filler"],
+    ["price\u1160list.xlsx", /contains a hidden character \(U\+1160\)$/, "the Hangul jungseong filler"],
+    ["price\u3164list.xlsx", /contains a hidden character \(U\+3164\)$/, "the Hangul filler"],
+    ["\u115f", /contains a hidden character \(U\+115F\)$/, "a name of nothing but the invisible filler"],
+  ];
+  for (const [name, pattern, named] of cases) {
+    const result = await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+      { fileFilename: name },
+    );
+    assert.equal(result.ok, false, `the name with ${named} is refused`);
+    if (!result.ok) assert.match(result.error, pattern, `the refusal names the character, for ${named}`);
+  }
+  assert.equal(rec.calls.length, 0, "not one refused name dialed");
 });
 
 test("a name that is only spaces, or edged with any white space or a dot, is refused before anything is sent", async () => {
@@ -359,8 +451,8 @@ test("a name that is only spaces, or edged with any white space or a dot, is ref
     ["\u00a0price-list.xlsx", /begins or ends with a space or a dot/, "a leading NBSP"],
     ["price-list.xlsx\u00a0", /begins or ends with a space or a dot/, "a trailing NBSP"],
     ["price-list.xlsx\u3000", /begins or ends with a space or a dot/, "a trailing ideographic space"],
-    ["price-list.xlsx\u2028", /begins or ends with a space or a dot/, "a trailing line separator"],
-    ["\u2028price-list.xlsx", /begins or ends with a space or a dot/, "a leading line separator"],
+    ["price-list.xlsx\u2028", /ends with a line break \(U\+2028\)$/, "a trailing line separator"],
+    ["\u2028price-list.xlsx", /contains a line break \(U\+2028\)$/, "a leading line separator"],
   ];
   for (const [name, pattern, named] of refusals) {
     const result = await api.staffPricing.pricingApplyPriceFile(
