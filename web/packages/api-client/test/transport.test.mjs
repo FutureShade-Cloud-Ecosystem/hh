@@ -1,9 +1,11 @@
 // The transport's cancellation and redirect gates, against a real local
 // server. A fetch resolves at the headers, so a deadline or a caller's abort
 // that expired at them would miss a body that stalls afterward; these tests
-// hold a body open mid-stream and prove both still land. The redirect gate
-// proves the transport refuses to follow one, on the second server's own
-// request count. The recorded harness (test/_recorded.mjs) answers without a
+// hold a body open mid-stream and prove both still land. The redirect gates
+// prove the transport refuses to follow one, cross origin and same origin
+// alike, on the receiving servers' own request counts. A custom FetchLike
+// that never settles is cut off by the deadline race, not by its own
+// cooperation. The recorded harness (test/_recorded.mjs) answers without a
 // network; this file is the one place the suite dials, and it dials only a
 // loopback server bound for the duration of one test.
 //
@@ -96,6 +98,38 @@ test("a redirect is refused, never followed", { timeout: 5000 }, async () => {
   }
 });
 
+// The same origin case, beside the cross origin one: the redirect points back
+// at the SAME server, one path over. With redirect: "follow" the platform
+// would dial the redirected path and its request count would move, failing
+// the first assertion. The refusal must not depend on where the redirect
+// points.
+test("a same origin redirect is refused, never followed", { timeout: 5000 }, async () => {
+  let first = 0;
+  let redirected = 0;
+  const origin = http.createServer((req, res) => {
+    if (req.url === "/after-the-redirect") {
+      redirected += 1;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"captured":true}');
+      return;
+    }
+    first += 1;
+    res.writeHead(302, { location: "/after-the-redirect" });
+    res.end();
+  });
+  await new Promise((resolve) => origin.listen(0, "127.0.0.1", resolve));
+  try {
+    const client = new api.ApiClient({ baseUrl: baseUrlOf(origin) });
+    const result = await api.tenantAuth.tenantGetMe(client);
+    assert.equal(redirected, 0, "the redirected path never received a request");
+    assert.equal(first, 1, "the origin answered with the redirect exactly once");
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.match(result.error, /transport error/);
+  } finally {
+    await shutdown(origin);
+  }
+});
+
 // The header provider's call sits inside the deadline (it matters for auth,
 // whose provider it is): a provider that never settles resolves the timeout
 // Result at the deadline instead of hanging the caller past it, and a
@@ -116,6 +150,35 @@ test("a caller's abort lands while the header provider is still pending", { time
   const client = new api.ApiClient({
     baseUrl: "https://hh-core.example",
     headers: () => new Promise(() => {}),
+  });
+  const pending = api.tenantAuth.tenantGetMe(client, { signal: controller.signal });
+  setTimeout(() => controller.abort(), 30);
+  const result = await pending;
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /the request was aborted/);
+});
+
+// The deadline does not rest on the transport's cooperation. The contract
+// (the README, "What a custom FetchLike must honour") asks a replacement to
+// observe init.signal, but nothing can force one to: the client races the
+// fetch promise against the armed controller, so even a transport that
+// accepts the signal and never settles resolves an error Result at the
+// deadline, and at the caller's abort, instead of hanging forever.
+test("a transport that never settles still lands the timeout", { timeout: 5000 }, async () => {
+  const client = new api.ApiClient({
+    baseUrl: "https://hh-core.example",
+    fetch: () => new Promise(() => {}),
+  });
+  const result = await api.tenantAuth.tenantGetMe(client, { timeoutMs: 50 });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /the request timed out after 50 ms/);
+});
+
+test("a transport that never settles still lands the caller's abort", { timeout: 5000 }, async () => {
+  const controller = new AbortController();
+  const client = new api.ApiClient({
+    baseUrl: "https://hh-core.example",
+    fetch: () => new Promise(() => {}),
   });
   const pending = api.tenantAuth.tenantGetMe(client, { signal: controller.signal });
   setTimeout(() => controller.abort(), 30);
