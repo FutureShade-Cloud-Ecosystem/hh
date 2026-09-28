@@ -183,9 +183,10 @@ function parseLockPayload(raw: unknown): LockMirrorPayload | null {
  * platform credential for the signed-in user and writes the engaged state to
  * the mirror; unlock() runs one verification, rate-limited on failure;
  * lock() re-engages; disengage() removes the lock. The open unlock lives in
- * memory only and re-locks itself after an idle window. No method here
- * returns or sends an identity claim: the audit pair is gone until the core
- * can verify an unlock.
+ * memory only and re-locks itself when its open window elapses (absolute
+ * time from the unlock, not idle time). No method here returns or sends an
+ * identity claim: the audit pair is gone until the core can verify an
+ * unlock.
  */
 export class DeviceLock {
   readonly #credentials: CredentialProvider;
@@ -195,7 +196,7 @@ export class DeviceLock {
   readonly #now: () => number;
   readonly #backoffBaseMs: number;
   readonly #backoffCapMs: number;
-  readonly #idleRelockMs: number;
+  readonly #openWindowMs: number;
   #engaged: LockMirrorPayload | null = null;
   #openAtMs: number | null = null;
   #failures = 0;
@@ -208,8 +209,13 @@ export class DeviceLock {
     now?: () => number;
     backoffBaseMs?: number;
     backoffCapMs?: number;
-    /** Configuration, not security: the screen hides again after this much idle time with the unlock open. */
-    idleRelockMs?: number;
+    /**
+     * Configuration, not security: the screen hides again this many
+     * milliseconds after the unlock, ABSOLUTELY. No activity is tracked and
+     * nothing extends the window; it is an open window measured from the
+     * unlock, not an idle timeout.
+     */
+    openWindowMs?: number;
   }) {
     this.#credentials = options.credentials;
     this.#sessions = options.sessions;
@@ -217,7 +223,7 @@ export class DeviceLock {
     this.#now = options.now ?? Date.now;
     this.#backoffBaseMs = options.backoffBaseMs ?? 1_000;
     this.#backoffCapMs = options.backoffCapMs ?? 60_000;
-    this.#idleRelockMs = options.idleRelockMs ?? 300_000;
+    this.#openWindowMs = options.openWindowMs ?? 300_000;
     const restored = parseLockPayload(this.#mirror.read());
     if (restored !== null) {
       // The engaged lock survives a reload; the open unlock does not.
@@ -229,7 +235,7 @@ export class DeviceLock {
 
   get state(): LockState {
     if (this.#engaged === null) return "absent";
-    this.#relockIfIdle();
+    this.#relockAfterWindow();
     return this.#openAtMs === null ? "locked" : "open";
   }
 
@@ -238,9 +244,10 @@ export class DeviceLock {
     return this.#mirror.degraded;
   }
 
-  #relockIfIdle(): void {
+  /** Close the open unlock once its open window has elapsed (absolute from the unlock; no activity extends it). */
+  #relockAfterWindow(): void {
     if (this.#openAtMs === null) return;
-    if (this.#now() - this.#openAtMs >= this.#idleRelockMs) this.#openAtMs = null;
+    if (this.#now() - this.#openAtMs >= this.#openWindowMs) this.#openAtMs = null;
   }
 
   /**
@@ -291,7 +298,7 @@ export class DeviceLock {
     if (this.#engaged === null) {
       return err("no device lock is engaged on this device");
     }
-    this.#relockIfIdle();
+    this.#relockAfterWindow();
     if (this.#openAtMs !== null) {
       return ok(undefined); // idempotent while open
     }

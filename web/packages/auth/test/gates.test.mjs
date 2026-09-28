@@ -161,7 +161,7 @@ test("the runtime code paths write no token, no PIN, no password, no handle into
     assert.equal(signedIn.ok, true, `the fixture sign-in must succeed for the capture to be real: ${signedIn.ok ? "" : signedIn.error}`);
 
     const credentials = new FakeCredentialProvider();
-    const lock = new DeviceLock({ credentials, sessions, now, idleRelockMs: 3_600_000 }); // the mirror resolves to the global fake
+    const lock = new DeviceLock({ credentials, sessions, now, openWindowMs: 3_600_000 }); // the mirror resolves to the global fake
     assert.equal((await lock.engage()).ok, true);
     credentials.present(FAKE_PIN);
     assert.equal((await lock.unlock()).ok, true);

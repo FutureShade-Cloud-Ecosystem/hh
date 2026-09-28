@@ -87,12 +87,14 @@ own lock was present; it does not prove which HH person that was.
   clears it and re-locks: it is a courtesy against fat fingers, not a
   control, and the platform authenticator's own lockout is the real
   limiter.
-- An open unlock relocks itself after an idle window (`idleRelockMs`, a
-  configuration value with the default 300000): reading `state` after the
-  window finds it locked again. The engaged lock survives a reload through
-  the same throw-safe mirror discipline as the session; an open unlock does
-  not survive a reload. `lock()` re-engages; `disengage()` removes the lock
-  from memory and mirror.
+- An open unlock relocks itself when its open window (`openWindowMs`, a
+  configuration value with the default 300000) elapses: an ABSOLUTE window
+  measured from the unlock, not an idle timeout. No activity is tracked and
+  nothing extends it; reading `state` after the window finds it locked
+  again. The engaged lock survives a reload through the same throw-safe
+  mirror discipline as the session; an open unlock does not survive a
+  reload. `lock()` re-engages; `disengage()` removes the lock from memory
+  and mirror.
 - **No audit pair.** The `X-Unlocked-By` and `X-Unlocked-At` headers are
   removed until the core can verify an unlock. Nothing in `core/` reads
   that pair, the authz middleware checks only Authorization and X-Org, and
@@ -208,7 +210,7 @@ The gates, as tests:
 - `test/unlock.test.mjs`: the unlock flow with the fake credential
   provider, engage bound to the signed-in user's id, the wrong-PIN path,
   the cancelled-prompt path, the exponential rate limiter (growth, cap,
-  reset), the idle relock against the injected clock, the mirror discipline
+  reset), the open-window relock against the injected clock, the mirror discipline
   across a reload, no audit pair anywhere, and the platform adapter's
   user-verification options asserted against a stubbed
   `navigator.credentials`.

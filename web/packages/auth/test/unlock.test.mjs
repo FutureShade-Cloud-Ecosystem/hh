@@ -1,8 +1,9 @@
 // The device unlock flow with the fake credential provider (the acceptance
 // line names it): engage bound to the signed-in user, unlock, the wrong-PIN
-// path, the local exponential rate limiter, the idle relock, the mirror
-// discipline across a reload, and the platform adapter's user-verification
-// options. The lock is a screen courtesy: no audit pair exists anywhere.
+// path, the local exponential rate limiter, the open-window relock, the
+// mirror discipline across a reload, and the platform adapter's
+// user-verification options. The lock is a screen courtesy: no audit pair
+// exists anywhere.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -35,7 +36,7 @@ function clock(startMs = START_MS) {
   };
 }
 
-async function rig({ idleRelockMs, withSession = true } = {}) {
+async function rig({ openWindowMs, withSession = true } = {}) {
   const recorded = new RecordedStorage();
   const time = clock();
   const sessions = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: time.now });
@@ -48,7 +49,7 @@ async function rig({ idleRelockMs, withSession = true } = {}) {
     sessions,
     mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded),
     now: time.now,
-    idleRelockMs,
+    openWindowMs,
   });
   return { recorded, credentials, lock, sessions, time };
 }
@@ -113,7 +114,7 @@ test("unlock opens with the fake credential provider and is idempotent while ope
 });
 
 test("a wrong PIN is refused and feeds the exponential backoff, capped, reset by success", async () => {
-  const { credentials, lock, time } = await rig({ idleRelockMs: 3_600_000 });
+  const { credentials, lock, time } = await rig({ openWindowMs: 3_600_000 });
   await lock.engage();
 
   credentials.present(WRONG_PIN);
@@ -153,7 +154,7 @@ test("a wrong PIN is refused and feeds the exponential backoff, capped, reset by
 });
 
 test("a cancelled prompt counts as a failed attempt", async () => {
-  const { credentials, lock } = await rig({ idleRelockMs: 3_600_000 });
+  const { credentials, lock } = await rig({ openWindowMs: 3_600_000 });
   await lock.engage();
   credentials.present(null);
   const cancelled = await lock.unlock();
@@ -194,18 +195,21 @@ test("a second engage without disengage is refused", async () => {
   assert.match(second.error, /already engaged/);
 });
 
-test("an open unlock relocks after the idle window, tested with the injected clock", async () => {
-  const { credentials, lock, time } = await rig({ idleRelockMs: 5_000 });
+test("an open unlock relocks after its open window, tested with the injected clock", async () => {
+  const { credentials, lock, time } = await rig({ openWindowMs: 5_000 });
   await lock.engage();
   credentials.present(FAKE_PIN);
   assert.equal((await lock.unlock()).ok, true);
   assert.equal(lock.state, "open");
 
-  time.advance(4_999);
-  assert.equal(lock.state, "open", "inside the idle window the unlock stays open");
+  time.advance(2_500);
+  assert.equal(lock.state, "open", "inside the open window the unlock stays open");
+
+  time.advance(2_499);
+  assert.equal(lock.state, "open", "reads do not extend the window: it is absolute from the unlock");
 
   time.advance(1);
-  assert.equal(lock.state, "locked", "after the idle window the courtesy relocks itself");
+  assert.equal(lock.state, "locked", "after the open window elapses the courtesy relocks itself");
 
   credentials.present(FAKE_PIN);
   assert.equal((await lock.unlock()).ok, true, "a relocked lock unlocks again with user verification");
@@ -222,7 +226,7 @@ test("the engaged lock survives a reload through the mirror; the open unlock doe
     sessions,
     mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded),
     now: time.now,
-    idleRelockMs: 3_600_000,
+    openWindowMs: 3_600_000,
   });
   await before.engage();
   credentials.present(FAKE_PIN);
@@ -234,7 +238,7 @@ test("the engaged lock survives a reload through the mirror; the open unlock doe
     sessions,
     mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded),
     now: time.now,
-    idleRelockMs: 3_600_000,
+    openWindowMs: 3_600_000,
   });
   assert.equal(after.state, "locked", "a reload restores the engaged lock");
   assert.deepEqual(after.auditHeaders, undefined, "a re-locked device carries no audit method");
