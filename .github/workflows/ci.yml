@@ -161,6 +161,9 @@ jobs:
             echo "google-chrome is missing from the runner image: the design system's browser leg requires it (that leg fails rather than skip in CI)" >&2
             exit 1
           fi
+          # The evidence of the browser leg should name the browser that ran
+          # it: print the version before the suite starts.
+          google-chrome --version
           # web/node_modules exists already: the install step above the bun
           # drift gate made it. This loop stays the one typecheck and test
           # pass over every web package.
