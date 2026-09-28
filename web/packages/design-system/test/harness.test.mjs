@@ -19,23 +19,37 @@ import { HARNESS_STATES, HARNESS_TITLE, KITS, WIDTHS, buildHarnessPage, harnessS
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgDir = join(here, '..');
 
+// The committed harness variants: four files, one per theme and brand. Each is
+// locked byte for byte to the same builder, so the double-click pages cannot
+// drift from what the kits render.
+const VARIANTS = [
+  ['index.html', { theme: 'dark', brand: 'base' }],
+  ['index-light.html', { theme: 'light', brand: 'base' }],
+  ['index-hh-pro.html', { theme: 'dark', brand: 'hh-pro' }],
+  ['index-light-hh-pro.html', { theme: 'light', brand: 'hh-pro' }],
+];
+
 test('the committed static harness is a fresh build of the page and its sheets, byte for byte', () => {
   // The static files are the deliverable the design sync opens; a stale one
-  // shows kits the sources no longer render. The lock is exact equality with
-  // the default build (dark, base brand), page and per-kit sheets both, so
+  // shows kits the sources no longer render. The lock is exact equality with a
+  // fresh build for each committed variant, page and per-kit sheets both, so
   // neither can drift. A sheet left behind for a kit that no longer exists
   // fails the same lock: the directory must be exactly what the build writes.
+  for (const [file, opts] of VARIANTS) {
+    const committed = readFileSync(join(pkgDir, 'harness', file), 'utf8');
+    assert.equal(
+      committed,
+      buildHarnessPage(opts),
+      `harness/${file} is stale: run npm run build:harness and commit the result`,
+    );
+    assert.ok(!/<script/i.test(committed), `harness/${file} must stay script-free`);
+  }
   const committed = readFileSync(join(pkgDir, 'harness', 'index.html'), 'utf8');
-  assert.equal(
-    committed,
-    buildHarnessPage({ theme: 'dark', brand: 'base' }),
-    'harness/index.html is stale: run npm run build:harness and commit the result',
-  );
-  assert.ok(!/<script/i.test(committed), 'the static harness must stay script-free');
 
   // Each cell paints inside its own declarative shadow root, so every kit is
   // under its own styles: one open shadow root per cell, each linking the
-  // kit's sheet.
+  // kit's sheet. Asserted on the default page; the other three are locked to
+  // the same builder above.
   const cells = committed.match(/data-cell="[^"]+"/g)?.length ?? 0;
   const roots = committed.match(/<template shadowrootmode="open">/g)?.length ?? 0;
   assert.ok(cells > 0, 'the page carries no cells');
@@ -59,7 +73,9 @@ test('the committed static harness is a fresh build of the page and its sheets, 
       `${tag}: only ${links} cells link the kit sheet; expected one per cell of the kit`,
     );
   }
-  assert.ok(statSync(join(pkgDir, 'harness', 'index.html')).isFile(), 'the committed page must stay a file');
+  for (const [file] of VARIANTS) {
+    assert.ok(statSync(join(pkgDir, 'harness', file)).isFile(), `the committed page ${file} must stay a file`);
+  }
 });
 
 test('the harness page carries every kit in every state at both walkthrough widths', () => {

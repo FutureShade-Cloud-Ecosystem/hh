@@ -2,9 +2,10 @@
 // designed states), at the two walkthrough widths, 1440 and 1920. The page is a
 // STRING, built by Node from the same render functions the custom elements
 // paint, so what the design sync opens is what the kits render, with no build
-// toolchain between them. The committed harness/index.html is one build of this
-// function (harness/build.mjs writes it), so the page opens from the file
-// itself; serve.mjs serves the theme and brand variants from the same source.
+// toolchain between them. The committed harness pages are four builds of this
+// function (harness/build.mjs writes them: dark and light, base and hh-pro),
+// so every variant opens from a file; serve.mjs serves the same variants from
+// the same source.
 //
 // Each cell renders into its own DECLARATIVE SHADOW ROOT
 // (<template shadowrootmode="open">): the page still has no script, and each
@@ -172,9 +173,14 @@ ${tokens}
 designed states (empty, loading, offline, conflict, error), at the two walkthrough widths.
 Rendered by Node from the kit render functions themselves, each cell into its own declarative
 shadow root, so every kit is painted under its own stylesheet. The committed
-<code>harness/index.html</code> is exactly this page (dark, base brand) and opens from the file
-itself, with the per-kit sheets the build writes under <code>harness/sheets/</code> beside it;
-<code>node --import ./src/_ts-js-loader.mjs harness/serve.mjs</code> serves the variants:
+pages are exactly this page in its four builds: <code>index.html</code> (dark,
+base brand, the double-click default) beside <code>index-light.html</code>,
+<code>index-hh-pro.html</code> and <code>index-light-hh-pro.html</code>, each
+opening from the file itself, with the per-kit sheets the build writes under
+<code>harness/sheets/</code> travelling with them (a page without that folder
+renders unstyled);
+<code>node --import ./src/_ts-js-loader.mjs harness/serve.mjs</code> serves the
+same variants live:
 add <code>?theme=light</code> for the light half and <code>?brand=hh-pro</code> for the standalone
 shell's brand override. Each width frame is its walkthrough width capped to the window, so the
 page never scrolls sideways; in a window narrower than a walkthrough width the capped frames

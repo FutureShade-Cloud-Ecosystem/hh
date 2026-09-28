@@ -1,0 +1,2457 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>@hh/design-system harness</title>
+<style>
+/* @hh/design-system tokens: ONE base vocabulary for internal apps, plus two
+   brand layers over it: the hh-pro override for the standalone shell, and the
+   contractor --cbrand-* layer that only the public proposal surface applies.
+   This sheet merges the two source vocabularies role for role:
+
+     - the ERP sheet (hardscapeos_dibbits app/src/styles/tokens.css), whose
+       --hos-* names are role names, is the structural parent: dark default in
+       :root, light opt-in via [data-theme="light"], every theme-capable role
+       carried in BOTH halves, and a measured pair behind every ruling;
+     - HH Pro's sheet (hh_pro_dibbits src/ui/styles/theme.css) contributes the
+       three-layer shape (platform, dealer --brand-*, contractor --cbrand-*)
+       and the exact role split of its dealer layer: identity (--brand, the
+       dealer AS TEXT), action (--brand-fill, a pressable control), chrome
+       (--brand-chrome*, the frame).
+
+   THE PREFIX IS --hh-*. The ERP's --hos-* names were NOT carried over verbatim,
+   and that is a decision, not an oversight. The ERP kept its names through its
+   rebrand because ~90 components already consumed them; this sheet has zero
+   consumers, so it starts on role names that belong to the house package
+   instead of to one source app. Every name below is a ROLE name, and the merge
+   decision for each role is recorded beside it: where the value came from, and
+   why. Where this sheet quotes a measured ratio, the number is the ERP sheet's
+   own measurement of the same two values, not a fresh claim.
+
+   THE GOLD RULE (carried unchanged). The brand gold #FFC313 is a SURFACE, never
+   an ink. Every gold fill carries the near-black --hh-accent-ink #0B1725 in
+   BOTH themes, never white: white on gold measures 1.61:1. On light surfaces
+   the gold ROLE as ink is carried by dark-gold #8A6500 (--hh-accent-text),
+   which is what the brand's own site does; it is also the focus ring, which is
+   why a keyboard ring is visible in Light Mode (a gold ring there is 1.50:1 and
+   fails WCAG 1.4.11).
+
+   THE MEASURED BARS (carried unchanged). 4.5:1 (WCAG AA) for anything read as
+   text; 3.0:1 (WCAG 1.4.11, non-text) for a boundary judged as a shape: a focus
+   ring, a solid fill against the surface it sits on. The gates in test/ hold
+   every pair the kits paint to the bar of its class, over the base vocabulary
+   AND each brand override AND each kit state; a pair under its bar fails the
+   suite naming the pair and its ratio.
+
+   PARSING WARNING, learned twice in the source repos. These gates and any
+   future reader of this file parse the token blocks by regex, and this header
+   CONSTANTLY names tokens next to colons. Every parser here strips comments
+   BEFORE it reads declarations, for exactly that reason: a name followed by a
+   colon in prose reads as a declaration whose value swallows the real ones
+   after it. Keep comments inside slash-star pairs and never let a parser see
+   prose as code.
+
+   Two carried conduct rules the kits are built on (from HH Pro's CLAUDE.md):
+   colour never encodes state alone (each state pairs its colour with an icon,
+   a label, or a pattern change), and disabled controls change COLOUR, not
+   opacity (a token swap, never a fade). */
+
+:root {
+  /* ── canvases and surfaces ─────────────────────────────────────────────────
+     Carried from the ERP dark theme, role for role: the page, the card one step
+     off it, and the solid line between them. The ERP paints its line SOLID (an
+     alpha flattened over the navy canvas) because tints that resolve over a
+     translucent line collapse to a wash; the same reasoning holds here. */
+  --hh-page: #071827;
+  --hh-card: #0B2338;
+  --hh-line: #253441;
+
+  /* ── control boundary ──────────────────────────────────────────────────────
+     The outline a NON-FILLED control is seen by: WCAG 1.4.11 judges a control's
+     boundary as a shape at 3:1, and --hh-line above is a hairline (1.41:1 on
+     the dark page), not a boundary. --hh-control-line is declared in BOTH
+     halves to clear 3:1 against the page AND the card (dark: 3.50 and 3.12;
+     light: 4.31 and 4.62); the secondary button's border takes it. */
+  --hh-control-line: #5A7086;
+
+  /* ── inks ──────────────────────────────────────────────────────────────────
+     Text, and the dimmed ink under it. The light half of --hh-text-dim is the
+     ERP's DIB-409 finding: the most-used dimmed text was under AA on its own
+     page, so the value is checked, not eyeballed. */
+  --hh-text: #FFFFFF;
+  --hh-text-dim: #AEBDCA;
+
+  /* ── the brand gold family (theme-INVARIANT, on purpose) ────────────────────
+     The fill does not flip between themes, so neither does its ink: that is the
+     whole gold rule, and it is why these three are declared once and re-valued
+     by no theme block. Gold AS INK is the one accent role that IS per-theme;
+     see the light half. */
+  --hh-accent: #FFC313;        /* a FILL, never an ink */
+  --hh-accent-hover: #FFD45B;  /* the gold hover fill */
+  --hh-accent-ink: #0B1725;    /* the ONLY ink a gold fill carries: 11.23:1 on the gold, 12.74:1 on the hover */
+  /* Gold as INK, dark half: on the dark page the gold itself reads (11.18:1). */
+  --hh-accent-text: #FFC313;
+
+  /* The focus ring is gold-as-INK (per theme), not the gold fill: the same rule
+     the ERP sheet states for its ring. Declared in both halves. */
+  --hh-focus-ring: var(--hh-accent-text);
+
+  /* ── status inks ───────────────────────────────────────────────────────────
+     Danger, info and success AS TEXT, per theme. Each is tuned to be READ on
+     the theme's own page, and the values are the ERP's: #FF8F9F is 8.28:1 on
+     the dark page, #AB1C31 is 6.65:1 on the light one. */
+  --hh-danger: #FF8F9F;
+  --hh-info: #86BDF6;
+  --hh-success: #58D69B;
+
+  /* ── the solid danger fill, per theme (the D-077 ruling, carried) ───────────
+     A red tuned to be read AS TEXT wants the opposite of what a SOLID red fill
+     under white ink wants, and no single red can be both. So the FILL is
+     per-theme, tuned for one white ink in both halves: white is 4.55:1 on the
+     dark fill and 5.95:1 on the light one. The fill also clears the 3:1
+     non-text bar against the page and the card in both halves. Use
+     --hh-danger for everything red that is text, border or tint, and
+     --hh-danger-fill ONLY for a solid red fill carrying white. */
+  --hh-danger-fill: #D73A51;
+  --hh-danger-fill-ink: #FFFFFF; /* theme-invariant: the fill flips so the ink need not (the D-077 shape) */
+
+  /* ── the solid success fill, per theme (the DIB-468 pattern, carried) ───────
+     Same ruling on green: --hh-success above is text ink; a solid green badge
+     under the near-black accent ink is a second role and gets a second token.
+     The accent ink is 9.89:1 on the dark fill and 5.35:1 on the light one, and
+     both fills clear 3:1 against the page and the card. Use --hh-success for
+     green text and borders, --hh-success-fill for solid fills. */
+  --hh-success-fill: #58D69B;
+
+  /* ── state colours, and they never travel alone ─────────────────────────────
+     good / watch / stop are meaning colours for marks: an icon, a dot, a pill
+     fill. Every use ships with an icon or a word; that rule is tested in
+     test/kits.test.mjs. The LIGHT values are this sheet's one deliberate
+     deviation from the ERP values: #2E8B57 and #C77A15 measure 3.96:1 and
+     3.14:1 as text on the light surfaces, under the 4.5 bar, so they are
+     darkened to #1F7A48 and #9A5F0C (4.76:1 and 4.67:1 on the worst light
+     surface), the ERP's own treatment for a value that misses AA by a little:
+     the value is adjusted minimally rather than the bar softened. */
+  --hh-state-good: #5CC48A;
+  --hh-state-watch: #F0A93A;
+  --hh-state-stop: #F07C6C;
+
+  /* ── disabled is a colour, not a fade ───────────────────────────────────────
+     The carried rule from HH Pro: a filled control at reduced opacity still
+     reads as clickable in daylight. Disabled controls DROP their fill and go
+     grey. This family is the token swap the rule is implemented with, and the
+     kit gate fails if any shipped source reaches for opacity or a filter
+     instead of it. Both pairs clear AA (4.77:1 dark, 5.22:1 light) even though
+     WCAG exempts disabled controls: an honest grey is free. */
+  --hh-disabled-fill: #1B2735;
+  --hh-disabled-ink: #7E93A8;
+  --hh-disabled-line: #2A3949;
+
+  /* ── the dashboard kit's own layer ──────────────────────────────────────────
+     A widget sits ONE step off the page, on its own ground; it is deliberately
+     not the card pair above. Dark steps the SURFACE and takes no shadow; light
+     keeps one surface and lifts with the shadow. */
+  --hh-ground: #0D1420;
+  --hh-widget: #152033;
+  --hh-widget-raised: #1A2740;
+  --hh-hairline: rgba(255,255,255,.07);
+  --hh-track: rgba(255,255,255,.08);
+  --hh-widget-shadow: none;
+
+  --hh-scrim: rgba(2, 7, 12, 0.72);
+
+  /* ── the row stripe ─────────────────────────────────────────────────────────
+     Carried for the list kits: alternating rows, stated as "the row's own
+     ground" and "the row's own ground plus a whisper of the ink", so the pair
+     works on any surface a list is put on. 6% over the dark page, 5% over the
+     light one (near-black at 6% over white is a heavier stripe than white at
+     6% over navy, and light's dimmed ink keeps AA only at 5). A tint is not a
+     measured pair: it resolves over whatever the row sits on, and the inks on
+     it are held to AA by the matrix over the underlying surfaces. */
+  --hh-row: transparent;
+  --hh-row-alt: color-mix(in srgb, var(--hh-text) 6%, transparent);
+
+  --hh-color-scheme: dark;
+
+  /* ── type ───────────────────────────────────────────────────────────────────
+     The ERP's stacks, kept. No webfont ships in this package and none is
+     fetched: the first name is the face a later fonts lane may self-host, and
+     the stack degrades to system faces that are always present. */
+  --hh-font-ui: 'Outfit', 'Segoe UI', system-ui, sans-serif;
+  --hh-font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+
+  /* ── the spacing grid: value-named, and it is Pencil's ───────────────────────
+     The ERP adopted a continuous 4px grid named BY VALUE (--s-4 is 4px) beside
+     its old index scale (--hos-space-4 is 16px), and the index names are
+     legacy. A new sheet starts on the value-named grid only; the index scale is
+     a migration, not a vocabulary, and it is not carried. */
+  --hh-s-2: 2px;  /* the optical nudge, the only half-step */
+  --hh-s-4: 4px;
+  --hh-s-8: 8px;
+  --hh-s-12: 12px;
+  --hh-s-16: 16px;
+  --hh-s-20: 20px;
+  --hh-s-24: 24px;
+  --hh-s-28: 28px;
+  --hh-s-32: 32px;
+  --hh-s-40: 40px;
+  --hh-s-48: 48px;
+  --hh-s-64: 64px;
+
+  /* ── radius, by role ──────────────────────────────────────────────────────── */
+  --hh-radius-control: 10px;
+  --hh-radius-card: 16px;
+  --hh-radius-pill: 999px;
+  --hh-radius-widget: 16px;
+
+  /* ── elevation: exactly two levels, resting and raised ───────────────────────
+     Dark lifts with the SURFACE step and takes no resting shadow; light lifts
+     with the shadow (the ERP's two-layer light shadow: a 1px contact shadow and
+     a wide negative-spread ambient). */
+  --hh-elev-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --hh-elev-2: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --hh-elev-3: 0 32px 90px rgba(0, 0, 0, 0.34);
+
+  /* ── z-index, one ordered scale ───────────────────────────────────────────── */
+  --hh-z-nav: 100;
+  --hh-z-dropdown: 200;
+  --hh-z-overlay: 900;
+  --hh-z-modal: 1000;
+  --hh-z-toast: 1100;
+
+  /* ── breakpoints, documentation for JS/matchMedia; CSS mirrors the px ───────── */
+  --hh-bp-sm: 480px;
+  --hh-bp-md: 768px;
+  --hh-bp-lg: 1024px;
+
+  /* ── the page layout contract ────────────────────────────────────────────────
+     Two gutters, because the block and inline halves are different numbers and
+     a shorthand cannot be reached into by calc(). The measure caps TEXT that
+     has no measure of its own; the reading cap is the pane's. The form column
+     is guarded by min() so a narrow container never scrolls sideways. */
+  --hh-page-gutter: 28px;
+  --hh-page-gutter-block: 24px;
+  --hh-measure: 62ch;
+  --hh-reading-max: 1000px;
+  --hh-content-max: 1040px;
+  --hh-form-col: 320px;
+  --hh-pane-columns: repeat(auto-fit, minmax(min(var(--hh-form-col), 100%), 1fr));
+
+  /* ── safe-area insets ─────────────────────────────────────────────────────── */
+  --hh-safe-top: env(safe-area-inset-top, 0px);
+  --hh-safe-right: env(safe-area-inset-right, 0px);
+  --hh-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --hh-safe-left: env(safe-area-inset-left, 0px);
+
+  /* ── the dealer brand layer (HH Pro's roles, defaulting to the house gold) ────
+     HH Pro's split is carried verbatim as ROLES: identity is the dealer AS TEXT
+     on a card; action is a filled pressable control; chrome is the frame around
+     the content. A consumer that uses only --brand roles with no brand attribute
+     gets the house gold: identity resolves to gold-as-ink (per theme), the fill
+     to the gold fill, the fill's ink to the accent ink. THE GOLD RULE DRAWS A
+     LINE HERE: --brand-on (the ink on the IDENTITY colour) flips with the
+     identity, but --brand-fill-on is pinned to the invariant accent ink in both
+     halves, because the gold FILL never flips and its ink must never read white
+     (1.61:1). --brand-hover has no separate base value: the base brand keeps one
+     identity ink, so hover inherits it. */
+  --brand: var(--hh-accent-text);
+  --brand-hover: var(--hh-accent-text);
+  --brand-on: var(--hh-accent-ink);
+  --brand-fill: var(--hh-accent);
+  --brand-fill-hover: var(--hh-accent-hover);
+  --brand-fill-on: var(--hh-accent-ink);
+  --brand-tint: color-mix(in oklch, var(--brand), black 78%);
+  --brand-chrome: var(--hh-page);
+  --brand-chrome-2: var(--hh-card);
+  --brand-chrome-line: var(--hh-line);
+  --brand-chrome-on: var(--hh-text);
+  --brand-chrome-muted: var(--hh-text-dim);
+  --brand-chrome-accent: var(--brand);
+
+  /* ── the contractor brand layer (the public proposal surface ONLY) ────────────
+     The homeowner's client is the contractor, so on the public proposal the
+     contractor's accent beats the dealer's brand. The layer is TWO tokens,
+     exactly as HH Pro expresses it; the proposal surface sets them at runtime
+     from the quote's accent colour, with the on-ink CHOSEN for that accent and
+     never assumed white. Nothing outside the proposal surface may set or
+     consume them (asserted in test/tokens.test.mjs), and a runtime value must
+     clear the same 4.5:1 bar the static palette is held to. The defaults defer
+     to the dealer layer so the tokens always resolve. */
+  --cbrand: var(--brand);
+  --cbrand-on: var(--brand-on);
+}
+
+/* ══ LIGHT, the second half ═══════════════════════════════════════════════════════
+   Same token NAMES, light values, following the ERP sheet's structure: the light
+   theme was EXTRACTED, not inverted (roughly half the brand site is already a
+   worked light theme, and an algorithmic inversion of the navy would have produced
+   a worse one). Every theme-capable role is DECLARED here, not inherited: both
+   halves of a per-theme pair are a design decision each, and the light one must
+   not silently follow a future edit to the dark one. The gold FILL family, the
+   fonts, the spacing grid, the radii, the z scale and the layout contract are
+   theme-invariant ON PURPOSE and are re-valued by no block. */
+:root[data-theme="light"] {
+  --hh-page: #F5F7FA;
+  --hh-card: #FFFFFF;
+  --hh-line: #DBE3EA;
+  --hh-control-line: #6B7683;
+  --hh-text: #0B1725;
+  --hh-text-dim: #5C6B7A;
+  --hh-row: transparent;
+  --hh-row-alt: color-mix(in srgb, var(--hh-text) 5%, transparent);
+
+  /* Gold as INK flips; the fill does not. #FFC313 as text is 1.50:1 on the light
+     page; dark-gold #8A6500 is 4.96:1 there, and it carries the focus ring. */
+  --hh-accent-text: #8A6500;
+  --hh-focus-ring: var(--hh-accent-text);
+
+  --hh-danger: #AB1C31;
+  --hh-danger-fill: #C0223A;
+  --hh-danger-fill-ink: #FFFFFF;
+  --hh-info: #14497B;
+  --hh-success: #0F6C43;
+  --hh-success-fill: #319E69;
+  --hh-state-good: #1F7A48;
+  --hh-state-watch: #9A5F0C;
+  --hh-state-stop: #C0392B;
+
+  --hh-disabled-fill: #E3E9EF;
+  --hh-disabled-ink: #51616F;
+  --hh-disabled-line: #CBD5DF;
+
+  /* The widget layer's light half: a warm grey ground under a pure white card,
+     because a cool ground under a white card reads as two whites. The lift is
+     the shadow, not a second surface. */
+  --hh-ground: #F3F2EE;
+  --hh-widget: #FFFFFF;
+  --hh-widget-raised: #FFFFFF;
+  --hh-hairline: rgba(0,0,0,.06);
+  --hh-track: rgba(0,0,0,.06);
+  --hh-widget-shadow: 0 1px 2px rgba(0,0,0,.05), 0 14px 34px -16px rgba(0,0,0,.26);
+
+  --hh-scrim: rgba(7, 24, 39, 0.42);
+
+  /* Light elevation: navy shadows, not black ones. A black shadow on a #F5F7FA
+     page reads as a smudge rather than a lift. */
+  --hh-elev-1: 0 1px 2px rgba(7, 24, 39, 0.06);
+  --hh-elev-2: 0 12px 30px rgba(7, 24, 39, 0.06);
+  --hh-elev-3: 0 24px 60px rgba(7, 24, 39, 0.16);
+
+  --hh-color-scheme: light;
+
+  /* The base brand's on-ink flips because the IDENTITY flips: in light the brand
+     identity is dark-gold #8A6500, and the ink that sits ON it is white (5.33:1).
+     The FILL's ink does NOT follow: --brand-fill-on stays the invariant accent
+     ink, declared in :root and re-valued by no block. */
+  --brand-on: #FFFFFF;
+  /* HH Pro's tint formula, light half: mixing toward white on a light ground. */
+  --brand-tint: color-mix(in oklch, var(--brand), white 90%);
+}
+
+/* ══ the hh-pro brand override: the standalone shell ══════════════════════════════
+   HH Pro's dealer layer, carried VERBATIM in oklch so this sheet says what that
+   product's sheet says (the values below are HH Pro's own, unconverted). The
+   identity roles are re-valued here, and the ACTION roles follow the identity
+   through HH Pro's own defaults (--brand-fill: var(--brand)), declared in BOTH
+   blocks because each half is its own decision: in this shell the pressable
+   control is the dealer blue, not the house gold. The identity flips per theme,
+   so --brand-on is declared in both blocks: white ink on the deep blue in
+   light, the dark surface ink on the light blue in dark. Measured against this
+   package's canvases: the light identity is 5.16:1 on the light page and its
+   white on-ink clears AA on the identity fill; the dark identity is 6.60:1 on
+   the dark page and its on-ink 7.03:1 on the fill. */
+:root[data-brand="hh-pro"] {
+  --brand: oklch(70% 0.17 255);
+  --brand-hover: oklch(76% 0.17 255);
+  --brand-on: oklch(17% 0.012 265);
+  --brand-fill: var(--brand);
+  --brand-fill-hover: var(--brand-hover);
+  --brand-fill-on: var(--brand-on);
+}
+
+:root[data-brand="hh-pro"][data-theme="light"] {
+  --brand: oklch(52% 0.19 255);
+  --brand-hover: oklch(46% 0.19 255);
+  --brand-on: oklch(100% 0 0);
+  --brand-fill: var(--brand);
+  --brand-fill-hover: var(--brand-hover);
+  --brand-fill-on: var(--brand-on);
+}
+
+/* The contractor layer needs no brand block: it is a runtime layer. The public
+   proposal surface sets --cbrand and --cbrand-on on its own root, from the quote.
+   See the :root declaration above for the rules that bind it. */
+
+</style>
+<style>
+  /* The page's own chrome styles itself here, and ONLY here: the kits' sheets
+     are scoped to their shadow roots, so nothing leaks onto the page any more
+     (the kit sheets' box-sizing used to reach these elements by accident). */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--hh-page); color: var(--hh-text); font-family: var(--hh-font-ui); }
+  body { padding: var(--hh-s-24); }
+  h1 { font-size: var(--hh-s-24); }
+  p.lede { color: var(--hh-text-dim); max-width: var(--hh-measure); }
+  .width-frame { border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-16); margin-block-end: var(--hh-s-24); }
+  .width-frame > h2 { margin: 0 0 var(--hh-s-12); font-size: var(--hh-s-16); color: var(--hh-text-dim); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); gap: var(--hh-s-16); align-items: start; }
+  figure.cell { margin: 0; display: grid; gap: var(--hh-s-8); min-width: 0; align-content: start; }
+  figure.cell figcaption { color: var(--hh-text-dim); font-size: var(--hh-s-12); overflow-wrap: anywhere; }
+  .cell-body { min-width: 0; }
+  section.proposal { border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-16); display: grid; gap: var(--hh-s-8); }
+  section.proposal h2 { margin: 0; font-size: var(--hh-s-16); }
+  section.proposal p { margin: 0; color: var(--hh-text-dim); max-width: var(--hh-measure); }
+  .proposal-accent { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--hh-s-12); padding: var(--hh-s-16); border-radius: var(--hh-radius-control); background: var(--cbrand); color: var(--cbrand-on); }
+  .proposal-name { font-weight: 600; }
+  .proposal-btn { border: 1px solid var(--cbrand-on); background: transparent; color: var(--cbrand-on); border-radius: var(--hh-radius-control); padding: var(--hh-s-8) var(--hh-s-16); min-height: 44px; }
+  .proposal-btn:focus-visible { outline: 2px solid var(--cbrand-on); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<h1>@hh/design-system harness</h1>
+<p class="lede">Static page, no build and no scripts: every kit in its ready state and its five
+designed states (empty, loading, offline, conflict, error), at the two walkthrough widths.
+Rendered by Node from the kit render functions themselves, each cell into its own declarative
+shadow root, so every kit is painted under its own stylesheet. The committed
+pages are exactly this page in its four builds: <code>index.html</code> (dark,
+base brand, the double-click default) beside <code>index-light.html</code>,
+<code>index-hh-pro.html</code> and <code>index-light-hh-pro.html</code>, each
+opening from the file itself, with the per-kit sheets the build writes under
+<code>harness/sheets/</code> travelling with them (a page without that folder
+renders unstyled);
+<code>node --import ./src/_ts-js-loader.mjs harness/serve.mjs</code> serves the
+same variants live:
+add <code>?theme=light</code> for the light half and <code>?brand=hh-pro</code> for the standalone
+shell's brand override. Each width frame is its walkthrough width capped to the window, so the
+page never scrolls sideways; in a window narrower than a walkthrough width the capped frames
+show at the window width and look the same, which is what their labels say.</p>
+<section class="proposal" style="--cbrand:#0F6C43; --cbrand-on:#ffffff" data-cbrand-example="true" aria-label="The public proposal surface, on the contractor layer"><h2>The public proposal surface (the contractor layer)</h2><p>The proposal sets the contractor accent on its own root, from the quote; the dealer brand does not reach this surface.</p><div class="proposal-accent"><span class="proposal-name">Alder Court hardscape proposal</span><button type="button" class="proposal-btn">Open the proposal</button></div></section>
+<section class="width-frame" data-width="1440" style="width:min(1440px, 100%)">
+<h2>walkthrough width 1440px, capped to the window</h2>
+<div class="grid">
+<figure class="cell" data-cell="hh-scan-and-confirm/ready"><figcaption>scan-and-confirm / ready</figcaption><div class="cell-body"><hh-scan-and-confirm state="ready"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><div
+    class="kit-root"
+    data-kit="hh-scan-and-confirm"
+    data-state="ready"
+    data-pattern="ready"
+    role="region"
+    aria-label="Scan and confirm"
+    aria-busy="false"
+  >
+    
+    <div class="scan-frame">
+      <span class="chip chip-neutral"><span class="chip-text">scanned: load ticket 4417</span></span>
+      <ul class="lines"><li class="line"><span class="name">Paver, 60mm, charcoal</span><span class="qty">640 sq ft</span></li><li class="line"><span class="name">Edge restraint, 8 ft steel</span><span class="qty">24 ea</span></li><li class="line"><span class="name">Bedding sand, washed</span><span class="qty">9 tonne</span></li></ul>
+      <div class="summary"><span>3 lines on the ticket</span><span>all priced</span></div>
+    </div>
+    <div class="kit-actions" data-live="true"><button type="button" class="btn btn-primary" data-action="confirm">Confirm load</button><button type="button" class="btn btn-secondary" data-action="rescan">Rescan</button></div>
+  </div></template></hh-scan-and-confirm></div></figure>
+<figure class="cell" data-cell="hh-scan-and-confirm/empty"><figcaption>scan-and-confirm / empty</figcaption><div class="cell-body"><hh-scan-and-confirm state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><div
+    class="kit-root"
+    data-kit="hh-scan-and-confirm"
+    data-state="empty"
+    data-pattern="prompt"
+    role="region"
+    aria-label="Scan and confirm"
+    aria-busy="false"
+  >
+    <div class="state-block state-empty" data-pattern="prompt">
+        <div class="state-indicator" data-state="empty" data-pattern="prompt">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M4 4h16v16H4z"></path><path d="M4 13h5l2 3h2l2-3h5"></path></svg>
+    <span class="state-label">Nothing here yet</span>
+  </div>
+        <p class="state-note">When work arrives it shows up here first.</p>
+      </div>
+    
+    
+  </div></template></hh-scan-and-confirm></div></figure>
+<figure class="cell" data-cell="hh-scan-and-confirm/loading"><figcaption>scan-and-confirm / loading</figcaption><div class="cell-body"><hh-scan-and-confirm state="loading"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><div
+    class="kit-root"
+    data-kit="hh-scan-and-confirm"
+    data-state="loading"
+    data-pattern="progress"
+    role="region"
+    aria-label="Scan and confirm"
+    aria-busy="true"
+  >
+    <div class="state-block state-loading" data-pattern="progress">
+        <div class="state-indicator" data-state="loading" data-pattern="progress">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M12 3a9 9 0 1 0 9 9"></path></svg>
+    <span class="state-label">Loading</span>
+  </div>
+        <span class="spinner-wrap"><span class="spinner" role="presentation" aria-hidden="true"></span></span>
+        <p class="state-note">Reading the latest from the server.</p>
+      </div>
+    
+    
+  </div></template></hh-scan-and-confirm></div></figure>
+<figure class="cell" data-cell="hh-scan-and-confirm/offline"><figcaption>scan-and-confirm / offline</figcaption><div class="cell-body"><hh-scan-and-confirm state="offline"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><div
+    class="kit-root"
+    data-kit="hh-scan-and-confirm"
+    data-state="offline"
+    data-pattern="cached"
+    role="region"
+    aria-label="Scan and confirm"
+    aria-busy="false"
+  >
+    <div class="banner banner-offline" role="status" data-pattern="cached">
+        <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M3 3l18 18"></path><path d="M9.5 14.5a4 4 0 0 1 5 0"></path><path d="M6 11a9 9 0 0 1 4-2.3"></path><path d="M18 11a9 9 0 0 0-3.4-2.1"></path><path d="M12 18h.01"></path></svg>
+        <span class="banner-text">Offline, showing the cached copy</span>
+        <span class="chip chip-neutral"><span class="chip-text">cached copy</span></span>
+      </div>
+    <div class="scan-frame">
+      <span class="chip chip-neutral"><span class="chip-text">scanned: load ticket 4417</span></span>
+      <ul class="lines"><li class="line"><span class="name">Paver, 60mm, charcoal</span><span class="qty">640 sq ft</span></li><li class="line"><span class="name">Edge restraint, 8 ft steel</span><span class="qty">24 ea</span></li><li class="line"><span class="name">Bedding sand, washed</span><span class="qty">9 tonne</span></li></ul>
+      <div class="summary"><span>3 lines on the ticket</span><span>all priced</span></div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-primary" disabled data-action="confirm">Confirm load</button><button type="button" class="btn btn-secondary" disabled data-action="rescan">Rescan</button></div>
+  </div></template></hh-scan-and-confirm></div></figure>
+<figure class="cell" data-cell="hh-scan-and-confirm/conflict"><figcaption>scan-and-confirm / conflict</figcaption><div class="cell-body"><hh-scan-and-confirm state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><div
+    class="kit-root"
+    data-kit="hh-scan-and-confirm"
+    data-state="conflict"
+    data-pattern="review"
+    role="region"
+    aria-label="Scan and confirm"
+    aria-busy="false"
+  >
+    <div class="review-card" role="alert" data-pattern="review">
+        <div class="review-head">
+          <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M9 8l-4 4 4 4"></path><path d="M15 8l4 4-4 4"></path><path d="M5 12h14"></path></svg>
+          <span class="review-title">This row changed on the server too</span>
+        </div>
+        <dl class="review-rows">
+          <div class="review-row"><dt>Your edit</dt><dd>Pallet coverage moved to 640 sq ft</dd></div>
+          <div class="review-row"><dt>Server copy</dt><dd>Pallet coverage moved to 620 sq ft</dd></div>
+        </dl>
+        <p class="state-note">Review both versions and pick one. Nothing is resolved silently.</p>
+      </div>
+    <div class="scan-frame">
+      <span class="chip chip-neutral"><span class="chip-text">scanned: load ticket 4417</span></span>
+      <ul class="lines"><li class="line"><span class="name">Paver, 60mm, charcoal</span><span class="qty">640 sq ft</span></li><li class="line"><span class="name">Edge restraint, 8 ft steel</span><span class="qty">24 ea</span></li><li class="line"><span class="name">Bedding sand, washed</span><span class="qty">9 tonne</span></li></ul>
+      <div class="summary"><span>3 lines on the ticket</span><span>all priced</span></div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-primary" data-action="review">Review changes</button><button type="button" class="btn btn-primary" disabled data-action="confirm">Confirm load</button><button type="button" class="btn btn-secondary" disabled data-action="rescan">Rescan</button></div>
+  </div></template></hh-scan-and-confirm></div></figure>
+<figure class="cell" data-cell="hh-scan-and-confirm/error"><figcaption>scan-and-confirm / error</figcaption><div class="cell-body"><hh-scan-and-confirm state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><div
+    class="kit-root"
+    data-kit="hh-scan-and-confirm"
+    data-state="error"
+    data-pattern="fault"
+    role="region"
+    aria-label="Scan and confirm"
+    aria-busy="false"
+  >
+    <div class="state-block state-error" role="alert" data-pattern="fault">
+        <div class="state-indicator" data-state="error" data-pattern="fault">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M8 2h8l6 6v8l-6 6H8l-6-6V8z"></path><path d="M9 9l6 6"></path><path d="M15 9l-6 6"></path></svg>
+    <span class="state-label">Something went wrong</span>
+  </div>
+        <p class="state-note">The last action did not complete. Nothing was lost.</p>
+        <button type="button" class="btn btn-primary" data-action="retry">Try again</button>
+      </div>
+    
+    
+  </div></template></hh-scan-and-confirm></div></figure>
+<figure class="cell" data-cell="hh-list-detail/ready"><figcaption>list-detail / ready</figcaption><div class="cell-body"><hh-list-detail state="ready"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><div
+    class="kit-root"
+    data-kit="hh-list-detail"
+    data-state="ready"
+    data-pattern="ready"
+    role="region"
+    aria-label="List and detail"
+    aria-busy="false"
+  >
+    
+    <div class="split">
+      <div class="master"><ul class="rows"><li class="row"><span class="cell-main">North yard, bay 4</span><span class="cell-sub">pallets: 18</span></li><li class="row row-alt row-selected" aria-current="true"><span class="cell-main">North yard, bay 5</span><span class="cell-sub">pallets: 6</span></li><li class="row"><span class="cell-main">South yard, bay 1</span><span class="cell-sub">pallets: 31</span></li></ul></div>
+      <div class="detail">
+        <h3>North yard, bay 5</h3>
+        <dl class="facts">
+          <dt>Contents</dt><dd>Charcoal paver, 60mm</dd>
+          <dt>On hand</dt><dd>6 pallets</dd>
+          <dt>Reserved</dt><dd>1 pallet</dd>
+        </dl>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="true"><button type="button" class="btn btn-primary" data-action="open">Open detail</button><button type="button" class="btn btn-secondary" data-action="assign">Assign crew</button></div>
+  </div></template></hh-list-detail></div></figure>
+<figure class="cell" data-cell="hh-list-detail/empty"><figcaption>list-detail / empty</figcaption><div class="cell-body"><hh-list-detail state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><div
+    class="kit-root"
+    data-kit="hh-list-detail"
+    data-state="empty"
+    data-pattern="prompt"
+    role="region"
+    aria-label="List and detail"
+    aria-busy="false"
+  >
+    <div class="state-block state-empty" data-pattern="prompt">
+        <div class="state-indicator" data-state="empty" data-pattern="prompt">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M4 4h16v16H4z"></path><path d="M4 13h5l2 3h2l2-3h5"></path></svg>
+    <span class="state-label">Nothing here yet</span>
+  </div>
+        <p class="state-note">When work arrives it shows up here first.</p>
+      </div>
+    
+    
+  </div></template></hh-list-detail></div></figure>
+<figure class="cell" data-cell="hh-list-detail/loading"><figcaption>list-detail / loading</figcaption><div class="cell-body"><hh-list-detail state="loading"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><div
+    class="kit-root"
+    data-kit="hh-list-detail"
+    data-state="loading"
+    data-pattern="progress"
+    role="region"
+    aria-label="List and detail"
+    aria-busy="true"
+  >
+    <div class="state-block state-loading" data-pattern="progress">
+        <div class="state-indicator" data-state="loading" data-pattern="progress">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M12 3a9 9 0 1 0 9 9"></path></svg>
+    <span class="state-label">Loading</span>
+  </div>
+        <span class="spinner-wrap"><span class="spinner" role="presentation" aria-hidden="true"></span></span>
+        <p class="state-note">Reading the latest from the server.</p>
+      </div>
+    
+    
+  </div></template></hh-list-detail></div></figure>
+<figure class="cell" data-cell="hh-list-detail/offline"><figcaption>list-detail / offline</figcaption><div class="cell-body"><hh-list-detail state="offline"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><div
+    class="kit-root"
+    data-kit="hh-list-detail"
+    data-state="offline"
+    data-pattern="cached"
+    role="region"
+    aria-label="List and detail"
+    aria-busy="false"
+  >
+    <div class="banner banner-offline" role="status" data-pattern="cached">
+        <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M3 3l18 18"></path><path d="M9.5 14.5a4 4 0 0 1 5 0"></path><path d="M6 11a9 9 0 0 1 4-2.3"></path><path d="M18 11a9 9 0 0 0-3.4-2.1"></path><path d="M12 18h.01"></path></svg>
+        <span class="banner-text">Offline, showing the cached copy</span>
+        <span class="chip chip-neutral"><span class="chip-text">cached copy</span></span>
+      </div>
+    <div class="split">
+      <div class="master"><ul class="rows"><li class="row"><span class="cell-main">North yard, bay 4</span><span class="cell-sub">pallets: 18</span></li><li class="row row-alt row-selected" aria-current="true"><span class="cell-main">North yard, bay 5</span><span class="cell-sub">pallets: 6</span></li><li class="row"><span class="cell-main">South yard, bay 1</span><span class="cell-sub">pallets: 31</span></li></ul></div>
+      <div class="detail">
+        <h3>North yard, bay 5</h3>
+        <dl class="facts">
+          <dt>Contents</dt><dd>Charcoal paver, 60mm</dd>
+          <dt>On hand</dt><dd>6 pallets</dd>
+          <dt>Reserved</dt><dd>1 pallet</dd>
+        </dl>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-primary" disabled data-action="open">Open detail</button><button type="button" class="btn btn-secondary" disabled data-action="assign">Assign crew</button></div>
+  </div></template></hh-list-detail></div></figure>
+<figure class="cell" data-cell="hh-list-detail/conflict"><figcaption>list-detail / conflict</figcaption><div class="cell-body"><hh-list-detail state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><div
+    class="kit-root"
+    data-kit="hh-list-detail"
+    data-state="conflict"
+    data-pattern="review"
+    role="region"
+    aria-label="List and detail"
+    aria-busy="false"
+  >
+    <div class="review-card" role="alert" data-pattern="review">
+        <div class="review-head">
+          <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M9 8l-4 4 4 4"></path><path d="M15 8l4 4-4 4"></path><path d="M5 12h14"></path></svg>
+          <span class="review-title">This row changed on the server too</span>
+        </div>
+        <dl class="review-rows">
+          <div class="review-row"><dt>Your edit</dt><dd>Pallet coverage moved to 640 sq ft</dd></div>
+          <div class="review-row"><dt>Server copy</dt><dd>Pallet coverage moved to 620 sq ft</dd></div>
+        </dl>
+        <p class="state-note">Review both versions and pick one. Nothing is resolved silently.</p>
+      </div>
+    <div class="split">
+      <div class="master"><ul class="rows"><li class="row"><span class="cell-main">North yard, bay 4</span><span class="cell-sub">pallets: 18</span></li><li class="row row-alt row-selected" aria-current="true"><span class="cell-main">North yard, bay 5</span><span class="cell-sub">pallets: 6</span></li><li class="row"><span class="cell-main">South yard, bay 1</span><span class="cell-sub">pallets: 31</span></li></ul></div>
+      <div class="detail">
+        <h3>North yard, bay 5</h3>
+        <dl class="facts">
+          <dt>Contents</dt><dd>Charcoal paver, 60mm</dd>
+          <dt>On hand</dt><dd>6 pallets</dd>
+          <dt>Reserved</dt><dd>1 pallet</dd>
+        </dl>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-primary" data-action="review">Review changes</button><button type="button" class="btn btn-primary" disabled data-action="open">Open detail</button><button type="button" class="btn btn-secondary" disabled data-action="assign">Assign crew</button></div>
+  </div></template></hh-list-detail></div></figure>
+<figure class="cell" data-cell="hh-list-detail/error"><figcaption>list-detail / error</figcaption><div class="cell-body"><hh-list-detail state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><div
+    class="kit-root"
+    data-kit="hh-list-detail"
+    data-state="error"
+    data-pattern="fault"
+    role="region"
+    aria-label="List and detail"
+    aria-busy="false"
+  >
+    <div class="state-block state-error" role="alert" data-pattern="fault">
+        <div class="state-indicator" data-state="error" data-pattern="fault">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M8 2h8l6 6v8l-6 6H8l-6-6V8z"></path><path d="M9 9l6 6"></path><path d="M15 9l-6 6"></path></svg>
+    <span class="state-label">Something went wrong</span>
+  </div>
+        <p class="state-note">The last action did not complete. Nothing was lost.</p>
+        <button type="button" class="btn btn-primary" data-action="retry">Try again</button>
+      </div>
+    
+    
+  </div></template></hh-list-detail></div></figure>
+<figure class="cell" data-cell="hh-guided-flow/ready"><figcaption>guided-flow / ready</figcaption><div class="cell-body"><hh-guided-flow state="ready"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><div
+    class="kit-root"
+    data-kit="hh-guided-flow"
+    data-state="ready"
+    data-pattern="ready"
+    role="region"
+    aria-label="Guided flow"
+    aria-busy="false"
+  >
+    
+    <div class="flow">
+      <ol class="rail"><li class="rail-step rail-step-done">
+      <span class="marker" aria-hidden="true"><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M5 12l5 5 9-10"></path></svg></span>
+      <span>Site address</span>
+      <span class="visually-hidden">(done)</span>
+    </li><li class="rail-step rail-step-current" aria-current="step">
+      <span class="marker" aria-hidden="true">2</span>
+      <span>Materials</span>
+      <span class="visually-hidden">(current step)</span>
+    </li><li class="rail-step">
+    <span class="marker" aria-hidden="true">3</span>
+    <span>Review and send</span>
+  </li></ol>
+      <div class="step-card">
+        <h3>Materials for 14 Alder Court</h3>
+        <p>The coverage this job quotes from. The supplier holds these figures, so they re-check when the job reaches the quote desk.</p>
+        <span class="field-label">Paver coverage</span>
+        <div class="field-value">640 sq ft</div>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="true"><button type="button" class="btn btn-secondary" data-action="back">Back</button><button type="button" class="btn btn-primary" data-action="next">Next</button></div>
+  </div></template></hh-guided-flow></div></figure>
+<figure class="cell" data-cell="hh-guided-flow/empty"><figcaption>guided-flow / empty</figcaption><div class="cell-body"><hh-guided-flow state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><div
+    class="kit-root"
+    data-kit="hh-guided-flow"
+    data-state="empty"
+    data-pattern="prompt"
+    role="region"
+    aria-label="Guided flow"
+    aria-busy="false"
+  >
+    <div class="state-block state-empty" data-pattern="prompt">
+        <div class="state-indicator" data-state="empty" data-pattern="prompt">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M4 4h16v16H4z"></path><path d="M4 13h5l2 3h2l2-3h5"></path></svg>
+    <span class="state-label">Nothing here yet</span>
+  </div>
+        <p class="state-note">When work arrives it shows up here first.</p>
+      </div>
+    
+    
+  </div></template></hh-guided-flow></div></figure>
+<figure class="cell" data-cell="hh-guided-flow/loading"><figcaption>guided-flow / loading</figcaption><div class="cell-body"><hh-guided-flow state="loading"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><div
+    class="kit-root"
+    data-kit="hh-guided-flow"
+    data-state="loading"
+    data-pattern="progress"
+    role="region"
+    aria-label="Guided flow"
+    aria-busy="true"
+  >
+    <div class="state-block state-loading" data-pattern="progress">
+        <div class="state-indicator" data-state="loading" data-pattern="progress">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M12 3a9 9 0 1 0 9 9"></path></svg>
+    <span class="state-label">Loading</span>
+  </div>
+        <span class="spinner-wrap"><span class="spinner" role="presentation" aria-hidden="true"></span></span>
+        <p class="state-note">Reading the latest from the server.</p>
+      </div>
+    
+    
+  </div></template></hh-guided-flow></div></figure>
+<figure class="cell" data-cell="hh-guided-flow/offline"><figcaption>guided-flow / offline</figcaption><div class="cell-body"><hh-guided-flow state="offline"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><div
+    class="kit-root"
+    data-kit="hh-guided-flow"
+    data-state="offline"
+    data-pattern="cached"
+    role="region"
+    aria-label="Guided flow"
+    aria-busy="false"
+  >
+    <div class="banner banner-offline" role="status" data-pattern="cached">
+        <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M3 3l18 18"></path><path d="M9.5 14.5a4 4 0 0 1 5 0"></path><path d="M6 11a9 9 0 0 1 4-2.3"></path><path d="M18 11a9 9 0 0 0-3.4-2.1"></path><path d="M12 18h.01"></path></svg>
+        <span class="banner-text">Offline, showing the cached copy</span>
+        <span class="chip chip-neutral"><span class="chip-text">cached copy</span></span>
+      </div>
+    <div class="flow">
+      <ol class="rail"><li class="rail-step rail-step-done">
+      <span class="marker" aria-hidden="true"><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M5 12l5 5 9-10"></path></svg></span>
+      <span>Site address</span>
+      <span class="visually-hidden">(done)</span>
+    </li><li class="rail-step rail-step-current" aria-current="step">
+      <span class="marker" aria-hidden="true">2</span>
+      <span>Materials</span>
+      <span class="visually-hidden">(current step)</span>
+    </li><li class="rail-step">
+    <span class="marker" aria-hidden="true">3</span>
+    <span>Review and send</span>
+  </li></ol>
+      <div class="step-card">
+        <h3>Materials for 14 Alder Court</h3>
+        <p>The coverage this job quotes from. The supplier holds these figures, so they re-check when the job reaches the quote desk.</p>
+        <span class="field-label">Paver coverage</span>
+        <div class="field-value">640 sq ft</div>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-secondary" disabled data-action="back">Back</button><button type="button" class="btn btn-primary" disabled data-action="next">Next</button></div>
+  </div></template></hh-guided-flow></div></figure>
+<figure class="cell" data-cell="hh-guided-flow/conflict"><figcaption>guided-flow / conflict</figcaption><div class="cell-body"><hh-guided-flow state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><div
+    class="kit-root"
+    data-kit="hh-guided-flow"
+    data-state="conflict"
+    data-pattern="review"
+    role="region"
+    aria-label="Guided flow"
+    aria-busy="false"
+  >
+    <div class="review-card" role="alert" data-pattern="review">
+        <div class="review-head">
+          <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M9 8l-4 4 4 4"></path><path d="M15 8l4 4-4 4"></path><path d="M5 12h14"></path></svg>
+          <span class="review-title">This row changed on the server too</span>
+        </div>
+        <dl class="review-rows">
+          <div class="review-row"><dt>Your edit</dt><dd>Pallet coverage moved to 640 sq ft</dd></div>
+          <div class="review-row"><dt>Server copy</dt><dd>Pallet coverage moved to 620 sq ft</dd></div>
+        </dl>
+        <p class="state-note">Review both versions and pick one. Nothing is resolved silently.</p>
+      </div>
+    <div class="flow">
+      <ol class="rail"><li class="rail-step rail-step-done">
+      <span class="marker" aria-hidden="true"><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M5 12l5 5 9-10"></path></svg></span>
+      <span>Site address</span>
+      <span class="visually-hidden">(done)</span>
+    </li><li class="rail-step rail-step-current" aria-current="step">
+      <span class="marker" aria-hidden="true">2</span>
+      <span>Materials</span>
+      <span class="visually-hidden">(current step)</span>
+    </li><li class="rail-step">
+    <span class="marker" aria-hidden="true">3</span>
+    <span>Review and send</span>
+  </li></ol>
+      <div class="step-card">
+        <h3>Materials for 14 Alder Court</h3>
+        <p>The coverage this job quotes from. The supplier holds these figures, so they re-check when the job reaches the quote desk.</p>
+        <span class="field-label">Paver coverage</span>
+        <div class="field-value">640 sq ft</div>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-primary" data-action="review">Review changes</button><button type="button" class="btn btn-secondary" disabled data-action="back">Back</button><button type="button" class="btn btn-primary" disabled data-action="next">Next</button></div>
+  </div></template></hh-guided-flow></div></figure>
+<figure class="cell" data-cell="hh-guided-flow/error"><figcaption>guided-flow / error</figcaption><div class="cell-body"><hh-guided-flow state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><div
+    class="kit-root"
+    data-kit="hh-guided-flow"
+    data-state="error"
+    data-pattern="fault"
+    role="region"
+    aria-label="Guided flow"
+    aria-busy="false"
+  >
+    <div class="state-block state-error" role="alert" data-pattern="fault">
+        <div class="state-indicator" data-state="error" data-pattern="fault">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M8 2h8l6 6v8l-6 6H8l-6-6V8z"></path><path d="M9 9l6 6"></path><path d="M15 9l-6 6"></path></svg>
+    <span class="state-label">Something went wrong</span>
+  </div>
+        <p class="state-note">The last action did not complete. Nothing was lost.</p>
+        <button type="button" class="btn btn-primary" data-action="retry">Try again</button>
+      </div>
+    
+    
+  </div></template></hh-guided-flow></div></figure>
+<figure class="cell" data-cell="hh-dashboard/ready"><figcaption>dashboard / ready</figcaption><div class="cell-body"><hh-dashboard state="ready"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><div
+    class="kit-root"
+    data-kit="hh-dashboard"
+    data-state="ready"
+    data-pattern="ready"
+    role="region"
+    aria-label="Dashboard"
+    aria-busy="false"
+  >
+    
+    <div class="bento">
+      <div class="widget">
+        <span class="widget-label">Pallet coverage on hand</span>
+        <span class="widget-figure">640 sq ft</span>
+        <span class="chip chip-good"><span class="chip-text">on hand</span></span>
+      </div>
+      <div class="widget">
+        <span class="widget-label">Loads confirmed this week</span>
+        <span class="widget-figure">12</span>
+        <p class="widget-note">3 awaiting the weighbridge</p>
+      </div>
+      <div class="widget">
+        <span class="widget-label">Pick queue</span>
+        <span class="widget-figure">7</span>
+        <span class="chip chip-watch"><span class="chip-text">2 stalled</span></span>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="true"><button type="button" class="btn btn-primary" data-action="open-queue">Open pick queue</button><button type="button" class="btn btn-secondary" data-action="refresh">Refresh figures</button></div>
+  </div></template></hh-dashboard></div></figure>
+<figure class="cell" data-cell="hh-dashboard/empty"><figcaption>dashboard / empty</figcaption><div class="cell-body"><hh-dashboard state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><div
+    class="kit-root"
+    data-kit="hh-dashboard"
+    data-state="empty"
+    data-pattern="prompt"
+    role="region"
+    aria-label="Dashboard"
+    aria-busy="false"
+  >
+    <div class="state-block state-empty" data-pattern="prompt">
+        <div class="state-indicator" data-state="empty" data-pattern="prompt">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M4 4h16v16H4z"></path><path d="M4 13h5l2 3h2l2-3h5"></path></svg>
+    <span class="state-label">Nothing here yet</span>
+  </div>
+        <p class="state-note">When work arrives it shows up here first.</p>
+      </div>
+    
+    
+  </div></template></hh-dashboard></div></figure>
+<figure class="cell" data-cell="hh-dashboard/loading"><figcaption>dashboard / loading</figcaption><div class="cell-body"><hh-dashboard state="loading"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><div
+    class="kit-root"
+    data-kit="hh-dashboard"
+    data-state="loading"
+    data-pattern="progress"
+    role="region"
+    aria-label="Dashboard"
+    aria-busy="true"
+  >
+    <div class="state-block state-loading" data-pattern="progress">
+        <div class="state-indicator" data-state="loading" data-pattern="progress">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M12 3a9 9 0 1 0 9 9"></path></svg>
+    <span class="state-label">Loading</span>
+  </div>
+        <span class="spinner-wrap"><span class="spinner" role="presentation" aria-hidden="true"></span></span>
+        <p class="state-note">Reading the latest from the server.</p>
+      </div>
+    
+    
+  </div></template></hh-dashboard></div></figure>
+<figure class="cell" data-cell="hh-dashboard/offline"><figcaption>dashboard / offline</figcaption><div class="cell-body"><hh-dashboard state="offline"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><div
+    class="kit-root"
+    data-kit="hh-dashboard"
+    data-state="offline"
+    data-pattern="cached"
+    role="region"
+    aria-label="Dashboard"
+    aria-busy="false"
+  >
+    <div class="banner banner-offline" role="status" data-pattern="cached">
+        <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M3 3l18 18"></path><path d="M9.5 14.5a4 4 0 0 1 5 0"></path><path d="M6 11a9 9 0 0 1 4-2.3"></path><path d="M18 11a9 9 0 0 0-3.4-2.1"></path><path d="M12 18h.01"></path></svg>
+        <span class="banner-text">Offline, showing the cached copy</span>
+        <span class="chip chip-neutral"><span class="chip-text">cached copy</span></span>
+      </div>
+    <div class="bento">
+      <div class="widget">
+        <span class="widget-label">Pallet coverage on hand</span>
+        <span class="widget-figure">640 sq ft</span>
+        <span class="chip chip-good"><span class="chip-text">on hand</span></span>
+      </div>
+      <div class="widget">
+        <span class="widget-label">Loads confirmed this week</span>
+        <span class="widget-figure">12</span>
+        <p class="widget-note">3 awaiting the weighbridge</p>
+      </div>
+      <div class="widget">
+        <span class="widget-label">Pick queue</span>
+        <span class="widget-figure">7</span>
+        <span class="chip chip-watch"><span class="chip-text">2 stalled</span></span>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-primary" disabled data-action="open-queue">Open pick queue</button><button type="button" class="btn btn-secondary" disabled data-action="refresh">Refresh figures</button></div>
+  </div></template></hh-dashboard></div></figure>
+<figure class="cell" data-cell="hh-dashboard/conflict"><figcaption>dashboard / conflict</figcaption><div class="cell-body"><hh-dashboard state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><div
+    class="kit-root"
+    data-kit="hh-dashboard"
+    data-state="conflict"
+    data-pattern="review"
+    role="region"
+    aria-label="Dashboard"
+    aria-busy="false"
+  >
+    <div class="review-card" role="alert" data-pattern="review">
+        <div class="review-head">
+          <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M9 8l-4 4 4 4"></path><path d="M15 8l4 4-4 4"></path><path d="M5 12h14"></path></svg>
+          <span class="review-title">This row changed on the server too</span>
+        </div>
+        <dl class="review-rows">
+          <div class="review-row"><dt>Your edit</dt><dd>Pallet coverage moved to 640 sq ft</dd></div>
+          <div class="review-row"><dt>Server copy</dt><dd>Pallet coverage moved to 620 sq ft</dd></div>
+        </dl>
+        <p class="state-note">Review both versions and pick one. Nothing is resolved silently.</p>
+      </div>
+    <div class="bento">
+      <div class="widget">
+        <span class="widget-label">Pallet coverage on hand</span>
+        <span class="widget-figure">640 sq ft</span>
+        <span class="chip chip-good"><span class="chip-text">on hand</span></span>
+      </div>
+      <div class="widget">
+        <span class="widget-label">Loads confirmed this week</span>
+        <span class="widget-figure">12</span>
+        <p class="widget-note">3 awaiting the weighbridge</p>
+      </div>
+      <div class="widget">
+        <span class="widget-label">Pick queue</span>
+        <span class="widget-figure">7</span>
+        <span class="chip chip-watch"><span class="chip-text">2 stalled</span></span>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-primary" data-action="review">Review changes</button><button type="button" class="btn btn-primary" disabled data-action="open-queue">Open pick queue</button><button type="button" class="btn btn-secondary" disabled data-action="refresh">Refresh figures</button></div>
+  </div></template></hh-dashboard></div></figure>
+<figure class="cell" data-cell="hh-dashboard/error"><figcaption>dashboard / error</figcaption><div class="cell-body"><hh-dashboard state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><div
+    class="kit-root"
+    data-kit="hh-dashboard"
+    data-state="error"
+    data-pattern="fault"
+    role="region"
+    aria-label="Dashboard"
+    aria-busy="false"
+  >
+    <div class="state-block state-error" role="alert" data-pattern="fault">
+        <div class="state-indicator" data-state="error" data-pattern="fault">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M8 2h8l6 6v8l-6 6H8l-6-6V8z"></path><path d="M9 9l6 6"></path><path d="M15 9l-6 6"></path></svg>
+    <span class="state-label">Something went wrong</span>
+  </div>
+        <p class="state-note">The last action did not complete. Nothing was lost.</p>
+        <button type="button" class="btn btn-primary" data-action="retry">Try again</button>
+      </div>
+    
+    
+  </div></template></hh-dashboard></div></figure>
+<figure class="cell" data-cell="hh-inbox/ready"><figcaption>inbox / ready</figcaption><div class="cell-body"><hh-inbox state="ready"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><div
+    class="kit-root"
+    data-kit="hh-inbox"
+    data-state="ready"
+    data-pattern="ready"
+    role="region"
+    aria-label="Inbox"
+    aria-busy="false"
+  >
+    
+    <div class="split">
+      <div class="list"><ul class="rows"><li class="row row-selected" aria-current="true"><span class="msg-main"><span class="msg-sender">Weighbridge</span><span class="msg-subject">Load 4417 needs a ticket check</span></span><span class="chip chip-good"><span class="chip-text">new</span></span></li><li class="row row-alt"><span class="msg-main"><span class="msg-sender">Quote desk</span><span class="msg-subject">Two lines need dealer pricing</span></span><span class="chip chip-good"><span class="chip-text">new</span></span></li><li class="row"><span class="msg-main"><span class="msg-sender">Yard crew</span><span class="msg-subject">Bay 5 restack finished</span></span><span class="chip chip-neutral"><span class="chip-text">read</span></span></li></ul></div>
+      <div class="reading">
+        <h3>Load 4417 needs a ticket check</h3>
+        <span class="from">from Weighbridge</span>
+        <p>The ticket total is one pallet short of the truck manifest. Confirm against the load before the driver leaves the gate.</p>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="true"><button type="button" class="btn btn-secondary" data-action="mark-read">Mark read</button><button type="button" class="btn btn-primary" data-action="open-load">Open load</button></div>
+  </div></template></hh-inbox></div></figure>
+<figure class="cell" data-cell="hh-inbox/empty"><figcaption>inbox / empty</figcaption><div class="cell-body"><hh-inbox state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><div
+    class="kit-root"
+    data-kit="hh-inbox"
+    data-state="empty"
+    data-pattern="prompt"
+    role="region"
+    aria-label="Inbox"
+    aria-busy="false"
+  >
+    <div class="state-block state-empty" data-pattern="prompt">
+        <div class="state-indicator" data-state="empty" data-pattern="prompt">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M4 4h16v16H4z"></path><path d="M4 13h5l2 3h2l2-3h5"></path></svg>
+    <span class="state-label">Nothing here yet</span>
+  </div>
+        <p class="state-note">When work arrives it shows up here first.</p>
+      </div>
+    
+    
+  </div></template></hh-inbox></div></figure>
+<figure class="cell" data-cell="hh-inbox/loading"><figcaption>inbox / loading</figcaption><div class="cell-body"><hh-inbox state="loading"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><div
+    class="kit-root"
+    data-kit="hh-inbox"
+    data-state="loading"
+    data-pattern="progress"
+    role="region"
+    aria-label="Inbox"
+    aria-busy="true"
+  >
+    <div class="state-block state-loading" data-pattern="progress">
+        <div class="state-indicator" data-state="loading" data-pattern="progress">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M12 3a9 9 0 1 0 9 9"></path></svg>
+    <span class="state-label">Loading</span>
+  </div>
+        <span class="spinner-wrap"><span class="spinner" role="presentation" aria-hidden="true"></span></span>
+        <p class="state-note">Reading the latest from the server.</p>
+      </div>
+    
+    
+  </div></template></hh-inbox></div></figure>
+<figure class="cell" data-cell="hh-inbox/offline"><figcaption>inbox / offline</figcaption><div class="cell-body"><hh-inbox state="offline"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><div
+    class="kit-root"
+    data-kit="hh-inbox"
+    data-state="offline"
+    data-pattern="cached"
+    role="region"
+    aria-label="Inbox"
+    aria-busy="false"
+  >
+    <div class="banner banner-offline" role="status" data-pattern="cached">
+        <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M3 3l18 18"></path><path d="M9.5 14.5a4 4 0 0 1 5 0"></path><path d="M6 11a9 9 0 0 1 4-2.3"></path><path d="M18 11a9 9 0 0 0-3.4-2.1"></path><path d="M12 18h.01"></path></svg>
+        <span class="banner-text">Offline, showing the cached copy</span>
+        <span class="chip chip-neutral"><span class="chip-text">cached copy</span></span>
+      </div>
+    <div class="split">
+      <div class="list"><ul class="rows"><li class="row row-selected" aria-current="true"><span class="msg-main"><span class="msg-sender">Weighbridge</span><span class="msg-subject">Load 4417 needs a ticket check</span></span><span class="chip chip-good"><span class="chip-text">new</span></span></li><li class="row row-alt"><span class="msg-main"><span class="msg-sender">Quote desk</span><span class="msg-subject">Two lines need dealer pricing</span></span><span class="chip chip-good"><span class="chip-text">new</span></span></li><li class="row"><span class="msg-main"><span class="msg-sender">Yard crew</span><span class="msg-subject">Bay 5 restack finished</span></span><span class="chip chip-neutral"><span class="chip-text">read</span></span></li></ul></div>
+      <div class="reading">
+        <h3>Load 4417 needs a ticket check</h3>
+        <span class="from">from Weighbridge</span>
+        <p>The ticket total is one pallet short of the truck manifest. Confirm against the load before the driver leaves the gate.</p>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-secondary" disabled data-action="mark-read">Mark read</button><button type="button" class="btn btn-primary" disabled data-action="open-load">Open load</button></div>
+  </div></template></hh-inbox></div></figure>
+<figure class="cell" data-cell="hh-inbox/conflict"><figcaption>inbox / conflict</figcaption><div class="cell-body"><hh-inbox state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><div
+    class="kit-root"
+    data-kit="hh-inbox"
+    data-state="conflict"
+    data-pattern="review"
+    role="region"
+    aria-label="Inbox"
+    aria-busy="false"
+  >
+    <div class="review-card" role="alert" data-pattern="review">
+        <div class="review-head">
+          <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M9 8l-4 4 4 4"></path><path d="M15 8l4 4-4 4"></path><path d="M5 12h14"></path></svg>
+          <span class="review-title">This row changed on the server too</span>
+        </div>
+        <dl class="review-rows">
+          <div class="review-row"><dt>Your edit</dt><dd>Pallet coverage moved to 640 sq ft</dd></div>
+          <div class="review-row"><dt>Server copy</dt><dd>Pallet coverage moved to 620 sq ft</dd></div>
+        </dl>
+        <p class="state-note">Review both versions and pick one. Nothing is resolved silently.</p>
+      </div>
+    <div class="split">
+      <div class="list"><ul class="rows"><li class="row row-selected" aria-current="true"><span class="msg-main"><span class="msg-sender">Weighbridge</span><span class="msg-subject">Load 4417 needs a ticket check</span></span><span class="chip chip-good"><span class="chip-text">new</span></span></li><li class="row row-alt"><span class="msg-main"><span class="msg-sender">Quote desk</span><span class="msg-subject">Two lines need dealer pricing</span></span><span class="chip chip-good"><span class="chip-text">new</span></span></li><li class="row"><span class="msg-main"><span class="msg-sender">Yard crew</span><span class="msg-subject">Bay 5 restack finished</span></span><span class="chip chip-neutral"><span class="chip-text">read</span></span></li></ul></div>
+      <div class="reading">
+        <h3>Load 4417 needs a ticket check</h3>
+        <span class="from">from Weighbridge</span>
+        <p>The ticket total is one pallet short of the truck manifest. Confirm against the load before the driver leaves the gate.</p>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-primary" data-action="review">Review changes</button><button type="button" class="btn btn-secondary" disabled data-action="mark-read">Mark read</button><button type="button" class="btn btn-primary" disabled data-action="open-load">Open load</button></div>
+  </div></template></hh-inbox></div></figure>
+<figure class="cell" data-cell="hh-inbox/error"><figcaption>inbox / error</figcaption><div class="cell-body"><hh-inbox state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><div
+    class="kit-root"
+    data-kit="hh-inbox"
+    data-state="error"
+    data-pattern="fault"
+    role="region"
+    aria-label="Inbox"
+    aria-busy="false"
+  >
+    <div class="state-block state-error" role="alert" data-pattern="fault">
+        <div class="state-indicator" data-state="error" data-pattern="fault">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M8 2h8l6 6v8l-6 6H8l-6-6V8z"></path><path d="M9 9l6 6"></path><path d="M15 9l-6 6"></path></svg>
+    <span class="state-label">Something went wrong</span>
+  </div>
+        <p class="state-note">The last action did not complete. Nothing was lost.</p>
+        <button type="button" class="btn btn-primary" data-action="retry">Try again</button>
+      </div>
+    
+    
+  </div></template></hh-inbox></div></figure>
+</div>
+</section>
+<section class="width-frame" data-width="1920" style="width:min(1920px, 100%)">
+<h2>walkthrough width 1920px, capped to the window</h2>
+<div class="grid">
+<figure class="cell" data-cell="hh-scan-and-confirm/ready"><figcaption>scan-and-confirm / ready</figcaption><div class="cell-body"><hh-scan-and-confirm state="ready"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><div
+    class="kit-root"
+    data-kit="hh-scan-and-confirm"
+    data-state="ready"
+    data-pattern="ready"
+    role="region"
+    aria-label="Scan and confirm"
+    aria-busy="false"
+  >
+    
+    <div class="scan-frame">
+      <span class="chip chip-neutral"><span class="chip-text">scanned: load ticket 4417</span></span>
+      <ul class="lines"><li class="line"><span class="name">Paver, 60mm, charcoal</span><span class="qty">640 sq ft</span></li><li class="line"><span class="name">Edge restraint, 8 ft steel</span><span class="qty">24 ea</span></li><li class="line"><span class="name">Bedding sand, washed</span><span class="qty">9 tonne</span></li></ul>
+      <div class="summary"><span>3 lines on the ticket</span><span>all priced</span></div>
+    </div>
+    <div class="kit-actions" data-live="true"><button type="button" class="btn btn-primary" data-action="confirm">Confirm load</button><button type="button" class="btn btn-secondary" data-action="rescan">Rescan</button></div>
+  </div></template></hh-scan-and-confirm></div></figure>
+<figure class="cell" data-cell="hh-scan-and-confirm/empty"><figcaption>scan-and-confirm / empty</figcaption><div class="cell-body"><hh-scan-and-confirm state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><div
+    class="kit-root"
+    data-kit="hh-scan-and-confirm"
+    data-state="empty"
+    data-pattern="prompt"
+    role="region"
+    aria-label="Scan and confirm"
+    aria-busy="false"
+  >
+    <div class="state-block state-empty" data-pattern="prompt">
+        <div class="state-indicator" data-state="empty" data-pattern="prompt">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M4 4h16v16H4z"></path><path d="M4 13h5l2 3h2l2-3h5"></path></svg>
+    <span class="state-label">Nothing here yet</span>
+  </div>
+        <p class="state-note">When work arrives it shows up here first.</p>
+      </div>
+    
+    
+  </div></template></hh-scan-and-confirm></div></figure>
+<figure class="cell" data-cell="hh-scan-and-confirm/loading"><figcaption>scan-and-confirm / loading</figcaption><div class="cell-body"><hh-scan-and-confirm state="loading"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><div
+    class="kit-root"
+    data-kit="hh-scan-and-confirm"
+    data-state="loading"
+    data-pattern="progress"
+    role="region"
+    aria-label="Scan and confirm"
+    aria-busy="true"
+  >
+    <div class="state-block state-loading" data-pattern="progress">
+        <div class="state-indicator" data-state="loading" data-pattern="progress">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M12 3a9 9 0 1 0 9 9"></path></svg>
+    <span class="state-label">Loading</span>
+  </div>
+        <span class="spinner-wrap"><span class="spinner" role="presentation" aria-hidden="true"></span></span>
+        <p class="state-note">Reading the latest from the server.</p>
+      </div>
+    
+    
+  </div></template></hh-scan-and-confirm></div></figure>
+<figure class="cell" data-cell="hh-scan-and-confirm/offline"><figcaption>scan-and-confirm / offline</figcaption><div class="cell-body"><hh-scan-and-confirm state="offline"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><div
+    class="kit-root"
+    data-kit="hh-scan-and-confirm"
+    data-state="offline"
+    data-pattern="cached"
+    role="region"
+    aria-label="Scan and confirm"
+    aria-busy="false"
+  >
+    <div class="banner banner-offline" role="status" data-pattern="cached">
+        <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M3 3l18 18"></path><path d="M9.5 14.5a4 4 0 0 1 5 0"></path><path d="M6 11a9 9 0 0 1 4-2.3"></path><path d="M18 11a9 9 0 0 0-3.4-2.1"></path><path d="M12 18h.01"></path></svg>
+        <span class="banner-text">Offline, showing the cached copy</span>
+        <span class="chip chip-neutral"><span class="chip-text">cached copy</span></span>
+      </div>
+    <div class="scan-frame">
+      <span class="chip chip-neutral"><span class="chip-text">scanned: load ticket 4417</span></span>
+      <ul class="lines"><li class="line"><span class="name">Paver, 60mm, charcoal</span><span class="qty">640 sq ft</span></li><li class="line"><span class="name">Edge restraint, 8 ft steel</span><span class="qty">24 ea</span></li><li class="line"><span class="name">Bedding sand, washed</span><span class="qty">9 tonne</span></li></ul>
+      <div class="summary"><span>3 lines on the ticket</span><span>all priced</span></div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-primary" disabled data-action="confirm">Confirm load</button><button type="button" class="btn btn-secondary" disabled data-action="rescan">Rescan</button></div>
+  </div></template></hh-scan-and-confirm></div></figure>
+<figure class="cell" data-cell="hh-scan-and-confirm/conflict"><figcaption>scan-and-confirm / conflict</figcaption><div class="cell-body"><hh-scan-and-confirm state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><div
+    class="kit-root"
+    data-kit="hh-scan-and-confirm"
+    data-state="conflict"
+    data-pattern="review"
+    role="region"
+    aria-label="Scan and confirm"
+    aria-busy="false"
+  >
+    <div class="review-card" role="alert" data-pattern="review">
+        <div class="review-head">
+          <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M9 8l-4 4 4 4"></path><path d="M15 8l4 4-4 4"></path><path d="M5 12h14"></path></svg>
+          <span class="review-title">This row changed on the server too</span>
+        </div>
+        <dl class="review-rows">
+          <div class="review-row"><dt>Your edit</dt><dd>Pallet coverage moved to 640 sq ft</dd></div>
+          <div class="review-row"><dt>Server copy</dt><dd>Pallet coverage moved to 620 sq ft</dd></div>
+        </dl>
+        <p class="state-note">Review both versions and pick one. Nothing is resolved silently.</p>
+      </div>
+    <div class="scan-frame">
+      <span class="chip chip-neutral"><span class="chip-text">scanned: load ticket 4417</span></span>
+      <ul class="lines"><li class="line"><span class="name">Paver, 60mm, charcoal</span><span class="qty">640 sq ft</span></li><li class="line"><span class="name">Edge restraint, 8 ft steel</span><span class="qty">24 ea</span></li><li class="line"><span class="name">Bedding sand, washed</span><span class="qty">9 tonne</span></li></ul>
+      <div class="summary"><span>3 lines on the ticket</span><span>all priced</span></div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-primary" data-action="review">Review changes</button><button type="button" class="btn btn-primary" disabled data-action="confirm">Confirm load</button><button type="button" class="btn btn-secondary" disabled data-action="rescan">Rescan</button></div>
+  </div></template></hh-scan-and-confirm></div></figure>
+<figure class="cell" data-cell="hh-scan-and-confirm/error"><figcaption>scan-and-confirm / error</figcaption><div class="cell-body"><hh-scan-and-confirm state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-scan-and-confirm.css"><div
+    class="kit-root"
+    data-kit="hh-scan-and-confirm"
+    data-state="error"
+    data-pattern="fault"
+    role="region"
+    aria-label="Scan and confirm"
+    aria-busy="false"
+  >
+    <div class="state-block state-error" role="alert" data-pattern="fault">
+        <div class="state-indicator" data-state="error" data-pattern="fault">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M8 2h8l6 6v8l-6 6H8l-6-6V8z"></path><path d="M9 9l6 6"></path><path d="M15 9l-6 6"></path></svg>
+    <span class="state-label">Something went wrong</span>
+  </div>
+        <p class="state-note">The last action did not complete. Nothing was lost.</p>
+        <button type="button" class="btn btn-primary" data-action="retry">Try again</button>
+      </div>
+    
+    
+  </div></template></hh-scan-and-confirm></div></figure>
+<figure class="cell" data-cell="hh-list-detail/ready"><figcaption>list-detail / ready</figcaption><div class="cell-body"><hh-list-detail state="ready"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><div
+    class="kit-root"
+    data-kit="hh-list-detail"
+    data-state="ready"
+    data-pattern="ready"
+    role="region"
+    aria-label="List and detail"
+    aria-busy="false"
+  >
+    
+    <div class="split">
+      <div class="master"><ul class="rows"><li class="row"><span class="cell-main">North yard, bay 4</span><span class="cell-sub">pallets: 18</span></li><li class="row row-alt row-selected" aria-current="true"><span class="cell-main">North yard, bay 5</span><span class="cell-sub">pallets: 6</span></li><li class="row"><span class="cell-main">South yard, bay 1</span><span class="cell-sub">pallets: 31</span></li></ul></div>
+      <div class="detail">
+        <h3>North yard, bay 5</h3>
+        <dl class="facts">
+          <dt>Contents</dt><dd>Charcoal paver, 60mm</dd>
+          <dt>On hand</dt><dd>6 pallets</dd>
+          <dt>Reserved</dt><dd>1 pallet</dd>
+        </dl>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="true"><button type="button" class="btn btn-primary" data-action="open">Open detail</button><button type="button" class="btn btn-secondary" data-action="assign">Assign crew</button></div>
+  </div></template></hh-list-detail></div></figure>
+<figure class="cell" data-cell="hh-list-detail/empty"><figcaption>list-detail / empty</figcaption><div class="cell-body"><hh-list-detail state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><div
+    class="kit-root"
+    data-kit="hh-list-detail"
+    data-state="empty"
+    data-pattern="prompt"
+    role="region"
+    aria-label="List and detail"
+    aria-busy="false"
+  >
+    <div class="state-block state-empty" data-pattern="prompt">
+        <div class="state-indicator" data-state="empty" data-pattern="prompt">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M4 4h16v16H4z"></path><path d="M4 13h5l2 3h2l2-3h5"></path></svg>
+    <span class="state-label">Nothing here yet</span>
+  </div>
+        <p class="state-note">When work arrives it shows up here first.</p>
+      </div>
+    
+    
+  </div></template></hh-list-detail></div></figure>
+<figure class="cell" data-cell="hh-list-detail/loading"><figcaption>list-detail / loading</figcaption><div class="cell-body"><hh-list-detail state="loading"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><div
+    class="kit-root"
+    data-kit="hh-list-detail"
+    data-state="loading"
+    data-pattern="progress"
+    role="region"
+    aria-label="List and detail"
+    aria-busy="true"
+  >
+    <div class="state-block state-loading" data-pattern="progress">
+        <div class="state-indicator" data-state="loading" data-pattern="progress">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M12 3a9 9 0 1 0 9 9"></path></svg>
+    <span class="state-label">Loading</span>
+  </div>
+        <span class="spinner-wrap"><span class="spinner" role="presentation" aria-hidden="true"></span></span>
+        <p class="state-note">Reading the latest from the server.</p>
+      </div>
+    
+    
+  </div></template></hh-list-detail></div></figure>
+<figure class="cell" data-cell="hh-list-detail/offline"><figcaption>list-detail / offline</figcaption><div class="cell-body"><hh-list-detail state="offline"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><div
+    class="kit-root"
+    data-kit="hh-list-detail"
+    data-state="offline"
+    data-pattern="cached"
+    role="region"
+    aria-label="List and detail"
+    aria-busy="false"
+  >
+    <div class="banner banner-offline" role="status" data-pattern="cached">
+        <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M3 3l18 18"></path><path d="M9.5 14.5a4 4 0 0 1 5 0"></path><path d="M6 11a9 9 0 0 1 4-2.3"></path><path d="M18 11a9 9 0 0 0-3.4-2.1"></path><path d="M12 18h.01"></path></svg>
+        <span class="banner-text">Offline, showing the cached copy</span>
+        <span class="chip chip-neutral"><span class="chip-text">cached copy</span></span>
+      </div>
+    <div class="split">
+      <div class="master"><ul class="rows"><li class="row"><span class="cell-main">North yard, bay 4</span><span class="cell-sub">pallets: 18</span></li><li class="row row-alt row-selected" aria-current="true"><span class="cell-main">North yard, bay 5</span><span class="cell-sub">pallets: 6</span></li><li class="row"><span class="cell-main">South yard, bay 1</span><span class="cell-sub">pallets: 31</span></li></ul></div>
+      <div class="detail">
+        <h3>North yard, bay 5</h3>
+        <dl class="facts">
+          <dt>Contents</dt><dd>Charcoal paver, 60mm</dd>
+          <dt>On hand</dt><dd>6 pallets</dd>
+          <dt>Reserved</dt><dd>1 pallet</dd>
+        </dl>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-primary" disabled data-action="open">Open detail</button><button type="button" class="btn btn-secondary" disabled data-action="assign">Assign crew</button></div>
+  </div></template></hh-list-detail></div></figure>
+<figure class="cell" data-cell="hh-list-detail/conflict"><figcaption>list-detail / conflict</figcaption><div class="cell-body"><hh-list-detail state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><div
+    class="kit-root"
+    data-kit="hh-list-detail"
+    data-state="conflict"
+    data-pattern="review"
+    role="region"
+    aria-label="List and detail"
+    aria-busy="false"
+  >
+    <div class="review-card" role="alert" data-pattern="review">
+        <div class="review-head">
+          <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M9 8l-4 4 4 4"></path><path d="M15 8l4 4-4 4"></path><path d="M5 12h14"></path></svg>
+          <span class="review-title">This row changed on the server too</span>
+        </div>
+        <dl class="review-rows">
+          <div class="review-row"><dt>Your edit</dt><dd>Pallet coverage moved to 640 sq ft</dd></div>
+          <div class="review-row"><dt>Server copy</dt><dd>Pallet coverage moved to 620 sq ft</dd></div>
+        </dl>
+        <p class="state-note">Review both versions and pick one. Nothing is resolved silently.</p>
+      </div>
+    <div class="split">
+      <div class="master"><ul class="rows"><li class="row"><span class="cell-main">North yard, bay 4</span><span class="cell-sub">pallets: 18</span></li><li class="row row-alt row-selected" aria-current="true"><span class="cell-main">North yard, bay 5</span><span class="cell-sub">pallets: 6</span></li><li class="row"><span class="cell-main">South yard, bay 1</span><span class="cell-sub">pallets: 31</span></li></ul></div>
+      <div class="detail">
+        <h3>North yard, bay 5</h3>
+        <dl class="facts">
+          <dt>Contents</dt><dd>Charcoal paver, 60mm</dd>
+          <dt>On hand</dt><dd>6 pallets</dd>
+          <dt>Reserved</dt><dd>1 pallet</dd>
+        </dl>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-primary" data-action="review">Review changes</button><button type="button" class="btn btn-primary" disabled data-action="open">Open detail</button><button type="button" class="btn btn-secondary" disabled data-action="assign">Assign crew</button></div>
+  </div></template></hh-list-detail></div></figure>
+<figure class="cell" data-cell="hh-list-detail/error"><figcaption>list-detail / error</figcaption><div class="cell-body"><hh-list-detail state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-list-detail.css"><div
+    class="kit-root"
+    data-kit="hh-list-detail"
+    data-state="error"
+    data-pattern="fault"
+    role="region"
+    aria-label="List and detail"
+    aria-busy="false"
+  >
+    <div class="state-block state-error" role="alert" data-pattern="fault">
+        <div class="state-indicator" data-state="error" data-pattern="fault">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M8 2h8l6 6v8l-6 6H8l-6-6V8z"></path><path d="M9 9l6 6"></path><path d="M15 9l-6 6"></path></svg>
+    <span class="state-label">Something went wrong</span>
+  </div>
+        <p class="state-note">The last action did not complete. Nothing was lost.</p>
+        <button type="button" class="btn btn-primary" data-action="retry">Try again</button>
+      </div>
+    
+    
+  </div></template></hh-list-detail></div></figure>
+<figure class="cell" data-cell="hh-guided-flow/ready"><figcaption>guided-flow / ready</figcaption><div class="cell-body"><hh-guided-flow state="ready"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><div
+    class="kit-root"
+    data-kit="hh-guided-flow"
+    data-state="ready"
+    data-pattern="ready"
+    role="region"
+    aria-label="Guided flow"
+    aria-busy="false"
+  >
+    
+    <div class="flow">
+      <ol class="rail"><li class="rail-step rail-step-done">
+      <span class="marker" aria-hidden="true"><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M5 12l5 5 9-10"></path></svg></span>
+      <span>Site address</span>
+      <span class="visually-hidden">(done)</span>
+    </li><li class="rail-step rail-step-current" aria-current="step">
+      <span class="marker" aria-hidden="true">2</span>
+      <span>Materials</span>
+      <span class="visually-hidden">(current step)</span>
+    </li><li class="rail-step">
+    <span class="marker" aria-hidden="true">3</span>
+    <span>Review and send</span>
+  </li></ol>
+      <div class="step-card">
+        <h3>Materials for 14 Alder Court</h3>
+        <p>The coverage this job quotes from. The supplier holds these figures, so they re-check when the job reaches the quote desk.</p>
+        <span class="field-label">Paver coverage</span>
+        <div class="field-value">640 sq ft</div>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="true"><button type="button" class="btn btn-secondary" data-action="back">Back</button><button type="button" class="btn btn-primary" data-action="next">Next</button></div>
+  </div></template></hh-guided-flow></div></figure>
+<figure class="cell" data-cell="hh-guided-flow/empty"><figcaption>guided-flow / empty</figcaption><div class="cell-body"><hh-guided-flow state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><div
+    class="kit-root"
+    data-kit="hh-guided-flow"
+    data-state="empty"
+    data-pattern="prompt"
+    role="region"
+    aria-label="Guided flow"
+    aria-busy="false"
+  >
+    <div class="state-block state-empty" data-pattern="prompt">
+        <div class="state-indicator" data-state="empty" data-pattern="prompt">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M4 4h16v16H4z"></path><path d="M4 13h5l2 3h2l2-3h5"></path></svg>
+    <span class="state-label">Nothing here yet</span>
+  </div>
+        <p class="state-note">When work arrives it shows up here first.</p>
+      </div>
+    
+    
+  </div></template></hh-guided-flow></div></figure>
+<figure class="cell" data-cell="hh-guided-flow/loading"><figcaption>guided-flow / loading</figcaption><div class="cell-body"><hh-guided-flow state="loading"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><div
+    class="kit-root"
+    data-kit="hh-guided-flow"
+    data-state="loading"
+    data-pattern="progress"
+    role="region"
+    aria-label="Guided flow"
+    aria-busy="true"
+  >
+    <div class="state-block state-loading" data-pattern="progress">
+        <div class="state-indicator" data-state="loading" data-pattern="progress">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M12 3a9 9 0 1 0 9 9"></path></svg>
+    <span class="state-label">Loading</span>
+  </div>
+        <span class="spinner-wrap"><span class="spinner" role="presentation" aria-hidden="true"></span></span>
+        <p class="state-note">Reading the latest from the server.</p>
+      </div>
+    
+    
+  </div></template></hh-guided-flow></div></figure>
+<figure class="cell" data-cell="hh-guided-flow/offline"><figcaption>guided-flow / offline</figcaption><div class="cell-body"><hh-guided-flow state="offline"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><div
+    class="kit-root"
+    data-kit="hh-guided-flow"
+    data-state="offline"
+    data-pattern="cached"
+    role="region"
+    aria-label="Guided flow"
+    aria-busy="false"
+  >
+    <div class="banner banner-offline" role="status" data-pattern="cached">
+        <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M3 3l18 18"></path><path d="M9.5 14.5a4 4 0 0 1 5 0"></path><path d="M6 11a9 9 0 0 1 4-2.3"></path><path d="M18 11a9 9 0 0 0-3.4-2.1"></path><path d="M12 18h.01"></path></svg>
+        <span class="banner-text">Offline, showing the cached copy</span>
+        <span class="chip chip-neutral"><span class="chip-text">cached copy</span></span>
+      </div>
+    <div class="flow">
+      <ol class="rail"><li class="rail-step rail-step-done">
+      <span class="marker" aria-hidden="true"><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M5 12l5 5 9-10"></path></svg></span>
+      <span>Site address</span>
+      <span class="visually-hidden">(done)</span>
+    </li><li class="rail-step rail-step-current" aria-current="step">
+      <span class="marker" aria-hidden="true">2</span>
+      <span>Materials</span>
+      <span class="visually-hidden">(current step)</span>
+    </li><li class="rail-step">
+    <span class="marker" aria-hidden="true">3</span>
+    <span>Review and send</span>
+  </li></ol>
+      <div class="step-card">
+        <h3>Materials for 14 Alder Court</h3>
+        <p>The coverage this job quotes from. The supplier holds these figures, so they re-check when the job reaches the quote desk.</p>
+        <span class="field-label">Paver coverage</span>
+        <div class="field-value">640 sq ft</div>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-secondary" disabled data-action="back">Back</button><button type="button" class="btn btn-primary" disabled data-action="next">Next</button></div>
+  </div></template></hh-guided-flow></div></figure>
+<figure class="cell" data-cell="hh-guided-flow/conflict"><figcaption>guided-flow / conflict</figcaption><div class="cell-body"><hh-guided-flow state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><div
+    class="kit-root"
+    data-kit="hh-guided-flow"
+    data-state="conflict"
+    data-pattern="review"
+    role="region"
+    aria-label="Guided flow"
+    aria-busy="false"
+  >
+    <div class="review-card" role="alert" data-pattern="review">
+        <div class="review-head">
+          <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M9 8l-4 4 4 4"></path><path d="M15 8l4 4-4 4"></path><path d="M5 12h14"></path></svg>
+          <span class="review-title">This row changed on the server too</span>
+        </div>
+        <dl class="review-rows">
+          <div class="review-row"><dt>Your edit</dt><dd>Pallet coverage moved to 640 sq ft</dd></div>
+          <div class="review-row"><dt>Server copy</dt><dd>Pallet coverage moved to 620 sq ft</dd></div>
+        </dl>
+        <p class="state-note">Review both versions and pick one. Nothing is resolved silently.</p>
+      </div>
+    <div class="flow">
+      <ol class="rail"><li class="rail-step rail-step-done">
+      <span class="marker" aria-hidden="true"><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M5 12l5 5 9-10"></path></svg></span>
+      <span>Site address</span>
+      <span class="visually-hidden">(done)</span>
+    </li><li class="rail-step rail-step-current" aria-current="step">
+      <span class="marker" aria-hidden="true">2</span>
+      <span>Materials</span>
+      <span class="visually-hidden">(current step)</span>
+    </li><li class="rail-step">
+    <span class="marker" aria-hidden="true">3</span>
+    <span>Review and send</span>
+  </li></ol>
+      <div class="step-card">
+        <h3>Materials for 14 Alder Court</h3>
+        <p>The coverage this job quotes from. The supplier holds these figures, so they re-check when the job reaches the quote desk.</p>
+        <span class="field-label">Paver coverage</span>
+        <div class="field-value">640 sq ft</div>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-primary" data-action="review">Review changes</button><button type="button" class="btn btn-secondary" disabled data-action="back">Back</button><button type="button" class="btn btn-primary" disabled data-action="next">Next</button></div>
+  </div></template></hh-guided-flow></div></figure>
+<figure class="cell" data-cell="hh-guided-flow/error"><figcaption>guided-flow / error</figcaption><div class="cell-body"><hh-guided-flow state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-guided-flow.css"><div
+    class="kit-root"
+    data-kit="hh-guided-flow"
+    data-state="error"
+    data-pattern="fault"
+    role="region"
+    aria-label="Guided flow"
+    aria-busy="false"
+  >
+    <div class="state-block state-error" role="alert" data-pattern="fault">
+        <div class="state-indicator" data-state="error" data-pattern="fault">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M8 2h8l6 6v8l-6 6H8l-6-6V8z"></path><path d="M9 9l6 6"></path><path d="M15 9l-6 6"></path></svg>
+    <span class="state-label">Something went wrong</span>
+  </div>
+        <p class="state-note">The last action did not complete. Nothing was lost.</p>
+        <button type="button" class="btn btn-primary" data-action="retry">Try again</button>
+      </div>
+    
+    
+  </div></template></hh-guided-flow></div></figure>
+<figure class="cell" data-cell="hh-dashboard/ready"><figcaption>dashboard / ready</figcaption><div class="cell-body"><hh-dashboard state="ready"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><div
+    class="kit-root"
+    data-kit="hh-dashboard"
+    data-state="ready"
+    data-pattern="ready"
+    role="region"
+    aria-label="Dashboard"
+    aria-busy="false"
+  >
+    
+    <div class="bento">
+      <div class="widget">
+        <span class="widget-label">Pallet coverage on hand</span>
+        <span class="widget-figure">640 sq ft</span>
+        <span class="chip chip-good"><span class="chip-text">on hand</span></span>
+      </div>
+      <div class="widget">
+        <span class="widget-label">Loads confirmed this week</span>
+        <span class="widget-figure">12</span>
+        <p class="widget-note">3 awaiting the weighbridge</p>
+      </div>
+      <div class="widget">
+        <span class="widget-label">Pick queue</span>
+        <span class="widget-figure">7</span>
+        <span class="chip chip-watch"><span class="chip-text">2 stalled</span></span>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="true"><button type="button" class="btn btn-primary" data-action="open-queue">Open pick queue</button><button type="button" class="btn btn-secondary" data-action="refresh">Refresh figures</button></div>
+  </div></template></hh-dashboard></div></figure>
+<figure class="cell" data-cell="hh-dashboard/empty"><figcaption>dashboard / empty</figcaption><div class="cell-body"><hh-dashboard state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><div
+    class="kit-root"
+    data-kit="hh-dashboard"
+    data-state="empty"
+    data-pattern="prompt"
+    role="region"
+    aria-label="Dashboard"
+    aria-busy="false"
+  >
+    <div class="state-block state-empty" data-pattern="prompt">
+        <div class="state-indicator" data-state="empty" data-pattern="prompt">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M4 4h16v16H4z"></path><path d="M4 13h5l2 3h2l2-3h5"></path></svg>
+    <span class="state-label">Nothing here yet</span>
+  </div>
+        <p class="state-note">When work arrives it shows up here first.</p>
+      </div>
+    
+    
+  </div></template></hh-dashboard></div></figure>
+<figure class="cell" data-cell="hh-dashboard/loading"><figcaption>dashboard / loading</figcaption><div class="cell-body"><hh-dashboard state="loading"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><div
+    class="kit-root"
+    data-kit="hh-dashboard"
+    data-state="loading"
+    data-pattern="progress"
+    role="region"
+    aria-label="Dashboard"
+    aria-busy="true"
+  >
+    <div class="state-block state-loading" data-pattern="progress">
+        <div class="state-indicator" data-state="loading" data-pattern="progress">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M12 3a9 9 0 1 0 9 9"></path></svg>
+    <span class="state-label">Loading</span>
+  </div>
+        <span class="spinner-wrap"><span class="spinner" role="presentation" aria-hidden="true"></span></span>
+        <p class="state-note">Reading the latest from the server.</p>
+      </div>
+    
+    
+  </div></template></hh-dashboard></div></figure>
+<figure class="cell" data-cell="hh-dashboard/offline"><figcaption>dashboard / offline</figcaption><div class="cell-body"><hh-dashboard state="offline"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><div
+    class="kit-root"
+    data-kit="hh-dashboard"
+    data-state="offline"
+    data-pattern="cached"
+    role="region"
+    aria-label="Dashboard"
+    aria-busy="false"
+  >
+    <div class="banner banner-offline" role="status" data-pattern="cached">
+        <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M3 3l18 18"></path><path d="M9.5 14.5a4 4 0 0 1 5 0"></path><path d="M6 11a9 9 0 0 1 4-2.3"></path><path d="M18 11a9 9 0 0 0-3.4-2.1"></path><path d="M12 18h.01"></path></svg>
+        <span class="banner-text">Offline, showing the cached copy</span>
+        <span class="chip chip-neutral"><span class="chip-text">cached copy</span></span>
+      </div>
+    <div class="bento">
+      <div class="widget">
+        <span class="widget-label">Pallet coverage on hand</span>
+        <span class="widget-figure">640 sq ft</span>
+        <span class="chip chip-good"><span class="chip-text">on hand</span></span>
+      </div>
+      <div class="widget">
+        <span class="widget-label">Loads confirmed this week</span>
+        <span class="widget-figure">12</span>
+        <p class="widget-note">3 awaiting the weighbridge</p>
+      </div>
+      <div class="widget">
+        <span class="widget-label">Pick queue</span>
+        <span class="widget-figure">7</span>
+        <span class="chip chip-watch"><span class="chip-text">2 stalled</span></span>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-primary" disabled data-action="open-queue">Open pick queue</button><button type="button" class="btn btn-secondary" disabled data-action="refresh">Refresh figures</button></div>
+  </div></template></hh-dashboard></div></figure>
+<figure class="cell" data-cell="hh-dashboard/conflict"><figcaption>dashboard / conflict</figcaption><div class="cell-body"><hh-dashboard state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><div
+    class="kit-root"
+    data-kit="hh-dashboard"
+    data-state="conflict"
+    data-pattern="review"
+    role="region"
+    aria-label="Dashboard"
+    aria-busy="false"
+  >
+    <div class="review-card" role="alert" data-pattern="review">
+        <div class="review-head">
+          <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M9 8l-4 4 4 4"></path><path d="M15 8l4 4-4 4"></path><path d="M5 12h14"></path></svg>
+          <span class="review-title">This row changed on the server too</span>
+        </div>
+        <dl class="review-rows">
+          <div class="review-row"><dt>Your edit</dt><dd>Pallet coverage moved to 640 sq ft</dd></div>
+          <div class="review-row"><dt>Server copy</dt><dd>Pallet coverage moved to 620 sq ft</dd></div>
+        </dl>
+        <p class="state-note">Review both versions and pick one. Nothing is resolved silently.</p>
+      </div>
+    <div class="bento">
+      <div class="widget">
+        <span class="widget-label">Pallet coverage on hand</span>
+        <span class="widget-figure">640 sq ft</span>
+        <span class="chip chip-good"><span class="chip-text">on hand</span></span>
+      </div>
+      <div class="widget">
+        <span class="widget-label">Loads confirmed this week</span>
+        <span class="widget-figure">12</span>
+        <p class="widget-note">3 awaiting the weighbridge</p>
+      </div>
+      <div class="widget">
+        <span class="widget-label">Pick queue</span>
+        <span class="widget-figure">7</span>
+        <span class="chip chip-watch"><span class="chip-text">2 stalled</span></span>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-primary" data-action="review">Review changes</button><button type="button" class="btn btn-primary" disabled data-action="open-queue">Open pick queue</button><button type="button" class="btn btn-secondary" disabled data-action="refresh">Refresh figures</button></div>
+  </div></template></hh-dashboard></div></figure>
+<figure class="cell" data-cell="hh-dashboard/error"><figcaption>dashboard / error</figcaption><div class="cell-body"><hh-dashboard state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-dashboard.css"><div
+    class="kit-root"
+    data-kit="hh-dashboard"
+    data-state="error"
+    data-pattern="fault"
+    role="region"
+    aria-label="Dashboard"
+    aria-busy="false"
+  >
+    <div class="state-block state-error" role="alert" data-pattern="fault">
+        <div class="state-indicator" data-state="error" data-pattern="fault">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M8 2h8l6 6v8l-6 6H8l-6-6V8z"></path><path d="M9 9l6 6"></path><path d="M15 9l-6 6"></path></svg>
+    <span class="state-label">Something went wrong</span>
+  </div>
+        <p class="state-note">The last action did not complete. Nothing was lost.</p>
+        <button type="button" class="btn btn-primary" data-action="retry">Try again</button>
+      </div>
+    
+    
+  </div></template></hh-dashboard></div></figure>
+<figure class="cell" data-cell="hh-inbox/ready"><figcaption>inbox / ready</figcaption><div class="cell-body"><hh-inbox state="ready"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><div
+    class="kit-root"
+    data-kit="hh-inbox"
+    data-state="ready"
+    data-pattern="ready"
+    role="region"
+    aria-label="Inbox"
+    aria-busy="false"
+  >
+    
+    <div class="split">
+      <div class="list"><ul class="rows"><li class="row row-selected" aria-current="true"><span class="msg-main"><span class="msg-sender">Weighbridge</span><span class="msg-subject">Load 4417 needs a ticket check</span></span><span class="chip chip-good"><span class="chip-text">new</span></span></li><li class="row row-alt"><span class="msg-main"><span class="msg-sender">Quote desk</span><span class="msg-subject">Two lines need dealer pricing</span></span><span class="chip chip-good"><span class="chip-text">new</span></span></li><li class="row"><span class="msg-main"><span class="msg-sender">Yard crew</span><span class="msg-subject">Bay 5 restack finished</span></span><span class="chip chip-neutral"><span class="chip-text">read</span></span></li></ul></div>
+      <div class="reading">
+        <h3>Load 4417 needs a ticket check</h3>
+        <span class="from">from Weighbridge</span>
+        <p>The ticket total is one pallet short of the truck manifest. Confirm against the load before the driver leaves the gate.</p>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="true"><button type="button" class="btn btn-secondary" data-action="mark-read">Mark read</button><button type="button" class="btn btn-primary" data-action="open-load">Open load</button></div>
+  </div></template></hh-inbox></div></figure>
+<figure class="cell" data-cell="hh-inbox/empty"><figcaption>inbox / empty</figcaption><div class="cell-body"><hh-inbox state="empty"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><div
+    class="kit-root"
+    data-kit="hh-inbox"
+    data-state="empty"
+    data-pattern="prompt"
+    role="region"
+    aria-label="Inbox"
+    aria-busy="false"
+  >
+    <div class="state-block state-empty" data-pattern="prompt">
+        <div class="state-indicator" data-state="empty" data-pattern="prompt">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M4 4h16v16H4z"></path><path d="M4 13h5l2 3h2l2-3h5"></path></svg>
+    <span class="state-label">Nothing here yet</span>
+  </div>
+        <p class="state-note">When work arrives it shows up here first.</p>
+      </div>
+    
+    
+  </div></template></hh-inbox></div></figure>
+<figure class="cell" data-cell="hh-inbox/loading"><figcaption>inbox / loading</figcaption><div class="cell-body"><hh-inbox state="loading"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><div
+    class="kit-root"
+    data-kit="hh-inbox"
+    data-state="loading"
+    data-pattern="progress"
+    role="region"
+    aria-label="Inbox"
+    aria-busy="true"
+  >
+    <div class="state-block state-loading" data-pattern="progress">
+        <div class="state-indicator" data-state="loading" data-pattern="progress">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M12 3a9 9 0 1 0 9 9"></path></svg>
+    <span class="state-label">Loading</span>
+  </div>
+        <span class="spinner-wrap"><span class="spinner" role="presentation" aria-hidden="true"></span></span>
+        <p class="state-note">Reading the latest from the server.</p>
+      </div>
+    
+    
+  </div></template></hh-inbox></div></figure>
+<figure class="cell" data-cell="hh-inbox/offline"><figcaption>inbox / offline</figcaption><div class="cell-body"><hh-inbox state="offline"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><div
+    class="kit-root"
+    data-kit="hh-inbox"
+    data-state="offline"
+    data-pattern="cached"
+    role="region"
+    aria-label="Inbox"
+    aria-busy="false"
+  >
+    <div class="banner banner-offline" role="status" data-pattern="cached">
+        <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M3 3l18 18"></path><path d="M9.5 14.5a4 4 0 0 1 5 0"></path><path d="M6 11a9 9 0 0 1 4-2.3"></path><path d="M18 11a9 9 0 0 0-3.4-2.1"></path><path d="M12 18h.01"></path></svg>
+        <span class="banner-text">Offline, showing the cached copy</span>
+        <span class="chip chip-neutral"><span class="chip-text">cached copy</span></span>
+      </div>
+    <div class="split">
+      <div class="list"><ul class="rows"><li class="row row-selected" aria-current="true"><span class="msg-main"><span class="msg-sender">Weighbridge</span><span class="msg-subject">Load 4417 needs a ticket check</span></span><span class="chip chip-good"><span class="chip-text">new</span></span></li><li class="row row-alt"><span class="msg-main"><span class="msg-sender">Quote desk</span><span class="msg-subject">Two lines need dealer pricing</span></span><span class="chip chip-good"><span class="chip-text">new</span></span></li><li class="row"><span class="msg-main"><span class="msg-sender">Yard crew</span><span class="msg-subject">Bay 5 restack finished</span></span><span class="chip chip-neutral"><span class="chip-text">read</span></span></li></ul></div>
+      <div class="reading">
+        <h3>Load 4417 needs a ticket check</h3>
+        <span class="from">from Weighbridge</span>
+        <p>The ticket total is one pallet short of the truck manifest. Confirm against the load before the driver leaves the gate.</p>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-secondary" disabled data-action="mark-read">Mark read</button><button type="button" class="btn btn-primary" disabled data-action="open-load">Open load</button></div>
+  </div></template></hh-inbox></div></figure>
+<figure class="cell" data-cell="hh-inbox/conflict"><figcaption>inbox / conflict</figcaption><div class="cell-body"><hh-inbox state="conflict"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><div
+    class="kit-root"
+    data-kit="hh-inbox"
+    data-state="conflict"
+    data-pattern="review"
+    role="region"
+    aria-label="Inbox"
+    aria-busy="false"
+  >
+    <div class="review-card" role="alert" data-pattern="review">
+        <div class="review-head">
+          <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M9 8l-4 4 4 4"></path><path d="M15 8l4 4-4 4"></path><path d="M5 12h14"></path></svg>
+          <span class="review-title">This row changed on the server too</span>
+        </div>
+        <dl class="review-rows">
+          <div class="review-row"><dt>Your edit</dt><dd>Pallet coverage moved to 640 sq ft</dd></div>
+          <div class="review-row"><dt>Server copy</dt><dd>Pallet coverage moved to 620 sq ft</dd></div>
+        </dl>
+        <p class="state-note">Review both versions and pick one. Nothing is resolved silently.</p>
+      </div>
+    <div class="split">
+      <div class="list"><ul class="rows"><li class="row row-selected" aria-current="true"><span class="msg-main"><span class="msg-sender">Weighbridge</span><span class="msg-subject">Load 4417 needs a ticket check</span></span><span class="chip chip-good"><span class="chip-text">new</span></span></li><li class="row row-alt"><span class="msg-main"><span class="msg-sender">Quote desk</span><span class="msg-subject">Two lines need dealer pricing</span></span><span class="chip chip-good"><span class="chip-text">new</span></span></li><li class="row"><span class="msg-main"><span class="msg-sender">Yard crew</span><span class="msg-subject">Bay 5 restack finished</span></span><span class="chip chip-neutral"><span class="chip-text">read</span></span></li></ul></div>
+      <div class="reading">
+        <h3>Load 4417 needs a ticket check</h3>
+        <span class="from">from Weighbridge</span>
+        <p>The ticket total is one pallet short of the truck manifest. Confirm against the load before the driver leaves the gate.</p>
+      </div>
+    </div>
+    <div class="kit-actions" data-live="false"><button type="button" class="btn btn-primary" data-action="review">Review changes</button><button type="button" class="btn btn-secondary" disabled data-action="mark-read">Mark read</button><button type="button" class="btn btn-primary" disabled data-action="open-load">Open load</button></div>
+  </div></template></hh-inbox></div></figure>
+<figure class="cell" data-cell="hh-inbox/error"><figcaption>inbox / error</figcaption><div class="cell-body"><hh-inbox state="error"><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-inbox.css"><div
+    class="kit-root"
+    data-kit="hh-inbox"
+    data-state="error"
+    data-pattern="fault"
+    role="region"
+    aria-label="Inbox"
+    aria-busy="false"
+  >
+    <div class="state-block state-error" role="alert" data-pattern="fault">
+        <div class="state-indicator" data-state="error" data-pattern="fault">
+    <svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+  ><path d="M8 2h8l6 6v8l-6 6H8l-6-6V8z"></path><path d="M9 9l6 6"></path><path d="M15 9l-6 6"></path></svg>
+    <span class="state-label">Something went wrong</span>
+  </div>
+        <p class="state-note">The last action did not complete. Nothing was lost.</p>
+        <button type="button" class="btn btn-primary" data-action="retry">Try again</button>
+      </div>
+    
+    
+  </div></template></hh-inbox></div></figure>
+</div>
+</section>
+</body>
+</html>

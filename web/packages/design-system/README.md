@@ -54,14 +54,18 @@ under `web/packages/`.
 - The harness: `harness/index.html` is the committed static page (built by
   `harness/build.mjs` from the same render functions the elements paint), every
   kit in every state at the two walkthrough widths, 1440 and 1920, with no
-  build step at view time and no client scripts; each cell paints inside its
-  own declarative shadow root, so every kit is styled under its own sheet, and
-  the build writes each kit's sheet once to `harness/sheets/<tag>.css`, which
-  the page opens beside. `harness/serve.mjs` serves the theme and brand
-  variants from the same builder (`/?theme=light`, `/?brand=hh-pro`) plus the
-  sheets, refuses to serve over an occupied port, and grades its own page
-  before announcing. The suite holds the committed page and every sheet
-  byte-equal to a fresh build.
+  build step at view time and no client scripts; the build commits all four
+  theme and brand variants as files beside it (`index-light.html`,
+  `index-hh-pro.html`, `index-light-hh-pro.html`), so a designer opens any of
+  them by double click and no server is needed to see both themes and the
+  hh-pro brand. Each cell paints inside its own declarative shadow root, so
+  every kit is styled under its own sheet, and the build writes each kit's
+  sheet once to `harness/sheets/<tag>.css`; that folder travels with the
+  pages (a page copied without `harness/sheets/` renders unstyled).
+  `harness/serve.mjs` serves the same variants from the same builder
+  (`/?theme=light`, `/?brand=hh-pro`) plus the sheets, refuses to serve over an
+  occupied port, and grades its own page before announcing. The suite holds
+  every committed page and every sheet byte-equal to a fresh build.
 
 ## Running the suite and the harness
 
