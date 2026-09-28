@@ -6,6 +6,7 @@
 // ZIP) lives in test/result-shape.test.mjs. Every assertion compares bytes.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import * as api from "../src/index.ts";
 import { recorder, unwrap } from "./_recorded.mjs";
 
@@ -82,6 +83,18 @@ test("the dispatch photo upload sends the raw bytes verbatim with its caption qu
 // FormData), then compares the field's bytes, so only a byte-exact ride
 // passes. The fixtures carry bytes a string field would mangle (invalid
 // UTF-8 lead bytes, 0x7f and 0x80).
+test("the generated output types the multipart binary fields Blob, never string", () => {
+  // An assertion over the GENERATED OUTPUT itself: a generator regression
+  // that typed these fields string would still pass every runtime gate (a
+  // string field String()s the caller's Blob into mangled text), so the
+  // spellings are pinned here. `file: Blob` lives in the named wire type the
+  // price file forms use; `image?: Blob` in feedbackCreateMultipart's inline
+  // body.
+  const types = readFileSync(new URL("../src/gen/types.ts", import.meta.url), "utf8");
+  assert.match(types, /export type PricingPriceFileForm = \{[^}]*file: Blob;/, "the price file field is a Blob in the generated wire type");
+  const feedback = readFileSync(new URL("../src/gen/staff-feedback.ts", import.meta.url), "utf8");
+  assert.match(feedback, /feedbackCreateMultipart\([\s\S]*?image\?: Blob/, "the screenshot field is an optional Blob in the generated operation");
+});
 test("the price file multipart field rides as the caller's bytes, byte for byte", async (t) => {
   const PRICE_FILE = Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 0xff, 0xfe, 0x7f, 0x80, 0x0d, 0x0a, 0x00, 0xc8]);
   const form = { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PRICE_FILE]) };
