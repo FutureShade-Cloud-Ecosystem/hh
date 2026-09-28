@@ -248,8 +248,11 @@ export type DeferredMethodName = "createEmailPasswordSession" | "getSession" | "
  * the controller's sign-in and resume paths make are handed to the test and
  * do not resolve until the test completes them. This is the fake the
  * in-flight races run against: begin a resume, sign out, then let the
- * platform answer late, and assert the custody adopted nothing. All values
- * are fake. By default deleteSession resolves immediately (the sign-out is
+ * platform answer late, and assert the custody adopted nothing. Every call
+ * of a method is kept, in call order (two and three sign-ins in flight are
+ * parked at once), so `handoffs(name)` lists them all and `handoff(name)`
+ * returns the latest, or null until that call has been made. All values are
+ * fake. By default deleteSession resolves immediately (the sign-out is
  * the event under test, never the deferred leg); with deferDeleteSession the
  * platform session delete is handed to the test as well, so a sign-in or a
  * resume can be parked against a sign-out that is itself mid await. The
@@ -258,10 +261,10 @@ export type DeferredMethodName = "createEmailPasswordSession" | "getSession" | "
 export class DeferredAccountSurface implements AccountSurface {
   user: AccountUser;
   deleteCount = 0;
-  #createEmailPasswordSession: DeferredCall<AccountUser> | null = null;
-  #getSession: DeferredCall<AccountUser> | null = null;
-  #createJWT: DeferredCall<{ jwt: string; expiresAtMs: number }> | null = null;
-  #deleteSession: DeferredCall<void> | null = null;
+  readonly #createEmailPasswordSessions: DeferredCall<AccountUser>[] = [];
+  readonly #getSessions: DeferredCall<AccountUser>[] = [];
+  readonly #createJWTs: DeferredCall<{ jwt: string; expiresAtMs: number }>[] = [];
+  readonly #deleteSessions: DeferredCall<void>[] = [];
   #deferDeleteSession: boolean;
 
   constructor(options?: { user?: AccountUser; deferDeleteSession?: boolean }) {
@@ -269,19 +272,27 @@ export class DeferredAccountSurface implements AccountSurface {
     this.#deferDeleteSession = options?.deferDeleteSession ?? false;
   }
 
-  /** The handoff for an in-flight call, or null until that call has been made. */
+  /** Every handoff made for a method, in call order (an empty array before the first). */
+  handoffs(
+    name: DeferredMethodName,
+  ): DeferredHandoff<AccountUser | { jwt: string; expiresAtMs: number } | void>[] {
+    if (name === "createEmailPasswordSession") return [...this.#createEmailPasswordSessions];
+    if (name === "getSession") return [...this.#getSessions];
+    if (name === "deleteSession") return [...this.#deleteSessions];
+    return [...this.#createJWTs];
+  }
+
+  /** The handoff for the latest in-flight call of a method, or null until that call has been made. */
   handoff(
     name: DeferredMethodName,
   ): DeferredHandoff<AccountUser | { jwt: string; expiresAtMs: number } | void> | null {
-    if (name === "createEmailPasswordSession") return this.#createEmailPasswordSession;
-    if (name === "getSession") return this.#getSession;
-    if (name === "deleteSession") return this.#deleteSession;
-    return this.#createJWT;
+    const all = this.handoffs(name);
+    return all.length === 0 ? null : all[all.length - 1];
   }
 
   async createEmailPasswordSession(_email: string, _password: string): Promise<AccountUser> {
     const call = new DeferredCall<AccountUser>();
-    this.#createEmailPasswordSession = call;
+    this.#createEmailPasswordSessions.push(call);
     return call.promise;
   }
 
@@ -291,13 +302,13 @@ export class DeferredAccountSurface implements AccountSurface {
 
   async getSession(): Promise<AccountUser> {
     const call = new DeferredCall<AccountUser>();
-    this.#getSession = call;
+    this.#getSessions.push(call);
     return call.promise;
   }
 
   async createJWT(): Promise<{ jwt: string; expiresAtMs: number }> {
     const call = new DeferredCall<{ jwt: string; expiresAtMs: number }>();
-    this.#createJWT = call;
+    this.#createJWTs.push(call);
     return call.promise;
   }
 
@@ -305,7 +316,7 @@ export class DeferredAccountSurface implements AccountSurface {
     this.deleteCount += 1;
     if (!this.#deferDeleteSession) return;
     const call = new DeferredCall<void>();
-    this.#deleteSession = call;
+    this.#deleteSessions.push(call);
     return call.promise;
   }
 }

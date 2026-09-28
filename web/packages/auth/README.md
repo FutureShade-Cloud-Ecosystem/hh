@@ -58,7 +58,7 @@ keeps the degraded path exercised on every `npm test`.
 ### Sign-out goes through signOut()
 
 The shell must sign out through `AuthController.signOut()`, never by
-calling `SessionStore.clear()` directly. Two counters live in the
+calling `SessionStore.clear()` directly. Three counters live in the
 controller. The generation counter cancels a resume in flight (and is
 bumped by every successful adoption, so of two overlapping resumes with no
 sign-out between them only the first adoption lands). The sign-out counter
@@ -66,14 +66,26 @@ cancels an explicit sign-in: only a sign-out bumps it, on both sides of
 its own await, because a sign-in is the person's own act. An adoption that
 lands first (a resume, an out-of-band callback) does not cancel it, and a
 double submit of the sign-in form does not resolve an error while the
-person is signed in. A direct `sessions.clear()` empties the custody but
+person is signed in. The sign-in sequence counter supersedes one sign-in
+with another: every submit bumps it, and a sign-in that is no longer the
+newest adopts nothing, minting nothing further. It resolves as successful
+only when custody already holds its own user (the double submit: the
+newest submit's adoption is that same user); otherwise it resolves
+superseded and the screen says so, because of two people's sign-ins in
+flight the older one's late answer must never replace the newer person's
+session on a shared tablet. A sign-out outranks the supersession: a
+sign-in parked under a sign-out resolves cancelled, never superseded. A
+direct `sessions.clear()` empties the custody but
 bumps neither counter: a resume that is already running is not cancelled,
 and when the platform answers it adopts a token into a custody the user
-asked to sign out. `signOut()` ends the platform session, bumps both
-counters on the two sides of that await, and wipes custody; the
-deferred-fake tests in `test/client.test.mjs` hold that ordering against a
-resume and a sign-in begun before and during the sign-out, a resume that
-adopts first, a double submit, and the two adoption bumps.
+asked to sign out. `signOut()` ends the platform session, bumps all three
+counters on the two sides of that await (the generation twice, the sign-out
+counter twice; the sequence counter is never touched by it), and wipes
+custody; the deferred-fake tests in `test/client.test.mjs` hold that
+ordering against a resume and a sign-in begun before and during the
+sign-out, a resume that adopts first, a double submit, the two people's
+and three sign-ins in flight, a sign-out landing between the two, and the
+two adoption bumps.
 
 ### The throw-safe mirror's provenance
 
@@ -145,12 +157,30 @@ own lock was present; it does not prove which HH person that was.
   person acknowledged; until an unlock is server verified, this package
   records no person at all.
 
-**Open question for Colton, what a real per-person unlock needs:** a
-credential per person (not one device credential named "device-unlock"), a
-challenge made by the server, the assertion and its user-verification flag
-verified on the server, and the server stamping the acting user on the
-audit entry from its own verified evidence. Anything the page stamps
-itself can be rewritten by any script in the page.
+**The ruling on the lock, recorded:** Colton was put two options, the lock
+as built with per-person unlock as its own later item, or per-person unlock
+required before release, and his words were "A is fine" (relay message 038,
+Colton's ruling on the tablet lock). The lock ships as built for the first
+release: it proves that someone who could unlock the tablet was present; it
+does not prove which HH person that was, and the core verifies nothing
+about it. The trigger that changes this is recorded with the ruling:
+per-person unlock is required before real staff share tablets in a yard,
+the point where knowing which person acted matters (on approvals or price
+overrides, for example). Until then the lock is a courtesy. Per-person
+unlock is not dropped: a credential per person (not one device credential
+named "device-unlock"), a challenge made by the server, the assertion and
+its user-verification flag verified on the server, and the server stamping
+the acting user on the audit entry from its own verified evidence. Anything
+the page stamps itself can be rewritten by any script in the page.
+
+**One behaviour beside that ruling, stated plainly and not changed:** by
+the accept-when-there-is-no-session rule, a lock is stored or opened for A
+when A signs out DURING the prompt. The re-check reads the custody fresh
+and accepts a custody holding no session at all (a sign-out leaves exactly
+that), so A's own sign-out mid prompt does not refuse A's engage or
+unlock; and nothing in `signOut()` touches the lock, so the lock is not
+disengaged at sign-out today. Whether the lock should disengage at
+sign-out is one of the two questions still open with Colton.
 
 Disclosures about the WebAuthn adapter: no test runs a real browser
 ceremony (the adapter's options are asserted against a stubbed
@@ -267,8 +297,11 @@ The gates, as tests:
   with a recording fetch: the staff header set (Authorization and X-Org,
   with the lock open or closed), the tenant header set (Authorization
   only), the headerless refusal with zero fetches, the controller paths
-  including the reload's resume through the issuer, and the no-role
-  surface.
+  including the reload's resume through the issuer, the sign-in's two
+  guards (the sign-out counter and the sign-in sequence: two people's
+  sign-ins in flight in both landing orders, three in flight, the double
+  submit, a sign-out during two sign-ins, and the sign-out counter's bump
+  before the await), and the no-role surface.
 - `test/gates.test.mjs`: the structural scans (no localStorage, no
   document.cookie, no indexedDB anywhere in the sources; the browser-session
   storage touched only by the mirror; only the owned X- header; no absolute

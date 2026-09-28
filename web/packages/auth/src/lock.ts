@@ -11,8 +11,9 @@
 // and the platform authenticator proves that someone who knows the device's
 // own lock was present, not which HH person it was. A header that claims a
 // fact the server cannot check poisons the audit trail the moment anything
-// trusts it. The README carries the open question for Colton: what a real
-// per-person unlock needs.
+// trusts it. The README carries the recorded ruling on the lock: the
+// courtesy lock ships for the first release, and what a real per-person
+// unlock needs is written there beside it, with its trigger.
 //
 // engage() takes no identity from its caller. It binds to the signed-in
 // user's id, read from the custody (`sessions.current`), and no name is

@@ -178,23 +178,33 @@ export interface AdoptSessionInput {
  * answered after the sign-out returned; the profile would be written back
  * to storage either way.
  *
- * The sign-in answers to a different master: it is an explicit act by the
- * person at the keyboard, so it checks a sign-out counter, not the shared
- * generation. Only signOut() bumps that counter, on both sides of its own
- * await. An adoption that lands first (a resume answering for whoever the
+ * The sign-in answers to two counters of its own, not the shared generation:
+ * it is an explicit act by the person at the keyboard. The sign-out counter
+ * cancels it: only signOut() bumps that counter, on both sides of its own
+ * await, so an adoption that lands first (a resume answering for whoever the
  * issuer still holds, or an out-of-band callback) does not cancel the
  * person's explicit sign-in: the sign-in carries on and its own adoption
  * wins custody, so the person who signed in is the person the tablet shows.
- * And one sign-in's own adoption does not cancel a second submit of the
- * same form: a double submit lands twice and no error is resolved while
- * the person is signed in. A sign-out cancels a sign-in, from both sides
- * of the sign-out's await, exactly as the generation guard does.
+ * The sign-in sequence counter supersedes it: every sign-in submit bumps
+ * that counter, and a sign-in that is no longer the newest adopts nothing,
+ * whatever the platform answered for it. It resolves as successful only when
+ * custody already holds its own user (the double submit of one form: the
+ * newest submit's adoption is that same user, so both submits land and
+ * neither resolves an error while the person is signed in); otherwise it
+ * resolves superseded, and the screen says so, because of two people's
+ * sign-ins in flight the older one's late answer must never replace the
+ * newer person's session: on a shared tablet that would be the wrong person
+ * signed in, silently. A sign-out cancels a sign-in outright, from both
+ * sides of the sign-out's await, exactly as the generation guard does, and
+ * the cancellation outranks the supersession: a sign-in parked under a
+ * sign-out resolves cancelled, never superseded.
  */
 export class AuthController {
   readonly #account: AccountSurface;
   readonly #sessions: SessionStore;
   #generation = 0;
   #signOuts = 0;
+  #signIns = 0;
 
   constructor(deps: { account: AccountSurface; sessions: SessionStore }) {
     this.#account = deps.account;
@@ -204,15 +214,19 @@ export class AuthController {
   /**
    * The house sign-in: establish the platform session, mint the JWT, adopt
    * it. Custody keeps the token in memory and the display profile in the
-   * mirror; no credential is stored. The guard across every await checks a
-   * sign-out counter, not the shared generation: an explicit sign-in is the
-   * person's own act, so a resume or an adoption that lands first does not
-   * cancel it (the sign-in carries on and its adoption wins custody), and a
-   * double submit does not resolve an error while the person is signed in.
-   * Only a sign-out cancels it, from both sides of the sign-out's own
-   * await, and nothing is adopted once it has.
+   * mirror; no credential is stored. Two guards run across every await. The
+   * sign-out counter: an explicit sign-in is the person's own act, so a
+   * resume or an adoption that lands first does not cancel it (the sign-in
+   * carries on and its adoption wins custody), and only a sign-out does,
+   * from both sides of the sign-out's own await. The sign-in sequence: a
+   * newer submit supersedes an older one, which then adopts nothing, minting
+   * nothing further; it resolves as successful only when custody already
+   * holds its own user (the double submit), otherwise superseded, and the
+   * screen says so.
    */
   async signInWithPassword(email: string, password: string): Promise<Result<AccountUser>> {
+    this.#signIns += 1;
+    const signIns = this.#signIns;
     const signOuts = this.#signOuts;
     let user: AccountUser;
     try {
@@ -223,6 +237,7 @@ export class AuthController {
     if (this.#signOuts !== signOuts) {
       return err("sign-in cancelled: sign-out landed while the sign-in was in flight, so nothing was adopted");
     }
+    if (this.#signIns !== signIns) return this.#staleSignIn(user);
     let minted: { jwt: string; expiresAtMs: number };
     try {
       minted = await this.#account.createJWT();
@@ -232,6 +247,7 @@ export class AuthController {
     if (this.#signOuts !== signOuts) {
       return err("sign-in cancelled: sign-out landed while the sign-in was in flight, so nothing was adopted");
     }
+    if (this.#signIns !== signIns) return this.#staleSignIn(user);
     const adopted = this.#sessions.adopt({
       token: minted.jwt,
       tokenExpiresAtMs: minted.expiresAtMs,
@@ -240,6 +256,20 @@ export class AuthController {
     if (!adopted) return err("sign-in failed: the platform returned an unusable session");
     this.#generation += 1; // the adoption is a structural change: it supersedes anything already in flight
     return ok({ ...user });
+  }
+
+  /**
+   * The resolution of a sign-in that is no longer the newest: it adopts
+   * nothing, whatever the platform answered for it. Custody already holding
+   * its own user resolves successful without adopting (the double submit of
+   * one form: the newest submit's adoption is that same user, and a second
+   * adoption of it could only race the newest submit's own); anything else
+   * resolves superseded, an error Result whose message is the screen's, so a
+   * person whose answer landed late sees why they are not the one signed in.
+   */
+  #staleSignIn(user: AccountUser): Result<AccountUser> {
+    if (this.#sessions.current?.user.userId === user.userId) return ok({ ...user });
+    return err("sign-in superseded: a newer sign-in landed while this one was in flight, so nothing was adopted");
   }
 
   /**
