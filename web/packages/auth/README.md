@@ -228,12 +228,23 @@ The gates, as tests:
 
 ### What the structural scans cannot catch
 
-The source scans are tripwires for the plain spellings. Each of these
-passes the scan, and the scan is not a proof: a computed property name
-(`globalThis["local" + "Storage"]`), an alias, a storage object passed in
-as a parameter, the Cache API, `window.name`, `history.replaceState`, or a
-write under another key inside the mirror's own module. The gate that
-counts is the run-time capture: every storage write the custody and lock
-code paths actually make is recorded and checked, key by key and value by
-value, with the clock injected so the fixture is live and the capture is
-never vacuous.
+The source scans are tripwires for the plain spellings, and they are cheap
+and partial. Each of these passes the scan, and the scan is not a proof: a
+computed property name (`globalThis["local" + "Storage"]`), an alias, a
+storage object passed in as a parameter, the Cache API, `window.name`,
+`history.replaceState`, or a write under another key inside the mirror's
+own module.
+
+The gate that counts is the run-time capture, and it works by swapping the
+platform's storage globals for recording fakes for the length of the test:
+`globalThis.sessionStorage` and `globalThis.localStorage` become recording
+storages, and `document.cookie`, the Cache API, and `indexedDB` become
+recording stubs. The sign-in, custody, and unlock flows then run through
+default-constructed stores, the production resolution path, so a write to
+the real global session storage, or to a persistent surface reached through
+a computed property name or an alias installed before the swap, lands in a
+recording fake and is checked, key by key and value by value, with the
+clock injected so the fixture is live and the capture is never vacuous.
+What even this capture cannot see: a storage object a caller injects into
+the mirror (the shell vouches for its own backing), and anything written
+after the test has restored the globals.

@@ -5,10 +5,12 @@
 //    document.cookie, indexedDB), a confinement proof that only the
 //    throw-safe mirror touches the browser-session storage, a scan for
 //    header names the package must never mint, and a runtime capture of
-//    every mirrored write across the custody and lock code paths against an
-//    injected clock. The structural scans are cheap tripwires for the plain
-//    spellings; the run-time capture is the gate that counts (the README
-//    names what the scans cannot catch).
+//    every write across the sign-in, custody, and lock code paths against an
+//    injected clock, with the platform's storage globals swapped for
+//    recording fakes so the production resolution path is the one captured.
+//    The structural scans are cheap tripwires for the plain spellings; the
+//    run-time capture is the gate that counts (the README names what the
+//    scans cannot catch).
 // 2. the header providers match the core's middleware rule on X-Org: the
 //    staff leg refuses a missing X-Org with 400, the tenant leg refuses a
 //    present X-Org with 400.
@@ -21,9 +23,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  AuthController,
   DeviceLock,
   SessionStore,
-  ThrowSafeMirror,
   LOCK_MIRROR_KEY,
   SESSION_MIRROR_KEY,
 } from "../src/index.ts";
@@ -32,6 +34,7 @@ import {
   FAKE_JWT,
   FAKE_PASSWORD,
   FAKE_PIN,
+  FakeAccountSurface,
   FakeCredentialProvider,
   RecordedStorage,
 } from "../src/testing.ts";
@@ -111,51 +114,99 @@ test("the header providers match the core's middleware rule on X-Org", () => {
   );
 });
 
-test("the runtime code paths mirror no token, no PIN, no password, no handle", async () => {
-  const recorded = new RecordedStorage();
-  // The clock is injected: the fixture's token is live against it, so adopt
-  // really succeeds and the capture is not vacuous (a stale fixture against
-  // the real clock once let the gate pass with nothing captured).
-  const sessions = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: () => START_MS });
-  const adopted = sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: START_MS + 60_000, user: { ...FAKE_ACCOUNT } });
-  assert.equal(adopted, true, "the fixture session must adopt for the capture to be real");
-  const credentials = new FakeCredentialProvider();
-  const lock = new DeviceLock({
-    credentials,
-    sessions,
-    mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded),
-    now: () => START_MS,
-    idleRelockMs: 3_600_000,
-  });
-  assert.equal((await lock.engage()).ok, true);
-  credentials.present(FAKE_PIN);
-  assert.equal((await lock.unlock()).ok, true);
+test("the runtime code paths write no token, no PIN, no password, no handle into any storage", async () => {
+  // The platform's storage globals are swapped for recording fakes for the
+  // length of the test, and the flows below run through DEFAULT-CONSTRUCTED
+  // stores, the production resolution path. A write to the real global
+  // session storage, or to a persistent surface reached through a computed
+  // property name or an alias, lands in a recording fake and is seen here;
+  // an injected recording storage alone once missed exactly that.
+  const sessionGlobal = new RecordedStorage();
+  const localGlobal = new RecordedStorage();
+  const cookieWrites = [];
+  const cacheWrites = [];
+  const dbWrites = [];
+  const storageNames = ["sessionStorage", "localStorage"];
+  const saved = storageNames.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]);
+  try {
+    Object.defineProperty(globalThis, "sessionStorage", { value: sessionGlobal, configurable: true, writable: true });
+    Object.defineProperty(globalThis, "localStorage", { value: localGlobal, configurable: true, writable: true });
+    Object.defineProperty(globalThis, "document", {
+      value: { set cookie(value) { cookieWrites.push(String(value)); } },
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "caches", {
+      value: {
+        open: async () => ({ put: async (request, response) => cacheWrites.push({ request, response }) }),
+        match: async () => undefined,
+        delete: async () => false,
+      },
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "indexedDB", {
+      value: { open: (name) => dbWrites.push(name) },
+      configurable: true,
+    });
 
-  const allowedKeys = new Set([SESSION_MIRROR_KEY, LOCK_MIRROR_KEY, "hh-auth.storage-probe"]);
-  const sessionWrites = recorded.writes.filter((w) => w.key === SESSION_MIRROR_KEY);
-  const lockWrites = recorded.writes.filter((w) => w.key === LOCK_MIRROR_KEY);
-  assert.ok(sessionWrites.length >= 1, "the session path wrote (the capture is not vacuous)");
-  assert.ok(lockWrites.length >= 1, "the lock path wrote (the capture is not vacuous)");
-  for (const write of recorded.writes) {
-    assert.ok(allowedKeys.has(write.key), `an unexpected key was written: ${write.key}`);
-    assert.equal(write.value.includes(FAKE_JWT), false, `the token reached storage (key ${write.key})`);
-    assert.equal(write.value.includes(FAKE_PIN), false, `the PIN reached storage (key ${write.key})`);
-    assert.equal(write.value.includes(FAKE_PASSWORD), false, `the password reached storage (key ${write.key})`);
-    if (write.key === SESSION_MIRROR_KEY) {
-      const payload = JSON.parse(write.value);
-      assert.deepEqual(
-        Object.keys(payload).sort(),
-        ["email", "name", "userId", "v"],
-        "the session mirror carries the display profile and nothing else",
-      );
+    // The clock is injected: the fixture's token is live against it, so the
+    // sign-in really adopts and the capture is not vacuous (a stale fixture
+    // against the real clock once let the gate pass with nothing captured).
+    const now = () => START_MS;
+    const account = new FakeAccountSurface();
+    account.setClock(now);
+    const sessions = new SessionStore({ now }); // the mirror resolves to the global fake
+    assert.equal(sessions.degraded, false, "the swapped-in global storage must probe as working");
+    const controller = new AuthController({ account, sessions });
+    const signedIn = await controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD);
+    assert.equal(signedIn.ok, true, `the fixture sign-in must succeed for the capture to be real: ${signedIn.ok ? "" : signedIn.error}`);
+
+    const credentials = new FakeCredentialProvider();
+    const lock = new DeviceLock({ credentials, sessions, now, idleRelockMs: 3_600_000 }); // the mirror resolves to the global fake
+    assert.equal((await lock.engage()).ok, true);
+    credentials.present(FAKE_PIN);
+    assert.equal((await lock.unlock()).ok, true);
+
+    const allowedKeys = new Set([SESSION_MIRROR_KEY, LOCK_MIRROR_KEY, "hh-auth.storage-probe"]);
+    for (const [surface, recording] of [["sessionStorage", sessionGlobal], ["localStorage", localGlobal]]) {
+      for (const write of recording.writes) {
+        assert.ok(allowedKeys.has(write.key), `an unexpected key reached ${surface}: ${write.key}`);
+        assert.equal(write.value.includes(FAKE_JWT), false, `the token reached ${surface} (key ${write.key})`);
+        assert.equal(write.value.includes(FAKE_PIN), false, `the PIN reached ${surface} (key ${write.key})`);
+        assert.equal(write.value.includes(FAKE_PASSWORD), false, `the password reached ${surface} (key ${write.key})`);
+        if (write.key === SESSION_MIRROR_KEY) {
+          const payload = JSON.parse(write.value);
+          assert.deepEqual(
+            Object.keys(payload).sort(),
+            ["email", "name", "userId", "v"],
+            `the session mirror carries the display profile and nothing else (${surface})`,
+          );
+        }
+        if (write.key === LOCK_MIRROR_KEY) {
+          const payload = JSON.parse(write.value);
+          assert.deepEqual(
+            Object.keys(payload).sort(),
+            ["credentialId", "engagedAtMs", "userId", "v"],
+            `the lock mirror carries the bound user id and the credential id, nothing else (${surface})`,
+          );
+        }
+      }
     }
-    if (write.key === LOCK_MIRROR_KEY) {
-      const payload = JSON.parse(write.value);
-      assert.deepEqual(
-        Object.keys(payload).sort(),
-        ["credentialId", "engagedAtMs", "userId", "v"],
-        "the lock mirror carries the bound user id and the credential id, nothing else",
-      );
+    assert.ok(
+      sessionGlobal.writes.some((w) => w.key === SESSION_MIRROR_KEY),
+      "the session path wrote the swapped-in global (the capture is not vacuous)",
+    );
+    assert.ok(
+      sessionGlobal.writes.some((w) => w.key === LOCK_MIRROR_KEY),
+      "the lock path wrote the swapped-in global (the capture is not vacuous)",
+    );
+    assert.equal(localGlobal.writes.length, 0, "localStorage recorded nothing: no persistent write exists");
+    assert.deepEqual(cookieWrites, [], "document.cookie recorded nothing");
+    assert.deepEqual(cacheWrites, [], "the Cache API recorded nothing");
+    assert.deepEqual(dbWrites, [], "indexedDB recorded nothing");
+  } finally {
+    for (const [name, descriptor] of saved) {
+      if (descriptor === undefined) delete globalThis[name];
+      else Object.defineProperty(globalThis, name, descriptor);
     }
   }
 });
