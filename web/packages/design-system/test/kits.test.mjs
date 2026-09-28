@@ -393,6 +393,103 @@ test('html() refuses a binding in an unquoted attribute even after a static pref
   );
 });
 
+// The r5 review's probes: a caller's string bound where an attribute NAME
+// goes becomes attributes (the probes ran script through it), and five more
+// positions the scanner did not refuse. One refusal per position below, each
+// proven able to fail: removing its check in a scratch copy of the package
+// turns that one test red.
+
+test('html() accepts only a trusted template, null, false or a bare attribute name where an attribute name goes', () => {
+  // Probe M5b: a whole attribute bound between attributes. A caller string
+  // that carries = or a second word is a value and a name, not a name:
+  // refused.
+  const whole = () => html`<button type="button"${'onclick=window.__pwn=1'}>go</button>`;
+  assert.throws(whole, HHRenderError, 'a caller string carrying an attribute pair must be refused where a name goes');
+  assert.throws(whole, /attribute name position/, 'the refusal must name the position');
+  // Probes M5a and M5c: a bare name that begins with on completes an event
+  // attribute, statically valued or bound. Attribute names are case
+  // insensitive, so the check is too.
+  const onName = () => html`<button ${'onclick'}="void 0">go</button>`;
+  assert.throws(onName, HHRenderError, 'a bound name beginning with on must be refused');
+  assert.throws(onName, /attribute name position/, 'the on refusal must name the position too');
+  assert.throws(() => html`<button ${'ONCLICK'}="void 0">go</button>`, HHRenderError, 'attribute names are case insensitive');
+  // A bound name holds for the value after the next =: an address name
+  // routes that value through the address check, so the bound name cannot
+  // launder a scheme past it.
+  assert.throws(() => html`<a ${'href'}="${'javascript:alert(1)'}">x</a>`, HHRenderError, 'a bound address name must not launder the address check');
+  assert.equal(renderTemplate(html`<a ${'href'}="${'/x'}">x</a>`), '<a href="/x">x</a>', 'a safe value behind a bound address name keeps rendering');
+  // A number or an array is not a name either.
+  assert.throws(() => html`<div ${5}>x</div>`, HHRenderError);
+  assert.throws(() => html`<div ${[' disabled']}>x</div>`, HHRenderError, 'an array is not a bare name');
+  // A binding continuing a partial name (on + click) is refused outright:
+  // the joined name is an event attribute the per-value checks never see.
+  assert.throws(() => html`<div on${'click'}="void 0">x</div>`, HHRenderError, 'a binding that completes a name mid-word must be refused');
+  assert.throws(() => html`<div${' disabled'}>x</div>`, HHRenderError, 'a binding right after the tag name continues it, and is refused');
+  // The accepted set keeps rendering: null, false and the empty string bind
+  // nothing; a bare non-event name becomes exactly that name; a trusted
+  // sub-template composes whole attributes.
+  assert.equal(renderTemplate(html`<button type="button"${null}${false}${''}>go</button>`), '<button type="button">go</button>');
+  assert.equal(
+    renderTemplate(html`<button type="button" class="btn"${' disabled'}${html` data-x="1"`}>go</button>`),
+    '<button type="button" class="btn" disabled data-x="1">go</button>',
+  );
+});
+
+test('html() refuses a binding in the SVG animation attributes values, to and from, by name', () => {
+  // Probes M2c and M2d: an animate or set element carries its target in
+  // attributeName and its payload in values, to or from; the decoded value
+  // lands on the target attribute, and onto href it ran script on click.
+  // Escaping cannot make these safe, so any binding inside them is refused.
+  const values = () => html`<svg><animate attributeName="href" values="${'javascript:alert(1)'}"></animate></svg>`;
+  assert.throws(values, HHRenderError, 'a binding inside animate values must be refused');
+  assert.throws(values, /values attribute/, 'the refusal must name the values attribute');
+  const to = () => html`<svg><set attributeName="href" to="${'javascript:alert(1)'}"></set></svg>`;
+  assert.throws(to, HHRenderError, 'a binding inside set to must be refused');
+  assert.throws(to, /\bto attribute/, 'the refusal must name the to attribute');
+  const from = () => html`<svg><animate attributeName="href" from="${'javascript:alert(1)'}" to="/x"></animate></svg>`;
+  assert.throws(from, HHRenderError, 'a binding inside animate from must be refused');
+  assert.throws(from, /\bfrom attribute/, 'the refusal must name the from attribute');
+});
+
+test('html() refuses a binding in the object data attribute, by name', () => {
+  // Probe M4b: the object element loads its data address as a document of
+  // its own; a data: address ran script inside that opaque origin. The
+  // address check cannot save this: escaping cannot make a binding there
+  // safe at all.
+  const data = () => html`<object data="${'data:text/html,<script>window.__pwn=1</script>'}"></object>`;
+  assert.throws(data, HHRenderError, 'a binding inside object data must be refused');
+  assert.throws(data, /data attribute/, 'the refusal must name the data attribute');
+});
+
+test('html() refuses a binding inside a script body, by name', () => {
+  // Probe M6b: inside a script element the parser reads the body as code
+  // until the close tag, so an escaped binding is unescaped straight back
+  // into the program when the document is parsed.
+  const body = () => html`<script>var x = '${'1; window.__pwn=1'}';</script>`;
+  assert.throws(body, HHRenderError, 'a binding inside a script body must be refused');
+  assert.throws(body, /script element body/, 'the refusal must name the script body');
+});
+
+test('html() refuses a binding inside a style body, by name', () => {
+  // The style element's body is RAWTEXT like a script's: the parser reads it
+  // as CSS until the close tag, so an escaped binding is unescaped straight
+  // back into the sheet and can close the element early.
+  const body = () => html`<style>.x { color: ${'red}; } </style><script>window.__pwn=1</script><style>.y { color: blue } ' }</style>`;
+  assert.throws(body, HHRenderError, 'a binding inside a style body must be refused');
+  assert.throws(body, /style element body/, 'the refusal must name the style body');
+});
+
+test('html() refuses a binding in the style attribute, by name', () => {
+  // Probe M1: escaping makes nothing inert inside a style attribute; the
+  // decoded value sets arbitrary CSS (the probe set a background-image).
+  const style = () => html`<div style="${'background-image:url(javascript:alert(1))'}">x</div>`;
+  assert.throws(style, HHRenderError, 'a binding inside the style attribute must be refused');
+  assert.throws(style, /style attribute/, 'the refusal must name the style attribute');
+  // A static prefix inside the attribute does not save it.
+  const prefixed = () => html`<div style="color:red; ${'background:url(x)'}">x</div>`;
+  assert.throws(prefixed, HHRenderError, 'a value after a static prefix inside the style attribute must be refused');
+});
+
 
 test('an unknown state fails loudly, never renders a quietly empty kit', () => {
   // A typo'd state name is a defect at the call site; an empty region would

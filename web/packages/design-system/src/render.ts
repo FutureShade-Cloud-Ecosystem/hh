@@ -11,16 +11,25 @@
 //   html        the tagged template. It returns a Template branded by a
 //               MODULE-PRIVATE SYMBOL, and nothing without that brand is ever
 //               emitted as markup: text values are escaped, nested templates
-//               and arrays compose, and a caller's object or a caller's string
-//               is always rendered as text, never as markup. The factory also
-//               refuses what escaping cannot make safe: a first argument that
-//               is not a real template strings array, a binding anywhere
+//               and arrays compose, and a caller's object is always rendered
+//               as text, never as markup. A caller's string is rendered as
+//               escaped text in every position but one: bound where an
+//               attribute NAME goes, a string is accepted only as a bare
+//               attribute name that does not begin with `on`, so it can
+//               become nothing but an inert name (never a value, never a
+//               handler, never two attributes), and every other binding in
+//               that position is refused. The factory also refuses what
+//               escaping cannot make safe, each by name: a first argument
+//               that is not a real template strings array, a binding anywhere
 //               inside an event attribute or srcdoc, a binding in an unquoted
-//               attribute value, an address attribute whose value is not
-//               wholly one binding, and an address whose scheme is not http,
-//               https or absent. There is no raw markup escape hatch anywhere
-//               in the package; the icon module builds its geometry through
-//               the same escaped attribute path.
+//               attribute value, a binding inside a script or style element
+//               body, a binding in the style attribute, a binding in the SVG
+//               animation attributes values, to and from, a binding in the
+//               object data attribute, an address attribute whose value is
+//               not wholly one binding, and an address whose scheme is not
+//               http, https or absent. There is no raw markup escape hatch
+//               anywhere in the package; the icon module builds its geometry
+//               through the same escaped attribute path.
 //   css         a style string. No resolving, no shims.
 //   HHElement   reactive properties from `static properties` (attribute
 //               reflected), a render() into an open shadow root in the browser,
@@ -76,6 +85,48 @@ const EVENT_ATTRIBUTE = /^on[a-z]+$/i;
 const NAME_BOUNDARY = /[\s=/>"'()]/;
 const WHITESPACE = /\s/;
 
+// Attribute VALUES the factory refuses outright: escaping cannot make a
+// binding inside one safe, so nothing but a static string may sit there. The
+// r5 review's probes ran code through values, to, from and data that no
+// scheme check can see (the value is decoded again after escaping: by the
+// SMIL animation, by the object's own document), and set arbitrary CSS
+// through style. Each entry carries the reason the refusal names.
+const REFUSED_VALUE_ATTRIBUTES: Record<string, string> = {
+  srcdoc: 'the parser entity-decodes srcdoc back into a document, so escaping cannot make a binding there safe',
+  style: 'a value inside a style attribute sets arbitrary CSS, and escaping cannot make that safe',
+  values: 'the SVG animation element decodes the value and applies it to its target attribute, escaping and all',
+  to: 'the SVG animation element decodes the value and applies it to its target attribute, escaping and all',
+  from: 'the SVG animation element decodes the value and applies it to its target attribute, escaping and all',
+  data: 'the object element loads the address as a document of its own, so escaping cannot make a binding there safe',
+};
+
+/** A bare attribute name: nothing but name characters, so the string can
+ * become nothing but a name (never a value, never a handler, never two
+ * attributes). Event attributes are excluded here, by the on prefix, because
+ * a name bound as a string is never seen by the value checks that would
+ * catch its value. */
+const ATTRIBUTE_NAME = /^[a-zA-Z_][a-zA-Z0-9_:.-]*$/;
+
+const isBareAttributeName = (v: string): boolean => {
+  const name = v.trim();
+  return name !== '' && ATTRIBUTE_NAME.test(name) && !/^on/i.test(name);
+};
+
+/** The run of attribute or tag name characters a static text ends with, if
+ * any: a binding after it continues that name instead of starting one, and
+ * the factory refuses it rather than guess what the parser would join. */
+function trailingNameText(text: string): string {
+  let end = text.length;
+  while (end > 0 && !/[\s=/>"'()<>]/.test(text[end - 1])) end--;
+  return text.slice(end);
+}
+
+const describeValue = (v: unknown): string => {
+  if (typeof v === 'string') return JSON.stringify(v);
+  if (Array.isArray(v)) return 'an array';
+  return `a ${typeof v} value`;
+};
+
 /** An address is safe when it carries no scheme other than http or https, or
  * no scheme at all (relative, rooted, fragment, protocol relative). The probe
  * folds the characters a URL parser ignores, so a line in the middle of the
@@ -89,12 +140,14 @@ function isSafeAddress(value: string): boolean {
 /** Where a binding sits, as the HTML parser would see it. `region` is the
  * parser state the binding lands in; `name` and `quote` carry the attribute
  * when the binding is inside a value; `valuePrefix` says whether static text
- * already precedes the binding inside that value. */
+ * already precedes the binding inside that value; `raw` names the RAWTEXT
+ * element whose body the binding landed in (script or style). */
 interface BindingContext {
-  region: 'text' | 'comment' | 'tag' | 'quoted' | 'unquoted';
+  region: 'text' | 'comment' | 'tag' | 'quoted' | 'unquoted' | 'rawtext';
   name: string;
   quote: string;
   valuePrefix: boolean;
+  raw: string;
 }
 
 /** The attribute name that ends just before the value opening at index `at`
@@ -115,16 +168,27 @@ function attributeNameEndingAt(text: string, at: number): string {
  * values (an interpolated value emits escaped text or a nested template's own
  * static text, never structure of its own), so it knows what the HTML parser
  * would be parsing at each binding: text, a comment, a tag between attributes,
- * or inside a quoted or unquoted attribute value. The r3 review's probes ran
- * script through the previous check, which read only the tail of the text
- * immediately before a value and so missed a binding anywhere else inside an
- * event attribute, inside srcdoc, an address split over more than one binding,
- * or a value riding after a static prefix in an unquoted attribute. */
+ * a quoted or unquoted attribute value, or the body of a RAWTEXT element
+ * (script or style, which the parser reads as code or CSS until the close
+ * tag). It also carries the attribute name a bound bare name emitted, so the
+ * value that follows `=` directly after it is checked against THAT name. The
+ * r3 review's probes ran script through the previous check, which read only
+ * the tail of the text immediately before a value and so missed a binding
+ * anywhere else inside an event attribute, inside srcdoc, an address split
+ * over more than one binding, or a value riding after a static prefix in an
+ * unquoted attribute. */
 function makeBindingScanner() {
   let region: BindingContext['region'] = 'text';
   let name = '';
   let quote = '';
   let valuePrefix = false;
+  let raw = '';
+  // The open tag's name, lowercased, while a tag's markup is open.
+  let tag = '';
+  let tagEnded = false;
+  // The attribute name a bound bare name just emitted: the parser binds the
+  // value after the next `=` to it, so the position checks must see it.
+  let pendingName = '';
 
   const feed = (text: string): void => {
     const n = text.length;
@@ -144,6 +208,9 @@ function makeBindingScanner() {
           }
           region = 'tag';
           name = '';
+          tag = '';
+          tagEnded = false;
+          pendingName = '';
         }
         i++;
       } else if (region === 'comment') {
@@ -153,10 +220,18 @@ function makeBindingScanner() {
         i = end + 3;
       } else if (region === 'tag') {
         if (ch === '>') {
-          region = 'text';
+          if (tag === 'script' || tag === 'style') {
+            region = 'rawtext';
+            raw = tag;
+          } else {
+            region = 'text';
+          }
+          tag = '';
+          pendingName = '';
         } else if (ch === '"' || ch === "'") {
           quote = ch;
-          name = attributeNameEndingAt(text, i);
+          name = attributeNameEndingAt(text, i) || pendingName;
+          pendingName = '';
           valuePrefix = false;
           region = 'quoted';
         } else if (ch === '=') {
@@ -165,21 +240,55 @@ function makeBindingScanner() {
           if (j >= n) {
             // The static text ends at or just after the '=': the binding lands
             // in this attribute's value position, unquoted.
-            name = attributeNameEndingAt(text, n);
+            name = attributeNameEndingAt(text, n) || pendingName;
+            pendingName = '';
             quote = '';
             valuePrefix = false;
             region = 'unquoted';
             break;
           }
           const valueChar = text[j];
-          name = attributeNameEndingAt(text, j);
+          name = attributeNameEndingAt(text, j) || pendingName;
+          pendingName = '';
           quote = valueChar === '"' || valueChar === "'" ? valueChar : '';
           valuePrefix = false;
           region = quote ? 'quoted' : 'unquoted';
           i = quote ? j + 1 : j;
           continue;
+        } else {
+          // Still between attributes: name characters build the tag's name
+          // until the first whitespace or slash ends it.
+          if (WHITESPACE.test(ch) || ch === '/') {
+            tagEnded = true;
+          } else if (!tagEnded) {
+            tag += ch.toLowerCase();
+          }
         }
         i++;
+      } else if (region === 'rawtext') {
+        // The body of a script or style element: the parser reads everything
+        // as the element's content until the close tag's own name ends.
+        const close = `</${raw}`;
+        const probe = text.slice(i).toLowerCase();
+        let at = -1;
+        let from = 0;
+        for (;;) {
+          at = probe.indexOf(close, from);
+          if (at === -1) break;
+          const after = probe[at + close.length];
+          if (after === undefined || WHITESPACE.test(after) || after === '>' || after === '/') break;
+          from = at + 1;
+        }
+        if (at === -1) {
+          i = n;
+          break;
+        }
+        // Resume inside the close tag: its '>' ends it in the tag branch.
+        region = 'tag';
+        tag = '';
+        tagEnded = true;
+        i += at + close.length;
+        continue;
       } else if (region === 'quoted') {
         if (ch === quote) {
           region = 'tag';
@@ -219,22 +328,42 @@ function makeBindingScanner() {
     }
   };
 
-  return { feed, skipValue, context: (): BindingContext => ({ region, name, quote, valuePrefix }) };
+  return {
+    feed,
+    skipValue,
+    context: (): BindingContext => ({ region, name, quote, valuePrefix, raw }),
+    // The factory calls this when a bare attribute name is accepted in the
+    // name position: the value after the next `=` belongs to that name.
+    holdName: (bound: string): void => {
+      pendingName = bound;
+    },
+  };
 }
 
 /** The position checks, run at the factory across the whole template: what the
- * parser would be parsing at each binding decides. Refused:
- *   anywhere inside an event attribute (on*)   an escaped string inside an
- *                                              event handler is still code;
- *   anywhere inside srcdoc                     the parser entity-decodes the
- *                                              value back into a document, so
- *                                              escaping cannot make it safe;
- *   inside an unquoted attribute value         the value can close and escape
- *                                              into markup, however escaped;
- *   inside an address attribute                refused unless the binding IS
- *                                              the whole value, and then only
- *                                              when the value is http, https
- *                                              or scheme-free (relative).
+ * parser would be parsing at each binding decides. Refused, each by name:
+ *   a binding where an attribute NAME goes   only null, false, the empty
+ *                                            string, a trusted template, or
+ *                                            a bare attribute name that does
+ *                                            not begin with on; a binding
+ *                                            that continues a tag or
+ *                                            attribute name mid-word is
+ *                                            refused outright;
+ *   anywhere inside an event attribute (on*) an escaped string inside an
+ *                                            event handler is still code;
+ *   anywhere inside srcdoc, the style        see REFUSED_VALUE_ATTRIBUTES:
+ *   attribute, the SVG animation values,     the value is decoded again
+ *   to and from, and the object data         after escaping, so escaping
+ *                                            cannot make it safe;
+ *   inside a script or style element body    the parser reads the body as
+ *                                            code or CSS until the close
+ *                                            tag;
+ *   inside an unquoted attribute value       the value can close and escape
+ *                                            into markup, however escaped;
+ *   inside an address attribute              refused unless the binding IS
+ *                                            the whole value, and then only
+ *                                            when the value is http, https
+ *                                            or scheme-free (relative).
  * A binding between attributes (the primitives' whole-attribute composition,
  * closed-union constants and trusted sub-templates) and everything else is the
  * documented text path. */
@@ -243,17 +372,52 @@ function checkBindingPositions(strings: readonly string[], values: readonly unkn
   for (let i = 0; i < values.length; i++) {
     scan.feed(strings[i] ?? '');
     const ctx = scan.context();
-    if (ctx.region === 'text' || ctx.region === 'comment' || ctx.region === 'tag') {
+    if (ctx.region === 'text' || ctx.region === 'comment') {
       scan.skipValue(values[i]);
       continue;
+    }
+    if (ctx.region === 'rawtext') {
+      throw new HHRenderError(
+        ctx.raw === 'script'
+          ? `html(): refusing a binding inside a script element body: the parser reads the body as code until the close tag, so escaping cannot make a binding there safe`
+          : `html(): refusing a binding inside a style element body: the parser reads the body as CSS until the close tag, so escaping cannot make a binding there safe`,
+      );
+    }
+    if (ctx.region === 'tag') {
+      // The attribute NAME position: a string here would become attributes,
+      // so only the inert set is accepted.
+      const v = values[i];
+      if (v == null || v === false || v === '') {
+        // Nothing is emitted (the empty string is what the primitives bind
+        // for an absent flag), so there is no name and no value to check.
+        continue;
+      }
+      const partial = trailingNameText(strings[i] ?? '');
+      if (partial !== '') {
+        throw new HHRenderError(
+          `html(): refusing a binding that continues the name ${JSON.stringify(partial)} inside a tag: ` +
+            `write the whole name statically, never complete one from a value`,
+        );
+      }
+      if (isTrusted(v)) {
+        scan.skipValue(v);
+        continue;
+      }
+      if (typeof v === 'string' && isBareAttributeName(v)) {
+        scan.holdName(v.trim());
+        continue;
+      }
+      throw new HHRenderError(
+        `html(): refusing ${describeValue(v)} in the attribute name position: ` +
+          `only null, false, the empty string, a trusted template, or a bare attribute name that does not begin with "on" may be bound where an attribute name goes`,
+      );
     }
     if (EVENT_ATTRIBUTE.test(ctx.name)) {
       throw new HHRenderError(`html(): refusing a value in the event attribute ${ctx.name}: these kits take no inline handlers`);
     }
-    if (ctx.name.toLowerCase() === 'srcdoc') {
-      throw new HHRenderError(
-        `html(): refusing a value in the srcdoc attribute: the parser entity-decodes srcdoc back into a document, so escaping cannot make a binding there safe`,
-      );
+    const refused = REFUSED_VALUE_ATTRIBUTES[ctx.name.toLowerCase()];
+    if (refused !== undefined) {
+      throw new HHRenderError(`html(): refusing a value in the ${ctx.name} attribute: ${refused}`);
     }
     if (ctx.region === 'unquoted') {
       throw new HHRenderError(
@@ -286,7 +450,7 @@ function checkBindingPositions(strings: readonly string[], values: readonly unkn
         continue;
       }
       throw new HHRenderError(
-        `html(): refusing ${typeof v === 'string' ? JSON.stringify(v) : `a ${typeof v} value`} as the ${ctx.name} address: ` +
+        `html(): refusing ${describeValue(v)} as the ${ctx.name} address: ` +
           `only http, https and scheme-free (relative) addresses render`,
       );
     }
