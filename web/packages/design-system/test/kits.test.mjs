@@ -480,8 +480,16 @@ test('the state word is never hidden: no hiding rule may target the word classes
   const hiding = /display:\s*none|visibility:\s*hidden|content-visibility|font-size:\s*0(?![.\d])|clip-path|position:\s*absolute|(?<![.\w-])width:\s*0(?![.\d])|(?<![.\w-])height:\s*0(?![.\d])|opacity/;
   for (const file of shippedStyleFiles()) {
     const src = stripComments(readPkg(file));
-    for (const m of src.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
-      const [selector, body] = [m[1], m[2]];
+    // The selector is the text since the previous block's closing brace, so it
+    // is sliced from the previous match's end rather than captured by a leading
+    // [^{}]* group: on the long brace-free runs in the committed harness pages
+    // that group backtracks quadratically and costs bun's whole test timeout
+    // (three pages made this one gate exceed five seconds on its own). The
+    // slice below is the same text the captured group held, in linear time.
+    let at = 0;
+    for (const m of src.matchAll(/\{([^{}]*)\}/g)) {
+      const [selector, body] = [src.slice(at, m.index), m[1]];
+      at = m.index + m[0].length;
       for (const cls of wordClasses) {
         if (!selector.includes(`.${cls}`)) continue;
         assert.doesNotMatch(
