@@ -26,7 +26,7 @@ What the kit layer actually needs from its substrate is small and stable:
 
 The first HH-30 round shipped this need as a file whose header claimed it was
 vendored Lit; that description was false and the review returned it. The lane
-then shipped the same need as `src/render.ts`, named for what it is (about 260
+then shipped the same need as `src/render.ts`, named for what it is (606
 lines, hand written, owned by the package, held by gates including a
 real-browser leg), with this record left open because the substrate choice
 belongs to the owner.
@@ -56,10 +56,12 @@ the position refusals in one reviewed place.
 - Upkeep: the file is small enough to hold in one head; every change runs the
   package's own gates. No version bumps, no upstream API drift, no licence
   file to carry.
-- Cost to the packages that build on the kits (today three: auth,
-  offline-store and shell-chrome; the app entries land later; api-client is
-  generated contract code that builds on none of the kits, and design-system
-  is the kit package itself): none to import and render. The listener limit
+- Cost to the packages that will build on the kits (today none does: no
+  package in the workspace imports design-system yet; auth has its own
+  sources and imports nothing from here, offline-store and shell-chrome are a
+  package manifest and a README each, and the app entries land later;
+  api-client is generated contract code that builds on none of the kits, and
+  design-system is the kit package itself): none to import and render. The listener limit
   below is the real cost: every integration must wire interactions by
   delegation on the host element, reading the action off
   `event.composedPath()` (not `event.target`, which arrives retargeted to the
@@ -161,7 +163,7 @@ deliberately kept Lit-shaped, the gates assert rendered markup and rendered DOM
 rather than the file, and if Lit lands later the file is deleted and the
 imports re-point without touching a kit. The layer is small, gated, and the
 known limits are survivable for pattern renders; a dependency grant spent only
-to delete 260 reviewed lines is not obviously well spent while the workspace
+to delete 606 reviewed lines is not obviously well spent while the workspace
 holds zero run-time dependencies. Revisit the ruling the first time a kit
 genuinely needs keyed lists, property binding, or directives: that is the
 point where Option 1's per-capability cost starts paying Option 2's rent.
