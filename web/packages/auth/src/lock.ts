@@ -34,7 +34,7 @@
 // secret; there is no PIN in this package's state at all.
 import { err, ok, type Result } from "@hh/api-client";
 import { ThrowSafeMirror } from "./session.js";
-import type { SessionStore } from "./session.js";
+import type { Session, SessionStore } from "./session.js";
 
 /**
  * The narrow credential surface this package needs, modelled on what the
@@ -201,7 +201,12 @@ function parseLockPayload(raw: unknown): { payload: LockMirrorPayload; clean: bo
  * the await; on a mismatch it adopts nothing (no open unlock, no backoff
  * from a superseded failure) and resolves an error Result, so a lock or
  * disengage during a verification in flight ends closed or absent, and of
- * two concurrent attempts only the newer one's outcome lands.
+ * two concurrent attempts only the newer one's outcome lands. The session
+ * itself is read again after each await too: a sign-out and another person's
+ * sign-in mid prompt change neither the lock's generation nor its mirror,
+ * so the custody comparison is what refuses to engage for, or open the lock
+ * for, the person who is now signed in instead of the person these methods
+ * saw.
  */
 export class DeviceLock {
   readonly #credentials: CredentialProvider;
@@ -269,6 +274,22 @@ export class DeviceLock {
   }
 
   /**
+   * True when the custody still holds the session engage or unlock saw when
+   * it began. The custody is read fresh at every call: engage and unlock
+   * await a platform prompt that can stay open across a sign-out and another
+   * person's sign-in, and neither the lock's state nor the prompt may land
+   * for a user other than the one these methods saw when they started. A
+   * session that became null counts as changed, and a null capture (unlock's
+   * recorded no-session case) only stays unchanged while the custody holds
+   * no session still.
+   */
+  #sessionStillHeldFor(session: Session | null): boolean {
+    const current = this.#sessions.current;
+    if (session === null) return current === null;
+    return current !== null && current.user.userId === session.user.userId;
+  }
+
+  /**
    * Register the platform credential and engage the lock for the signed-in
    * user's session. Takes no identity argument on purpose: the user id comes
    * from custody, so the lock cannot be pointed at a name the caller made
@@ -276,7 +297,11 @@ export class DeviceLock {
    * credential (WebAuthn absent), or when a lock is already engaged. The
    * generation guard runs across every await: a disengage or another
    * structural change that lands mid engage cancels it as data and the
-   * mirror is written by neither path.
+   * mirror is written by neither path. The custody is read again after each
+   * await as well: a sign-out and another person's sign-in while the
+   * platform's credential prompt is open leave the custody holding a
+   * different user, and the engage refuses instead of storing the lock for
+   * the person who is no longer signed in.
    */
   async engage(): Promise<Result<void>> {
     if (this.#engaged !== null) {
@@ -296,6 +321,9 @@ export class DeviceLock {
     if (this.#generation !== generation) {
       return err("device unlock was superseded while engage was in flight, so nothing was engaged");
     }
+    if (!this.#sessionStillHeldFor(session)) {
+      return err("device unlock engages only for the user it saw signed in when it began: the session changed while engage was in flight, so nothing was engaged");
+    }
     if (!available) {
       return err("device unlock is unavailable: no platform credential is available on this device");
     }
@@ -307,6 +335,9 @@ export class DeviceLock {
     }
     if (this.#generation !== generation) {
       return err("device unlock was superseded while engage was in flight, so nothing was engaged");
+    }
+    if (!this.#sessionStillHeldFor(session)) {
+      return err("device unlock engages only for the user it saw signed in when it began: the session changed while engage was in flight, so nothing was engaged");
     }
     this.#generation += 1;
     this.#engaged = { v: 1, userId: session.user.userId, credentialId, engagedAtMs: this.#now() };
@@ -331,7 +362,10 @@ export class DeviceLock {
    * guard runs across the await: a lock, a disengage, or a newer attempt
    * that starts mid verification supersedes this one, and on a mismatch it
    * adopts nothing (no open unlock, and no backoff recorded from a failure
-   * that no longer matters).
+   * that no longer matters). The custody is read again after the prompt: a
+   * sign-out and another person's sign-in while the platform prompt was open
+   * leave the custody holding a different user, and the attempt refuses
+   * instead of opening the lock for the person who now is signed in.
    */
   async unlock(): Promise<Result<void>> {
     if (this.#engaged === null) {
@@ -364,6 +398,9 @@ export class DeviceLock {
     }
     if (this.#generation !== generation || this.#engaged === null) {
       return err("device unlock was superseded while the platform prompt was in flight");
+    }
+    if (!this.#sessionStillHeldFor(session)) {
+      return err("device unlock binds to the user it saw signed in before the prompt: the session changed while the platform prompt was in flight, so nothing opened");
     }
     this.#failures = 0;
     this.#backoffUntilMs = 0;

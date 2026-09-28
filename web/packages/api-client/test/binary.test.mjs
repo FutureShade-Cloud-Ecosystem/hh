@@ -219,7 +219,7 @@ test("the longest accepted file name is 160 characters, one more is refused", as
     { fileFilename: "p".repeat(161) },
   );
   assert.equal(tooLong.ok, false);
-  if (!tooLong.ok) assert.match(tooLong.error, /longer than the 160 characters/);
+  if (!tooLong.ok) assert.match(tooLong.error, /longer than the 160 bytes/);
   assert.equal(rec.calls.length, 0, "the over long name dialed nothing");
   unwrap(
     await api.staffPricing.pricingApplyPriceFile(
@@ -233,6 +233,120 @@ test("the longest accepted file name is 160 characters, one more is refused", as
   const part = parsed.get("file");
   assert.ok(part instanceof Blob, "the guarded name still rides as a Blob part");
   assert.equal(part.name, "p".repeat(160), "the accepted name arrives whole");
+});
+
+test("the 160 bound counts UTF-8 bytes: a name of 160 CJK characters the old code point rule accepted is refused", async () => {
+  // The core's stored-name cap counts bytes (strings.Builder.Len() after
+  // each WriteRune, sanitizeFileName, pricefile_service.go lines 845 to 861),
+  // so the client counts the same unit. The old rule counted code points and
+  // accepted this name; 160 three-byte CJK characters are 480 bytes, and the
+  // core would have cut the stored name to 54 characters.
+  const rec = recorder({ "POST /api/v1/pricing/price-file/apply": { status: 201, body: {} } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch, headers: () => ({ "X-Org": "dibbits" }) });
+  const tooManyBytes = await api.staffPricing.pricingApplyPriceFile(
+    client,
+    { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+    { fileFilename: "\u65e5".repeat(160) },
+  );
+  assert.equal(tooManyBytes.ok, false, "160 three-byte characters are 480 bytes, past the bound");
+  if (!tooManyBytes.ok) assert.match(tooManyBytes.error, /longer than the 160 bytes/);
+  assert.equal(rec.calls.length, 0, "the 480 byte name dialed nothing");
+
+  // The byte boundary itself, on the multi-byte side: 53 of the same
+  // characters are 159 bytes and arrive whole; one more is 162 bytes and is
+  // refused.
+  unwrap(
+    await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+      { fileFilename: "\u65e5".repeat(53) },
+    ),
+  );
+  assert.equal(rec.calls.length, 1, "a name inside the byte bound dials");
+  const parsed = await new Request(rec.calls[0].url, { method: rec.calls[0].method, body: rec.calls[0].form }).formData();
+  const part = parsed.get("file");
+  assert.ok(part instanceof Blob, "the accepted multibyte name still rides as a Blob part");
+  assert.equal(part.name, "\u65e5".repeat(53), "the accepted multibyte name arrives whole");
+  const oneMore = await api.staffPricing.pricingApplyPriceFile(
+    client,
+    { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+    { fileFilename: "\u65e5".repeat(54) },
+  );
+  assert.equal(oneMore.ok, false, "54 three-byte characters are 162 bytes, past the bound");
+  assert.equal(rec.calls.length, 1, "the 162 byte name dialed nothing");
+});
+
+test("a bidirectional control character in a file name is refused before anything is sent, each of the nine tested", async () => {
+  // The marks that reorder how text displays: an extension can be made to
+  // appear reversed. The core's sanitizer strips only the C0 controls and
+  // DEL and would store these; the client refuses them (the README carries
+  // that record). Each character is asserted by its own name.
+  const bidi = [
+    ["\u202a", "U+202A LRE"],
+    ["\u202b", "U+202B RLE"],
+    ["\u202c", "U+202C PDF"],
+    ["\u202d", "U+202D LRO"],
+    ["\u202e", "U+202E RLO"],
+    ["\u2066", "U+2066 LRI"],
+    ["\u2067", "U+2067 RLI"],
+    ["\u2068", "U+2068 FSI"],
+    ["\u2069", "U+2069 PDI"],
+  ];
+  const rec = recorder({ "POST /api/v1/pricing/price-file/apply": { status: 201, body: {} } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
+  for (const [mark, named] of bidi) {
+    const result = await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+      { fileFilename: `price${mark}list.xlsx` },
+    );
+    assert.equal(result.ok, false, `a name carrying the bidirectional mark ${named} is refused`);
+    if (!result.ok) assert.match(result.error, /bidirectional control character/, `the refusal names the mark, for ${named}`);
+  }
+  assert.equal(rec.calls.length, 0, "not one bidi carrying name dialed");
+});
+
+test("a name that is only spaces, or edged with a space or a dot, is refused before anything is sent", async () => {
+  const rec = recorder({ "POST /api/v1/pricing/price-file/apply": { status: 201, body: {} } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
+  const refusals = [
+    ["   ", /nothing but spaces/, "only spaces"],
+    [" price-list.xlsx", /begins or ends with a space or a dot/, "a leading space"],
+    ["price-list.xlsx ", /begins or ends with a space or a dot/, "a trailing space"],
+    [".price-list.xlsx", /begins or ends with a space or a dot/, "a leading dot"],
+    ["price-list.xlsx.", /begins or ends with a space or a dot/, "a trailing dot"],
+  ];
+  for (const [name, pattern, named] of refusals) {
+    const result = await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+      { fileFilename: name },
+    );
+    assert.equal(result.ok, false, `the name with ${named} is refused`);
+    if (!result.ok) assert.match(result.error, pattern, `the refusal names the shape, for ${named}`);
+  }
+  assert.equal(rec.calls.length, 0, "not one refused name dialed");
+
+  // Interior spaces and interior dot runs stay fine, and arrive whole.
+  unwrap(
+    await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+      { fileFilename: "price list v2.xlsx" },
+    ),
+  );
+  unwrap(
+    await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+      { fileFilename: "price..list.xlsx" },
+    ),
+  );
+  assert.equal(rec.calls.length, 2, "both interior shaped names dialed");
+  const first = await new Request(rec.calls[0].url, { method: rec.calls[0].method, body: rec.calls[0].form }).formData();
+  assert.equal(first.get("file").name, "price list v2.xlsx", "an interior space arrives whole");
+  const second = await new Request(rec.calls[1].url, { method: rec.calls[1].method, body: rec.calls[1].form }).formData();
+  assert.equal(second.get("file").name, "price..list.xlsx", "an interior dot run arrives whole");
 });
 
 // The guard lives in the transport, so it holds on every multipart operation;

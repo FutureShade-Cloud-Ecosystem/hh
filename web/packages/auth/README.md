@@ -97,7 +97,11 @@ own lock was present; it does not prove which HH person that was.
   id, read from custody, and no name is stored anywhere: refused when no
   live session is held, when the platform offers no credential (WebAuthn
   absent; the shell then falls back to not caching a lockable session), and
-  when a lock is already engaged.
+  when a lock is already engaged. The custody is read again after each of
+  its awaits: a sign-out and another person's sign-in while the platform's
+  credential prompt is open leave the custody holding a different user, and
+  the engage refuses instead of storing the lock for the person who is no
+  longer signed in.
 - `unlock()` runs one verification against the registered credential id.
   Every failure (wrong PIN, cancelled prompt, platform refusal) feeds a
   local exponential backoff (in memory, one second after the first failure,
@@ -105,7 +109,10 @@ own lock was present; it does not prove which HH person that was.
   elapses; a success resets it. The backoff lives in memory, so a reload
   clears it and re-locks: it is a courtesy against fat fingers, not a
   control, and the platform authenticator's own lockout is the real
-  limiter.
+  limiter. The custody is read again after the prompt too: a session that
+  changed while the platform prompt was open (a sign-out and another
+  person's sign-in) refuses the attempt instead of opening the lock for the
+  person who now is signed in.
 - An open unlock relocks itself when its open window (`openWindowMs`, a
   configuration value with the default 300000) elapses: an ABSOLUTE window
   measured from the unlock, not an idle timeout. No activity is tracked and
@@ -207,6 +214,14 @@ with the api-client's tsconfig shape; `typescript` and `@types/node` are
 the pinned devDependencies, reusing the web workspace lockfile. CI runs
 this package's typecheck and this suite on Node 22, alongside the
 api-client's.
+
+A correction of record about that CI: the merged auth pull request's
+description said CI did not run, refused for billing. It ran. The `ci`
+check executed on the merged head on GitHub's runner (run 36457289814) and
+passed, every step, and the review's fresh clone rerun of the whole
+workflow matched it step for step with the same counts. A merged pull
+request's description stays as it was written, so this note is the
+correction: the merged auth work landed on real CI, green.
 
 `src/testing.ts` is the test entry point (behind the `./testing` subpath,
 never exported from src/index.ts, so it never rides a browser bundle):

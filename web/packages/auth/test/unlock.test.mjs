@@ -530,7 +530,7 @@ function engageRig() {
     mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded),
     now: time.now,
   });
-  return { gated, lock, recorded };
+  return { gated, lock, recorded, sessions };
 }
 
 test("of two concurrent engages only the first completion lands, and the mirror holds one entry", async () => {
@@ -575,6 +575,79 @@ test("a disengage during an engage in flight cancels the engage, and the mirror 
     undefined,
     "the mirror holds nothing: the superseded engage wrote no entry and the disengage cleared what was there",
   );
+});
+
+// A second identity for the shared-tablet races: person B signs in while
+// person A's platform ceremony is still open.
+const OTHER_ACCOUNT = {
+  userId: "fake-user-2",
+  email: "other.user@example.invalid",
+  name: "Other User",
+};
+
+function otherUserAdopt(sessions) {
+  sessions.clear(); // person A signs out while the platform ceremony is open
+  sessions.adopt({
+    token: FAKE_JWT,
+    tokenExpiresAtMs: START_MS + 3_600_000,
+    user: { ...OTHER_ACCOUNT },
+  }); // person B signs in during it
+}
+
+test("a sign-out and another person's sign-in during the credential prompt refuse the engage: the lock is never stored for the person who left", async () => {
+  // The recorded gap this closes: engage bound the user it read BEFORE its
+  // awaits, so an A sign-out and a B sign-in during the platform's prompt
+  // left the lock stored for A while B was signed in, and B's unlock was
+  // refused. The custody is now read again after each await.
+  const { gated, lock, recorded, sessions } = engageRig();
+
+  const engaging = lock.engage(); // person A's engage, parked at the platform's create
+  await untilCreates(gated, 1);
+  otherUserAdopt(sessions);
+  gated.pendingCreates[0].resolve("fake-credential-id-1"); // the platform answers late
+
+  const result = await engaging;
+  assert.equal(result.ok, false, "the engage is refused: the session it saw is no longer the one held");
+  assert.match(result.error, /the session changed while engage was in flight/);
+  assert.equal(lock.state, "absent", "nothing was engaged for A while B is signed in");
+  assert.equal(
+    new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded).read(),
+    undefined,
+    "the mirror holds nothing: the lock was never stored for the user who signed out",
+  );
+
+  // Person B's own engagement works, and binds to B.
+  const engagingB = lock.engage();
+  await untilCreates(gated, 2);
+  gated.pendingCreates[1].resolve("fake-credential-id-2");
+  assert.equal((await engagingB).ok, true, "person B engages their own lock");
+  const payload = JSON.parse(recorded.getItem(LOCK_MIRROR_KEY));
+  assert.equal(payload.userId, OTHER_ACCOUNT.userId, "the lock binds to the user actually signed in");
+  assert.equal(lock.state, "locked");
+});
+
+test("a sign-out and another person's sign-in during the prompt refuse A's unlock, and B's later unlock works", async () => {
+  const { credentials, lock, sessions } = await deferredRig();
+  assert.equal((await lock.engage()).ok, true); // person A engages
+
+  const opening = lock.unlock(); // A's unlock, parked at the platform prompt
+  const verify = await untilPending(credentials, 1);
+  otherUserAdopt(sessions); // A signs out, B signs in during the prompt
+  verify.complete(undefined); // the platform answers A's prompt with a success
+
+  const result = await opening;
+  assert.equal(result.ok, false, "A's unlock is refused: the session changed while the prompt was open");
+  assert.match(result.error, /the session changed while the platform prompt was in flight/);
+  assert.equal(lock.state, "locked", "the late success opened nothing for the person who is no longer signed in");
+
+  // B's later unlock works: B disengages A's lock and engages their own.
+  lock.disengage();
+  assert.equal((await lock.engage()).ok, true, "B engages the lock for their own session");
+  const openingB = lock.unlock();
+  const verifyB = await untilPending(credentials, 2);
+  verifyB.complete(undefined);
+  assert.equal((await openingB).ok, true, "B's own unlock works");
+  assert.equal(lock.state, "open");
 });
 
 test("unlock binds to the user who engaged: a different signed-in user is refused without a prompt", async () => {

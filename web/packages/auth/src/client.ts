@@ -166,10 +166,15 @@ export interface AdoptSessionInput {
  * again after it, just before the clear; signInWithPassword and resume
  * capture the counter before their first await and compare it after every
  * await, and on a mismatch they adopt nothing and resolve an error Result.
- * Without the guard, a resume or a sign-in begun before the user signed out
- * would re-sign the custody in when the platform answered after the
- * sign-out, and a resume or a sign-in begun during the sign-out's own await
- * (it reads the already bumped generation) would do the same once the
+ * Every successful adoption bumps the counter as well, so an adoption that
+ * lands while another platform answer is still in flight supersedes it: of
+ * two overlapping resumes with no sign-out between them, only the first
+ * adoption lands, and the older one's late failure clears nothing and its
+ * late success adopts nothing, so the newer session is neither wiped nor
+ * replaced. Without the guard, a resume or a sign-in begun before the user
+ * signed out would re-sign the custody in when the platform answered after
+ * the sign-out, and a resume or a sign-in begun during the sign-out's own
+ * await (it reads the already bumped generation) would do the same once the
  * platform answered after the sign-out returned; the profile would be
  * written back to storage either way.
  */
@@ -199,7 +204,7 @@ export class AuthController {
       return err(`sign-in failed: ${asMessage(error)}`);
     }
     if (this.#generation !== generation) {
-      return err("sign-in cancelled: sign-out happened while the sign-in was in flight, so nothing was adopted");
+      return err("sign-in cancelled: sign-out or another adoption landed while the sign-in was in flight, so nothing was adopted");
     }
     let minted: { jwt: string; expiresAtMs: number };
     try {
@@ -208,7 +213,7 @@ export class AuthController {
       return err(`sign-in failed minting the token: ${asMessage(error)}`);
     }
     if (this.#generation !== generation) {
-      return err("sign-in cancelled: sign-out happened while the sign-in was in flight, so nothing was adopted");
+      return err("sign-in cancelled: sign-out or another adoption landed while the sign-in was in flight, so nothing was adopted");
     }
     const adopted = this.#sessions.adopt({
       token: minted.jwt,
@@ -216,6 +221,7 @@ export class AuthController {
       user,
     });
     if (!adopted) return err("sign-in failed: the platform returned an unusable session");
+    this.#generation += 1; // the adoption is a structural change: it supersedes anything already in flight
     return ok({ ...user });
   }
 
@@ -230,11 +236,13 @@ export class AuthController {
   adopt(input: AdoptSessionInput): boolean {
     const user: AccountUser | null = input.user;
     if (user === null || typeof user !== "object") return false;
-    return this.#sessions.adopt({
+    const adopted = this.#sessions.adopt({
       token: input.token,
       tokenExpiresAtMs: input.tokenExpiresAtMs,
       user: { userId: user.userId, email: user.email, name: user.name },
     });
+    if (adopted) this.#generation += 1; // the adoption is a structural change: it supersedes anything already in flight
+    return adopted;
   }
 
   /**
@@ -253,11 +261,15 @@ export class AuthController {
    * already wiped the custody it would clear.) The generation guard runs
    * across every await: a sign-out that lands mid resume cancels it as data
    * and nothing is adopted, so the late platform answer can never re-sign a
-   * custody the user signed out. The failure paths clear only the custody
-   * they began from: each clear is guarded by the same generation check, so
-   * a stale resume whose platform answer FAILS after the user signed out and
-   * someone else signed in resolves its error Result and leaves the new
-   * user's custody alone.
+   * custody the user signed out. Every successful adoption bumps the same
+   * counter, so of two overlapping resumes with no sign-out between them
+   * only the first adoption lands: the older one's late failure clears
+   * nothing of the newer session and its late success adopts nothing, in
+   * either order. The failure paths clear only the custody they began from:
+   * each clear is guarded by the same generation check, so a stale resume
+   * whose platform answer FAILS after the user signed out and someone else
+   * signed in resolves its error Result and leaves the new user's custody
+   * alone.
    */
   async resume(): Promise<Result<AccountUser>> {
     const generation = this.#generation;
@@ -269,7 +281,7 @@ export class AuthController {
       return err(`no platform session to resume: ${asMessage(error)}`);
     }
     if (this.#generation !== generation) {
-      return err("resume cancelled: sign-out happened while the resume was in flight, so nothing was adopted");
+      return err("resume cancelled: sign-out or another adoption landed while the resume was in flight, so nothing was adopted");
     }
     let minted: { jwt: string; expiresAtMs: number };
     try {
@@ -279,7 +291,7 @@ export class AuthController {
       return err(`the token refresh failed: ${asMessage(error)}`);
     }
     if (this.#generation !== generation) {
-      return err("resume cancelled: sign-out happened while the resume was in flight, so nothing was adopted");
+      return err("resume cancelled: sign-out or another adoption landed while the resume was in flight, so nothing was adopted");
     }
     const adopted = this.#sessions.adopt({
       token: minted.jwt,
@@ -290,6 +302,7 @@ export class AuthController {
       if (this.#generation === generation) this.#sessions.clear();
       return err("the platform returned an unusable session");
     }
+    this.#generation += 1; // the adoption is a structural change: it supersedes anything already in flight
     return ok({ ...user });
   }
 
