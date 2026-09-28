@@ -241,7 +241,7 @@ export class DeferredCall<T> implements DeferredHandoff<T> {
 }
 
 /** The AccountSurface methods the deferred account surface holds open. */
-export type DeferredMethodName = "createEmailPasswordSession" | "getSession" | "createJWT";
+export type DeferredMethodName = "createEmailPasswordSession" | "getSession" | "createJWT" | "deleteSession";
 
 /**
  * A deferred fake of THIS package's AccountSurface: the three platform calls
@@ -249,8 +249,11 @@ export type DeferredMethodName = "createEmailPasswordSession" | "getSession" | "
  * do not resolve until the test completes them. This is the fake the
  * in-flight races run against: begin a resume, sign out, then let the
  * platform answer late, and assert the custody adopted nothing. All values
- * are fake. deleteSession resolves immediately (sign-out is the event under
- * test, never the deferred leg) and the OAuth2 ceremony is not deferred.
+ * are fake. By default deleteSession resolves immediately (the sign-out is
+ * the event under test, never the deferred leg); with deferDeleteSession the
+ * platform session delete is handed to the test as well, so a sign-in or a
+ * resume can be parked against a sign-out that is itself mid await. The
+ * OAuth2 ceremony is not deferred.
  */
 export class DeferredAccountSurface implements AccountSurface {
   user: AccountUser;
@@ -258,17 +261,21 @@ export class DeferredAccountSurface implements AccountSurface {
   #createEmailPasswordSession: DeferredCall<AccountUser> | null = null;
   #getSession: DeferredCall<AccountUser> | null = null;
   #createJWT: DeferredCall<{ jwt: string; expiresAtMs: number }> | null = null;
+  #deleteSession: DeferredCall<void> | null = null;
+  #deferDeleteSession: boolean;
 
-  constructor(options?: { user?: AccountUser }) {
+  constructor(options?: { user?: AccountUser; deferDeleteSession?: boolean }) {
     this.user = options?.user ?? { ...FAKE_ACCOUNT };
+    this.#deferDeleteSession = options?.deferDeleteSession ?? false;
   }
 
   /** The handoff for an in-flight call, or null until that call has been made. */
   handoff(
     name: DeferredMethodName,
-  ): DeferredHandoff<AccountUser | { jwt: string; expiresAtMs: number }> | null {
+  ): DeferredHandoff<AccountUser | { jwt: string; expiresAtMs: number } | void> | null {
     if (name === "createEmailPasswordSession") return this.#createEmailPasswordSession;
     if (name === "getSession") return this.#getSession;
+    if (name === "deleteSession") return this.#deleteSession;
     return this.#createJWT;
   }
 
@@ -296,6 +303,10 @@ export class DeferredAccountSurface implements AccountSurface {
 
   async deleteSession(): Promise<void> {
     this.deleteCount += 1;
+    if (!this.#deferDeleteSession) return;
+    const call = new DeferredCall<void>();
+    this.#deleteSession = call;
+    return call.promise;
   }
 }
 

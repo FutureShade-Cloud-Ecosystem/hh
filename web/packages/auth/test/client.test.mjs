@@ -468,17 +468,19 @@ test("a sign-in begun while sign-out's own deleteSession is pending adopts nothi
 
 test("a resume in flight when sign-out is called resolves cancelled even while deleteSession is still pending", async () => {
   // The first bump's case: the resume began BEFORE the sign-out, and its
-  // answer lands during the sign-out's own await. The bump that precedes the
-  // await is what cancels it here; the post-await bump alone would let it
-  // adopt and only wipe the adoption afterwards.
+  // answer lands while the sign-out's own deleteSession is still open. The
+  // bump that precedes the await is what cancels it here; a post-await bump
+  // alone would let it adopt and resolve ok during the window and only wipe
+  // the adoption afterwards.
   const { recorded, sessions } = custody();
-  const account = new DeferredAccountSurface();
+  const account = new DeferredAccountSurface({ deferDeleteSession: true });
   const controller = new AuthController({ account, sessions });
 
   const pending = controller.resume(); // the resume is in flight when the user signs out
   const getSession = await untilHandoff(account, "getSession");
 
-  const signingOut = controller.signOut(); // deleteSession is in flight, unresolved
+  const signingOut = controller.signOut(); // deleteSession is parked: the sign-out waits
+  const deleteCall = await untilHandoff(account, "deleteSession");
   getSession.complete({ ...FAKE_ACCOUNT }); // the platform answers while the sign-out waits
   await flush();
   assert.equal(
@@ -493,6 +495,7 @@ test("a resume in flight when sign-out is called resolves cancelled even while d
   assert.equal(sessions.profile, null, "storage holds no profile while deleteSession is still in flight");
   assert.equal(recorded.size, 0, "nothing was written while deleteSession is still in flight");
 
+  deleteCall.complete(undefined); // the platform session ends; the sign-out completes
   await signingOut;
   assert.equal(account.deleteCount, 1);
   assert.equal(sessions.current, null);
