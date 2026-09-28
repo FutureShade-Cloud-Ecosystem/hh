@@ -177,6 +177,79 @@ test("a Blob named by no option rides verbatim, under the name the platform give
   assert.deepEqual(new Uint8Array(await entry.arrayBuffer()), PNG, "byte for byte, as the platform's part");
 });
 
+// The caller's file name is guarded like a path value: refused as an error
+// Result before anything is sent. Every refusal class is exercised through
+// the real transport (the recorded FetchLike), and the empty recorder is what
+// pins "before anything is sent": not one refused name reached a wire.
+test("a file name that is empty, a dot segment, path-like, or control carrying is refused before anything is sent", async () => {
+  const rec = recorder({ "POST /api/v1/pricing/price-file/apply": { status: 201, body: {} } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
+  const refusals = [
+    "", // empty
+    ".", // the dot segment
+    "..", // the parent dot segment
+    "/", // the bare separator
+    "\\", // the bare separator, the other platform's
+    "a/b/price-list.xlsx", // a path riding the name
+    "a\\b\\price-list.xlsx", // a Windows path riding the name
+    "price\u0000list.xlsx", // a NUL byte
+    "price\nlist.xlsx", // a line break, a control character
+    "price\tlist.xlsx", // a tab, a control character
+  ];
+  for (const name of refusals) {
+    const result = await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+      { fileFilename: name },
+    );
+    assert.equal(result.ok, false, `the name ${JSON.stringify(name)} is refused`);
+    if (!result.ok) {
+      assert.match(result.error, /the file part's file name /, `the refusal names the part, for ${JSON.stringify(name)}`);
+    }
+  }
+  assert.equal(rec.calls.length, 0, "not one refused name dialed");
+});
+
+test("the longest accepted file name is 160 characters, one more is refused", async () => {
+  const rec = recorder({ "POST /api/v1/pricing/price-file/apply": { status: 201, body: {} } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch, headers: () => ({ "X-Org": "dibbits" }) });
+  const tooLong = await api.staffPricing.pricingApplyPriceFile(
+    client,
+    { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+    { fileFilename: "p".repeat(161) },
+  );
+  assert.equal(tooLong.ok, false);
+  if (!tooLong.ok) assert.match(tooLong.error, /longer than the 160 characters/);
+  assert.equal(rec.calls.length, 0, "the over long name dialed nothing");
+  unwrap(
+    await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+      { fileFilename: "p".repeat(160) },
+    ),
+  );
+  assert.equal(rec.calls.length, 1, "a name of exactly the bound dials");
+  const parsed = await new Request(rec.calls[0].url, { method: rec.calls[0].method, body: rec.calls[0].form }).formData();
+  const part = parsed.get("file");
+  assert.ok(part instanceof Blob, "the guarded name still rides as a Blob part");
+  assert.equal(part.name, "p".repeat(160), "the accepted name arrives whole");
+});
+
+// The guard lives in the transport, so it holds on every multipart operation;
+// the feedback screenshot pins it on the second one.
+test("the feedback screenshot's name gets the same guard", async () => {
+  const rec = recorder({ "POST /api/v1/feedback": { status: 201, body: { id: "fb-3" } } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
+  const result = await api.staffFeedback.feedbackCreateMultipart(
+    client,
+    { type: "bug", message: "the board froze on drop", image: new Blob([PNG]) },
+    { imageFilename: "../escape.png" },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /the image part's file name carries a path separator/);
+  assert.equal(rec.calls.length, 0, "the refused name dialed nothing");
+});
+
 test("the pricing CSV import accepts a string body and rides it verbatim", async (t) => {
   const csv = "sku,price_cents\nDBS-OAKS-VINTAGE,101700\n";
   const rec = recorder({ "POST /api/v1/pricing/batches/b1/import": { body: { lines: 1 } } });

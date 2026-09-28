@@ -16,12 +16,18 @@
 // and resolves an error Result naming which one fired; it never rejects. Both
 // are armed before the header provider is called, so the provider's call sits
 // inside the deadline: a provider that never settles (a wedged auth lookup)
-// resolves the timeout Result instead of hanging the caller past it. Both
-// stay armed until the response body has been read, because a fetch resolves
-// at the headers and a body that stalls after them is still a pending
-// request. Redirects are refused (redirect: "error"): a redirect could replay
-// a request's headers and body against another origin, so a redirected
-// request resolves a transport error Result instead.
+// resolves the timeout Result instead of hanging the caller past it. The dial
+// itself is raced against the armed controller, not merely handed its signal:
+// a custom FetchLike that ignores init.signal and never settles still
+// resolves the deadline's error Result instead of hanging the caller (the
+// README states the contract a replacement must honour). Both stay armed
+// until the response body has been read, because a fetch resolves at the
+// headers and a body that stalls after them is still a pending request.
+// Redirects are refused (redirect: "error"): a redirect could replay a
+// request's headers and body against another origin, so a redirected request
+// resolves a transport error Result instead. A caller-supplied multipart file
+// name is guarded like a path value and refused as an error Result before
+// anything is sent (see filenameProblem).
 //
 // Reading the response: JSON by default, the raw text when the generator
 // marked the operation textResponse (plain string content: text/csv,
@@ -87,9 +93,14 @@ export interface OperationRequest {
   /**
    * The multipart part name per form field, for the binary fields the caller
    * holds as Blobs: the generated multipart operations expose it as their
-   * options argument (`{ fileFilename: "price-list.xlsx" }`). A field with
-   * no name here (or no entry) rides under the platform's default part name,
-   * "blob", which is what the core stores when the caller says nothing.
+   * options argument (`{ fileFilename: "price-list.xlsx" }`). A name is
+   * guarded like a path value: empty, one of the dot segments (`.` or `..`),
+   * carrying a path separator (`/` or `\`), carrying a NUL or any other
+   * control character, or longer than 160 characters (the bound the core's
+   * own stored name keeps) resolves an error Result before anything dials.
+   * A field with no name here (or no entry) rides under the platform's
+   * default part name, "blob", which is what the core stores when the caller
+   * says nothing.
    */
   filenames?: Record<string, string | undefined>;
   /**
@@ -121,6 +132,37 @@ const JSON_CONTENT_TYPE = "application/json";
 // travel, so the transport checks first and names the header, never its
 // value.
 const INVALID_HEADER_VALUE = /[^\t\x20-\x7e\x80-\xff]/;
+
+// The longest file name the transport accepts. It is the bound the core's own
+// stored name keeps (core/internal/pricing/pricefile_service.go,
+// sanitizeFileName, keeps at most this many characters of the caller's name
+// when it stores it on the import run), so a name that passes here is a name
+// the core can store whole rather than truncate.
+const MAX_FILENAME_CHARS = 160;
+
+// A file name rides the multipart part's Content-Disposition as given, so it
+// gets the care fillPath gives a path parameter: refused here, as data,
+// before anything is sent. Refused: empty, one of the dot segments, a path
+// separator (either platform's), a NUL, any other control character, and
+// anything past MAX_FILENAME_CHARS. The platform percent-encodes a quote or a
+// line break inside the quoted parameter, so framing itself cannot be split,
+// but a separator would hand a path to whatever stores the name and a control
+// character would ride the wire raw. The bound counts characters (Unicode
+// code points), not code units, so it means the same thing for a name
+// outside the basic multilingual plane.
+function filenameProblem(name: string): string | undefined {
+  if (name === "") return "is empty";
+  if (name === "." || name === "..") return `is the path segment ${name}`;
+  for (let i = 0; i < name.length; i += 1) {
+    const code = name.charCodeAt(i);
+    if (code === 0x2f || code === 0x5c) return "carries a path separator";
+    if (code < 0x20 || code === 0x7f) return "carries a control character";
+  }
+  let chars = 0;
+  for (const _ of name) chars += 1;
+  if (chars > MAX_FILENAME_CHARS) return `is longer than the ${MAX_FILENAME_CHARS} characters a file name may carry`;
+  return undefined;
+}
 
 // The default binding reads globalThis.fetch at call time, so a later polyfill
 // or test double installed on the global is honored.
@@ -277,10 +319,17 @@ export class ApiClient {
           if (value === undefined || value === null) continue;
           if (value instanceof Blob) {
             // A caller-named part rides under the given filename; an unnamed
-            // Blob keeps the platform's own default part name, "blob".
+            // Blob keeps the platform's own default part name, "blob". The
+            // name is refused here, before anything is sent, when it is not
+            // a plain file name (see filenameProblem).
             const filename = req.filenames?.[name];
-            if (filename !== undefined) form.append(name, value, filename);
-            else form.append(name, value);
+            if (filename !== undefined) {
+              const problem = filenameProblem(filename);
+              if (problem !== undefined) return err(`${id}: the ${name} part's file name ${problem}`);
+              form.append(name, value, filename);
+            } else {
+              form.append(name, value);
+            }
           } else {
             form.append(name, String(value));
           }
@@ -308,12 +357,27 @@ export class ApiClient {
       const beforeDial = aborted();
       if (beforeDial !== undefined) return beforeDial;
 
-      let response: ResponseLike;
-      try {
-        response = await this.fetchLike(url, { ...init, signal: controller.signal });
-      } catch (error) {
-        return aborted() ?? err(`${id}: transport error: ${asMessage(error)}`);
+      // The dial is raced against the armed controller, not merely handed its
+      // signal. The transport contract (the README, "What a custom FetchLike
+      // must honour") asks a FetchLike to observe init.signal, and the
+      // platform's fetch does, but nothing can force a replacement to: the
+      // race is the floor. A transport that accepts the signal and never
+      // settles still resolves the deadline's or the caller's abort's error
+      // Result here, instead of hanging the caller past it.
+      const racedDial = await Promise.race([
+        this.fetchLike(url, { ...init, signal: controller.signal }).then(
+          (response) => ({ kind: "response" as const, response }),
+          (error) => ({ kind: "dialFailed" as const, error }),
+        ),
+        abortWait,
+      ]);
+      if (racedDial.kind === "abort") {
+        return aborted() ?? err(`${id}: the request was aborted`);
       }
+      if (racedDial.kind === "dialFailed") {
+        return aborted() ?? err(`${id}: transport error: ${asMessage(racedDial.error)}`);
+      }
+      const response = racedDial.response;
 
       if (!response.ok) {
         // The refusal stands on the status even when the body cannot be read.
