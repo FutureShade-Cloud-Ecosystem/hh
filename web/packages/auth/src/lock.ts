@@ -34,7 +34,7 @@
 // secret; there is no PIN in this package's state at all.
 import { err, ok, type Result } from "@hh/api-client";
 import { ThrowSafeMirror } from "./session.js";
-import type { Session, SessionStore } from "./session.js";
+import type { SessionStore } from "./session.js";
 
 /**
  * The narrow credential surface this package needs, modelled on what the
@@ -202,11 +202,15 @@ function parseLockPayload(raw: unknown): { payload: LockMirrorPayload; clean: bo
  * from a superseded failure) and resolves an error Result, so a lock or
  * disengage during a verification in flight ends closed or absent, and of
  * two concurrent attempts only the newer one's outcome lands. The session
- * itself is read again after each await too: a sign-out and another person's
- * sign-in mid prompt change neither the lock's generation nor its mirror,
- * so the custody comparison is what refuses to engage for, or open the lock
- * for, the person who is now signed in instead of the person these methods
- * saw.
+ * itself is read again after each await too, on the success path and on the
+ * failure path alike: a sign-out and another person's sign-in mid prompt
+ * change neither the lock's generation nor its mirror, so the custody
+ * comparison is what refuses to engage for, or open the lock for, or record
+ * a failure against, a person who is now signed in instead of the person
+ * these methods are bound to. The bound user's own token moving underneath
+ * is not a change of person: a token refreshed or expired mid prompt leaves
+ * the custody holding either no session at all or the same user's fresh
+ * session, and both are accepted.
  */
 export class DeviceLock {
   readonly #credentials: CredentialProvider;
@@ -274,19 +278,22 @@ export class DeviceLock {
   }
 
   /**
-   * True when the custody still holds the session engage or unlock saw when
-   * it began. The custody is read fresh at every call: engage and unlock
-   * await a platform prompt that can stay open across a sign-out and another
-   * person's sign-in, and neither the lock's state nor the prompt may land
-   * for a user other than the one these methods saw when they started. A
-   * session that became null counts as changed, and a null capture (unlock's
-   * recorded no-session case) only stays unchanged while the custody holds
-   * no session still.
+   * True when the custody holds no session, or holds one for the user engage
+   * or unlock is bound to. The custody is read fresh at every call: engage
+   * and unlock await a platform prompt that can stay open across a sign-out
+   * and another person's sign-in, and neither the lock's state nor the
+   * prompt nor a failure's backoff may land for a user other than the one
+   * these methods are bound to. The bound user's own token moving underneath
+   * them is not a change of person, so it is not a refusal: a token
+   * refreshed mid prompt (a new token, the same user) leaves the custody
+   * holding the same user's session, and a token that expires mid prompt
+   * leaves it holding no session at all, and both are accepted. What is
+   * refused is a session for a different user, which is what a sign-out and
+   * another person's sign-in during the prompt leave behind.
    */
-  #sessionStillHeldFor(session: Session | null): boolean {
+  #sessionIsAbsentOrFor(userId: string): boolean {
     const current = this.#sessions.current;
-    if (session === null) return current === null;
-    return current !== null && current.user.userId === session.user.userId;
+    return current === null || current.user.userId === userId;
   }
 
   /**
@@ -321,7 +328,7 @@ export class DeviceLock {
     if (this.#generation !== generation) {
       return err("device unlock was superseded while engage was in flight, so nothing was engaged");
     }
-    if (!this.#sessionStillHeldFor(session)) {
+    if (!this.#sessionIsAbsentOrFor(session.user.userId)) {
       return err("device unlock engages only for the user it saw signed in when it began: the session changed while engage was in flight, so nothing was engaged");
     }
     if (!available) {
@@ -336,7 +343,7 @@ export class DeviceLock {
     if (this.#generation !== generation) {
       return err("device unlock was superseded while engage was in flight, so nothing was engaged");
     }
-    if (!this.#sessionStillHeldFor(session)) {
+    if (!this.#sessionIsAbsentOrFor(session.user.userId)) {
       return err("device unlock engages only for the user it saw signed in when it began: the session changed while engage was in flight, so nothing was engaged");
     }
     this.#generation += 1;
@@ -362,10 +369,15 @@ export class DeviceLock {
    * guard runs across the await: a lock, a disengage, or a newer attempt
    * that starts mid verification supersedes this one, and on a mismatch it
    * adopts nothing (no open unlock, and no backoff recorded from a failure
-   * that no longer matters). The custody is read again after the prompt: a
-   * sign-out and another person's sign-in while the platform prompt was open
-   * leave the custody holding a different user, and the attempt refuses
-   * instead of opening the lock for the person who now is signed in.
+   * that no longer matters). The custody is read again after the prompt, on
+   * the success path and on the failure path alike: a sign-out and another
+   * person's sign-in while the platform prompt was open leave the custody
+   * holding a different user, and the attempt refuses instead of opening
+   * the lock for, or recording a failure's backoff against, the person who
+   * now is signed in. The bound user's own token moving underneath is not a
+   * refusal: a token refreshed or expired mid prompt leaves the custody
+   * holding no session at all or the same user's fresh session, and both
+   * are accepted.
    */
   async unlock(): Promise<Result<void>> {
     if (this.#engaged === null) {
@@ -391,6 +403,14 @@ export class DeviceLock {
       if (this.#generation !== generation || this.#engaged === null) {
         return err("device unlock was superseded while the platform prompt was in flight");
       }
+      // The failure path carries the same session rule as the success path,
+      // so the rule has no exception: a failed attempt records its backoff
+      // only while the custody holds the engaged user's session, or no
+      // session at all. A different user's session landed mid prompt records
+      // nothing.
+      if (!this.#sessionIsAbsentOrFor(this.#engaged.userId)) {
+        return err("device unlock binds to the user it saw signed in before the prompt: the session changed while the platform prompt was in flight, so nothing was recorded");
+      }
       this.#failures += 1;
       const delayMs = Math.min(this.#backoffBaseMs * 2 ** (this.#failures - 1), this.#backoffCapMs);
       this.#backoffUntilMs = this.#now() + delayMs;
@@ -399,7 +419,7 @@ export class DeviceLock {
     if (this.#generation !== generation || this.#engaged === null) {
       return err("device unlock was superseded while the platform prompt was in flight");
     }
-    if (!this.#sessionStillHeldFor(session)) {
+    if (!this.#sessionIsAbsentOrFor(this.#engaged.userId)) {
       return err("device unlock binds to the user it saw signed in before the prompt: the session changed while the platform prompt was in flight, so nothing opened");
     }
     this.#failures = 0;

@@ -101,7 +101,10 @@ own lock was present; it does not prove which HH person that was.
   its awaits: a sign-out and another person's sign-in while the platform's
   credential prompt is open leave the custody holding a different user, and
   the engage refuses instead of storing the lock for the person who is no
-  longer signed in.
+  longer signed in. The engaged user's own token moving underneath is not a
+  change of person: a token refreshed or expired during the prompt leaves
+  the custody holding either no session at all or the same user's fresh
+  session, and both are accepted.
 - `unlock()` runs one verification against the registered credential id.
   Every failure (wrong PIN, cancelled prompt, platform refusal) feeds a
   local exponential backoff (in memory, one second after the first failure,
@@ -109,10 +112,15 @@ own lock was present; it does not prove which HH person that was.
   elapses; a success resets it. The backoff lives in memory, so a reload
   clears it and re-locks: it is a courtesy against fat fingers, not a
   control, and the platform authenticator's own lockout is the real
-  limiter. The custody is read again after the prompt too: a session that
-  changed while the platform prompt was open (a sign-out and another
-  person's sign-in) refuses the attempt instead of opening the lock for the
-  person who now is signed in.
+  limiter. The custody is read again after the prompt, on the success path
+  and the failure path alike: a session for a different user (a sign-out
+  and another person's sign-in while the platform prompt was open) refuses
+  the attempt, and a failed attempt under that session records no backoff,
+  instead of opening the lock for, or recording a failure against, the
+  person who now is signed in. The bound user's own token moving underneath
+  is not a refusal: a token refreshed or expired mid prompt leaves the
+  custody holding no session at all or the same user's fresh session, and
+  both are accepted.
 - An open unlock relocks itself when its open window (`openWindowMs`, a
   configuration value with the default 300000) elapses: an ABSOLUTE window
   measured from the unlock, not an idle timeout. No activity is tracked and
