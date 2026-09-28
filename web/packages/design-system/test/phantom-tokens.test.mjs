@@ -51,7 +51,7 @@ test('the file walker finds the package (guards the scan below)', () => {
   assert.ok(files.length >= 12, `expected the walker to find the package's sources; found ${files.length}`);
   for (const anchor of [
     'src/tokens.css',
-    'src/lit.ts',
+    'src/render.ts',
     'src/state.ts',
     'src/primitives.ts',
     'src/state-icons.ts',

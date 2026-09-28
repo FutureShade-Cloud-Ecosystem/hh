@@ -8,8 +8,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync } from 'node:fs';
 
-import { contrast, parseDeclarations, palettes, readPkg, resolveColor, sheetBlocks, stripComments } from './_lib/sheet.mjs';
+import { contrast, parseDeclarations, palettes, pkgDir, readPkg, resolveColor, sheetBlocks, stripComments } from './_lib/sheet.mjs';
+import { join } from 'node:path';
 
 const AA = 4.5;
 
@@ -23,7 +25,7 @@ test('every theme-capable role is DECLARED in the light half, not inherited', ()
   const dark = parseDeclarations(blocks.dark);
   const light = parseDeclarations(blocks.light);
   const perTheme = [
-    '--hh-page', '--hh-card', '--hh-line', '--hh-text', '--hh-text-dim',
+    '--hh-page', '--hh-card', '--hh-line', '--hh-control-line', '--hh-text', '--hh-text-dim',
     '--hh-row', '--hh-row-alt',
     '--hh-accent-text', '--hh-focus-ring',
     '--hh-danger', '--hh-danger-fill', '--hh-danger-fill-ink',
@@ -139,9 +141,17 @@ test('the contractor layer is declared once, defers to the dealer brand, and is 
   assert.equal(dark['--cbrand-on'], 'var(--brand-on)', '--cbrand-on must defer to --brand-on on :root');
   const light = parseDeclarations(blocks.light);
   assert.ok(!('--cbrand' in light), 'the contractor layer needs no light half: it defers, it does not re-value');
-  for (const file of ['src/state.ts', 'src/primitives.ts', 'src/lit.ts',
-    'src/kits/scan-and-confirm.ts', 'src/kits/list-detail.ts', 'src/kits/guided-flow.ts',
-    'src/kits/dashboard.ts', 'src/kits/inbox.ts']) {
+  // The ban is a DIRECTORY WALK over src/kits, not a hard-coded list, so a new
+  // kit file is covered the moment it exists. The walk must actually find the
+  // five kits, or the gate below would pass while scanning nothing.
+  const kitFiles = readdirSync(join(pkgDir, 'src', 'kits'))
+    .filter((f) => f.endsWith('.ts'))
+    .sort()
+    .map((f) => `src/kits/${f}`);
+  for (const expected of ['dashboard.ts', 'guided-flow.ts', 'inbox.ts', 'list-detail.ts', 'scan-and-confirm.ts']) {
+    assert.ok(kitFiles.includes(`src/kits/${expected}`), `the kit walk missed src/kits/${expected}: it is not package-wide`);
+  }
+  for (const file of [...kitFiles, 'src/state.ts', 'src/primitives.ts', 'src/render.ts']) {
     const src = readPkg(file);
     assert.ok(!src.includes('--cbrand'), `${file} consumes the contractor layer; only the public proposal surface may`);
   }

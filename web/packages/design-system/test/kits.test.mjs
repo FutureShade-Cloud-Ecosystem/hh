@@ -18,7 +18,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderTemplate } from '../src/lit.js';
+import { renderTemplate, html } from '../src/render.js';
 import { KIT_STATES, STATE_META, kitShell, stateIndicator } from '../src/state.js';
 import { baseStyles } from '../src/primitives.js';
 import { STATE_ICONS, icon } from '../src/state-icons.js';
@@ -92,6 +92,14 @@ test('kit coverage: every kit renders its every designed state and its ready sta
 
 // ── colour never encodes state alone ─────────────────────────────────────────────
 
+// Every render's icons must carry exactly the geometry the state system
+// declares for that state: distinctness is judged on the PATH DATA a user is
+// shown, not on an invisible attribute, so five identical icons fail here.
+const iconGeometry = (markup) => {
+  const svgs = [...markup.matchAll(/<svg[^>]*>[\s\S]*?<\/svg>/g)].map((m) => m[0]);
+  return svgs.map((svg) => [...svg.matchAll(/ d="([^"]+)"/g)].map((d) => d[1]).join(' ')).join(' || ');
+};
+
 test(`state indicators survive with colour removed: every kit`, () => {
   for (const [tag, Kit] of KITS) {
       const shapes = new Set();
@@ -100,23 +108,37 @@ test(`state indicators survive with colour removed: every kit`, () => {
         // The word, with content.
         const label = markup.match(/class="[^"]*(state-label|banner-text|review-title)[^"]*"\s*>([^<]+)</);
         assert.ok(label && label[2].trim().length > 0, `${tag}/${state}: no word beside the colour`);
-        // The icon, with geometry (a path, not a glyph and not an image).
-        const svg = markup.match(/<svg[^>]*>[\s\S]*?<\/svg>/);
-        assert.ok(svg, `${tag}/${state}: no icon beside the colour`);
-        assert.match(svg[0], /<path d="/, `${tag}/${state}: the icon is not path geometry`);
-        assert.ok(!svg[0].includes('data:image'), `${tag}/${state}: the icon must not be an embedded image`);
+        // The icon, as the geometry the user is shown: the state's declared
+        // path data, byte for byte, not just some path on the page.
+        const expected = STATE_META[state].icon;
+        const geometry = iconGeometry(markup);
+        const declared = STATE_ICONS[expected].paths.join(' ');
+        assert.ok(geometry.includes(declared), `${tag}/${state}: the icon shown is not the ${expected} geometry (got: ${geometry || 'none'})`);
+        assert.ok(!geometry.includes('data:image'), `${tag}/${state}: the icon must not be an embedded image`);
         // The pattern change, machine-checkable.
         const pattern = attr(markup, 'data-pattern');
         assert.ok(pattern && pattern !== 'ready', `${tag}/${state}: no pattern change marker`);
-        shapes.add(`${pattern}|${label[2]}`);
+        shapes.add(`${pattern}|${label[2]}|${geometry}`);
       }
       // No two states of a kit may present the same shape: five distinct
-      // pattern+word pairs, so the states are tellable apart with colour gone.
+      // pattern+word+geometry triples, so the states are tellable apart with
+      // colour gone and with the invisible attributes gone too.
       assert.equal(
         shapes.size,
         KIT_STATES.length,
         `${tag}: two states present the same indicator shape (${[...shapes].join(' ; ')}), which means they are colour-only apart`,
       );
+  }
+});
+
+test('the state icons are pairwise distinct geometry', () => {
+  // The direct half of the gate above: identical path data across the marks
+  // fails here even before any kit renders them.
+  const seen = new Map();
+  for (const [name, spec] of Object.entries(STATE_ICONS)) {
+    const key = spec.paths.join('|');
+    assert.ok(!seen.has(key), `the ${name} mark is byte-identical to the ${seen.get(key)} mark`);
+    seen.set(key, name);
   }
 });
 
@@ -161,6 +183,96 @@ test('offline and conflict are pattern changes, not recolourings: the body stays
   }
 });
 
+// The five designed states are not the only places a kit shows state: the
+// guided-flow rail shows done/current/todo on every render, chips carry tones,
+// a row carries its selection. This walks EVERY kit in EVERY state and holds
+// each state-showing spot to the rule, not only the five kit states.
+test('every place a kit shows state carries a non-colour cue', () => {
+  const allStates = ['ready', ...KIT_STATES];
+  for (const [tag, Kit] of KITS) {
+    for (const state of allStates) {
+      const markup = render(Kit, state);
+      // A DONE rail step: the check icon is the visible cue, the visually
+      // hidden word is the AT cue; the green rides beside them, never alone.
+      for (const m of markup.matchAll(/<li class="rail-step rail-step-done">[\s\S]*?<\/li>/g)) {
+        assert.match(m[0], /<path d="/, `${tag}/${state}: a done rail step has no visible icon cue`);
+        assert.match(m[0], /class="visually-hidden"[^>]*>\(done\)</, `${tag}/${state}: a done rail step has no word cue`);
+      }
+      // The CURRENT rail step: aria-current is the non-colour cue.
+      for (const m of markup.matchAll(/<li class="rail-step rail-step-current"[^>]*>/g)) {
+        assert.match(m[0], /aria-current="step"/, `${tag}/${state}: the current rail step is colour-only`);
+      }
+      // A toned chip carries its word.
+      for (const tone of ['chip-good', 'chip-watch', 'chip-stop']) {
+        const at = markup.indexOf(`chip ${tone}`);
+        if (at === -1) continue;
+        const window = markup.slice(at, at + 400);
+        assert.match(window, /chip-text">[^<]+</, `${tag}/${state}: a ${tone} chip carries no word`);
+      }
+    }
+  }
+  // The selected row's cue is structural: the sheet must change something
+  // besides colour on .row-selected, and the selection border must be the
+  // logical property so a right-to-left reading mirrors it.
+  const selected = baseStyles.match(/\.row-selected\s*\{[^}]*\}/);
+  assert.ok(selected, 'the sheet must carry the .row-selected rule');
+  assert.match(selected[0], /font-weight/, 'the selected row must carry a weight cue, not colour alone');
+  assert.match(selected[0], /border-inline-start/, 'the selection border must be the logical property');
+  assert.doesNotMatch(selected[0], /border-left/, 'the selection border must not be the physical left');
+});
+
+// ── trusted markup is a brand, never a shape ─────────────────────────────────────
+
+test('a caller object and a caller string are text, never markup', () => {
+  const poison = '<img src=x onerror=alert(1)>';
+  // A caller's object that carries an unsafe-looking key: parsed JSON shaped
+  // like the old UnsafeHtml must land as TEXT (or nothing), never as markup.
+  const fromObject = renderTemplate(html`<div>${{ unsafe: poison }}</div>`);
+  assert.ok(!fromObject.includes('<img'), `a caller object with an unsafe key became markup: ${fromObject}`);
+  assert.ok(!fromObject.includes('onerror'), `a caller object with an unsafe key became markup: ${fromObject}`);
+  // The same object handed straight to the renderer: escaped text.
+  const direct = renderTemplate({ unsafe: poison });
+  assert.ok(!direct.includes('<img') && !direct.includes('onerror='), `renderTemplate emitted a caller's object raw: ${direct}`);
+  // A caller's string: escaped.
+  const fromString = renderTemplate(html`<div>${poison}</div>`);
+  assert.match(fromString, /&lt;img src=x onerror=alert\(1\)&gt;/, "a caller's string was not escaped");
+  // A caller's object shaped like the old Template (strings key): shape is
+  // never trust, so this is escaped text too.
+  const fakeTemplate = renderTemplate(html`<div>${{ strings: ['<b>bold</b>'], values: [] }}</div>`);
+  assert.ok(!fakeTemplate.includes('<b>'), `an object with a strings key became markup: ${fakeTemplate}`);
+  const fakeDirect = renderTemplate({ strings: ['<b>bold</b>'], values: [] });
+  assert.ok(!fakeDirect.includes('<b>'), `renderTemplate emitted a fake template raw: ${fakeDirect}`);
+  // The icon path data is bound as an ATTRIBUTE value: a poisoned label or a
+  // poisoned d cannot close the attribute and inject. The label lands as
+  // ESCAPED text (inert inside the title), never as a second element.
+  const labelled = renderTemplate(icon('check', `${poison}`));
+  assert.ok(!/<img/.test(labelled), `a poisoned icon label became markup: ${labelled}`);
+  assert.match(labelled, /&lt;img src=x onerror/, 'the poisoned label must appear escaped, not stripped and not raw');
+  // And no raw-markup escape hatch may return, under any name.
+  assert.ok(!readPkg('src/index.ts').includes('unsafeSvg'), 'the public surface exports unsafeSvg again');
+  assert.ok(!/export\s+(function|const|class)\s+unsafeSvg/.test(readPkg('src/render.ts')), 'src/render.ts exports an unsafeSvg escape hatch');
+});
+
+
+test('an unknown state fails loudly, never renders a quietly empty kit', () => {
+  // A typo'd state name is a defect at the call site; an empty region would
+  // hide it from everyone but the person using the screen.
+  for (const [tag, Kit] of KITS) {
+    assert.throws(
+      () => render(Kit, 'nonsense'),
+      (e) => e instanceof Error && e.message.includes(tag) && e.message.includes('nonsense'),
+      `${tag}: an unknown state must throw, naming the kit and the state`,
+    );
+  }
+  assert.match(render(KITS[0][1], 'ready'), /data-state="ready"/, 'the known states must keep rendering');
+});
+
+test('the kits answer the sheet: color-scheme is applied, not just declared', () => {
+  const host = baseStyles.match(/:host\s*\{[^}]*\}/);
+  assert.ok(host, 'the primitives must carry the :host rule');
+  assert.match(host[0], /color-scheme:\s*var\(--hh-color-scheme\)/, ':host must follow the sheet per theme');
+});
+
 // ── disabled changes colour, not opacity ────────────────────────────────────────
 
 test('the disabled rule is a token swap, stated once in the primitives', () => {
@@ -176,11 +288,14 @@ test('no shipped source fades a control: no opacity declaration, no filter, anyw
   // The counterexample that earned this rule was a raw "Accept and sign"
   // button at reduced opacity on the one screen where someone decides to spend
   // money. The rule is package-wide and the scan is comment-stripped, so a
-  // comment that QUOTES the word is not a violation but a declaration is.
+  // comment that QUOTES the word is not a violation but a declaration is. The
+  // scan matches a declaration after whitespace, a statement break, a brace,
+  // OR a quote, so an inline style="opacity:.." on a rendered control is
+  // caught by the same net as a stylesheet rule.
   const offenders = [];
   for (const file of shippedStyleFiles()) {
     const src = stripComments(readPkg(file));
-    for (const m of src.matchAll(/(?:^|[\s;{])(opacity|filter)\s*:/gm)) {
+    for (const m of src.matchAll(/(?:^|[\s;{"'`])(opacity|filter)\s*:/gm)) {
       offenders.push(`${file}: ${m[1]} declaration`);
     }
   }
@@ -190,6 +305,63 @@ test('no shipped source fades a control: no opacity declaration, no filter, anyw
     `a shipped source declares opacity or filter. Disabled controls change COLOUR through the ` +
       `--hh-disabled-* swap; a fade is not a state:\n  ${offenders.join('\n  ')}`,
   );
+});
+
+test('no rendered control carries an inline fade: the user-visible half of the rule', () => {
+  // A stylesheet can be clean while a template interpolates a fade onto one
+  // control; this holds the RENDERED markup, every kit in every state.
+  const allStates = ['ready', ...KIT_STATES];
+  const offenders = [];
+  for (const [tag, Kit] of KITS) {
+    for (const state of allStates) {
+      const markup = render(Kit, state);
+      for (const m of markup.matchAll(/style="[^"]*(opacity|filter)[^"]*"/gi)) {
+        offenders.push(`${tag}/${state}: ${m[0]}`);
+      }
+      for (const b of markup.match(/<button[^>]*>/g) ?? []) {
+        if (b.includes('style=')) offenders.push(`${tag}/${state}: a button carries an inline style: ${b}`);
+      }
+    }
+  }
+  assert.deepEqual(
+    offenders.sort(),
+    [],
+    `rendered markup carries an inline fade. Disabled controls change COLOUR through the ` +
+      `--hh-disabled-* swap; a fade is not a state:\n  ${offenders.join('\n  ')}`,
+  );
+});
+
+test('the state word is never hidden: no hiding rule may target the word classes', () => {
+  // The word is the state's cue when colour is gone; CSS must not be able to
+  // delete it while the colours stay. The sanctioned hiding pattern
+  // (.visually-hidden) is reserved for words paired with a VISIBLE cue, and it
+  // is not allowed to touch these classes.
+  const wordClasses = ['state-label', 'banner-text', 'review-title'];
+  const hiding = /display:\s*none|visibility:\s*hidden|content-visibility|font-size:\s*0(?![.\d])|clip-path|position:\s*absolute|(?<![.\w-])width:\s*0(?![.\d])|(?<![.\w-])height:\s*0(?![.\d])|opacity/;
+  for (const file of shippedStyleFiles()) {
+    const src = stripComments(readPkg(file));
+    for (const m of src.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+      const [selector, body] = [m[1], m[2]];
+      for (const cls of wordClasses) {
+        if (!selector.includes(`.${cls}`)) continue;
+        assert.doesNotMatch(
+          body,
+          hiding,
+          `${file}: the rule for .${cls} hides the state word (colour never encodes state alone, and the word is the cue)`,
+        );
+      }
+    }
+  }
+  // And the rendered word never carries an inline hiding style. Only the five
+  // designed states carry a state word; ready shows the plain body.
+  for (const [tag, Kit] of KITS) {
+    for (const state of KIT_STATES) {
+      const markup = render(Kit, state);
+      const word = markup.match(/class="[^"]*(state-label|banner-text|review-title)[^"]*"[^>]*>/);
+      assert.ok(word, `${tag}/${state}: no state word element at all`);
+      assert.ok(!word[0].includes('style='), `${tag}/${state}: the state word carries an inline style`);
+    }
+  }
 });
 
 test('the disabled pairs the swap produces clear AA in both halves', () => {

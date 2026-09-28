@@ -29,12 +29,24 @@ import {
   declaredPairs,
   palette,
   palettes,
+  readPkg,
   resolveColor,
 } from './_lib/sheet.mjs';
 import { hexToOklch, oklchToHex, parseOklch, relativeLuminance } from './_lib/color.mjs';
 
 const AA = 4.5;
 const NON_TEXT = 3.0;
+
+/** Composites an ink at alpha over an opaque ground, both 6-digit hex, and
+ * returns the resulting 6-digit hex: how a browser flattens a translucent
+ * stripe over its ground. */
+const chan = (h, i) => parseInt(h.slice(1 + 2 * i, 3 + 2 * i), 16);
+const blendOver = (ground, ink, alpha) => {
+  const mixed = [0, 1, 2].map((i) =>
+    Math.round(chan(ground, i) * (1 - alpha) + chan(ink, i) * alpha),
+  );
+  return '#' + mixed.map((c) => c.toString(16).padStart(2, '0')).join('');
+};
 
 const fail = (name, fgHex, bgHex, ratio, min) =>
   `${name}: ${ratio.toFixed(2)}:1 (${fgHex} on ${bgHex}), below the ${min}:1 bar`;
@@ -239,11 +251,30 @@ test(`the primary action's boundary is tellable from the page in every palette`,
 
 // ── per-kit, per-state pairs: the state combinations the kits actually paint ────
 
-// Every kit paints the same state system (src/state.ts), so the state pairs are
-// designed once and named once here; the kit loop holds every kit to them. The
-// indicator sits on the state block (a card surface); the banner and review
-// card sit on cards; the spinner arc and the disabled pair are their own rows.
-const KIT_TAGS = ['hh-scan-and-confirm', 'hh-list-detail', 'hh-guided-flow', 'hh-dashboard', 'hh-inbox'];
+// KIT-TRUE, not one matrix five times: each kit's pairs are measured on the
+// surfaces THAT KIT paints, derived by scanning the kit's own source plus the
+// shared scaffold for the surface tokens they reference. The dashboard kit
+// paints ground and widget, the list kits paint the row stripe over a card,
+// and each kit gets exactly the surfaces its markup names.
+const KIT_SOURCES = {
+  'hh-scan-and-confirm': 'src/kits/scan-and-confirm.ts',
+  'hh-list-detail': 'src/kits/list-detail.ts',
+  'hh-guided-flow': 'src/kits/guided-flow.ts',
+  'hh-dashboard': 'src/kits/dashboard.ts',
+  'hh-inbox': 'src/kits/inbox.ts',
+};
+
+const SHARED_STATE_SOURCES = ['src/state.ts', 'src/primitives.ts'];
+const SURFACE_VOCABULARY = ['--hh-page', '--hh-card', '--hh-ground', '--hh-widget', '--hh-widget-raised'];
+
+function kitSurfaces(file) {
+  const src = [readPkg(file), ...SHARED_STATE_SOURCES.map((f) => readPkg(f))].join('\n');
+  const found = new Set();
+  for (const m of src.matchAll(/var\(\s*(--[a-z0-9-]+)/g)) {
+    if (SURFACE_VOCABULARY.includes(m[1])) found.add(m[1]);
+  }
+  return [...found].sort();
+}
 
 // state -> the ink its indicator, banner or review card is read in.
 const STATE_INK = {
@@ -255,22 +286,26 @@ const STATE_INK = {
 };
 
 for (const name of PALETTE_NAMES) {
-  for (const tag of KIT_TAGS) {
+  for (const [tag, file] of Object.entries(KIT_SOURCES)) {
     for (const state of Object.keys(STATE_INK)) {
       test(`kit pair clears AA: ${tag} / ${state} / ${name}`, () => {
         const v = palette(name);
         const failures = [];
 
-        // The state's indicator ink on the card it is painted on.
+        // The state's indicator ink on every surface THIS kit paints, not a
+        // shared assumption about surfaces.
         const inkTok = STATE_INK[state];
         const fg = resolveColor(v[inkTok], v);
-        const card = resolveColor(v['--hh-card'], v);
-        const inkRatio = contrast(fg, card);
-        if (inkRatio < AA) failures.push(fail(`${state} indicator (${inkTok}) on --hh-card`, fg, card, inkRatio, AA));
+        for (const surface of kitSurfaces(file)) {
+          const bg = resolveColor(v[surface], v);
+          const inkRatio = contrast(fg, bg);
+          if (inkRatio < AA) failures.push(fail(`${state} indicator (${inkTok}) on ${surface}`, fg, bg, inkRatio, AA));
+        }
 
         if (state === 'loading') {
           // The spinner arc, a boundary: gold-as-ink on the card, non-text bar.
           const arc = resolveColor(v['--hh-accent-text'], v);
+          const card = resolveColor(v['--hh-card'], v);
           const ratio = contrast(arc, card);
           if (ratio < NON_TEXT) failures.push(fail('spinner arc (--hh-accent-text) on --hh-card', arc, card, ratio, NON_TEXT));
         }
@@ -292,6 +327,75 @@ for (const name of PALETTE_NAMES) {
     }
   }
 }
+
+// ── pairs a user sees that no gate looked at, held from now on ──────────────────
+
+test('the focus ring, state borders and the control boundary clear 3:1 where they appear: every palette', () => {
+  // WCAG 1.4.11 judges these as SHAPES: the keyboard ring, the state colour
+  // drawn as a border (the offline banner, the conflict review card, the toned
+  // chips), and the boundary of a non-filled control. All pass when measured;
+  // the gate exists so they cannot stop passing quietly.
+  const failures = [];
+  for (const name of PALETTE_NAMES) {
+    const v = palette(name);
+    const ring = resolveColor(v['--hh-focus-ring'], v);
+    const control = resolveColor(v['--hh-control-line'], v);
+    for (const surface of ['--hh-page', '--hh-card']) {
+      const bg = resolveColor(v[surface], v);
+      const ringRatio = contrast(ring, bg);
+      if (ringRatio < NON_TEXT) failures.push(fail(`focus ring vs ${surface}`, ring, bg, ringRatio, NON_TEXT));
+      const controlRatio = contrast(control, bg);
+      if (controlRatio < NON_TEXT) failures.push(fail(`--hh-control-line vs ${surface}`, control, bg, controlRatio, NON_TEXT));
+      for (const border of ['--hh-state-good', '--hh-state-watch', '--hh-state-stop', '--hh-info']) {
+        const ink = resolveColor(v[border], v);
+        const ratio = contrast(ink, bg);
+        if (ratio < NON_TEXT) failures.push(fail(`${border} as border vs ${surface}`, ink, bg, ratio, NON_TEXT));
+      }
+    }
+  }
+  assert.deepEqual(failures.sort(), [], `user-visible boundaries under the ${NON_TEXT}:1 bar:\n  ${failures.join('\n  ')}`);
+});
+
+test('dimmed text on the row stripe clears AA over both grounds a list lands on: every palette', () => {
+  // The stripe is a tint declared as color-mix over the row's ground, so the
+  // pair is resolved by compositing the declared percentage over each ground
+  // and measuring the dimmed ink against the result. The percentage is read
+  // from the sheet, not assumed.
+  const failures = [];
+  for (const name of PALETTE_NAMES) {
+    const v = palette(name);
+    const decl = v['--hh-row-alt'];
+    const m = String(decl).match(/color-mix\(in\s+srgb,\s*var\(\s*(--[a-z0-9-]+)\s*\)\s*([\d.]+)%/);
+    assert.ok(m, `--hh-row-alt in ${name} is not a readable srgb color-mix over one ink: ${decl}`);
+    const ink = resolveColor(v[m[1]], v);
+    const pct = parseFloat(m[2]);
+    const dim = resolveColor(v['--hh-text-dim'], v);
+    for (const ground of ['--hh-page', '--hh-card']) {
+      const base = resolveColor(v[ground], v);
+      const stripe = blendOver(base, ink, pct / 100);
+      const ratio = contrast(dim, stripe);
+      if (ratio < AA) failures.push(fail(`--hh-text-dim on the row stripe over ${ground}`, dim, stripe, ratio, AA));
+    }
+  }
+  assert.deepEqual(failures.sort(), [], `dimmed text on the row stripe under AA:\n  ${failures.join('\n  ')}`);
+});
+
+test('the primary button under hover keeps its AA pair and its boundary: every palette', () => {
+  const failures = [];
+  for (const name of PALETTE_NAMES) {
+    const v = palette(name);
+    const hover = resolveColor(v['--brand-fill-hover'], v);
+    const on = resolveColor(v['--brand-fill-on'], v);
+    const ratio = contrast(on, hover);
+    if (ratio < AA) failures.push(fail('--brand-fill-on on --brand-fill-hover (primary hover)', on, hover, ratio, AA));
+    for (const surface of ['--hh-page', '--hh-card']) {
+      const bg = resolveColor(v[surface], v);
+      const best = Math.max(contrast(hover, bg), contrast(on, bg));
+      if (best < NON_TEXT) failures.push(fail(`primary hover boundary vs ${surface}`, `${hover}/${on}`, bg, best, NON_TEXT));
+    }
+  }
+  assert.deepEqual(failures.sort(), [], `primary hover pairs under their bars:\n  ${failures.join('\n  ')}`);
+});
 
 // ── the declared-pair gate: every rule block that states a pair, in every palette ──
 

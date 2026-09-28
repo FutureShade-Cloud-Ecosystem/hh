@@ -158,9 +158,12 @@ export function referencedTokens(src) {
   return refs;
 }
 
-/** Every token DEFINED in tokens.css (declaration lines only). */
+/** Every token DEFINED in tokens.css (declaration lines only, comments
+ * stripped FIRST: this header itself names tokens next to colons, and a
+ * definition that exists only inside a comment is not a definition, so a
+ * phantom whose "definition" is commented out must still fail the gate). */
 export function definedTokens() {
-  const css = readPkg('src/tokens.css');
+  const css = stripComments(readPkg('src/tokens.css'));
   const defined = new Set();
   for (const m of css.matchAll(/^\s*(--[a-z0-9-]+)\s*:/gm)) defined.add(m[1]);
   return defined;

@@ -8,6 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -17,6 +18,19 @@ import { HARNESS_STATES, HARNESS_TITLE, KITS, WIDTHS, buildHarnessPage } from '.
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgDir = join(here, '..');
+
+test('the committed static harness is a fresh build of the page, byte for byte', () => {
+  // The static file is the deliverable the design sync opens; a stale one
+  // shows kits the sources no longer render. The lock is exact equality with
+  // the default build (dark, base brand), so the file cannot drift.
+  const committed = readFileSync(join(pkgDir, 'harness', 'index.html'), 'utf8');
+  assert.equal(
+    committed,
+    buildHarnessPage({ theme: 'dark', brand: 'base' }),
+    'harness/index.html is stale: run npm run build:harness and commit the result',
+  );
+  assert.ok(!/<script/i.test(committed), 'the static harness must stay script-free');
+});
 
 test('the harness page carries every kit in every state at both walkthrough widths', () => {
   for (const theme of ['dark', 'light']) {
@@ -72,7 +86,7 @@ test('the contractor example on the page clears AA, measured', () => {
 
 const startServer = (port) =>
   new Promise((resolve, reject) => {
-    const child = spawn('/snap/bin/node', ['--import', './src/_ts-js-loader.mjs', 'harness/serve.mjs'], {
+    const child = spawn(process.execPath, ['--import', './src/_ts-js-loader.mjs', 'harness/serve.mjs'], {
       cwd: pkgDir,
       env: { ...process.env, HARNESS_PORT: String(port) },
       stdio: ['ignore', 'pipe', 'pipe'],
