@@ -84,16 +84,27 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Install the web workspace
+        # The web install precedes the bun drift gate: the gate's bun test
+        # discovers the web packages' suites under the workspace, and those
+        # suites (and the packages they run) resolve sibling and vendored
+        # packages by name through web/node_modules. Installing only inside
+        # the web loop left the gate first in line, so a fresh clone, which
+        # has no web/node_modules, failed the gate with "Cannot find module"
+        # once web packages imported each other by name. The loop below
+        # remains the ONE typecheck and test pass over every web package;
+        # it no longer installs, it consumes the install made here.
+        run: npm --prefix web ci
       - name: Test and manifest drift gate
         run: |
           set -euo pipefail
-          # The web workspace is installed BEFORE the gate runs: the web
+          # The web workspace is installed by the step above: the web
           # packages' suites import @hh/api-client by its bare name, and on a
           # fresh checkout there is no web/node_modules to resolve it from
-          # until npm ci has linked the workspace. Without this install the
+          # until npm ci has linked the workspace. Without that install the
           # gate goes red on every fresh runner while passing on a
-          # workstation that still holds the last install.
-          npm --prefix web ci
+          # workstation that still holds the last install. This gate does not
+          # install; it consumes the install the step above made.
           # Pre-install the one npm package the gate needs, pinned to the exact
           # version the contract tools' lockfile installs, so the gate never
           # relies on bun's on-demand auto-install (which resolves unpinned).
@@ -116,32 +127,6 @@ jobs:
           node core/api/tools/fixtures.mjs
           node core/api/tools/statemap.mjs
           node core/api/tools/d8-isolation.mjs
-      - name: Typecheck web packages
-        run: |
-          # The web packages' TypeScript gate: strict, noEmit, on every pull
-          # request. @hh/api-client and @hh/auth own strict typecheck scripts
-          # and pinned typescript devDependencies (the zero-dependency claim
-          # covers the runtime only). @hh/design-system is typechecked by the
-          # same gate the moment its lane adds a tsconfig.json; today it
-          # carries no TypeScript sources, so there is nothing to check there
-          # yet.
-          npm --prefix web ci
-          npm --prefix web run -w @hh/api-client typecheck
-          npm --prefix web run -w @hh/auth typecheck
-          if [ -f web/packages/design-system/tsconfig.json ]; then
-            web/node_modules/.bin/tsc --noEmit -p web/packages/design-system
-          else
-            echo "web/packages/design-system has no tsconfig.json yet; its lane owns its sources and will add the strict check with them."
-          fi
-      - name: Test web packages on Node 22
-        run: |
-          # Every web package's own Node 22 suite runs here, not by accident:
-          # the root bun gate above is the drift gate, and bun test only
-          # discovers these suites because they sit under the workspace. A
-          # package's own test script is the contract; each suite runs on
-          # Node 22, exactly as a developer would run it.
-          npm --prefix web run -w @hh/api-client test
-          npm --prefix web run -w @hh/auth test
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -158,3 +143,48 @@ jobs:
         # serializes packages so locally set gate variables cannot race
         # two packages' fixture cleanups on one scratch database.
         run: go test ./... -count=1 -p 1
+      - name: Web packages (typecheck and Node 22 suite)
+        working-directory: web
+        # setup-node pins Node 22, whose type stripping of the packages' .ts
+        # sources is on by default (22.18 and later point releases), so the
+        # packages' test and typecheck scripts run as written.
+        #
+        # The design system's real-browser leg drives google-chrome headless
+        # over the DevTools protocol and, because CI is set on this runner, it
+        # FAILS the job instead of skipping when the binary is missing: a
+        # skipped gate is a failed gate. The runner image is expected to ship
+        # google-chrome; this check names it, so an image without one fails
+        # here, naming what is missing.
+        run: |
+          set -euo pipefail
+          if ! command -v google-chrome >/dev/null 2>&1; then
+            echo "google-chrome is missing from the runner image: the design system's browser leg requires it (that leg fails rather than skip in CI)" >&2
+            exit 1
+          fi
+          # web/node_modules exists already: the install step above the bun
+          # drift gate made it. This loop stays the one typecheck and test
+          # pass over every web package.
+          checked=0
+          for dir in packages/*/ apps/*/; do
+            [ -f "$dir/package.json" ] || continue
+            name="$(basename "$dir")"
+            if grep -q '"typecheck"[[:space:]]*:' "$dir/package.json"; then
+              npm --prefix "$dir" run typecheck
+            elif find "$dir" -path '*/node_modules' -prune -o -name '*.ts' -print | grep -q .; then
+              echo "$name has TypeScript sources but no typecheck script; add one" >&2
+              exit 1
+            else
+              echo "$name: nothing to typecheck"
+            fi
+            if grep -q '"test"[[:space:]]*:' "$dir/package.json"; then
+              npm --prefix "$dir" test
+              checked=$((checked + 1))
+            elif [ -d "$dir/test" ]; then
+              echo "$name has a test directory but no test script; add one" >&2
+              exit 1
+            fi
+          done
+          if [ "$checked" -lt 1 ]; then
+            echo "no web package ran a test suite; the loop above is broken" >&2
+            exit 1
+          fi

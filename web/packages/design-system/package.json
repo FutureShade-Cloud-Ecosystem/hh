@@ -2,5 +2,15 @@
   "name": "@hh/design-system",
   "version": "0.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "test": "node --import ./src/_ts-js-loader.mjs --test 'test/*.test.mjs'",
+    "serve": "node --import ./src/_ts-js-loader.mjs harness/serve.mjs",
+    "build:harness": "node --import ./src/_ts-js-loader.mjs harness/build.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "typescript": "5.9.3"
+  }
 }
