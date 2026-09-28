@@ -42,7 +42,13 @@ so the generator needs its install first: `npm --prefix core/api/tools ci`.
   caller-set header exactly because of that: a staff caller sets it once on
   the client, for example `new ApiClient({ baseUrl, headers: () => ({ "X-Org": org }) })`.
   A header provider that throws or rejects resolves an error Result; it never
-  surfaces as a rejected promise.
+  surfaces as a rejected promise. A header value the platform would refuse
+  (a control character, a bare CR or LF) is refused by the transport before
+  anything dials, and the error names the header, never its value: header
+  values are where tokens travel, and the platform's own refusal message
+  echoes the value. Redirects are refused (`redirect: "error"`): a redirect
+  could replay a request's headers and body against another origin, so a
+  redirected request resolves a transport error Result instead of following.
 - `src/pagination.ts` is the cursor page walker. A cursor is the previous
   page's `next_cursor` verbatim; the walk ends at `next_cursor: null`. The
   yard pending-tickets feed's position cursor (see
@@ -51,7 +57,10 @@ so the generator needs its install first: `npm --prefix core/api/tools ci`.
   `AbortSignal` as `walkPages`' `signal` option and the walk resolves an
   error Result naming the page it stopped at, fetching nothing further; the
   same signal rides to every page fetch.
-- `src/index.ts` re-exports the public surface.
+- `src/index.ts` re-exports the public surface. The package's `main` and the
+  exports map's `.` point at it, and the exports map carries one further
+  subpath, `./testing`, for the descriptors; everything else is unreachable
+  by import, so no caller deep-imports generated internals.
 - `test/` holds the fixture contract tests and the gates.
 
 ## Types
@@ -77,12 +86,16 @@ so the generator needs its install first: `npm --prefix core/api/tools ci`.
   note on the emitted type (the legacy offset fields `total` and `offset` on
   the tenant page envelopes, kept because the recorded captures still carry
   them).
-- The int64 bound: the contract's money and sequence fields, 454 `*_cents`
-  properties and 8 `seq` properties (462 in total), are declared integer
-  (`int64`) in the document and typed `number` here. TypeScript's `number` is
-  an IEEE 754 double, exact for integers up to 2^53; that is
-  9,007,199,254,740,992 cents, about 90 trillion dollars, far above any
-  figure the dealer modules move, so every value these fields carry is exact.
+- The int64 bound: the contract declares 547 int64 fields
+  (`grep -c 'format: int64' core/api/openapi.yaml`), and every one of them is
+  typed `number` here. The count is the whole contract, not only the money
+  and sequence fields: a walk of the YAML finds 537 object properties (454
+  named `*_cents`, 6 named `*seq`, and 77 others such as `size_bytes` and the
+  `*_bps` rates), 7 parameters, 1 array item, and 2 `additionalProperties`.
+  TypeScript's `number` is an IEEE 754 double, exact for integers up to 2^53;
+  that is 9,007,199,254,740,992, far above any figure the dealer modules
+  move, so every value these fields carry is exact, and the bound is stated
+  for all 547.
 
 ## Event streams
 
@@ -102,10 +115,24 @@ stays with that caller.
 
 An `application/json` request body is typed from the document and sent as
 JSON; a `multipart/form-data` body is typed from its schema and sent as
-`FormData`. The three raw uploads the document declares `format: binary`
+`FormData`, with a `format: binary` field typed `Blob` so the part arrives as
+the caller's bytes, byte for byte. When an operation declares both
+`application/json` and `multipart/form-data` (that is `feedbackCreate`), the
+client emits one function per declared type: the first declared keeps the
+operationId, and the multipart form takes a `Multipart` suffix
+(`feedbackCreateMultipart`, with the screenshot as an optional `Blob`). The
+mapping is emitted as `BODY_VARIANTS` in the manifest.
+
+The three raw uploads the document declares `format: binary`
 (`productPutImage`, `dispatchUploadStopPhoto`, `pricingImportBatch`) accept
-`string | Uint8Array` and ride the wire verbatim with the first declared
-content type.
+`string | Uint8Array` and ride the wire verbatim. Each takes an optional
+`contentType` argument typed as the union of the operation's declared content
+types: `pricingImportBatch` declares only `text/csv`, so that is the default;
+the two image uploads declare `image/jpeg`, `image/png` and `image/webp`, and
+there the caller must say, because the core checks the declared type against
+the file's first bytes and stores the declared type on the row. With no
+`contentType` they send no `Content-Type` header at all, so an unsaid upload
+is refused by the core, never mislabeled: a PNG is never sent as a JPEG.
 
 The success type is the lowest declared 2xx response. Where that response's
 content is plain string formats (`text/csv`, `text/html`) the operation
@@ -119,6 +146,9 @@ refusal.
 Every request carries an optional `call` argument (`{ signal, timeoutMs }`):
 the signal aborts the request, the timeout aborts it after the given
 milliseconds, and either resolves an error Result naming which one fired.
+Both stay armed until the response body has been read: a fetch resolves at
+the headers, and a body that stalls after them is still a pending request, so
+an abort or a deadline that expired at the headers would miss it.
 
 ## Tests and gates
 
@@ -146,16 +176,24 @@ The gates, as tests:
   generated manifest's `SUCCESS_SCHEMAS` table keyed by the replayed
   operationId, never a test-picked schema.
 - `test/result-shape.test.mjs` proves the Result shape: every generated
-  operation's signature returns `Promise<Result<...>>`, and every refusal
-  path (4xx, 5xx, transport error, malformed JSON, unusable path parameter,
-  failed header provider, abort, timeout) resolves
-  `{ ok: false, error }` and never throws or rejects, with the status riding
-  the HTTP-status refusals.
+  operation function's signature returns `Promise<Result<...>>`, and every
+  refusal path (4xx, 5xx, transport error, malformed JSON, unusable path
+  parameter, failed header provider, refused header value, abort, timeout)
+  resolves `{ ok: false, error }` and never throws or rejects, with the
+  status riding the HTTP-status refusals; it also replays the two plain
+  string formats (`text/csv`, `text/html`) and checks each declared body
+  variant against the manifest.
 - `test/binary.test.mjs` proves the binary story byte for byte: a
   `format: binary` success resolves exactly the bytes the wire carried (the
   fixtures are a real PNG signature and IHDR and a real ZIP local file
-  header), and the three binary-bodied uploads send exactly the bytes the
-  caller held.
+  header), the three binary-bodied uploads send exactly the bytes the caller
+  held with the content type the caller said, and the multipart binary
+  fields (the price file and the feedback screenshot) arrive byte for byte
+  through a real multipart parse of the emitted body.
+- `test/transport.test.mjs` is the one place the suite dials, and it dials
+  only a loopback server bound for the duration of one test: a body that
+  stalls after its headers still lands the timeout and the caller's abort,
+  and a redirect is refused, never followed.
 - `test/pagination.test.mjs` walks a synthetic multi-page cursor sequence,
   proves termination at the documented end condition, surfaces the
   position cursor opaquely, and proves the walk cancellable by signal.
