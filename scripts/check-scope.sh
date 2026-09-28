@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Scope gate for the hh monorepo (HH-30).
-# No file in the repository may name the old npm scope @hh/ in code,
-# configuration or documents, apart from ONE history note that records the
-# rename (docs/scope-rename-history.md). And no package in the web workspace
+# No file in the repository may name the old npm scope in code, configuration
+# or documents, apart from ONE history note that records the rename
+# (docs/scope-rename-history.md). And no package in the web workspace
 # may carry a name outside @hardscapehouse/, apart from the workspace root
 # (web/package.json, name hh-web). Reason: the npm scope hh belongs to a
 # stranger; see docs/scope-rename-history.md for the ruling and the rename.
+# This file builds the old scope from byte escapes below and must never
+# carry the literal itself: it is a tracked file like any other.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
