@@ -187,6 +187,14 @@ function parseLockPayload(raw: unknown): LockMirrorPayload | null {
  * time from the unlock, not idle time). No method here returns or sends an
  * identity claim: the audit pair is gone until the core can verify an
  * unlock.
+ *
+ * The generation guard: every structural change (an engage completing, a
+ * lock, a disengage) and every unlock attempt bumps a counter. An attempt
+ * that awaits the platform captures the counter first and re-checks it after
+ * the await; on a mismatch it adopts nothing (no open unlock, no backoff
+ * from a superseded failure) and resolves an error Result, so a lock or
+ * disengage during a verification in flight ends closed or absent, and of
+ * two concurrent attempts only the newer one's outcome lands.
  */
 export class DeviceLock {
   readonly #credentials: CredentialProvider;
@@ -197,6 +205,7 @@ export class DeviceLock {
   readonly #backoffBaseMs: number;
   readonly #backoffCapMs: number;
   readonly #openWindowMs: number;
+  #generation = 0;
   #engaged: LockMirrorPayload | null = null;
   #openAtMs: number | null = null;
   #failures = 0;
@@ -255,7 +264,10 @@ export class DeviceLock {
    * user's session. Takes no identity argument on purpose: the user id comes
    * from custody, so the lock cannot be pointed at a name the caller made
    * up. Refused when no live session is held, when the platform offers no
-   * credential (WebAuthn absent), or when a lock is already engaged.
+   * credential (WebAuthn absent), or when a lock is already engaged. The
+   * generation guard runs across every await: a disengage or another
+   * structural change that lands mid engage cancels it as data and the
+   * mirror is written by neither path.
    */
   async engage(): Promise<Result<void>> {
     if (this.#engaged !== null) {
@@ -265,11 +277,15 @@ export class DeviceLock {
     if (session === null) {
       return err("device unlock engages only for a signed-in user: no live session is held");
     }
+    const generation = this.#generation;
     let available: boolean;
     try {
       available = await this.#credentials.isAvailable();
     } catch (error) {
       return err(`device unlock could not ask the platform: ${asMessage(error)}`);
+    }
+    if (this.#generation !== generation) {
+      return err("device unlock was superseded while engage was in flight, so nothing was engaged");
     }
     if (!available) {
       return err("device unlock is unavailable: no platform credential is available on this device");
@@ -280,7 +296,14 @@ export class DeviceLock {
     } catch (error) {
       return err(`device unlock could not create the credential: ${asMessage(error)}`);
     }
+    if (this.#generation !== generation) {
+      return err("device unlock was superseded while engage was in flight, so nothing was engaged");
+    }
+    this.#generation += 1;
     this.#engaged = { v: 1, userId: session.user.userId, credentialId, engagedAtMs: this.#now() };
+    this.#openAtMs = null;
+    this.#failures = 0;
+    this.#backoffUntilMs = 0;
     this.#mirror.write(this.#engaged);
     return ok(undefined);
   }
@@ -293,6 +316,13 @@ export class DeviceLock {
    * lives in memory, so a reload clears it and re-locks: it is a courtesy
    * against fat fingers, not a control. The platform authenticator's own
    * lockout is the real limiter.
+   *
+   * The attempt binds to the user who engaged: a live session belonging to a
+   * different user is refused before the platform is asked. The generation
+   * guard runs across the await: a lock, a disengage, or a newer attempt
+   * that starts mid verification supersedes this one, and on a mismatch it
+   * adopts nothing (no open unlock, and no backoff recorded from a failure
+   * that no longer matters).
    */
   async unlock(): Promise<Result<void>> {
     if (this.#engaged === null) {
@@ -302,17 +332,29 @@ export class DeviceLock {
     if (this.#openAtMs !== null) {
       return ok(undefined); // idempotent while open
     }
+    const session = this.#sessions.current;
+    if (session !== null && session.user.userId !== this.#engaged.userId) {
+      return err("device unlock binds to the user who engaged it: this session belongs to a different user");
+    }
     const nowMs = this.#now();
     if (nowMs < this.#backoffUntilMs) {
       return err(`device unlock is rate limited: try again in ${this.#backoffUntilMs - nowMs} ms`);
     }
+    const generation = ++this.#generation;
+    const credentialId = this.#engaged.credentialId;
     try {
-      await this.#credentials.verify(this.#engaged.credentialId);
+      await this.#credentials.verify(credentialId);
     } catch (error) {
+      if (this.#generation !== generation || this.#engaged === null) {
+        return err("device unlock was superseded while the platform prompt was in flight");
+      }
       this.#failures += 1;
       const delayMs = Math.min(this.#backoffBaseMs * 2 ** (this.#failures - 1), this.#backoffCapMs);
-      this.#backoffUntilMs = nowMs + delayMs;
+      this.#backoffUntilMs = this.#now() + delayMs;
       return err(`device unlock failed: ${asMessage(error)} (failed attempts: ${this.#failures})`);
+    }
+    if (this.#generation !== generation || this.#engaged === null) {
+      return err("device unlock was superseded while the platform prompt was in flight");
     }
     this.#failures = 0;
     this.#backoffUntilMs = 0;
@@ -320,15 +362,32 @@ export class DeviceLock {
     return ok(undefined);
   }
 
-  /** Re-engage an open lock. The engaged credential and its mirror entry stay; the open unlock and the backoff are dropped. */
+  /**
+   * Re-engage an open lock. The engaged credential and its mirror entry
+   * stay; the open unlock and the backoff are dropped. On an already locked
+   * lock it does nothing, so it cannot clear a failure backoff, and the
+   * generation bump sends any verification still in flight away empty
+   * handed: a lock during an unlock in flight ends locked.
+   */
   lock(): void {
+    // A verification still in flight is superseded whether or not the lock
+    // is already closed; the failure backoff of a closed lock is kept.
+    this.#generation += 1;
+    if (this.#openAtMs === null) return;
     this.#openAtMs = null;
     this.#failures = 0;
     this.#backoffUntilMs = 0;
   }
 
-  /** Remove the lock entirely: memory and mirror. The platform credential the engage ceremony created stays on the device; the platform owns its deletion. */
+  /**
+   * Remove the lock entirely: memory and mirror. The generation bump sends
+   * any verification still in flight away empty handed: a disengage during
+   * an unlock in flight ends absent, never open. The platform credential the
+   * engage ceremony created stays on the device; the platform owns its
+   * deletion.
+   */
   disengage(): void {
+    this.#generation += 1;
     this.#engaged = null;
     this.#openAtMs = null;
     this.#failures = 0;

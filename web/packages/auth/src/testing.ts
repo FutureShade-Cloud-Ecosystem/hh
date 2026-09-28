@@ -294,3 +294,41 @@ export class DeferredAccountSurface implements AccountSurface {
     this.deleteCount += 1;
   }
 }
+
+/**
+ * A deferred fake of THIS package's CredentialProvider: the platform
+ * verification is handed to the test and does not resolve until the test
+ * completes it, so an unlock attempt can be parked across a lock() or a
+ * disengage() and answered afterwards, and two attempts can be held in
+ * flight at once (every verify appends a handoff to `pending`). create()
+ * and isAvailable() resolve immediately; every value is fake.
+ */
+export class DeferredCredentialProvider implements CredentialProvider {
+  /** One handoff per verify call, in call order. */
+  readonly pending: DeferredHandoff<void>[] = [];
+
+  creationCount = 0;
+  verificationCount = 0;
+  #createdCredentialId: string | null = null;
+
+  get credentialId(): string | null {
+    return this.#createdCredentialId;
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
+  async create(): Promise<string> {
+    this.creationCount += 1;
+    this.#createdCredentialId = `fake-credential-id-${this.creationCount}`;
+    return this.#createdCredentialId;
+  }
+
+  async verify(_credentialId: string): Promise<void> {
+    this.verificationCount += 1;
+    const call = new DeferredCall<void>();
+    this.pending.push(call);
+    return call.promise;
+  }
+}

@@ -17,6 +17,7 @@ import {
   FAKE_ACCOUNT,
   FAKE_JWT,
   FAKE_PIN,
+  DeferredCredentialProvider,
   FakeCredentialProvider,
   RecordedStorage,
   ThrowingStorage,
@@ -291,6 +292,129 @@ test("disengage removes the lock from memory and mirror", async () => {
 
   const after = new DeviceLock({ credentials: new FakeCredentialProvider(), sessions, mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded) });
   assert.equal(after.state, "absent", "a reload after disengage restores nothing");
+});
+
+// The deferred credential provider holds one platform verification open per
+// call; this loop waits until the lock has actually asked the platform.
+async function untilPending(provider, count) {
+  while (provider.pending.length < count) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  return provider.pending[count - 1];
+}
+
+// The rig for the in-flight races: every verify is held open for the test to
+// complete, so a lock change can land mid prompt.
+async function deferredRig() {
+  const recorded = new RecordedStorage();
+  const time = clock();
+  const sessions = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: time.now });
+  sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: time.now() + 3_600_000, user: { ...FAKE_ACCOUNT } });
+  const credentials = new DeferredCredentialProvider();
+  const lock = new DeviceLock({
+    credentials,
+    sessions,
+    mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded),
+    now: time.now,
+    openWindowMs: 3_600_000,
+  });
+  return { recorded, credentials, lock, sessions, time };
+}
+
+test("a lock during an unlock in flight ends locked: the late verification adopts nothing", async () => {
+  const { credentials, lock } = await deferredRig();
+  assert.equal((await lock.engage()).ok, true);
+
+  const opening = lock.unlock();
+  const verify = await untilPending(credentials, 1);
+  lock.lock(); // the user taps lock while the platform prompt is still up
+  verify.complete(undefined); // the platform answers late with a success
+  const result = await opening;
+
+  assert.equal(result.ok, false, "the superseded attempt resolves an error Result");
+  assert.match(result.error, /superseded/);
+  assert.equal(lock.state, "locked", "the late verification must not open the locked lock");
+
+  const again = lock.unlock();
+  const againVerify = await untilPending(credentials, 2);
+  againVerify.complete(undefined); // the next attempt reaches the platform at once
+  assert.equal((await again).ok, true, "no backoff was recorded from the superseded failure");
+  assert.equal(lock.state, "open");
+});
+
+test("a disengage during an unlock in flight stays absent, and a re-engage starts locked", async () => {
+  const { credentials, lock } = await deferredRig();
+  assert.equal((await lock.engage()).ok, true);
+
+  const opening = lock.unlock();
+  const verify = await untilPending(credentials, 1);
+  lock.disengage(); // the lock is removed while the platform prompt is still up
+  verify.complete(undefined); // the platform answers late with a success
+  const result = await opening;
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /superseded/);
+  assert.equal(lock.state, "absent", "the late verification must not reopen a removed lock");
+  assert.equal((await lock.engage()).ok, true, "the device can be re-engaged");
+  assert.equal(lock.state, "locked", "the re-engaged lock starts locked: no stale open unlock survived");
+});
+
+test("lock() on an already locked lock does not clear the failure backoff", async () => {
+  const { credentials, lock } = await rig({ openWindowMs: 3_600_000 });
+  await lock.engage();
+
+  credentials.present(WRONG_PIN);
+  const failed = await lock.unlock();
+  assert.equal(failed.ok, false);
+
+  lock.lock(); // a no-op on a locked lock: it must not reset the courtesy backoff
+  const tooSoon = await lock.unlock();
+  assert.equal(tooSoon.ok, false);
+  assert.match(tooSoon.error, /rate limited/, "lock() on a locked lock must not clear the backoff");
+});
+
+test("of two concurrent unlocks only the newer attempt's outcome lands", async () => {
+  const { credentials, lock } = await deferredRig();
+  assert.equal((await lock.engage()).ok, true);
+
+  const first = lock.unlock();
+  const second = lock.unlock();
+  const firstVerify = await untilPending(credentials, 1);
+  const secondVerify = await untilPending(credentials, 2);
+
+  secondVerify.fail(new Error("fake: user verification failed")); // the newer attempt fails...
+  firstVerify.complete(undefined); // ...and the older attempt succeeds late: superseded either way
+
+  const firstResult = await first;
+  assert.equal(firstResult.ok, false, "the older attempt's late success adopts nothing");
+  assert.match(firstResult.error, /superseded/);
+  const secondResult = await second;
+  assert.equal(secondResult.ok, false, "the newer attempt's failure is the one that lands");
+  assert.match(secondResult.error, /failed attempts: 1/, "exactly one failure was recorded");
+
+  const third = await lock.unlock();
+  assert.match(third.error, /try again in 1000 ms/, "the superseded success fed no failure count: the backoff is the base");
+});
+
+test("unlock binds to the user who engaged: a different signed-in user is refused without a prompt", async () => {
+  const { credentials, lock, sessions, time } = await rig({ openWindowMs: 3_600_000 });
+  await lock.engage();
+  const promptCountBefore = credentials.verificationCount;
+
+  sessions.adopt({
+    token: FAKE_JWT,
+    tokenExpiresAtMs: time.now() + 3_600_000,
+    user: { ...FAKE_ACCOUNT, userId: "someone-else", email: "someone.else@example.invalid", name: "Someone Else" },
+  });
+  credentials.present(FAKE_PIN);
+  const refused = await lock.unlock();
+  assert.equal(refused.ok, false, "another user's session cannot unlock alice's lock");
+  assert.match(refused.error, /binds to the user who engaged/);
+  assert.equal(credentials.verificationCount, promptCountBefore, "the platform was never asked");
+
+  sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: time.now() + 3_600_000, user: { ...FAKE_ACCOUNT } });
+  credentials.present(FAKE_PIN);
+  assert.equal((await lock.unlock()).ok, true, "the engaging user's session still unlocks");
 });
 
 test("the platform adapter demands user verification on create and on get", async () => {
