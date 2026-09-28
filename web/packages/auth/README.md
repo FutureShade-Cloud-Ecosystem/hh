@@ -40,7 +40,9 @@ getSession, then a fresh minted JWT into memory. In degraded mode the
 mirror holds nothing that survives a reload. `clear()` (sign-out) leaves
 nothing. A payload the constructor cannot validate is dropped from storage,
 not merely hidden from view, so nothing credential-shaped survives under
-the mirror's key.
+the mirror's key; a payload that validates but carries fields this version
+does not know (a leftover from an older version) is rewritten on read down
+to the known fields.
 
 When the storage accessor is broken or denied, the mirror degrades to a
 memory map and the session simply does not survive a reload, which is the

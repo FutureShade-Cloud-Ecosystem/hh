@@ -173,17 +173,23 @@ interface StoredMirrorPayload {
 // display profile only. Version 1 carried a refresh handle; this package was
 // reworked so that no credential of any kind is ever stored, and a v1
 // payload is refused like any other unusable input and dropped from storage.
-function parseStoredPayload(raw: unknown): StoredMirrorPayload | null {
+// A payload that validates but carries unknown extra fields (a leftover from
+// an older version, for example a token) reports clean=false so the caller
+// can rewrite the stored payload down to the known fields.
+function parseStoredPayload(raw: unknown): { payload: StoredMirrorPayload; clean: boolean } | null {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
   const candidate = raw as Record<string, unknown>;
   if (candidate["v"] !== 2) return null;
   if (typeof candidate["userId"] !== "string" || candidate["userId"] === "") return null;
   if (typeof candidate["email"] !== "string" || typeof candidate["name"] !== "string") return null;
   return {
-    v: 2,
-    userId: candidate["userId"],
-    email: candidate["email"],
-    name: candidate["name"],
+    payload: {
+      v: 2,
+      userId: candidate["userId"],
+      email: candidate["email"],
+      name: candidate["name"],
+    },
+    clean: Object.keys(candidate).length === 4,
   };
 }
 
@@ -217,7 +223,19 @@ export class SessionStore {
     this.#now = options?.now ?? Date.now;
     const restored = parseStoredPayload(this.#mirror.read());
     if (restored !== null) {
-      this.#profile = { userId: restored.userId, email: restored.email, name: restored.name };
+      this.#profile = {
+        userId: restored.payload.userId,
+        email: restored.payload.email,
+        name: restored.payload.name,
+      };
+      if (!restored.clean) {
+        // The payload carried fields this version does not know (a leftover
+        // from an older version, for example a token): it is rewritten to the
+        // known fields, so nothing unrecognized stays in storage under this
+        // key. In degraded mode the rewrite lives in memory only, which is
+        // the mirror's ordinary discipline.
+        this.#mirror.write(restored.payload);
+      }
     } else {
       // A payload we cannot validate is a payload we do not keep: it is
       // dropped from storage, not merely hidden from view, so nothing

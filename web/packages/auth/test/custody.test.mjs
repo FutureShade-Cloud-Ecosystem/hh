@@ -166,6 +166,29 @@ test("an unusable mirror payload is dropped from storage, not merely unread", ()
   }
 });
 
+test("a stored payload with unknown extra fields is rewritten to the known fields on read", () => {
+  // A leftover from an older version: the payload validates, so the profile
+  // restores, but what it carries beyond the known fields (here a token
+  // shape the current package would never write) must not stay in storage.
+  const recorded = new RecordedStorage();
+  recorded.setItem(
+    SESSION_MIRROR_KEY,
+    JSON.stringify({ v: 2, userId: "u-1", email: "x@example.test", name: "Y", token: "LEFTOVER-OLDER-VERSION" }),
+  );
+  const store = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: () => START_MS });
+  assert.deepEqual(store.profile, { userId: "u-1", email: "x@example.test", name: "Y" }, "the valid profile restores");
+
+  const rewritten = recorded.getItem(SESSION_MIRROR_KEY);
+  assert.notEqual(rewritten, null, "the payload was rewritten in storage");
+  const payload = JSON.parse(rewritten);
+  assert.deepEqual(
+    Object.keys(payload).sort(),
+    ["email", "name", "userId", "v"],
+    "storage now holds exactly the known fields",
+  );
+  assert.equal(rewritten.includes("LEFTOVER-OLDER-VERSION"), false, "the unknown field is gone from storage");
+});
+
 test("the mirror degrades observably on a throwing accessor, and a degraded reload restores nothing", () => {
   const throwing = () => new ThrowSafeMirror(SESSION_MIRROR_KEY, new ThrowingStorage());
   const mirror = throwing();

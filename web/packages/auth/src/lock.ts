@@ -163,7 +163,11 @@ interface LockMirrorPayload {
 
 export const LOCK_MIRROR_KEY = "hh-auth.lock.v1";
 
-function parseLockPayload(raw: unknown): LockMirrorPayload | null {
+// A payload that validates but carries unknown extra fields (a leftover from
+// an older version) reports clean=false so the caller can rewrite the stored
+// payload down to the known fields; the lock's mirror carries the bound user
+// id, the credential id, and the engage instant, and nothing else.
+function parseLockPayload(raw: unknown): { payload: LockMirrorPayload; clean: boolean } | null {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
   const candidate = raw as Record<string, unknown>;
   if (candidate["v"] !== 1) return null;
@@ -171,10 +175,13 @@ function parseLockPayload(raw: unknown): LockMirrorPayload | null {
   if (typeof candidate["credentialId"] !== "string" || candidate["credentialId"] === "") return null;
   if (typeof candidate["engagedAtMs"] !== "number" || !Number.isFinite(candidate["engagedAtMs"])) return null;
   return {
-    v: 1,
-    userId: candidate["userId"],
-    credentialId: candidate["credentialId"],
-    engagedAtMs: candidate["engagedAtMs"],
+    payload: {
+      v: 1,
+      userId: candidate["userId"],
+      credentialId: candidate["credentialId"],
+      engagedAtMs: candidate["engagedAtMs"],
+    },
+    clean: Object.keys(candidate).length === 4,
   };
 }
 
@@ -235,8 +242,10 @@ export class DeviceLock {
     this.#openWindowMs = options.openWindowMs ?? 300_000;
     const restored = parseLockPayload(this.#mirror.read());
     if (restored !== null) {
-      // The engaged lock survives a reload; the open unlock does not.
-      this.#engaged = restored;
+      // The engaged lock survives a reload; the open unlock does not. A
+      // payload with unknown extra fields is rewritten to the known fields.
+      this.#engaged = restored.payload;
+      if (!restored.clean) this.#mirror.write(this.#engaged);
     } else {
       this.#mirror.clear();
     }

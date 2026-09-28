@@ -281,6 +281,42 @@ test("the lock mirror payload carries no token, no PIN, no name, no secret", asy
   }
 });
 
+test("a stored lock payload with unknown extra fields is rewritten to the known fields on read", async () => {
+  const recorded = new RecordedStorage();
+  recorded.setItem(
+    LOCK_MIRROR_KEY,
+    JSON.stringify({
+      v: 1,
+      userId: "u-1",
+      credentialId: "leftover-credential",
+      engagedAtMs: START_MS,
+      name: "Leftover Display Name",
+    }),
+  );
+  const credentials = new FakeCredentialProvider();
+  const time = clock();
+  const sessions = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: time.now });
+  sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: time.now() + 3_600_000, user: { ...FAKE_ACCOUNT } });
+  const lock = new DeviceLock({
+    credentials,
+    sessions,
+    mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded),
+    now: time.now,
+    openWindowMs: 3_600_000,
+  });
+  assert.equal(lock.state, "locked", "the valid engaged lock restores");
+
+  const rewritten = recorded.getItem(LOCK_MIRROR_KEY);
+  assert.notEqual(rewritten, null, "the payload was rewritten in storage");
+  const payload = JSON.parse(rewritten);
+  assert.deepEqual(
+    Object.keys(payload).sort(),
+    ["credentialId", "engagedAtMs", "userId", "v"],
+    "storage now holds exactly the known fields",
+  );
+  assert.equal(rewritten.includes("Leftover Display Name"), false, "the unknown field is gone from storage");
+});
+
 test("disengage removes the lock from memory and mirror", async () => {
   const { recorded, lock, sessions } = await rig();
   await lock.engage();
