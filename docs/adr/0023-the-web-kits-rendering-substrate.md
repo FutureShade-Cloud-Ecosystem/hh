@@ -150,7 +150,9 @@ stand whether or not the substrate changes:
   `adoptedStyleSheets`, so a page with many kit instances re-parses the sheet
   per instance per update (measured sheet size: about 8 KB per kit);
 - the layer attaches nothing, so there is nothing to clean up: no
-  `disconnectedCallback` is needed.
+  `disconnectedCallback` is needed;
+- the rendering layer has taken three review rounds so far that probed it as a
+  security boundary, and each round found script running through it.
 
 These limits are exactly what Lit maintains for its users, which is why the
 brief named it; they are survivable for pattern renders, and the gates hold
