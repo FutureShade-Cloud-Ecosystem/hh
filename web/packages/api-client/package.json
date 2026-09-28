@@ -2,5 +2,9 @@
   "name": "@hh/api-client",
   "version": "0.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "description": "The web api-client generated from core/api/openapi.yaml, with its hand-written runtime and fixture contract tests",
+  "scripts": {
+    "test": "node --import ./src/_ts-js-loader.mjs --test test/fixtures-live.test.mjs test/result-shape.test.mjs test/pagination.test.mjs test/gen-scan.test.mjs test/idempotence.test.mjs"
+  }
 }
