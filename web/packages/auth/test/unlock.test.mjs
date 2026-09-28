@@ -345,12 +345,17 @@ test("disengage removes the lock from memory and mirror", async () => {
 });
 
 // The deferred credential provider holds one platform verification open per
-// call; this loop waits until the lock has actually asked the platform.
+// call; this loop waits until the lock has actually asked the platform. The
+// bound keeps a regression a fast red instead of a hang: if the lock never
+// asks the platform, this throws and the waiting test fails with the reason.
+const PENDING_LIMIT = 10_000;
+
 async function untilPending(provider, count) {
-  while (provider.pending.length < count) {
+  for (let i = 0; i < PENDING_LIMIT; i += 1) {
+    if (provider.pending.length >= count) return provider.pending[count - 1];
     await new Promise((resolve) => setImmediate(resolve));
   }
-  return provider.pending[count - 1];
+  throw new Error(`the lock never made verification call ${count} the test waits to complete`);
 }
 
 // The rig for the in-flight races: every verify is held open for the test to

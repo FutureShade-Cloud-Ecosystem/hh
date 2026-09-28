@@ -301,13 +301,18 @@ test("resume is refused as data when the platform holds no session", async () =>
 });
 
 // The deferred fakes hold one platform call open at a time; this loop waits
-// until the controller has actually made the named call.
+// until the controller has actually made the named call. The bound keeps a
+// regression a fast red instead of a hang: if the controller never makes the
+// call, this throws and the waiting test fails with the reason.
+const HANDOFF_LIMIT = 10_000;
+
 async function untilHandoff(account, name) {
-  for (;;) {
+  for (let i = 0; i < HANDOFF_LIMIT; i += 1) {
     const call = account.handoff(name);
     if (call !== null) return call;
     await new Promise((resolve) => setImmediate(resolve));
   }
+  throw new Error(`the controller never made the ${name} call the test waits to hand off`);
 }
 
 test("sign out wins over a resume in flight: the late platform answer adopts nothing", async () => {
@@ -384,13 +389,14 @@ function flush() {
 
 // The deferred fake's handoff(name) returns the LATEST call of that name, so
 // a test that parks two of the same call must be able to wait for the one
-// that is not the parked previous call.
+// that is not the parked previous call. Bounded like untilHandoff.
 async function untilNextHandoff(account, name, previous) {
-  for (;;) {
+  for (let i = 0; i < HANDOFF_LIMIT; i += 1) {
     const call = account.handoff(name);
     if (call !== null && call !== previous) return call;
     await new Promise((resolve) => setImmediate(resolve));
   }
+  throw new Error(`the controller never made a new ${name} call the test waits to hand off`);
 }
 
 test("a resume begun while sign-out's own deleteSession is pending adopts nothing once sign-out has returned", async () => {
