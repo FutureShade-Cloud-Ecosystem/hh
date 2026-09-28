@@ -96,11 +96,14 @@ export interface OperationRequest {
    * options argument (`{ fileFilename: "price-list.xlsx" }`). A name is
    * guarded like a path value: empty, one of the dot segments (`.` or `..`),
    * carrying a path separator (`/` or `\`), carrying a NUL or any other
-   * control character, or longer than 160 characters (the bound the core's
-   * own stored name keeps) resolves an error Result before anything dials.
-   * A field with no name here (or no entry) rides under the platform's
-   * default part name, "blob", which is what the core stores when the caller
-   * says nothing.
+   * control character, carrying a Unicode bidirectional control character
+   * (U+202A through U+202E, U+2066 through U+2069), made of nothing but
+   * spaces, beginning or ending with a space or a dot, or longer than 160
+   * UTF-8 bytes (the bound the core's own stored name keeps, counted in the
+   * same unit the core counts) resolves an error Result before anything
+   * dials. A field with no name here (or no entry) rides under the
+   * platform's default part name, "blob", which is what the core stores when
+   * the caller says nothing.
    */
   filenames?: Record<string, string | undefined>;
   /**
@@ -133,23 +136,36 @@ const JSON_CONTENT_TYPE = "application/json";
 // value.
 const INVALID_HEADER_VALUE = /[^\t\x20-\x7e\x80-\xff]/;
 
-// The longest file name the transport accepts. It is the bound the core's own
-// stored name keeps (core/internal/pricing/pricefile_service.go,
-// sanitizeFileName, keeps at most this many characters of the caller's name
-// when it stores it on the import run), so a name that passes here is a name
-// the core can store whole rather than truncate.
-const MAX_FILENAME_CHARS = 160;
+// The longest file name the transport accepts, counted in BYTES of the
+// name's UTF-8 spelling. The unit is the core's own: the stored-name cap
+// (core/internal/pricing/pricefile_service.go, sanitizeFileName, lines 845
+// to 861) checks strings.Builder.Len() after each WriteRune, which counts
+// bytes, so a name that passes here is a name the core can store whole
+// rather than truncate. A code point count once let a name of 160 three-byte
+// CJK characters pass here (480 bytes) and the core cut it to 54 characters.
+const MAX_FILENAME_BYTES = 160;
+
+// The Unicode bidirectional control characters (U+202A through U+202E, and
+// U+2066 through U+2069): the marks that reorder how text displays. A file
+// name carrying one can be made to display as something it is not (an
+// extension appearing reversed is the classic), so they are refused outright.
+const BIDI_CONTROL = /[\u202a-\u202e\u2066-\u2069]/;
 
 // A file name rides the multipart part's Content-Disposition as given, so it
 // gets the care fillPath gives a path parameter: refused here, as data,
 // before anything is sent. Refused: empty, one of the dot segments, a path
-// separator (either platform's), a NUL, any other control character, and
-// anything past MAX_FILENAME_CHARS. The platform percent-encodes a quote or a
-// line break inside the quoted parameter, so framing itself cannot be split,
-// but a separator would hand a path to whatever stores the name and a control
-// character would ride the wire raw. The bound counts characters (Unicode
-// code points), not code units, so it means the same thing for a name
-// outside the basic multilingual plane.
+// separator (either platform's), a NUL, any other control character, a
+// bidirectional control character (see BIDI_CONTROL), a name made of nothing
+// but spaces, a name that begins or ends with a space or a dot (the core's
+// sanitizer trims edge spaces off the stored name, a Windows reader strips
+// edge spaces and a trailing dot, and a leading dot hides the file on a
+// Unix-like reader, so the name would not stay the name the caller said),
+// and anything past MAX_FILENAME_BYTES. The platform percent-encodes a quote
+// or a line break inside the quoted parameter, so framing itself cannot be
+// split, but a separator would hand a path to whatever stores the name and a
+// control character would ride the wire raw. The bound counts UTF-8 bytes,
+// not code points and not code units, because the core's cap counts bytes
+// (see MAX_FILENAME_BYTES).
 function filenameProblem(name: string): string | undefined {
   if (name === "") return "is empty";
   if (name === "." || name === "..") return `is the path segment ${name}`;
@@ -158,9 +174,15 @@ function filenameProblem(name: string): string | undefined {
     if (code === 0x2f || code === 0x5c) return "carries a path separator";
     if (code < 0x20 || code === 0x7f) return "carries a control character";
   }
-  let chars = 0;
-  for (const _ of name) chars += 1;
-  if (chars > MAX_FILENAME_CHARS) return `is longer than the ${MAX_FILENAME_CHARS} characters a file name may carry`;
+  if (BIDI_CONTROL.test(name)) return "carries a bidirectional control character";
+  if (name.trim() === "") return "is nothing but spaces";
+  const first = name[0];
+  const last = name[name.length - 1];
+  if (first === " " || first === "." || last === " " || last === ".") {
+    return "begins or ends with a space or a dot";
+  }
+  const bytes = new TextEncoder().encode(name).length;
+  if (bytes > MAX_FILENAME_BYTES) return `is longer than the ${MAX_FILENAME_BYTES} bytes a file name may carry`;
   return undefined;
 }
 

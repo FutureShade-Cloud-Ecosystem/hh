@@ -54,7 +54,8 @@ so the generator needs its install first: `npm --prefix core/api/tools ci`.
   deadline (see "What a custom FetchLike must honour" below), and a caller's
   multipart file name is guarded like a path value: refused as an error
   Result before anything dials when it is empty, a dot segment, path-like,
-  control carrying, or over 160 characters.
+  control carrying, bidirectional control carrying, only spaces, edged with
+  a space or a dot, or over 160 UTF-8 bytes.
 - `src/pagination.ts` is the cursor page walker. A cursor is the previous
   page's `next_cursor` verbatim; the walk ends at `next_cursor: null`. The
   yard pending-tickets feed's position cursor (see
@@ -128,11 +129,26 @@ takes a filename option per field, so the caller names the part:
 `feedbackCreateMultipart(client, form, { imageFilename: "board-frozen.png" })`.
 A caller's name is guarded like a path value: a name that is empty, is one of
 the dot segments (`.` or `..`), carries a path separator (`/` or `\`),
-carries a NUL or any other control character, or is longer than 160
-characters resolves an error Result before anything dials. 160 is the bound
-the core's own stored name keeps (`core/internal/pricing/pricefile_service.go`,
-`sanitizeFileName`, caps the name it stores on the import run), so a name
-that passes here is one the core can store whole. A name outside ASCII rides
+carries a NUL or any other control character, carries a Unicode bidirectional
+control character (U+202A through U+202E, U+2066 through U+2069, the marks
+that reorder how text displays, so a stored name can be made to read as
+something it is not), is nothing but spaces, begins or ends with a space or a
+dot (the core's sanitizer trims edge spaces off the stored name, a Windows
+reader strips edge spaces and a trailing dot, and a leading dot hides the
+file on a Unix-like reader, so the name would not stay the name the caller
+said), or is longer than 160 UTF-8 bytes resolves an error Result before
+anything dials. 160 is the bound the core's own stored name keeps
+(`core/internal/pricing/pricefile_service.go`, `sanitizeFileName`, lines 845
+to 861), and the core's cap counts BYTES (`strings.Builder.Len()` after each
+`WriteRune`), so this guard counts bytes too, and a name that passes here is
+one the core can store whole. The count was code points once: a name of 160
+three-byte CJK characters (480 bytes) passed here and the core cut it to 54
+characters. The bidirectional marks are refused here though the core still
+accepts them: its sanitizer strips only the C0 controls and DEL, so the gap
+on the core's side is recorded for Colton (nothing unsafe follows in the core
+today, since no path, object key, or header is built from the stored name
+anywhere, but a stored name carrying a mark can display as something it is
+not). A name outside ASCII rides
 as UTF-8 bytes inside the quoted `filename` parameter, which is the HTML
 standard's own multipart encoding; a receiver that still decodes the
 parameter as ISO-8859-1 (the older RFCs' default, `busboy`'s included) shows
@@ -249,9 +265,12 @@ The gates, as tests:
   fields (the price file and the feedback screenshot) arrive byte for byte
   through a real multipart parse of the emitted body. The caller's file name
   is guarded there too: every refusal class (empty, dot segments, either
-  path separator, NUL, control characters, past the 160 character bound)
-  resolves an error Result with the recorder empty, nothing dialed, and a
-  name of exactly the bound arrives whole.
+  path separator, NUL, control characters, bidirectional control characters,
+  only spaces, an edge space or dot, past the 160 byte bound) resolves an
+  error Result with the recorder empty, nothing dialed, and a name of
+  exactly the bound arrives whole; the byte bound itself is pinned on the
+  multi-byte side, where 160 CJK characters (480 bytes) are refused and 53
+  (159 bytes) arrive whole.
 - `test/transport.test.mjs` is the one place the suite dials, and it dials
   only a loopback server bound for the duration of one test: a body that
   stalls after its headers still lands the timeout and the caller's abort, a
