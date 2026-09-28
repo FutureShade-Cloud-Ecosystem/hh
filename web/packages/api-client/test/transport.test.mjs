@@ -65,20 +65,33 @@ test("a body that stalls after the headers still lands the caller's abort", { ti
 });
 
 test("a redirect is refused, never followed", { timeout: 5000 }, async () => {
-  let requests = 0;
-  const server = http.createServer((_req, res) => {
-    requests++;
-    res.writeHead(302, { location: "https://elsewhere.example/after-the-redirect" });
+  // The redirect points at a SECOND loopback server this test owns, so the
+  // refusal is observable: with redirect: "follow" the platform would dial
+  // the second server and its request count would move, failing the last
+  // assertion. A redirect to an unobservable host cannot fail this way.
+  let received = 0;
+  const target = http.createServer((_req, res) => {
+    received++;
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end('{"captured":true}');
+  });
+  await new Promise((resolve) => target.listen(0, "127.0.0.1", resolve));
+  let redirects = 0;
+  const origin = http.createServer((_req, res) => {
+    redirects++;
+    res.writeHead(302, { location: `${baseUrlOf(target)}/after-the-redirect` });
     res.end();
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise((resolve) => origin.listen(0, "127.0.0.1", resolve));
   try {
-    const client = new api.ApiClient({ baseUrl: baseUrlOf(server) });
+    const client = new api.ApiClient({ baseUrl: baseUrlOf(origin) });
     const result = await api.tenantAuth.tenantGetMe(client);
+    assert.equal(received, 0, "the redirect target never received a request");
+    assert.equal(redirects, 1, "the origin answered with the redirect exactly once");
     assert.equal(result.ok, false);
     if (!result.ok) assert.match(result.error, /transport error/);
-    assert.equal(requests, 1, "the redirect target was never dialed");
   } finally {
-    await shutdown(server);
+    await shutdown(origin);
+    await shutdown(target);
   }
 });
