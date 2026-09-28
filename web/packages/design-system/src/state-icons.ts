@@ -16,7 +16,7 @@
 // attribute value, so even a poisoned registry entry could not close the
 // attribute and inject.
 
-import { html, type Template } from './render.js';
+import { html, nothing, type TemplateResult as Template } from 'lit';
 
 export interface StateIcon {
   /** SVG path `d` strings, drawn in order, stroked in currentColor. */
@@ -43,10 +43,15 @@ export type StateIconName = keyof typeof STATE_ICONS;
 /** Renders an icon as inline SVG through the escaped template path. With a
  * label the mark is a labelled image carrying its own text alternative, for
  * standalone use; beside a visible word (the state system's case) render it
- * bare so the word is not announced twice. */
+ * bare so the word is not announced twice.
+ *
+ * The label is the aria-label attribute, not a <title> child: Lit allows no
+ * expression inside a raw-text element's body (title, textarea, style, script
+ * are read as text by the template parser), and a raw-markup path to put the
+ * label there is exactly what this package refuses. role stays img, so the
+ * accessible name is carried either way. */
 export function icon(name: StateIconName, label?: string): Template {
   const paths = STATE_ICONS[name].paths;
-  const title = label ? html`<title>${label}</title>` : '';
   return html`<svg
     class="icon"
     viewBox="0 0 24 24"
@@ -57,5 +62,6 @@ export function icon(name: StateIconName, label?: string): Template {
     stroke-linejoin="round"
     aria-hidden="${label ? 'false' : 'true'}"
     role="${label ? 'img' : 'presentation'}"
-  >${title}${paths.map((d) => html`<path d="${d}"></path>`)}</svg>`;
+    aria-label=${label ?? nothing}
+  >${paths.map((d) => html`<path d="${d}"></path>`)}</svg>`;
 }

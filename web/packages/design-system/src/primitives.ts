@@ -1,7 +1,6 @@
 // The primitive layer: the seam where the Ionic primitives land.
 //
-// The source brief names Ionic as the kits' primitive library. The web
-// workspace carries no dependencies and this package may add none, so the few
+// The source brief names Ionic as the kits' primitive library. The few
 // primitives the kits need exist here as small template helpers over plain
 // markup, with the call sites the Ionic elements will occupy. When Ionic lands
 // as a workspace dependency, the BODIES of these helpers swap to the ion-*
@@ -20,7 +19,7 @@
 //      the :focus-visible ring from --hh-focus-ring, because a shadow root does
 //      not inherit the document's ring rule.
 
-import { css, html, type Template } from './render.js';
+import { css, html, nothing, type TemplateResult as Template } from 'lit';
 
 export type ButtonKind = 'primary' | 'secondary' | 'danger';
 
@@ -155,10 +154,11 @@ export interface ButtonSpec {
 
 export function button(spec: ButtonSpec): Template {
   const kind = spec.kind ?? 'primary';
-  // Attribute VALUES go through template interpolation so the engine escapes
-  // them; only closed-union constants and flags are composed directly.
-  const actionAttr = spec.action ? html` data-action="${spec.action}"` : '';
-  return html`<button type="button" class="btn btn-${kind}"${spec.disabled ? ' disabled' : ''}${actionAttr}>${spec.label}</button>`;
+  // Lit's binding forms for the flag and the action: ?disabled renders the
+  // bare attribute when true and nothing when false; the nothing sentinel
+  // drops data-action when the spec carries none. Only closed-union constants
+  // and flags are bound; a caller's values arrive as the label's text.
+  return html`<button type="button" class="btn btn-${kind}" ?disabled=${spec.disabled === true} data-action=${spec.action ?? nothing}>${spec.label}</button>`;
 }
 
 /** The motion half of the loading pattern. The WORD lives in the state
@@ -180,8 +180,6 @@ export function row(content: Template, opts: { alt?: boolean; selected?: boolean
   const cls = `row${opts.alt ? ' row-alt' : ''}${opts.selected ? ' row-selected' : ''}`;
   // The selection is more than a bar and a weight: aria-current tells assistive
   // tech which row the detail pane is showing, on the element that carries the
-  // visual cue. The attribute is a TRUSTED sub-template (the button spec's
-  // pattern): a plain interpolated string would be escaped as text.
-  const aria = opts.selected ? html` aria-current="true"` : '';
-  return html`<li class="${cls}"${aria}>${content}</li>`;
+  // visual cue. Lit's nothing sentinel drops the attribute on unselected rows.
+  return html`<li class="${cls}" aria-current=${opts.selected ? 'true' : nothing}>${content}</li>`;
 }

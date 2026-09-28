@@ -5,11 +5,12 @@
 // Penpot mapping: the Penpot component named hh-scan-and-confirm, one-to-one
 // with the element tag below.
 
-import { css, defineElement, html, HHElement, type Template } from '../render.js';
+import { css, html, type TemplateResult as Template } from 'lit';
+import { defineElement, HHElement } from '../base.js';
 import { baseStyles, chip } from '../primitives.js';
 import { kitShell, stateStyles, type ButtonSpec, type KitState } from '../state.js';
 
-const styles = baseStyles + stateStyles + css`
+const styles = css`
   .scan-frame {
     background: var(--hh-card);
     border: 1px dashed var(--hh-line);
@@ -50,9 +51,7 @@ const LINES: ReadonlyArray<readonly [string, string]> = [
 ];
 
 export class ScanConfirmKit extends HHElement {
-  static properties = { state: { attribute: true } };
-  static styles = styles;
-  state: KitState = 'ready';
+  static styles = [baseStyles, stateStyles, styles];
 
   private body(): Template {
     const rows = LINES.map(
