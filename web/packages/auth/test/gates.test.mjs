@@ -86,8 +86,8 @@ test("the api-client is imported through its exports map, never by a relative pa
   );
   const importers = sources().filter((file) => file.text.includes(`from "@hh/api-client"`));
   assert.deepEqual(
-    importers.map((file) => file.name),
-    ["client.ts", "lock.ts"],
+    importers.map((file) => file.name).sort(),
+    ["client.ts", "lock.ts"].sort(),
     "the Result convention and the HeaderProvider type come from the workspace sibling by its bare name",
   );
 });
