@@ -149,7 +149,20 @@ them is NOT to attach listeners to content inside a kit: the layer's measured
 limit is that every update replaces the whole shadow root, so a listener
 attached to kit content (and focus with it) is gone at the next render, even a
 re-render to the same state. The supported pattern is delegation on the HOST
-element: attach one listener to the `<hh-*>` element itself and read
-`event.target.closest('[data-action]')` inside it. The host is never replaced
-by a render, so host listeners survive. The same limit is stated in
-`docs/adr/0023`, and it stands whatever Colton later rules on the substrate.
+element: attach one listener to the `<hh-*>` element itself and read the
+control off `event.composedPath()` inside it:
+
+```js
+host.addEventListener('click', (event) => {
+  const control = event.composedPath().find((n) => n instanceof Element && n.hasAttribute('data-action'));
+  if (control) handle(control.getAttribute('data-action'));
+});
+```
+
+Not `event.target.closest('[data-action]')`: the shadow boundary retargets
+`event.target` to the host itself, so at the host it IS the host and `closest`
+finds nothing (measured in the browser leg, whose consumer-listener test
+asserts both halves: the retargeting and the action arriving off
+`composedPath()`). The host is never replaced by a render, so host listeners
+survive. The same limit is stated in `docs/adr/0023`, and it stands whatever
+Colton later rules on the substrate.

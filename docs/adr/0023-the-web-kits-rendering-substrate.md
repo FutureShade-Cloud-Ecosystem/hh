@@ -59,8 +59,10 @@ the position refusals in one reviewed place.
   design-system, offline-store, shell-chrome; the app entries land later):
   none to import and render. The listener limit below is the real cost: every
   integration must wire interactions by delegation on the host element,
-  because content listeners die at the next render. That is a design habit,
-  not work, but it must be learned once and never forgotten.
+  reading the action off `event.composedPath()` (not `event.target`, which
+  arrives retargeted to the host), because content listeners die at the next
+  render. That is a design habit, not work, but it must be learned once and
+  never forgotten.
 
 ### Option 2: adopt the Lit library (the brief's named substrate)
 
@@ -119,8 +121,13 @@ stand whether or not the substrate changes:
   attribute is set the same-named property is ignored;
 - a listener a shell attaches to content inside a kit is lost at the next
   render, even a re-render to the same state, and focus inside the kit goes
-  with it; the supported pattern is delegation on the host element, which the
-  package README now states and the record above costs into Option 1;
+  with it; the supported pattern is delegation on the host element, reading
+  the control off `event.composedPath()`, because the shadow boundary
+  retargets `event.target` to the host itself (measured in Chrome: at the
+  host, `event.target` IS the host and `event.target.closest('[data-action]')`
+  finds nothing, while `composedPath()` finds the control), which the package
+  README states with the working pattern and the record above costs into
+  Option 1;
 - each instance re-parses its stylesheet on every update: the layer sets no
   `adoptedStyleSheets`, so a page with many kit instances re-parses the sheet
   per instance per update (measured sheet size: about 8 KB per kit);
