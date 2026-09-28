@@ -171,6 +171,25 @@ test("a binaryResponse operation resolves the wire bytes byte for byte", async (
   }
 });
 
+// The text response path (the plain string formats: text/csv, text/html)
+// resolves the wire string verbatim, never a JSON parse of it. One replay per
+// declared format.
+test("a text/html success resolves the raw wire text", async (t) => {
+  const receipt = "<html><body>receipt for sale r-1</body></html>";
+  const rec = recorder({ "GET /api/v1/pos/sales/r-1/receipt": { text: receipt } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
+  const value = unwrap(await api.staffPrinting.printingGetReceipt(client, "r-1"));
+  assert.equal(value, receipt, "the receipt HTML, verbatim");
+});
+
+test("a text/csv success resolves the raw wire text", async (t) => {
+  const csv = "invoice_id,total_cents\nINV-1,101700\n";
+  const rec = recorder({ "GET /api/v1/ar/register/export": { text: csv } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
+  const value = unwrap(await api.staffBilling.billingExportRegister(client));
+  assert.equal(value, csv, "the register CSV, verbatim");
+});
+
 test("the Result helpers narrow, map, and collect as the convention says", (t) => {
   assert.ok(isOk(api.ok(3)));
   assert.equal(mapResult(api.ok(2), (n) => n * 10).value, 20);
@@ -258,6 +277,26 @@ test("a header provider that rejects resolves an error Result and never rejects"
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.error, /header provider failed: the org lookup refused/);
   assert.equal(rec.calls.length, 0);
+});
+
+// A header value the platform would refuse (a bare CR and LF here) is
+// refused by the transport before anything dials: the platform's own refusal
+// message echoes the value, and header values are where tokens travel, so
+// the error names the header, never its value.
+test("a refused header value resolves an error naming the header, never the value", async (t) => {
+  const rec = recorder({});
+  const client = new api.ApiClient({
+    baseUrl: "https://hh-core.example",
+    fetch: rec.fetch,
+    headers: () => ({ "X-Org": "dibbits", Authorization: "Bearer leaked\r\ninjected: 1" }),
+  });
+  const result = await api.tenantAuth.tenantGetMe(client);
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.match(result.error, /the Authorization header value is not a valid header value/);
+    assert.doesNotMatch(result.error, /leaked/, "the refused value never lands in the error string");
+  }
+  assert.equal(rec.calls.length, 0, "the poisoned request never dialed");
 });
 
 test("a request past its timeout resolves an error Result naming the timeout", async (t) => {

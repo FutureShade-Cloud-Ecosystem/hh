@@ -13,7 +13,12 @@
 // Cancellation and deadlines: a request carries an AbortSignal and an optional
 // timeoutMs (ApiCallOptions, what the generated operations accept as their
 // optional trailing call argument). The transport aborts the fetch on either
-// and resolves an error Result naming which one fired; it never rejects.
+// and resolves an error Result naming which one fired; it never rejects. Both
+// stay armed until the response body has been read, because a fetch resolves
+// at the headers and a body that stalls after them is still a pending
+// request. Redirects are refused (redirect: "error"): a redirect could replay
+// a request's headers and body against another origin, so a redirected
+// request resolves a transport error Result instead.
 //
 // Reading the response: JSON by default, the raw text when the generator
 // marked the operation textResponse (plain string content: text/csv,
@@ -29,6 +34,12 @@ export interface RequestInitLike {
   headers: Record<string, string>;
   body?: string | FormData | Uint8Array | ArrayBuffer;
   signal?: AbortSignal;
+  /**
+   * Always "error": the transport never follows a redirect. A redirect could
+   * replay a request's headers and body against another origin, so a
+   * redirected request resolves a transport error Result instead.
+   */
+  redirect: "error";
 }
 
 export interface ResponseLike {
@@ -92,6 +103,13 @@ export interface OperationRequest {
 }
 
 const JSON_CONTENT_TYPE = "application/json";
+
+// The set of header value characters the platform's Headers refuses (a
+// control character, a bare CR or LF, DEL). The platform's own refusal
+// message echoes the refused value, and header values are where tokens
+// travel, so the transport checks first and names the header, never its
+// value.
+const INVALID_HEADER_VALUE = /[^\t\x20-\x7e\x80-\xff]/;
 
 // The default binding reads globalThis.fetch at call time, so a later polyfill
 // or test double installed on the global is honored.
@@ -207,69 +225,85 @@ export class ApiClient {
       body = JSON.stringify(req.body);
       headers["Content-Type"] = JSON_CONTENT_TYPE;
     }
-    const init: RequestInitLike = { method: req.method, headers, ...(body !== undefined ? { body } : {}) };
+    // A header value the platform would refuse must never reach fetch: the
+    // platform's own refusal message echoes the value, and header values are
+    // where tokens travel, so the transport refuses here first and names the
+    // header, never its value.
+    for (const [name, value] of Object.entries(headers)) {
+      if (INVALID_HEADER_VALUE.test(value)) {
+        return err(`${id}: the ${name} header value is not a valid header value`);
+      }
+    }
+    const init: RequestInitLike = { method: req.method, headers, redirect: "error", ...(body !== undefined ? { body } : {}) };
 
-    // The caller's signal and the timeout drive one controller, so the fetch
-    // aborts on whichever fires first and the refusal names it.
-    let response: ResponseLike;
-    {
-      const controller = new AbortController();
-      let abortKind: "timeout" | "caller" | undefined;
-      const onCallerAbort = () => {
-        abortKind = "caller";
+    // The caller's signal and the timeout drive one controller, and both stay
+    // armed until the body has been read: a fetch resolves at the headers,
+    // and a body that stalls after them is still a pending request. An abort
+    // during the read resolves the same timeout or aborted Result an abort
+    // before the headers would have.
+    const controller = new AbortController();
+    let abortKind: "timeout" | "caller" | undefined;
+    const onCallerAbort = () => {
+      abortKind = "caller";
+      controller.abort();
+    };
+    if (req.signal !== undefined) {
+      if (req.signal.aborted) onCallerAbort();
+      else req.signal.addEventListener("abort", onCallerAbort, { once: true });
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (req.timeoutMs !== undefined) {
+      timer = setTimeout(() => {
+        abortKind = "timeout";
         controller.abort();
-      };
-      if (req.signal !== undefined) {
-        if (req.signal.aborted) onCallerAbort();
-        else req.signal.addEventListener("abort", onCallerAbort, { once: true });
-      }
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      if (req.timeoutMs !== undefined) {
-        timer = setTimeout(() => {
-          abortKind = "timeout";
-          controller.abort();
-        }, req.timeoutMs);
-      }
+      }, req.timeoutMs);
+    }
+    const aborted = (): Result<T> | undefined => {
+      if (abortKind === "timeout") return err(`${id}: the request timed out after ${req.timeoutMs} ms`);
+      if (abortKind === "caller") return err(`${id}: the request was aborted`);
+      return undefined;
+    };
+
+    try {
+      let response: ResponseLike;
       try {
         response = await this.fetchLike(url, { ...init, signal: controller.signal });
       } catch (error) {
-        if (abortKind === "timeout") return err(`${id}: the request timed out after ${req.timeoutMs} ms`);
-        if (abortKind === "caller") return err(`${id}: the request was aborted`);
-        return err(`${id}: transport error: ${asMessage(error)}`);
-      } finally {
-        if (timer !== undefined) clearTimeout(timer);
-        if (req.signal !== undefined) req.signal.removeEventListener("abort", onCallerAbort);
+        return aborted() ?? err(`${id}: transport error: ${asMessage(error)}`);
       }
-    }
 
-    if (!response.ok) {
-      // The refusal stands on the status even when the body cannot be read.
-      let text = "";
+      if (!response.ok) {
+        // The refusal stands on the status even when the body cannot be read.
+        let text = "";
+        try {
+          text = await response.text();
+        } catch (error) {
+          return aborted() ?? err(`${id}: transport error reading the response: ${asMessage(error)}`);
+        }
+        return err(refusalFrom(response.status, text), response.status);
+      }
+      if (req.bytesResponse) {
+        try {
+          return ok(new Uint8Array(await response.arrayBuffer()) as T);
+        } catch (error) {
+          return aborted() ?? err(`${id}: transport error reading the response: ${asMessage(error)}`);
+        }
+      }
+      let text: string;
       try {
         text = await response.text();
-      } catch {
-        // keep the empty body: refusalFrom falls back to the status
-      }
-      return err(refusalFrom(response.status, text), response.status);
-    }
-    if (req.bytesResponse) {
-      try {
-        return ok(new Uint8Array(await response.arrayBuffer()) as T);
       } catch (error) {
-        return err(`${id}: transport error reading the response: ${asMessage(error)}`);
+        return aborted() ?? err(`${id}: transport error reading the response: ${asMessage(error)}`);
       }
-    }
-    let text: string;
-    try {
-      text = await response.text();
-    } catch (error) {
-      return err(`${id}: transport error reading the response: ${asMessage(error)}`);
-    }
-    if (req.textResponse) return ok(text as T);
-    try {
-      return ok(JSON.parse(text) as T);
-    } catch {
-      return err(`${id}: the success response is not valid JSON`);
+      if (req.textResponse) return ok(text as T);
+      try {
+        return ok(JSON.parse(text) as T);
+      } catch {
+        return err(`${id}: the success response is not valid JSON`);
+      }
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      if (req.signal !== undefined) req.signal.removeEventListener("abort", onCallerAbort);
     }
   }
 
