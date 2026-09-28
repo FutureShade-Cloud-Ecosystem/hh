@@ -164,12 +164,17 @@ test("the multipart binary parts carry the caller's filename", async (t) => {
   assert.equal(image.name, "board-frozen.png", "the screenshot's filename rides the part");
 });
 
-test("a Blob named by no option keeps the platform's default part name", async (t) => {
+test("a Blob named by no option rides verbatim, under the name the platform gives it", async (t) => {
+  // Today's behaviour is the default: the transport adds no name of its own
+  // and appends the caller's Blob itself. What an unnamed part is then called
+  // is the platform's business (Node 22's undici names it "blob", bun leaves
+  // it empty), so the assertion stops at the transport's own output.
   const rec = recorder({ "POST /api/v1/pricing/price-file/preview": { body: {} } });
   const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch, headers: () => ({ "X-Org": "dibbits" }) });
   unwrap(await api.staffPricing.pricingPreviewPriceFile(client, { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) }));
-  const parsed = await new Request(rec.calls[0].url, { method: rec.calls[0].method, body: rec.calls[0].form }).formData();
-  assert.equal(parsed.get("file").name, "blob", "saying nothing names the part as the platform always has");
+  const entry = rec.calls[0].form.get("file");
+  assert.ok(entry instanceof Blob, "the transport appended the caller's Blob, adding no name of its own");
+  assert.deepEqual(new Uint8Array(await entry.arrayBuffer()), PNG, "byte for byte, as the platform's part");
 });
 
 test("the pricing CSV import accepts a string body and rides it verbatim", async (t) => {

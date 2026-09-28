@@ -120,8 +120,9 @@ the caller's bytes, byte for byte. A multipart operation with a binary field
 takes a filename option per field, so the caller names the part:
 `pricingApplyPriceFile(client, form, { fileFilename: "price-list.xlsx" })`,
 `feedbackCreateMultipart(client, form, { imageFilename: "board-frozen.png" })`.
-A Blob named by no option rides as `blob`, the platform's default part name,
-which is what the core stores when the caller says nothing. When an operation
+A Blob named by no option rides as `blob`, the fetch standard's default part
+name (Node 22 and the browsers; bun's deviates and sends an empty name), so
+that is what the core stores when the caller says nothing. When an operation
 declares both `application/json` and `multipart/form-data` (that is
 `feedbackCreate`), the client emits one function per declared type: the first
 declared keeps the operationId, and the multipart form takes a `Multipart`
