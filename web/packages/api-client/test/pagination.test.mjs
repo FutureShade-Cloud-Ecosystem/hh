@@ -81,3 +81,42 @@ test("maxPages stops a feed that never ends", async (t) => {
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.error, /3 pages/);
 });
+
+test("an aborted signal cancels the walk before the next page", async (t) => {
+  const controller = new AbortController();
+  let pages = 0;
+  let received = "<the page never ran>";
+  const result = await walkPages(
+    async (cursor, pageOptions) => {
+      pages++;
+      received = pageOptions;
+      return { ok: true, value: pageOf(["x"], null) };
+    },
+    { signal: controller.signal, maxPages: 1 },
+  );
+  assert.equal(pages, 1);
+  assert.deepEqual(received, { signal: controller.signal }, "the walk's signal rides to the page fetcher");
+  controller.abort();
+  const cancelled = await walkPages(
+    async (cursor) => ({ ok: true, value: pageOf(["x"], cursor === undefined ? "a" : `${cursor}b`) }),
+    { signal: controller.signal },
+  );
+  assert.equal(cancelled.ok, false);
+  if (!cancelled.ok) assert.match(cancelled.error, /aborted before page 1/);
+});
+
+test("an abort between pages ends the walk with an error Result, nothing fetched after", async (t) => {
+  const controller = new AbortController();
+  let pages = 0;
+  const result = await walkPages(
+    async (cursor) => {
+      pages++;
+      if (pages === 2) controller.abort();
+      return { ok: true, value: pageOf(["x"], cursor === undefined ? "a" : `${cursor}b`) };
+    },
+    { signal: controller.signal },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /aborted before page 3/);
+  assert.equal(pages, 2, "no page is fetched after the abort");
+});

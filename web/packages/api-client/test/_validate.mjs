@@ -5,7 +5,7 @@
 // types, required properties, enum vocabularies, array and string bounds, and
 // numeric bounds, with formats left alone. A fixture that does not validate
 // is a finding, never a schema to loosen.
-import { SCHEMA_DESCRIPTORS } from "../src/gen/descriptors.ts";
+import { SCHEMA_DESCRIPTORS } from "../src/testing.ts";
 
 /**
  * Validate one value against one descriptor; returns the list of problems,

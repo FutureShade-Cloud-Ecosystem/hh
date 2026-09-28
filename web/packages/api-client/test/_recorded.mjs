@@ -11,11 +11,23 @@
 /** Build one ResponseLike off a stub, exactly the recorded harness's respond. */
 export function respond(stub) {
   const status = stub.status ?? 200;
+  if (stub.bytes !== undefined) {
+    // A binary capture: the harness answers the bytes verbatim, never a
+    // decoded or re-encoded copy, so byte-exact assertions mean something.
+    const bytes = stub.bytes;
+    return {
+      status,
+      ok: status >= 200 && status < 300,
+      text: () => Promise.resolve(new TextDecoder().decode(bytes)),
+      arrayBuffer: () => Promise.resolve(bytes.slice().buffer),
+    };
+  }
   const text = stub.body === undefined ? "" : JSON.stringify(stub.body);
   return {
     status,
     ok: status >= 200 && status < 300,
     text: () => Promise.resolve(text),
+    arrayBuffer: () => Promise.resolve(new TextEncoder().encode(text).slice().buffer),
   };
 }
 
@@ -44,6 +56,8 @@ export function recorder(routes) {
       query,
       headers: { ...init.headers },
       body: typeof init.body === "string" ? init.body : undefined,
+      bytes: init.body instanceof Uint8Array ? init.body : undefined,
+      signal: init.signal,
     });
 
     const queue = queues.get(`${init.method} ${parsed.pathname}`);

@@ -10,16 +10,20 @@
 // capture is replayed through the operation the contract assigns to its route
 // with a recorded FetchLike (no network, ever), asserting the request the
 // client builds (method, filled path, serialized query) and that the response
-// parses and structurally validates against the document's schema. Where a
-// capture's route were not in the document, the mapping below fails loudly; a
-// capture that does not validate is a finding, never a schema to loosen.
+// parses and structurally validates against the operation's own generated
+// success schema: the schema name comes from the generated manifest's
+// SUCCESS_SCHEMAS table keyed by the replayed operationId, never from a
+// test-picked schema. Where a capture's route were not in the document, the
+// mapping below fails loudly; a capture that does not validate is a finding,
+// never a schema to loosen.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as api from "../src/index.ts";
-import { SCHEMA_DESCRIPTORS } from "../src/gen/descriptors.ts";
+import { SCHEMA_DESCRIPTORS } from "../src/testing.ts";
+import { ROUTES, SUCCESS_SCHEMAS } from "../src/gen/manifest.ts";
 import { need, recorder, unwrap } from "./_recorded.mjs";
 import { validateValue } from "./_validate.mjs";
 
@@ -36,7 +40,7 @@ const capture = (file) => JSON.parse(readFileSync(join(fixturesDir, file), "utf8
 const CAPTURES = [
   {
     file: "login.json",
-    schema: "TenantLoginResponse",
+    operation: "tenantLogin",
     route: "POST /api/v1/tenant/login",
     method: "POST",
     path: "/api/v1/tenant/login",
@@ -53,7 +57,7 @@ const CAPTURES = [
   },
   {
     file: "refresh.json",
-    schema: "TenantRefreshResponse",
+    operation: "tenantRefreshToken",
     route: "POST /api/v1/tenant/token/refresh",
     method: "POST",
     path: "/api/v1/tenant/token/refresh",
@@ -67,7 +71,7 @@ const CAPTURES = [
   },
   {
     file: "me.json",
-    schema: "TenantMe",
+    operation: "tenantGetMe",
     route: "GET /api/v1/tenant/me",
     method: "GET",
     path: "/api/v1/tenant/me",
@@ -81,7 +85,7 @@ const CAPTURES = [
   },
   {
     file: "config.json",
-    schema: "TenantPublicConfig",
+    operation: "tenantGetConfig",
     route: "GET /api/v1/tenant/config",
     method: "GET",
     path: "/api/v1/tenant/config",
@@ -94,7 +98,7 @@ const CAPTURES = [
   },
   {
     file: "dashboard.json",
-    schema: "TenantDashboard",
+    operation: "tenantGetDashboard",
     route: "GET /api/v1/tenant/dashboard",
     method: "GET",
     path: "/api/v1/tenant/dashboard",
@@ -107,7 +111,7 @@ const CAPTURES = [
   },
   {
     file: "billing-summary.json",
-    schema: "TenantBillingSummary",
+    operation: "tenantGetBillingSummary",
     route: "GET /api/v1/tenant/billing/summary",
     method: "GET",
     path: "/api/v1/tenant/billing/summary",
@@ -123,7 +127,7 @@ const CAPTURES = [
   },
   {
     file: "catalog-search-paver.json",
-    schema: "TenantCatalogSearchResponse",
+    operation: "tenantSearchCatalog",
     route: "GET /api/v1/tenant/catalog/search",
     method: "GET",
     path: "/api/v1/tenant/catalog/search",
@@ -140,7 +144,7 @@ const CAPTURES = [
   },
   {
     file: "catalog-search-sand.json",
-    schema: "TenantCatalogSearchResponse",
+    operation: "tenantSearchCatalog",
     route: "GET /api/v1/tenant/catalog/search",
     method: "GET",
     path: "/api/v1/tenant/catalog/search",
@@ -155,7 +159,7 @@ const CAPTURES = [
   },
   {
     file: "orders-page.json",
-    schema: "TenantOrderPage",
+    operation: "tenantListOrders",
     route: "GET /api/v1/tenant/orders",
     method: "GET",
     path: "/api/v1/tenant/orders",
@@ -173,7 +177,7 @@ const CAPTURES = [
   },
   {
     file: "order-detail.json",
-    schema: "TenantOrderDetail",
+    operation: "tenantGetOrder",
     route: "GET /api/v1/tenant/orders/86b744fc-c0bf-4b07-a3c7-91b860d428f4",
     method: "GET",
     path: "/api/v1/tenant/orders/86b744fc-c0bf-4b07-a3c7-91b860d428f4",
@@ -186,7 +190,7 @@ const CAPTURES = [
   },
   {
     file: "invoices-page.json",
-    schema: "TenantInvoicePage",
+    operation: "tenantListInvoices",
     route: "GET /api/v1/tenant/invoices",
     method: "GET",
     path: "/api/v1/tenant/invoices",
@@ -199,7 +203,7 @@ const CAPTURES = [
   },
   {
     file: "invoice-detail.json",
-    schema: "TenantInvoiceDetail",
+    operation: "tenantGetInvoice",
     route: "GET /api/v1/tenant/invoices/0dd4ec29-9616-4754-9f5f-667da1722018",
     method: "GET",
     path: "/api/v1/tenant/invoices/0dd4ec29-9616-4754-9f5f-667da1722018",
@@ -213,7 +217,7 @@ const CAPTURES = [
   },
   {
     file: "quotes-page.json",
-    schema: "TenantQuotePage",
+    operation: "tenantListQuotes",
     route: "GET /api/v1/tenant/quotes",
     method: "GET",
     path: "/api/v1/tenant/quotes",
@@ -227,7 +231,7 @@ const CAPTURES = [
   },
   {
     file: "quote-detail.json",
-    schema: "TenantQuoteDetail",
+    operation: "tenantGetQuote",
     route: "GET /api/v1/tenant/quotes/2cbb6e96-c88d-4a05-a2c9-d2709a15a718",
     method: "GET",
     path: "/api/v1/tenant/quotes/2cbb6e96-c88d-4a05-a2c9-d2709a15a718",
@@ -251,7 +255,22 @@ test("every vendored capture is mapped to a contract operation", (t) => {
   const mapped = [...CAPTURES.map((c) => c.file), "error-401.json", "error-404.json"].sort();
   assert.deepEqual(onDisk, mapped, "a capture without a mapping is a stop, not a skip");
   for (const c of CAPTURES) {
-    assert.notEqual(SCHEMA_DESCRIPTORS[c.schema], undefined, `${c.schema} is a schema of the document`);
+    // The schema the capture validates against is the operation's own
+    // generated success schema, keyed by operationId in the manifest.
+    const schema = SUCCESS_SCHEMAS[c.operation];
+    assert.notEqual(schema, undefined, `${c.operation} declares a single named success schema`);
+    assert.notEqual(SCHEMA_DESCRIPTORS[schema], undefined, `${schema} is a schema of the document`);
+    // And the replayed route is the route the generated manifest assigns to
+    // that operation, so the mapping cannot quietly pair a capture with the
+    // wrong operation: the method agrees exactly, and the replayed concrete
+    // path fills the manifest's path template (every {param} one segment).
+    const route = ROUTES.find((r) => r.operationId === c.operation);
+    assert.notEqual(route, undefined, `${c.operation} is a route of the document`);
+    assert.equal(route.method, c.method, `${c.operation} owns the route's method`);
+    const template = new RegExp(
+      `^${route.path.replace(/\{[^}]+\}/g, "[^/]+").replace(/\//g, "/")}$`,
+    );
+    assert.match(c.path, template, `${c.operation} owns ${route.path}`);
   }
 });
 
@@ -260,10 +279,11 @@ for (const c of CAPTURES) {
     const body = capture(c.file);
     const rec = recorder({ [c.route]: { body } });
     const client = new api.ApiClient({ baseUrl: BASE_URL, fetch: rec.fetch });
+    const schema = SUCCESS_SCHEMAS[c.operation];
 
     // The call resolves (never throws), the request is the documented one,
     // and the response parses and structurally validates against the schema
-    // the contract assigns to the route.
+    // the contract assigns to the operation.
     const result = await c.call(client);
     const value = unwrap(result);
     assert.equal(rec.calls.length, 1, "the replay dialed exactly one route");
@@ -271,7 +291,7 @@ for (const c of CAPTURES) {
     assert.equal(call.method, c.method);
     assert.equal(call.route, c.path);
     assert.equal(call.url, `${BASE_URL}${c.path}${c.query === "" ? "" : `?${c.query}`}`);
-    assert.deepEqual(validateValue(value, SCHEMA_DESCRIPTORS[c.schema], "capture"), [], `validates against ${c.schema}`);
+    assert.deepEqual(validateValue(value, SCHEMA_DESCRIPTORS[schema], "capture"), [], `validates against ${schema}`);
 
     c.pins(value, call);
   });
