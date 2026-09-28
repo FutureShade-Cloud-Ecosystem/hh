@@ -24,6 +24,13 @@ export interface WalkOptions {
    * otherwise walk forever. Default 1000 pages.
    */
   maxPages?: number;
+  /**
+   * Cancels the walk: once aborted, the walk resolves an error Result naming
+   * the page it stopped at and fetches nothing further. The signal also rides
+   * to every fetchPage call, so a page fetched through the transport aborts
+   * its request with the same signal.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -37,19 +44,22 @@ export function resumeCursor<T>(page: CursorPage<T>): string | null {
 /**
  * Walk a cursor-paginated feed to its end, collecting every page's items.
  * fetchPage receives the cursor to resume from (undefined for the first page)
- * and returns the page as a Result. The first refused page ends the walk with
+ * and the walk's page options (the signal, when the walk was given one), and
+ * returns the page as a Result. The first refused page ends the walk with
  * that same Result, so a refused page surfaces exactly what the operation
  * resolved. Never throws on a refusal.
  */
 export async function walkPages<T, Page extends CursorPage<T>>(
-  fetchPage: (cursor: string | undefined) => Promise<Result<Page>>,
+  fetchPage: (cursor: string | undefined, pageOptions: { signal?: AbortSignal }) => Promise<Result<Page>>,
   options: WalkOptions = {},
 ): Promise<Result<T[]>> {
   const maxPages = options.maxPages ?? 1000;
+  const pageOptions = { signal: options.signal };
   const items: T[] = [];
   let cursor: string | undefined;
   for (let page = 1; page <= maxPages; page++) {
-    const result = await fetchPage(cursor);
+    if (options.signal?.aborted) return err(`walkPages: aborted before page ${page}`);
+    const result = await fetchPage(cursor, pageOptions);
     if (!result.ok) return result;
     items.push(...result.value.items);
     const next = resumeCursor(result.value);

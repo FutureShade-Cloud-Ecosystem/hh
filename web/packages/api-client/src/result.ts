@@ -12,14 +12,21 @@
  * a domain refusal all reach the caller identically, as data.
  */
 
-export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
+export type Result<T> = { ok: true; value: T } | { ok: false; error: string; status?: number };
 
 export function ok<T>(value: T): Result<T> {
   return { ok: true, value };
 }
 
-export function err<T = never>(error: string): Result<T> {
-  return { ok: false, error };
+/**
+ * The error leg. status rides only on an HTTP-status refusal (a 4xx or 5xx
+ * response): it is the status the server answered. A transport failure, an
+ * aborted or timed-out request, a failed header provider, and a malformed
+ * success body carry no status, because either nothing answered or what
+ * answered answered success.
+ */
+export function err<T = never>(error: string, status?: number): Result<T> {
+  return status === undefined ? { ok: false, error } : { ok: false, error, status };
 }
 
 export function isOk<T>(result: Result<T>): result is { ok: true; value: T } {
