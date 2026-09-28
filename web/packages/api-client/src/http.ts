@@ -95,16 +95,23 @@ export interface OperationRequest {
    * holds as Blobs: the generated multipart operations expose it as their
    * options argument (`{ fileFilename: "price-list.xlsx" }`). A name is
    * guarded like a path value: empty, one of the dot segments (`.` or `..`),
-   * carrying a path separator (`/` or `\`), carrying a NUL or any other
-   * control character, carrying a Unicode bidirectional control character
-   * (the whole \p{Bidi_Control} class), carrying an invisible format
-   * character (\p{Cf}) or a control character \p{Cc} names that the byte
-   * loop misses (the C1 range among them), made of nothing but
+   * carrying a path separator (`/` or `\`), carrying a tab, carrying a line
+   * break, carrying a NUL or any other control character, carrying a Unicode
+   * bidirectional control character (the whole \p{Bidi_Control} class),
+   * carrying an invisible format character (\p{Cf}, the two allowed joiners
+   * U+200C and U+200D excepted) or a control character \p{Cc} that the
+   * per-character loop would otherwise miss (the C1 range among them),
+   * carrying a line separator (U+2028 or U+2029) inside the name, carrying a
+   * Hangul filler (U+115F, U+1160, U+3164; a name of nothing but U+115F is
+   * invisible), made of nothing but
    * spaces, beginning or ending with any white space or a dot, or longer
    * than 160
    * UTF-8 bytes (the bound the core's own stored name keeps, counted in the
    * same unit the core counts) resolves an error Result before anything
-   * dials. A field with no name here (or no entry) rides under the
+   * dials. Every refusal names what it refused in words a person understands
+   * (contains a tab, ends with a line break, contains a hidden character
+   * (U+00AD)), with the code point for the invisible classes. A field with
+   * no name here (or no entry) rides under the
    * platform's default part name, "blob", which is what the core stores when
    * the caller says nothing.
    */
@@ -154,7 +161,8 @@ const MAX_FILENAME_BYTES = 160;
 // how text displays. A file name carrying one can be made to display as
 // something it is not (an extension appearing reversed is the classic), so
 // they are refused outright; the first cut refused only nine of the twelve
-// and let the three reorder neutrals through.
+// and let the three reorder neutrals through. Tested one character at a
+// time so the refusal can name the character it found.
 const BIDI_CONTROL = /\p{Bidi_Control}/u;
 
 // The format characters (\p{Cf}: the zero width marks, the joiners, the
@@ -163,24 +171,61 @@ const BIDI_CONTROL = /\p{Bidi_Control}/u;
 // filenameProblem refuses first, plus the C1 range U+0080 to U+009F the
 // loop's per code unit comparison cannot see). An invisible character in a
 // stored name makes names that display identically but differ in bytes, so
-// both classes are refused outright.
+// both classes are refused outright. Tested one character at a time so the
+// refusal can name the character it found.
 const FORMAT_CHARACTER = /\p{Cf}/u;
 const CONTROL_CHARACTER = /\p{Cc}/u;
+
+// The two joiners a name may carry: U+200C ZERO WIDTH NON-JOINER and
+// U+200D ZERO WIDTH JOINER. Both are \p{Cf} format characters, but they
+// join letters (Persian words are spelled with the non-joiner) and build
+// emoji (the family and profession sequences are joiner chains), and they
+// hide nothing: each is allowed where every other format character is
+// refused, so an ordinary Persian name and a plain emoji name are not
+// refused by a rule meant for invisible marks. The first cut refused them
+// with their class, and a rule that refuses ordinary names gets switched
+// off.
+const ALLOWED_JOINERS = new Set([0x200c, 0x200d]);
+
+// The line separators: U+2028 LINE SEPARATOR (the whole \p{Zl} class) and
+// U+2029 PARAGRAPH SEPARATOR (the whole \p{Zp} class). The edge rule below
+// refuses them at either edge; refused inside as well, because a line break
+// in the middle of a displayed name is a paste artefact and the core's
+// sanitizer would keep it.
+const LINE_SEPARATORS = new Set([0x2028, 0x2029]);
+
+// The Hangul fillers: U+115F HANGUL CHOSEONG FILLER, U+1160 HANGUL
+// JUNGSEONG FILLER, and U+3164 HANGUL FILLER. They are letters, not format
+// characters and not white space, so no other rule sees them, and a name
+// made of nothing but U+115F is accepted by every other rule and invisible:
+// refused outright, as one invisible character more.
+const HANGUL_FILLERS = new Set([0x115f, 0x1160, 0x3164]);
+
+function codePointName(code: number): string {
+  return `U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
+}
 
 // A file name rides the multipart part's Content-Disposition as given, so it
 // gets the care fillPath gives a path parameter: refused here, as data,
 // before anything is sent. Refused: empty, one of the dot segments, a path
-// separator (either platform's), a NUL, any other control character, a
-// bidirectional control character, an invisible format character, or a
-// control character the byte loop missed (see BIDI_CONTROL,
-// FORMAT_CHARACTER, CONTROL_CHARACTER), a name made of nothing but spaces, a
+// separator (either platform's), a tab, a line break (named as such, since a
+// name pasted from a spreadsheet cell usually ends in one), any other
+// control character (each named by its code point), a bidirectional control
+// character, an invisible format character (each named by its code point;
+// the two allowed joiners excepted, see ALLOWED_JOINERS), a line separator
+// inside the name, a Hangul filler (a name of nothing but U+115F is
+// invisible), a name made of nothing but spaces, a
 // name that begins or ends with ANY white space or a dot (the core's
 // sanitizer trims edge white space off the stored name with TrimSpace, a
 // Unicode trim, so an accepted NBSP, ideographic space, or line separator
 // at an edge would arrive as a name the core stores changed; a Windows
 // reader strips edge spaces and a trailing dot, and a leading dot hides the
 // file on a Unix-like reader, so the name would not stay the name the
-// caller said), and anything past MAX_FILENAME_BYTES. The platform
+// caller said), and anything past MAX_FILENAME_BYTES. Every refusal NAMES
+// what it refused in words a person understands (contains a tab, ends with
+// a line break, contains a hidden character (U+00AD)), so a person who
+// pasted from a spreadsheet or a document can fix the name instead of
+// guessing at a class name. The platform
 // percent-encodes a quote or a line break inside the quoted parameter, so
 // framing itself cannot be split, but a separator would hand a path to
 // whatever stores the name and a control character would ride the wire raw.
@@ -189,14 +234,32 @@ const CONTROL_CHARACTER = /\p{Cc}/u;
 function filenameProblem(name: string): string | undefined {
   if (name === "") return "is empty";
   if (name === "." || name === "..") return `is the path segment ${name}`;
-  for (let i = 0; i < name.length; i += 1) {
-    const code = name.charCodeAt(i);
+  let index = 0;
+  for (const character of name) {
+    const code = character.codePointAt(0) as number;
+    const atEnd = index + character.length === name.length;
+    index += character.length;
     if (code === 0x2f || code === 0x5c) return "carries a path separator";
-    if (code < 0x20 || code === 0x7f) return "carries a control character";
+    if (code === 0x09) return "contains a tab";
+    if (code === 0x0a || code === 0x0d) {
+      return atEnd ? "ends with a line break" : "contains a line break";
+    }
+    if (LINE_SEPARATORS.has(code)) {
+      return atEnd ? `ends with a line break (${codePointName(code)})` : `contains a line break (${codePointName(code)})`;
+    }
+    if (BIDI_CONTROL.test(character)) {
+      return `contains a hidden character (${codePointName(code)})`;
+    }
+    if (FORMAT_CHARACTER.test(character) && !ALLOWED_JOINERS.has(code)) {
+      return `contains a hidden character (${codePointName(code)})`;
+    }
+    if (CONTROL_CHARACTER.test(character)) {
+      return `contains a control character (${codePointName(code)})`;
+    }
+    if (HANGUL_FILLERS.has(code)) {
+      return `contains a hidden character (${codePointName(code)})`;
+    }
   }
-  if (BIDI_CONTROL.test(name)) return "carries a bidirectional control character";
-  if (FORMAT_CHARACTER.test(name)) return "carries an invisible formatting character";
-  if (CONTROL_CHARACTER.test(name)) return "carries a control character";
   if (name.trim() === "") return "is nothing but spaces";
   if (/^[\s.]|[\s.]$/u.test(name)) {
     return "begins or ends with a space or a dot";
