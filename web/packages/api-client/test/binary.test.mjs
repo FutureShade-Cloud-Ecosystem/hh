@@ -1,0 +1,136 @@
+// The binary gate. The contract's binary transfers ride the wire as bytes, so
+// the client must read a format: binary success as bytes and send the binary
+// uploads as bytes, byte for byte, with no text decode or re-encode anywhere.
+// The fixtures are real binary payloads built here: a PNG file signature with
+// its IHDR chunk for the images, the ZIP local file header (every xlsx is a
+// ZIP) lives in test/result-shape.test.mjs. Every assertion compares bytes.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import * as api from "../src/index.ts";
+import { recorder, unwrap } from "./_recorded.mjs";
+
+// A PNG file signature (89 50 4E 47 0D 0A 1A 0A) plus a minimal IHDR chunk:
+// length 13, the chunk name, width and height of one pixel, the depth and
+// color type, and the chunk CRC. This is the lead of every real PNG file.
+const PNG = Uint8Array.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // the PNG signature
+  0x00, 0x00, 0x00, 0x0d, // the IHDR chunk's data length
+  0x49, 0x48, 0x44, 0x52, // "IHDR"
+  0x00, 0x00, 0x00, 0x01, // width 1
+  0x00, 0x00, 0x00, 0x01, // height 1
+  0x08, 0x02, // bit depth 8, truecolor
+  0x00, 0x00, 0x00, // compression, filter, interlace
+  0x90, 0x77, 0x53, 0xde, // the chunk CRC
+]);
+
+test("a format: binary success resolves the exact bytes the wire carried", async (t) => {
+  const rec = recorder({ "GET /api/v1/products/abc/image": { bytes: PNG } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
+  const value = unwrap(await api.staffProduct.productGetImage(client, "abc"));
+  assert.ok(value instanceof Uint8Array, "the value is bytes");
+  assert.equal(value.byteLength, PNG.byteLength);
+  assert.deepEqual(value, PNG, "byte for byte, signature through CRC");
+});
+
+test("a refused binary route still reads the JSON error envelope with its status", async (t) => {
+  const rec = recorder({ "GET /api/v1/products/abc/image": { status: 404, body: { error: "not found" } } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
+  const result = await api.staffProduct.productGetImage(client, "abc");
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error, "not found");
+    assert.equal(result.status, 404);
+  }
+});
+
+test("the product image upload sends the raw bytes verbatim with the type the caller says", async (t) => {
+  const rec = recorder({ "PUT /api/v1/products/abc/image": { body: { size_bytes: PNG.byteLength } } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch, headers: () => ({ "X-Org": "dibbits" }) });
+  unwrap(await api.staffProduct.productPutImage(client, "abc", PNG, "image/png"));
+  const call = rec.calls[0];
+  assert.equal(call.method, "PUT");
+  assert.equal(call.headers["Content-Type"], "image/png", "the caller says which declared type rides");
+  assert.ok(call.bytes instanceof Uint8Array, "the body rode as bytes");
+  assert.deepEqual(call.bytes, PNG, "the upload is byte for byte what the caller held");
+});
+
+test("an upload declaring several types sends no Content-Type until the caller says", async (t) => {
+  const rec = recorder({ "PUT /api/v1/products/abc/image": { body: { size_bytes: PNG.byteLength } } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
+  unwrap(await api.staffProduct.productPutImage(client, "abc", PNG));
+  assert.equal(
+    rec.calls[0].headers["Content-Type"],
+    undefined,
+    "no silently chosen type: the bytes go out unlabeled, so the core refuses them, never misreads them",
+  );
+});
+
+test("the dispatch photo upload sends the raw bytes verbatim with its caption query", async (t) => {
+  const rec = recorder({ "POST /api/v1/dispatch/stops/stop-9/photos": { status: 201, body: { id: "p1" } } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch, headers: () => ({ "X-Org": "dibbits" }) });
+  unwrap(await api.staffDispatch.dispatchUploadStopPhoto(client, "stop-9", PNG, "image/png", { caption: "gate 3, delivered" }));
+  const call = rec.calls[0];
+  assert.equal(call.headers["Content-Type"], "image/png");
+  assert.deepEqual(call.bytes, PNG);
+  assert.equal(call.query.caption, "gate 3, delivered");
+});
+
+// The multipart binary fields: the contract types them format: binary, so the
+// client types them Blob and the transport appends the caller's Blob to the
+// form verbatim. Each assertion parses the emitted body with the platform's
+// own multipart encoder and parser (a real Request over the recorded
+// FormData), then compares the field's bytes, so only a byte-exact ride
+// passes. The fixtures carry bytes a string field would mangle (invalid
+// UTF-8 lead bytes, 0x7f and 0x80).
+test("the price file multipart field rides as the caller's bytes, byte for byte", async (t) => {
+  const PRICE_FILE = Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 0xff, 0xfe, 0x7f, 0x80, 0x0d, 0x0a, 0x00, 0xc8]);
+  const form = { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PRICE_FILE]) };
+  const rec = recorder({
+    "POST /api/v1/pricing/price-file/preview": { body: {} },
+    "POST /api/v1/pricing/price-file/apply": { status: 201, body: {} },
+  });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch, headers: () => ({ "X-Org": "dibbits" }) });
+  unwrap(await api.staffPricing.pricingPreviewPriceFile(client, form));
+  unwrap(await api.staffPricing.pricingApplyPriceFile(client, { ...form, digest: "preview-digest" }));
+  assert.equal(rec.calls.length, 2);
+  for (const call of rec.calls) {
+    const parsed = await new Request(call.url, { method: call.method, body: call.form }).formData();
+    const file = parsed.get("file");
+    assert.ok(file instanceof Blob, "the file field rides as a Blob part");
+    assert.deepEqual(new Uint8Array(await file.arrayBuffer()), PRICE_FILE, "byte for byte through a real multipart parse");
+  }
+});
+
+test("the feedback screenshot multipart form rides as the caller's bytes, byte for byte", async (t) => {
+  const rec = recorder({ "POST /api/v1/feedback": { status: 201, body: { id: "fb-1" } } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch, headers: () => ({ "X-Org": "dibbits" }) });
+  unwrap(await api.staffFeedback.feedbackCreateMultipart(client, { type: "bug", message: "the board froze on drop", image: new Blob([PNG]) }));
+  const call = rec.calls[0];
+  const parsed = await new Request(call.url, { method: call.method, body: call.form }).formData();
+  assert.equal(parsed.get("type"), "bug");
+  assert.equal(parsed.get("message"), "the board froze on drop");
+  const image = parsed.get("image");
+  assert.ok(image instanceof Blob, "the screenshot rides as a Blob part");
+  assert.deepEqual(new Uint8Array(await image.arrayBuffer()), PNG, "byte for byte through a real multipart parse");
+});
+
+test("the pricing CSV import accepts a string body and rides it verbatim", async (t) => {
+  const csv = "sku,price_cents\nDBS-OAKS-VINTAGE,101700\n";
+  const rec = recorder({ "POST /api/v1/pricing/batches/b1/import": { body: { lines: 1 } } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch, headers: () => ({ "X-Org": "dibbits" }) });
+  unwrap(await api.staffPricing.pricingImportBatch(client, "b1", csv));
+  const call = rec.calls[0];
+  assert.equal(call.headers["Content-Type"], "text/csv");
+  assert.equal(call.body, csv);
+});
+
+test("the pricing CSV import accepts bytes too, and rides them verbatim", async (t) => {
+  const bytes = new TextEncoder().encode("sku,price_cents\nDBS-OAKS-VINTAGE,101700\n");
+  const rec = recorder({ "POST /api/v1/pricing/batches/b1/import": { body: { lines: 1 } } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch, headers: () => ({ "X-Org": "dibbits" }) });
+  unwrap(await api.staffPricing.pricingImportBatch(client, "b1", bytes));
+  const call = rec.calls[0];
+  assert.equal(call.headers["Content-Type"], "text/csv");
+  assert.ok(call.bytes instanceof Uint8Array);
+  assert.deepEqual(call.bytes, bytes);
+});

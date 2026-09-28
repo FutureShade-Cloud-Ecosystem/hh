@@ -82,6 +82,17 @@ jobs:
           bun-version: 1.3.12
       - name: Test and manifest drift gate
         run: |
+          set -euo pipefail
+          # Pre-install the one npm package the gate needs, pinned to the exact
+          # version the contract tools' lockfile installs, so the gate never
+          # relies on bun's on-demand auto-install (which resolves unpinned).
+          # The install needs a package.json at the tree's root, which this
+          # repository deliberately does not carry, so bun writes one along
+          # with bun.lock; the trap removes both (and the installed
+          # node_modules) when the step ends, leaving the tree clean on a
+          # runner and on a workstation alike.
+          trap 'rm -rf package.json bun.lock node_modules' EXIT
+          bun add --exact yaml@2.9.1
           bun test
           bun scripts/generate-manifest.ts --check
       - name: Set up Node
@@ -98,6 +109,21 @@ jobs:
           node core/api/tools/fixtures.mjs
           node core/api/tools/statemap.mjs
           node core/api/tools/d8-isolation.mjs
+      - name: Typecheck web packages
+        run: |
+          # The web packages' TypeScript gate: strict, noEmit, on every pull
+          # request. @hh/api-client owns a strict typecheck script and a
+          # pinned typescript devDependency (the zero-dependency claim covers
+          # the runtime only). @hh/design-system is typechecked by the same
+          # gate the moment its lane adds a tsconfig.json; today it carries no
+          # TypeScript sources, so there is nothing to check there yet.
+          npm --prefix web ci
+          npm --prefix web run -w @hh/api-client typecheck
+          if [ -f web/packages/design-system/tsconfig.json ]; then
+            web/node_modules/.bin/tsc --noEmit -p web/packages/design-system
+          else
+            echo "web/packages/design-system has no tsconfig.json yet; its lane owns its sources and will add the strict check with them."
+          fi
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
