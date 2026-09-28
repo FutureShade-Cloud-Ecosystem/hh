@@ -7,6 +7,28 @@ comment carries its Penpot mapping name; the element tag is the Penpot
 component name). Framework-free domain rules in `AGENTS.md` apply to everything
 under `web/packages/`.
 
+## The rendering substrate: Lit
+
+The kits render through the Lit library (docs/adr/0023, option 2, accepted;
+the ruling's words are "Adopt lit", relay message 046). The kits build markup
+only with Lit's `html` and `css` tagged templates and the reactive base class
+(`HHElement`, a thin `LitElement` subclass in `src/base.ts`); the browser
+render path is LitElement's shadow-root render loop, and the Node-side render
+the tests and the static harness hang on is Lit's server render
+(`@lit-labs/ssr`).
+
+The dependencies, read from `web/package-lock.json`:
+
+| package | kind | version (exact) | licence | packages it adds to the install |
+| --- | --- | --- | --- | --- |
+| `lit` | run-time dependency | `3.3.3` | BSD-3-Clause | 6 (`lit`, `lit-html`, `lit-element`, `@lit/reactive-element`, `@lit-labs/ssr-dom-shim`, `@types/trusted-types`) |
+| `@lit-labs/ssr` | development dependency | `4.1.0` | BSD-3-Clause | 14 (`@lit-labs/ssr`, `@lit-labs/ssr-client`, `@parse5/tools`, `parse5`, `enhanced-resolve`, `node-fetch`, `entities`, `tapable`, `graceful-fs`, `data-uri-to-buffer`, `fetch-blob`, `formdata-polyfill`, `node-domexception`, `web-streams-polyfill`) |
+
+Both versions are pinned exactly (no caret, no tilde). The web workspace
+therefore no longer holds zero run-time dependencies, and it tracks Lit's
+releases for the life of the product; that trade is the ruling's, recorded in
+docs/adr/0023.
+
 ## What is here (cycle HH-4a, Plane HH-30)
 
 - `src/tokens.css`: the sheet. One base vocabulary for internal apps (dark
@@ -19,22 +41,26 @@ under `web/packages/`.
 - The five kits: `scan-and-confirm`, `list-detail`, `guided-flow`, `dashboard`,
   `inbox` (`src/kits/`). Every kit renders its ready state and the five states
   designed once per pattern: empty, loading, offline, conflict, error
-  (`src/state.ts`). Element tags are the Penpot names, one to one.
-- `src/render.ts`: the kits' rendering layer, written by this package. It is a
-  small hand-written layer, not Lit and not vendored from anything; the draft
-  decision record that lays out the substrate options for Colton is
-  `docs/adr/0023` (status draft, choice open). Markup can only be produced by
-  the package's own `html()` behind a module-private symbol, so a caller's
-  object or string is always text and never markup, and icon geometry is bound
-  as escaped attribute values. The scanner over each template fails closed: a
-  binding is accepted only in a position it has positively classified as safe
-  (text content; a quoted attribute value in an attribute on the allow list;
-  a bare attribute name on the bound-name allow list, whose value is then
-  checked against that name), and every other position is refused with a
-  named `HHRenderError`, including any position the literal text leaves
-  unclassifiable and everything after it. An unknown state throws the same
-  named error at render, in Node and in the browser, and a failed browser
-  render never leaves an empty element.
+  (`src/state.ts`). Element tags are the Penpot names, one to one. The kits'
+  render functions are unchanged from the owned-layer drafts: Lit's template
+  rules and the base class carry what the old hand-written layer carried.
+- `src/base.ts`: the whole of what this package adds around Lit: `HHElement`
+  (the `LitElement` subclass the kits extend, with the reactive `state`
+  property declared once, its default, and the named `HHRenderError` wrapper
+  around a failed render), and `defineElement`. There is no other rendering
+  layer in the package; `src/render.ts` is deleted.
+- The raw-markup rule: no render path in this package may offer raw markup.
+  Lit ships exactly one class of API that turns a string into markup: the
+  unsafe directives (unsafeHTML, unsafeSVG, unsafeMathML) and unsafeStatic,
+  with the static-html module that fronts it. `test/no-raw-markup.test.mjs`
+  refuses any import of those, and any mention of their names, anywhere in
+  this package and in any package that depends on this one, and refuses the
+  raw DOM paths (`innerHTML =`, `outerHTML =`, `insertAdjacentHTML`,
+  `document.write`) beside them. The gate is proven able to fail: its scanners
+  are pinned against planted offences in the suite, and removing a refusal
+  turns a named test red. Lit's own rules carry the rest: an interpolated
+  value lands as a text node or an attribute value, never as markup, and the
+  kits bind only closed-union constants, flags, and text.
 - `src/primitives.ts`: the Ionic seam: `button`, `chip`, `spinner` and `row`
   with the call sites the `ion-*` primitives will occupy. The disabled rule and
   the focus ring live here, once, so no kit can get them wrong.
@@ -48,22 +74,26 @@ under `web/packages/`.
   shown geometry and every place state is shown; disabled changes colour, not
   opacity, asserted as a token swap with no opacity or filter declaration and
   no inline fade in any rendered control), per-kit per-state render coverage,
-  and a headless-browser leg (see below) that registers the real custom
-  elements and asserts each kit in each state in a live page.
+  the raw-markup gate above, and a headless-browser leg (see below) that
+  registers the real custom elements and asserts each kit in each state in a
+  live page.
 - `src/icons/README.md`: the icon package seam. Documentation only; it records
   the registry format (DIB-ICONS-1) this package adopts when the ERP lane
   lands, and how the two icon inventories stay in step. No code imports the
   ERP's registry here.
 - The harness: `harness/index.html` is the committed static page (built by
-  `harness/build.mjs` from the same render functions the elements paint), every
-  kit in every state at the two walkthrough widths, 1440 and 1920, with no
-  build step at view time and no client scripts; the build commits all four
-  theme and brand variants as files beside it (`index-light.html`,
-  `index-hh-pro.html`, `index-light-hh-pro.html`), so a designer opens any of
-  them by double click and no server is needed to see both themes and the
-  hh-pro brand. Each cell paints inside its own declarative shadow root, so
-  every kit is styled under its own sheet, and the build writes each kit's
-  sheet once to `harness/sheets/<tag>.css`; that folder travels with the
+  `harness/build.mjs` through Lit's server render, from the same render
+  functions the elements paint), every kit in every state at the two
+  walkthrough widths, 1440 and 1920, with no build step at view time and no
+  client scripts; the build commits all four theme and brand variants as files
+  beside it (`index-light.html`, `index-hh-pro.html`,
+  `index-light-hh-pro.html`), so a designer opens any of them by double click
+  and no server is needed to see both themes and the hh-pro brand. Each cell
+  paints inside its own declarative shadow root (built by this package's
+  builder, as before: Lit's server render is used for the kits' templates, and
+  it adds only inert comment markers, never a shadow root of its own on this
+  path), so every kit is styled under its own sheet, and the build writes each
+  kit's sheet once to `harness/sheets/<tag>.css`; that folder travels with the
   pages (a page copied without `harness/sheets/` renders unstyled).
   `harness/serve.mjs` serves the same variants from the same builder
   (`/?theme=light`, `/?brand=hh-pro`) plus the sheets, refuses to serve over an
@@ -74,8 +104,9 @@ under `web/packages/`.
 
 Node 22 only: the sources use type stripping, which is default-on from Node
 22.18 (this machine's Node 22 is `/snap/bin/node`; the system `node` may be
-older). Zero npm dependencies in the package itself; the dev-only typescript
-and type packages come from the workspace install at `web/`.
+older). The package's dependencies come from the workspace install at `web/`:
+`lit` at run time, and the dev-only `@lit-labs/ssr`, `typescript` and type
+packages beside it.
 
 ```
 node --import ./src/_ts-js-loader.mjs --test 'test/*.test.mjs'   # the suite
@@ -96,15 +127,16 @@ move it off screen, set its colour equal to the card it sits on, or collapse
 its container to zero height and still pass. It drives the browser over the
 DevTools protocol with
 Node 22's own WebSocket (`test/_lib/cdp.mjs`): no Playwright, no new
-dependency. It finds a browser at `$HH_DS_BROWSER`, then the usual PATH names,
-then the Playwright cache. When none exists the leg fails loudly if `CI` is
-set (a skipped gate is a failed gate; the workflow step names google-chrome
-for exactly this reason) and skips with a loud, named reason otherwise; under
-bun it never runs, and because bun's node:test layer ignores a `{ skip }`
-option, the loud statement registers there as a plain passing test: the tally
-counts it as a pass (the CI log shows it), with the named reason carried on
-its console output, while under Node the same statement registers as a skip
-carrying the reason, so no Node tally counts the skipped leg as a pass.
+dependency beyond the substrate itself. It finds a browser at
+`$HH_DS_BROWSER`, then the usual PATH names, then the Playwright cache. When
+none exists the leg fails loudly if `CI` is set (a skipped gate is a failed
+gate; the workflow step names google-chrome for exactly this reason) and skips
+with a loud, named reason otherwise; under bun it never runs, and because bun's
+node:test layer ignores a `{ skip }` option, the loud statement registers there
+as a plain passing test: the tally counts it as a pass (the CI log shows it),
+with the named reason carried on its console output, while under Node the same
+statement registers as a skip carrying the reason, so no Node tally counts the
+skipped leg as a pass.
 
 ## Measured notes the sheet's readers asked for
 
@@ -146,29 +178,28 @@ carrying the reason, so no Node tally counts the skipped leg as a pass.
 
 ## Recorded deviations
 
-The source brief names Lit and Ionic as the kit substrate. The web workspace
-carries no run-time dependencies and this lane may add none (what it installs,
-typescript and the Node type packages, is dev-only), so:
+The source brief names Lit and Ionic as the kit substrate and primitive
+library. Lit has landed as the substrate (docs/adr/0023, option 2, accepted).
+Ionic has not:
 
-- `src/render.ts` is a small hand-written rendering layer, owned here, named
-  for what it is (see the header in the file). The decision to own it instead
-  of taking the real library, with the alternative and the reasons, is the
-  draft `docs/adr/0023` awaiting Colton's ruling; if the real Lit lands, the
-  file is deleted and the imports re-point at it, and the kits' render
-  functions do not change.
 - `src/primitives.ts` is the Ionic seam, as described above. When Ionic lands
-  as a workspace dependency, the bodies of these helpers swap and the kits do
-  not change.
+  as a workspace dependency, the BODIES of these helpers swap to the ion-*
+  primitives and the kits do not change.
 
-Both are the locked spec's sanctioned vendor-minimal path, recorded rather than
-silent. The kits' interaction wiring is intentionally absent: these are pattern
-renders with real `<button>` elements carrying `data-action`. The way to wire
-them is NOT to attach listeners to content inside a kit: the layer's measured
-limit is that every update replaces the whole shadow root, so a listener
-attached to kit content (and focus with it) is gone at the next render, even a
-re-render to the same state. The supported pattern is delegation on the HOST
-element: attach one listener to the `<hh-*>` element itself and read the
-control off `event.composedPath()` inside it:
+## Wiring kit interactions: delegate on the host
+
+The kits are pattern renders with real `<button>` elements carrying
+`data-action`. Under Lit, the element's shadow DOM is not wiped on a render:
+Lit diffs its parts, so DOM a template keeps producing survives from render to
+render. A listener attached to CONTENT inside a kit therefore survives a
+re-render to the same state (measured: element identity and focus survive an
+explicit update). What it does not survive is a render that swaps the template:
+the designed states replace a kit's body with a different template, the old
+nodes go, and a content listener and its focus go with them.
+
+So the supported pattern is still delegation on the HOST element: attach one
+listener to the `<hh-*>` element itself and read the control off
+`event.composedPath()` inside it:
 
 ```js
 host.addEventListener('click', (event) => {
@@ -181,6 +212,10 @@ Not `event.target.closest('[data-action]')`: the shadow boundary retargets
 `event.target` to the host itself, so at the host it IS the host and `closest`
 finds nothing (measured in the browser leg, whose consumer-listener test
 asserts both halves: the retargeting and the action arriving off
-`composedPath()`). The host is never replaced by a render, so host listeners
-survive. The same limit is stated in `docs/adr/0023`, and it stands whatever
-Colton later rules on the substrate.
+`composedPath()`). This half of the advice is unchanged from the owned layer
+and it is a shadow-DOM fact, not a renderer choice: it holds for every Lit
+component and would hold for any open shadow root. The host is never replaced
+by a render, so host listeners survive anything. If a consumer wires a
+listener INSIDE a template (`@click=${...}` in its own Lit template), Lit
+attaches and detaches it with the part, so it lives and dies with the node it
+is on, which is the same fact stated from the template side.
