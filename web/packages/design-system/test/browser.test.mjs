@@ -3,17 +3,20 @@
 // executed anywhere. This leg registers the five custom elements in headless
 // Chromium over the DevTools protocol (zero npm dependencies: Node 22's global
 // WebSocket, test/_lib/cdp.mjs), then renders every kit in every state in the
-// live DOM and asserts the page contents per kit and state, and holds the
-// harness page to a clean layout at all three widths (1440, 1920, and the 400
-// the review flagged).
+// live DOM, asserts what a person would SEE (the state words and icons painted
+// with size, visibility and opaque colour; disabled controls unfaded), and
+// holds the harness page to a clean layout at every gate width (1920, 1440,
+// 1280, 768, and the 400 the review flagged).
 //
 // The page's sources are served through Node's own TypeScript stripping
 // (module.stripTypeScriptTypes): the same job src/_ts-js-loader.mjs does for
 // the Node process, done for a browser page. No build step, no new dependency.
 //
-// The skip is LOUD on purpose: a silent skip would read as a pass, so when no
-// global WebSocket, no stripping API (Node 22.13+), or no browser binary
-// exists, the reason is printed and a visible test registers in its place.
+// The skip is LOUD, and in CI it is not a skip at all: when no global
+// WebSocket, no stripping API (Node 22.13+), or no browser binary exists, the
+// reason is printed and a visible test registers in its place locally; when
+// CI is set, the leg FAILS naming what is missing, because a skipped gate is
+// a failed gate.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 import { findBrowserBinary, launchBrowser } from './_lib/cdp.mjs';
 import { KIT_STATES, STATE_META } from '../src/state.js';
-import { KITS, buildHarnessPage } from '../src/harness-page.js';
+import { KITS, buildHarnessPage, harnessSheets } from '../src/harness-page.js';
 
 // Guarded, not static: a runtime without this export (bun's node:module) would
 // otherwise fail the whole file at link time instead of skipping loudly below.
@@ -82,7 +85,11 @@ function skipReason() {
 function elementPage() {
   return `<!doctype html>
 <html>
-<head><meta charset="utf-8"><title>hh design system browser leg</title></head>
+<head>
+<meta charset="utf-8">
+<title>hh design system browser leg</title>
+<link rel="stylesheet" href="/tokens.css">
+</head>
 <body>
 <main id="grid"></main>
 <script type="module">
@@ -104,6 +111,14 @@ function elementPage() {
 function startServer() {
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
+    if (url.pathname === '/tokens.css') {
+      // The element page must paint the DESIGNED colours: without the sheet,
+      // every var() colour is invalid at computed-value time and falls back to
+      // inherited black, and a colour assertion would pass vacuously.
+      res.writeHead(200, { 'content-type': 'text/css; charset=utf-8' });
+      res.end(readFileSync(join(pkgDir, 'src', 'tokens.css'), 'utf8'));
+      return;
+    }
     if (url.pathname === '/') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(elementPage());
@@ -113,6 +128,16 @@ function startServer() {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(buildHarnessPage({ theme: 'dark', brand: 'base' }));
       return;
+    }
+    // The per-kit sheets the harness page's declarative shadow roots link.
+    const sheet = url.pathname.match(/^\/sheets\/([a-z0-9-]+)\.css$/);
+    if (sheet) {
+      const kit = harnessSheets().find((s) => s.tag === sheet[1]);
+      if (kit) {
+        res.writeHead(200, { 'content-type': 'text/css; charset=utf-8' });
+        res.end(kit.css);
+        return;
+      }
     }
     if (url.pathname.startsWith('/src/')) {
       // Map a .js specifier onto its .ts source, stripped for the browser.
@@ -146,8 +171,18 @@ function startServer() {
 // test/harness.test.mjs: bun interleaves async tests across files
 // (oven-sh/bun#5090), so the async legs register on node only.
 const reason = skipReason();
+const inCI = process.env.CI !== undefined && process.env.CI !== '';
 
-if (reason) {
+if (reason && inCI) {
+  // A skipped gate is a failed gate: on a runner (CI set) a missing browser
+  // FAILS the job and names what is missing, it never passes with a warning.
+  test('the headless-browser leg refuses to skip when CI is set', () => {
+    assert.fail(
+      `CI is set and the headless-browser leg cannot run; it fails instead of skipping: ${reason}. ` +
+        `Install the browser the leg uses (google-chrome) or point HH_DS_BROWSER at one.`,
+    );
+  });
+} else if (reason) {
   test('the headless-browser leg has a loud, named reason for not running here', () => {
     console.warn(`SKIPPING the headless-browser leg: ${reason}`);
     assert.ok(reason.length > 0, 'the skip reason must be stated, never silent');
@@ -217,12 +252,15 @@ if (reason) {
     }
   });
 
-  test('the harness page lays out at 1440, 1920 and 400 without sideways scroll or escaping cells', async () => {
+  test('the harness page lays out at every gate width without sideways scroll or escaping cells', async () => {
     const { port, close } = await startServer();
     const cdp = await launchBrowser(binary);
     try {
       await cdp.navigate(`http://127.0.0.1:${port}/harness`);
-      for (const width of [1440, 1920, 400]) {
+      // The widths the two-pane kits must survive: at 1280 and 768 the frames
+      // are narrow enough that a fixed-width pane pushes the page sideways,
+      // which the reviewer proved the 1440/1920/400 list let pass.
+      for (const width of [1920, 1440, 1280, 768, 400]) {
         await cdp.setViewport(width, 1000);
         const m = await cdp.evaluate(
           `(() => {
@@ -242,6 +280,194 @@ if (reason) {
         );
         assert.deepEqual(m.overflowing, [], `at a ${width} pixel window these cells run past their width frame`);
       }
+    } finally {
+      await cdp.close();
+      await close();
+    }
+  });
+
+  test('the leg asserts what a person would see: state words and icons painted, disabled controls unfaded', async () => {
+    // Source-regex gates can always be spelled around; this asserts the PAINT:
+    // per designed state, the state's word and icon have a real box, are
+    // visible, are at least 12 pixels, and are drawn in a colour with its
+    // alpha intact; every disabled button keeps computed opacity 1 and an
+    // opaque colour (a fade is not a state, in the browser too).
+    const { port, close } = await startServer();
+    const cdp = await launchBrowser(binary);
+    try {
+      await cdp.navigate(`http://127.0.0.1:${port}/`);
+      const { tokensLoaded, out: cells } = await cdp.evaluate(
+        `(() => {
+          const tokensLoaded = document.styleSheets.length > 0;
+          const alphaOf = (c) => {
+            const m = String(c).match(/rgba?\\(([^)]+)\\)/);
+            if (!m) return null;
+            const parts = m[1].replace(/\\//g, ' ').trim().split(/[\\s,]+/).map(Number);
+            return parts.length >= 4 ? parts[3] : 1;
+          };
+          const paint = (el, colourProp) => {
+            const cs = getComputedStyle(el);
+            const box = el.getBoundingClientRect();
+            const colour = colourProp ? cs[colourProp] : cs.color;
+            return {
+              display: cs.display,
+              visibility: cs.visibility,
+              fontSize: parseFloat(cs.fontSize),
+              opacity: parseFloat(cs.opacity),
+              colour,
+              alpha: alphaOf(colour),
+              width: box.width,
+              height: box.height,
+            };
+          };
+          const out = [];
+          for (const el of document.querySelectorAll('main > *')) {
+            const root = el.shadowRoot;
+            const kitRoot = root ? root.querySelector('.kit-root') : null;
+            if (!kitRoot) { out.push({ cell: el.dataset.cell, upgraded: false }); continue; }
+            const state = kitRoot.getAttribute('data-state');
+            const wordEl = kitRoot.querySelector('.state-label, .banner-text, .review-title');
+            out.push({
+              cell: el.dataset.cell,
+              upgraded: true,
+              state,
+              word: wordEl ? { text: wordEl.textContent.trim(), ...paint(wordEl) } : null,
+              icons: [...kitRoot.querySelectorAll('svg.icon')].map((i) => paint(i, 'stroke')),
+              disabled: [...kitRoot.querySelectorAll('button[disabled]')].map((b) => paint(b)),
+              selected: kitRoot.querySelectorAll('[aria-current="true"]').length,
+            });
+          }
+          return { tokensLoaded, out };
+        })()`,
+      );
+
+      // The colour assertions below are only honest against the designed
+      // palette: without the sheet every var() colour falls back to inherited
+      // black and an alpha check would pass vacuously.
+      assert.ok(tokensLoaded, 'the element page loaded no token sheet; colour assertions would be vacuous');
+
+      const ROW_KITS = ['hh-list-detail', 'hh-inbox'];
+      const BODY_STATES = ['ready', 'offline', 'conflict'];
+      for (const cell of cells) {
+        assert.ok(cell.upgraded, `${cell.cell}: the element never upgraded`);
+        const [tag, state] = cell.cell.split('/');
+        if (state !== 'ready') {
+          // The word: present, visible, readable, opaque.
+          assert.ok(cell.word, `${cell.cell}: no state word element at all`);
+          assert.ok(cell.word.text.length > 0, `${cell.cell}: the state word is empty`);
+          assert.equal(cell.word.visibility, 'visible', `${cell.cell}: the state word is not visible`);
+          assert.notEqual(cell.word.display, 'none', `${cell.cell}: the state word is display none`);
+          assert.ok(cell.word.fontSize >= 12, `${cell.cell}: the state word renders under 12 pixels (${cell.word.fontSize})`);
+          assert.ok(cell.word.width > 0 && cell.word.height > 0, `${cell.cell}: the state word has an empty box`);
+          assert.ok(
+            cell.word.alpha !== null && cell.word.alpha >= 0.999,
+            `${cell.cell}: the state word colour is not opaque (${cell.word.colour})`,
+          );
+        }
+        // Every icon on the cell (the state's mark, the offline banner's, the
+        // review head's, the done check): painted, visible, opaque.
+        for (const icon of cell.icons) {
+          assert.notEqual(icon.display, 'none', `${cell.cell}: an icon is display none`);
+          assert.equal(icon.visibility, 'visible', `${cell.cell}: an icon is not visible`);
+          assert.ok(icon.width >= 1 && icon.height >= 1, `${cell.cell}: an icon has an empty box`);
+          assert.match(String(icon.colour), /rgb/, `${cell.cell}: an icon stroke did not resolve to a colour`);
+          assert.ok(
+            icon.alpha !== null && icon.alpha >= 0.999,
+            `${cell.cell}: an icon colour is not opaque (${icon.colour})`,
+          );
+        }
+        // Disabled changes colour, not opacity, in the paint as in the sheet.
+        for (const b of cell.disabled) {
+          assert.equal(b.opacity, 1, `${cell.cell}: a disabled control is faded (opacity ${b.opacity})`);
+          assert.ok(
+            b.alpha !== null && b.alpha >= 0.999,
+            `${cell.cell}: a disabled control's ink is not opaque (${b.colour})`,
+          );
+        }
+        // The ARIA half of the selected row, in the live DOM.
+        const expectSelected = ROW_KITS.includes(tag) && BODY_STATES.includes(state) ? 1 : 0;
+        assert.equal(cell.selected, expectSelected, `${cell.cell}: wrong count of aria-current="true" rows`);
+      }
+      // The word assertions must be exercised: every kit in every designed
+      // state had a word to check.
+      const designedCells = cells.filter((c) => c.state !== 'ready');
+      assert.equal(designedCells.length, KITS.length * KIT_STATES.length);
+      assert.ok(designedCells.every((c) => c.word), 'a designed state rendered without a word to assert on');
+    } finally {
+      await cdp.close();
+      await close();
+    }
+  });
+
+  test('an unknown state fails loudly in the browser: a named error and no empty element', async () => {
+    const { port, close } = await startServer();
+    const cdp = await launchBrowser(binary);
+    try {
+      await cdp.navigate(`http://127.0.0.1:${port}/`);
+      const out = await cdp.evaluate(
+        `(() => {
+          const onErr = (ev) => errors.push({ name: ev.error ? ev.error.name : null, message: String(ev.error ? ev.error.message : ev.message) });
+          const errors = [];
+          window.addEventListener('error', onErr);
+          const result = {};
+          // A FAILED FIRST RENDER: the state is bad before the element ever
+          // connects. The markup is built before the shadow root is attached,
+          // so the element must end up with no shadow root at all: never an
+          // empty element. A callback exception is REPORTED to the window,
+          // not thrown into the caller, so the named error is read off the
+          // error event.
+          const bad = document.createElement('hh-scan-and-confirm');
+          bad.setAttribute('state', 'nonsense');
+          document.body.append(bad);
+          result.errorCount = errors.length;
+          result.name = errors[0] ? errors[0].name : null;
+          result.message = errors[0] ? errors[0].message : null;
+          result.shadowAfterRefusal = bad.shadowRoot === null ? 'none' : bad.shadowRoot.innerHTML.length;
+          bad.removeAttribute('state');
+          result.stateAfterRemoval = bad.shadowRoot ? (bad.shadowRoot.querySelector('.kit-root')?.getAttribute('data-state') ?? null) : null;
+          result.errorsAfterRemoval = errors.length;
+          bad.setAttribute('state', 'error');
+          result.stateAfterValid = bad.shadowRoot ? (bad.shadowRoot.querySelector('.kit-root')?.getAttribute('data-state') ?? null) : null;
+          result.errorsAfterValid = errors.length;
+          // A FAILED RE-RENDER of an element already painted: the last good
+          // paint stays (it is never blanked), and the error is still loud.
+          const painted = document.createElement('hh-scan-and-confirm');
+          document.body.append(painted);
+          result.paintedState = painted.shadowRoot ? (painted.shadowRoot.querySelector('.kit-root')?.getAttribute('data-state') ?? null) : null;
+          result.paintedLength = painted.shadowRoot.innerHTML.length;
+          painted.setAttribute('state', 'nonsense');
+          result.errorsAfterBadRerender = errors.length;
+          result.paintedStateAfterRerender = painted.shadowRoot ? (painted.shadowRoot.querySelector('.kit-root')?.getAttribute('data-state') ?? null) : null;
+          result.paintedLengthAfterRerender = painted.shadowRoot.innerHTML.length;
+          window.removeEventListener('error', onErr);
+          return result;
+        })()`,
+      );
+      assert.equal(out.errorCount, 1, 'an unknown state must fail loudly at render with exactly one reported error');
+      assert.equal(out.name, 'HHRenderError', 'the failure must carry the named error');
+      assert.match(out.message, /hh-scan-and-confirm/, 'the error must name the kit');
+      assert.match(out.message, /nonsense/, 'the error must name the bad state');
+      assert.equal(
+        out.shadowAfterRefusal,
+        'none',
+        'a refused first render must not attach an empty shadow root: the element stays unpainted, never blank',
+      );
+      assert.equal(
+        out.stateAfterRemoval,
+        'ready',
+        'removing the attribute must fall back to the field default, not a stale render',
+      );
+      assert.equal(out.errorsAfterRemoval, 1, 'the fallback render must succeed without a second error');
+      assert.equal(out.stateAfterValid, 'error', 'a valid state after the refusal must render again');
+      assert.equal(out.errorsAfterValid, 1, 'the valid render must succeed without a second error');
+      assert.equal(out.paintedState, 'ready', 'the painted element must render before the bad re-render');
+      assert.equal(out.errorsAfterBadRerender, 2, 'a failed re-render must report its error too');
+      assert.equal(
+        out.paintedStateAfterRerender,
+        'ready',
+        'a failed re-render must keep the last good paint, never an empty element',
+      );
+      assert.equal(out.paintedLengthAfterRerender, out.paintedLength, 'the kept paint must be the previous render, byte for byte');
     } finally {
       await cdp.close();
       await close();

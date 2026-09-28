@@ -119,8 +119,19 @@ jobs:
         # setup-node pins Node 22, whose type stripping of the packages' .ts
         # sources is on by default (22.18 and later point releases), so the
         # packages' test and typecheck scripts run as written.
+        #
+        # The design system's real-browser leg drives google-chrome headless
+        # over the DevTools protocol and, because CI is set on this runner, it
+        # FAILS the job instead of skipping when the binary is missing: a
+        # skipped gate is a failed gate. The runner image is expected to ship
+        # google-chrome; this check names it, so an image without one fails
+        # here, naming what is missing.
         run: |
           set -euo pipefail
+          if ! command -v google-chrome >/dev/null 2>&1; then
+            echo "google-chrome is missing from the runner image: the design system's browser leg requires it (that leg fails rather than skip in CI)" >&2
+            exit 1
+          fi
           npm ci
           checked=0
           for dir in packages/*/ apps/*/; do
