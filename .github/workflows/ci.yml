@@ -114,3 +114,35 @@ jobs:
         # serializes packages so locally set gate variables cannot race
         # two packages' fixture cleanups on one scratch database.
         run: go test ./... -count=1 -p 1
+      - name: Web packages (typecheck and Node 22 suite)
+        working-directory: web
+        # setup-node pins Node 22, whose type stripping of the packages' .ts
+        # sources is on by default (22.18 and later point releases), so the
+        # packages' test and typecheck scripts run as written.
+        run: |
+          set -euo pipefail
+          npm ci
+          checked=0
+          for dir in packages/*/ apps/*/; do
+            [ -f "$dir/package.json" ] || continue
+            name="$(basename "$dir")"
+            if grep -q '"typecheck"[[:space:]]*:' "$dir/package.json"; then
+              npm --prefix "$dir" run typecheck
+            elif find "$dir" -path '*/node_modules' -prune -o -name '*.ts' -print | grep -q .; then
+              echo "$name has TypeScript sources but no typecheck script; add one" >&2
+              exit 1
+            else
+              echo "$name: nothing to typecheck"
+            fi
+            if grep -q '"test"[[:space:]]*:' "$dir/package.json"; then
+              npm --prefix "$dir" test
+              checked=$((checked + 1))
+            elif [ -d "$dir/test" ]; then
+              echo "$name has a test directory but no test script; add one" >&2
+              exit 1
+            fi
+          done
+          if [ "$checked" -lt 1 ]; then
+            echo "no web package ran a test suite; the loop above is broken" >&2
+            exit 1
+          fi
