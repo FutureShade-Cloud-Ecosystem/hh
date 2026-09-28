@@ -2,5 +2,9 @@
   "name": "@hh/design-system",
   "version": "0.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "test": "node --import ./src/_ts-js-loader.mjs --test 'test/*.test.mjs'",
+    "serve": "node --import ./src/_ts-js-loader.mjs harness/serve.mjs"
+  }
 }

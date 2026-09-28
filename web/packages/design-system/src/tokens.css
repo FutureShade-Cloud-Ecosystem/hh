@@ -1,0 +1,368 @@
+/* @hh/design-system tokens: ONE base vocabulary for internal apps, plus two
+   brand layers over it: the hh-pro override for the standalone shell, and the
+   contractor --cbrand-* layer that only the public proposal surface applies.
+   This sheet merges the two source vocabularies role for role:
+
+     - the ERP sheet (hardscapeos_dibbits app/src/styles/tokens.css), whose
+       --hos-* names are role names, is the structural parent: dark default in
+       :root, light opt-in via [data-theme="light"], every theme-capable role
+       carried in BOTH halves, and a measured pair behind every ruling;
+     - HH Pro's sheet (hh_pro_dibbits src/ui/styles/theme.css) contributes the
+       three-layer shape (platform, dealer --brand-*, contractor --cbrand-*)
+       and the exact role split of its dealer layer: identity (--brand, the
+       dealer AS TEXT), action (--brand-fill, a pressable control), chrome
+       (--brand-chrome*, the frame).
+
+   THE PREFIX IS --hh-*. The ERP's --hos-* names were NOT carried over verbatim,
+   and that is a decision, not an oversight. The ERP kept its names through its
+   rebrand because ~90 components already consumed them; this sheet has zero
+   consumers, so it starts on role names that belong to the house package
+   instead of to one source app. Every name below is a ROLE name, and the merge
+   decision for each role is recorded beside it: where the value came from, and
+   why. Where this sheet quotes a measured ratio, the number is the ERP sheet's
+   own measurement of the same two values, not a fresh claim.
+
+   THE GOLD RULE (carried unchanged). The brand gold #FFC313 is a SURFACE, never
+   an ink. Every gold fill carries the near-black --hh-accent-ink #0B1725 in
+   BOTH themes, never white: white on gold measures 1.61:1. On light surfaces
+   the gold ROLE as ink is carried by dark-gold #8A6500 (--hh-accent-text),
+   which is what the brand's own site does; it is also the focus ring, which is
+   why a keyboard ring is visible in Light Mode (a gold ring there is 1.50:1 and
+   fails WCAG 1.4.11).
+
+   THE MEASURED BARS (carried unchanged). 4.5:1 (WCAG AA) for anything read as
+   text; 3.0:1 (WCAG 1.4.11, non-text) for a boundary judged as a shape: a focus
+   ring, a solid fill against the surface it sits on. The gates in test/ hold
+   every pair the kits paint to the bar of its class, over the base vocabulary
+   AND each brand override AND each kit state; a pair under its bar fails the
+   suite naming the pair and its ratio.
+
+   PARSING WARNING, learned twice in the source repos. These gates and any
+   future reader of this file parse the token blocks by regex, and this header
+   CONSTANTLY names tokens next to colons. Every parser here strips comments
+   BEFORE it reads declarations, for exactly that reason: a name followed by a
+   colon in prose reads as a declaration whose value swallows the real ones
+   after it. Keep comments inside slash-star pairs and never let a parser see
+   prose as code.
+
+   Two carried conduct rules the kits are built on (from HH Pro's CLAUDE.md):
+   colour never encodes state alone (each state pairs its colour with an icon,
+   a label, or a pattern change), and disabled controls change COLOUR, not
+   opacity (a token swap, never a fade). */
+
+:root {
+  /* ── canvases and surfaces ─────────────────────────────────────────────────
+     Carried from the ERP dark theme, role for role: the page, the card one step
+     off it, and the solid line between them. The ERP paints its line SOLID (an
+     alpha flattened over the navy canvas) because tints that resolve over a
+     translucent line collapse to a wash; the same reasoning holds here. */
+  --hh-page: #071827;
+  --hh-card: #0B2338;
+  --hh-line: #253441;
+
+  /* ── inks ──────────────────────────────────────────────────────────────────
+     Text, and the dimmed ink under it. The light half of --hh-text-dim is the
+     ERP's DIB-409 finding: the most-used dimmed text was under AA on its own
+     page, so the value is checked, not eyeballed. */
+  --hh-text: #FFFFFF;
+  --hh-text-dim: #AEBDCA;
+
+  /* ── the brand gold family (theme-INVARIANT, on purpose) ────────────────────
+     The fill does not flip between themes, so neither does its ink: that is the
+     whole gold rule, and it is why these three are declared once and re-valued
+     by no theme block. Gold AS INK is the one accent role that IS per-theme;
+     see the light half. */
+  --hh-accent: #FFC313;        /* a FILL, never an ink */
+  --hh-accent-hover: #FFD45B;  /* the gold hover fill */
+  --hh-accent-ink: #0B1725;    /* the ONLY ink a gold fill carries: 11.23:1 on the gold, 12.74:1 on the hover */
+  /* Gold as INK, dark half: on the dark page the gold itself reads (11.18:1). */
+  --hh-accent-text: #FFC313;
+
+  /* The focus ring is gold-as-INK (per theme), not the gold fill: the same rule
+     the ERP sheet states for its ring. Declared in both halves. */
+  --hh-focus-ring: var(--hh-accent-text);
+
+  /* ── status inks ───────────────────────────────────────────────────────────
+     Danger, info and success AS TEXT, per theme. Each is tuned to be READ on
+     the theme's own page, and the values are the ERP's: #FF8F9F is 8.28:1 on
+     the dark page, #AB1C31 is 6.65:1 on the light one. */
+  --hh-danger: #FF8F9F;
+  --hh-info: #86BDF6;
+  --hh-success: #58D69B;
+
+  /* ── the solid danger fill, per theme (the D-077 ruling, carried) ───────────
+     A red tuned to be read AS TEXT wants the opposite of what a SOLID red fill
+     under white ink wants, and no single red can be both. So the FILL is
+     per-theme, tuned for one white ink in both halves: white is 4.55:1 on the
+     dark fill and 5.95:1 on the light one. The fill also clears the 3:1
+     non-text bar against the page and the card in both halves. Use
+     --hh-danger for everything red that is text, border or tint, and
+     --hh-danger-fill ONLY for a solid red fill carrying white. */
+  --hh-danger-fill: #D73A51;
+  --hh-danger-fill-ink: #FFFFFF; /* theme-invariant: the fill flips so the ink need not (the D-077 shape) */
+
+  /* ── the solid success fill, per theme (the DIB-468 pattern, carried) ───────
+     Same ruling on green: --hh-success above is text ink; a solid green badge
+     under the near-black accent ink is a second role and gets a second token.
+     The accent ink is 9.89:1 on the dark fill and 5.35:1 on the light one, and
+     both fills clear 3:1 against the page and the card. Use --hh-success for
+     green text and borders, --hh-success-fill for solid fills. */
+  --hh-success-fill: #58D69B;
+
+  /* ── state colours, and they never travel alone ─────────────────────────────
+     good / watch / stop are meaning colours for marks: an icon, a dot, a pill
+     fill. Every use ships with an icon or a word; that rule is tested in
+     test/kits.test.mjs. The LIGHT values are this sheet's one deliberate
+     deviation from the ERP values: #2E8B57 and #C77A15 measure 3.96:1 and
+     3.14:1 as text on the light surfaces, under the 4.5 bar, so they are
+     darkened to #1F7A48 and #9A5F0C (4.76:1 and 4.67:1 on the worst light
+     surface), the ERP's own treatment for a value that misses AA by a little:
+     the value is adjusted minimally rather than the bar softened. */
+  --hh-state-good: #5CC48A;
+  --hh-state-watch: #F0A93A;
+  --hh-state-stop: #F07C6C;
+
+  /* ── disabled is a colour, not a fade ───────────────────────────────────────
+     The carried rule from HH Pro: a filled control at reduced opacity still
+     reads as clickable in daylight. Disabled controls DROP their fill and go
+     grey. This family is the token swap the rule is implemented with, and the
+     kit gate fails if any shipped source reaches for opacity or a filter
+     instead of it. Both pairs clear AA (4.77:1 dark, 5.22:1 light) even though
+     WCAG exempts disabled controls: an honest grey is free. */
+  --hh-disabled-fill: #1B2735;
+  --hh-disabled-ink: #7E93A8;
+  --hh-disabled-line: #2A3949;
+
+  /* ── the dashboard kit's own layer ──────────────────────────────────────────
+     A widget sits ONE step off the page, on its own ground; it is deliberately
+     not the card pair above. Dark steps the SURFACE and takes no shadow; light
+     keeps one surface and lifts with the shadow. */
+  --hh-ground: #0D1420;
+  --hh-widget: #152033;
+  --hh-widget-raised: #1A2740;
+  --hh-hairline: rgba(255,255,255,.07);
+  --hh-track: rgba(255,255,255,.08);
+  --hh-widget-shadow: none;
+
+  --hh-scrim: rgba(2, 7, 12, 0.72);
+
+  /* ── the row stripe ─────────────────────────────────────────────────────────
+     Carried for the list kits: alternating rows, stated as "the row's own
+     ground" and "the row's own ground plus a whisper of the ink", so the pair
+     works on any surface a list is put on. 6% over the dark page, 5% over the
+     light one (near-black at 6% over white is a heavier stripe than white at
+     6% over navy, and light's dimmed ink keeps AA only at 5). A tint is not a
+     measured pair: it resolves over whatever the row sits on, and the inks on
+     it are held to AA by the matrix over the underlying surfaces. */
+  --hh-row: transparent;
+  --hh-row-alt: color-mix(in srgb, var(--hh-text) 6%, transparent);
+
+  --hh-color-scheme: dark;
+
+  /* ── type ───────────────────────────────────────────────────────────────────
+     The ERP's stacks, kept. No webfont ships in this package and none is
+     fetched: the first name is the face a later fonts lane may self-host, and
+     the stack degrades to system faces that are always present. */
+  --hh-font-ui: 'Outfit', 'Segoe UI', system-ui, sans-serif;
+  --hh-font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+
+  /* ── the spacing grid: value-named, and it is Pencil's ───────────────────────
+     The ERP adopted a continuous 4px grid named BY VALUE (--s-4 is 4px) beside
+     its old index scale (--hos-space-4 is 16px), and the index names are
+     legacy. A new sheet starts on the value-named grid only; the index scale is
+     a migration, not a vocabulary, and it is not carried. */
+  --hh-s-2: 2px;  /* the optical nudge, the only half-step */
+  --hh-s-4: 4px;
+  --hh-s-8: 8px;
+  --hh-s-12: 12px;
+  --hh-s-16: 16px;
+  --hh-s-20: 20px;
+  --hh-s-24: 24px;
+  --hh-s-28: 28px;
+  --hh-s-32: 32px;
+  --hh-s-40: 40px;
+  --hh-s-48: 48px;
+  --hh-s-64: 64px;
+
+  /* ── radius, by role ──────────────────────────────────────────────────────── */
+  --hh-radius-control: 10px;
+  --hh-radius-card: 16px;
+  --hh-radius-pill: 999px;
+  --hh-radius-widget: 16px;
+
+  /* ── elevation: exactly two levels, resting and raised ───────────────────────
+     Dark lifts with the SURFACE step and takes no resting shadow; light lifts
+     with the shadow (the ERP's two-layer light shadow: a 1px contact shadow and
+     a wide negative-spread ambient). */
+  --hh-elev-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --hh-elev-2: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --hh-elev-3: 0 32px 90px rgba(0, 0, 0, 0.34);
+
+  /* ── z-index, one ordered scale ───────────────────────────────────────────── */
+  --hh-z-nav: 100;
+  --hh-z-dropdown: 200;
+  --hh-z-overlay: 900;
+  --hh-z-modal: 1000;
+  --hh-z-toast: 1100;
+
+  /* ── breakpoints, documentation for JS/matchMedia; CSS mirrors the px ───────── */
+  --hh-bp-sm: 480px;
+  --hh-bp-md: 768px;
+  --hh-bp-lg: 1024px;
+
+  /* ── the page layout contract ────────────────────────────────────────────────
+     Two gutters, because the block and inline halves are different numbers and
+     a shorthand cannot be reached into by calc(). The measure caps TEXT that
+     has no measure of its own; the reading cap is the pane's. The form column
+     is guarded by min() so a narrow container never scrolls sideways. */
+  --hh-page-gutter: 28px;
+  --hh-page-gutter-block: 24px;
+  --hh-measure: 62ch;
+  --hh-reading-max: 1000px;
+  --hh-content-max: 1040px;
+  --hh-form-col: 320px;
+  --hh-pane-columns: repeat(auto-fit, minmax(min(var(--hh-form-col), 100%), 1fr));
+
+  /* ── safe-area insets ─────────────────────────────────────────────────────── */
+  --hh-safe-top: env(safe-area-inset-top, 0px);
+  --hh-safe-right: env(safe-area-inset-right, 0px);
+  --hh-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --hh-safe-left: env(safe-area-inset-left, 0px);
+
+  /* ── the dealer brand layer (HH Pro's roles, defaulting to the house gold) ────
+     HH Pro's split is carried verbatim as ROLES: identity is the dealer AS TEXT
+     on a card; action is a filled pressable control; chrome is the frame around
+     the content. A consumer that uses only --brand roles with no brand attribute
+     gets the house gold: identity resolves to gold-as-ink (per theme), the fill
+     to the gold fill, the fill's ink to the accent ink. THE GOLD RULE DRAWS A
+     LINE HERE: --brand-on (the ink on the IDENTITY colour) flips with the
+     identity, but --brand-fill-on is pinned to the invariant accent ink in both
+     halves, because the gold FILL never flips and its ink must never read white
+     (1.61:1). --brand-hover has no separate base value: the base brand keeps one
+     identity ink, so hover inherits it. */
+  --brand: var(--hh-accent-text);
+  --brand-hover: var(--hh-accent-text);
+  --brand-on: var(--hh-accent-ink);
+  --brand-fill: var(--hh-accent);
+  --brand-fill-hover: var(--hh-accent-hover);
+  --brand-fill-on: var(--hh-accent-ink);
+  --brand-tint: color-mix(in oklch, var(--brand), black 78%);
+  --brand-chrome: var(--hh-page);
+  --brand-chrome-2: var(--hh-card);
+  --brand-chrome-line: var(--hh-line);
+  --brand-chrome-on: var(--hh-text);
+  --brand-chrome-muted: var(--hh-text-dim);
+  --brand-chrome-accent: var(--brand);
+
+  /* ── the contractor brand layer (the public proposal surface ONLY) ────────────
+     The homeowner's client is the contractor, so on the public proposal the
+     contractor's accent beats the dealer's brand. The layer is TWO tokens,
+     exactly as HH Pro expresses it; the proposal surface sets them at runtime
+     from the quote's accent colour, with the on-ink CHOSEN for that accent and
+     never assumed white. Nothing outside the proposal surface may set or
+     consume them (asserted in test/tokens.test.mjs), and a runtime value must
+     clear the same 4.5:1 bar the static palette is held to. The defaults defer
+     to the dealer layer so the tokens always resolve. */
+  --cbrand: var(--brand);
+  --cbrand-on: var(--brand-on);
+}
+
+/* ══ LIGHT, the second half ═══════════════════════════════════════════════════════
+   Same token NAMES, light values, following the ERP sheet's structure: the light
+   theme was EXTRACTED, not inverted (roughly half the brand site is already a
+   worked light theme, and an algorithmic inversion of the navy would have produced
+   a worse one). Every theme-capable role is DECLARED here, not inherited: both
+   halves of a per-theme pair are a design decision each, and the light one must
+   not silently follow a future edit to the dark one. The gold FILL family, the
+   fonts, the spacing grid, the radii, the z scale and the layout contract are
+   theme-invariant ON PURPOSE and are re-valued by no block. */
+:root[data-theme="light"] {
+  --hh-page: #F5F7FA;
+  --hh-card: #FFFFFF;
+  --hh-line: #DBE3EA;
+  --hh-text: #0B1725;
+  --hh-text-dim: #5C6B7A;
+  --hh-row: transparent;
+  --hh-row-alt: color-mix(in srgb, var(--hh-text) 5%, transparent);
+
+  /* Gold as INK flips; the fill does not. #FFC313 as text is 1.50:1 on the light
+     page; dark-gold #8A6500 is 4.96:1 there, and it carries the focus ring. */
+  --hh-accent-text: #8A6500;
+  --hh-focus-ring: var(--hh-accent-text);
+
+  --hh-danger: #AB1C31;
+  --hh-danger-fill: #C0223A;
+  --hh-danger-fill-ink: #FFFFFF;
+  --hh-info: #14497B;
+  --hh-success: #0F6C43;
+  --hh-success-fill: #319E69;
+  --hh-state-good: #1F7A48;
+  --hh-state-watch: #9A5F0C;
+  --hh-state-stop: #C0392B;
+
+  --hh-disabled-fill: #E3E9EF;
+  --hh-disabled-ink: #51616F;
+  --hh-disabled-line: #CBD5DF;
+
+  /* The widget layer's light half: a warm grey ground under a pure white card,
+     because a cool ground under a white card reads as two whites. The lift is
+     the shadow, not a second surface. */
+  --hh-ground: #F3F2EE;
+  --hh-widget: #FFFFFF;
+  --hh-widget-raised: #FFFFFF;
+  --hh-hairline: rgba(0,0,0,.06);
+  --hh-track: rgba(0,0,0,.06);
+  --hh-widget-shadow: 0 1px 2px rgba(0,0,0,.05), 0 14px 34px -16px rgba(0,0,0,.26);
+
+  --hh-scrim: rgba(7, 24, 39, 0.42);
+
+  /* Light elevation: navy shadows, not black ones. A black shadow on a #F5F7FA
+     page reads as a smudge rather than a lift. */
+  --hh-elev-1: 0 1px 2px rgba(7, 24, 39, 0.06);
+  --hh-elev-2: 0 12px 30px rgba(7, 24, 39, 0.06);
+  --hh-elev-3: 0 24px 60px rgba(7, 24, 39, 0.16);
+
+  --hh-color-scheme: light;
+
+  /* The base brand's on-ink flips because the IDENTITY flips: in light the brand
+     identity is dark-gold #8A6500, and the ink that sits ON it is white (5.63:1).
+     The FILL's ink does NOT follow: --brand-fill-on stays the invariant accent
+     ink, declared in :root and re-valued by no block. */
+  --brand-on: #FFFFFF;
+  /* HH Pro's tint formula, light half: mixing toward white on a light ground. */
+  --brand-tint: color-mix(in oklch, var(--brand), white 90%);
+}
+
+/* ══ the hh-pro brand override: the standalone shell ══════════════════════════════
+   HH Pro's dealer layer, carried VERBATIM in oklch so this sheet says what that
+   product's sheet says (the values below are HH Pro's own, unconverted). The
+   identity roles are re-valued here, and the ACTION roles follow the identity
+   through HH Pro's own defaults (--brand-fill: var(--brand)), declared in BOTH
+   blocks because each half is its own decision: in this shell the pressable
+   control is the dealer blue, not the house gold. The identity flips per theme,
+   so --brand-on is declared in both blocks: white ink on the deep blue in
+   light, the dark surface ink on the light blue in dark. Measured against this
+   package's canvases: the light identity is 5.16:1 on the light page and its
+   white on-ink clears AA on the identity fill; the dark identity is 6.60:1 on
+   the dark page and its on-ink 7.03:1 on the fill. */
+:root[data-brand="hh-pro"] {
+  --brand: oklch(70% 0.17 255);
+  --brand-hover: oklch(76% 0.17 255);
+  --brand-on: oklch(17% 0.012 265);
+  --brand-fill: var(--brand);
+  --brand-fill-hover: var(--brand-hover);
+  --brand-fill-on: var(--brand-on);
+}
+
+:root[data-brand="hh-pro"][data-theme="light"] {
+  --brand: oklch(52% 0.19 255);
+  --brand-hover: oklch(46% 0.19 255);
+  --brand-on: oklch(100% 0 0);
+  --brand-fill: var(--brand);
+  --brand-fill-hover: var(--brand-hover);
+  --brand-fill-on: var(--brand-on);
+}
+
+/* The contractor layer needs no brand block: it is a runtime layer. The public
+   proposal surface sets --cbrand and --cbrand-on on its own root, from the quote.
+   See the :root declaration above for the rules that bind it. */
