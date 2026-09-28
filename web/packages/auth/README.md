@@ -262,10 +262,13 @@ platform's storage globals for recording fakes for the length of the test:
 storages, and `document.cookie`, the Cache API, and `indexedDB` become
 recording stubs. The sign-in, custody, and unlock flows then run through
 default-constructed stores, the production resolution path, so a write to
-the real global session storage, or to a persistent surface reached through
-a computed property name or an alias installed before the swap, lands in a
-recording fake and is checked, key by key and value by value, with the
-clock injected so the fixture is live and the capture is never vacuous.
-What even this capture cannot see: a storage object a caller injects into
-the mirror (the shell vouches for its own backing), and anything written
-after the test has restored the globals.
+the real global session storage reached through the swapped global at call
+time, including one through a computed property name evaluated when the
+write happens, lands in a recording fake and is checked, key by key and
+value by value, with the clock injected so the fixture is live and the
+capture is never vacuous. What even this capture cannot see: an alias of a
+storage object taken before the swap (an alias captured at module import
+time holds the real accessor, and a write through it lands outside every
+recording fake with no gate the wiser), a storage object a caller injects
+into the mirror (the shell vouches for its own backing), and anything
+written after the test has restored the globals.

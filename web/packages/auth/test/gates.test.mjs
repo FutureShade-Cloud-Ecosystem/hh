@@ -137,9 +137,14 @@ test("the runtime code paths write no token, no PIN, no password, no handle into
   // The platform's storage globals are swapped for recording fakes for the
   // length of the test, and the flows below run through DEFAULT-CONSTRUCTED
   // stores, the production resolution path. A write to the real global
-  // session storage, or to a persistent surface reached through a computed
-  // property name or an alias, lands in a recording fake and is seen here;
-  // an injected recording storage alone once missed exactly that.
+  // session storage reached through the swapped global at call time,
+  // including one through a computed property name evaluated when the write
+  // happens, lands in a recording fake and is seen here; an injected
+  // recording storage alone once missed exactly that. An alias of a storage
+  // object taken BEFORE the swap holds the real accessor and a write
+  // through it is NOT seen: that limit is recorded in the README.
+  // document, caches and indexedDB are swapped and restored here too, so
+  // the stubs outlive this test no more than the storages do.
   const sessionGlobal = new RecordedStorage();
   const localGlobal = new RecordedStorage();
   const cookieWrites = [];
