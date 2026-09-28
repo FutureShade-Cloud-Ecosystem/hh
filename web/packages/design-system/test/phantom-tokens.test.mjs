@@ -18,9 +18,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 import {
   definedTokens,
+  pkgDir,
   readPkg,
   referencedTokens,
   shippedStyleFiles,
@@ -144,4 +147,31 @@ test('the tests are excluded from the scan, and the exclusion is honest', () => 
   const files = shippedStyleFiles();
   const leaked = files.filter((f) => f.startsWith('test/') || /\.test\./.test(f) || f.includes('_ts-js-loader'));
   assert.deepEqual(leaked, [], `test machinery leaked into the shipped-file scan: ${leaked.join(', ')}`);
+});
+
+test('every test file in this package lives in test/, where the Node step runs it', () => {
+  // The CI web loop only runs a package's test script, and this package's test
+  // script runs test/*.test.mjs. A *.test.* file placed anywhere else (src/,
+  // harness/, the package root) would be silently unrun by the Node step; the
+  // root bun drift gate would still pick it up, so the two suites would quietly
+  // disagree. This gate fails the suite instead: move the file into test/.
+  const strays = [];
+  const walk = (dir, prefix) => {
+    for (const entry of readdirSync(dir)) {
+      const rel = prefix ? `${prefix}/${entry}` : entry;
+      const abs = join(pkgDir, rel);
+      if (statSync(abs).isDirectory()) {
+        if (entry === 'node_modules' || entry === 'test') continue;
+        walk(abs, rel);
+      } else if (/\.test\.[cm]?[jt]s$/.test(entry)) {
+        strays.push(rel);
+      }
+    }
+  };
+  walk(pkgDir, '');
+  assert.deepEqual(
+    strays.sort(),
+    [],
+    `a test file lives outside test/, where the Node step cannot run it; move it into test/:\n  ${strays.join('\n  ')}`,
+  );
 });
