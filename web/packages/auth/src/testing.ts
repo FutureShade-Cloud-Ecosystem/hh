@@ -1,4 +1,4 @@
-// The test entry point for @hh/auth, following the api-client precedent
+// The test entry point for @hardscapehouse/auth, following the api-client precedent
 // (web/packages/api-client/src/testing.ts): test doubles and gates data that
 // deliberately never ride the public entry (src/index.ts) into a browser
 // bundle.

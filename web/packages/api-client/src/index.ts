@@ -1,4 +1,4 @@
-// The public surface of @hh/api-client: the hand-written runtime and the
+// The public surface of @hardscapehouse/api-client: the hand-written runtime and the
 // generated surface (wire types, descriptors, manifest, and the operations
 // grouped one namespace per document tag). The generated tree is never
 // hand-edited; regenerate it with node scripts/gen-client/gen-client.mjs.

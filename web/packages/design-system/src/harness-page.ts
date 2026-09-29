@@ -35,7 +35,7 @@ import { GuidedFlowKit } from './kits/guided-flow.js';
 import { DashboardKit } from './kits/dashboard.js';
 import { InboxKit } from './kits/inbox.js';
 
-export const HARNESS_TITLE = '@hh/design-system harness';
+export const HARNESS_TITLE = '@hardscapehouse/design-system harness';
 export const WIDTHS = [1440, 1920] as const;
 export type HarnessTheme = 'dark' | 'light';
 export type HarnessBrand = 'base' | 'hh-pro';

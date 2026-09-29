@@ -76,6 +76,11 @@ jobs:
           exit 1
       - name: App Shape check
         run: bash scripts/check-shape.sh
+      - name: Scope gate
+        # No file names the old npm scope outside the one history note, and
+        # no web workspace package is named outside @hardscapehouse/
+        # (HH-30, docs/scope-rename-history.md).
+        run: bash scripts/check-scope.sh
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -99,7 +104,7 @@ jobs:
         run: |
           set -euo pipefail
           # The web workspace is installed by the step above: the web
-          # packages' suites import @hh/api-client by its bare name, and on a
+          # packages' suites import @hardscapehouse/api-client by its bare name, and on a
           # fresh checkout there is no web/node_modules to resolve it from
           # until npm ci has linked the workspace. Without that install the
           # gate goes red on every fresh runner while passing on a

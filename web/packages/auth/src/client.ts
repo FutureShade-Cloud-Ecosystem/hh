@@ -40,7 +40,7 @@
 // issuer's own session is an httpOnly cookie script cannot read, so the
 // platform answers for the sign-in while this package holds nothing to
 // trade.
-import { err, ok, type HeaderProvider, type Result } from "@hh/api-client";
+import { err, ok, type HeaderProvider, type Result } from "@hardscapehouse/api-client";
 import type { SessionStore } from "./session.js";
 
 function asMessage(error: unknown): string {

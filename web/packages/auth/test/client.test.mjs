@@ -6,7 +6,7 @@
 // state at all.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ApiClient } from "@hh/api-client";
+import { ApiClient } from "@hardscapehouse/api-client";
 import {
   AuthController,
   DeviceLock,
