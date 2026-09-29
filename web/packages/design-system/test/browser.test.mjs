@@ -244,9 +244,20 @@ if (reason && inCI && !underBun) {
       const snapshot = await cdp.evaluate(
         `(async () => {
           // Lit renders on a microtask after connect, not inside
-          // connectedCallback: give the elements their first update before
-          // the snapshot reads them.
-          await new Promise((r) => setTimeout(r, 150));
+          // connectedCallback, and each test drives a cold browser: wait for
+          // the tags to register and the elements to upgrade instead of a
+          // fixed sleep, which loses that race under load.
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              const els = [...document.querySelectorAll('main > *')];
+              const ok = ${JSON.stringify(TAGS)}.every((tag) => !!customElements.get(tag)) &&
+                els.length > 0 && els.every((el) => el.shadowRoot !== null);
+              if (ok || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
           const cells = [];
           for (const el of document.querySelectorAll('main > *')) {
             const root = el.shadowRoot;
@@ -350,7 +361,21 @@ if (reason && inCI && !underBun) {
       await cdp.navigate(`http://127.0.0.1:${port}/`);
       const { tokensLoaded, out: cells } = await cdp.evaluate(
         `(async () => {
-          await new Promise((r) => setTimeout(r, 150));
+          // Lit renders on a microtask after connect, not inside
+          // connectedCallback, and each test drives a cold browser: wait for
+          // the tags to register and the elements to upgrade instead of a
+          // fixed sleep, which loses that race under load.
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              const els = [...document.querySelectorAll('main > *')];
+              const ok = ${JSON.stringify(TAGS)}.every((tag) => !!customElements.get(tag)) &&
+                els.length > 0 && els.every((el) => el.shadowRoot !== null);
+              if (ok || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
           const tokensLoaded = document.styleSheets.length > 0;
           const alphaOf = (c) => {
             const m = String(c).match(/rgba?\\(([^)]+)\\)/);
@@ -472,6 +497,17 @@ if (reason && inCI && !underBun) {
           window.addEventListener('error', onErr);
           window.addEventListener('unhandledrejection', onRejection);
           const settle = () => new Promise((r) => setTimeout(r, 80));
+          // Each test drives a cold browser: the module that registers the
+          // tags may still be loading. Wait for the tag before creating an
+          // element, so append upgrades it synchronously.
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              if (customElements.get('hh-scan-and-confirm') || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
           const stateOf = (el) => el.shadowRoot ? (el.shadowRoot.querySelector('.kit-root')?.getAttribute('data-state') ?? null) : null;
           const result = {};
           // A FAILED FIRST RENDER: the state is bad before the element ever
@@ -580,7 +616,21 @@ if (reason && inCI && !underBun) {
       await cdp.navigate(`http://127.0.0.1:${port}/`);
       const out = await cdp.evaluate(
         `(async () => {
-          await new Promise((r) => setTimeout(r, 150));
+          // Lit renders on a microtask after connect, not inside
+          // connectedCallback, and each test drives a cold browser: wait for
+          // the tags to register and the elements to upgrade instead of a
+          // fixed sleep, which loses that race under load.
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              const els = [...document.querySelectorAll('main > *')];
+              const ok = ${JSON.stringify(TAGS)}.every((tag) => !!customElements.get(tag)) &&
+                els.length > 0 && els.every((el) => el.shadowRoot !== null);
+              if (ok || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
           const host = document.querySelector('hh-scan-and-confirm[state="ready"]');
           const received = [];
           // The README's pattern, in shape: one listener on the host element,
