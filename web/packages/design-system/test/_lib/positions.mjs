@@ -631,7 +631,7 @@ export const thisPackageSources = () => {
   return out;
 };
 
-/** Every workspace package that depends on @hh/design-system, by manifest or
+/** Every workspace package that depends on @hardscapehouse/design-system, by manifest or
  * by import. */
 export const dependentPackages = () => {
   const out = [];
@@ -647,11 +647,11 @@ export const dependentPackages = () => {
       const abs = join(dir, name);
       if (!statSync(abs).isDirectory()) continue;
       const manifest = manifestOf(abs);
-      if (!manifest || manifest.name === '@hh/design-system') continue;
+      if (!manifest || manifest.name === '@hardscapehouse/design-system') continue;
       const deps = { ...(manifest.dependencies ?? {}), ...(manifest.devDependencies ?? {}), ...(manifest.peerDependencies ?? {}) };
       const sources = walkSources(abs, `${group}/${name}`, []);
-      const imports = sources.some((s) => s.text.includes('@hh/design-system'));
-      if (deps['@hh/design-system'] || imports) out.push({ name: manifest.name ?? `${group}/${name}`, sources });
+      const imports = sources.some((s) => s.text.includes('@hardscapehouse/design-system'));
+      if (deps['@hardscapehouse/design-system'] || imports) out.push({ name: manifest.name ?? `${group}/${name}`, sources });
     }
   }
   return out;

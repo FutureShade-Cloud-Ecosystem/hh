@@ -182,7 +182,7 @@ const thisPackageSources = () => {
   return out;
 };
 
-/** Every workspace package that depends on @hh/design-system, by manifest or
+/** Every workspace package that depends on @hardscapehouse/design-system, by manifest or
  * by import: where this gate's rule must hold just as hard. */
 const dependentPackages = () => {
   const out = [];
@@ -198,11 +198,11 @@ const dependentPackages = () => {
       const abs = join(dir, name);
       if (!statSync(abs).isDirectory()) continue;
       const manifest = manifestOf(abs);
-      if (!manifest || manifest.name === '@hh/design-system') continue;
+      if (!manifest || manifest.name === '@hardscapehouse/design-system') continue;
       const deps = { ...(manifest.dependencies ?? {}), ...(manifest.devDependencies ?? {}), ...(manifest.peerDependencies ?? {}) };
       const sources = walkSources(abs, `${group}/${name}`, []);
-      const imports = sources.some((s) => s.text.includes('@hh/design-system'));
-      if (deps['@hh/design-system'] || imports) out.push({ name: manifest.name ?? `${group}/${name}`, sources });
+      const imports = sources.some((s) => s.text.includes('@hardscapehouse/design-system'));
+      if (deps['@hardscapehouse/design-system'] || imports) out.push({ name: manifest.name ?? `${group}/${name}`, sources });
     }
   }
   return out;
@@ -316,7 +316,7 @@ test('the walk finds this package and names the workspace packages it must also 
   assert.deepEqual(
     dependentPackages().map((d) => d.name),
     [],
-    'a package now depends on @hh/design-system; its sources are scanned below, and this lock must name it deliberately',
+    'a package now depends on @hardscapehouse/design-system; its sources are scanned below, and this lock must name it deliberately',
   );
 });
 
