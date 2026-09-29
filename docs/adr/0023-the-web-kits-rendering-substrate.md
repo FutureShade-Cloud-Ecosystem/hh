@@ -160,7 +160,8 @@ are the baseline the re-measurement below is measured against:
 
 The same five limits, re-measured against the adopted substrate by the same
 method (a live page over the DevTools protocol, real kit elements, DOM
-identity and paint facts read back through Runtime.evaluate):
+identity and paint facts read back through Runtime.evaluate). The probe and
+limit figures in this section stand as the supervisor's measurement:
 
 - **Whole-root redraw: gone.** No render replaces the shadow root. Element
   identity survives an update (the same list row is the same node after an

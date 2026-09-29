@@ -185,6 +185,11 @@ Ionic has not:
 - `src/primitives.ts` is the Ionic seam, as described above. When Ionic lands
   as a workspace dependency, the BODIES of these helpers swap to the ion-*
   primitives and the kits do not change.
+- The labelled icon's text alternative moved from a `<title>` child to the
+  `aria-label` attribute when Lit landed, because Lit allows no expression
+  inside a raw-text element's body and a raw-markup path to put the label
+  there is exactly what this package refuses. The trade, stated plainly: the
+  accessible name is kept and the hover tooltip is lost.
 
 ## Wiring kit interactions: delegate on the host
 

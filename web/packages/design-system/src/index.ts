@@ -10,6 +10,7 @@
 // because the gate refuses the mention as well as the import.
 export { html, css } from 'lit';
 export { HHElement, defineElement, HHRenderError } from './base.js';
+export { hhAddress } from './address.js';
 export {
   KIT_STATES,
   STATE_META,
