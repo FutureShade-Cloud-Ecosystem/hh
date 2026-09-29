@@ -8,25 +8,38 @@
 // one IS its rule's fail proof: it asserts a refusal, so removing the rule
 // turns this file red.
 //
-// The fixtures live here and this file is excluded from both gates' walks BY
-// NAME (test/no-raw-markup.test.mjs and test/positions.test.mjs, in
-// GATE_FILES), stated in the lock further down.
+// Beside it, the IMPORT LIST: the gate names what is allowed and refuses the
+// rest. In every walked file of the package, every import, re-export, dynamic
+// import and require is refused unless its specifier and its imported names
+// are on the list written in the gate (IMPORT_ALLOW_LIST, in
+// test/_lib/positions.mjs), and eval, new Function, and a dynamic import or
+// require whose argument is not a string literal are refused by the parser.
+// The list itself is locked to the package's actual imports by a test below.
+//
+// The fixtures live here. This file and test/no-raw-markup.test.mjs are
+// excluded from the POSITION walk and the raw-markup walk BY NAME (GATE_FILES),
+// because those two scans read raw text and would see the fixture strings; the
+// import list scan and the two-place scan walk this file too and stay quiet on
+// it, because every fixture here is a string, which the parser never reads as
+// code. The exclusion is stated in the lock further down.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import {
   auditSource,
-  auditTagIntroductions,
+  auditImports,
   auditTagUsages,
   refusedBy,
   extractTemplates,
+  importedSpecifiers,
   thisPackageSources,
   everyPackageSource,
   dependentPackages,
   GATE_FILES,
+  IMPORT_ALLOW_LIST,
   ALLOWED_PROPERTY_OR_EVENT,
   ADDRESS_HELPER,
 } from './_lib/positions.mjs';
@@ -128,24 +141,85 @@ for (const [name, source] of ALLOWED_FIXTURES) {
   });
 }
 
-// ── the tag's introduction: the gate cannot be left by a rename ─────────────────
+// ── the import list: the gate names what is allowed, and refuses the rest ────────
 //
-// The extractor finds a template only where its tag is spelled html or svg,
-// so the gate's second half holds, for every file it walks, that a lit
-// template tag cannot enter a file under any other spelling. Each fixture
-// below is one of the four introduction rules' fail proofs: it asserts a
-// refusal, so removing the rule turns this file red.
+// In every walked file, every import, re-export, dynamic import and require
+// is refused unless its specifier AND its imported names are on the gate's
+// list (IMPORT_ALLOW_LIST, per folder: src, test, harness). html and svg are
+// allowed from lit only, under their own names only. Each fixture below is
+// one refusal's fail proof, naming the file, the LINE and the SPECIFIER, so
+// removing the rule or widening the list turns this file red. Every fixture
+// here is a string, which the parser never reads as code.
 
-const TAG_INTRODUCTION_FIXTURES = [
-  ['an aliased import of html', `import { html as h } from 'lit';`, 'an import of html under the name h'],
-  ['a namespace import from lit', `import * as everything from 'lit';`, 'a namespace import from lit'],
-  ['an import of mathml', `import { mathml } from 'lit';`, 'an import of mathml'],
-  ['a re-export of html from lit', `export { html } from 'lit';`, 'a re-export of html from lit'],
+const LIST_REFUSAL_FIXTURES = [
+  ['lit-element imported aliased (the family package the list does not name)',
+   "import { html as h } from 'lit-element';",
+   'an import from lit-element', 'src/fixture.ts'],
+  ['lit-element imported as a namespace (the specifier alone refuses it)',
+   "import * as litElement from 'lit-element';",
+   'an import from lit-element', 'src/fixture.ts'],
+  ['lit-element imported by subpath',
+   "import { html as h } from 'lit-element/lit-element.js';",
+   'an import from lit-element/lit-element.js', 'src/fixture.ts'],
+  ['a package the list does not name',
+   "import { thing } from 'some-new-package';",
+   'an import from some-new-package', 'src/fixture.ts'],
+  ['a listed package under a name the list does not carry',
+   "import { render } from 'lit';",
+   'an import of render from lit', 'src/fixture.ts'],
+  ['the mathml tag (a name off the lit entry)',
+   "import { mathml } from 'lit';",
+   'an import of mathml from lit', 'src/fixture.ts'],
+  ['the html tag under another name',
+   "import { html as h } from 'lit';",
+   'an import of html under the name h', 'src/fixture.ts'],
+  ['the svg tag under another name',
+   "import { svg as vector } from 'lit';",
+   'an import of svg under the name vector', 'src/fixture.ts'],
+  ['a namespace import from lit',
+   "import * as everything from 'lit';",
+   'a namespace import from lit', 'src/fixture.ts'],
+  ['a default import from lit',
+   "import lit from 'lit';",
+   'an import of default from lit', 'src/fixture.ts'],
+  ['a star re-export from lit',
+   "export * from 'lit';",
+   'a star re-export from lit', 'src/fixture.ts'],
+  ['a namespace re-export from lit',
+   "export * as lit from 'lit';",
+   'a namespace re-export from lit', 'src/fixture.ts'],
+  ['a re-export of the tag under another name',
+   "export { html as h } from 'lit';",
+   'an import of html under the name h', 'src/fixture.ts'],
+  ['a dynamic import whose specifier is not a string literal',
+   'const m = await import(whichLit);',
+   'a dynamic import whose specifier is not a string literal', 'src/fixture.ts'],
+  ['a dynamic import whose names the source does not show',
+   "const m = await import('lit');",
+   'a dynamic import of lit', 'src/fixture.ts'],
+  ['a require whose specifier is not a string literal',
+   'const m = require(whichLit);',
+   'a require whose specifier is not a string literal', 'src/fixture.ts'],
+  ['a require of a listed specifier (the names arrive where the statement does not show them)',
+   "const m = require('lit');",
+   'a require of lit', 'src/fixture.ts'],
+  ['a relative import that resolves outside the package',
+   "import { html } from '../tag-source.js';",
+   'an import from ../tag-source.js', 'test/fixture.mjs'],
+  ['a require of a module outside the package',
+   "const m = require('../../tag-source.js');",
+   'a require of ../../tag-source.js', 'test/fixture.mjs'],
+  ['a call of eval',
+   "const made = eval('makeTag()');",
+   'a call of eval', 'src/fixture.ts'],
+  ['a call of new Function',
+   "const made = new Function('return html');",
+   'a call of new Function', 'src/fixture.ts'],
 ];
 
-for (const [name, source, expectedPosition] of TAG_INTRODUCTION_FIXTURES) {
+for (const [name, source, expectedPosition, fixtureFile] of LIST_REFUSAL_FIXTURES) {
   test(`fixture: ${name}`, () => {
-    const refusals = refusedBy(auditTagIntroductions(source, 'fixture.ts'));
+    const refusals = refusedBy(auditImports(source, fixtureFile));
     assert.equal(
       refusals.length,
       1,
@@ -155,7 +229,7 @@ for (const [name, source, expectedPosition] of TAG_INTRODUCTION_FIXTURES) {
       refusals[0].position.includes(expectedPosition),
       `the refusal must name the position: got ${JSON.stringify(refusals[0].position)}, expected it to name ${JSON.stringify(expectedPosition)}`,
     );
-    assert.equal(refusals[0].file, 'fixture.ts', 'the refusal must name the file');
+    assert.equal(refusals[0].file, fixtureFile, 'the refusal must name the file');
     assert.equal(refusals[0].line, 1, 'the refusal must name the line');
     assert.ok(
       refusals.every((r) => !/^allowed$/.test(r.rule)),
@@ -163,6 +237,187 @@ for (const [name, source, expectedPosition] of TAG_INTRODUCTION_FIXTURES) {
     );
   });
 }
+
+// Allowed fixtures: every import the package makes today, folder by folder,
+// stays quiet. The lock further down holds the list to exactly these, entry
+// by entry and name by name.
+const LIST_ALLOWED_FIXTURES = [
+  ["the src folder's imports, at the package root", 'src/fixture.ts',
+   [
+     "import '@lit-labs/ssr/lib/install-global-dom-shim.js';",
+     "import { render } from '@lit-labs/ssr';",
+     "import { collectResultSync } from '@lit-labs/ssr/lib/render-result.js';",
+     "import { CSSResult, type CSSResultGroup, type TemplateResult as Template } from 'lit';",
+     "import { readFileSync } from 'node:fs';",
+     "import { dirname, join } from 'node:path';",
+     "import { fileURLToPath } from 'node:url';",
+     "import { hhAddress } from './address.js';",
+     "import { HHElement, HHRenderError, defineElement } from './base.js';",
+     "import { ButtonSpec, baseStyles, button, chip, row, spinner } from './primitives.js';",
+     "import { STATE_ICONS, StateIconName, icon } from './state-icons.js';",
+     "import { DesignedState, KIT_STATES, STATE_META, KitState, kitShell, stateIndicator, stateStyles } from './state.js';",
+     "export { css } from 'lit';",
+     "export type { KitState, DesignedState } from './state.js';",
+   ].join('\n')],
+  ["the src folder's imports, in a kit subfolder", 'src/kits/fixture.ts',
+   [
+     "import { css, html, type TemplateResult as Template } from 'lit';",
+     "import { defineElement, HHElement } from '../base.js';",
+     "import { baseStyles, chip, row } from '../primitives.js';",
+     "import { kitShell, stateStyles, ButtonSpec, KitState } from '../state.js';",
+     "import { icon } from '../state-icons.js';",
+   ].join('\n')],
+  ["the test folder's imports", 'test/fixture.mjs',
+   [
+     "import { test } from 'node:test';",
+     "import assert from 'node:assert/strict';",
+     "import ts from 'typescript';",
+     "import { html } from 'lit';",
+     "import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';",
+     "import { dirname, join, relative } from 'node:path';",
+     "import { fileURLToPath } from 'node:url';",
+     "import { createServer } from 'node:http';",
+     "import { tmpdir } from 'node:os';",
+     "import { spawn, spawnSync } from 'node:child_process';",
+     "import { setTimeout as delay } from 'node:timers/promises';",
+     "import { render } from '@lit-labs/ssr';",
+     "import { findBrowserBinary, launchBrowser } from './_lib/cdp.mjs';",
+     "import { hexToOklch, oklchToHex, parseOklch, relativeLuminance } from './_lib/color.mjs';",
+     "import { contrast, palettes, readPkg } from './_lib/sheet.mjs';",
+     "import { renderKit, renderTemplate } from './_lib/render.mjs';",
+     "import { GATE_FILES } from './_lib/positions.mjs';",
+     "import { KITS, buildHarnessPage, harnessSheets } from '../src/harness-page.js';",
+     "import { baseStyles } from '../src/primitives.js';",
+     "import { STATE_ICONS, icon } from '../src/state-icons.js';",
+     "import { KIT_STATES, STATE_META, kitShell, stateIndicator } from '../src/state.js';",
+     "import { DashboardKit } from '../src/kits/dashboard.js';",
+     "import { ListDetailKit } from '../src/kits/list-detail.js';",
+     "import { GuidedFlowKit } from '../src/kits/guided-flow.js';",
+     "import { InboxKit } from '../src/kits/inbox.js';",
+     "import { ScanConfirmKit } from '../src/kits/scan-and-confirm.js';",
+     "({ stripTypeScriptTypes } = await import('node:module'));",
+   ].join('\n')],
+  ["the harness folder's imports", 'harness/fixture.mjs',
+   [
+     "import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';",
+     "import { dirname, join } from 'node:path';",
+     "import { fileURLToPath } from 'node:url';",
+     "import { createServer } from 'node:http';",
+     "import net from 'node:net';",
+     "import { HARNESS_TITLE, buildHarnessPage, harnessSheets } from '../src/harness-page.js';",
+   ].join('\n')],
+];
+
+for (const [name, fixtureFile, source] of LIST_ALLOWED_FIXTURES) {
+  test(`allowed: ${name}`, () => {
+    const refusals = refusedBy(auditImports(source, fixtureFile));
+    assert.deepEqual(refusals, [], `the gate refused an allowed import: ${JSON.stringify(refusals)}`);
+  });
+}
+
+// The list is what the package imports, not what it might: every entry is
+// exercised by some walked file today, every name on an entry is imported
+// today (svg excused, the pattern's second tag, listed so the door is named
+// and not silent), and the tags sit on no entry but lit's.
+test('the import list is exactly what the package imports today, and the tags sit on lit alone', () => {
+  const actual = new Map();
+  for (const { rel, text } of everyPackageSource()) {
+    const folder = rel.split('/')[0];
+    if (!['src', 'test', 'harness'].includes(folder)) continue;
+    for (const { spec, names } of importedSpecifiers(text, rel)) {
+      const key = `${folder}\u0000${spec}`;
+      const seen = actual.get(key) ?? new Set();
+      if (names === null) seen.add(null);
+      else for (const n of names) seen.add(n);
+      actual.set(key, seen);
+    }
+  }
+  for (const folder of ['src', 'test', 'harness']) {
+    for (const spec of Object.keys(IMPORT_ALLOW_LIST[folder])) {
+      assert.ok(
+        actual.has(`${folder}\u0000${spec}`),
+        `the list entry ${folder}: ${spec} is imported by no walked file today: take it off the list or write the import (adding an entry is a change a reviewer sees)`,
+      );
+    }
+  }
+  const EXCUSED = ['svg'];
+  for (const [folder, table] of Object.entries(IMPORT_ALLOW_LIST)) {
+    for (const [spec, names] of Object.entries(table)) {
+      for (const name of names) {
+        assert.ok(
+          EXCUSED.includes(name) || (actual.get(`${folder}\u0000${spec}`) ?? new Set()).has(name),
+          `the name ${name} on the ${folder}: ${spec} entry is imported by no walked file today: take it off the entry or write the import`,
+        );
+      }
+    }
+  }
+  for (const [folder, table] of Object.entries(IMPORT_ALLOW_LIST)) {
+    for (const [spec, names] of Object.entries(table)) {
+      for (const name of names) {
+        if (name === 'html' || name === 'svg') {
+          assert.equal(spec, 'lit', `the tag ${name} is allowed from lit only: it is on the ${folder}: ${spec} entry`);
+        }
+      }
+    }
+  }
+});
+
+test('the import list scanner refuses every spelling that could carry a tag (guards the gate)', () => {
+  const planted = [
+    [`import { svg as vector } from 'lit';`, 'under the name vector'],
+    [`import { html as h } from 'lit-html';`, 'an import from lit-html'],
+    [`import { svg as v } from 'lit/html.js';`, 'an import from lit/html.js'],
+    [`import { html as h } from 'lit-element';`, 'an import from lit-element'],
+    [`import * as litElement from 'lit-element/lit-element.js';`, 'an import from lit-element/lit-element.js'],
+    [`import lit from 'lit';`, 'an import of default from lit'],
+    [`import lit, { html } from 'lit';`, 'an import of default from lit'],
+    [`import * as everything from 'lit';`, 'a namespace import from lit'],
+    [`const m = await import('lit-html');`, 'a dynamic import of lit-html'],
+    ['const m = await import(whichLit);', 'not a string literal'],
+    ['const m = require(whichLit);', 'not a string literal'],
+    [`export { html as h } from 'lit';`, 'under the name h'],
+    [`export { h as svg } from 'lit';`, 'an import of h from lit'],
+    [`export * from 'lit';`, 'a star re-export from lit'],
+    [`export * as lit from 'lit';`, 'a namespace re-export from lit'],
+    ["const made = eval('makeTag()');", 'a call of eval'],
+    ["const made = new Function('return html');", 'a call of new Function'],
+    [`import { thing } from 'some-new-package';`, 'an import from some-new-package'],
+    [`import { render } from '@lit-labs/ssr/lib/render-result.js';`, 'an import of render from @lit-labs/ssr/lib/render-result.js'],
+  ];
+  // The planted spellings are judged as src files; the last one proves the
+  // name rule on a listed subpath: the specifier is on the folder's list and
+  // the name is not, so the refusal names the name.
+  for (const [p, expected] of planted) {
+    const refusals = refusedBy(auditImports(p, 'src/plant.ts'));
+    assert.ok(refusals.length >= 1, `the scanner missed the planted offence: ${p}`);
+    assert.ok(
+      refusals.some((r) => r.position.includes(expected)),
+      `the refusal must name the position (${expected}): got ${JSON.stringify(refusals.map((r) => r.position))} for ${p}`,
+    );
+  }
+  // And it stays quiet on the statements the package is allowed: the tags
+  // under their own names, type only names, side effect imports, re-exports
+  // of listed names, and a dynamic import whose names the source shows.
+  const quiet = [
+    [`import { html, svg } from 'lit';`, 'src/quiet.ts'],
+    [`import { LitElement, type PropertyValues } from 'lit';`, 'src/quiet.ts'],
+    [`import { html, type TemplateResult as Template } from 'lit';`, 'src/quiet.ts'],
+    [`import 'lit';`, 'src/quiet.ts'],
+    [`import { kitShell } from './state.js';`, 'src/quiet.ts'],
+    [`export { css } from 'lit';`, 'src/quiet.ts'],
+    [`export type { KitState, DesignedState } from './state.js';`, 'src/quiet.ts'],
+    [`import { test } from 'node:test';`, 'test/quiet.mjs'],
+    [`import assert from 'node:assert/strict';`, 'test/quiet.mjs'],
+    [`import ts from 'typescript';`, 'test/quiet.mjs'],
+    [`const { stripTypeScriptTypes } = await import('node:module');`, 'test/quiet.mjs'],
+    [`import net from 'node:net';`, 'harness/quiet.mjs'],
+    [`import { buildHarnessPage } from '../src/harness-page.js';`, 'harness/quiet.mjs'],
+  ];
+  for (const [p, file] of quiet) {
+    const refusals = refusedBy(auditImports(p, file));
+    assert.deepEqual(refusals, [], `the scanner flagged an allowed statement: ${p}: ${JSON.stringify(refusals)}`);
+  }
+});
 
 // ── the tag's two places: one refusal per spelling the review round ran ─────────
 //
@@ -173,14 +428,10 @@ for (const [name, source, expectedPosition] of TAG_INTRODUCTION_FIXTURES) {
 // of either name in any scope is refused, so the name always means the
 // import. Each fixture below is one spelling's fail proof: it asserts the
 // refusal naming the file and the LINE, so removing the rule turns this file
-// red. This file is itself walked by this rule (the walk excludes only
-// node_modules, the build output and .git) and holds no fixture of its kind:
-// every fixture here is a string, which the parser never sees as code.
-
-// Where a fixture file's relative imports resolve from: the package's own
-// root, so the escape fixture's ../ provably lands outside the package and
-// the allowed ./ stays inside it.
-const TAG_USAGE_FIXTURE_DIR = PKG;
+// red. This file is itself walked by this rule (the walk leaves out only
+// node_modules and the build output at the package's root, by their full
+// path, and .git) and holds no fixture of its kind: every fixture here is a
+// string, which the parser never sees as code.
 
 const TAG_USAGE_REFUSAL_FIXTURES = [
   ['the tag bound to another local name, then a template under that name',
@@ -198,14 +449,11 @@ const TAG_USAGE_REFUSAL_FIXTURES = [
   ['a local declaration of the name in a function scope (the shadowing case)',
    "function render(label) {\n  const html = `<b>${label}</b>`;\n  return label;\n}",
    'a local declaration of the name html', 2],
-  ['a relative import that resolves outside the package',
-   "import { html } from '../tag-source.js';\nhtml`<p>x</p>`;",
-   'a relative import that leaves the package', 1],
 ];
 
 for (const [name, source, expectedPosition, expectedLine] of TAG_USAGE_REFUSAL_FIXTURES) {
   test(`fixture: ${name}`, () => {
-    const refusals = refusedBy(auditTagUsages(source, 'fixture.ts', TAG_USAGE_FIXTURE_DIR));
+    const refusals = refusedBy(auditTagUsages(source, 'fixture.ts'));
     assert.equal(
       refusals.length,
       1,
@@ -226,7 +474,8 @@ for (const [name, source, expectedPosition, expectedLine] of TAG_USAGE_REFUSAL_F
 
 // Ordinary kit code stays quiet: the tags under their own names, in tag
 // position, beside css, nested in maps, inside a component class, and names
-// that are only member labels.
+// that are only member labels. What a relative specifier may BE is the import
+// list's decision, not this rule's.
 const TAG_USAGE_ALLOWED_FIXTURES = [
   ['the tags under their own names, in tag position only',
    "import { html, svg } from 'lit';\nconst t = html`<p>${'x'}</p>`;\nconst s = svg`<circle r=\"2\"></circle>`;"],
@@ -238,13 +487,13 @@ const TAG_USAGE_ALLOWED_FIXTURES = [
    "import { LitElement, html } from 'lit';\nclass X extends LitElement {\n  render() {\n    return html`<div></div>`;\n  }\n}"],
   ['names that are only member labels',
    "const box = { html: 1, svg: 2 };\nconst n = box.html;\nfunction f(p) { return p.svg; }"],
-  ['a relative import that stays inside the package',
+  ['a relative import judged only for its identifiers here',
    "import { html } from './local-tags.js';\nconst t = html`<p>x</p>`;"],
 ];
 
 for (const [name, source] of TAG_USAGE_ALLOWED_FIXTURES) {
   test(`two places allowed: ${name}`, () => {
-    const refusals = refusedBy(auditTagUsages(source, 'allowed-fixture.ts', TAG_USAGE_FIXTURE_DIR));
+    const refusals = refusedBy(auditTagUsages(source, 'allowed-fixture.ts'));
     assert.deepEqual(refusals, [], `the gate refused an allowed use: ${JSON.stringify(refusals)}`);
   });
 }
@@ -263,10 +512,9 @@ test('the two-place scanner refuses every shape the rule names (guards the gate)
     ['a destructuring capture of the name', "const { html } = readTags();", 'a local declaration of the name html (a destructuring)'],
     ['a default import under the name', "import html from 'lit';", 'a declaration of the name html (a default or namespace import)'],
     ['a namespace import under the name', "import * as html from 'lit';", 'a declaration of the name html (a default or namespace import)'],
-    ['a require of a module outside the package', "const m = require('../../tag-source.js');", 'a relative import that leaves the package'],
   ];
   for (const [name, source, expected] of planted) {
-    const refusals = refusedBy(auditTagUsages(source, 'plant.ts', TAG_USAGE_FIXTURE_DIR));
+    const refusals = refusedBy(auditTagUsages(source, 'plant.ts'));
     assert.ok(refusals.length >= 1, `the scanner missed the planted ${name}: ${source}`);
     assert.ok(
       refusals.some((r) => r.position.includes(expected)),
@@ -279,7 +527,7 @@ test('the two-place scanner refuses every shape the rule names (guards the gate)
     'const box = { html: 1, svg: 2 };\nbox.html; box.svg;',
     "import { html } from './local-tags.js';\nconst t = html`<p>x</p>`;",
   ]) {
-    const refusals = refusedBy(auditTagUsages(quiet, 'fine.ts', TAG_USAGE_FIXTURE_DIR));
+    const refusals = refusedBy(auditTagUsages(quiet, 'fine.ts'));
     assert.deepEqual(refusals, [], `the scanner flagged a quiet use: ${quiet}: ${JSON.stringify(refusals)}`);
   }
 });
@@ -321,64 +569,6 @@ test('the extractor survives nesting, strings and escapes (guards the classifica
   assert.deepEqual(bindingsOf(templates[2]), ['v']);
 });
 
-test('the tag introduction scanner sees every spelling that hides a tag (guards the gate)', () => {
-  // The four fixtures above are one spelling each; the scanner must refuse
-  // the whole family, so every spelling is planted here.
-  const planted = [
-    [`import { html as h } from 'lit';`, 'under the name h'],
-    [`import { svg as vector } from 'lit';`, 'under the name vector'],
-    [`import { html as h } from 'lit-html';`, 'under the name h'],
-    [`import { svg as v } from 'lit/html.js';`, 'under the name v'],
-    [`import { html as h } from 'lit-html/template.js';`, 'under the name h'],
-    [`import { mathml as m } from 'lit';`, 'an import of mathml'],
-    [`import * as lit from 'lit';`, 'a namespace import'],
-    [`import lit from 'lit';`, 'a default import'],
-    [`import lit, { html } from 'lit';`, 'a default import'],
-    [`const m = await import('lit');`, 'a dynamic import of lit'],
-    [`const m = await import('lit-html');`, 'a dynamic import of lit-html'],
-    [`const m = require('lit');`, 'a require of lit'],
-    [`const m = require(whichLit);`, 'not a string literal'],
-    [`export { html } from 'lit';`, 'a re-export of html from lit'],
-    [`export { html as h } from 'lit';`, 'a re-export of html from lit'],
-    [`export { h as svg } from 'lit';`, 'a re-export of svg from lit'],
-    [`export { mathml } from 'lit';`, 'a re-export of mathml from lit'],
-    [`export * from 'lit';`, 'a star re-export'],
-    [`export * as lit from 'lit';`, 'a star re-export'],
-    [`import { html } from 'lit'; export { html as h };`, 'a re-export of the local html binding'],
-    [`import { html } from 'lit'; export default html;`, 'a default re-export of html'],
-  ];
-  for (const [p, expected] of planted) {
-    const refusals = refusedBy(auditTagIntroductions(p, 'plant.ts'));
-    assert.ok(refusals.length >= 1, `the scanner missed the planted offence: ${p}`);
-    assert.ok(
-      refusals.some((r) => r.position.includes(expected)),
-      `the refusal must name the position (${expected}): got ${JSON.stringify(refusals.map((r) => r.position))} for ${p}`,
-    );
-  }
-  // And it stays quiet on the statements the kits are allowed: the tags under
-  // their own names, the library's non tag exports, type only imports, and
-  // specifiers that are not the lit packages.
-  for (const allowed of [
-    `import { html, css } from 'lit';`,
-    `import { svg } from 'lit';`,
-    `import { LitElement, type PropertyValues } from 'lit';`,
-    `import { html, type TemplateResult as Template } from 'lit';`,
-    `import { nothing } from 'lit';`,
-    `import 'lit';`,
-    `import { render } from '@lit-labs/ssr';`,
-    `import { html } from './local.js';`,
-    `import { join } from 'node:path';`,
-    `const m = await import('./local.js');`,
-    `export { css } from 'lit';`,
-    `export * from './local.js';`,
-    `export { css };`,
-    `export type { KitState } from './state.js';`,
-  ]) {
-    const refusals = refusedBy(auditTagIntroductions(allowed, 'fine.ts'));
-    assert.deepEqual(refusals, [], `the scanner flagged an allowed statement: ${allowed}: ${JSON.stringify(refusals)}`);
-  }
-});
-
 // ── the gates themselves: the package and its dependents ────────────────────────
 
 test('every html and svg template in this package sits in an allowed position', () => {
@@ -409,39 +599,24 @@ test('every html and svg template in any package that depends on this one sits i
   );
 });
 
-test('no file of this package introduces a lit template tag the template pattern cannot see', () => {
+test('no walked file of this package imports anything the import list does not name', () => {
   const offences = [];
-  for (const { rel, text } of thisPackageSources()) {
-    for (const o of refusedBy(auditTagIntroductions(text, rel))) offences.push(o);
+  for (const { rel, text } of everyPackageSource()) {
+    for (const o of refusedBy(auditImports(text, rel))) offences.push(o);
   }
   assert.deepEqual(
     offences,
     [],
-    `a file introduces an html, svg or mathml tag outside the spellings the template pattern sees` +
-      ` (the tags under their own names, from lit or lit-html, are the only allowed introduction):\n  ` +
+    `a file imports a specifier or a name the gate's list does not carry` +
+      ` (the list is IMPORT_ALLOW_LIST in test/_lib/positions.mjs; adding an entry is a change a reviewer sees):\n  ` +
       offences.map((o) => `${o.file}:${o.line}: ${o.position} (${o.rule})`).join('\n  '),
   );
 });
 
-test('no file of any package that depends on this one introduces a tag the template pattern cannot see', () => {
-  const offences = [];
-  for (const dependent of dependentPackages()) {
-    for (const { rel, text } of dependent.sources) {
-      for (const o of refusedBy(auditTagIntroductions(text, rel))) {
-        offences.push({ ...o, file: `${dependent.name} (${o.file})` });
-      }
-    }
-  }
-  assert.deepEqual(
-    offences,
-    [],
-    `a dependent package introduces a tag outside the spellings the template pattern sees.` +
-      ` The kits' rule binds its dependents too:\n  ` +
-      offences.map((o) => `${o.file}:${o.line}: ${o.position} (${o.rule})`).join('\n  '),
-  );
-});
-
-// ── the tag's two places, over every file of the package ────────────────────────
+// The import list is written for this package's folders. The rules it
+// replaced ran on dependent packages too; when a package comes to depend on
+// this one, the other gates' locks name it below, and what it may import
+// must be argued into the gate the same way, entry by entry.
 
 test('the two-place walk covers every source file of the package (guards the gate)', () => {
   const walked = everyPackageSource().map((s) => s.rel);
@@ -458,11 +633,25 @@ test('the two-place walk covers every source file of the package (guards the gat
   }
 });
 
+test('the import list walk covers every source file of the package (guards the gate)', () => {
+  const walked = everyPackageSource().map((s) => s.rel);
+  for (const anchor of [
+    'src/index.ts',
+    'src/kits/inbox.ts',
+    'src/_ts-js-loader.mjs',
+    'harness/build.mjs',
+    'test/_lib/cdp.mjs',
+  ]) {
+    assert.ok(walked.includes(anchor), `the import list walk missed ${anchor}`);
+  }
+});
+
 test('the walk reaches the package root: a re-export file there is named and refused', () => {
   // The hole the review round ran: a file at the package root, outside the
   // walked folders, re-exporting the library, imported by a kit through a
   // relative path. The root file is planted for real, walked, refused, and
-  // removed, so the gate proves its own reach.
+  // removed, so the gate proves its own reach. The root has no folder list,
+  // so nothing it imports can be allowed.
   const rootFileRel = 'gate-root-fixture.mjs';
   const rootFile = join(PKG, rootFileRel);
   const body = "export * from 'lit';\n";
@@ -473,13 +662,13 @@ test('the walk reaches the package root: a re-export file there is named and ref
       walked.includes(rootFileRel),
       `the package walk must name a file at the package root: got ${JSON.stringify(walked)}`,
     );
-    const refusals = refusedBy(auditTagIntroductions(body, rootFileRel));
+    const refusals = refusedBy(auditImports(body, rootFileRel));
     assert.ok(
-      refusals.some((r) => r.position.includes('a star re-export')),
-      `the introduction scan must refuse the root file's re-export: got ${JSON.stringify(refusals.map((r) => r.position))}`,
+      refusals.some((r) => r.position.includes('a re-export from lit')),
+      `the import list must refuse the root file's re-export: got ${JSON.stringify(refusals.map((r) => r.position))}`,
     );
     assert.deepEqual(
-      refusedBy(auditTagUsages(body, rootFileRel, PKG)),
+      refusedBy(auditTagUsages(body, rootFileRel)),
       [],
       'the root file carries no tag identifier, so the two-place scan stays quiet on it',
     );
@@ -488,10 +677,40 @@ test('the walk reaches the package root: a re-export file there is named and ref
   }
 });
 
+test('fixture: a source file inside a nested folder named like an exclusion is walked and refused', () => {
+  // node_modules and the build output (dist) are excluded at the package's
+  // root only, by their full path: a folder of either name anywhere else is
+  // walked, so a source file cannot hide inside one. The file is planted for
+  // real under a nested dist, walked, refused by the import list, and
+  // removed.
+  const nestedDir = join(PKG, 'src', 'dist');
+  const nestedRel = 'src/dist/nested-fixture.mjs';
+  const nestedFile = join(nestedDir, 'nested-fixture.mjs');
+  mkdirSync(nestedDir, { recursive: true });
+  const body = "import { html as h } from 'lit-element';\n";
+  writeFileSync(nestedFile, body);
+  try {
+    const walked = everyPackageSource().map((s) => s.rel);
+    assert.ok(
+      walked.includes(nestedRel),
+      `the walk must enter a nested folder named like an exclusion: got ${JSON.stringify(walked)}`,
+    );
+    const refusals = refusedBy(auditImports(body, nestedRel));
+    assert.equal(refusals.length, 1, `expected exactly one refusal, got ${JSON.stringify(refusals)}`);
+    assert.ok(
+      refusals[0].position.includes('lit-element'),
+      `the refusal must name the specifier: got ${JSON.stringify(refusals[0].position)}`,
+    );
+    assert.equal(refusals[0].file, nestedRel, 'the refusal must name the file');
+  } finally {
+    rmSync(nestedDir, { recursive: true, force: true });
+  }
+});
+
 test('no file of this package uses an imported html or svg anywhere but its import and its tag position', () => {
   const offences = [];
-  for (const { rel, abs, text } of everyPackageSource()) {
-    for (const o of refusedBy(auditTagUsages(text, rel, dirname(abs)))) offences.push(o);
+  for (const { rel, text } of everyPackageSource()) {
+    for (const o of refusedBy(auditTagUsages(text, rel))) offences.push(o);
   }
   assert.deepEqual(
     offences,
@@ -505,8 +724,8 @@ test('no file of this package uses an imported html or svg anywhere but its impo
 test('no file of any package that depends on this one uses a tag outside its two places', () => {
   const offences = [];
   for (const dependent of dependentPackages()) {
-    for (const { rel, abs, text } of dependent.sources) {
-      for (const o of refusedBy(auditTagUsages(text, rel, dirname(abs), dependent.dir))) {
+    for (const { rel, text } of dependent.sources) {
+      for (const o of refusedBy(auditTagUsages(text, rel))) {
         offences.push({ ...o, file: `${dependent.name} (${o.file})` });
       }
     }
@@ -527,9 +746,13 @@ test('the property and event allow table is exactly what the kits need today, wh
   assert.deepEqual([...ALLOWED_PROPERTY_OR_EVENT], []);
 });
 
-test('the gate files are excluded from the walks by name, and by no other exclusion', () => {
-  // The fixtures are bindings in refused positions BY DESIGN; the exclusion is
-  // the two gate files' names, nothing broader.
+test('the gate files are excluded from the raw-text walks by name, and by no other exclusion', () => {
+  // The fixtures are bindings in refused positions BY DESIGN; the two
+  // raw-text scans (the position gate and the raw-markup gate) read source
+  // as text and would see the fixture strings, so the exclusion names
+  // exactly the two gate files. The parser scans (the import list and the
+  // two-place rule) walk this file too: their exclusion is none, and they
+  // stay quiet because every fixture here is a string.
   assert.deepEqual(
     [...GATE_FILES].sort(),
     ['test/no-raw-markup.test.mjs', 'test/positions.test.mjs'],

@@ -42,15 +42,21 @@ import { html } from 'lit';
 const row = html`<li class="row">${label}</li>`;
 ```
 
-No other spelling carries a tag the gate can see: an aliased import, a
-namespace or default import, a dynamic import or require of lit, the mathml
-tag, a re-export, and any local rebinding of the name are all refused by the
-position gate (`test/positions.test.mjs`), which walks every source file of
-this package and holds that an imported `html` or `svg` appears in exactly
-two places, its import statement and the tag position of a tagged template.
-The tag under its own name, used only as a template's tag, is the one
-spelling the gate holds for you, in this package and in any package that
-adopts its rules.
+No other spelling carries a tag the gate can see, because the gate now
+names what is allowed and refuses the rest: in every walked file of this
+package, every import, re-export, dynamic import and require is refused
+unless its specifier and its imported names are on the list written in the
+gate (`test/_lib/positions.mjs`, `IMPORT_ALLOW_LIST`), folder by folder, no
+entry a prefix or a pattern. `html` and `svg` are allowed from `lit` only,
+under their own names only, so an aliased import, a namespace or default
+import, a dynamic import or require, a subpath nobody listed, the mathml
+tag, another package of the lit family (lit-element re-exports the same
+tags), and any local rebinding of the name are all refused, with the file,
+the line and the specifier. The position gate (`test/positions.test.mjs`)
+then holds an imported `html` or `svg` to exactly two places, its import
+statement and the tag position of a tagged template. The tag under its own
+name, used only as a template's tag, is the one spelling the gate holds for
+you, in this package and in any package that adopts its rules.
 
 ## What is here (cycle HH-4a, Plane HH-30)
 
