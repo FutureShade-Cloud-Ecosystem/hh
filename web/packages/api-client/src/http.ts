@@ -103,7 +103,9 @@ export interface OperationRequest {
    * per-character loop would otherwise miss (the C1 range among them),
    * carrying a line separator (U+2028 or U+2029) inside the name, carrying a
    * Hangul filler (U+115F, U+1160, U+3164; a name of nothing but U+115F is
-   * invisible), made of nothing but
+   * invisible), made of nothing but the two allowed joiners (an invisible
+   * name), beginning or ending with a joiner (which would defeat the edge
+   * rule), made of nothing but
    * spaces, beginning or ending with any white space or a dot, or longer
    * than 160
    * UTF-8 bytes (the bound the core's own stored name keeps, counted in the
@@ -214,7 +216,9 @@ function codePointName(code: number): string {
 // character, an invisible format character (each named by its code point;
 // the two allowed joiners excepted, see ALLOWED_JOINERS), a line separator
 // inside the name, a Hangul filler (a name of nothing but U+115F is
-// invisible), a name made of nothing but spaces, a
+// invisible), a name made of nothing but the two allowed joiners (invisible),
+// a joiner at either edge (it would defeat the edge rule), a name made of
+// nothing but spaces, a
 // name that begins or ends with ANY white space or a dot (the core's
 // sanitizer trims edge white space off the stored name with TrimSpace, a
 // Unicode trim, so an accepted NBSP, ideographic space, or line separator
@@ -260,6 +264,16 @@ function filenameProblem(name: string): string | undefined {
       return `contains a hidden character (${codePointName(code)})`;
     }
   }
+  // The two allowed joiners ride between visible characters, and only
+  // there: a name with no character but joiners is invisible (the same
+  // class of name as U+115F alone), and a joiner at an edge would defeat
+  // the edge rule (a trailing dot or a leading space would show as the
+  // name's last or first character with the joiner hiding after or before
+  // it). Refused, in the same words as the other shape rules.
+  const withoutJoiners = name.replace(/[\u{200C}\u{200D}]/gu, "");
+  if (withoutJoiners === "") return "is nothing but invisible joiners";
+  if (/^[\u{200C}\u{200D}]/u.test(name)) return "begins with an invisible joiner";
+  if (/[\u{200C}\u{200D}]$/u.test(name)) return "ends with an invisible joiner";
   if (name.trim() === "") return "is nothing but spaces";
   if (/^[\s.]|[\s.]$/u.test(name)) {
     return "begins or ends with a space or a dot";

@@ -155,7 +155,13 @@ are U+200C ZERO WIDTH NON-JOINER and U+200D ZERO WIDTH JOINER: they are
 non-joiner) and build emoji (the family and profession sequences are joiner
 chains), and they hide nothing, so they are allowed where every other
 format character is refused; a rule that refuses ordinary names gets
-switched off. The line separators are refused inside a name as well as at
+switched off. The allowance is between visible characters only: a name of
+nothing but joiners is invisible and refused ("is nothing but invisible
+joiners"), and a joiner at either edge is refused ("begins with an
+invisible joiner", "ends with an invisible joiner"), because it would
+defeat the edge rule: a trailing dot or a leading space would show as the
+name's edge with the joiner hiding beside it. The line separators are
+refused inside a name as well as at
 its edges (the edge rule would catch them alone), and so are the Hangul
 fillers: they are letters, not format characters and not white space, so no
 other rule sees them, and a name of nothing but U+115F is invisible. Every
@@ -187,8 +193,10 @@ to 861), and the core's cap counts BYTES (`strings.Builder.Len()` after each
 `WriteRune`), so this guard counts bytes too, and a name that passes here is
 one the core can store whole. The count was code points once: a name of 160
 three-byte CJK characters (480 bytes) passed here and the core cut it to 54
-characters. The bidirectional marks, the format characters (the allowed
-joiners included), the line separators, and the Hangul fillers are refused
+characters. The bidirectional marks, the format characters (every one but
+the two allowed joiners, and a name of nothing but the joiners, or a joiner
+at an edge: the allowance is between visible characters only), the line
+separators, and the Hangul fillers are refused
 here though the core still accepts them: its sanitizer strips only the C0
 controls and DEL, so the gap on the core's side is recorded for Colton
 (nothing unsafe follows in the core

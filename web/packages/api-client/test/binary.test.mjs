@@ -389,6 +389,46 @@ test("the two joiners are allowed in a file name: Persian with ZWNJ and an emoji
   assert.equal(second.get("file").name, family, "the emoji ZWJ sequence arrives whole");
 });
 
+test("a name made of nothing but joiners, or edged with a joiner, is refused: the allowance is between visible characters only", async () => {
+  // The two joiners ride between visible characters and only there: a name
+  // with no character but joiners is invisible (the class of name 043
+  // closed for U+115F alone), and a joiner at an edge would defeat the edge
+  // rule (a trailing dot or a leading space would show as the name's edge
+  // with the joiner hiding beside it). Each refusal names the shape.
+  const rec = recorder({ "POST /api/v1/pricing/price-file/apply": { status: 201, body: {} } });
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: rec.fetch });
+  const refusals = [
+    ["\u200d", /is nothing but invisible joiners$/, "a name of one ZWJ"],
+    ["\u200c\u200d\u200c", /is nothing but invisible joiners$/, "a name of three joiners"],
+    ["price-list.xlsx\u200d", /ends with an invisible joiner$/, "a trailing joiner"],
+    ["\u200cprice-list.xlsx", /begins with an invisible joiner$/, "a leading joiner"],
+    ["a.\u200d", /ends with an invisible joiner$/, "a trailing dot shown, a joiner hiding after it"],
+  ];
+  for (const [name, pattern, named] of refusals) {
+    const result = await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+      { fileFilename: name },
+    );
+    assert.equal(result.ok, false, `the name with ${named} is refused`);
+    if (!result.ok) assert.match(result.error, pattern, `the refusal names the shape, for ${named}`);
+  }
+  assert.equal(rec.calls.length, 0, "not one joiner-only or joiner-edged name dialed");
+
+  // The allowance is untouched: a joiner between visible characters, on
+  // either side of interior spaces, still rides whole.
+  unwrap(
+    await api.staffPricing.pricingApplyPriceFile(
+      client,
+      { vendor_id: "86b744fc-c0bf-4b07-a3c7-91b860d428f4", file: new Blob([PNG]) },
+      { fileFilename: "price\u200c list\u200d.xlsx" },
+    ),
+  );
+  assert.equal(rec.calls.length, 1, "the interior-joiner name dialed");
+  const parsed = await new Request(rec.calls[0].url, { method: rec.calls[0].method, body: rec.calls[0].form }).formData();
+  assert.equal(parsed.get("file").name, "price\u200c list\u200d.xlsx", "the interior joiners arrive whole");
+});
+
 test("the refusal names what it refused in words a person can act on", async () => {
   // The messages a person meets: a tab pasted from a spreadsheet cell, a
   // line break at the end of one, a soft hyphen pasted from a document.
