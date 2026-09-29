@@ -38,7 +38,7 @@
 // signing in disengages it before the new session is shown, a prompt that
 // answers after its owner signed out stores nothing and opens nothing, and
 // a lock found at start-up with no session is cleared, not shown.
-import { err, ok, type Result } from "@hh/api-client";
+import { err, ok, type Result } from "@hardscapehouse/api-client";
 import { SignOutCounter } from "./client.js";
 import { ThrowSafeMirror } from "./session.js";
 import type { SessionStore } from "./session.js";

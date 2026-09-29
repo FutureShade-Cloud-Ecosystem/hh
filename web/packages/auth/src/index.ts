@@ -1,4 +1,4 @@
-// The public surface of @hh/auth: session custody (memory-only JWT, the
+// The public surface of @hardscapehouse/auth: session custody (memory-only JWT, the
 // throw-safe mirror that carries the display profile only), the device lock
 // (a screen courtesy that sends no audit pair), and the wiring into the
 // api-client (a staff provider and a tenant provider). src/testing.ts is the

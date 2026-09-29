@@ -1,4 +1,4 @@
-// Session custody for @hh/auth: the JWT lives in memory only, and NO
+// Session custody for @hardscapehouse/auth: the JWT lives in memory only, and NO
 // credential of any kind is ever written to any browser storage,
 // sessionStorage included. The throw-safe mirror carries only the display
 // profile (user id, email, name): what a reload may show while it signs in
