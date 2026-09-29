@@ -1,4 +1,4 @@
-// Test-only module resolution hook for @hh/auth. The package's sources
+// Test-only module resolution hook for @hardscapehouse/auth. The package's sources
 // import their siblings with the runtime-correct .js extension (what tsc and
 // vite emit), and Node's native TypeScript type stripping loads the .ts
 // sources directly, so for the test process this hook rewrites a relative

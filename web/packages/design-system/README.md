@@ -1,4 +1,4 @@
-# @hh/design-system
+# @hardscapehouse/design-system
 
 Tokens (base plus per-brand overrides), primitives, patterns, and app kits, per
 context section 4.5. Tokens come from `tokens.css` exported out of Penpot;

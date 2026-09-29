@@ -32,7 +32,7 @@
 // id of the signed-in user who engaged it). An OPEN unlock does not survive
 // a reload: a reload re-locks. The mirror payload carries no token and no
 // secret; there is no PIN in this package's state at all.
-import { err, ok, type Result } from "@hh/api-client";
+import { err, ok, type Result } from "@hardscapehouse/api-client";
 import { ThrowSafeMirror } from "./session.js";
 import type { Session, SessionStore } from "./session.js";
 

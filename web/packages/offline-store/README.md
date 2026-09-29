@@ -1,4 +1,4 @@
-# @hh/offline-store
+# @hardscapehouse/offline-store
 
 One offline-store package, two backends: SQLite in the Tauri shells, wa-sqlite
 on OPFS in the PWA (IndexedDB fallback for read-cache-only frontends). Local
