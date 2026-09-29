@@ -11,7 +11,7 @@
     "./testing": "./src/testing.ts"
   },
   "scripts": {
-    "test": "node --import ./test/_ts-js-loader.mjs --test test/custody.test.mjs test/unlock.test.mjs test/client.test.mjs test/gates.test.mjs",
+    "test": "node --import ./test/_ts-js-loader.mjs --test test/custody.test.mjs test/unlock.test.mjs test/lock-signout.test.mjs test/client.test.mjs test/gates.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

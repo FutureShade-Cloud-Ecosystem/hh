@@ -54,8 +54,14 @@ so the generator needs its install first: `npm --prefix core/api/tools ci`.
   deadline (see "What a custom FetchLike must honour" below), and a caller's
   multipart file name is guarded like a path value: refused as an error
   Result before anything dials when it is empty, a dot segment, path-like,
-  control carrying, bidirectional control carrying, only spaces, edged with
-  a space or a dot, or over 160 UTF-8 bytes.
+  control carrying, bidirectional control carrying (the whole
+  `\p{Bidi_Control}` class), invisible format or control character carrying
+  (`\p{Cf}` and `\p{Cc}`, the two allowed joiners U+200C and U+200D
+  excepted), carrying a line separator (U+2028, U+2029) or a Hangul filler
+  (U+115F, U+1160, U+3164) inside the name, only spaces, edged with any
+  white space or a dot, or over 160 UTF-8 bytes. Every refusal names what it
+  refused in words a person understands: contains a tab, ends with a line
+  break, contains a hidden character (U+00AD).
 - `src/pagination.ts` is the cursor page walker. A cursor is the previous
   page's `next_cursor` verbatim; the walk ends at `next_cursor: null`. The
   yard pending-tickets feed's position cursor (see
@@ -129,23 +135,71 @@ takes a filename option per field, so the caller names the part:
 `feedbackCreateMultipart(client, form, { imageFilename: "board-frozen.png" })`.
 A caller's name is guarded like a path value: a name that is empty, is one of
 the dot segments (`.` or `..`), carries a path separator (`/` or `\`),
-carries a NUL or any other control character, carries a Unicode bidirectional
-control character (U+202A through U+202E, U+2066 through U+2069, the marks
-that reorder how text displays, so a stored name can be made to read as
-something it is not), is nothing but spaces, begins or ends with a space or a
-dot (the core's sanitizer trims edge spaces off the stored name, a Windows
-reader strips edge spaces and a trailing dot, and a leading dot hides the
-file on a Unix-like reader, so the name would not stay the name the caller
-said), or is longer than 160 UTF-8 bytes resolves an error Result before
-anything dials. 160 is the bound the core's own stored name keeps
+carries a tab, carries a line break, carries a NUL or any other control
+character, carries a Unicode bidirectional
+control character, carries an invisible formatting character, carries a line
+separator (U+2028 or U+2029) or a Hangul filler (U+115F, U+1160, U+3164)
+inside the name, is nothing but spaces, begins or
+ends with any white space or a dot, or is longer than 160 UTF-8 bytes
+resolves an error Result before anything dials. The refused classes, named:
+the whole Unicode bidirectional control class, the binary property
+`\p{Bidi_Control}` (twelve characters: U+061C, U+200E, U+200F, U+202A
+through U+202E, and U+2066 through U+2069, the marks that reorder how text
+displays, so a stored name can be made to read as something it is not); the
+format characters, `\p{Cf}` (the zero width marks, the soft hyphen, and the
+byte order mark among them), with the two allowed joiners excepted; and the
+control characters, `\p{Cc}` (the C0 range and DEL that the per-character
+loop refuses first, plus the C1 range U+0080 to U+009F). The two exceptions
+are U+200C ZERO WIDTH NON-JOINER and U+200D ZERO WIDTH JOINER: they are
+`\p{Cf}`, but they join letters (Persian words are spelled with the
+non-joiner) and build emoji (the family and profession sequences are joiner
+chains), and they hide nothing, so they are allowed where every other
+format character is refused; a rule that refuses ordinary names gets
+switched off. The allowance is between visible characters only: a name of
+nothing but joiners is invisible and refused ("is nothing but invisible
+joiners"), and a joiner at either edge is refused ("begins with an
+invisible joiner", "ends with an invisible joiner"), because it would
+defeat the edge rule: a trailing dot or a leading space would show as the
+name's edge with the joiner hiding beside it. The line separators are
+refused inside a name as well as at
+its edges (the edge rule would catch them alone), and so are the Hangul
+fillers: they are letters, not format characters and not white space, so no
+other rule sees them, and a name of nothing but U+115F is invisible. Every
+refusal NAMES what it refused, in words a person understands: "this name
+contains a tab", "this name ends with a line break", "this name contains a
+hidden character (U+00AD)", the code point included for everything
+invisible, so a person who pasted from a spreadsheet or a document can fix
+the name instead of guessing at a class. What is refused that a person
+might reasonably meet, as a list:
+
+- the three subdivision flags built from tag characters (England, Scotland,
+  Wales): every tag character is `\p{Cf}`;
+- a direction mark pasted with Arabic or Hebrew text (LRM U+200E, RLM
+  U+200F, and their isolates): `\p{Bidi_Control}`;
+- a name ending in a dot ("Acme Inc."): the edge rule, the way a Windows
+  reader would strip it.
+
+The edge rule is any white space or a dot at
+either edge, not the ASCII space alone: the core's sanitizer trims edge
+white space off the stored name with TrimSpace, a Unicode trim, so an
+accepted NBSP, ideographic space, or line separator at an edge would arrive
+as a name the core stores changed, and a Windows reader strips edge spaces
+and a trailing dot while a leading dot hides the file on a Unix-like reader,
+so the name would not stay the name the caller said. Interior white space
+and interior dot runs are kept whole. 160 is the bound the core's own
+stored name keeps
 (`core/internal/pricing/pricefile_service.go`, `sanitizeFileName`, lines 845
 to 861), and the core's cap counts BYTES (`strings.Builder.Len()` after each
 `WriteRune`), so this guard counts bytes too, and a name that passes here is
 one the core can store whole. The count was code points once: a name of 160
 three-byte CJK characters (480 bytes) passed here and the core cut it to 54
-characters. The bidirectional marks are refused here though the core still
-accepts them: its sanitizer strips only the C0 controls and DEL, so the gap
-on the core's side is recorded for Colton (nothing unsafe follows in the core
+characters. The bidirectional marks, the format characters (every one but
+the two allowed joiners, and a name of nothing but the joiners, or a joiner
+at an edge: the allowance is between visible characters only), the line
+separators, and the Hangul fillers are refused
+here though the core still accepts them: its sanitizer strips only the C0
+controls and DEL, so the gap on the core's side is recorded for Colton
+(nothing unsafe follows in the core
 today, since no path, object key, or header is built from the stored name
 anywhere, but a stored name carrying a mark can display as something it is
 not). A name outside ASCII rides
@@ -265,11 +319,15 @@ The gates, as tests:
   fields (the price file and the feedback screenshot) arrive byte for byte
   through a real multipart parse of the emitted body. The caller's file name
   is guarded there too: every refusal class (empty, dot segments, either
-  path separator, NUL, control characters, bidirectional control characters,
-  only spaces, an edge space or dot, past the 160 byte bound) resolves an
-  error Result with the recorder empty, nothing dialed, and a name of
-  exactly the bound arrives whole; the byte bound itself is pinned on the
-  multi-byte side, where 160 CJK characters (480 bytes) are refused and 53
+  path separator, a tab, a line break, NUL, control characters, the whole
+  bidirectional control class `\p{Bidi_Control}`, the format characters
+  `\p{Cf}` with the two allowed joiners excepted and named, the C1 controls
+  the per-character loop names by code point, an interior line separator,
+  the Hangul fillers, a name of nothing but U+115F, only spaces, an edge of
+  any white space or a dot, past the 160 byte bound) resolves an
+  error Result with the recorder empty, nothing dialed, each refusal naming
+  the character it found, and a name of exactly the bound arrives whole;
+  the byte bound itself is pinned on the multi-byte side, where 160 CJK characters (480 bytes) are refused and 53
   (159 bytes) arrive whole.
 - `test/transport.test.mjs` is the one place the suite dials, and it dials
   only a loopback server bound for the duration of one test: a body that
@@ -290,3 +348,15 @@ The vendored captures are the D22 set: byte for byte what the live server
 said, with tokens redacted. A capture that does not validate against the
 schema the contract assigns to its route is a finding, never a schema to
 loosen.
+
+## History
+
+A record that was once claimed and not written, written now. Report 015
+said the executor's mutation-revert incident "is recorded in the as-built".
+That sentence was untrue when written: the reviewer searched the pushed
+tree, the records and infra and found no such record. The record exists
+only from this pull request: while the carried auth and api-client work was
+under mutation testing, the executor discarded its own uncommitted edits
+with a careless checkout. The loss was caught immediately, the edits were
+restored, and the full suite was re-verified before anything was committed.
+Nothing pushed was ever in a broken state.
