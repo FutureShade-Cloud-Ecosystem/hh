@@ -682,4 +682,188 @@ if (reason && inCI && !underBun) {
       await close();
     }
   });
+
+  test('a property set re-renders the kit: the reactive property drives the render, not only the attribute', async () => {
+    // The reviewer checked this by hand in Chrome; the suite holds it now. The
+    // state is set as a PROPERTY (host.state = ...), never as an attribute, so
+    // a render that followed the attribute would leave the kit stale and this
+    // test red.
+    const { port, close } = await startServer();
+    const cdp = await launchBrowser(binary);
+    try {
+      await cdp.navigate(`http://127.0.0.1:${port}/`);
+      const out = await cdp.evaluate(
+        `(async () => {
+          // Each test drives a cold browser: wait for the tag to register
+          // before creating an element, so append upgrades it synchronously.
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              if (customElements.get('hh-scan-and-confirm') || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
+          const host = document.createElement('hh-scan-and-confirm');
+          document.body.append(host);
+          await host.updateComplete;
+          const stateOf = () => host.shadowRoot.querySelector('.kit-root')?.getAttribute('data-state') ?? null;
+          const before = stateOf();
+          host.state = 'error';
+          await host.updateComplete;
+          const word = host.shadowRoot.querySelector('.kit-root .state-label, .kit-root .banner-text, .kit-root .review-title');
+          return {
+            before,
+            after: stateOf(),
+            attributeUnset: host.getAttribute('state') === null,
+            word: word ? word.textContent.trim() : null,
+          };
+        })()`,
+      );
+      assert.equal(out.before, 'ready', 'the kit must render its default state before the property set');
+      assert.equal(
+        out.after,
+        'error',
+        'a property set must re-render: data-state must follow the property the test set',
+      );
+      assert.equal(
+        out.attributeUnset,
+        true,
+        'the render must have followed the property: the state attribute was never set',
+      );
+      assert.equal(
+        out.word,
+        'Something went wrong',
+        'the re-render must paint the designed error state, not only move the marker',
+      );
+    } finally {
+      await cdp.close();
+      await close();
+    }
+  });
+
+  test('a same-state update keeps its nodes: Lit diffs the parts, it does not redraw the root', async () => {
+    // The reviewer checked this by hand in Chrome; the suite holds it now. A
+    // regression that renders by wiping the shadow root would replace every
+    // node on an update and fail the identity check.
+    const { port, close } = await startServer();
+    const cdp = await launchBrowser(binary);
+    try {
+      await cdp.navigate(`http://127.0.0.1:${port}/`);
+      const out = await cdp.evaluate(
+        `(async () => {
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              if (customElements.get('hh-scan-and-confirm') || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
+          const host = document.createElement('hh-scan-and-confirm');
+          document.body.append(host);
+          await host.updateComplete;
+          const before = host.shadowRoot.querySelector('button[data-action]');
+          host.requestUpdate();
+          await host.updateComplete;
+          const after = host.shadowRoot.querySelector('button[data-action]');
+          return {
+            hadControl: before !== null,
+            sameNode: before === after,
+            stillConnected: before !== null && before.isConnected,
+          };
+        })()`,
+      );
+      assert.equal(out.hadControl, true, 'the ready kit must render a live control to hold on to');
+      assert.equal(
+        out.sameNode,
+        true,
+        'a same-state update must keep the node it rendered: the control must be the same element, not a fresh copy',
+      );
+      assert.equal(out.stillConnected, true, 'the kept node must still sit in the shadow tree');
+    } finally {
+      await cdp.close();
+      await close();
+    }
+  });
+
+  test('a host listener survives a state change; a listener on content inside the kit does not', async () => {
+    // The README's rule for consumers, held by the leg: a state change
+    // replaces a kit's content nodes, so a listener that outside code
+    // attached to a node inside a kit is lost across one, and a listener on
+    // the host element survives.
+    const { port, close } = await startServer();
+    const cdp = await launchBrowser(binary);
+    try {
+      await cdp.navigate(`http://127.0.0.1:${port}/`);
+      const out = await cdp.evaluate(
+        `(async () => {
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              if (customElements.get('hh-scan-and-confirm') || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
+          const host = document.createElement('hh-scan-and-confirm');
+          document.body.append(host);
+          await host.updateComplete;
+          const received = [];
+          host.addEventListener('click', (event) => {
+            const control = event.composedPath().find((n) => n instanceof Element && n.hasAttribute('data-action'));
+            received.push(control ? control.getAttribute('data-action') : null);
+          });
+          const first = host.shadowRoot.querySelector('button[data-action]');
+          let innerCalls = 0;
+          first.addEventListener('click', () => { innerCalls++; });
+          const action = first.getAttribute('data-action');
+          // One state change swaps the body; the design's own rule.
+          host.state = 'error';
+          await host.updateComplete;
+          const firstGone = !first.isConnected;
+          host.state = 'ready';
+          await host.updateComplete;
+          const second = host.shadowRoot.querySelector('button[data-action]');
+          second.addEventListener('click', () => { innerCalls++; });
+          // A second round trip, so the listener measured at the click is one
+          // that sat on content across a full swap.
+          host.state = 'error';
+          await host.updateComplete;
+          host.state = 'ready';
+          await host.updateComplete;
+          const third = host.shadowRoot.querySelector('button[data-action]');
+          third.click();
+          return {
+            action,
+            firstGone,
+            replaced: third !== first && third !== second,
+            received,
+            innerCalls,
+          };
+        })()`,
+      );
+      assert.ok(out.action, 'the ready kit must render a live data-action control to click');
+      assert.equal(
+        out.firstGone,
+        true,
+        'a state change must replace the kit content nodes: the node the content listener sat on is gone',
+      );
+      assert.equal(out.replaced, true, 'each return to ready must be a fresh body, not the old nodes');
+      assert.equal(out.received.length, 1, 'the host listener must fire exactly once for the click after two state changes');
+      assert.equal(
+        out.received[0],
+        out.action,
+        'the host listener must survive a state change and receive the action',
+      );
+      assert.equal(
+        out.innerCalls,
+        0,
+        'a listener that outside code attached to a node inside the kit must be lost across a state change',
+      );
+    } finally {
+      await cdp.close();
+      await close();
+    }
+  });
 }

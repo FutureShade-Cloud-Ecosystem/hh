@@ -202,7 +202,12 @@ explicit update). What it does not survive is a render that swaps the template:
 the designed states replace a kit's body with a different template, the old
 nodes go, and a content listener and its focus go with them.
 
-So the supported pattern is still delegation on the HOST element: attach one
+The rule for consumers: listen on the host. A state change replaces a kit's
+content nodes, so a listener that outside code attached to a node inside a kit
+is lost across one, while a listener on the host element survives (the browser
+leg holds both halves: the host listener still receives the action after a
+state change and back, and a content listener does not fire again). So the
+supported pattern is delegation on the HOST element: attach one
 listener to the `<hh-*>` element itself and read the control off
 `event.composedPath()` inside it:
 
