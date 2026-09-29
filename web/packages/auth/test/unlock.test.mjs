@@ -296,12 +296,17 @@ test("the lock mirror payload carries no token, no PIN, no name, no secret", asy
 });
 
 test("a stored lock payload with unknown extra fields is rewritten to the known fields on read", async () => {
+  // A leftover from an older version: the payload validates, so the lock
+  // restores, but what it carries beyond the known fields (here a display
+  // name the current package would never write) must not stay in storage.
+  // The bound user is the signed-in user: a lock for anybody else is a
+  // different rule's case (the ruling's start-up check clears it).
   const recorded = new RecordedStorage();
   recorded.setItem(
     LOCK_MIRROR_KEY,
     JSON.stringify({
       v: 1,
-      userId: "u-1",
+      userId: FAKE_ACCOUNT.userId,
       credentialId: "leftover-credential",
       engagedAtMs: START_MS,
       name: "Leftover Display Name",
@@ -480,11 +485,14 @@ test("four concurrent wrong attempts all reach the verifier, and the newest fail
 });
 
 test("an unlock with no live session opens: the binding check has no user to compare", async () => {
-  // The recorded gap, stated as behaviour: the lock binds to the user who
-  // engaged, but that check compares against the LIVE session, and with no
-  // live session there is nothing to compare. The lock is a screen courtesy
-  // and the JWT is the authority, so the unlock proceeds. If this ever
-  // changes, it is a decision, not an accident.
+  // The recorded gap, stated as behaviour and now bounded by Colton's
+  // ruling C (relay message 048): the lock binds to the user who engaged,
+  // but that check compares against the LIVE session, and with no live
+  // session there is nothing to compare. A bare clear() is not a sign-out:
+  // no counter moves and the lock is not disengaged, so this custody is the
+  // expiry-shaped one, and the unlock proceeds. A sign-out is the act that
+  // refuses (the sign-out counter, test/lock-signout.test.mjs); if this
+  // acceptance ever narrows further, it is a decision, not an accident.
   const { credentials, lock, sessions } = await rig({ openWindowMs: 3_600_000 });
   assert.equal((await lock.engage()).ok, true);
   sessions.clear(); // the custody holds no live session
@@ -530,7 +538,7 @@ function engageRig() {
     mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded),
     now: time.now,
   });
-  return { gated, lock, recorded, sessions };
+  return { gated, lock, recorded, sessions, time };
 }
 
 test("of two concurrent engages only the first completion lands, and the mirror holds one entry", async () => {
@@ -717,4 +725,151 @@ test("the platform adapter demands user verification on create and on get", asyn
     "verification pins userVerification to required: the discouraged spelling must turn this test red",
   );
   assert.equal(getOptions.publicKey.allowCredentials.length, 1, "the assertion targets exactly the registered credential");
+});
+
+// The re-checks after each await refuse a DIFFERENT user only: the bound
+// user's own token moving underneath (a refresh mid prompt, a token that
+// expires mid prompt) is not a change of person. Each test below parks the
+// platform at the await the re-check follows, moves only the bound user's
+// own token, and expects the platform's answer to land.
+test("the engaged user's token expiring during the credential create does not refuse the engage", async () => {
+  // The re-check after create once compared with the session captured at the
+  // start, so the engaged user's own token expiring mid prompt (the custody
+  // then holds no session at all) refused the engage and the person had to
+  // start over. Nobody else signed in: the engage lands.
+  const { gated, lock, recorded, sessions, time } = engageRig();
+
+  const engaging = lock.engage(); // person A's engage, parked at the platform's create
+  await untilCreates(gated, 1);
+  time.advance(3_600_001); // the captured token expires while create is in flight
+  assert.equal(sessions.current, null, "the custody holds no live session while create is in flight");
+  gated.pendingCreates[0].resolve("fake-credential-id-1"); // the platform answers
+
+  const result = await engaging;
+  assert.equal(result.ok, true, `nobody else signed in, so the engage lands (${result.ok ? "" : result.error})`);
+  assert.equal(lock.state, "locked");
+  const payload = JSON.parse(recorded.getItem(LOCK_MIRROR_KEY));
+  assert.equal(payload.userId, FAKE_ACCOUNT.userId, "the lock still binds to the user who engaged it");
+});
+
+test("the engaged user's token expiring during the prompt does not refuse the unlock", async () => {
+  const { credentials, lock, sessions, time } = await deferredRig();
+  assert.equal((await lock.engage()).ok, true);
+
+  const opening = lock.unlock(); // parked at the platform prompt
+  const verify = await untilPending(credentials, 1);
+  time.advance(3_600_001); // the token expires while the prompt is open
+  assert.equal(sessions.current, null, "the custody holds no live session while the prompt is open");
+  verify.complete(undefined); // the platform answers with a success
+
+  const result = await opening;
+  assert.equal(result.ok, true, `nobody else signed in, so the prompt's answer opens (${result.ok ? "" : result.error})`);
+  assert.equal(lock.state, "open");
+});
+
+test("an unlock begun with no live session accepts the engaged user's own refresh landing during the prompt", async () => {
+  // The recorded case: the token expired while the lock was engaged, so the
+  // unlock begins with no session to compare, and the engaged user's own
+  // refresh lands mid prompt. The re-check once compared with that null
+  // capture, so a live session for the SAME user refused. It refuses a
+  // different user only.
+  const { credentials, lock, sessions, time } = await deferredRig();
+  assert.equal((await lock.engage()).ok, true);
+  time.advance(3_600_001); // the token expired: the lock stays engaged, the custody holds no live session
+  assert.equal(sessions.current, null);
+
+  const opening = lock.unlock(); // begun with no live session
+  const verify = await untilPending(credentials, 1);
+  sessions.adopt({
+    token: FAKE_JWT,
+    tokenExpiresAtMs: time.now() + 3_600_000,
+    user: { ...FAKE_ACCOUNT },
+  }); // the engaged user's own refresh, mid prompt
+  verify.complete(undefined);
+
+  const result = await opening;
+  assert.equal(result.ok, true, `the session is the engaged user's own (${result.ok ? "" : result.error})`);
+  assert.equal(lock.state, "open");
+});
+
+test("a failed prompt with another user's session landed records no backoff: the failure path carries the session re-check", async () => {
+  // The success path and the failure path carry the same rule: a failure
+  // that lands after a sign-out and another person's sign-in records no
+  // backoff, so the rule has no exception.
+  const { credentials, lock, sessions } = await deferredRig();
+  assert.equal((await lock.engage()).ok, true);
+
+  const opening = lock.unlock(); // person A's unlock, parked at the platform prompt
+  const verify = await untilPending(credentials, 1);
+  otherUserAdopt(sessions); // A signs out, B signs in while the prompt is open
+  verify.fail(new Error("fake: user verification failed")); // and the prompt itself fails
+
+  const result = await opening;
+  assert.equal(result.ok, false);
+  assert.match(result.error, /the session changed while the platform prompt was in flight/, "the refusal names the session change");
+  assert.doesNotMatch(result.error, /failed attempts/, "no failure was recorded against the person no longer signed in");
+
+  // The backoff was never armed: with A's own session back, the next attempt
+  // reaches the platform at once.
+  sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: START_MS + 3_600_000, user: { ...FAKE_ACCOUNT } });
+  const again = lock.unlock();
+  const verify2 = await untilPending(credentials, 2);
+  verify2.complete(undefined);
+  assert.equal((await again).ok, true, "the next attempt was not rate limited: the refused failure recorded nothing");
+  assert.equal(lock.state, "open");
+});
+
+// A credential provider whose isAvailable is parked per call, so a session
+// switch can land while engage is still waiting on the platform's
+// availability answer: the first re-check's case, before create is asked.
+function gatedIsAvailableProvider() {
+  const pendingAvailability = [];
+  let createCount = 0;
+  return {
+    provider: {
+      isAvailable: () => new Promise((resolve) => pendingAvailability.push({ resolve })),
+      create: async () => {
+        createCount += 1;
+        return `fake-credential-id-${createCount}`;
+      },
+      verify: async () => {},
+    },
+    pendingAvailability,
+    get createCount() {
+      return createCount;
+    },
+  };
+}
+
+test("a session switch during isAvailable asks the platform for no credential: engage's first re-check refuses before create", async () => {
+  // Removing the first re-check alone once left every test green (the second
+  // re-check still refuses the engage), but the platform was then asked to
+  // register a credential for the person who is no longer signed in. This
+  // pins the first re-check where only it is under test: create is never
+  // asked.
+  const recorded = new RecordedStorage();
+  const sessions = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: () => START_MS });
+  sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: START_MS + 3_600_000, user: { ...FAKE_ACCOUNT } });
+  const gated = gatedIsAvailableProvider();
+  const lock = new DeviceLock({
+    credentials: gated.provider,
+    sessions,
+    mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded),
+    now: () => START_MS,
+  });
+
+  const engaging = lock.engage(); // parked at isAvailable
+  for (let i = 0; i < PENDING_LIMIT && gated.pendingAvailability.length < 1; i += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(gated.pendingAvailability.length, 1, "engage asked the platform whether a credential is available");
+  otherUserAdopt(sessions); // A signs out, B signs in while the availability ask is open
+  gated.pendingAvailability[0].resolve(true);
+
+  const result = await engaging;
+  assert.equal(result.ok, false);
+  assert.match(result.error, /the session changed while engage was in flight/);
+  assert.equal(gated.createCount, 0, "the platform was never asked to create a credential for the person who left");
+  assert.equal(lock.state, "absent");
+  assert.equal(new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded).read(), undefined, "nothing was mirrored");
 });

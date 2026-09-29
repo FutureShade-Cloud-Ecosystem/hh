@@ -189,6 +189,63 @@ test("a stored payload with unknown extra fields is rewritten to the known field
   assert.equal(rewritten.includes("LEFTOVER-OLDER-VERSION"), false, "the unknown field is gone from storage");
 });
 
+test("no field other than the four known ones is ever written to the session mirror: the write side of the read rule", () => {
+  // Colton's ruling on the email in session storage (relay message 047):
+  // unknown fields are stripped on read (the test above), and this is the
+  // same rule on write. Every code path that writes the mirror is driven
+  // here, and every write that lands under the key is checked field by
+  // field: only v, userId, email and name may ever be written.
+  const recorded = new RecordedStorage();
+
+  // Write site one: the constructor's rewrite of a payload that validates
+  // but carries fields this version does not know. The seeded leftover is
+  // the test's own fixture, not a package write: only writes made after the
+  // seed are the package's.
+  recorded.setItem(
+    SESSION_MIRROR_KEY,
+    JSON.stringify({ v: 2, userId: "u-1", email: "x@example.test", name: "Y", token: "LEFTOVER-OLDER-VERSION" }),
+  );
+  const seedWrites = recorded.writes.length;
+  new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: () => START_MS });
+
+  // Write site two: adopt, the one path a session's profile reaches the
+  // mirror by (a sign-in answer, a Google callback, a resume's mint all
+  // adopt through it).
+  const store = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: () => START_MS });
+  assert.equal(
+    store.adopt({ token: FAKE_JWT, tokenExpiresAtMs: START_MS + 60_000, user: { ...FAKE_ACCOUNT } }),
+    true,
+  );
+  assert.equal(
+    store.adopt({
+      token: FAKE_JWT,
+      tokenExpiresAtMs: START_MS + 120_000,
+      user: { userId: "u-2", email: "second@example.test", name: "Second" },
+    }),
+    true,
+    "a second adoption writes again, so the check below is not vacuous",
+  );
+
+  const writes = recorded.writes.slice(seedWrites).filter((w) => w.key === SESSION_MIRROR_KEY);
+  assert.ok(writes.length >= 3, `the rewrite and both adoptions must have written (saw ${writes.length})`);
+  for (const write of writes) {
+    const payload = JSON.parse(write.value);
+    assert.deepEqual(
+      Object.keys(payload).sort(),
+      ["email", "name", "userId", "v"],
+      "the write carries exactly the four known fields: v, userId, email, name, and nothing else",
+    );
+    assert.equal("token" in payload, false, "no token field is ever written");
+    assert.equal("handle" in payload, false, "no handle field is ever written: no refresh handle exists");
+  }
+  // A clear is a removal, not a write; drive one so the whole mirror
+  // lifecycle runs inside the capture.
+  store.clear();
+  assert.equal(recorded.getItem(SESSION_MIRROR_KEY), null, "the clear removed the payload");
+  const writesAfterClear = recorded.writes.slice(seedWrites).filter((w) => w.key === SESSION_MIRROR_KEY);
+  assert.equal(writesAfterClear.length, writes.length, "the clear added no write");
+});
+
 test("the mirror degrades observably on a throwing accessor, and a degraded reload restores nothing", () => {
   const throwing = () => new ThrowSafeMirror(SESSION_MIRROR_KEY, new ThrowingStorage());
   const mirror = throwing();
