@@ -5,11 +5,12 @@
 // Penpot mapping: the Penpot component named hh-list-detail, one-to-one with
 // the element tag below.
 
-import { css, defineElement, html, HHElement, type Template } from '../render.js';
+import { css, html, type TemplateResult as Template } from 'lit';
+import { defineElement, HHElement } from '../base.js';
 import { baseStyles, row } from '../primitives.js';
 import { kitShell, stateStyles, type ButtonSpec, type KitState } from '../state.js';
 
-const styles = baseStyles + stateStyles + css`
+const styles = css`
   .split {
     display: grid;
     /* minmax(0, ..) so the panes shrink and wrap instead of pushing past the
@@ -54,9 +55,7 @@ const ITEMS: ReadonlyArray<readonly [string, string]> = [
 ];
 
 export class ListDetailKit extends HHElement {
-  static properties = { state: { attribute: true } };
-  static styles = styles;
-  state: KitState = 'ready';
+  static styles = [baseStyles, stateStyles, styles];
 
   private body(): Template {
     const rows = ITEMS.map(([name, sub], i) =>

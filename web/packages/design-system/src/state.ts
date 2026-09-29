@@ -8,7 +8,7 @@
 // a word, and a pattern change (the data-pattern marker on the root), so a
 // reader with the colour removed can still tell which state they are in.
 
-import { css, html, type Template } from './render.js';
+import { css, html, type TemplateResult as Template } from 'lit';
 import { button, chip, spinner, type ButtonSpec } from './primitives.js';
 
 // The kits take their action specs through ShellSpec, so they import the spec

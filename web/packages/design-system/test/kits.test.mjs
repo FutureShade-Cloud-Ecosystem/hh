@@ -14,15 +14,26 @@
 //
 //   COVERAGE: every kit renders every designed state (the five from the source
 //   brief) and the ready state beside them.
+//
+// The renderer is Lit (docs/adr/0023, option 2, adopted). What a value Lit
+// interpolates can become is Lit's contract, held by the library and by the
+// raw-markup gate (test/no-raw-markup.test.mjs): an interpolated value lands
+// as escaped text or an attribute value, never as markup. This file holds the
+// conduct rules on top of that contract, plus the two value-shape facts a kit
+// caller leans on (a caller's string and a caller's object are TEXT).
+//
+// RENDER ORDER NOTE: the render helper installs Lit's Node DOM shim as a
+// side-effect import, so it must be imported before any kit class loads.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderTemplate, html, HHRenderError } from '../src/render.js';
+import { renderKit, renderTemplate } from './_lib/render.mjs';
 import { KIT_STATES, STATE_META, kitShell, stateIndicator } from '../src/state.js';
 import { baseStyles } from '../src/primitives.js';
 import { STATE_ICONS, icon } from '../src/state-icons.js';
 import { parseDeclarations, readPkg, shippedStyleFiles, sheetBlocks, stripComments } from './_lib/sheet.mjs';
+import { html } from 'lit';
 
 import { ScanConfirmKit } from '../src/kits/scan-and-confirm.js';
 import { ListDetailKit } from '../src/kits/list-detail.js';
@@ -38,12 +49,17 @@ const KITS = [
   ['hh-inbox', InboxKit],
 ];
 
-const render = (Kit, state) => Kit.renderToString({ state });
+const render = (Kit, state) => renderKit(Kit, { state });
 
 const attr = (markup, name) => {
   const m = markup.match(new RegExp(`${name}="([^"]*)"`));
   return m ? m[1] : null;
 };
+
+// Lit's server render anchors every interpolated text at a comment marker, so
+// a word the kit renders sits just behind one. The helper below reads the word
+// the way a browser shows it: markers stripped, whitespace trimmed.
+const visibleText = (markup) => markup.replace(/<!--.*?-->/g, '');
 
 // ── coverage ────────────────────────────────────────────────────────────────────
 
@@ -72,7 +88,10 @@ test('kit coverage: every kit renders its every designed state and its ready sta
         assert.equal(attr(markup, 'data-kit'), tag, 'the root must name the kit');
         assert.equal(attr(markup, 'data-state'), state, 'the root must name the state');
         assert.equal(attr(markup, 'data-pattern'), STATE_META[state].pattern, 'the root must carry the state pattern');
-        assert.ok(markup.includes('state-label') || markup.includes('banner-text'), `${tag}/${state} lost its word`);
+        assert.ok(
+          markup.includes('state-label') || markup.includes('banner-text') || markup.includes('review-title'),
+          `${tag}/${state} lost its word`,
+        );
         assert.ok(markup.includes('<svg'), `${tag}/${state} lost its icon`);
       } catch (e) {
         failures.push(`${tag}/${state}: ${e.message}`);
@@ -96,15 +115,18 @@ test('kit coverage: every kit renders its every designed state and its ready sta
 // declares for that state: distinctness is judged on the PATH DATA a user is
 // shown, not on an invisible attribute, so five identical icons fail here.
 const iconGeometry = (markup) => {
+  // The local is not named svg: the position gate's two-place rule reserves
+  // that name in every file of the package (test/positions.test.mjs), so the
+  // name always means the imported tag.
   const svgs = [...markup.matchAll(/<svg[^>]*>[\s\S]*?<\/svg>/g)].map((m) => m[0]);
-  return svgs.map((svg) => [...svg.matchAll(/ d="([^"]+)"/g)].map((d) => d[1]).join(' ')).join(' || ');
+  return svgs.map((svgMarkup) => [...svgMarkup.matchAll(/ d="([^"]+)"/g)].map((d) => d[1]).join(' ')).join(' || ');
 };
 
-test(`state indicators survive with colour removed: every kit`, () => {
+test('state indicators survive with colour removed: every kit', () => {
   for (const [tag, Kit] of KITS) {
       const shapes = new Set();
       for (const state of KIT_STATES) {
-        const markup = render(Kit, state);
+        const markup = visibleText(render(Kit, state));
         // The word, with content.
         const label = markup.match(/class="[^"]*(state-label|banner-text|review-title)[^"]*"\s*>([^<]+)</);
         assert.ok(label && label[2].trim().length > 0, `${tag}/${state}: no word beside the colour`);
@@ -172,7 +194,7 @@ test('offline and conflict are pattern changes, not recolourings: the body stays
   const conflict = render(kit, 'conflict');
   assert.ok(conflict.includes('review-card'), 'conflict must carry the review pattern');
   assert.ok(conflict.includes('msg-main'), 'conflict must show the local body');
-  const buttons = conflict.match(/<button[^>]*>[^<]*</g) ?? [];
+  const buttons = visibleText(conflict).match(/<button[^>]*>[^<]*</g) ?? [];
   const review = buttons.find((b) => b.includes('data-action="review"'));
   assert.ok(review && !review.includes('disabled'), 'conflict must leave the scaffold review action live');
   assert.ok(buttons.filter((b) => b.includes('disabled')).length >= 2, 'conflict must hold the kit actions');
@@ -191,7 +213,7 @@ test('every place a kit shows state carries a non-colour cue', () => {
   const allStates = ['ready', ...KIT_STATES];
   for (const [tag, Kit] of KITS) {
     for (const state of allStates) {
-      const markup = render(Kit, state);
+      const markup = visibleText(render(Kit, state));
       // A DONE rail step: the check icon is the visible cue, the visually
       // hidden word is the AT cue; the green rides beside them, never alone.
       for (const m of markup.matchAll(/<li class="rail-step rail-step-done">[\s\S]*?<\/li>/g)) {
@@ -214,7 +236,7 @@ test('every place a kit shows state carries a non-colour cue', () => {
   // The selected row's cue is structural: the sheet must change something
   // besides colour on .row-selected, and the selection border must be the
   // logical property so a right-to-left reading mirrors it.
-  const selected = baseStyles.match(/\.row-selected\s*\{[^}]*\}/);
+  const selected = baseStyles.cssText.match(/\.row-selected\s*\{[^}]*\}/);
   assert.ok(selected, 'the sheet must carry the .row-selected rule');
   assert.match(selected[0], /font-weight/, 'the selected row must carry a weight cue, not colour alone');
   assert.match(selected[0], /border-inline-start/, 'the selection border must be the logical property');
@@ -242,481 +264,43 @@ test('the selected row carries an ARIA state, and only it does', () => {
   assert.match(render(KITS[2][1], 'ready'), /aria-current="step"/, 'the rail keeps its own aria-current on the current step');
 });
 
-// ── trusted markup is a brand, never a shape ─────────────────────────────────────
+// ── a caller's values are text, never markup ─────────────────────────────────────
 
 test('a caller object and a caller string are text, never markup', () => {
   const poison = '<img src=x onerror=alert(1)>';
   // A caller's object that carries an unsafe-looking key: parsed JSON shaped
   // like the old UnsafeHtml must land as TEXT (or nothing), never as markup.
-  const fromObject = renderTemplate(html`<div>${{ unsafe: poison }}</div>`);
+  // Lit stringifies a plain object in a text position: "[object Object]".
+  const fromObject = visibleText(renderTemplate(html`<div>${{ unsafe: poison }}</div>`));
   assert.ok(!fromObject.includes('<img'), `a caller object with an unsafe key became markup: ${fromObject}`);
   assert.ok(!fromObject.includes('onerror'), `a caller object with an unsafe key became markup: ${fromObject}`);
-  // The same object handed straight to the renderer: escaped text.
-  const direct = renderTemplate({ unsafe: poison });
-  assert.ok(!direct.includes('<img') && !direct.includes('onerror='), `renderTemplate emitted a caller's object raw: ${direct}`);
-  // A caller's string: escaped.
-  const fromString = renderTemplate(html`<div>${poison}</div>`);
-  assert.match(fromString, /&lt;img src=x onerror=alert\(1\)&gt;/, "a caller's string was not escaped");
-  // A caller's object shaped like the old Template (strings key): shape is
-  // never trust, so this is escaped text too.
-  const fakeTemplate = renderTemplate(html`<div>${{ strings: ['<b>bold</b>'], values: [] }}</div>`);
+  assert.match(fromObject, /\[object Object\]/, 'a plain object renders as its stringified text');
+  // A caller's object shaped like a template (strings key): shape is never
+  // trust, so this is stringified text too.
+  const fakeTemplate = visibleText(renderTemplate(html`<div>${{ strings: ['<b>bold</b>'], values: [] }}</div>`));
   assert.ok(!fakeTemplate.includes('<b>'), `an object with a strings key became markup: ${fakeTemplate}`);
-  const fakeDirect = renderTemplate({ strings: ['<b>bold</b>'], values: [] });
-  assert.ok(!fakeDirect.includes('<b>'), `renderTemplate emitted a fake template raw: ${fakeDirect}`);
+  // A caller's string: escaped text, so the tags come back as text.
+  const fromString = visibleText(renderTemplate(html`<div>${poison}</div>`));
+  assert.match(fromString, /&lt;img src=x onerror=alert\(1\)&gt;/, "a caller's string was not escaped");
+  assert.ok(!/<img/.test(fromString), `a caller's string became markup: ${fromString}`);
+  // A caller's object handed straight to the renderer (not inside a template):
+  // stringified to its plain text, never read as markup.
+  const direct = visibleText(renderTemplate({ unsafe: poison }));
+  assert.ok(!direct.includes('<img') && !direct.includes('onerror='), `renderTemplate emitted a caller's object raw: ${direct}`);
+  assert.match(direct, /\[object Object\]/);
   // The icon path data is bound as an ATTRIBUTE value: a poisoned label or a
   // poisoned d cannot close the attribute and inject. The label lands as
   // ESCAPED text (inert inside the title), never as a second element.
-  const labelled = renderTemplate(icon('check', `${poison}`));
+  const labelled = visibleText(renderTemplate(icon('check', `${poison}`)));
   assert.ok(!/<img/.test(labelled), `a poisoned icon label became markup: ${labelled}`);
   assert.match(labelled, /&lt;img src=x onerror/, 'the poisoned label must appear escaped, not stripped and not raw');
-  // And no raw-markup escape hatch may return, under any name.
+  // And no raw-markup escape hatch may return, under any name, on the public
+  // surface or in any shipped source (the package-wide gate lives in
+  // test/no-raw-markup.test.mjs; this half pins the surface).
   assert.ok(!readPkg('src/index.ts').includes('unsafeSvg'), 'the public surface exports unsafeSvg again');
-  assert.ok(!/export\s+(function|const|class)\s+unsafeSvg/.test(readPkg('src/render.ts')), 'src/render.ts exports an unsafeSvg escape hatch');
 });
 
-test('html() accepts only a real template strings array', () => {
-  // The engine hands a tagged call a TemplateStringsArray, which carries `raw`.
-  // A plain array (say parsed from JSON) has none, and its items would be
-  // emitted as literal markup: the reviewer's probe ran script through exactly
-  // this door. Both shapes are refused at the factory, by name.
-  const fromJsonArray = () => html(JSON.parse('["<img src=x onerror=window.__pwn=1>"]'));
-  assert.throws(fromJsonArray, HHRenderError, 'a plain array as the strings argument must be refused');
-  assert.throws(fromJsonArray, /template strings array/, 'the refusal must name what was wrong');
-  const fromJsonObject = () => html(JSON.parse('{"0":"<img src=x onerror=window.__pwn=1>","raw":["<img src=x onerror=window.__pwn=1>"]}'));
-  assert.throws(fromJsonObject, HHRenderError, 'a plain object shaped like a strings array must be refused');
-  assert.throws(() => html('<img src=x onerror=alert(1)>'), HHRenderError, 'a bare string must be refused');
-  // A real tagged call keeps working, branded and composable.
-  assert.equal(renderTemplate(html`<b>safe</b>`), '<b>safe</b>');
-});
-
-test('html() refuses a binding in an unquoted attribute, by name', () => {
-  // Escaping makes a QUOTED attribute value inert; an unquoted one the value
-  // can close and escape into. The factory reads the position from the static
-  // text before the binding.
-  const unquoted = () => html`<div class=${'x onmouseover=window.__pwn=1'}>text</div>`;
-  assert.throws(unquoted, HHRenderError);
-  assert.throws(unquoted, /unquoted attribute class/, 'the refusal must name the attribute');
-  // The same value in the SAME attribute, quoted, is the ordinary escaped path.
-  assert.equal(
-    renderTemplate(html`<div class="${'x onmouseover=window.__pwn=1'}">text</div>`),
-    '<div class="x onmouseover=window.__pwn=1">text</div>',
-  );
-});
-
-test('html() refuses a value in an event attribute, by name', () => {
-  const handler = () => html`<button onclick="${'window.__pwn=1'}">go</button>`;
-  assert.throws(handler, HHRenderError);
-  assert.throws(handler, /event attribute onclick/, 'the refusal must name the event attribute');
-  const mouseover = () => html`<span onmouseover='${'window.__pwn=1'}'>x</span>`;
-  assert.throws(mouseover, HHRenderError);
-});
-
-test('html() refuses an address that is not http, https or relative, by name', () => {
-  for (const bad of ['javascript:alert(1)', 'JAVASCRIPT:alert(1)', ' java\nscript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'vbscript:x']) {
-    const refuse = () => html`<a href="${bad}">x</a>`;
-    assert.throws(refuse, HHRenderError, `${JSON.stringify(bad)} must be refused as an address`);
-    assert.throws(refuse, /address/, 'the refusal must name it as an address');
-  }
-  // The other navigation attributes are held to the same rule.
-  assert.throws(() => html`<img src="${'javascript:alert(1)'}">`, HHRenderError);
-  assert.throws(() => html`<form action="${'javascript:alert(1)'}">`, HHRenderError);
-  // A value that is not an address-shaped string (a template, an object) is
-  // refused too: markup has no business inside a navigation target.
-  assert.throws(() => html`<a href="${html`<b>x</b>`}">x</a>`, HHRenderError);
-  assert.throws(() => html`<a href="${{ evil: 'yes' }}">x</a>`, HHRenderError);
-  // The safe set keeps working: http, https, scheme free, fragment, protocol
-  // relative, and the empty address.
-  for (const good of ['https://example.com/a', 'http://example.com/a', '/relative/path', 'rows/one', '#fragment', '//example.com/a', '']) {
-    assert.doesNotThrow(() => html`<a href="${good}">x</a>`, `${JSON.stringify(good)} must keep rendering`);
-  }
-});
-
-// The r3 review's five probes: each ran script through the previous position
-// check, which read only the static text immediately before a value and so
-// saw a plain attribute wherever the binding did not sit directly after the
-// opening quote. One refusal per probe below.
-
-test('html() refuses a binding anywhere inside an event attribute, not only directly after the quote', () => {
-  // Probe B2: a value after other text inside the handler. Escaping cannot
-  // save it: whatever lands in an event attribute is code.
-  const prefixed = () => html`<button onclick="void 0;${'window.__pwn=1'}">go</button>`;
-  assert.throws(prefixed, HHRenderError, 'a value after a static prefix inside onclick must be refused');
-  assert.throws(prefixed, /event attribute onclick/, 'the refusal must name the event attribute');
-  // A second binding later in the same handler is refused with the first.
-  const second = () => html`<span onmouseover="${'a'};void 0;${'b'}">x</span>`;
-  assert.throws(second, HHRenderError, 'the later binding inside the same handler must be refused');
-  // The direct form keeps its refusal too.
-  assert.throws(() => html`<button onclick="${'window.__pwn=1'}">go</button>`, HHRenderError);
-});
-
-test('html() refuses a value in srcdoc: the parser entity-decodes it back into a document', () => {
-  // Probe B4: an escaped value inside srcdoc is unescaped again when the
-  // iframe's document is parsed, so the script tags come back to life.
-  const frame = () => html`<iframe srcdoc="${'<script>window.__pwn=1</script>'}"></iframe>`;
-  assert.throws(frame, HHRenderError, 'a binding inside srcdoc must be refused');
-  assert.throws(frame, /srcdoc/, 'the refusal must name srcdoc');
-  // A static prefix inside the attribute does not save it either.
-  const prefixed = () => html`<iframe srcdoc="<p>static ${'<img src=x onerror=window.__pwn=1>'}"></iframe>`;
-  assert.throws(prefixed, HHRenderError, 'a value after a static prefix inside srcdoc must be refused');
-});
-
-test('html() refuses an address attribute whose value is not wholly one binding', () => {
-  // Probe B1: the scheme split over two bindings reassembles in the browser,
-  // where no per-value check can ever see it.
-  const split = () => html`<a href="${'java'}${'script:alert(1)'}">x</a>`;
-  assert.throws(split, HHRenderError, 'an address split over two bindings must be refused');
-  assert.throws(split, /not wholly one value/, 'the refusal must say the value must be whole');
-  // Probe B6: a binding after a literal prefix inside the address.
-  const prefixed = () => html`<a href="javascript:${'alert(1)'}">x</a>`;
-  assert.throws(prefixed, HHRenderError, 'a value after a static prefix inside an address must be refused');
-  assert.throws(prefixed, /not wholly one value/, 'the refusal must say the value must be whole');
-  // A suffix after the binding is refused the same way.
-  const suffixed = () => html`<a href="${'/x'}?next">x</a>`;
-  assert.throws(suffixed, HHRenderError, 'an address with a static suffix after the binding must be refused');
-  // The whole address as one binding keeps rendering, scheme checked as before.
-  assert.equal(renderTemplate(html`<a href="${'/x?next'}">x</a>`), '<a href="/x?next">x</a>');
-});
-
-test('html() refuses a binding in an unquoted attribute even after a static prefix', () => {
-  // Probe B3: the old tail read saw title=x and no name=quote pattern at the
-  // end, so the value rode through: a space ends an unquoted value and the
-  // next word becomes a new attribute, here an event handler.
-  const afterLetter = () => html`<div title=x${' onmouseover=window.__pwn=1'}>text</div>`;
-  assert.throws(afterLetter, HHRenderError, 'a value riding after an unquoted prefix must be refused');
-  assert.throws(afterLetter, /unquoted attribute title/, 'the refusal must name the unquoted attribute');
-  // The sanctioned whole-attribute composition (the button spec's pattern:
-  // closed-union constants and trusted sub-templates between attributes) keeps
-  // rendering, attributes and all.
-  assert.equal(
-    renderTemplate(html`<button type="button" class="btn"${' disabled'}${html` data-x="1"`}>go</button>`),
-    '<button type="button" class="btn" disabled data-x="1">go</button>',
-  );
-});
-
-// The r5 review's probes: a caller's string bound where an attribute NAME
-// goes becomes attributes (the probes ran script through it), and five more
-// positions the scanner did not refuse. One refusal per position below, each
-// proven able to fail: removing its check in a scratch copy of the package
-// turns that one test red.
-
-test('html() accepts only a trusted template, null, false or a bare attribute name where an attribute name goes', () => {
-  // Probe M5b: a whole attribute bound between attributes. A caller string
-  // that carries = or a second word is a value and a name, not a name:
-  // refused.
-  const whole = () => html`<button type="button"${'onclick=window.__pwn=1'}>go</button>`;
-  assert.throws(whole, HHRenderError, 'a caller string carrying an attribute pair must be refused where a name goes');
-  assert.throws(whole, /attribute name position/, 'the refusal must name the position');
-  // Probes M5a and M5c: a bare name that begins with on completes an event
-  // attribute, statically valued or bound. Attribute names are case
-  // insensitive, so the check is too.
-  const onName = () => html`<button ${'onclick'}="void 0">go</button>`;
-  assert.throws(onName, HHRenderError, 'a bound name beginning with on must be refused');
-  assert.throws(onName, /attribute name position/, 'the on refusal must name the position too');
-  assert.throws(() => html`<button ${'ONCLICK'}="void 0">go</button>`, HHRenderError, 'attribute names are case insensitive');
-  // A bound name holds for the value after the next =: an address name
-  // routes that value through the address check, so the bound name cannot
-  // launder a scheme past it.
-  assert.throws(() => html`<a ${'href'}="${'javascript:alert(1)'}">x</a>`, HHRenderError, 'a bound address name must not launder the address check');
-  assert.equal(renderTemplate(html`<a ${'href'}="${'/x'}">x</a>`), '<a href="/x">x</a>', 'a safe value behind a bound address name keeps rendering');
-  // A number or an array is not a name either.
-  assert.throws(() => html`<div ${5}>x</div>`, HHRenderError);
-  assert.throws(() => html`<div ${[' disabled']}>x</div>`, HHRenderError, 'an array is not a bare name');
-  // A binding continuing a partial name (on + click) is refused outright:
-  // the joined name is an event attribute the per-value checks never see.
-  assert.throws(() => html`<div on${'click'}="void 0">x</div>`, HHRenderError, 'a binding that completes a name mid-word must be refused');
-  assert.throws(() => html`<div${' disabled'}>x</div>`, HHRenderError, 'a binding right after the tag name continues it, and is refused');
-  // The accepted set keeps rendering: null, false and the empty string bind
-  // nothing; a bare non-event name becomes exactly that name; a trusted
-  // sub-template composes whole attributes.
-  assert.equal(renderTemplate(html`<button type="button"${null}${false}${''}>go</button>`), '<button type="button">go</button>');
-  assert.equal(
-    renderTemplate(html`<button type="button" class="btn"${' disabled'}${html` data-x="1"`}>go</button>`),
-    '<button type="button" class="btn" disabled data-x="1">go</button>',
-  );
-});
-
-test('html() refuses a binding in the SVG animation attributes values, to and from, by name', () => {
-  // Probes M2c and M2d: an animate or set element carries its target in
-  // attributeName and its payload in values, to or from; the decoded value
-  // lands on the target attribute, and onto href it ran script on click.
-  // Escaping cannot make these safe, so any binding inside them is refused.
-  const values = () => html`<svg><animate attributeName="href" values="${'javascript:alert(1)'}"></animate></svg>`;
-  assert.throws(values, HHRenderError, 'a binding inside animate values must be refused');
-  assert.throws(values, /values attribute/, 'the refusal must name the values attribute');
-  const to = () => html`<svg><set attributeName="href" to="${'javascript:alert(1)'}"></set></svg>`;
-  assert.throws(to, HHRenderError, 'a binding inside set to must be refused');
-  assert.throws(to, /\bto attribute/, 'the refusal must name the to attribute');
-  const from = () => html`<svg><animate attributeName="href" from="${'javascript:alert(1)'}" to="/x"></animate></svg>`;
-  assert.throws(from, HHRenderError, 'a binding inside animate from must be refused');
-  assert.throws(from, /\bfrom attribute/, 'the refusal must name the from attribute');
-});
-
-test('html() refuses a binding in the object data attribute, by name', () => {
-  // Probe M4b: the object element loads its data address as a document of
-  // its own; a data: address ran script inside that opaque origin. The
-  // address check cannot save this: escaping cannot make a binding there
-  // safe at all.
-  const data = () => html`<object data="${'data:text/html,<script>window.__pwn=1</script>'}"></object>`;
-  assert.throws(data, HHRenderError, 'a binding inside object data must be refused');
-  assert.throws(data, /data attribute/, 'the refusal must name the data attribute');
-});
-
-test('html() refuses a binding inside a script body, by name', () => {
-  // Probe M6b: inside a script element the parser reads the body as code
-  // until the close tag, so an escaped binding is unescaped straight back
-  // into the program when the document is parsed.
-  const body = () => html`<script>var x = '${'1; window.__pwn=1'}';</script>`;
-  assert.throws(body, HHRenderError, 'a binding inside a script body must be refused');
-  assert.throws(body, /script element body/, 'the refusal must name the script body');
-});
-
-test('html() refuses a binding inside a style body, by name', () => {
-  // The style element's body is RAWTEXT like a script's: the parser reads it
-  // as CSS until the close tag, so an escaped binding is unescaped straight
-  // back into the sheet and can close the element early.
-  const body = () => html`<style>.x { color: ${'red}; } </style><script>window.__pwn=1</script><style>.y { color: blue } ' }</style>`;
-  assert.throws(body, HHRenderError, 'a binding inside a style body must be refused');
-  assert.throws(body, /style element body/, 'the refusal must name the style body');
-});
-
-test('html() refuses a binding in the style attribute, by name', () => {
-  // Probe M1: escaping makes nothing inert inside a style attribute; the
-  // decoded value sets arbitrary CSS (the probe set a background-image).
-  const style = () => html`<div style="${'background-image:url(javascript:alert(1))'}">x</div>`;
-  assert.throws(style, HHRenderError, 'a binding inside the style attribute must be refused');
-  assert.throws(style, /style attribute/, 'the refusal must name the style attribute');
-  // A static prefix inside the attribute does not save it.
-  const prefixed = () => html`<div style="color:red; ${'background:url(x)'}">x</div>`;
-  assert.throws(prefixed, HHRenderError, 'a value after a static prefix inside the style attribute must be refused');
-});
-
-// ── the scanner fails closed ────────────────────────────────────────────────────
-//
-// The rule of the sixth round: the default for a binding position the scanner
-// has not positively classified as safe is REFUSE. The allowed positions are
-// written as a list (text content; a quoted attribute value in an attribute on
-// the allow list; a bare attribute name on the bound-name allow list, whose
-// value is then checked against that name) and everything else is refused,
-// including any position the literal text leaves unclassifiable. Each rule
-// below is proven able to fail: removing its check in a scratch copy of the
-// package turns its assertion red (the mutation evidence in the gate report).
-
-test('html() fails closed: a value in any attribute off the allow list is refused', () => {
-  // The allow list is what the kits bind (class, role, the SVG path d) plus
-  // the two inert namespaces (data-*, aria-*); addresses keep their own
-  // stricter rule. Everything else is refused however harmless the value
-  // looks, so the next gap cannot be an attribute nobody listed. Each probe
-  // below binds a value into a statically written attribute the kits do not
-  // use; the list is the sample, broadly drawn across documents.
-  const sampled = [
-    ['title', () => html`<div title="${'x'}">t</div>`],
-    ['id', () => html`<div id="${'x'}">t</div>`],
-    ['name', () => html`<div name="${'x'}">t</div>`],
-    ['value', () => html`<div value="${'x'}">t</div>`],
-    ['alt', () => html`<img alt="${'x'}">`],
-    ['width', () => html`<img width="${'x'}">`],
-    ['height', () => html`<img height="${'x'}">`],
-    ['lang', () => html`<div lang="${'x'}">t</div>`],
-    ['dir', () => html`<div dir="${'x'}">t</div>`],
-    ['placeholder', () => html`<input placeholder="${'x'}">`],
-    ['min', () => html`<input min="${'x'}">`],
-    ['max', () => html`<input max="${'x'}">`],
-    ['step', () => html`<input step="${'x'}">`],
-    ['size', () => html`<input size="${'x'}">`],
-    ['rel', () => html`<a rel="${'x'}">t</a>`],
-    ['target', () => html`<a target="${'x'}">t</a>`],
-    ['download', () => html`<a download="${'x'}">t</a>`],
-    ['ping', () => html`<a ping="${'x'}">t</a>`],
-    ['sandbox', () => html`<iframe sandbox="${'x'}"></iframe>`],
-    ['allow', () => html`<iframe allow="${'x'}"></iframe>`],
-    ['http-equiv', () => html`<meta http-equiv="${'x'}">`],
-    ['colspan', () => html`<td colspan="${'x'}">t</td>`],
-    ['rowspan', () => html`<td rowspan="${'x'}">t</td>`],
-    ['start', () => html`<ol start="${'x'}"><li>t</li></ol>`],
-    ['for', () => html`<label for="${'x'}">t</label>`],
-    ['is', () => html`<div is="${'x'}">t</div>`],
-    ['slot', () => html`<div slot="${'x'}">t</div>`],
-    ['srcset', () => html`<img srcset="${'x'}">`],
-    ['color', () => html`<font color="${'x'}">t</font>`],
-    ['align', () => html`<div align="${'x'}">t</div>`],
-    ['coords', () => html`<area coords="${'x'}">`],
-    ['shape', () => html`<area shape="${'x'}">`],
-    ['wrap', () => html`<textarea wrap="${'x'}">t</textarea>`],
-    ['type', () => html`<input type="${'x'}">`],
-  ];
-  const alive = [];
-  for (const [name, probe] of sampled) {
-    try {
-      probe();
-      alive.push(name);
-    } catch (e) {
-      assert.ok(e instanceof HHRenderError, `${name}: the refusal must be the named error`);
-      assert.match(e.message, /allow list/, `${name}: the refusal must say the attribute is off the allow list`);
-    }
-  }
-  assert.deepEqual(alive, [], `bindings in unlisted attributes must all be refused, fail closed: ${alive.join(', ')}`);
-  // The namespaces stay closed outside their prefix: a lookalike is just
-  // another unlisted attribute, bound as a name or as a value.
-  for (const impostor of ['datax', 'ariax', 'data', 'aria', 'Data-id', 'ARIA-label']) {
-    assert.throws(() => html`<div ${impostor}="${'x'}">t</div>`, HHRenderError, `the name ${impostor} is not on the allow list`);
-    assert.throws(() => html`<div ${impostor}="${'x'}">t</div>`, /attribute name position/, `${impostor}: the name refusal must name the position`);
-  }
-  // The listed set keeps rendering, bound name or static name.
-  assert.equal(renderTemplate(html`<div class="${'x'}">t</div>`), '<div class="x">t</div>');
-  assert.equal(renderTemplate(html`<div ${'data-id'}="${'x'}">t</div>`), '<div data-id="x">t</div>');
-  assert.equal(renderTemplate(html`<path d="${'M4 4h16'}"></path>`), '<path d="M4 4h16"></path>');
-});
-
-test('html() fails closed: a bound name off the allow list is refused, and a listed one keeps rendering', () => {
-  // Where an attribute NAME goes, a string is accepted only as a bare name
-  // the allow list names: the boolean flag, the namespaces, and the address
-  // names whose values the address rule then judges. Everything else,
-  // including every on* spelling, is refused at the position.
-  const unlisted = [
-    'onclick', 'ONCLICK', 'OnMouseOver', 'onanimationstart', 'hrefx', 'srcdoc',
-    'style', 'data', 'values', 'to', 'from', 'class-x', 'type', 'id', 'title',
-    'onclick ', ' onclick', 'datanax', 'role=', 'dis abled',
-  ];
-  for (const name of unlisted) {
-    const probe = () => html`<button ${name}="1">go</button>`;
-    assert.throws(probe, HHRenderError, `${JSON.stringify(name)} must be refused where a name goes`);
-    assert.throws(probe, /attribute name position/, `${JSON.stringify(name)}: the refusal must name the position`);
-  }
-  assert.equal(renderTemplate(html`<button ${'disabled'}>go</button>`), '<button disabled>go</button>');
-  assert.equal(renderTemplate(html`<button ${'data-x'}="1">go</button>`), '<button data-x="1">go</button>');
-  assert.equal(renderTemplate(html`<button ${'aria-label'}="${'x'}">go</button>`), '<button aria-label="x">go</button>');
-  assert.equal(renderTemplate(html`<a ${'href'}="${'/x'}">x</a>`), '<a href="/x">x</a>', 'a bound address name takes its value through the address rule');
-});
-
-test('html() refuses any binding inside a script or base tag: a caller string must not choose what the parser loads', () => {
-  // The scheme rule allowed relative and plain http addresses, so a binding
-  // in a script's src, an SVG script's href, or a base's href could point
-  // the parser at an attacker-chosen script while passing every scheme
-  // check. Fail closed: nothing binds inside these tags, value or name,
-  // relative or not, upper case or lower case.
-  const cases = [
-    ['script src, relative', () => html`<script src="${'/evil.js'}"></script>`],
-    ['script src, http', () => html`<script src="${'http://cdn.example/x.js'}"></script>`],
-    ['script src as a bound name', () => html`<script ${'src'}="${'/evil.js'}"></script>`],
-    ['script type', () => html`<script type="${'module'}"></script>`],
-    ['SCRIPT, upper case', () => html`<SCRIPT src="${'/evil.js'}"></SCRIPT>`],
-    ['svg script href', () => html`<svg><script href="${'/evil.js'}"></script></svg>`],
-    ['svg script xlink:href', () => html`<svg><script xlink:href="${'/evil.js'}"></script></svg>`],
-    ['base href', () => html`<base href="${'/evil/'}">`],
-    ['base href, bare relative', () => html`<base href="${'evil/'}">`],
-    ['BASE, upper case', () => html`<BASE href="${'/evil/'}">`],
-    ['base target', () => html`<base target="${'_blank'}">`],
-  ];
-  for (const [label, probe] of cases) {
-    assert.throws(probe, HHRenderError, `${label} must be refused`);
-    assert.throws(probe, /script tag|base tag/, `${label}: the refusal must name the tag`);
-  }
-  // Ordinary address attributes keep their scheme rule and keep rendering.
-  assert.equal(renderTemplate(html`<a href="${'/x'}">x</a>`), '<a href="/x">x</a>');
-});
-
-test('html() refuses a binding the scanner cannot classify, and every binding after it', () => {
-  // Four kinds of markup used to be read as safe because the scanner had no
-  // unknown state. A quote that opens no value folds into a bogus attribute
-  // name while the parser keeps reading attributes; a doctype or processing
-  // instruction is a parser state the scanner does not model; a comment
-  // inside a script body keeps the parser's double-escaped body open past
-  // the first close tag. All of them now refuse, and everything after them.
-  const unclassifiable = [
-    ['a quote that opens no value', () => html`<a x' href="${'javascript:window.__pwn=1'}">go</a>`],
-    ['a binding after such a quote', () => html`<a x' href>go</a><b title="${'x'}">t</b>`],
-    ['a doctype', () => html`<!DOCTYPE html><a href="${'/x'}">go</a>`],
-    ['a binding after a doctype', () => html`<!DOCTYPE html><b title="${'x'}">t</b>`],
-    ['a processing instruction', () => html`<?xml version="1.0"?><b title="${'x'}">t</b>`],
-    ['a comment inside a script body', () => html`<script><!--<script></script>\n${'window.__pwn=1'}</script>`],
-    ['a binding after that script', () => html`<script><!--<script></script>\n</script><b title="${'x'}">t</b>`],
-  ];
-  for (const [label, probe] of unclassifiable) {
-    assert.throws(probe, HHRenderError, `${label} must be refused`);
-    assert.throws(probe, /cannot classify/, `${label}: the refusal must say the scanner cannot classify the position`);
-  }
-  // The comment forms the parser really closes are tracked, so markup after
-  // them is judged in its true position instead of waved through a comment
-  // the scanner only imagined.
-  assert.throws(() => html`<!--><a href="${'javascript:window.__pwn=1'}">go</a>`, /address/, 'the abrupt empty comment closes, and the anchor after it is checked');
-  assert.throws(() => html`<!---><a href="${'javascript:window.__pwn=1'}">go</a>`, /address/, 'the dashed abrupt comment closes too');
-  assert.throws(() => html`<!-- x --!><a href="${'javascript:window.__pwn=1'}">go</a>`, /address/, 'the bang close closes the comment');
-  assert.equal(renderTemplate(html`<!--><b class="${'x'}">t</b>`), '<!--><b class="x">t</b>', 'a closed abrupt comment leaves ordinary, checked markup');
-  // A binding inside a comment body is refused outright: it is not one of
-  // the allowed positions. Text after a properly closed comment is text.
-  assert.throws(() => html`<!-- ${'x'} --><b title="${'x'}">t</b>`, /comment/, 'a binding inside a comment body is refused');
-  assert.equal(renderTemplate(html`<!-- note --><b>t</b>`), '<!-- note --><b>t</b>', 'a closed comment stays ordinary markup');
-});
-
-test('a name carried out of a trusted template is checked against the value that follows it', () => {
-  // A trusted template in the name position used to skip every check on the
-  // value after the equals: the event, srcdoc and address refusals all
-  // looked at no name at all. Its trailing name is carried forward the way a
-  // bound name's is, and a template composed into a tag has its own
-  // bindings re-checked where they land.
-  assert.throws(() => html`<div ${html`onmouseover`}="${'window.__pwn=1'}">u</div>`, /event attribute onmouseover/, 'a trusted event name must not skip the event refusal');
-  assert.throws(() => html`<a ${html`href`}="${'javascript:window.__pwn=1'}">go</a>`, /address/, 'a trusted address name must not skip the address refusal');
-  assert.throws(() => html`<iframe ${html`srcdoc`}="${'&lt;img src=x onerror=window.__pwn=1&gt;'}"></iframe>`, /srcdoc/, 'a trusted srcdoc name must not skip the srcdoc refusal');
-  assert.throws(() => html`<button${html` onclick="${'window.__pwn=1'}"`}>go</button>`, /event attribute onclick/, 'a binding inside a composed trusted template is checked in its landing context');
-  // The safe forms keep rendering: the primitives' own composition pattern.
-  assert.equal(renderTemplate(html`<a ${html`href`}="${'/x'}">x</a>`), '<a href="/x">x</a>', 'a safe value behind a trusted address name keeps rendering');
-  assert.equal(
-    renderTemplate(html`<button type="button" class="btn"${' disabled'}${html` data-x="1"`}>go</button>`),
-    '<button type="button" class="btn" disabled data-x="1">go</button>',
-    'the whole-attribute composition keeps rendering',
-  );
-});
-
-test('bound names do not join: a binding beside another binding, or followed by a name character, is refused', () => {
-  // Two bound bare names side by side, or a bound name completed by static
-  // text, form one name the value checks never saw (the probes ran script
-  // through hr plus ef, and through o plus nmouseover).
-  assert.throws(() => html`<button ${'disabled'}${'data-x'}="1">go</button>`, /continues the name "disabled"/, 'a listed bound name standing against a held one is refused');
-  assert.throws(() => html`<a ${'hr'}${'ef'}="${'javascript:window.__pwn=1'}">go</a>`, HHRenderError, 'the two fragment join is refused (neither fragment is a listed name)');
-  assert.throws(() => html`<div ${'o'}${'nmouseover'}="${'window.__pwn=1'}">u</div>`, HHRenderError, 'the bound name join is refused');
-  assert.throws(() => html`<div ${'o'}nmouseover="${'window.__pwn=1'}">u</div>`, HHRenderError, 'the bound name completed by static text is refused');
-  assert.throws(() => html`<a ${'href'}x="${'/x'}">go</a>`, /followed by a name character/, 'a listed bound name followed by a static name character is refused');
-  assert.throws(() => html`<button ${'disabled'}x="1">go</button>`, /followed by a name character/, 'the boolean flag joins the same way');
-  assert.throws(() => html`<div on${'click'}="void 0">x</div>`, /continues the name "on"/, 'a binding continuing a static name mid-word is refused');
-  // A space between two bound names is two attributes, not one joined name.
-  assert.equal(renderTemplate(html`<button ${'disabled'} ${'data-x'}="1">go</button>`), '<button disabled data-x="1">go</button>');
-});
-
-test('the canonicalization rules bite: the bare name pattern, the trim, and the four lower casings', () => {
-  // Each assertion pins one rule the eye skips; the mutation evidence in the
-  // gate report shows each going red when its rule is removed.
-  // The bare-name pattern: a family match alone is not a name.
-  assert.throws(() => html`<div ${'data-x=y'}="1">t</div>`, /attribute name position/, 'a bound name carrying an equals is not a bare name');
-  assert.throws(() => html`<div ${'data-x onclick'}="1">t</div>`, /attribute name position/, 'a bound name carrying a space is not a bare name');
-  // The trim on a bound name: the flag and the address name arrive padded,
-  // and the padded string must reach the allow lists and the address rule.
-  assert.throws(() => html`<a ${' href'}="${'javascript:window.__pwn=1'}">go</a>`, /address/, 'a padded bound address name must still route through the address check');
-  assert.throws(() => html`<a ${'href '}="${'javascript:window.__pwn=1'}">go</a>`, /address/, 'padded on the other side too');
-  assert.equal(renderTemplate(html`<button ${' disabled '}>go</button>`), '<button  disabled >go</button>', 'a padded boolean flag is recognized by its trimmed name (the author padding is emitted verbatim)');
-  // Lower casing, one: the refused-value table is looked up on the lower
-  // cased attribute name, so an upper case spelling keeps its named refusal.
-  assert.throws(() => html`<iframe SRCDOC="${'&lt;img src=x onerror=window.__pwn=1&gt;'}"></iframe>`, /entity-decodes/, 'an upper case SRCDOC keeps the srcdoc refusal');
-  assert.throws(() => html`<div STYLE="${'background:url(x)'}">t</div>`, /arbitrary CSS/, 'an upper case STYLE keeps the style refusal');
-  assert.throws(() => html`<object DATA="${'data:text/html,<script>window.__pwn=1</script>'}"></object>`, /loads the address as a document/, 'an upper case DATA keeps the data refusal');
-  // Lower casing, two: the address table is looked up on the lower cased
-  // name, so an upper case address attribute keeps the scheme rule.
-  assert.throws(() => html`<a HREF="${'javascript:window.__pwn=1'}">go</a>`, /address/, 'an upper case HREF keeps the scheme rule');
-  assert.equal(renderTemplate(html`<a HREF="${'/x'}">go</a>`), '<a HREF="/x">go</a>', 'an upper case HREF keeps rendering a safe address');
-  // Lower casing, three: the rawtext close tag is found case insensitively,
-  // so the body ends where the parser says it ends.
-  assert.equal(
-    renderTemplate(html`<script>var a = 'x';</SCRIPT>${'plain text'}`),
-    `<script>var a = 'x';</SCRIPT>plain text`,
-    'an upper case close tag ends a script body for the scanner too',
-  );
-  assert.throws(() => html`<SCRIPT>${'window.__pwn=1'}</SCRIPT>`, /script element body/, 'an upper case open tag still opens a script body');
-  // Lower casing, four: the tag name is lower cased, so the script and base
-  // refusals and the rawtext rule see SCRIPT and BASE as what they are.
-  assert.throws(() => html`<SCRIPT src="${'/evil.js'}"></SCRIPT>`, /script tag/, 'an upper case SCRIPT tag is still a script tag');
-  assert.throws(() => html`<BASE href="${'/evil/'}">`, /base tag/, 'an upper case BASE tag is still a base tag');
-  assert.throws(() => html`<STYLE>${'x'}</STYLE>`, /style element body/, 'an upper case STYLE tag still opens a style body');
-});
-
+// ── the state contract ───────────────────────────────────────────────────────────
 
 test('an unknown state fails loudly, never renders a quietly empty kit', () => {
   // A typo'd state name is a defect at the call site; an empty region would
@@ -732,7 +316,7 @@ test('an unknown state fails loudly, never renders a quietly empty kit', () => {
 });
 
 test('the kits answer the sheet: color-scheme is applied, not just declared', () => {
-  const host = baseStyles.match(/:host\s*\{[^}]*\}/);
+  const host = baseStyles.cssText.match(/:host\s*\{[^}]*\}/);
   assert.ok(host, 'the primitives must carry the :host rule');
   assert.match(host[0], /color-scheme:\s*var\(--hh-color-scheme\)/, ':host must follow the sheet per theme');
 });
@@ -740,7 +324,7 @@ test('the kits answer the sheet: color-scheme is applied, not just declared', ()
 // ── disabled changes colour, not opacity ────────────────────────────────────────
 
 test('the disabled rule is a token swap, stated once in the primitives', () => {
-  const styles = baseStyles;
+  const styles = baseStyles.cssText;
   const rule = styles.match(/button:disabled[\s\S]*?\}/);
   assert.ok(rule, 'the primitives must carry a button:disabled rule');
   assert.match(rule[0], /var\(--hh-disabled-fill\)/, 'the swap must set the disabled fill token');
@@ -880,10 +464,10 @@ test('state-icons.ts is path geometry only: the non-geometry reject list', () =>
 
 test('every icon renders as currentColor stroke geometry with a text alternative available', () => {
   for (const name of Object.keys(STATE_ICONS)) {
-    const markup = renderTemplate(icon(name, `label for ${name}`));
+    const markup = visibleText(renderTemplate(icon(name, `label for ${name}`)));
     assert.match(markup, /stroke="currentColor"/, `${name} must draw in currentColor`);
     assert.ok(!/#[0-9a-f]{3,8}/i.test(markup), `${name} must carry no colour of its own`);
-    assert.match(markup, /<title>/, `${name} rendered with a label must carry a text alternative`);
+    assert.match(markup, /aria-label="label for /, `${name} rendered with a label must carry a text alternative`);
     const bare = renderTemplate(icon(name));
     assert.match(bare, /aria-hidden="true"/, `${name} rendered bare must be hidden from assistive tech`);
   }

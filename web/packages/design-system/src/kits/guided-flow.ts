@@ -10,12 +10,13 @@
 // assistive tech, beside the green. The CURRENT step carries
 // aria-current="step" beside its ring. Asserted in test/kits.test.mjs.
 
-import { css, defineElement, html, HHElement, type Template } from '../render.js';
+import { css, html, type TemplateResult as Template } from 'lit';
+import { defineElement, HHElement } from '../base.js';
 import { baseStyles } from '../primitives.js';
 import { kitShell, stateStyles, type ButtonSpec, type KitState } from '../state.js';
 import { icon } from '../state-icons.js';
 
-const styles = baseStyles + stateStyles + css`
+const styles = css`
   .flow {
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr);
@@ -114,9 +115,7 @@ function railStep([kind, label]: Step, index: number): Template {
 }
 
 export class GuidedFlowKit extends HHElement {
-  static properties = { state: { attribute: true } };
-  static styles = styles;
-  state: KitState = 'ready';
+  static styles = [baseStyles, stateStyles, styles];
 
   private body(): Template {
     const rail = STEPS.map(railStep);

@@ -45,6 +45,7 @@ try {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgDir = join(here, '..');
+const webRoot = join(pkgDir, '..', '..');
 
 const TAGS = KITS.map((k) => k.tag);
 const ALL_STATES = ['ready', ...KIT_STATES];
@@ -94,6 +95,20 @@ function elementPage() {
 <meta charset="utf-8">
 <title>hh design system browser leg</title>
 <link rel="stylesheet" href="/tokens.css">
+<script type="importmap">
+  {
+    "imports": {
+      "lit": "/node_modules/lit/index.js",
+      "lit/": "/node_modules/lit/",
+      "lit-html": "/node_modules/lit-html/lit-html.js",
+      "lit-html/": "/node_modules/lit-html/",
+      "lit-element": "/node_modules/lit-element/lit-element.js",
+      "lit-element/": "/node_modules/lit-element/",
+      "@lit/reactive-element": "/node_modules/@lit/reactive-element/reactive-element.js",
+      "@lit/reactive-element/": "/node_modules/@lit/reactive-element/"
+    }
+  }
+</script>
 </head>
 <body>
 <main id="grid"></main>
@@ -141,6 +156,16 @@ function startServer() {
       if (kit) {
         res.writeHead(200, { 'content-type': 'text/css; charset=utf-8' });
         res.end(kit.css);
+        return;
+      }
+    }
+    if (url.pathname.startsWith('/node_modules/')) {
+      // The sources import from 'lit' by bare specifier; the import map above
+      // points it here, and lit's own imports are relative from there.
+      const abs = join(webRoot, url.pathname.slice(1));
+      if (existsSync(abs) && statSync(abs).isFile()) {
+        res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' });
+        res.end(readFileSync(abs, 'utf8'));
         return;
       }
     }
@@ -217,7 +242,22 @@ if (reason && inCI && !underBun) {
     try {
       await cdp.navigate(`http://127.0.0.1:${port}/`);
       const snapshot = await cdp.evaluate(
-        `(() => {
+        `(async () => {
+          // Lit renders on a microtask after connect, not inside
+          // connectedCallback, and each test drives a cold browser: wait for
+          // the tags to register and the elements to upgrade instead of a
+          // fixed sleep, which loses that race under load.
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              const els = [...document.querySelectorAll('main > *')];
+              const ok = ${JSON.stringify(TAGS)}.every((tag) => !!customElements.get(tag)) &&
+                els.length > 0 && els.every((el) => el.shadowRoot !== null);
+              if (ok || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
           const cells = [];
           for (const el of document.querySelectorAll('main > *')) {
             const root = el.shadowRoot;
@@ -320,7 +360,22 @@ if (reason && inCI && !underBun) {
     try {
       await cdp.navigate(`http://127.0.0.1:${port}/`);
       const { tokensLoaded, out: cells } = await cdp.evaluate(
-        `(() => {
+        `(async () => {
+          // Lit renders on a microtask after connect, not inside
+          // connectedCallback, and each test drives a cold browser: wait for
+          // the tags to register and the elements to upgrade instead of a
+          // fixed sleep, which loses that race under load.
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              const els = [...document.querySelectorAll('main > *')];
+              const ok = ${JSON.stringify(TAGS)}.every((tag) => !!customElements.get(tag)) &&
+                els.length > 0 && els.every((el) => el.shadowRoot !== null);
+              if (ok || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
           const tokensLoaded = document.styleSheets.length > 0;
           const alphaOf = (c) => {
             const m = String(c).match(/rgba?\\(([^)]+)\\)/);
@@ -428,63 +483,115 @@ if (reason && inCI && !underBun) {
     try {
       await cdp.navigate(`http://127.0.0.1:${port}/`);
       const out = await cdp.evaluate(
-        `(() => {
-          const onErr = (ev) => errors.push({ name: ev.error ? ev.error.name : null, message: String(ev.error ? ev.error.message : ev.message) });
-          const errors = [];
+        `(async () => {
+          const failures = [];
+          const seen = new Set();
+          const record = (name, message) => {
+            if (!seen.has(message)) { seen.add(message); failures.push({ name, message }); }
+          };
+          const onErr = (ev) => record(ev.error ? ev.error.name : null, String(ev.error ? ev.error.message : ev.message));
+          const onRejection = (ev) => {
+            const r = ev.reason;
+            record(r instanceof Error ? r.name : null, String(r instanceof Error ? r.message : r));
+          };
           window.addEventListener('error', onErr);
+          window.addEventListener('unhandledrejection', onRejection);
+          const settle = () => new Promise((r) => setTimeout(r, 80));
+          // Each test drives a cold browser: the module that registers the
+          // tags may still be loading. Wait for the tag before creating an
+          // element, so append upgrades it synchronously.
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              if (customElements.get('hh-scan-and-confirm') || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
+          const stateOf = (el) => el.shadowRoot ? (el.shadowRoot.querySelector('.kit-root')?.getAttribute('data-state') ?? null) : null;
           const result = {};
           // A FAILED FIRST RENDER: the state is bad before the element ever
-          // connects. The markup is built before the shadow root is attached,
-          // so the element must end up with no shadow root at all: never an
-          // empty element. A callback exception is REPORTED to the window,
-          // not thrown into the caller, so the named error is read off the
-          // error event.
+          // connects. Lit reports an exception thrown out of an update as an
+          // unhandled rejection naming the element, and commits nothing: the
+          // element must end up with a shadow root that paints nothing, never
+          // a wrong paint and never a quietly blank kit that looks rendered.
+          // Distinct refusals are counted, not events: Lit's updateComplete
+          // contract re-surfaces the same rejected update once on the next
+          // update (an awaiter-less rejected promise re-rejected), which is
+          // the same refusal echoing, not a new one.
           const bad = document.createElement('hh-scan-and-confirm');
           bad.setAttribute('state', 'nonsense');
           document.body.append(bad);
-          result.errorCount = errors.length;
-          result.name = errors[0] ? errors[0].name : null;
-          result.message = errors[0] ? errors[0].message : null;
+          await settle();
+          result.errorCount = failures.length;
+          result.name = failures[0] ? failures[0].name : null;
+          result.message = failures[0] ? failures[0].message : null;
           result.shadowAfterRefusal = bad.shadowRoot === null ? 'none' : bad.shadowRoot.innerHTML.length;
           bad.removeAttribute('state');
-          result.stateAfterRemoval = bad.shadowRoot ? (bad.shadowRoot.querySelector('.kit-root')?.getAttribute('data-state') ?? null) : null;
-          result.errorsAfterRemoval = errors.length;
+          await settle();
+          result.stateAfterRemoval = stateOf(bad);
+          result.errorsAfterRemoval = failures.length;
           bad.setAttribute('state', 'error');
-          result.stateAfterValid = bad.shadowRoot ? (bad.shadowRoot.querySelector('.kit-root')?.getAttribute('data-state') ?? null) : null;
-          result.errorsAfterValid = errors.length;
-          // A FAILED RE-RENDER of an element already painted: the last good
-          // paint stays (it is never blanked), and the error is still loud.
+          await settle();
+          result.stateAfterValid = stateOf(bad);
+          result.errorsAfterValid = failures.length;
+          // A FAILED RE-RENDER of an element already painted: Lit never
+          // commits a partial render, so the last good paint stays (it is
+          // never blanked), and the failed cycle's own promise carries the
+          // named error. (Its message is identical to the first element's, so
+          // the distinct-event listener above cannot count it; the failed
+          // updateComplete promise is the precise observation.)
           const painted = document.createElement('hh-scan-and-confirm');
           document.body.append(painted);
-          result.paintedState = painted.shadowRoot ? (painted.shadowRoot.querySelector('.kit-root')?.getAttribute('data-state') ?? null) : null;
+          await settle();
+          result.paintedState = stateOf(painted);
           result.paintedLength = painted.shadowRoot.innerHTML.length;
           painted.setAttribute('state', 'nonsense');
-          result.errorsAfterBadRerender = errors.length;
-          result.paintedStateAfterRerender = painted.shadowRoot ? (painted.shadowRoot.querySelector('.kit-root')?.getAttribute('data-state') ?? null) : null;
+          const failedCycle = painted.updateComplete;
+          result.badRerenderSettled = await new Promise((done) => {
+            failedCycle.then(
+              () => done('resolved'),
+              (e) => {
+                result.badRerenderName = e instanceof Error ? e.name : null;
+                result.badRerenderMessage = String(e instanceof Error ? e.message : e);
+                done('rejected');
+              },
+            );
+          });
+          await settle();
+          result.paintedStateAfterRerender = stateOf(painted);
           result.paintedLengthAfterRerender = painted.shadowRoot.innerHTML.length;
           window.removeEventListener('error', onErr);
+          window.removeEventListener('unhandledrejection', onRejection);
           return result;
         })()`,
       );
-      assert.equal(out.errorCount, 1, 'an unknown state must fail loudly at render with exactly one reported error');
+      assert.equal(out.errorCount, 1, 'an unknown state must fail loudly at render with exactly one distinct reported error');
       assert.equal(out.name, 'HHRenderError', 'the failure must carry the named error');
       assert.match(out.message, /hh-scan-and-confirm/, 'the error must name the kit');
       assert.match(out.message, /nonsense/, 'the error must name the bad state');
       assert.equal(
         out.shadowAfterRefusal,
-        'none',
-        'a refused first render must not attach an empty shadow root: the element stays unpainted, never blank',
+        0,
+        'a refused first render must commit nothing: the element stays unpainted, never a wrong paint',
       );
       assert.equal(
         out.stateAfterRemoval,
         'ready',
-        'removing the attribute must fall back to the field default, not a stale render',
+        'removing the attribute must fall back to the default, not a stale render',
       );
-      assert.equal(out.errorsAfterRemoval, 1, 'the fallback render must succeed without a second error');
+      assert.equal(out.errorsAfterRemoval, 1, 'the fallback render must succeed without a second distinct error');
       assert.equal(out.stateAfterValid, 'error', 'a valid state after the refusal must render again');
-      assert.equal(out.errorsAfterValid, 1, 'the valid render must succeed without a second error');
+      assert.equal(out.errorsAfterValid, 1, 'the valid render must succeed without a second distinct error');
       assert.equal(out.paintedState, 'ready', 'the painted element must render before the bad re-render');
-      assert.equal(out.errorsAfterBadRerender, 2, 'a failed re-render must report its error too');
+      assert.equal(
+        out.badRerenderSettled,
+        'rejected',
+        'a failed re-render must reject its update cycle loudly, not quietly skip',
+      );
+      assert.equal(out.badRerenderName, 'HHRenderError', 'the failed re-render must carry the named error');
+      assert.match(out.badRerenderMessage, /hh-scan-and-confirm/, 'the failed re-render must name the kit');
+      assert.match(out.badRerenderMessage, /nonsense/, 'the failed re-render must name the bad state');
       assert.equal(
         out.paintedStateAfterRerender,
         'ready',
@@ -508,7 +615,22 @@ if (reason && inCI && !underBun) {
     try {
       await cdp.navigate(`http://127.0.0.1:${port}/`);
       const out = await cdp.evaluate(
-        `(() => {
+        `(async () => {
+          // Lit renders on a microtask after connect, not inside
+          // connectedCallback, and each test drives a cold browser: wait for
+          // the tags to register and the elements to upgrade instead of a
+          // fixed sleep, which loses that race under load.
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              const els = [...document.querySelectorAll('main > *')];
+              const ok = ${JSON.stringify(TAGS)}.every((tag) => !!customElements.get(tag)) &&
+                els.length > 0 && els.every((el) => el.shadowRoot !== null);
+              if (ok || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
           const host = document.querySelector('hh-scan-and-confirm[state="ready"]');
           const received = [];
           // The README's pattern, in shape: one listener on the host element,
@@ -554,6 +676,190 @@ if (reason && inCI && !underBun) {
         out.targetClosestFound,
         false,
         "event.target.closest('[data-action]') at the host must find nothing, which is why the README says composedPath",
+      );
+    } finally {
+      await cdp.close();
+      await close();
+    }
+  });
+
+  test('a property set re-renders the kit: the reactive property drives the render, not only the attribute', async () => {
+    // The reviewer checked this by hand in Chrome; the suite holds it now. The
+    // state is set as a PROPERTY (host.state = ...), never as an attribute, so
+    // a render that followed the attribute would leave the kit stale and this
+    // test red.
+    const { port, close } = await startServer();
+    const cdp = await launchBrowser(binary);
+    try {
+      await cdp.navigate(`http://127.0.0.1:${port}/`);
+      const out = await cdp.evaluate(
+        `(async () => {
+          // Each test drives a cold browser: wait for the tag to register
+          // before creating an element, so append upgrades it synchronously.
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              if (customElements.get('hh-scan-and-confirm') || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
+          const host = document.createElement('hh-scan-and-confirm');
+          document.body.append(host);
+          await host.updateComplete;
+          const stateOf = () => host.shadowRoot.querySelector('.kit-root')?.getAttribute('data-state') ?? null;
+          const before = stateOf();
+          host.state = 'error';
+          await host.updateComplete;
+          const word = host.shadowRoot.querySelector('.kit-root .state-label, .kit-root .banner-text, .kit-root .review-title');
+          return {
+            before,
+            after: stateOf(),
+            attributeUnset: host.getAttribute('state') === null,
+            word: word ? word.textContent.trim() : null,
+          };
+        })()`,
+      );
+      assert.equal(out.before, 'ready', 'the kit must render its default state before the property set');
+      assert.equal(
+        out.after,
+        'error',
+        'a property set must re-render: data-state must follow the property the test set',
+      );
+      assert.equal(
+        out.attributeUnset,
+        true,
+        'the render must have followed the property: the state attribute was never set',
+      );
+      assert.equal(
+        out.word,
+        'Something went wrong',
+        'the re-render must paint the designed error state, not only move the marker',
+      );
+    } finally {
+      await cdp.close();
+      await close();
+    }
+  });
+
+  test('a same-state update keeps its nodes: Lit diffs the parts, it does not redraw the root', async () => {
+    // The reviewer checked this by hand in Chrome; the suite holds it now. A
+    // regression that renders by wiping the shadow root would replace every
+    // node on an update and fail the identity check.
+    const { port, close } = await startServer();
+    const cdp = await launchBrowser(binary);
+    try {
+      await cdp.navigate(`http://127.0.0.1:${port}/`);
+      const out = await cdp.evaluate(
+        `(async () => {
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              if (customElements.get('hh-scan-and-confirm') || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
+          const host = document.createElement('hh-scan-and-confirm');
+          document.body.append(host);
+          await host.updateComplete;
+          const before = host.shadowRoot.querySelector('button[data-action]');
+          host.requestUpdate();
+          await host.updateComplete;
+          const after = host.shadowRoot.querySelector('button[data-action]');
+          return {
+            hadControl: before !== null,
+            sameNode: before === after,
+            stillConnected: before !== null && before.isConnected,
+          };
+        })()`,
+      );
+      assert.equal(out.hadControl, true, 'the ready kit must render a live control to hold on to');
+      assert.equal(
+        out.sameNode,
+        true,
+        'a same-state update must keep the node it rendered: the control must be the same element, not a fresh copy',
+      );
+      assert.equal(out.stillConnected, true, 'the kept node must still sit in the shadow tree');
+    } finally {
+      await cdp.close();
+      await close();
+    }
+  });
+
+  test('a host listener survives a state change; a listener on content inside the kit does not', async () => {
+    // The README's rule for consumers, held by the leg: a state change
+    // replaces a kit's content nodes, so a listener that outside code
+    // attached to a node inside a kit is lost across one, and a listener on
+    // the host element survives.
+    const { port, close } = await startServer();
+    const cdp = await launchBrowser(binary);
+    try {
+      await cdp.navigate(`http://127.0.0.1:${port}/`);
+      const out = await cdp.evaluate(
+        `(async () => {
+          await new Promise((done) => {
+            const t0 = Date.now();
+            const poll = () => {
+              if (customElements.get('hh-scan-and-confirm') || Date.now() - t0 > 5000) done();
+              else setTimeout(poll, 25);
+            };
+            poll();
+          });
+          const host = document.createElement('hh-scan-and-confirm');
+          document.body.append(host);
+          await host.updateComplete;
+          const received = [];
+          host.addEventListener('click', (event) => {
+            const control = event.composedPath().find((n) => n instanceof Element && n.hasAttribute('data-action'));
+            received.push(control ? control.getAttribute('data-action') : null);
+          });
+          const first = host.shadowRoot.querySelector('button[data-action]');
+          let innerCalls = 0;
+          first.addEventListener('click', () => { innerCalls++; });
+          const action = first.getAttribute('data-action');
+          // One state change swaps the body; the design's own rule.
+          host.state = 'error';
+          await host.updateComplete;
+          const firstGone = !first.isConnected;
+          host.state = 'ready';
+          await host.updateComplete;
+          const second = host.shadowRoot.querySelector('button[data-action]');
+          second.addEventListener('click', () => { innerCalls++; });
+          // A second round trip, so the listener measured at the click is one
+          // that sat on content across a full swap.
+          host.state = 'error';
+          await host.updateComplete;
+          host.state = 'ready';
+          await host.updateComplete;
+          const third = host.shadowRoot.querySelector('button[data-action]');
+          third.click();
+          return {
+            action,
+            firstGone,
+            replaced: third !== first && third !== second,
+            received,
+            innerCalls,
+          };
+        })()`,
+      );
+      assert.ok(out.action, 'the ready kit must render a live data-action control to click');
+      assert.equal(
+        out.firstGone,
+        true,
+        'a state change must replace the kit content nodes: the node the content listener sat on is gone',
+      );
+      assert.equal(out.replaced, true, 'each return to ready must be a fresh body, not the old nodes');
+      assert.equal(out.received.length, 1, 'the host listener must fire exactly once for the click after two state changes');
+      assert.equal(
+        out.received[0],
+        out.action,
+        'the host listener must survive a state change and receive the action',
+      );
+      assert.equal(
+        out.innerCalls,
+        0,
+        'a listener that outside code attached to a node inside the kit must be lost across a state change',
       );
     } finally {
       await cdp.close();

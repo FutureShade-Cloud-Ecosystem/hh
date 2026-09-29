@@ -5,11 +5,12 @@
 // Penpot mapping: the Penpot component named hh-dashboard, one-to-one with
 // the element tag below.
 
-import { css, defineElement, html, HHElement, type Template } from '../render.js';
+import { css, html, type TemplateResult as Template } from 'lit';
+import { defineElement, HHElement } from '../base.js';
 import { baseStyles, chip } from '../primitives.js';
 import { kitShell, stateStyles, type ButtonSpec, type KitState } from '../state.js';
 
-const styles = baseStyles + stateStyles + css`
+const styles = css`
   .bento {
     background: var(--hh-ground);
     border: 1px solid var(--hh-hairline);
@@ -42,9 +43,7 @@ const styles = baseStyles + stateStyles + css`
 `;
 
 export class DashboardKit extends HHElement {
-  static properties = { state: { attribute: true } };
-  static styles = styles;
-  state: KitState = 'ready';
+  static styles = [baseStyles, stateStyles, styles];
 
   private body(): Template {
     return html`<div class="bento">

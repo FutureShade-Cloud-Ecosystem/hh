@@ -7,6 +7,11 @@
 // so every variant opens from a file; serve.mjs serves the same variants from
 // the same source.
 //
+// The Node-side render is Lit's server render (@lit-labs/ssr, the package's
+// dev dependency): the kit instance is never connected, so Lit's own update
+// loop never runs, and the page renders the template the element's render()
+// returns, synchronously, the way the browser will commit it.
+//
 // Each cell renders into its own DECLARATIVE SHADOW ROOT
 // (<template shadowrootmode="open">): the page still has no script, and each
 // kit is painted under its own stylesheet, scoped by the shadow boundary, so
@@ -23,11 +28,18 @@
 // proposal surface will, with values that clear the same AA bar the static
 // palette is held to (the gate in test/harness.test.mjs measures them).
 
+// The DOM shim must be installed before any LitElement subclass is defined
+// (Node has no HTMLElement of its own); the side-effect import orderings here
+// and in the test helper are the contract, and the class definitions below
+// depend on it.
+import '@lit-labs/ssr/lib/install-global-dom-shim.js';
+import { render } from '@lit-labs/ssr';
+import { collectResultSync } from '@lit-labs/ssr/lib/render-result.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { type Template } from './render.js';
+import { CSSResult, type CSSResultGroup, type TemplateResult } from 'lit';
 import { KIT_STATES, type KitState } from './state.js';
 import { ScanConfirmKit } from './kits/scan-and-confirm.js';
 import { ListDetailKit } from './kits/list-detail.js';
@@ -46,18 +58,17 @@ export type HarnessBrand = 'base' | 'hh-pro';
  * concrete kit type, and no kit names another.
  */
 export interface KitElement {
-  render(): Template;
+  render(): TemplateResult;
 }
 
 /**
  * The constructor contract the kit map holds: the class object itself. The
- * harness touches one static member on it, the Node-side renderToString the
- * page string is built from.
+ * harness touches one static member on it, the static styles the real element
+ * paints, which the sheet files ship.
  */
 export interface KitElementCtor {
   new (): KitElement;
-  renderToString(props?: Record<string, unknown>): string;
-  renderParts(props?: Record<string, unknown>): { styles: string; markup: string };
+  styles: CSSResultGroup;
 }
 
 export interface KitEntry {
@@ -84,19 +95,38 @@ const PROPOSAL_CBRAND_ON = '#ffffff';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
+/** Flattens a static styles group (a css template, or arrays of them) to the
+ * one stylesheet string a kit's shadow root paints. */
+function cssTextOf(group: CSSResultGroup | undefined): string {
+  if (Array.isArray(group)) return group.map((g) => cssTextOf(g as CSSResultGroup)).join('');
+  if (group instanceof CSSResult) return group.cssText;
+  return '';
+}
+
+/** The kit's markup for the given props, rendered by Lit's server render.
+ * The instance is never connected, so the template is the only thing that
+ * renders, synchronously, and a refused value throws to the caller. */
+function renderKitMarkup(element: KitElementCtor, props: Record<string, unknown> = {}): string {
+  const instance = new element();
+  for (const [name, value] of Object.entries(props)) {
+    (instance as unknown as Record<string, unknown>)[name] = value;
+  }
+  return collectResultSync(render(instance.render()));
+}
+
 /** Each kit's full stylesheet, once per kit: the sheet the build writes to
  * harness/sheets/<tag>.css and every cell of that kit links. The styles come
  * from the same static member the real element paints, so the page and the
  * element cannot drift apart. */
 export function harnessSheets(): ReadonlyArray<{ tag: string; css: string }> {
-  return KITS.map((kit) => ({ tag: kit.tag, css: kit.element.renderParts().styles }));
+  return KITS.map((kit) => ({ tag: kit.tag, css: cssTextOf(kit.element.styles) }));
 }
 
 function kitFigures(): string {
   const figures: string[] = [];
   for (const kit of KITS) {
     for (const state of HARNESS_STATES) {
-      const { markup } = kit.element.renderParts({ state });
+      const markup = renderKitMarkup(kit.element, { state });
       figures.push(
         `<figure class="cell" data-cell="${kit.tag}/${state}">` +
           `<figcaption>${kit.title} / ${state}</figcaption>` +

@@ -151,7 +151,7 @@ test('the contractor layer is declared once, defers to the dealer brand, and is 
   for (const expected of ['dashboard.ts', 'guided-flow.ts', 'inbox.ts', 'list-detail.ts', 'scan-and-confirm.ts']) {
     assert.ok(kitFiles.includes(`src/kits/${expected}`), `the kit walk missed src/kits/${expected}: it is not package-wide`);
   }
-  for (const file of [...kitFiles, 'src/state.ts', 'src/primitives.ts', 'src/render.ts']) {
+  for (const file of [...kitFiles, 'src/state.ts', 'src/primitives.ts', 'src/base.ts']) {
     const src = readPkg(file);
     assert.ok(!src.includes('--cbrand'), `${file} consumes the contractor layer; only the public proposal surface may`);
   }
