@@ -14,15 +14,17 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import {
   auditSource,
   auditTagIntroductions,
+  auditTagUsages,
   refusedBy,
   extractTemplates,
   thisPackageSources,
+  everyPackageSource,
   dependentPackages,
   GATE_FILES,
   ALLOWED_PROPERTY_OR_EVENT,
@@ -161,6 +163,126 @@ for (const [name, source, expectedPosition] of TAG_INTRODUCTION_FIXTURES) {
     );
   });
 }
+
+// ── the tag's two places: one refusal per spelling the review round ran ─────────
+//
+// The parser rule (test/_lib/positions.mjs, auditTagUsages): in every file of
+// the package, an imported html or svg may appear in exactly two places, its
+// import statement and the tag position of a tagged template; any other
+// appearance is refused, with the file and the line, and a local declaration
+// of either name in any scope is refused, so the name always means the
+// import. Each fixture below is one spelling's fail proof: it asserts the
+// refusal naming the file and the LINE, so removing the rule turns this file
+// red. This file is itself walked by this rule (the walk excludes only
+// node_modules, the build output and .git) and holds no fixture of its kind:
+// every fixture here is a string, which the parser never sees as code.
+
+// Where a fixture file's relative imports resolve from: the package's own
+// root, so the escape fixture's ../ provably lands outside the package and
+// the allowed ./ stays inside it.
+const TAG_USAGE_FIXTURE_DIR = PKG;
+
+const TAG_USAGE_REFUSAL_FIXTURES = [
+  ['the tag bound to another local name, then a template under that name',
+   "import { html } from 'lit';\nconst h = html;\nh`<p>x</p>`;",
+   'the tag bound to a local name', 2],
+  ['a function that wraps the tag',
+   "import { html } from 'lit';\nfunction wrap() {\n  return html;\n}\nconst h = wrap();\nh`<p>x</p>`;",
+   'the tag returned from a function', 3],
+  ['the tag passed as an argument',
+   "import { html } from 'lit';\nconst h = makeTag(html);\nh`<p>x</p>`;",
+   'the tag passed as an argument', 2],
+  ['a local rebinding that is then exported',
+   "import { html } from 'lit';\nconst h = html;\nexport { h };",
+   'the tag bound to a local name', 2],
+  ['a local declaration of the name in a function scope (the shadowing case)',
+   "function render(label) {\n  const html = `<b>${label}</b>`;\n  return label;\n}",
+   'a local declaration of the name html', 2],
+  ['a relative import that resolves outside the package',
+   "import { html } from '../tag-source.js';\nhtml`<p>x</p>`;",
+   'a relative import that leaves the package', 1],
+];
+
+for (const [name, source, expectedPosition, expectedLine] of TAG_USAGE_REFUSAL_FIXTURES) {
+  test(`fixture: ${name}`, () => {
+    const refusals = refusedBy(auditTagUsages(source, 'fixture.ts', TAG_USAGE_FIXTURE_DIR));
+    assert.equal(
+      refusals.length,
+      1,
+      `expected exactly one refusal for the fixture, got ${JSON.stringify(refusals)}`,
+    );
+    assert.ok(
+      refusals[0].position.includes(expectedPosition),
+      `the refusal must name the position: got ${JSON.stringify(refusals[0].position)}, expected it to name ${JSON.stringify(expectedPosition)}`,
+    );
+    assert.equal(refusals[0].file, 'fixture.ts', 'the refusal must name the file');
+    assert.equal(refusals[0].line, expectedLine, `the refusal must name the line (${expectedLine})`);
+    assert.ok(
+      refusals[0].rule.includes('two places') || refusals[0].rule.includes('fails closed'),
+      `the refusal must carry the rule: got ${JSON.stringify(refusals[0].rule)}`,
+    );
+  });
+}
+
+// Ordinary kit code stays quiet: the tags under their own names, in tag
+// position, beside css, nested in maps, inside a component class, and names
+// that are only member labels.
+const TAG_USAGE_ALLOWED_FIXTURES = [
+  ['the tags under their own names, in tag position only',
+   "import { html, svg } from 'lit';\nconst t = html`<p>${'x'}</p>`;\nconst s = svg`<circle r=\"2\"></circle>`;"],
+  ['css beside the tags',
+   "import { css, html } from 'lit';\nconst t = html`<p>x</p>`;\nconst c = css`.p { color: red; }`;"],
+  ['a nested template inside a map',
+   "import { html } from 'lit';\nconst t = html`<ul>${['a'].map((r) => html`<li>${r}</li>`)}</ul>`;"],
+  ['a component class rendering through the tag',
+   "import { LitElement, html } from 'lit';\nclass X extends LitElement {\n  render() {\n    return html`<div></div>`;\n  }\n}"],
+  ['names that are only member labels',
+   "const box = { html: 1, svg: 2 };\nconst n = box.html;\nfunction f(p) { return p.svg; }"],
+  ['a relative import that stays inside the package',
+   "import { html } from './local-tags.js';\nconst t = html`<p>x</p>`;"],
+];
+
+for (const [name, source] of TAG_USAGE_ALLOWED_FIXTURES) {
+  test(`two places allowed: ${name}`, () => {
+    const refusals = refusedBy(auditTagUsages(source, 'allowed-fixture.ts', TAG_USAGE_FIXTURE_DIR));
+    assert.deepEqual(refusals, [], `the gate refused an allowed use: ${JSON.stringify(refusals)}`);
+  });
+}
+
+test('the two-place scanner refuses every shape the rule names (guards the gate)', () => {
+  const planted = [
+    ['an assignment', "import { html } from 'lit';\nlet h = null;\nh = html;", 'the tag assigned to another name'],
+    ['an argument', "import { html } from 'lit';\nregister(html);", 'the tag passed as an argument'],
+    ['a return', "import { html } from 'lit';\nfunction w() {\n  return html;\n}", 'the tag returned from a function'],
+    ['a property value', "import { html } from 'lit';\nconst box = { tag: html };", 'the tag as a property value'],
+    ['an export', "import { html } from 'lit';\nexport { html };", 'the tag exported from this file'],
+    ['a spread', "import { html } from 'lit';\nconst pair = [...html];", 'the tag spread into an expression'],
+    ['a typeof', "import { html } from 'lit';\nconst t = { f: typeof html };", 'the tag under a typeof'],
+    ['a comma expression', "import { html } from 'lit';\nconst x = (0, html);", 'the tag riding a comma expression'],
+    ['a shorthand property', "import { html } from 'lit';\nconst box = { html };", 'shorthand property'],
+    ['a destructuring capture of the name', "const { html } = readTags();", 'a local declaration of the name html (a destructuring)'],
+    ['a default import under the name', "import html from 'lit';", 'a declaration of the name html (a default or namespace import)'],
+    ['a namespace import under the name', "import * as html from 'lit';", 'a declaration of the name html (a default or namespace import)'],
+    ['a require of a module outside the package', "const m = require('../../tag-source.js');", 'a relative import that leaves the package'],
+  ];
+  for (const [name, source, expected] of planted) {
+    const refusals = refusedBy(auditTagUsages(source, 'plant.ts', TAG_USAGE_FIXTURE_DIR));
+    assert.ok(refusals.length >= 1, `the scanner missed the planted ${name}: ${source}`);
+    assert.ok(
+      refusals.some((r) => r.position.includes(expected)),
+      `the refusal must name the position (${expected}): got ${JSON.stringify(refusals.map((r) => r.position))} for ${source}`,
+    );
+  }
+  // And it stays quiet where the names are only labels or the two places.
+  for (const quiet of [
+    "import { html } from 'lit';\nconst t = html`<p>x</p>`;",
+    'const box = { html: 1, svg: 2 };\nbox.html; box.svg;',
+    "import { html } from './local-tags.js';\nconst t = html`<p>x</p>`;",
+  ]) {
+    const refusals = refusedBy(auditTagUsages(quiet, 'fine.ts', TAG_USAGE_FIXTURE_DIR));
+    assert.deepEqual(refusals, [], `the scanner flagged a quiet use: ${quiet}: ${JSON.stringify(refusals)}`);
+  }
+});
 
 // ── the scanner and the extractor guard themselves, so a clean gate is evidence ──
 
@@ -314,6 +436,85 @@ test('no file of any package that depends on this one introduces a tag the templ
     offences,
     [],
     `a dependent package introduces a tag outside the spellings the template pattern sees.` +
+      ` The kits' rule binds its dependents too:\n  ` +
+      offences.map((o) => `${o.file}:${o.line}: ${o.position} (${o.rule})`).join('\n  '),
+  );
+});
+
+// ── the tag's two places, over every file of the package ────────────────────────
+
+test('the two-place walk covers every source file of the package (guards the gate)', () => {
+  const walked = everyPackageSource().map((s) => s.rel);
+  for (const anchor of [
+    'src/index.ts',
+    'src/kits/inbox.ts',
+    'harness/serve.mjs',
+    'test/_lib/positions.mjs',
+    'test/positions.test.mjs',
+    'test/no-raw-markup.test.mjs',
+    'src/_ts-js-loader.mjs',
+  ]) {
+    assert.ok(walked.includes(anchor), `the two-place walk missed ${anchor}`);
+  }
+});
+
+test('the walk reaches the package root: a re-export file there is named and refused', () => {
+  // The hole the review round ran: a file at the package root, outside the
+  // walked folders, re-exporting the library, imported by a kit through a
+  // relative path. The root file is planted for real, walked, refused, and
+  // removed, so the gate proves its own reach.
+  const rootFileRel = 'gate-root-fixture.mjs';
+  const rootFile = join(PKG, rootFileRel);
+  const body = "export * from 'lit';\n";
+  writeFileSync(rootFile, body);
+  try {
+    const walked = everyPackageSource().map((s) => s.rel);
+    assert.ok(
+      walked.includes(rootFileRel),
+      `the package walk must name a file at the package root: got ${JSON.stringify(walked)}`,
+    );
+    const refusals = refusedBy(auditTagIntroductions(body, rootFileRel));
+    assert.ok(
+      refusals.some((r) => r.position.includes('a star re-export')),
+      `the introduction scan must refuse the root file's re-export: got ${JSON.stringify(refusals.map((r) => r.position))}`,
+    );
+    assert.deepEqual(
+      refusedBy(auditTagUsages(body, rootFileRel, PKG)),
+      [],
+      'the root file carries no tag identifier, so the two-place scan stays quiet on it',
+    );
+  } finally {
+    unlinkSync(rootFile);
+  }
+});
+
+test('no file of this package uses an imported html or svg anywhere but its import and its tag position', () => {
+  const offences = [];
+  for (const { rel, abs, text } of everyPackageSource()) {
+    for (const o of refusedBy(auditTagUsages(text, rel, dirname(abs)))) offences.push(o);
+  }
+  assert.deepEqual(
+    offences,
+    [],
+    `a file of this package uses an html or svg name outside its two places` +
+      ` (the import statement and the tag position of a tagged template):\n  ` +
+      offences.map((o) => `${o.file}:${o.line}: ${o.position} (${o.rule})`).join('\n  '),
+  );
+});
+
+test('no file of any package that depends on this one uses a tag outside its two places', () => {
+  const offences = [];
+  for (const dependent of dependentPackages()) {
+    for (const { rel, abs, text } of dependent.sources) {
+      for (const o of refusedBy(auditTagUsages(text, rel, dirname(abs), dependent.dir))) {
+        offences.push({ ...o, file: `${dependent.name} (${o.file})` });
+      }
+    }
+  }
+  assert.deepEqual(
+    offences,
+    [],
+    `a dependent package uses a tag outside its two places.` +
       ` The kits' rule binds its dependents too:\n  ` +
       offences.map((o) => `${o.file}:${o.line}: ${o.position} (${o.rule})`).join('\n  '),
   );

@@ -115,8 +115,11 @@ test('kit coverage: every kit renders its every designed state and its ready sta
 // declares for that state: distinctness is judged on the PATH DATA a user is
 // shown, not on an invisible attribute, so five identical icons fail here.
 const iconGeometry = (markup) => {
+  // The local is not named svg: the position gate's two-place rule reserves
+  // that name in every file of the package (test/positions.test.mjs), so the
+  // name always means the imported tag.
   const svgs = [...markup.matchAll(/<svg[^>]*>[\s\S]*?<\/svg>/g)].map((m) => m[0]);
-  return svgs.map((svg) => [...svg.matchAll(/ d="([^"]+)"/g)].map((d) => d[1]).join(' ')).join(' || ');
+  return svgs.map((svgMarkup) => [...svgMarkup.matchAll(/ d="([^"]+)"/g)].map((d) => d[1]).join(' ')).join(' || ');
 };
 
 test('state indicators survive with colour removed: every kit', () => {

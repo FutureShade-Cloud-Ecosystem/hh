@@ -29,6 +29,29 @@ therefore no longer holds zero run-time dependencies, and it tracks Lit's
 releases for the life of the product; that trade is the ruling's, recorded in
 docs/adr/0023.
 
+### Writing a template as a consumer
+
+The package's surface exports no template tag (`src/index.ts` records why: a
+re-export hands the tag to a second file, which can alias it again where the
+gate does not look). To write a template, import the tag from the library by
+its own name and tag your template with it, exactly as the kits do:
+
+```js
+import { html } from 'lit';
+
+const row = html`<li class="row">${label}</li>`;
+```
+
+No other spelling carries a tag the gate can see: an aliased import, a
+namespace or default import, a dynamic import or require of lit, the mathml
+tag, a re-export, and any local rebinding of the name are all refused by the
+position gate (`test/positions.test.mjs`), which walks every source file of
+this package and holds that an imported `html` or `svg` appears in exactly
+two places, its import statement and the tag position of a tagged template.
+The tag under its own name, used only as a template's tag, is the one
+spelling the gate holds for you, in this package and in any package that
+adopts its rules.
+
 ## What is here (cycle HH-4a, Plane HH-30)
 
 - `src/tokens.css`: the sheet. One base vocabulary for internal apps (dark

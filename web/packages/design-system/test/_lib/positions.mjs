@@ -35,10 +35,16 @@
 // and not by parsing. A template is extracted only where its tag is spelled
 // html or svg in the source text, and the body is read by the same kind of
 // walk, not by a parser: an expression the extractor cannot balance is
-// refused rather than guessed at. That limit is why the tag introduction scan
-// below exists: it holds, for every file the gate walks, that a lit template
-// tag cannot enter a file under any other spelling, so the pattern above has
-// already seen every template there is. A call whose value is a template
+// refused rather than guessed at. That limit is why the two scans below
+// exist: the tag introduction scan holds, for every file the gate walks, that
+// a lit template tag cannot enter a file under any other spelling, and the
+// tag usage scan (on the TypeScript compiler's own parser, which the package
+// already carries for its typecheck) holds that an imported html or svg
+// appears in exactly two places, its import statement and the tag position of
+// a tagged template. Together the two scans make the pattern sufficient: the
+// tag can only ever stand as html or svg in tag position, so the pattern
+// above has already seen every template there is. A call whose value is a
+// template
 // (chip(...), icon(...), kitShell(...)) is judged at the call position
 // (text), and the template it returns is audited where it is built, when the
 // walk reaches the file that builds it. An expression that contains a nested
@@ -47,7 +53,12 @@
 // judged where it lands.
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+// The TypeScript compiler's own parser: the devDependency the package's
+// typecheck already carries, so the two-place scan below walks the syntax
+// tree the language's own parser builds. No new dependency.
+import ts from 'typescript';
 
 // ── the allow lists, from render.ts at 81e6f689 ─────────────────────────────────
 
@@ -473,10 +484,14 @@ export const extractTemplates = (source) => {
 //      file, which can alias it again at its own import of THIS package,
 //      where none of these rules look. This is why the package's own surface
 //      exports no tag (src/index.ts exports css, never html).
-// What this scan does not see, stated honestly: it reads module statements by
-// the same kind of walk as the extractor, not by a parser. A tag value copied
-// through local code (a const that holds the binding, exported later under a
-// new name) is a value flow, not a statement, and the scan does not follow it.
+// What this scan does not see, the usage scan below holds instead: a tag
+// value copied through local code is a value flow, not a statement, and no
+// scan of statements can follow it. The usage scan, on the TypeScript
+// compiler's own parser, refuses every appearance of an imported html or svg
+// outside its two places (the import statement and the tag position of a
+// tagged template), so the copy cannot exist to be missed. That rule is what
+// makes the template pattern sufficient: if the tag can only ever appear as
+// html or svg in tag position, the pattern sees every template there is.
 
 const TAG_NAMES = new Set(['html', 'svg', 'mathml']);
 
@@ -957,6 +972,186 @@ export const auditTagIntroductions = (source, file) => {
   return offences;
 };
 
+// ── the tag's two places: the parser rule that makes the pattern sufficient ─────
+//
+// The introduction scan reads module statements; a tag value copied through
+// local code is a value flow, not a statement, and no scan of statements can
+// follow it. This rule is decided where every copy must begin, at the
+// identifier, on the TypeScript compiler's own parser (the devDependency the
+// package's typecheck already carries; no new dependency): in every file of
+// the package, an imported html or svg may appear in exactly two places, its
+// import statement and the tag position of a tagged template. Any other
+// appearance is refused, with the file and the line: an assignment, an
+// argument, a return, a property, an export, a spread, a typeof, a comma
+// expression, anything else.
+//
+//   1. The two places: an import specifier, and the tag of a tagged template
+//      expression.
+//   2. Shadowing: a local declaration named html or svg, in any scope of a
+//      scanned file, is refused, so that the name always means the import.
+//   3. A member LABEL is not an appearance of the name: x.html, { html: 1 },
+//      a class field or method named html, the key of a destructuring
+//      renamed on purpose ({ html: h }). A label neither reads nor binds the
+//      lexical name. A shorthand property ({ html }) is NOT a label: it reads
+//      the binding, and it is refused.
+//   4. The walk: every .ts, .mts, .js and .mjs under the package's directory,
+//      the package root included, leaving out only node_modules, the build
+//      output (dist) and .git. A relative import that resolves outside the
+//      package is refused: it hands the file a module the gate never walked.
+//      A require or a dynamic import with a string specifier is held to the
+//      same rule.
+//   5. A file the parser cannot read is refused (the gate fails closed).
+//
+// This is what makes the template pattern sufficient: if the tag can only
+// ever appear as html or svg in tag position, the pattern has seen every
+// template there is.
+
+const TAG_ID_NAMES = new Set(['html', 'svg']);
+
+const TWO_PLACES_RULE = 'an imported html or svg may appear in exactly two places, its import statement and the tag position of a tagged template; every other appearance is refused, so the pattern that finds templates by the spelling of the tag has seen every template there is';
+
+/** An identifier that only LABELS a member (see 3 above): never an appearance
+ * of the name. */
+const isMemberLabel = (node) => {
+  const p = node.parent;
+  if (!p) return false;
+  if ((ts.isPropertyAccessExpression(p) || ts.isQualifiedName(p)) && p.name === node) return true;
+  if (ts.isBindingElement(p) && p.propertyName === node) return true;
+  return (
+    p.name === node &&
+    (ts.isPropertyAssignment(p) ||
+      ts.isPropertySignature(p) ||
+      ts.isPropertyDeclaration(p) ||
+      ts.isMethodDeclaration(p) ||
+      ts.isGetAccessorDeclaration(p) ||
+      ts.isSetAccessorDeclaration(p) ||
+      ts.isEnumMember(p))
+  );
+};
+
+/** The refusal's words for where the name stands. */
+const describeAppearance = (node) => {
+  const p = node.parent;
+  if (!p) return `a bare occurrence of the name ${node.text}`;
+  if (ts.isVariableDeclaration(p)) {
+    return p.initializer === node
+      ? 'the tag bound to a local name (an initializer)'
+      : `a local declaration of the name ${node.text}`;
+  }
+  if (ts.isParameter(p)) {
+    return p.name === node
+      ? `a local declaration of the name ${node.text} (a parameter)`
+      : 'the tag bound as a parameter';
+  }
+  if (ts.isReturnStatement(p)) return 'the tag returned from a function';
+  if (ts.isCallExpression(p) || ts.isNewExpression(p)) return 'the tag passed as an argument';
+  if (ts.isExportSpecifier(p)) return 'the tag exported from this file';
+  if (ts.isExportAssignment(p)) return 'the tag on a default export';
+  if (ts.isBinaryExpression(p)) {
+    if (p.operatorToken.kind === ts.SyntaxKind.EqualsToken) return 'the tag assigned to another name';
+    if (p.operatorToken.kind === ts.SyntaxKind.CommaToken) return 'the tag riding a comma expression';
+    return `the tag in a ${ts.SyntaxKind[p.operatorToken.kind]} expression`;
+  }
+  if (p.kind === ts.SyntaxKind.TypeOfExpression || ts.isTypeQueryNode(p)) return 'the tag under a typeof';
+  if (ts.isSpreadElement(p) || ts.isSpreadAssignment(p)) return 'the tag spread into an expression';
+  if (ts.isShorthandPropertyAssignment(p)) return 'the tag handed on as a shorthand property';
+  if (ts.isPropertyAssignment(p)) return 'the tag as a property value';
+  if (ts.isBindingElement(p)) return `a local declaration of the name ${node.text} (a destructuring)`;
+  if (ts.isImportClause(p) || ts.isNamespaceImport(p)) {
+    return `a declaration of the name ${node.text} (a default or namespace import)`;
+  }
+  if (
+    ts.isFunctionDeclaration(p) || ts.isFunctionExpression(p) ||
+    ts.isClassDeclaration(p) || ts.isClassExpression(p) ||
+    ts.isInterfaceDeclaration(p) || ts.isTypeAliasDeclaration(p) ||
+    ts.isEnumDeclaration(p) || ts.isModuleDeclaration(p) || ts.isTypeParameterDeclaration(p)
+  ) return `a local declaration of the name ${node.text}`;
+  return `an appearance of the name ${node.text} under a ${ts.SyntaxKind[p.kind]}`;
+};
+
+/** The string specifier of a require call or a dynamic import with one
+ * string argument, or null. The introduction scan holds these to the lit
+ * rules; here they are held to the package's edges, like any import. */
+const callSpecifier = (node) => {
+  if (!ts.isCallExpression(node) || node.arguments.length !== 1 || !ts.isStringLiteral(node.arguments[0])) return null;
+  if (node.expression.kind === ts.SyntaxKind.ImportKeyword) return node.arguments[0].text;
+  if (ts.isIdentifier(node.expression) && node.expression.text === 'require') return node.arguments[0].text;
+  return null;
+};
+
+/** The specifiers that can leave the package: a relative path, an absolute
+ * path, a file URL. A bare specifier (lit, node:path, a workspace name)
+ * resolves into some package root by construction and cannot. Returns the
+ * offending specifier, or null when it stays inside rootDir. */
+const specifierLeavingThePackage = (spec, baseDir, rootDir) => {
+  let resolved;
+  if (spec.startsWith('./') || spec.startsWith('../')) resolved = resolve(baseDir, spec);
+  else if (isAbsolute(spec)) resolved = resolve(spec);
+  else if (spec.startsWith('file:')) {
+    try {
+      resolved = fileURLToPath(spec);
+    } catch {
+      return spec;
+    }
+  } else return null;
+  const rel = relative(rootDir, resolved);
+  if (rel !== '' && (rel.startsWith('..') || isAbsolute(rel))) return spec;
+  return null;
+};
+
+/** The two-place rule, against one source file. baseDir is the directory the
+ * file's relative imports resolve from; rootDir is the package directory the
+ * walk is anchored at. Returns offences in the shape the other scans return,
+ * so the gates and their fixtures treat all three alike. */
+export const auditTagUsages = (source, file, baseDir, rootDir = PKG_DIR) => {
+  const offences = [];
+  const at = (line, position, rule) => offences.push({ file, line, position, rule });
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const diags = sf.parseDiagnostics ?? [];
+  if (diags.length > 0) {
+    at(
+      lineOf(source, diags[0].start ?? 0),
+      'a file the parser cannot read',
+      `the parser reports a syntax error, so no identifier in the file can be judged (the gate fails closed): ${ts.flattenDiagnosticMessageText(diags[0].messageText, ' ')}`,
+    );
+    return offences;
+  }
+  const walk = (node) => {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)
+    ) {
+      const spec = node.moduleSpecifier.text;
+      if (specifierLeavingThePackage(spec, baseDir, rootDir) !== null) {
+        at(
+          lineOf(source, node.getStart(sf)),
+          'a relative import that leaves the package',
+          `the specifier ${spec} resolves outside this package, so it hands the file a module the gate never walked; the gate refuses it (the gate fails closed)`,
+        );
+      }
+    }
+    const called = callSpecifier(node);
+    if (called !== null && specifierLeavingThePackage(called, baseDir, rootDir) !== null) {
+      at(
+        lineOf(source, node.getStart(sf)),
+        'a relative import that leaves the package',
+        `the specifier ${called} resolves outside this package, so it hands the file a module the gate never walked; the gate refuses it (the gate fails closed)`,
+      );
+    }
+    if (ts.isIdentifier(node) && TAG_ID_NAMES.has(node.text)) {
+      const p = node.parent;
+      const atTheImport = p !== undefined && ts.isImportSpecifier(p);
+      const atTheTag = p !== undefined && ts.isTaggedTemplateExpression(p) && p.tag === node;
+      if (!atTheImport && !atTheTag && !isMemberLabel(node)) {
+        at(lineOf(source, node.getStart(sf)), describeAppearance(node), TWO_PLACES_RULE);
+      }
+    }
+    node.forEachChild(walk);
+  };
+  walk(sf);
+  return offences;
+};
+
 // ── the decision: the allow list against each binding's position ────────────────
 
 const lineOf = (source, offset) => source.slice(0, offset).split('\n').length;
@@ -1102,7 +1297,7 @@ export const auditSource = (source, file) => {
 export const allowedBy = (offences) => offences.filter((o) => o.rule === 'allowed');
 export const refusedBy = (offences) => offences.filter((o) => o.rule !== 'allowed');
 
-// ── the walk: this package (src, harness, and test minus the gates) + dependents ──
+// ── the walk: every source file of the package + dependents ─────────────────────
 
 export const PKG_DIR = join(new URL('../..', import.meta.url).pathname);
 export const WEB_ROOT = join(PKG_DIR, '..', '..');
@@ -1119,7 +1314,8 @@ export const walkSources = (dir, prefix, out, skipFiles = []) => {
     const rel = prefix ? `${prefix}/${entry}` : entry;
     const abs = join(dir, entry);
     if (statSync(abs).isDirectory()) {
-      if (entry === 'node_modules' || entry === '.git') continue;
+      // node_modules and .git are never sources; dist is the build output.
+      if (entry === 'node_modules' || entry === '.git' || entry === 'dist') continue;
       walkSources(abs, rel, out, skipFiles);
     } else if (SOURCE_RE.test(entry) && !skipFiles.includes(rel)) {
       out.push({ rel, abs, text: readFileSync(abs, 'utf8') });
@@ -1136,14 +1332,21 @@ export const manifestOf = (dir) => {
   }
 };
 
-/** This package's sources the gate judges. */
+/** This package's sources the gates judge: every source file under the
+ * package's directory, the package root included, so no file of the package
+ * stands outside the walked folders. The two gate files stay excluded by
+ * name (they hold the fixtures, which are offences by design). */
 export const thisPackageSources = () => {
   const out = [];
-  for (const root of ['src', 'harness', 'test']) {
-    walkSources(join(PKG_DIR, root), root, out, GATE_FILES);
-  }
+  walkSources(PKG_DIR, '', out, GATE_FILES);
   return out;
 };
+
+/** The walk the two-place rule runs over: every source file of the package,
+ * leaving out only node_modules, the build output (dist) and .git. The two
+ * gate files are NOT excluded here: the rule has no fixture file, and the
+ * gate files hold none of its kind. */
+export const everyPackageSource = () => walkSources(PKG_DIR, '', [], []);
 
 /** Every workspace package that depends on @hardscapehouse/design-system, by manifest or
  * by import. */
@@ -1165,7 +1368,9 @@ export const dependentPackages = () => {
       const deps = { ...(manifest.dependencies ?? {}), ...(manifest.devDependencies ?? {}), ...(manifest.peerDependencies ?? {}) };
       const sources = walkSources(abs, `${group}/${name}`, []);
       const imports = sources.some((s) => s.text.includes('@hardscapehouse/design-system'));
-      if (deps['@hardscapehouse/design-system'] || imports) out.push({ name: manifest.name ?? `${group}/${name}`, sources });
+      if (deps['@hardscapehouse/design-system'] || imports) {
+        out.push({ name: manifest.name ?? `${group}/${name}`, dir: abs, sources });
+      }
     }
   }
   return out;
