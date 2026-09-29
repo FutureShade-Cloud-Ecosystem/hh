@@ -83,13 +83,8 @@ lands first (a resume, an out-of-band callback) does not cancel it, and a
 double submit of the sign-in form does not resolve an error while the
 person is signed in. The sign-in sequence counter supersedes one sign-in
 with another: every submit bumps it, and a sign-in that is no longer the
-newest adopts nothing, minting nothing further. It resolves as successful
-only when custody already holds its own user (the double submit: the
-newest submit's adoption is that same user); otherwise it resolves
-superseded and the screen says so, because of two people's sign-ins in
-flight the older one's late answer must never replace the newer person's
-session on a shared tablet. A sign-out outranks the supersession: a
-sign-in parked under a sign-out resolves cancelled, never superseded. A
+newest adopts nothing, minting nothing further, and waits for the newest
+to settle before it resolves (the exact rule in the paragraph below it). A
 direct `sessions.clear()` empties the custody but
 bumps neither counter: a resume that is already running is not cancelled,
 and when the platform answers it adopts a token into a custody the user
@@ -98,12 +93,39 @@ counters on the two sides of that await (the generation twice, the sign-out
 counter twice; the sequence counter is never touched by it), and wipes
 custody; the wired lock is disengaged beside that wipe, under the same
 guards, so the lock drops with the session (the ruling on the lock at
-sign-out, in the device unlock section below); the deferred-fake tests in
+sign-out, in the device unlock section below); a failed resume clears the
+custody it failed from and the wired lock with it, because a lock belongs
+to the signed-in person or to nobody. The deferred-fake tests in
 `test/client.test.mjs` hold that
 ordering against a resume and a sign-in begun before and during the
-sign-out, a resume that adopts first, a double submit, the two people's
+sign-out, a resume that adopts first, a double submit in both landing
+orders, the two people's
 and three sign-ins in flight, a sign-out landing between the two, and the
 two adoption bumps.
+
+The sign-in sequence, stated exactly: every submit bumps the sequence
+counter, and a sign-in that is no longer the newest adopts nothing and
+mints nothing further. It does not resolve straight away: it WAITS for the
+newest sign-in to settle, then resolves by what custody holds. The same
+person signed in resolves success, so a double submit of one sign-in lands
+both submits in either landing order (the first submit's answer landing
+first, the usual order, and the second's landing first) and neither promise
+of the two resolves an error while the person is signed in. A different
+person, or nobody, resolves superseded, and the screen says so, because of
+two people's sign-ins in flight the older one's late answer must never
+replace the newer person's session on a shared tablet. A sign-out outranks
+the supersession: a sign-in parked under a sign-out resolves cancelled,
+never superseded, without waiting.
+
+What is not verified about the double submit, and what the code does in
+that case: what the real platform does with a SECOND session for one person
+is unknown. If the platform refuses the second session while the first is
+active, the newest submit resolves `sign-in failed`, the older submit
+(waiting for it) resolves superseded with custody holding nobody, and the
+person ends signed out with both promises answered. The code does not retry
+and holds nothing session shaped of its own to fall back to: the platform's
+session is the issuer's to own, and this package keeps only what custody
+adopted.
 
 The wiring that lets the lock see the sign-out: the shell hands the
 controller the device lock (as `lock`, a narrow two method handle) and the

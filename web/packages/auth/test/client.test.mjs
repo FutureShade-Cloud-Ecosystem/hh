@@ -755,15 +755,69 @@ test("a resume that adopts first does not cancel a person's explicit sign-in", a
   otherUserCustodyHolds(sessions, recorded);
 });
 
-test("a double submit of one sign-in does not error while the person is signed in: both submits land", async () => {
+// Both landing orders of a double submit, each its own test: the FIRST
+// submit's answer landing first (the order pull request 28 held, and the
+// order a form usually produces) and the second's landing first (the order
+// the sequence counter's first cut was tested in). In either order the
+// person is signed in and neither promise of the two resolves an error.
+test("a double submit of one sign-in, the FIRST submit's answer landing first: the older waits for the newest to settle, then both resolves land and neither errors", async () => {
+  // The order this test held in pull request 28, restored: the first
+  // submit's credential is accepted first, which is the usual order. A
+  // sign-in that resolves the instant it is superseded would show this
+  // person an error ("sign-in superseded") and then sign them in anyway
+  // when the second submit landed. The fix: the older submit WAITS for the
+  // newest to settle, then resolves by what custody holds: the same person
+  // signed in, success.
+  const { recorded, sessions } = custody();
+  const account = new DeferredAccountSurface();
+  const controller = new AuthController({ account, sessions });
+
+  const first = controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD);
+  const created1 = await untilHandoffAt(account, "createEmailPasswordSession", 0);
+  const second = controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD); // the double submit
+  const created2 = await untilHandoffAt(account, "createEmailPasswordSession", 1);
+
+  created1.complete({ ...FAKE_ACCOUNT }); // the FIRST submit's credential is accepted first
+  await flush();
+  assert.equal(
+    account.handoffs("createJWT").length,
+    0,
+    "the first submit minted nothing: it is no longer the newest, and it is parked waiting for the newest to settle",
+  );
+
+  created2.complete({ ...FAKE_ACCOUNT }); // the second submit's credential lands
+  await flush(); // the second submit carries on to its mint
+  const mint2 = await untilHandoffAt(account, "createJWT", 0); // the only mint: the second submit's
+  mint2.complete({ jwt: `${FAKE_JWT}-MINT-2`, expiresAtMs: START_MS + 900_000 });
+  assert.equal((await settles(second, "the second submit")).ok, true, "the newest submit signed in and adopted");
+  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-2`, "custody holds the newest submit's own session");
+
+  const firstResult = await settles(first, "the first submit");
+  assert.equal(
+    firstResult.ok,
+    true,
+    `the first submit resolves successful too: it waited, custody holds its own user (${firstResult.ok ? "" : firstResult.error})`,
+  );
+  assert.equal(account.handoffs("createJWT").length, 1, "the first submit minted nothing, in the end: only the newest submit's mint");
+  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-2`, "custody still holds the newest submit's own mint: the late submit adopted nothing");
+  assert.deepEqual(sessions.profile, { ...FAKE_ACCOUNT });
+  assert.equal(
+    recorded.getItem(SESSION_MIRROR_KEY)?.includes(FAKE_ACCOUNT.userId),
+    true,
+    "storage holds the signed-in profile",
+  );
+});
+
+test("a double submit of one sign-in, the SECOND submit's answer landing first: both submits land", async () => {
   // The sign-in once checked the shared generation, so of two submits of the
   // same credential the first adoption's bump cancelled the second, and a
   // form showing the last promise's error showed a false error while the
   // person was signed in. Only a sign-out cancels a sign-in now, and the
-  // sign-in sequence makes the OLDER submit adopt nothing: it resolves
-  // successful because custody already holds its own user, so both submits
-  // land, the newest one's mint is the one in custody, and neither promise
-  // resolves an error while the person is signed in.
+  // sign-in sequence makes the OLDER submit adopt nothing: it waits for the
+  // newest to settle, then resolves successful because custody holds its
+  // own user, so both submits land, the newest one's mint is the one in
+  // custody, and neither promise resolves an error while the person is
+  // signed in.
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface();
   const controller = new AuthController({ account, sessions });
@@ -850,7 +904,7 @@ test("two people's sign-ins in flight, the older answer landing after the newer 
   otherUserCustodyHolds(sessions, recorded);
 });
 
-test("two people's sign-ins in flight, the NEWER answer landing after the older's: the older, no longer newest, adopts nothing and the newer lands", async () => {
+test("two people's sign-ins in flight, the NEWER answer landing after the older's: the older waits, adopts nothing and mints nothing, and resolves superseded once the newer settled", async () => {
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface();
   const controller = new AuthController({ account, sessions });
@@ -867,10 +921,7 @@ test("two people's sign-ins in flight, the NEWER answer landing after the older'
     0,
     "A minted nothing: B's submit had already made A no longer the newest",
   );
-  const stale = await settles(older, "the older sign-in");
-  assert.equal(stale.ok, false, "A resolves superseded: custody held nobody, not A's own user");
-  assert.match(stale.error, /superseded/);
-  assert.equal(sessions.current, null, "custody holds nobody: A adopted nothing");
+  assert.equal(sessions.current, null, "custody holds nobody while A waits: A adopted nothing");
   assert.equal(sessions.profile, null);
   assert.equal(recorded.size, 0, "storage holds nothing");
 
@@ -879,6 +930,12 @@ test("two people's sign-ins in flight, the NEWER answer landing after the older'
   mintB.complete({ jwt: `${FAKE_JWT}-B`, expiresAtMs: START_MS + 900_000 });
   assert.equal((await settles(newer, "the newer sign-in")).ok, true, "B, the newest sign-in, signed in");
   assert.equal(sessions.current.token, `${FAKE_JWT}-B`, "custody holds B's session");
+
+  // A resolves only once the newest settled, and then by what custody holds.
+  const stale = await settles(older, "the older sign-in");
+  assert.equal(stale.ok, false, "A resolves superseded: custody holds B, not A");
+  assert.match(stale.error, /superseded/);
+  assert.equal(sessions.current.token, `${FAKE_JWT}-B`, "custody still holds B's session");
   assert.deepEqual(sessions.profile, OTHER_ACCOUNT);
   otherUserCustodyHolds(sessions, recorded);
 });

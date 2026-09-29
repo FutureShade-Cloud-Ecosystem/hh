@@ -383,3 +383,148 @@ test("a stale lock at start-up is cleared, not shown: a reopened tab meets the s
   assert.equal(sessions.current, null, "custody holds nobody");
   assert.equal(sessions.profile, null, "no display profile survived the sign-out");
 });
+
+// A failed resume clears the lock beside the custody it clears (relay
+// message 052, P3: a lock belongs to the signed-in person, or to nobody).
+test("a failed resume clears the custody and the lock with it: the lock never outlives the signed-in state it belongs to", async () => {
+  // The second-tab case the review found: this tab holds its session and
+  // its lock, the first tab signs out, and this tab's resume then FAILS
+  // (the platform holds no session for it any more). The failure cleared
+  // the custody but kept the lock, and the lock then opened with nobody
+  // signed in. The lock goes with the custody it belongs to.
+  const rig = wiredRig();
+  assert.equal(rig.seedSignedIn(), true);
+  assert.equal((await rig.lock.engage()).ok, true);
+  assert.equal(rig.lock.state, "locked", "A's lock is engaged, and A is signed in");
+  assert.notEqual(rig.recorded.getItem(LOCK_MIRROR_KEY), null, "the engaged lock is in storage before the resume");
+
+  const resuming = rig.controller.resume(); // this tab's re-sign-in, in flight
+  const getSession = await untilHandoffAt(rig.account, "getSession", 0);
+  getSession.fail(new Error("platform: session gone")); // the platform holds no session for this tab any more
+  const refused = await resuming;
+  assert.equal(refused.ok, false, "the resume is refused as data");
+  assert.match(refused.error, /no platform session to resume/);
+
+  assert.equal(rig.sessions.current, null, "the failed resume cleared the custody");
+  assert.equal(rig.sessions.profile, null, "and the display profile with it");
+  assert.equal(rig.lock.state, "absent", "the lock went with the signed-in state: it belongs to nobody now");
+  assert.equal(rig.recorded.getItem(LOCK_MIRROR_KEY), null, "no lock key remains in storage");
+  assert.equal(rig.recorded.getItem(SESSION_MIRROR_KEY), null, "no session key remains in storage");
+  assert.equal(rig.recorded.size, 0, "storage holds nothing after the failed resume");
+});
+
+// The four guards the review found untested, one test each: the adoption
+// reconciliation in the controller's adopt(), the one in resume(), unlock's
+// failure-path sign-out check, and the start-up check's second arm (a lock
+// whose profile names somebody else). Each fails when its guard is removed.
+test("an out-of-band adoption of another user disengages the lock before the new session is shown", async () => {
+  // The controller's adopt() reconciles the lock with the user it adopted
+  // (the Google callback through the Console bridge adopts out of band, no
+  // sign-out in between): a lock bound to a different user goes, before B's
+  // session is shown.
+  const rig = wiredRig();
+  assert.equal(rig.seedSignedIn(), true);
+  assert.equal((await rig.lock.engage()).ok, true);
+  assert.equal(rig.lock.state, "locked", "A's lock is engaged over A's live session");
+
+  assert.equal(
+    rig.controller.adopt({ token: `${FAKE_JWT}-B`, tokenExpiresAtMs: rig.time.now() + 3_600_000, user: { ...OTHER_ACCOUNT } }),
+    true,
+    "B's session was adopted out of band",
+  );
+
+  assert.equal(rig.sessions.current.user.userId, OTHER_ACCOUNT.userId, "custody holds B's session");
+  assert.equal(rig.lock.state, "absent", "B is not shown A's lock: the adoption disengaged it");
+  assert.equal(rig.recorded.getItem(LOCK_MIRROR_KEY), null, "no lock key remains in storage");
+  assert.equal(rig.recorded.getItem(SESSION_MIRROR_KEY)?.includes(OTHER_ACCOUNT.userId), true, "storage holds B's profile");
+});
+
+test("a resume that answers for another user disengages the lock as it adopts", async () => {
+  // The controller's resume() reconciles the lock with the user the issuer's
+  // cookie answered for: a reload's re-sign-in landing on a different person
+  // than the one whose lock is engaged clears the lock before the new
+  // session is shown.
+  const rig = wiredRig();
+  assert.equal(rig.seedSignedIn(), true);
+  assert.equal((await rig.lock.engage()).ok, true);
+  assert.equal(rig.lock.state, "locked", "A's lock is engaged");
+
+  const resuming = rig.controller.resume(); // the reload's re-sign-in, in flight
+  const getSession = await untilHandoffAt(rig.account, "getSession", 0);
+  getSession.complete({ ...OTHER_ACCOUNT }); // the issuer's cookie answers for B
+  const mint = await untilHandoffAt(rig.account, "createJWT", 0);
+  mint.complete({ jwt: `${FAKE_JWT}-B`, expiresAtMs: rig.time.now() + 900_000 });
+  const result = await resuming;
+  assert.equal(result.ok, true, `the resume landed (${result.ok ? "" : result.error})`);
+
+  assert.equal(rig.sessions.current.user.userId, OTHER_ACCOUNT.userId, "custody holds B's resumed session");
+  assert.equal(rig.lock.state, "absent", "the resume's adoption disengaged A's lock");
+  assert.equal(rig.recorded.getItem(LOCK_MIRROR_KEY), null, "no lock key remains in storage");
+  assert.equal(rig.recorded.getItem(SESSION_MIRROR_KEY)?.includes(OTHER_ACCOUNT.userId), true, "storage holds B's profile");
+});
+
+test("a failed unlock whose person signed out mid prompt records no backoff and names the sign-out", async () => {
+  // Unlock's failure path carries the sign-out counter check as well as the
+  // success path does, so the rule has no exception: a prompt that FAILS
+  // after its person signed out records no backoff and tells the screen it
+  // was the sign-out, not a supersession and not a wrong PIN against
+  // nobody.
+  const rig = wiredRig({ parked: true, deferDeleteSession: true });
+  assert.equal(rig.seedSignedIn(), true);
+  const engaging = rig.lock.engage();
+  (await untilCreate(rig.credentials, 1)).resolve("fake-credential-id-1");
+  assert.equal((await engaging).ok, true, "A's lock is engaged");
+
+  const opening = rig.lock.unlock(); // parked at the platform prompt
+  const verify = await untilVerify(rig.credentials, 1);
+  const signingOut = rig.controller.signOut(); // the counter bumps; the sign-out's own deleteSession is parked
+  verify.fail(new Error("fake: user verification failed (simulated wrong PIN)")); // the prompt FAILS after the sign-out landed
+
+  const result = await opening;
+  assert.equal(result.ok, false, "the failed attempt resolves an error Result");
+  assert.match(
+    result.error,
+    /signed out while the platform prompt was in flight, so nothing was recorded/,
+    `the failure names the sign-out: this is the failure path's own check (${result.ok ? "" : result.error})`,
+  );
+
+  const deleteCall = await untilHandoffAt(rig.account, "deleteSession", 0);
+  deleteCall.complete(undefined); // the sign-out completes
+  await signingOut;
+
+  assert.equal(rig.recorded.size, 0, "storage holds nothing: no lock, no session mirror");
+  assert.equal(rig.lock.state, "absent", "the screen shows the signed-out state with no lock");
+});
+
+test("a start-up lock whose display profile names somebody else is cleared, not shown", async () => {
+  // The start-up check's second arm: a lock in the mirror bound to A beside
+  // a display profile for B. A payload combination only an older version or
+  // a hand edit produces (a sign-out clears both, and a different user's
+  // sign-in disengages the lock before writing their profile), but the
+  // start-up check does not argue with storage: the lock belongs to the
+  // signed-in person, or to nobody, and B is the one signed in.
+  const recorded = new RecordedStorage();
+  recorded.setItem(
+    SESSION_MIRROR_KEY,
+    JSON.stringify({ v: 2, userId: OTHER_ACCOUNT.userId, email: OTHER_ACCOUNT.email, name: OTHER_ACCOUNT.name }),
+  );
+  recorded.setItem(
+    LOCK_MIRROR_KEY,
+    JSON.stringify({ v: 1, userId: FAKE_ACCOUNT.userId, credentialId: "fake-credential-left", engagedAtMs: START_MS }),
+  );
+
+  const time = clock();
+  const sessions = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, recorded), now: time.now });
+  const lock = new DeviceLock({
+    credentials: new FakeCredentialProvider(),
+    sessions,
+    mirror: new ThrowSafeMirror(LOCK_MIRROR_KEY, recorded),
+    now: time.now,
+    signOuts: new SignOutCounter(),
+  });
+
+  assert.equal(sessions.profile?.userId, OTHER_ACCOUNT.userId, "B's profile is what the screen would show");
+  assert.equal(lock.state, "absent", "A's lock is not shown: it is not B's");
+  assert.equal(recorded.getItem(LOCK_MIRROR_KEY), null, "the lock bound to A was cleared from storage");
+  assert.equal(recorded.getItem(SESSION_MIRROR_KEY)?.includes(OTHER_ACCOUNT.userId), true, "B's profile stays");
+});

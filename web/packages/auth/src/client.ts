@@ -214,18 +214,19 @@ export class SignOutCounter {
  * person's explicit sign-in: the sign-in carries on and its own adoption
  * wins custody, so the person who signed in is the person the tablet shows.
  * The sign-in sequence counter supersedes it: every sign-in submit bumps
- * that counter, and a sign-in that is no longer the newest adopts nothing,
- * whatever the platform answered for it. It resolves as successful only when
- * custody already holds its own user (the double submit of one form: the
- * newest submit's adoption is that same user, so both submits land and
- * neither resolves an error while the person is signed in); otherwise it
- * resolves superseded, and the screen says so, because of two people's
- * sign-ins in flight the older one's late answer must never replace the
- * newer person's session: on a shared tablet that would be the wrong person
- * signed in, silently. A sign-out cancels a sign-in outright, from both
- * sides of the sign-out's await, exactly as the generation guard does, and
- * the cancellation outranks the supersession: a sign-in parked under a
- * sign-out resolves cancelled, never superseded.
+ * that counter, and a sign-in that is no longer the newest adopts nothing
+ * and mints nothing further. It WAITS for the newest sign-in to settle
+ * before it resolves, and then resolves by what custody holds: the same
+ * person signed in, success (the double submit of one form lands both
+ * submits in either landing order, and neither promise resolves an error
+ * while the person is signed in); a different person, or nobody, superseded,
+ * and the screen says so, because of two people's sign-ins in flight the
+ * older one's late answer must never replace the newer person's session: on
+ * a shared tablet that would be the wrong person signed in, silently. A
+ * sign-out cancels a sign-in outright, from both sides of the sign-out's
+ * await, exactly as the generation guard does, and the cancellation outranks
+ * the supersession: a sign-in parked under a sign-out resolves cancelled,
+ * never superseded, without waiting.
  *
  * The lock rides the same acts (Colton's ruling C, relay message 048: the
  * lock is yours while you are signed in; a lock belongs to the signed-in
@@ -246,6 +247,8 @@ export class AuthController {
   readonly #signOuts: SignOutCounter;
   #generation = 0;
   #signIns = 0;
+  /** The newest submit's number and the promise its own flow resolves when its outcome is decided; what a stale sign-in waits on. */
+  #newestSignIn: { signIns: number; settled: Promise<void> } | null = null;
 
   constructor(deps: {
     account: AccountSurface;
@@ -270,13 +273,28 @@ export class AuthController {
    * carries on and its adoption wins custody), and only a sign-out does,
    * from both sides of the sign-out's own await. The sign-in sequence: a
    * newer submit supersedes an older one, which then adopts nothing, minting
-   * nothing further; it resolves as successful only when custody already
-   * holds its own user (the double submit), otherwise superseded, and the
-   * screen says so.
+   * nothing further; it waits for the newest submit to settle, then resolves
+   * by what custody holds: the same person, success; anybody else, or
+   * nobody, superseded, and the screen says so.
    */
   async signInWithPassword(email: string, password: string): Promise<Result<AccountUser>> {
     this.#signIns += 1;
     const signIns = this.#signIns;
+    // This submit's settlement: what every older submit still in flight
+    // waits for before it resolves, and what a still newer submit replaces.
+    let settle!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    this.#newestSignIn = { signIns, settled };
+    try {
+      return await this.#signInFlow(email, password, signIns);
+    } finally {
+      settle(); // this submit's outcome is decided, whatever it was
+    }
+  }
+
+  async #signInFlow(email: string, password: string, signIns: number): Promise<Result<AccountUser>> {
     const signOuts = this.#signOuts.count;
     let user: AccountUser;
     try {
@@ -287,7 +305,7 @@ export class AuthController {
     if (this.#signOuts.count !== signOuts) {
       return err("sign-in cancelled: sign-out landed while the sign-in was in flight, so nothing was adopted");
     }
-    if (this.#signIns !== signIns) return this.#staleSignIn(user);
+    if (this.#signIns !== signIns) return this.#staleSignIn(signIns, user);
     let minted: { jwt: string; expiresAtMs: number };
     try {
       minted = await this.#account.createJWT();
@@ -297,7 +315,7 @@ export class AuthController {
     if (this.#signOuts.count !== signOuts) {
       return err("sign-in cancelled: sign-out landed while the sign-in was in flight, so nothing was adopted");
     }
-    if (this.#signIns !== signIns) return this.#staleSignIn(user);
+    if (this.#signIns !== signIns) return this.#staleSignIn(signIns, user);
     const adopted = this.#sessions.adopt({
       token: minted.jwt,
       tokenExpiresAtMs: minted.expiresAtMs,
@@ -311,14 +329,32 @@ export class AuthController {
 
   /**
    * The resolution of a sign-in that is no longer the newest: it adopts
-   * nothing, whatever the platform answered for it. Custody already holding
-   * its own user resolves successful without adopting (the double submit of
-   * one form: the newest submit's adoption is that same user, and a second
-   * adoption of it could only race the newest submit's own); anything else
-   * resolves superseded, an error Result whose message is the screen's, so a
-   * person whose answer landed late sees why they are not the one signed in.
+   * nothing, whatever the platform answered for it, and it does not resolve
+   * straight away: it waits for every sign-in newer than it to settle (a
+   * newer submit landing while it waits extends the wait), so its resolution
+   * says what custody holds once the submit that beat it is done. The same
+   * person signed in resolves successful without adopting (the double
+   * submit of one form: the newest submit's adoption is that same user, in
+   * either landing order, so neither promise of a double submit resolves an
+   * error while the person is signed in); anybody else, or nobody, resolves
+   * superseded, an error Result whose message is the screen's, so a person
+   * whose answer landed late sees why they are not the one signed in.
    */
-  #staleSignIn(user: AccountUser): Result<AccountUser> {
+  async #staleSignIn(signIns: number, user: AccountUser): Promise<Result<AccountUser>> {
+    // Wait for every submit newer than this one to settle. Each pass awaits
+    // the newest submit there is and raises the high-water mark to its
+    // number, so a newer submit landing mid wait extends the wait, and a
+    // pass over an already settled newest exits: every settled submit at or
+    // under the mark has decided, and the stale ones among them adopt
+    // nothing, so once the newest has settled custody can move no further
+    // from sign-ins.
+    let waited = signIns;
+    for (;;) {
+      const newest = this.#newestSignIn;
+      if (newest === null || newest.signIns <= waited) break;
+      await newest.settled;
+      waited = newest.signIns;
+    }
     if (this.#sessions.current?.user.userId === user.userId) return ok({ ...user });
     return err("sign-in superseded: a newer sign-in landed while this one was in flight, so nothing was adopted");
   }
@@ -359,7 +395,11 @@ export class AuthController {
    * shell would render the previous user's name over a signed-out custody.
    * (The one exception is the generation guard's cancellation: a resume
    * that lands after a sign-out writes nothing at all, because the sign-out
-   * already wiped the custody it would clear.) The generation guard runs
+   * already wiped the custody it would clear.) A failed resume's custody
+   * clear takes the wired lock with it: a resume that produced nothing is
+   * the end of the signed-in state this tab knows, and a lock whose person
+   * is no longer signed in belongs to nobody (Colton's ruling C, relay
+   * message 048). The generation guard runs
    * across every await: a sign-out that lands mid resume cancels it as data
    * and nothing is adopted, so the late platform answer can never re-sign a
    * custody the user signed out. Every successful adoption bumps the same
@@ -378,7 +418,7 @@ export class AuthController {
     try {
       user = await this.#account.getSession();
     } catch (error) {
-      if (this.#generation === generation) this.#sessions.clear();
+      if (this.#generation === generation) this.#failSignedOut();
       return err(`no platform session to resume: ${asMessage(error)}`);
     }
     if (this.#generation !== generation) {
@@ -388,7 +428,7 @@ export class AuthController {
     try {
       minted = await this.#account.createJWT();
     } catch (error) {
-      if (this.#generation === generation) this.#sessions.clear();
+      if (this.#generation === generation) this.#failSignedOut();
       return err(`the token refresh failed: ${asMessage(error)}`);
     }
     if (this.#generation !== generation) {
@@ -400,12 +440,30 @@ export class AuthController {
       user,
     });
     if (!adopted) {
-      if (this.#generation === generation) this.#sessions.clear();
+      if (this.#generation === generation) this.#failSignedOut();
       return err("the platform returned an unusable session");
     }
     this.#generation += 1; // the adoption is a structural change: it supersedes anything already in flight
     this.#lock?.disengageUnlessBoundTo(user.userId);
     return ok({ ...user });
+  }
+
+  /**
+   * What a failed resume does beside clearing the custody it failed from
+   * (Colton's ruling C, relay message 048: the lock is yours while you are
+   * signed in; a lock belongs to the signed-in person, or to nobody). A
+   * resume that produces nothing clears the display profile and the live
+   * token, so it is the end of the signed-in state this tab knows: the lock
+   * goes with it, or a lock would sit in the mirror beside a signed-out
+   * custody and open for nobody. The case that makes this more than tidying:
+   * in a second tab, after the first tab signed out, this tab's resume
+   * fails (the platform holds no session for it any more), and without this
+   * the second tab would keep the first tab's lock and open it with nobody
+   * signed in.
+   */
+  #failSignedOut(): void {
+    this.#sessions.clear();
+    this.#lock?.disengage();
   }
 
   /**
