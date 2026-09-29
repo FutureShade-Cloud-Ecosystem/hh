@@ -26,12 +26,15 @@ under `web/packages/`.
   `docs/adr/0023` (status draft, choice open). Markup can only be produced by
   the package's own `html()` behind a module-private symbol, so a caller's
   object or string is always text and never markup, and icon geometry is bound
-  as escaped attribute values. The factory also refuses what escaping cannot
-  make safe, each by a named `HHRenderError`: a first argument that is not a
-  real template strings array, a binding in an unquoted attribute, a value in
-  an event attribute, and an address whose scheme is not http, https or
-  absent. An unknown state throws the same named error at render, in Node and
-  in the browser, and a failed browser render never leaves an empty element.
+  as escaped attribute values. The scanner over each template fails closed: a
+  binding is accepted only in a position it has positively classified as safe
+  (text content; a quoted attribute value in an attribute on the allow list;
+  a bare attribute name on the bound-name allow list, whose value is then
+  checked against that name), and every other position is refused with a
+  named `HHRenderError`, including any position the literal text leaves
+  unclassifiable and everything after it. An unknown state throws the same
+  named error at render, in Node and in the browser, and a failed browser
+  render never leaves an empty element.
 - `src/primitives.ts`: the Ionic seam: `button`, `chip`, `spinner` and `row`
   with the call sites the `ion-*` primitives will occupy. The disabled rule and
   the focus ring live here, once, so no kit can get them wrong.
@@ -97,8 +100,11 @@ dependency. It finds a browser at `$HH_DS_BROWSER`, then the usual PATH names,
 then the Playwright cache. When none exists the leg fails loudly if `CI` is
 set (a skipped gate is a failed gate; the workflow step names google-chrome
 for exactly this reason) and skips with a loud, named reason otherwise; under
-bun it never runs, and its skip registers as a skip in the tally, never as a
-pass.
+bun it never runs, and because bun's node:test layer ignores a `{ skip }`
+option, the loud statement registers there as a plain passing test: the tally
+counts it as a pass (the CI log shows it), with the named reason carried on
+its console output, while under Node the same statement registers as a skip
+carrying the reason, so no Node tally counts the skipped leg as a pass.
 
 ## Measured notes the sheet's readers asked for
 
