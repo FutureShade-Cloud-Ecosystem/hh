@@ -19,6 +19,7 @@ import { join } from 'node:path';
 
 import {
   auditSource,
+  auditTagIntroductions,
   refusedBy,
   extractTemplates,
   thisPackageSources,
@@ -54,6 +55,9 @@ const REFUSED_FIXTURES = [
   ['an address with a static prefix, even through the helper', `html\`<a href="/p\${${ADDRESS_HELPER}('/x')}">go</a>\``, 'not wholly one value'],
   ['a binding inside a script tag', `html\`<script src="\${'x'}"></script>\``, 'of a script tag'],
   ['a binding inside a base tag', `html\`<base href="\${'x'}">\``, 'of a base tag'],
+  ['a binding of an attribute name inside a script tag', `html\`<script \${'src'}="x"></script>\``, 'inside a script tag'],
+  ['a binding of an attribute name inside a base tag', `html\`<base \${'target'}>\``, 'inside a base tag'],
+  ['a parenthesis between attributes enters the unknown state', `html\`<div a="1" (\${'x'})>t</div>\``, 'cannot classify'],
   ['a binding inside a script body', `html\`<script>\${'x'}</script>\``, 'raw-text element script'],
   ['a binding inside a style body', `html\`<style>\${'x'}</style>\``, 'raw-text element style'],
   ['a binding inside a textarea body', `html\`<textarea>\${'x'}</textarea>\``, 'raw-text element textarea'],
@@ -122,6 +126,42 @@ for (const [name, source] of ALLOWED_FIXTURES) {
   });
 }
 
+// ── the tag's introduction: the gate cannot be left by a rename ─────────────────
+//
+// The extractor finds a template only where its tag is spelled html or svg,
+// so the gate's second half holds, for every file it walks, that a lit
+// template tag cannot enter a file under any other spelling. Each fixture
+// below is one of the four introduction rules' fail proofs: it asserts a
+// refusal, so removing the rule turns this file red.
+
+const TAG_INTRODUCTION_FIXTURES = [
+  ['an aliased import of html', `import { html as h } from 'lit';`, 'an import of html under the name h'],
+  ['a namespace import from lit', `import * as everything from 'lit';`, 'a namespace import from lit'],
+  ['an import of mathml', `import { mathml } from 'lit';`, 'an import of mathml'],
+  ['a re-export of html from lit', `export { html } from 'lit';`, 'a re-export of html from lit'],
+];
+
+for (const [name, source, expectedPosition] of TAG_INTRODUCTION_FIXTURES) {
+  test(`fixture: ${name}`, () => {
+    const refusals = refusedBy(auditTagIntroductions(source, 'fixture.ts'));
+    assert.equal(
+      refusals.length,
+      1,
+      `expected exactly one refusal for the fixture, got ${JSON.stringify(refusals)}`,
+    );
+    assert.ok(
+      refusals[0].position.includes(expectedPosition),
+      `the refusal must name the position: got ${JSON.stringify(refusals[0].position)}, expected it to name ${JSON.stringify(expectedPosition)}`,
+    );
+    assert.equal(refusals[0].file, 'fixture.ts', 'the refusal must name the file');
+    assert.equal(refusals[0].line, 1, 'the refusal must name the line');
+    assert.ok(
+      refusals.every((r) => !/^allowed$/.test(r.rule)),
+      'the refusal must be a refusal',
+    );
+  });
+}
+
 // ── the scanner and the extractor guard themselves, so a clean gate is evidence ──
 
 test('the extractor sees the package (guards the gate below)', () => {
@@ -159,6 +199,64 @@ test('the extractor survives nesting, strings and escapes (guards the classifica
   assert.deepEqual(bindingsOf(templates[2]), ['v']);
 });
 
+test('the tag introduction scanner sees every spelling that hides a tag (guards the gate)', () => {
+  // The four fixtures above are one spelling each; the scanner must refuse
+  // the whole family, so every spelling is planted here.
+  const planted = [
+    [`import { html as h } from 'lit';`, 'under the name h'],
+    [`import { svg as vector } from 'lit';`, 'under the name vector'],
+    [`import { html as h } from 'lit-html';`, 'under the name h'],
+    [`import { svg as v } from 'lit/html.js';`, 'under the name v'],
+    [`import { html as h } from 'lit-html/template.js';`, 'under the name h'],
+    [`import { mathml as m } from 'lit';`, 'an import of mathml'],
+    [`import * as lit from 'lit';`, 'a namespace import'],
+    [`import lit from 'lit';`, 'a default import'],
+    [`import lit, { html } from 'lit';`, 'a default import'],
+    [`const m = await import('lit');`, 'a dynamic import of lit'],
+    [`const m = await import('lit-html');`, 'a dynamic import of lit-html'],
+    [`const m = require('lit');`, 'a require of lit'],
+    [`const m = require(whichLit);`, 'not a string literal'],
+    [`export { html } from 'lit';`, 'a re-export of html from lit'],
+    [`export { html as h } from 'lit';`, 'a re-export of html from lit'],
+    [`export { h as svg } from 'lit';`, 'a re-export of svg from lit'],
+    [`export { mathml } from 'lit';`, 'a re-export of mathml from lit'],
+    [`export * from 'lit';`, 'a star re-export'],
+    [`export * as lit from 'lit';`, 'a star re-export'],
+    [`import { html } from 'lit'; export { html as h };`, 'a re-export of the local html binding'],
+    [`import { html } from 'lit'; export default html;`, 'a default re-export of html'],
+  ];
+  for (const [p, expected] of planted) {
+    const refusals = refusedBy(auditTagIntroductions(p, 'plant.ts'));
+    assert.ok(refusals.length >= 1, `the scanner missed the planted offence: ${p}`);
+    assert.ok(
+      refusals.some((r) => r.position.includes(expected)),
+      `the refusal must name the position (${expected}): got ${JSON.stringify(refusals.map((r) => r.position))} for ${p}`,
+    );
+  }
+  // And it stays quiet on the statements the kits are allowed: the tags under
+  // their own names, the library's non tag exports, type only imports, and
+  // specifiers that are not the lit packages.
+  for (const allowed of [
+    `import { html, css } from 'lit';`,
+    `import { svg } from 'lit';`,
+    `import { LitElement, type PropertyValues } from 'lit';`,
+    `import { html, type TemplateResult as Template } from 'lit';`,
+    `import { nothing } from 'lit';`,
+    `import 'lit';`,
+    `import { render } from '@lit-labs/ssr';`,
+    `import { html } from './local.js';`,
+    `import { join } from 'node:path';`,
+    `const m = await import('./local.js');`,
+    `export { css } from 'lit';`,
+    `export * from './local.js';`,
+    `export { css };`,
+    `export type { KitState } from './state.js';`,
+  ]) {
+    const refusals = refusedBy(auditTagIntroductions(allowed, 'fine.ts'));
+    assert.deepEqual(refusals, [], `the scanner flagged an allowed statement: ${allowed}: ${JSON.stringify(refusals)}`);
+  }
+});
+
 // ── the gates themselves: the package and its dependents ────────────────────────
 
 test('every html and svg template in this package sits in an allowed position', () => {
@@ -185,6 +283,38 @@ test('every html and svg template in any package that depends on this one sits i
     offences,
     [],
     `a dependent package binds a value in a refused position. The kits' rule binds its dependents too:\n  ` +
+      offences.map((o) => `${o.file}:${o.line}: ${o.position} (${o.rule})`).join('\n  '),
+  );
+});
+
+test('no file of this package introduces a lit template tag the template pattern cannot see', () => {
+  const offences = [];
+  for (const { rel, text } of thisPackageSources()) {
+    for (const o of refusedBy(auditTagIntroductions(text, rel))) offences.push(o);
+  }
+  assert.deepEqual(
+    offences,
+    [],
+    `a file introduces an html, svg or mathml tag outside the spellings the template pattern sees` +
+      ` (the tags under their own names, from lit or lit-html, are the only allowed introduction):\n  ` +
+      offences.map((o) => `${o.file}:${o.line}: ${o.position} (${o.rule})`).join('\n  '),
+  );
+});
+
+test('no file of any package that depends on this one introduces a tag the template pattern cannot see', () => {
+  const offences = [];
+  for (const dependent of dependentPackages()) {
+    for (const { rel, text } of dependent.sources) {
+      for (const o of refusedBy(auditTagIntroductions(text, rel))) {
+        offences.push({ ...o, file: `${dependent.name} (${o.file})` });
+      }
+    }
+  }
+  assert.deepEqual(
+    offences,
+    [],
+    `a dependent package introduces a tag outside the spellings the template pattern sees.` +
+      ` The kits' rule binds its dependents too:\n  ` +
       offences.map((o) => `${o.file}:${o.line}: ${o.position} (${o.rule})`).join('\n  '),
   );
 });

@@ -8,7 +8,15 @@
 // refused anywhere in this package and in any package that depends on it, by
 // the gate in test/no-raw-markup.test.mjs. Their names are not spelled here
 // because the gate refuses the mention as well as the import.
-export { html, css } from 'lit';
+//
+// There is equally no export of a template tag on this surface: the position
+// gate (test/positions.test.mjs) refuses a re-export of the html, svg and
+// mathml tags from any file of the package, because a re-export hands the tag
+// to a second file, which can alias it again at its own import of this
+// package, where the gate's tag introduction rules do not look. A consumer
+// that wants the tag imports it from lit directly, under its own name, where
+// the same rules hold. css is not a tag and stays.
+export { css } from 'lit';
 export { HHElement, defineElement, HHRenderError } from './base.js';
 export { hhAddress } from './address.js';
 export {
