@@ -143,7 +143,7 @@ func TestDemoG7_ANilCardRailRefusesToo(t *testing.T) {
 // simulator leg beside this one proves the serve half actually serves.
 func TestDemoServeRefusesALiveCardRailBeforeTheListener(t *testing.T) {
 	t.Setenv("HOS_CARD_PROCESSOR", "run")
-	err := demoServe(func(string) string { return "" }, demoSaysDemoTwice())
+	err := demoServe(func(string) string { return "" }, demoSaysDemoTwice(), os.Environ)
 	if err == nil {
 		t.Fatal("demoServe accepted a live card processor: the demo build would serve on a live rail")
 	}
@@ -179,7 +179,7 @@ func TestDemoServeServesOnTheSimulatorCardRail(t *testing.T) {
 	}
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- demoServe(getenv, demoSaysDemoTwice()) }()
+	go func() { errCh <- demoServe(getenv, demoSaysDemoTwice(), os.Environ) }()
 
 	if !waitUntilServes(t, port) {
 		select {
@@ -308,7 +308,7 @@ func demoServeCase(t *testing.T) string {
 // alone and drops it after, the boot package's G3 suite shape.
 func createCaseDatabase(t *testing.T, baseURL, name string) string {
 	t.Helper()
-	adminURL, err := swapDSNDatabase(baseURL, "postgres")
+	adminURL, err := swapDemoDSNDatabase(baseURL, "postgres")
 	if err != nil {
 		t.Fatalf("%s is not a database URL: %v", coreDBEnvVar, err)
 	}
@@ -331,16 +331,16 @@ func createCaseDatabase(t *testing.T, baseURL, name string) string {
 	if err := admin.Close(context.Background()); err != nil {
 		t.Fatalf("close maintenance connection: %v", err)
 	}
-	caseURL, err := swapDSNDatabase(baseURL, name)
+	caseURL, err := swapDemoDSNDatabase(baseURL, name)
 	if err != nil {
 		t.Fatalf("%s is not a database URL: %v", coreDBEnvVar, err)
 	}
 	return caseURL
 }
 
-// swapDSNDatabase replaces a postgres URL's database name, keeping the
+// swapDemoDSNDatabase replaces a postgres URL's database name, keeping the
 // query string intact.
-func swapDSNDatabase(baseURL, dbName string) (string, error) {
+func swapDemoDSNDatabase(baseURL, dbName string) (string, error) {
 	u, err := url.Parse(baseURL)
 	if err != nil {
 		return "", err
