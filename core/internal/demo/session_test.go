@@ -110,7 +110,18 @@ func newTestMint(t *testing.T, minter *fakeMinter, staff *fakeStaff) (*Mint, *fa
 // postSession drives the session route the way the entry page calls it.
 func postSession(t *testing.T, m *Mint, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	return postSessionFrom(t, m, body, "192.0.2.1:1234", nil)
+}
+
+// postSessionFrom drives the session route from a named peer address with
+// extra headers, the way the limit's key question is exercised.
+func postSessionFrom(t *testing.T, m *Mint, body, remoteAddr string, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/demo/session", strings.NewReader(body))
+	req.RemoteAddr = remoteAddr
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	rsp := httptest.NewRecorder()
 	m.Session(rsp, req)
 	return rsp
@@ -254,6 +265,9 @@ func TestSessionRefusesBadRequests(t *testing.T) {
 		{"empty object", `{}`},
 		{"empty flow", `{"flow":""}`},
 		{"unknown flow", `{"flow":"receivables"}`},
+		{"an unknown field", `{"flow":"sales","email":"x","role":"y"}`},
+		{"trailing data", `{"flow":"sales"} {"flow":"sales-manager"}`},
+		{"trailing garbage", `{"flow":"sales"} not json`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -484,5 +498,95 @@ func TestSessionRefusesABurst(t *testing.T) {
 	}
 	if len(minter.subjects) != 2 {
 		t.Errorf("the minter saw %d subjects after an unknown flow, want no change", len(minter.subjects))
+	}
+}
+
+// The issuer failing after the audit row: the answer is the 500 that says
+// the session could not be minted, and the trail row the mint wrote stays,
+// the record of an attempt that passed every check.
+func TestSessionRefusesWhenTheIssuerFails(t *testing.T) {
+	minter := &fakeMinter{err: errors.New("key gone")}
+	m, _, auditFake := newTestMint(t, minter, nil)
+
+	rsp := postSession(t, m, `{"flow":"sales"}`)
+	if rsp.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500 (body: %s)", rsp.Code, rsp.Body.String())
+	}
+	if len(auditFake.rows) != 1 {
+		t.Errorf("%d trail rows after a failed mint, want the one written before the token", len(auditFake.rows))
+	}
+}
+
+// Role refusals spend the allowance, deliberately: the limit is asked
+// before the role answer, so a broken world cannot be probed for free.
+// Stated here so the semantics are a pin, not an accident.
+func TestRoleRefusalsSpendTheAllowance(t *testing.T) {
+	minter := &fakeMinter{token: "t"}
+	m, _, _ := newTestMint(t, minter, nil)
+	m.limit = NewAddressLimit(1, time.Second, nil)
+	m.staff = &fakeStaff{ok: false}
+
+	refused := postSession(t, m, `{"flow":"sales"}`)
+	if refused.Code != http.StatusForbidden {
+		t.Fatalf("status %d, want the role refusal's 403", refused.Code)
+	}
+	spent := postSession(t, m, `{"flow":"sales"}`)
+	if spent.Code != http.StatusTooManyRequests {
+		t.Fatalf("status %d, want the limit's 429: the role refusal spent the one admission", spent.Code)
+	}
+	if len(minter.subjects) != 0 {
+		t.Errorf("the minter saw %v, neither refusal reaches the issuer", minter.subjects)
+	}
+}
+
+// Behind the box's own proxy (the demo image's Caddy on loopback) the
+// limit keys on the first address of the forwarded chain, so two testers
+// tapping cards together hold separate allowances and the box is not one
+// bucket.
+func TestLimitKeysTheForwardedChainBehindALoopbackPeer(t *testing.T) {
+	minter := &fakeMinter{token: "t"}
+	m, _, _ := newTestMint(t, minter, nil)
+	m.limit = NewAddressLimit(2, time.Second, nil)
+
+	for i := 0; i < 2; i++ {
+		rsp := postSessionFrom(t, m, `{"flow":"sales"}`, "127.0.0.1:4444",
+			map[string]string{"X-Forwarded-For": "198.51.100.1"})
+		if rsp.Code != http.StatusOK {
+			t.Fatalf("admission %d from the first tester: status %d, want 200", i+1, rsp.Code)
+		}
+	}
+	if rsp := postSessionFrom(t, m, `{"flow":"sales"}`, "127.0.0.1:4444",
+		map[string]string{"X-Forwarded-For": "198.51.100.1"}); rsp.Code != http.StatusTooManyRequests {
+		t.Fatalf("the first tester's burst answered %d, want 429", rsp.Code)
+	}
+	if rsp := postSessionFrom(t, m, `{"flow":"sales"}`, "127.0.0.1:4444",
+		map[string]string{"X-Forwarded-For": "198.51.100.2"}); rsp.Code != http.StatusOK {
+		t.Fatalf("the second tester answered %d, want 200 from their own bucket", rsp.Code)
+	}
+	// A loopback peer with no forwarded chain still counts against
+	// something: the proxy's own address, one bucket.
+	direct := postSessionFrom(t, m, `{"flow":"sales"}`, "127.0.0.1:4445", nil)
+	if direct.Code != http.StatusOK && direct.Code != http.StatusTooManyRequests {
+		t.Fatalf("a direct loopback mint answered %d, want an answer from a real bucket", direct.Code)
+	}
+}
+
+// From a peer that is not the box's proxy the forwarded header is
+// untrusted and ignored: the connection's own address is the key, so one
+// direct client cannot rotate buckets by rewriting it.
+func TestLimitIgnoresTheForwardedHeaderFromANonLoopbackPeer(t *testing.T) {
+	minter := &fakeMinter{token: "t"}
+	m, _, _ := newTestMint(t, minter, nil)
+	m.limit = NewAddressLimit(2, time.Second, nil)
+
+	for i, fwd := range []string{"1.2.3.4", "5.6.7.8"} {
+		if rsp := postSessionFrom(t, m, `{"flow":"sales"}`, "198.51.100.9:7777",
+			map[string]string{"X-Forwarded-For": fwd}); rsp.Code != http.StatusOK {
+			t.Fatalf("admission %d: status %d, want 200 inside the peer's allowance", i+1, rsp.Code)
+		}
+	}
+	if rsp := postSessionFrom(t, m, `{"flow":"sales"}`, "198.51.100.9:7777",
+		map[string]string{"X-Forwarded-For": "9.9.9.9"}); rsp.Code != http.StatusTooManyRequests {
+		t.Fatalf("the third mint answered %d, want 429: the spoofed header bought no new bucket", rsp.Code)
 	}
 }

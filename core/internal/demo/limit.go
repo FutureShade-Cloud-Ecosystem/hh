@@ -93,18 +93,21 @@ func (l *AddressLimit) live(stamps []time.Time, cutoff time.Time) []time.Time {
 	return keep
 }
 
-// sweep drops addresses the window has already forgotten, then arbitrary
-// ones if the bound still stands, so a pre-auth route cannot grow the map
-// without end. Losing an entry only ever loses a count: the worst case is
-// an extra mint, never a wrong answer and never a held credential.
+// sweep drops addresses the window has already forgotten, then a batch of
+// live ones if the bound still stands, down to a low-water mark. Batching
+// keeps the eviction amortised: a flood of distinct addresses pays one
+// short walk per batch, not a full walk per request. Losing an entry only
+// ever loses a count: the worst case is an extra mint, never a wrong
+// answer and never a held credential.
 func (l *AddressLimit) sweep(cutoff time.Time) {
 	for address, stamps := range l.entries {
 		if len(stamps) == 0 || !stamps[len(stamps)-1].After(cutoff) {
 			delete(l.entries, address)
 		}
 	}
+	lowWater := maxTrackedAddresses - maxTrackedAddresses/8
 	for address := range l.entries {
-		if len(l.entries) <= maxTrackedAddresses {
+		if len(l.entries) <= lowWater {
 			break
 		}
 		delete(l.entries, address)

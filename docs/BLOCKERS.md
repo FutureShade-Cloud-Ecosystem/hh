@@ -217,7 +217,13 @@ through a switch with no seam, and registerRoutes constructs the platform
 membership client unconditionally, so a demo box cannot boot the default
 serve path at all. The lane therefore added the smallest seam main.go
 admits: one guarded call to demoDispatch before the standard role switch,
-with the no-op stub in demo_off.go. The default build's behavior is
+with the no-op stub in demo_off.go. main.go is the only production file
+outside the lane's Touches; beside it the lane added
+core/cmd/core/demoenv_inventory.go (untagged, so its deny and allow lists
+compile into the default binary as data and no /internal/demo symbol)
+and three test files there (demo_build_guard_test.go,
+demoenv_inventory_test.go, demo_on_test.go, the last carrying the demo
+tag by the lead's ruling on review finding P3-1). The default build's behavior is
 unchanged (the stub returns false before the switch), the G1 tests in
 core/cmd/core hold the default dependency closure free of
 core/internal/demo/, and the compiled-binary review command counts demo
@@ -546,3 +552,70 @@ edit outside this lane's Touches the lead granted.
   was already the identity program's to converge. The acceptance run asserts
   the invented name on the drawer strip and the parked list header, and the
   screenshots show it.
+
+## The Counter Till cycle, lane L3 (W5): the demoseed integration suite's migration glob resolves nowhere since the fold (recorded, not this lane's file)
+
+The composition suite at `core/cmd/core/demoseed_integration_test.go`
+globs its migrations at `filepath.Join("..", "..", "migrations", "*.sql")`
+relative to the package directory, which resolves to `core/migrations`
+and finds nothing: the migration set lives at `core/db/migrations`, and
+the suite's own header still names the ERP's `./cmd/demoseed/...` layout
+the fold replaced. Every test in the file fails at "no migrations found"
+wherever it runs, so the suite's database legs cannot be gated into CI
+(the demo job leaves the step out and says why, in the workflow). The fix
+is one glob argument in a file outside this lane's declared Touches;
+recorded so the owning lane lands it and the composition legs return to
+the demo job's coverage.
+W2's third commit's subject spells a window length out in words where
+the house rules want no duration in committed prose. The amend to reword
+it was refused by the repository hook (history rewrite refused in full,
+per the lane's rules), and a refusal is final, so the subject stands as
+history. The commit's content is correct; this entry deliberately quotes
+no passage of the message, and the lead may reword the message when
+landing the pull request, or let it stand.
+
+## The Counter Till cycle, lane L3 (W2), the review round: two fixes placed outside the lane's Touches, by the lead's rulings
+
+The independent review of W2 (pull request 49) returned no P1, three P2
+and seven P3 findings, and the lead's rulings placed every fix on the
+lane's branch. Two of the fixes edit files the lane's Touches never
+named, each because the ruling says so and each recorded here in the W3
+precedent's spirit: the audit middleware's carve-out table
+(selfRecordedMutations in core/internal/audit/service.go, so the demo
+session route takes no coarse HTTP row and a refused mint writes nothing
+at all, the review's P2-1), and the contract's declaration of the
+route's refusals (the demo session operation in core/api/skeleton.yaml
+gains its 403, 429 and 500, the TooManyRequests and InternalServerError
+response components join the house's table, and the stale description
+now names the demo build, the four constructor collaborators, the limit
+and the row order; the review's P2-3). Everything else sits inside the
+Touches: the limit now keys on the forwarded chain when the peer is the
+box's own loopback proxy and ignores the header from any other peer
+(P2-2), the request decoder refuses unknown fields and trailing data
+(P3-2), and the small findings (the blockers reword, the mint failure
+after the trail row, the spent allowance stated, the batched eviction,
+the exit test's rename and generic run note, the clock literals) are
+fixed in place with their tests. All seven P3s were cheap and none is
+left open.
+## The Counter Till cycle, lane L3 (W1), review follow-ups: named gaps and their holders
+
+- **No CI leg builds or tests the demo tag (review P2-4).** The ci job runs
+  untagged only, so every demo-tagged guard and the compilation of
+  demo_on.go sit outside the check, and another lane changing a wire
+  function's signature would break the demo build with CI green. The lead
+  assigns the leg to W5, whose plan row adds the CI job with a Postgres
+  service; the interim holder is the in-team review, which runs both tag
+  suites. Until W5 lands it, a merge that touches a wire function should
+  be built with -tags demo by hand.
+- **One demo-tagged test file sits outside the plan's two places (review
+  P3-1).** core/cmd/core/demo_on_test.go carries //go:build demo because
+  only a tagged test can call demoServe. The lead accepts it: test files
+  enter no binary. The plan's sentence counts source files, and the
+  amendment is the record's to make.
+- **A boot dying between migrate and demo-populate cannot be retried
+  (review P3-6).** demo-check refuses a migrated database that is not yet
+  a demo world, which is G0 as the plan writes it, so an entrypoint that
+  stops between the two steps leaves a box demo-check refuses from then
+  on and the database has to be dropped. No change to G0; the W5
+  entrypoint answers it (each step idempotent, the pair run to completion
+  before serve).

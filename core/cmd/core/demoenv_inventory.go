@@ -71,10 +71,17 @@ var demoEnvAllowPrefixes = []string{
 // It is held to the source tree by demoenv_inventory_test.go, which walks
 // every non-test Go file under the core module, resolves the environment
 // readers' literal and constant arguments, and fails when a read is
-// missing from this list or this list names a read that is gone. When a
-// change adds or removes an environment read, this list changes in the
-// same commit and every name on it must be classed: denied on the demo
-// box, allowed on it, or the card processor's own rule.
+// missing from this list or the list names a read that is gone. The
+// scanner sees a reader shaped as Getenv or LookupEnv under any receiver
+// or import alias, a helper or field or bare name in its reader set, with
+// a literal or package-constant argument; it does not follow a reader
+// passed under a name outside that set, a computed name, or an interface
+// of another shape, and the names read only through pinned dynamic sites
+// (main.go's literal table of the verifier timing knobs) are kept in the
+// test's envInventoryDynamicNames beside it. When a change adds or
+// removes an environment read, this list changes in the same commit and
+// every name on it must be classed: denied on the demo box, allowed on
+// it, or the card processor's own rule.
 var envInventoryFixture = []string{
 	"ALLOW_SEED",
 	"APP_ENV",

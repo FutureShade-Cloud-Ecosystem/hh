@@ -30,17 +30,25 @@ the entrypoint sets the second from the first so the two cannot drift.
 
 A boot that stops between migrate and demo-populate leaves a database
 demo-check refuses (the guard reads a migrated database without the
-populate's marker as a world never built here). The answer is the
-entrypoint's classifier: a database holding the migration set, no marker
-row, and nothing but the demo's own org anchor (or none) is an interrupted
-build of the demo's own world, so the next boot resumes it: migrate
+populate's marker as a world never built here). The answer is the image's
+own build marker: on a fresh database (no migration record and no user
+table at all) the entrypoint writes `demo_build_marker`, one row recording
+the build started, before migrate runs. The image therefore only ever
+resumes a build it started: a schema without the marker is refused before
+anything writes, whatever it holds, because every database of the source
+product below the org migration has that shape and none of them is the
+demo's. A marked build whose populate row is absent is the interrupted
+build, and before it resumes, the entrypoint runs the populate's own
+refusals as guarded probes (no org other than the demo's, no user outside
+the migrations' planted set, no payment configuration the populate did not
+write): a database holding a real user or a real configuration is refused
+before migrate or the seed write a row. What passes resumes: migrate
 completes what it had not applied, the seed writes only its missing rows,
 the populate completes, and demo-check runs before serve with the world
 whole. Every write stays forward only and idempotent, so a resume adds
-nothing twice. Any other shape (a schema that is not the demo's) is
-refused before anything runs, and the refusal names the recovery:
-recreate the database resource; the demo world builds from nothing on the
-fresh database.
+nothing twice. The refusal everywhere names the recovery: recreate the
+database resource; the demo world builds from nothing on the fresh
+database.
 
 ## The phrase gate (G6)
 
@@ -53,15 +61,21 @@ does not look like a bcrypt hash is refused with a message that names the
 mistake (the phrase pasted where the hash belongs) without repeating the
 value.
 
-The hash flows to Caddy alone: the entrypoint substitutes it into the
-gate's configuration and pipes the configuration to Caddy on standard
-input, so no generated configuration and no hash ever sits on a filesystem
-inside the container; the variable is unset before the core starts, so no
-core process carries it; and no log line prints it. The gate asks for the
-phrase on pages and on `/api/v1/demo/*` only: every other `/api/v1/*`
-route is the core's own law (staff routes answer 401 without a bearer, the
-public legs answer as on any box), which is why a staff call with a valid
-demo bearer and no phrase still answers.
+The hash flows to Caddy alone, and what "alone" means exactly: the
+entrypoint substitutes it into the gate's configuration and pipes the
+configuration to Caddy on standard input, and the entrypoint's own copy of
+the variable is unset before the core starts, so no core process inherits
+it and no log line prints it. What remains on the box is the hash by
+design: Caddy's autosave of the adapted configuration sits in the
+container's shared-memory tmpfs (root only, gone with the container), and
+the kernel keeps the starting environment of the container's first process
+for its life, which is where the operator's runtime value arrived. The box
+is permitted to hold the hash; it must never hold the phrase, and no file
+in the image's layers, a volume, or the writable layer ever holds either.
+The gate asks for the phrase on pages and on `/api/v1/demo/*` only: every
+other `/api/v1/*` route is the core's own law (staff routes answer 401
+without a bearer, the public legs answer as on any box), which is why a
+staff call with a valid demo bearer and no phrase still answers.
 
 The same proxy legs carry the forwarded address discipline (W2's review,
 routed here): Caddy replaces `X-Forwarded-For` with the address it saw
