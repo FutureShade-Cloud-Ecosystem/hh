@@ -205,3 +205,39 @@ backup into a Dibbits staging org (HH-BISTRACK-CUTOVER-RULING-r1). The
 module stays the fail-closed stub it is today; the FIRST lane that
 touches it removes the push half and that sentence. Until then this
 entry marks the obligation.
+
+## Counter Till cycle, lane L0 (W0): the `demoseed -plan` dated range does not describe the world it writes (open)
+
+Item W0's exit test asserts that the demo world's first and last dates in the
+database are those `demoseed -plan` reports for the run's clock. They are not,
+in either direction, on a fresh database built by migrate plus `demoseed
+-apply`:
+
+- The world's oldest rows (the demo customers, products, stock moves and the
+  pricing facts) carry a `created_at` older than the report's first figure.
+  That figure is instead the oldest seeded invoice's issue date: `buildPlan`
+  computes `FirstDate` from the same offset as the deepest invoice issue age
+  (`demoseed_plan.go`, `demoseed_build.go`), while the catalogue, stock and
+  pricing rows are stamped with a deeper `agoDays` figure.
+- The world's newest written row is dated at the run's clock itself; no demo
+  row is written later than the clock. The report's last figure is the
+  furthest scheduled delivery (runs and stops), reached only by scheduled and
+  expiry date columns, never by a written row's own stamp. The widest dated
+  fact in the world overshoots it the other way: a seeded account counter
+  sale's invoice due date lands further out still (the customer's terms added
+  to a sale dated before the clock).
+
+So the report line ("plan N rows across M tables, dated X .. Y") reads as a
+history summary, oldest invoice to furthest scheduled delivery, rather than
+the world's span, and it is not derivable from the rows it summarizes. W0
+asserts the whole-world reading (min and max `created_at` over every row
+carrying the seed's marker) and records this entry rather than narrowing the
+assertion to the two figures that happen to match. The world itself applies
+clean and is dated to the run's clock: the newest seeded counter sale falls on
+the run's day and every other W0 assertion passes. A fix belongs to the seed
+or its report, never to the test: either derive `FirstDate` and `LastDate`
+from the built rows, or word the report line as what it is.
+
+Recorded by lane L0, item W0 (`TestDemoWorld_CounterTill`,
+`core/cmd/core/demoworld_countertill_test.go`). Per the plan's rule for a W0
+gap, the lead closes it inside the goal or puts it to Colton.
