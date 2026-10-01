@@ -36,17 +36,26 @@ serves, because there the route answers nothing too.
 
 ## Tests
 
-`npm test` runs the Playwright suite (playwright.config.ts). It starts the
-stub and the dev server itself and drives the system Chrome through the
-`chrome` channel: the same browser the design system's browser leg expects on
-the runner, so no browser download rides the npm install. The suite's ports
-are hashed from this app's own path (a sibling worktree hashes elsewhere) and
-the servers are never reused, so a collision refuses loudly rather than
-testing a stranger's server; the suite only ever tests the servers it
-started. A hand run can still pin ports with
-`CT_APP_PORT` and `CT_STUB_PORT`. The spec
-files are named `*.pw.ts` so the repository root's bun drift gate (which
-discovers `*.test.*` suites) does not pick them up.
+`npm test` runs the unit and scan files first (`test/unit.test.mjs`, the one
+time credential slot's own assertions, and `test/sinks.test.mjs`, the scan
+that refuses any place in `src` a credential could rest in or surface from),
+then the Playwright suite (playwright.config.ts). Playwright starts the stub
+and the dev server itself and drives the system Chrome through the `chrome`
+channel: the same browser the design system's browser leg expects on the
+runner, so no browser download rides the npm install. The suite's ports are
+hashed from this app's own path (a sibling worktree hashes elsewhere) and the
+servers are never reused, so a collision refuses loudly rather than testing a
+stranger's server; the suite only ever tests the servers it started. A hand
+run can still pin ports with `CT_APP_PORT` and `CT_STUB_PORT`. The Playwright
+spec files are named `*.pw.ts` so the repository root's bun drift gate (which
+discovers `*.test.*` suites) does not pick them up; the two unit and scan
+files are `.test.mjs` and run under both the app's own script and that gate.
+
+The stub also serves `GET /_stub/state`, a harness-only peek at its own
+ledgers (the api requests it has sighted and whether any carried the approver
+header, the returns posts' idempotency keys in send order, the last return
+body verbatim, and who each committed return named as clerk and approver): no
+contract path shares the namespace, and the app never calls it.
 
 The stub is a development and test double only: the real routes are the core's
 (`POST /api/v1/demo/session`, `GET /api/v1/demo/flows` in

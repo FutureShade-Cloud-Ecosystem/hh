@@ -79,26 +79,31 @@ function mintToken(flow) {
 }
 
 // The stub's till world: the demo branch's sales, the drawer, and the returns
-// already taken. The sale numbers are the counter's own spellings, the money
-// is integer cents straight from the (stubbed) core, and tax is zero in this
-// world so every figure a test reads is the line's own total. A sale numbered
-// outside this table (another branch's sale among them: the real lookup is
-// branch fenced, and a fenced sale is an invisible one) answers not found.
+// already taken. The sale numbers are the counter's own spellings, every id
+// is uuid shaped as the contract's formats name them, the money is integer
+// cents straight from the (stubbed) core, and tax is zero in this world so
+// every figure a test reads is the line's own total. A sale numbered outside
+// this table (another branch's sale among them: the real lookup is branch
+// fenced, and a fenced sale is an invisible one) answers not found.
 const BRANCH_ID = "5d1b3f6e-0000-4000-9000-000000000001";
+
+// Deterministic uuid shaped ids, one per row of this invented world: the
+// digits are the world's own numbering, the shape is the contract's.
+const uuid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
 const SALES = {
   "CT-1001": {
-    order_id: "demo-order-1001",
+    order_id: uuid(1001),
     order_no: "CT-1001",
     branch_id: BRANCH_ID,
-    customer_id: "demo-customer-01",
-    invoice_id: "demo-invoice-1001",
+    customer_id: uuid(100001),
+    invoice_id: uuid(2001),
     sale_tender: "CASH",
     card_refundable: false,
     lines: [
       {
-        order_line_id: "demo-line-1001-1",
-        product_id: "demo-product-paver",
+        order_line_id: uuid(11011),
+        product_id: uuid(50001),
         description: "Holland paver, bevelled, each",
         qty_sold: 2,
         unit_price_cents: 6000,
@@ -106,8 +111,8 @@ const SALES = {
         tax_cents: 0,
       },
       {
-        order_line_id: "demo-line-1001-2",
-        product_id: "demo-product-wallblock",
+        order_line_id: uuid(11012),
+        product_id: uuid(50002),
         description: "Wall block, charcoal, each",
         qty_sold: 6,
         unit_price_cents: 6000,
@@ -117,17 +122,37 @@ const SALES = {
     ],
   },
   "CT-1002": {
-    order_id: "demo-order-1002",
+    order_id: uuid(1002),
     order_no: "CT-1002",
     branch_id: BRANCH_ID,
-    customer_id: "demo-customer-01",
-    invoice_id: "demo-invoice-1002",
+    customer_id: uuid(100001),
+    invoice_id: uuid(2002),
     sale_tender: "CASH",
     card_refundable: false,
     lines: [
       {
-        order_line_id: "demo-line-1002-1",
-        product_id: "demo-product-wallblock",
+        order_line_id: uuid(11021),
+        product_id: uuid(50002),
+        description: "Wall block, charcoal, each",
+        qty_sold: 6,
+        unit_price_cents: 6000,
+        line_total_cents: 36000,
+        tax_cents: 0,
+      },
+    ],
+  },
+  "CT-1003": {
+    order_id: uuid(1003),
+    order_no: "CT-1003",
+    branch_id: BRANCH_ID,
+    customer_id: uuid(100001),
+    invoice_id: uuid(2003),
+    sale_tender: "CASH",
+    card_refundable: false,
+    lines: [
+      {
+        order_line_id: uuid(11031),
+        product_id: uuid(50002),
         description: "Wall block, charcoal, each",
         qty_sold: 6,
         unit_price_cents: 6000,
@@ -137,21 +162,41 @@ const SALES = {
     ],
   },
   "CT-2001": {
-    order_id: "demo-order-2001",
+    order_id: uuid(2001),
     order_no: "CT-2001",
     branch_id: BRANCH_ID,
-    customer_id: "demo-customer-02",
-    invoice_id: "demo-invoice-2001",
+    customer_id: uuid(100002),
+    invoice_id: uuid(3001),
     sale_tender: "CARD",
     card_refundable: true,
     lines: [
       {
-        order_line_id: "demo-line-2001-1",
-        product_id: "demo-product-edger",
+        order_line_id: uuid(12011),
+        product_id: uuid(50003),
         description: "Garden edger, grey, each",
         qty_sold: 1,
         unit_price_cents: 8900,
         line_total_cents: 8900,
+        tax_cents: 0,
+      },
+    ],
+  },
+  "CT-2002": {
+    order_id: uuid(2002),
+    order_no: "CT-2002",
+    branch_id: BRANCH_ID,
+    customer_id: uuid(100002),
+    invoice_id: uuid(3002),
+    sale_tender: "CARD",
+    card_refundable: true,
+    lines: [
+      {
+        order_line_id: uuid(12021),
+        product_id: uuid(50004),
+        description: "Garden edger, sandstone, each",
+        qty_sold: 2,
+        unit_price_cents: 7500,
+        line_total_cents: 15000,
         tax_cents: 0,
       },
     ],
@@ -163,7 +208,7 @@ const SALES = {
 // is read off these counters, so a cash return moving the cash out counter is
 // the same movement the Z report shows.
 const DRAWER = {
-  session_id: "till-session-trenton-1",
+  session_id: uuid(90001),
   branch_id: BRANCH_ID,
   opening_float_cents: 20000,
   cash_in_cents: 0,
@@ -176,6 +221,16 @@ const DRAWER = {
 // lookup's still-returnable counts.
 const RETURNS_BY_KEY = new Map();
 const RETURNED_QTY = new Map();
+
+// What the harness's tests read back (the peek route below): every api
+// request's path and whether it carried the approver's header, the returns
+// posts' idempotency keys in send order, the last return body verbatim, and
+// who each committed return names as its clerk and its approver. Test
+// scaffolding only, on a route no contract path shares.
+const SIGHTINGS = [];
+const KEYS_SEEN = [];
+let LAST_RETURN_BODY = null;
+const RETURN_META = new Map();
 
 // The approval above which a refund needs a manager, and the roles that hold
 // the approval, as the demo dealer's configuration sets them (D49's 250.00
@@ -292,8 +347,10 @@ function saleFromInput(body) {
 // The commit, as the core's would be: the refund's total is the returned
 // lines' own totals (this world carries no tax), the cash rail moves the
 // drawer's cash out counter, and the idempotency key makes a replay answer
-// the stored return without a second movement.
-function commitReturn(caller, body) {
+// the stored return without a second movement. The approver, verified by the
+// caller of this function, is recorded beside the clerk for the harness's
+// peek route: the response body's shape carries neither, by the contract.
+function commitReturn(caller, body, approver) {
   const key = body.idempotency_key;
   const replay = RETURNS_BY_KEY.get(key);
   if (replay !== undefined) return { ...replay, replayed: true };
@@ -305,7 +362,7 @@ function commitReturn(caller, body) {
     RETURNED_QTY.set(saleLine.order_line_id, (RETURNED_QTY.get(saleLine.order_line_id) ?? 0) + line.qty_base);
   }
   const answer = {
-    return_id: `demo-return-${RETURN_SEQ}`,
+    return_id: uuid(40000 + RETURN_SEQ),
     return_no: `CT-R-${100 + RETURN_SEQ}`,
     order_id: sale.order_id,
     invoice_id: sale.invoice_id,
@@ -318,13 +375,12 @@ function commitReturn(caller, body) {
     replayed: false,
   };
   RETURNS_BY_KEY.set(key, answer);
+  RETURN_META.set(key, {
+    clerk: caller.account.user_id,
+    approver: approver.present && approver.account !== null ? approver.account.user_id : null,
+  });
   if (body.refund_method === "CASH") DRAWER.cash_out_cents += answer.total_cents;
   return answer;
-}
-
-function respondJson(response, status, payload) {
-  response.writeHead(status, { "content-type": "application/json" });
-  response.end(JSON.stringify(payload));
 }
 
 function readBody(request) {
@@ -360,7 +416,6 @@ function callerFromRequest(request) {
   }
 }
 
-const server = createServer(async (request, response) => {
 function respondJson(response, status, payload, extraHeaders = {}) {
   response.writeHead(status, { "content-type": "application/json", ...extraHeaders });
   response.end(JSON.stringify(payload));
@@ -375,10 +430,30 @@ function sawOrg(request) {
   return { "x-stub-saw-org": request.headers["x-org"] ?? "" };
 }
 
-const server = createServer((request, response) => {
+const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
+  // Every api request is sighted for the harness's peek route: the path, and
+  // whether the approver's header rode it. The credential's whole claim
+  // (one send, the approver's client alone) is asserted against this ledger.
+  if (url.pathname.startsWith("/api/")) {
+    SIGHTINGS.push({
+      path: url.pathname,
+      approverHeader: (request.headers["x-approver-authorization"] ?? "") !== "",
+    });
+  }
   if (request.method === "GET" && url.pathname === "/healthz") {
     respondJson(response, 200, { ok: true });
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/_stub/state") {
+    // Harness-only: the tests' read back of this stub's ledgers. No contract
+    // path shares the namespace, and the app never calls it.
+    respondJson(response, 200, {
+      keys: KEYS_SEEN,
+      lastReturnBody: LAST_RETURN_BODY,
+      sightings: SIGHTINGS,
+      returns: [...RETURN_META.entries()].map(([key, meta]) => ({ key, ...meta })),
+    });
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/v1/demo/flows") {
@@ -523,6 +598,10 @@ const server = createServer((request, response) => {
       } catch {
         respondJson(response, 400, { error: "the request body is not JSON" });
         return;
+      }
+      if (body !== null && typeof body === "object" && typeof body.idempotency_key === "string") {
+        KEYS_SEEN.push(body.idempotency_key);
+        LAST_RETURN_BODY = body;
       }
       const refusal = returnsRefusal(caller, body, approver);
       if (refusal !== null) {

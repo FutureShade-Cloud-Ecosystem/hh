@@ -36,7 +36,9 @@ export function approverLabels(roleKeys: readonly string[]): string[] {
  * header provider takes it: taken, it is gone, whatever the call's answer
  * turns out to be. It lives in memory alone, never in any storage, never in
  * a log, and the transport calls the provider exactly once per request, so
- * one send consumes one credential.
+ * one send consumes one credential. The mint's answer object the caller
+ * holds becomes unreachable when the caller's own method returns; the slot
+ * is emptied sooner, inside the send.
  */
 export class OneTimeCredential {
   #token: string | null = null;
@@ -54,4 +56,14 @@ export class OneTimeCredential {
   drop(): void {
     this.#token = null;
   }
+}
+
+// The approver roles the demo's refund names, the same keys the refusal's
+// approval body carries. This is DISPLAY knowledge for the receipt's wording
+// on the approver's own path (the review round's ruling: the receipt line is
+// display, the server's audit row holds the record): the server alone
+// decides whose credential an approval needs, and nothing here gates a
+// request or a screen on it.
+export function isApproverRole(roleCode: string): boolean {
+  return Object.hasOwn(ROLE_LABELS, roleCode);
 }

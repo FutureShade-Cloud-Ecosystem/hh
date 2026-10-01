@@ -5,6 +5,7 @@
 // (the design system's host delegation rule: never @click, never a content
 // listener that a re-render would strand).
 import { css, html, nothing, type TemplateResult } from "lit";
+import { keyed } from "lit/directives/keyed.js";
 import { formatMoney } from "../money.js";
 import { approverLabels } from "../returns/approval.js";
 import type { RefundMethod, RefundReceipt, ReturnsFlow } from "../returns/flow.js";
@@ -227,9 +228,19 @@ export function renderReturns(flow: ReturnsFlow): TemplateResult {
       <div class="find-row">
         <div>
           <label for="ct-returns-order-no">Sale number</label>
-          <input id="ct-returns-order-no" type="text" data-field="order-no" ?disabled=${flow.busy} />
+          <input
+            id="ct-returns-order-no"
+            type="text"
+            data-field="order-no"
+            ?disabled=${flow.busy || flow.dialogOpen}
+          />
         </div>
-        <button type="button" class="btn-secondary" data-action="returns-find" ?disabled=${!flow.canFind}>
+        <button
+          type="button"
+          class="btn-secondary"
+          data-action="returns-find"
+          ?disabled=${!flow.canFind || flow.dialogOpen}
+        >
           Find sale
         </button>
       </div>
@@ -294,7 +305,10 @@ function renderApprovalDialog(flow: ReturnsFlow): TemplateResult {
   `;
 }
 
-function renderSale(flow: ReturnsFlow): TemplateResult {
+// The keyed block below is a directive result rather than a bare
+// TemplateResult; a child part takes either, so this helper's return type is
+// the union Lit's templates accept from it.
+function renderSale(flow: ReturnsFlow): unknown {
   const lookup = flow.lookup;
   if (lookup === null) return html``;
   if (flow.receipt !== null) {
@@ -303,24 +317,34 @@ function renderSale(flow: ReturnsFlow): TemplateResult {
     return html``;
   }
   const nothingReturnable = lookup.lines.every((line) => line.qtySold <= line.qtyReturned);
-  return html`
-    <h3 class="sale-heading" data-testid="returns-sale">Sale ${lookup.orderNo}</h3>
-    <p class="sale-meta">Paid by ${tenderWords(lookup.saleTender)}.</p>
-    ${nothingReturnable
-      ? html`<p class="notice" role="status">Nothing on this sale is still returnable: every line has gone back already.</p>`
-      : html`
-          <ul class="rows" aria-label="Sale lines">
-            ${lookup.lines.map((line) => renderLine(flow, line))}
-          </ul>
-          ${renderDraft(flow)}
-        `}
-  `;
+  // The whole sale's block is keyed on the draft's epoch: the desk's fields
+  // are uncontrolled by design, so a reset the model performs must rebuild
+  // the nodes too, or a new find would inherit the last draft's typed words
+  // (the review round's P1).
+  return keyed(
+    flow.draftEpoch,
+    html`
+      <h3 class="sale-heading" data-testid="returns-sale">Sale ${lookup.orderNo}</h3>
+      <p class="sale-meta">Paid by ${tenderWords(lookup.saleTender)}.</p>
+      ${nothingReturnable
+        ? html`<p class="notice" role="status">Nothing on this sale is still returnable: every line has gone back already.</p>`
+        : html`
+            <ul class="rows" aria-label="Sale lines">
+              ${lookup.lines.map((line) => renderLine(flow, line))}
+            </ul>
+            ${renderDraft(flow)}
+          `}
+    `,
+  );
 }
 
 function renderLine(
   flow: ReturnsFlow,
   line: { orderLineId: string; description: string; qtySold: number; qtyReturned: number; unitPriceCents: number; lineTotalCents: number },
 ): TemplateResult {
+  // The desk's controls stand down while anything is in flight or the
+  // approval dialog holds the till: nothing drafts under a send.
+  const frozen = flow.submitting || flow.dialogOpen || flow.approving;
   // What is still returnable is the line's two returned-and-sold counts read
   // side by side; the commit re-guards the quantity on the server, so this
   // read-off is for the clerk's eye, never an authority.
@@ -339,7 +363,7 @@ function renderLine(
           data-field="qty"
           data-line=${line.orderLineId}
           aria-label="Quantity to return: ${line.description}"
-          ?disabled=${flow.submitting}
+          ?disabled=${frozen}
         />
       </span>
     </li>
@@ -377,6 +401,7 @@ function renderDraft(flow: ReturnsFlow): TemplateResult {
   } else if (flow.method !== null) {
     chosenNote = html`<p class="notice" role="status">${methodWords(flow.method)}: ${methodNote(flow)}</p>`;
   }
+  const frozen = flow.submitting || flow.dialogOpen || flow.approving;
   return html`
     <div class="methods" role="group" aria-label="Refund method">
       ${(["CASH", "CARD", "ACCOUNT_CREDIT"] as const).map((method) => html`
@@ -386,7 +411,7 @@ function renderDraft(flow: ReturnsFlow): TemplateResult {
           data-action="returns-method"
           data-method=${method}
           aria-pressed=${flow.method === method ? "true" : "false"}
-          ?disabled=${!flow.methodAvailable(method) || flow.submitting}
+          ?disabled=${!flow.methodAvailable(method) || frozen}
         >
           ${METHOD_LABELS[method]}
         </button>
@@ -401,8 +426,11 @@ function renderDraft(flow: ReturnsFlow): TemplateResult {
     ${chosenNote}
     <div class="draft-row">
       <label for="ct-returns-reason">Reason</label>
-      <select id="ct-returns-reason" data-field="reason-code" ?disabled=${flow.submitting}>
-        <!-- The five codes the contract spells, static because the union is closed; REASON_OPTIONS in returns/flow.ts holds the same five and refuses any other value the select could send. -->
+      <!-- The five codes the contract spells, written static because the union
+           is closed and Other leads because a fresh select shows its first
+           option: the flow's default reason (REASON_CODES in returns/flow.ts)
+           is the same Other, so the screen and the draft never disagree. -->
+      <select id="ct-returns-reason" data-field="reason-code" ?disabled=${frozen}>
         <option value="OTHER">Other</option>
         <option value="DAMAGED">Damaged</option>
         <option value="DEFECT">Defect</option>
@@ -410,23 +438,20 @@ function renderDraft(flow: ReturnsFlow): TemplateResult {
         <option value="NO_LONGER_NEEDED">No longer needed</option>
       </select>
       <label for="ct-returns-note">Note</label>
-      <input id="ct-returns-note" type="text" data-field="note" ?disabled=${flow.submitting} />
+      <input id="ct-returns-note" type="text" data-field="note" ?disabled=${frozen} />
       <label class="restock">
-        <input type="checkbox" data-field="restock" checked ?disabled=${flow.submitting} />
+        <input type="checkbox" data-field="restock" checked ?disabled=${frozen} />
         Restock the goods
       </label>
     </div>
     <div class="submit-row">
-      <button type="button" class="btn-primary" data-action="returns-submit" ?disabled=${!flow.canSubmit}>
+      <button type="button" class="btn-primary" data-action="returns-submit" ?disabled=${!flow.canSubmit || frozen}>
         ${flow.method === null ? "Record refund" : submitLabel(flow.method)}
       </button>
     </div>
   `;
 }
 
-// Other leads the list because it is the desk's default: a fresh select
-// shows its first option, and the flow's default reason must be the one the
-// screen already shows, never a silent mismatch between the two.
 function drawerWords(drawer: ReturnsFlow["drawer"]): string {
   if (drawer.kind === "closed") return "no drawer is open at the sale's branch.";
   return "the drawer could not be asked just now.";

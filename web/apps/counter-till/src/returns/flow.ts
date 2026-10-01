@@ -24,7 +24,7 @@ import {
   type Result,
 } from "@hardscapehouse/api-client";
 import type { DemoAccount } from "../demo-account.js";
-import type { OneTimeCredential } from "./approval.js";
+import { isApproverRole, type OneTimeCredential } from "./approval.js";
 import type { RefundApprovalCapture } from "./capture.js";
 
 /** How the original sale was paid, as the lookup's tender field spells it. */
@@ -78,6 +78,18 @@ export interface SaleLookup {
   lines: ReturnableLine[];
 }
 
+/**
+ * Who the till is signed in as, read live from custody at use: the display
+ * name the session carries, the role code the mint stated (the server's own
+ * word, kept by the adapter), and the role's label as the entry card showed
+ * it. Null when nothing is signed in.
+ */
+export interface ClerkIdentity {
+  name: string;
+  roleCode: string | null;
+  roleLabel: string | null;
+}
+
 export interface ReturnsFlowOptions {
   /** The clerk's client: the till's own session rides its header provider. */
   client: ApiClient;
@@ -91,8 +103,8 @@ export interface ReturnsFlowOptions {
   account: DemoAccount;
   /** The one time credential slot the approval's send consumes. */
   credential: OneTimeCredential;
-  /** The clerk the till is signed in as, read at receipt time. */
-  clerkName: () => string | null;
+  /** Who the till is signed in as, read from custody at receipt time. */
+  clerk: () => ClerkIdentity | null;
   /** The wrapped fetch's reader for the refusal body's approval. */
   capture: RefundApprovalCapture;
   /** Called after every state change, so the host re-renders. */
@@ -104,7 +116,7 @@ export class ReturnsFlow {
   readonly #approverClient: ApiClient;
   readonly #account: DemoAccount;
   readonly #credential: OneTimeCredential;
-  readonly #clerkName: () => string | null;
+  readonly #clerk: () => ClerkIdentity | null;
   readonly #capture: RefundApprovalCapture;
   readonly #onChange: () => void;
 
@@ -133,6 +145,19 @@ export class ReturnsFlow {
   /** The committed return, when one is. */
   receipt: RefundReceipt | null = null;
   /**
+   * Bumped every time the draft's whole state resets (a new find, a fresh
+   * desk): the view keys the draft's fields on it, so the screen's inputs are
+   * rebuilt with the model instead of keeping what an earlier draft typed.
+   * The review round's P1: the fields are uncontrolled by design, so a reset
+   * the model performs alone would leave the last draft's words on the screen
+   * while the body carried the defaults.
+   */
+  #draftEpoch = 0;
+
+  get draftEpoch(): number {
+    return this.#draftEpoch;
+  }
+  /**
    * The approval a 409 named: the dealer's amount and the roles that may
    * approve. The desk shows both, and the approval's refusal never carries a
    * figure of its own: the amount named is the dealer's threshold, exactly
@@ -151,7 +176,7 @@ export class ReturnsFlow {
     this.#approverClient = options.approverClient;
     this.#account = options.account;
     this.#credential = options.credential;
-    this.#clerkName = options.clerkName;
+    this.#clerk = options.clerk;
     this.#capture = options.capture;
     this.#onChange = options.onChange;
   }
@@ -262,6 +287,9 @@ export class ReturnsFlow {
     }
     this.lookup = lookup;
     this.notice = null;
+    // The new sale's story replaces the last one's whole desk, receipt
+    // included: a find is the clerk moving on.
+    this.receipt = null;
     this.#resetDraft();
     this.#onChange();
     // The desk's side reads, in words on the screen when they fail: the
@@ -308,7 +336,18 @@ export class ReturnsFlow {
       this.#onChange();
       return;
     }
-    this.receipt = this.#receiptFrom(committed, null);
+    // The receipt's approver line on the caller's own path (the review
+    // round's ruling): when the till is signed in as a role the demo's
+    // approver set names, the caller is the approver, and the line names them
+    // from the session, display name and role beside. It is display wording;
+    // the server's audit row holds the record, and a return whose size never
+    // reached the threshold is still a commit the caller made.
+    const clerk = this.#clerk();
+    const approverName =
+      clerk !== null && clerk.roleCode !== null && isApproverRole(clerk.roleCode)
+        ? `the ${clerk.roleLabel ?? clerk.roleCode} on this till: ${clerk.name}`
+        : null;
+    this.receipt = this.#receiptFrom(committed, approverName);
     this.#pendingInput = null;
     this.#onChange();
   }
@@ -344,8 +383,9 @@ export class ReturnsFlow {
    * mints the approver credential through the demo adapter, the same return
    * goes once more with it in X-Approver-Authorization, and the token lives
    * in the one time slot for exactly that send: the slot is swept in the same
-   * breath whatever the answer turns out to be, and nothing else remains of
-   * it but the approver's name, which is not a credential and rides the
+   * breath whatever the answer turns out to be. The mint's answer local holds
+   * the token only while this method runs, and nothing of it survives the
+   * return but the approver's name, which is not a credential and rides the
    * receipt. The clerk's session is never touched.
    */
   async approveWithFlow(flowName: string): Promise<void> {
@@ -355,6 +395,12 @@ export class ReturnsFlow {
     this.approving = true;
     this.#onChange();
     const minted = await this.#account.mintApproverCredential(flowName);
+    // A sign-out mid flight blanks the desk; nothing of this approval then
+    // sends or writes onto the blanked till (the review round's P3).
+    if (this.lookup === null) {
+      this.#endApproval(null);
+      return;
+    }
     if (!minted.ok) {
       this.#endApproval(`The manager's sign-in was refused: ${minted.error}`);
       return;
@@ -367,7 +413,6 @@ export class ReturnsFlow {
     } finally {
       this.#credential.drop();
     }
-    this.approving = false;
     if (!result.ok) {
       this.#endApproval(`The refund was refused again: ${result.error}`);
       return;
@@ -385,6 +430,16 @@ export class ReturnsFlow {
     this.approving = false;
     this.dialogOpen = false;
     this.approverFlows = null;
+    if (this.lookup === null) {
+      // The desk was blanked under this approval (a sign out): write nothing
+      // on it, not even this attempt's refusal or error, for whoever signs in
+      // next. The slot is already empty; the send's result is dropped whole.
+      this.refusal = null;
+      this.#pendingKey = null;
+      this.#pendingInput = null;
+      this.#onChange();
+      return;
+    }
     if (notice !== null) {
       this.notice = notice;
     } else {
@@ -401,7 +456,7 @@ export class ReturnsFlow {
     committed: { returnNo: string; method: RefundMethod; subtotalCents: number; taxCents: number; totalCents: number; replayed: boolean },
     approverName: string | null,
   ): RefundReceipt {
-    const clerk = this.#clerkName();
+    const clerk = this.#clerk();
     return {
       returnNo: committed.returnNo,
       method: committed.method,
@@ -410,7 +465,7 @@ export class ReturnsFlow {
       totalCents: committed.totalCents,
       replayed: committed.replayed,
       approverName,
-      clerkName: clerk !== null && clerk !== "" ? clerk : null,
+      clerkName: clerk?.name ?? null,
       cardSimulated: committed.method === "CARD" ? this.cardSimulated : null,
     };
   }
@@ -466,7 +521,9 @@ export class ReturnsFlow {
       refund_method: this.method,
       reason: this.note,
       restock: this.restock,
-      till_session_id: this.drawer.kind === "open" ? this.drawer.sessionId : "",
+      // The drawer rides only the rail that pays from it: the contract
+      // describes till_session_id as the CASH refund's open drawer.
+      till_session_id: this.method === "CASH" && this.drawer.kind === "open" ? this.drawer.sessionId : "",
     };
   }
 
@@ -484,6 +541,9 @@ export class ReturnsFlow {
     this.approving = false;
     this.#pendingKey = null;
     this.#pendingInput = null;
+    // The screen's fields are rebuilt from this: the view keys the draft on
+    // the epoch, so a reset the model performs is a reset the screen shows.
+    this.#draftEpoch += 1;
   }
 
   async #readDrawer(branchId: string): Promise<void> {
@@ -508,10 +568,6 @@ export class ReturnsFlow {
       result.status === 404
         ? `No sale numbered ${orderNo} answers at this counter: check the number and try again.`
         : `The lookup was refused: ${result.error}`;
-    this.#onChange();
-  }
-
-  #touch(): void {
     this.#onChange();
   }
 }

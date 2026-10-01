@@ -26,6 +26,12 @@ export interface MintedSession {
   token: string;
   tokenExpiresAtMs: number;
   user: AccountUser;
+  /**
+   * The role code the mint's user block states (IdentityUser requires it):
+   * the server's own word about the account, carried for the receipt's
+   * display wording. Nothing gates a request on it.
+   */
+  roleCode: string;
 }
 
 /**
@@ -122,16 +128,18 @@ export class DemoAccount implements AccountSurface {
 }
 
 /** Field-by-field, never a cast: the staff login user block this app needs. */
-function userFromMint(raw: unknown): AccountUser | null {
+function userFromMint(raw: unknown): { user: AccountUser; roleCode: string } | null {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
   const userId = record["user_id"];
   const email = record["email"];
   const name = record["display_name"];
+  const roleCode = record["role_code"];
   if (typeof userId !== "string" || userId === "") return null;
   if (typeof email !== "string") return null;
   if (typeof name !== "string") return null;
-  return { userId, email, name };
+  if (typeof roleCode !== "string" || roleCode === "") return null;
+  return { user: { userId, email, name }, roleCode };
 }
 
 /**
@@ -167,9 +175,9 @@ function decodeBase64Url(segment: string): string {
 function validateMint(response: DemoSessionResponse, now: number): MintedSession | null {
   const token = response.token;
   if (typeof token !== "string" || token === "") return null;
-  const user = userFromMint(response.user);
-  if (user === null) return null;
+  const mintedUser = userFromMint(response.user);
+  if (mintedUser === null) return null;
   const tokenExpiresAtMs = expiryFromToken(token, now);
   if (tokenExpiresAtMs === null) return null;
-  return { token, tokenExpiresAtMs, user };
+  return { token, tokenExpiresAtMs, user: mintedUser.user, roleCode: mintedUser.roleCode };
 }

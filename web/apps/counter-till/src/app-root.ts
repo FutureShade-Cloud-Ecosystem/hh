@@ -80,6 +80,10 @@ export class CounterTillApp extends HHElement {
   #busy = false;
   #message: string | null = null;
   #till: { label: string } | null = null;
+  /** The user the till's own mint was for: custody is checked against it. */
+  #clerkUserId: string | null = null;
+  /** The role code the clerk's mint stated, for the receipt's display words. */
+  #clerkRoleCode: string | null = null;
   readonly #returns: ReturnsFlow;
 
   constructor() {
@@ -120,7 +124,15 @@ export class CounterTillApp extends HHElement {
       approverClient,
       account: this.#account,
       credential: approverCredential,
-      clerkName: () => this.#sessions.current?.user.name ?? null,
+      clerk: () => {
+        const session = this.#sessions.current;
+        if (session === null) return null;
+        return {
+          name: session.user.name,
+          roleCode: this.#clerkRoleCode,
+          roleLabel: this.#till?.label ?? null,
+        };
+      },
       capture,
       onChange: () => this.requestUpdate(),
     });
@@ -196,7 +208,13 @@ export class CounterTillApp extends HHElement {
     const field = control.getAttribute("data-field");
     if (field === "order-no") this.#returns.setOrderNo(control.value);
     if (field === "qty" && control instanceof HTMLInputElement) {
-      this.#returns.setQty(control.getAttribute("data-line") ?? "", control.value);
+      const line = control.getAttribute("data-line") ?? "";
+      this.#returns.setQty(line, control.value);
+      // The flow keeps whole units; the field is brought to the same answer,
+      // so a typed 1.5 never sits on the screen while a 1 rides the draft.
+      const stored = this.#returns.qtyOf(line);
+      const canonical = stored === 0 ? "" : String(stored);
+      if (control.value !== canonical) control.value = canonical;
     }
     if (field === "note") this.#returns.setNote(control.value);
     if (field === "restock" && control instanceof HTMLInputElement) {
@@ -232,8 +250,26 @@ export class CounterTillApp extends HHElement {
       this.requestUpdate();
       return;
     }
+    this.#clerkUserId = minted.value.user.userId;
+    this.#clerkRoleCode = minted.value.roleCode;
     this.#till = { label: this.#labelFor(flow) };
     this.requestUpdate();
+  }
+
+  /**
+   * The role label in the chrome, read from custody rather than cached: while
+   * the live session is the one this till minted for, the entry card's label
+   * stands; if custody were ever replaced quietly (the review round's M3b),
+   * the chrome names who the session actually carries, so the till can never
+   * show one person's role over another person's session.
+   */
+  #signedInRoleLabel(): string {
+    const session = this.#sessions.current;
+    if (session === null) return "";
+    if (this.#clerkUserId !== null && session.user.userId !== this.#clerkUserId) {
+      return session.user.name;
+    }
+    return this.#till?.label ?? session.user.name;
   }
 
   #labelFor(flow: string): string {
@@ -260,6 +296,8 @@ export class CounterTillApp extends HHElement {
     this.#busy = false;
     this.#till = null;
     this.#message = null;
+    this.#clerkUserId = null;
+    this.#clerkRoleCode = null;
     this.#returns.reset();
     this.requestUpdate();
   }
@@ -280,7 +318,7 @@ export class CounterTillApp extends HHElement {
             ? nothing
             : html`
                 <p class="signed-in">
-                  <span class="role-name" data-testid="signed-in-role">${this.#till.label}</span>
+                  <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
                   <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
                     Sign out
                   </button>
