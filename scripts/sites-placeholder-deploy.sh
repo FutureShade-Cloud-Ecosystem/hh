@@ -21,7 +21,7 @@
 #   deploy:  APPWRITE_SITES_KEY (this phase only), APPWRITE_ENDPOINT,
 #            APPWRITE_PROJECT_ID, APPWRITE_CLI (written by install), SITE_ID,
 #            CREATE_SITE (true only on the first run, step S3), RUNNER_TEMP
-#   verify:  SITE_URL, POLL_ATTEMPTS, POLL_WAIT_SECONDS
+#   verify:  SITE_URL, SITE_ID, POLL_ATTEMPTS, POLL_WAIT_SECONDS
 # GITHUB_OUTPUT, GITHUB_ENV and GITHUB_STEP_SUMMARY are used when set.
 set -euo pipefail
 
@@ -199,9 +199,11 @@ phase_deploy() {
 
 # Step S7's byte check, bounded: POLL_ATTEMPTS fetches of SITE_URL, waiting
 # POLL_WAIT_SECONDS between them, each fetch itself capped by curl. The page
-# matches when its sha256 equals the committed index.html's.
+# matches when its sha256 equals the committed index.html's. It proves the
+# page, not this run's deployment: an index.html unchanged since the last good
+# deploy matches at once, and the key cannot read a deployment's status.
 phase_verify() {
-  : "${SITE_URL:?}"
+  : "${SITE_URL:?}" "${SITE_ID:?}"
   local attempts="${POLL_ATTEMPTS:-30}" wait="${POLL_WAIT_SECONDS:-10}"
   [[ "$attempts" =~ ^[1-9][0-9]*$ ]] || fail "POLL_ATTEMPTS must be a positive whole number, got '$attempts'"
   [[ "$wait" =~ ^[0-9]+$ ]] || fail "POLL_WAIT_SECONDS must be a whole number, got '$wait'"
@@ -213,6 +215,8 @@ phase_verify() {
       if [ "$got" = "$expected" ]; then
         say "attempt $i of $attempts: $SITE_URL serves the committed index.html (sha256 $got)"
         summary "The public page \`$SITE_URL\` serves the committed \`index.html\` (sha256 \`$got\`), attempt $i of $attempts."
+        summary ""
+        summary "This proves the page, not this run's deployment: the key cannot read a deployment's status, and an \`index.html\` unchanged since the last good deploy matches at once even if this run's deployment never built or activated. FB Console's Sites page for \`$SITE_ID\` shows which deployment is active."
         return 0
       fi
       say "attempt $i of $attempts: $SITE_URL served sha256 $got, not the committed one"
