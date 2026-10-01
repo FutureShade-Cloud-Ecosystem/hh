@@ -84,6 +84,18 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 	if !found {
 		return Return{}, errReturnNotFound
 	}
+	// The branch wall runs BEFORE any rail and before any write (X2, fixing
+	// HH-218): no processor reversal, no drawer payout and no account credit
+	// may move for a sale the caller's resolved authority does not reach.
+	// The return runs at the sale's branch; the caller brings their own
+	// grants, resolved per request by the guards, never claimed.
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return Return{}, err
+	}
+	if err := requireBranchReach(caller, oc.BranchID); err != nil {
+		return Return{}, err
+	}
 	if in.RefundMethod == RefundCash && in.TillSessionID == "" {
 		return Return{}, ErrNoOpenTill{}
 	}
@@ -324,6 +336,8 @@ func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOr
 
 // LookupReturn is the pre-return read: the original committed sale + its lines with prior-return
 // sums netted, so the counter can build the per-line qty entry. Read-only, the commit re-guards.
+// The branch wall answers before the lines are read (X2): another branch's sale is refused, its
+// returnable quantities are not a thing this counter gets to browse.
 func (s *Service) LookupReturn(ctx context.Context, orderID, orderNo string) (ReturnLookup, error) {
 	if orderID == "" && orderNo == "" {
 		return ReturnLookup{}, clientErr(http.StatusBadRequest, "pos: order_id or order_no is required")
@@ -334,6 +348,13 @@ func (s *Service) LookupReturn(ctx context.Context, orderID, orderNo string) (Re
 	}
 	if !found {
 		return ReturnLookup{}, errReturnNotFound
+	}
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return ReturnLookup{}, err
+	}
+	if err := requireBranchReach(caller, oc.BranchID); err != nil {
+		return ReturnLookup{}, err
 	}
 	lines, err := s.store.ListReturnableLines(ctx, oc.OrderID)
 	if err != nil {
