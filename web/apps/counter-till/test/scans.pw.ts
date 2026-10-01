@@ -30,18 +30,19 @@ function walkSources(dir: string, out: string[] = []): string[] {
 test("the money scan prints nothing outside the one named money helper", () => {
   const scan = /_cents\s*[-+*/]|[-+*/]\s*[A-Za-z_.]*_cents/;
   const offenders: string[] = [];
-  const helperHits: string[] = [];
+  const scanned: string[] = [];
   for (const file of walkSources(SRC)) {
+    scanned.push(file);
     const hits = readFileSync(file, "utf8").split("\n").filter((line) => scan.test(line));
     if (hits.length === 0) continue;
-    if (file.endsWith(MONEY_HELPER)) helperHits.push(file);
-    else offenders.push(`${file}: ${hits.join(" | ")}`);
+    offenders.push(`${file}: ${hits.join(" | ")}`);
   }
-  // The helper is the one file the plan's scan excludes, and the suite holds
-  // it to a stronger standard: even there the scan finds nothing, because the
-  // helper formats integers and parses one typed string, and computes none of
-  // it.
+  // The stronger standard the comment claims: the helper itself is scanned
+  // with the rest and finds nothing, because it formats integers and parses
+  // one typed string, and computes none of it. The walk must have covered the
+  // helper for that claim to mean anything.
   expect(offenders).toEqual([]);
+  expect(scanned.some((file) => file.endsWith(MONEY_HELPER))).toBe(true);
 });
 
 test("the card scan prints nothing: no card number path, no tokenizer, no loader", () => {

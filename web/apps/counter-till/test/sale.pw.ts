@@ -3,10 +3,13 @@
 // it). The story this holds, screen by screen from the plan's section 2: the
 // drawer is found or opened on a first use, three lines ring at the walk-in's
 // retail and the sale read answers every figure the screen showed, a card
-// sale carries the simulated notice on the tender and the receipt, an account
-// sale shows its invoice and its balance, an account on hold is refused in
-// words, a contractor's Holland pavers ring at the account's rule price with
-// the margin shown, and a ticket parks and resumes priced fresh.
+// sale carries the simulated notice on the tender and the receipt (and shows
+// none when the rail answers false), an account sale shows its invoice and
+// its balance, an account on hold is refused in words, a contractor's Holland
+// pavers ring at the account's rule price with the margin shown, the
+// quantity the till sends is the one typed on the screen, the requested date
+// is the house zone's day, and a ticket parks and resumes priced fresh: for a
+// walk-in, and across a sign-out for an account's ticket.
 //
 // The sale read comparison works through the real path: this spec mints its
 // own demo session (the same public route the app's cards use) and reads the
@@ -21,6 +24,16 @@ function dollars(cents: number): string {
   const whole = Math.floor(magnitude / 100);
   const remainder = magnitude - whole * 100;
   return `${negative ? "-" : ""}$${whole.toLocaleString("en-CA")}.${String(remainder).padStart(2, "0")}`;
+}
+
+/** The dealer's day, computed the way the stub validates it, for comparison. */
+function houseDay(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Toronto",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
 /** Mint a demo session as Sales and return the bearer header's value. */
@@ -96,6 +109,8 @@ test("a walk-in cash sale of three lines rings with change due, and the sale rea
   expect(orderNo).toMatch(/^ORD-/);
   expect(invoiceNo).toMatch(/^INV-/);
   await expect(receipt.getByTestId("receipt-total")).toContainText("$");
+  // A cash receipt carries no card notice, whatever the rail answers.
+  await expect(receipt.getByTestId("receipt-simulated-notice")).toHaveCount(0);
 
   // The read path: mint, read, and hold every figure against the screen.
   const bearer = await salesBearer(page);
@@ -104,13 +119,13 @@ test("a walk-in cash sale of three lines rings with change due, and the sale rea
   const sale = await getSale(page, bearer, orderId as string);
   expect(sale.order_no).toBe(orderNo);
   expect(sale.invoice_no).toBe(invoiceNo);
-  expect(receipt.getByTestId("receipt-subtotal")).toHaveText(dollars(sale.subtotal_cents as number));
-  expect(receipt.getByTestId("receipt-tax")).toHaveText(dollars(sale.tax_cents as number));
-  expect(receipt.getByTestId("receipt-total")).toHaveText(dollars(sale.total_cents as number));
-  expect(receipt.getByTestId("receipt-tendered")).toHaveText(dollars(8000));
+  await expect(receipt.getByTestId("receipt-subtotal")).toHaveText(dollars(sale.subtotal_cents as number));
+  await expect(receipt.getByTestId("receipt-tax")).toHaveText(dollars(sale.tax_cents as number));
+  await expect(receipt.getByTestId("receipt-total")).toHaveText(dollars(sale.total_cents as number));
+  await expect(receipt.getByTestId("receipt-tendered")).toHaveText(dollars(8000));
   // The change due is the core's figure; the read carries the parts, so the
   // test puts them together where the test lives.
-  expect(receipt.getByTestId("receipt-change-due")).toHaveText(
+  await expect(receipt.getByTestId("receipt-change-due")).toHaveText(
     dollars((8000 as number) - (sale.total_cents as number)),
   );
   const viewLines = sale.lines as Array<Record<string, unknown>>;
@@ -129,7 +144,51 @@ test("a walk-in cash sale of three lines rings with change due, and the sale rea
   await expect(receipt.getByTestId("receipt-tender")).toContainText(dollars(sale.total_cents as number));
 });
 
-test("a card sale shows the simulated notice on the tender and on the receipt", async ({ page }) => {
+test("the quantity rung is the quantity on the screen, and the requested date is the house zone's day", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await expect(page.getByTestId("drawer-status")).toContainText("open");
+
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await expect(page.getByTestId("line-unit-price").first()).toHaveText("$4.00");
+
+  // Type ten and ring without leaving the field, without re-pricing: what
+  // leaves the till is the ten on the screen, and the ticket re-prices first,
+  // because the engine prices by quantity.
+  await page.getByLabel("Quantity of Holland Stone 60 mm").fill("10");
+  await page.getByLabel("Cash tendered, in dollars").fill("60.00");
+  const ring = page.waitForRequest(
+    (request) => request.method() === "POST" && request.url().includes("/api/v1/pos/sales"),
+  );
+  await page.getByRole("button", { name: "Ring the sale" }).click();
+  const ringRequest = await ring;
+  const body = (await ringRequest.postDataJSON()) as Record<string, unknown>;
+  const ringLines = body.lines as Array<Record<string, unknown>>;
+  expect(ringLines).toHaveLength(1);
+  expect(ringLines[0].qty_entered).toBe(10);
+  // The dealer's day, not the browser's UTC day: the stub refuses a ring
+  // whose date is not the house zone's day, and the body says it plainly.
+  expect(body.requested_date).toBe(houseDay());
+
+  const receipt = page.getByTestId("receipt");
+  await expect(receipt).toBeVisible();
+  const bearer = await salesBearer(page);
+  const sale = await getSale(page, bearer, (await receipt.getAttribute("data-order-id")) as string);
+  const viewLines = sale.lines as Array<Record<string, unknown>>;
+  expect(viewLines[0].qty_entered).toBe(10);
+  expect(viewLines[0].line_total_cents).toBe(4000);
+  await expect(receipt.getByTestId("receipt-total")).toHaveText(dollars(sale.total_cents as number));
+  expect(sale.total_cents).toBe(4520);
+  await expect(receipt.getByTestId("receipt-change-due")).toHaveText(
+    dollars((6000 as number) - (sale.total_cents as number)),
+  );
+});
+
+test("a card sale shows the simulated notice on the tender and on the receipt, and none when the rail answers false", async ({
+  page,
+}) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Sales", exact: true }).click();
   await expect(page.getByTestId("drawer-status")).toContainText("open");
@@ -139,12 +198,14 @@ test("a card sale shows the simulated notice on the tender and on the receipt", 
   await page.getByRole("button", { name: "Card", exact: true }).click();
   await expect(page.getByTestId("simulated-notice")).toHaveText("Simulated card: no card was charged");
   await page.getByRole("button", { name: "Ring the sale" }).click();
-  await expect(page.getByTestId("receipt")).toBeVisible();
-  await expect(page.getByTestId("receipt-simulated-notice")).toHaveText("Simulated card: no card was charged");
+  const receipt = page.getByTestId("receipt");
+  await expect(receipt).toBeVisible();
+  await expect(receipt.getByTestId("receipt-simulated-notice")).toHaveText("Simulated card: no card was charged");
 
   // The notice is value driven: the same screen against a status route that
-  // answers simulated false shows no notice at all (and the stub's own
-  // answer is true, so both values are covered by the suite).
+  // answers simulated false shows no notice on the tender and none on the
+  // receipt either (and the stub's own answer is true, so both values are
+  // covered by the suite).
   const other = await page.context().newPage();
   await other.route("**/api/v1/payments/config", (route) =>
     route.fulfill({
@@ -161,12 +222,21 @@ test("a card sale shows the simulated notice on the tender and on the receipt", 
   );
   await other.goto("/");
   await other.getByRole("button", { name: "Sales", exact: true }).click();
+  await expect(other.getByTestId("drawer-status")).toContainText("open");
+  await searchAndAdd(other, "wall", "Retaining Wall Stone, Standard");
+  await expect(other.getByTestId("line-unit-price").first()).toHaveText("$52.00");
   await other.getByRole("button", { name: "Card", exact: true }).click();
   await expect(other.getByTestId("simulated-notice")).toHaveCount(0);
+  await other.getByRole("button", { name: "Ring the sale" }).click();
+  const falseReceipt = other.getByTestId("receipt");
+  await expect(falseReceipt).toBeVisible();
+  await expect(falseReceipt.getByTestId("receipt-simulated-notice")).toHaveCount(0);
   await other.close();
 });
 
-test("an account sale for C02 shows its invoice and its balance", async ({ page }) => {
+test("an account sale for C02 shows its invoice and its balance, and the receipt keeps the account it was rung for", async ({
+  page,
+}) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Sales", exact: true }).click();
   await expect(page.getByTestId("drawer-status")).toContainText("open");
@@ -213,6 +283,18 @@ test("an account sale for C02 shows its invoice and its balance", async ({ page 
   await expect(receipt.getByTestId("receipt-account")).toContainText(
     dollars(balanceBefore + (sale.total_cents as number)),
   );
+
+  // The receipt speaks for the sale, not for whoever the counter serves now:
+  // picking another account and going back to the walk-in moves nothing on
+  // it.
+  await page.getByLabel("Find an account by name or account number").fill("C01");
+  await page.getByRole("button", { name: "Find", exact: true }).click();
+  await page.getByTestId("customer-hits").getByRole("button", { name: "Use" }).click();
+  await expect(page.getByTestId("customer-name")).toContainText("Maple Ridge Contracting");
+  await expect(receipt.getByTestId("receipt-account")).toContainText("Fenwick Builders Ltd (C02)");
+  await page.getByRole("button", { name: "Back to the walk-in" }).click();
+  await expect(page.getByTestId("customer-name")).toContainText("Walk-in");
+  await expect(receipt.getByTestId("receipt-account")).toContainText("Fenwick Builders Ltd (C02)");
 });
 
 test("an account sale for C09 is refused in words", async ({ page }) => {
@@ -261,7 +343,9 @@ test("a C01 Holland paver line rings at its rule price with its margin shown", a
   await expect(page.getByTestId("line-margin-none")).toHaveText("(no margin)");
 });
 
-test("a ticket parks and resumes, re-priced", async ({ page }) => {
+test("a ticket parks and resumes, re-priced, and the counter's ticket is never thrown away silently", async ({
+  page,
+}) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Sales", exact: true }).click();
   await expect(page.getByTestId("drawer-status")).toContainText("open");
@@ -280,12 +364,76 @@ test("a ticket parks and resumes, re-priced", async ({ page }) => {
   // The fence: the stub's world holds a Kingston ticket, and it never shows.
   await expect(page.getByTestId("parked-list")).not.toContainText("PARK-9001");
 
-  // Resume: the line comes back with no price on it and the ticket re-prices
-  // through the engine, in a call this test watches leave.
-  const reprice = page.waitForRequest((request) => request.url().includes("/api/v1/pos/counter-prices"));
+  // Resuming over lines on the counter refuses in words, and nothing moves.
+  await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
+  await expect(page.getByTestId("ticket-line")).toHaveCount(1);
   await parked.first().getByRole("button", { name: "Resume" }).click();
+  await expect(page.getByTestId("parked-panel-note").first()).toBeVisible();
+  await expect(page.getByTestId("parked-list").getByTestId("parked-ticket")).toHaveCount(1);
+  await expect(page.getByTestId("ticket-line")).toHaveCount(1);
+
+  // Park the counter's line too, then resume the first ticket: the row goes
+  // with it, and the lines come back priced fresh, in an engine call this
+  // test watches leave.
+  await page.getByRole("button", { name: "Park this ticket" }).click();
+  await expect(page.getByTestId("parked-list").getByTestId("parked-ticket")).toHaveCount(2);
+  const reprice = page.waitForRequest((request) => request.url().includes("/api/v1/pos/counter-prices"));
+  await page.getByTestId("parked-list").getByTestId("parked-ticket").first().getByRole("button", { name: "Resume" }).click();
   await reprice;
   await expect(page.getByTestId("ticket-line")).toHaveCount(1);
   await expect(page.getByTestId("line-unit-price").first()).toHaveText("$4.00");
   await expect(page.getByTestId("line-margin").first()).toContainText("%");
+  // The resumed row has left the list: one ticket remains parked.
+  await expect(page.getByTestId("parked-list").getByTestId("parked-ticket")).toHaveCount(1);
+});
+
+test("an account's parked ticket survives the hand-over: the next login resumes it for the account, at the account's price", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await expect(page.getByTestId("drawer-status")).toContainText("open");
+
+  // Sales rings up C01's pavers and parks the ticket.
+  await page.getByLabel("Find an account by name or account number").fill("C01");
+  await page.getByRole("button", { name: "Find", exact: true }).click();
+  await page.getByTestId("customer-hits").getByRole("button", { name: "Use" }).click();
+  await expect(page.getByTestId("customer-name")).toContainText("Maple Ridge Contracting");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await expect(page.getByTestId("line-unit-price").first()).toHaveText("$3.28");
+  await page.getByRole("button", { name: "Park this ticket" }).click();
+  const c01Row = page
+    .getByTestId("parked-list")
+    .getByTestId("parked-ticket")
+    .filter({ hasText: "Maple Ridge Contracting (C01)" });
+  await expect(c01Row).toHaveCount(1);
+
+  // The hand-over the till's rules name: anyone at the counter picks up any
+  // parked sale at their branch. Sign out; the Sales manager takes the till.
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
+  await expect(page.getByTestId("drawer-status")).toContainText("open");
+
+  // The row names the account, never a walk-in.
+  const managerRows = page.getByTestId("parked-list").getByTestId("parked-ticket");
+  const managerRow = managerRows.filter({ hasText: "Maple Ridge Contracting (C01)" });
+  await expect(managerRow).toHaveCount(1);
+
+  // Resume: the customer is the account, and the line re-prices at the
+  // account's rule price, in an engine call for the account's id.
+  const accountPrice = page.waitForRequest((request) => {
+    if (!request.url().includes("/api/v1/pos/counter-prices")) return false;
+    return (request.postData() ?? "").includes("c-maple-ridge");
+  });
+  await managerRow.getByRole("button", { name: "Resume" }).click();
+  await accountPrice;
+  await expect(page.getByTestId("customer-name")).toContainText("Maple Ridge Contracting");
+  // The account number shows beside the name: the ticket is C01's again.
+  await expect(page.getByText("(C01, CONTRACTOR)")).toBeVisible();
+  await expect(page.getByTestId("line-unit-price").first()).toHaveText("$3.28");
+  await expect(page.getByTestId("line-margin").first()).toHaveText("15.9%");
+  await expect(page.getByTestId("ticket-panel-priced-for")).toContainText("CONTRACTOR");
+  // The resumed row has left the list.
+  await expect(managerRows.filter({ hasText: "Maple Ridge Contracting (C01)" })).toHaveCount(0);
 });

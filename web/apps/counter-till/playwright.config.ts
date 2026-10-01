@@ -32,14 +32,17 @@ export default defineConfig({
     {
       command: "node test/stub/demo-stub.mjs",
       url: `http://127.0.0.1:${stubPort}/healthz`,
-      reuseExistingServer: true,
+      // Reuse is a workstation convenience only: a stale server on the pair
+      // must never be driven silently, least of all by CI, so under CI a
+      // busy port fails the run instead of joining it.
+      reuseExistingServer: !process.env.CI,
       cwd: appDir,
       env: { CT_STUB_PORT: stubPort },
     },
     {
       command: `npx --no-install vite --port ${appPort} --strictPort --host 127.0.0.1`,
       url: `http://127.0.0.1:${appPort}/`,
-      reuseExistingServer: true,
+      reuseExistingServer: !process.env.CI,
       cwd: appDir,
       env: { CT_STUB_PORT: stubPort, CT_APP_PORT: appPort },
     },
