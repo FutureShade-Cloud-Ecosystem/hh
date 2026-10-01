@@ -91,8 +91,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// exactly like the batch preview above.
 	r.Handle("GET /api/v1/pricing/reports/low-margin/scan", g.RequireStaff(h.staff(h.lowMarginScan)))
 
-	// Quantity-break editor (A-07 Tier-B). A break is an ADJUSTMENT that STACKS on the tier-resolved
-	// base; the editor lets the dealer principal configure + review the PROVISIONAL skid trigger values. Reads =
+	// Quantity-break editor (A-07 Tier-B). Under D1 a break prices off the retail anchor and
+	// REPLACES the resolved price when strictly cheaper (service.go step 6); the editor lets the
+	// dealer principal configure + review the PROVISIONAL skid trigger values. Reads =
 	// Sales+; writes = Manager+ (the keystone RBAC point, a break is real-money config).
 	r.Handle("GET /api/v1/pricing/quantity-breaks", g.RequireStaff(h.staff(h.listQuantityBreaks)))
 	r.Handle("GET /api/v1/pricing/quantity-breaks/{id}", g.RequireStaff(h.staff(h.getQuantityBreak)))

@@ -374,9 +374,10 @@ func TestResolve_CustomerOverride_BeatsTier(t *testing.T) {
 	}
 }
 
-// - U5: quantity break bucket select STACKS on the tier base (120 SF → 50-199 bucket) -
-// The 50-199 bucket (−20%) is selected and STACKED on the TIER_DEFAULT base (−15%), not used as a
-// competing replacement level: 48700 × 0.85 × 0.80 = 33116. Source stays TIER_DEFAULT.
+// - U5: quantity break bucket select under D1 (120 SF → the 50-199 bucket wins the contest) -
+// The 50-199 bucket (−20%) is selected and its ANCHOR price 48700 × 0.80 = 38960 replaces the
+// TIER_DEFAULT base (−15% → 41395), never stacked on it (that would be 33116). The top bucket
+// (−25% → 36525) is NOT selected: the assertion pins the bucket, not just the replace rule.
 func TestResolve_QuantityBreak_BucketSelect(t *testing.T) {
 	st := &fakeStore{
 		listPrice: &ListPrice{"blu60", 48700, "SF"},
@@ -387,11 +388,11 @@ func TestResolve_QuantityBreak_BucketSelect(t *testing.T) {
 		},
 	}
 	bd := resolve(t, newSvc(st, "pavers"), base(ResolveInput{QtyEntered: 120, UOMEntered: "SF"}))
-	if bd.Source != SourceTierDefault || bd.FinalCents != 33116 {
-		t.Fatalf("50-199 break −20%% STACKED on tier −15%%: 48700×0.85×0.80 → 33116 (source stays TIER_DEFAULT), got %+v", bd)
+	if bd.Source != SourceQuantityBreak || bd.FinalCents != 38960 {
+		t.Fatalf("50-199 break −20%% off the anchor REPLACES the tier −15%%: 38960 (the 200+ bucket would be 36525, stacking would be 33116), got %+v", bd)
 	}
 	if !strings.Contains(bd.Detail, "Volume 50-199 SF: 20% off") {
-		t.Fatalf("breakdown detail must note the stacked break, got %q", bd.Detail)
+		t.Fatalf("breakdown detail must name the winning break, got %q", bd.Detail)
 	}
 }
 
@@ -655,8 +656,8 @@ func TestRule_DiscountOnlyCheck_RejectsAbsoluteOnScope(t *testing.T) {
 	}
 }
 
-// - U24: partial-skid SURCHARGE under a weight (T/KG) threshold via ConvertUOM -
-func TestResolve_Surcharge_PartialSkidWeightUOM(t *testing.T) {
+// - U24: a partial-skid SURCHARGE tier never adjusts the price under D1 -
+func TestResolve_Surcharge_NeverWinsTheReplaceContest(t *testing.T) {
 	st := &fakeStore{
 		listPrice: &ListPrice{"stone", 10000, "T"},
 		breaks: []QuantityBreak{{
@@ -665,11 +666,15 @@ func TestResolve_Surcharge_PartialSkidWeightUOM(t *testing.T) {
 			ValueType: BreakSurchargePct, SurchargeBps: p64(1500), PriceUOM: "T",
 		}},
 	}
-	// 500 KG → 0.5 T (via ConvertUOM seam), under threshold → +15% surcharge (price UP). No rule
-	// matches, so the base is LIST (retail) and the surcharge STACKS on it: Source stays LIST.
+	// 500 KG → 0.5 T (via ConvertUOM seam), under threshold, so the tier MATCHES: but D1's replace
+	// rule is a cheapest-wins contest and an uplift can never win it, so the price stays LIST and
+	// the breakdown says why (ADR-0015 records the partial-skid surcharge as the model's loss).
 	bd := resolve(t, newSvc(st, "stone"), base(ResolveInput{QtyEntered: 500, UOMEntered: "KG"}))
-	if bd.Source != SourceList || bd.FinalCents != 11500 || bd.FinalCents <= bd.OriginalCents {
-		t.Fatalf("partial-skid surcharge: 10000 + 15%% → 11500 (price UP, source stays LIST), got %+v", bd)
+	if bd.Source != SourceList || bd.FinalCents != 10000 {
+		t.Fatalf("a surcharge tier can never beat the standing price: 10000 stands, got %+v", bd)
+	}
+	if !strings.Contains(bd.Detail, "Partial-skid surcharge not applied") {
+		t.Fatalf("the breakdown must say why the surcharge never landed, got %q", bd.Detail)
 	}
 }
 
@@ -751,10 +756,10 @@ func TestResolve_Break_BadThresholdUOM_Errors(t *testing.T) {
 	}
 }
 
-// - F4: a SURCHARGE is an ADJUSTMENT on the discounted base, not a level that replaces it -
-// Fix #4: contractor 18% off + 15% partial-skid surcharge → discounted-THEN-surcharged
-// (48700 × 0.82 × 1.15 = 45924), NOT list + 15% (48700 × 1.15 = 56005).
-func TestResolve_Surcharge_AppliesOnTopOfTierDiscount(t *testing.T) {
+// - F4: a SURCHARGE tier never lifts the tier price under D1 (was: adjusted on top of it) -
+// Contractor 18% off stands at 39934; the matched partial-skid surcharge cannot win the
+// cheapest-wins contest, so the price holds and the breakdown records the held tier.
+func TestResolve_Surcharge_NeverLiftsTheTierPrice(t *testing.T) {
 	st := &fakeStore{
 		listPrice: &ListPrice{"blu60", 48700, "SF"},
 		rules:     []Rule{{ID: "r-cat", Scope: ScopeTierCategory, CustomerType: "CONTRACTOR", CategoryID: "pavers", CalcType: CalcPctOffList, DiscountBps: p64(1800), PriceUOM: "SF", Priority: 40, IsActive: true}},
@@ -765,21 +770,19 @@ func TestResolve_Surcharge_AppliesOnTopOfTierDiscount(t *testing.T) {
 		}},
 	}
 	bd := resolve(t, newSvc(st, "pavers"), base(ResolveInput{CategoryID: "pavers", QtyEntered: 10, UOMEntered: "SF"}))
-	if bd.Source != SourceTierCategory {
-		t.Fatalf("a surcharge-adjusted line keeps the base source TIER_CATEGORY (composition in detail), got %+v", bd)
+	if bd.Source != SourceTierCategory || bd.FinalCents != 39934 {
+		t.Fatalf("an uplift can never win the replace contest: the tier price 39934 stands, got %+v", bd)
 	}
-	if bd.FinalCents != 45924 {
-		t.Fatalf("discounted-then-surcharged: 48700 × 0.82 × 1.15 = 45924, got %d (list+15%% would be 56005)", bd.FinalCents)
-	}
-	if !strings.Contains(bd.Detail, "Partial-skid surcharge") {
-		t.Fatalf("breakdown detail must note the stacked surcharge, got %q", bd.Detail)
+	if !strings.Contains(bd.Detail, "Partial-skid surcharge not applied") {
+		t.Fatalf("breakdown detail must note the held surcharge, got %q", bd.Detail)
 	}
 }
 
-// - F4b: a quantity DISCOUNT break STACKS on the tier-resolved base (the core stacking fix) -
-// Contractor Pavers (−18% TIER_CATEGORY) + a 5% full-skid DISCOUNT break STACK:
-// 48700 × 0.82 × 0.95 = 37937 (NOT 48700 × 0.95 = 46265), and never above the −18% base (39934).
-func TestResolve_QuantityDiscountBreak_StacksOnTierBase(t *testing.T) {
+// - F4b: a quantity DISCOUNT break REPLACES the resolved price when strictly cheaper (D1),
+//    and holds when the standing price already beats it. The pairing that pins the fix:
+//    a break the tier beats answers the TIER price (37937, the stacking answer, is the bug), and
+//    the same break against a weaker standing price REPLACES it off the anchor. -
+func TestResolve_QuantityDiscountBreak_ReplacesNotStacks(t *testing.T) {
 	st := &fakeStore{
 		listPrice: &ListPrice{"blu60", 48700, "SF"},
 		rules:     []Rule{{ID: "r-cat", Scope: ScopeTierCategory, CustomerType: "CONTRACTOR", CategoryID: "pavers", CalcType: CalcPctOffList, DiscountBps: p64(1800), PriceUOM: "SF", Priority: 40, IsActive: true, DetailText: "Contractor, Pavers: 18% off"}},
@@ -788,23 +791,28 @@ func TestResolve_QuantityDiscountBreak_StacksOnTierBase(t *testing.T) {
 			ThresholdUOM: "SF", FromQty: 200, ValueType: BreakPctOff, DiscountBps: p64(500), PriceUOM: "SF",
 		}},
 	}
+	// The contractor's −18% already beats the break's −5%-off-anchor (39934 < 46265): the break
+	// loses the contest, the tier price stands UNCHANGED, never the stacked 48700×0.82×0.95 = 37937.
 	bd := resolve(t, newSvc(st, "pavers"), base(ResolveInput{CategoryID: "pavers", QtyEntered: 240, UOMEntered: "SF"}))
-	if bd.Source != SourceTierCategory {
-		t.Fatalf("the base source must stay TIER_CATEGORY (the break STACKS, not competes), got %+v", bd)
+	if bd.Source != SourceTierCategory || bd.FinalCents != 39934 {
+		t.Fatalf("the break loses to the tier: 39934 stands (stacking would answer 37937), got %+v", bd)
 	}
-	if bd.FinalCents != 37937 {
-		t.Fatalf("stacked −18%%+−5%%: 48700×0.82×0.95 = 37937, got %d (a competing break would be 46265)", bd.FinalCents)
+	if !strings.Contains(bd.Detail, "Full-skid −5% not applied") {
+		t.Fatalf("the breakdown must say why the volume break did not land, got %q", bd.Detail)
 	}
-	if bd.FinalCents >= 39934 {
-		t.Fatalf("a bulk discount must NEVER price above the contractor base 39934, got %d", bd.FinalCents)
+	// The same break against the shelf price: 48700 × 0.95 = 46265 REPLACES list, and the source
+	// names the level that now prices the line.
+	retail := resolve(t, newSvc(st, "pavers"), base(ResolveInput{CustomerType: "RETAIL", CategoryID: "pavers", QtyEntered: 240, UOMEntered: "SF"}))
+	if retail.Source != SourceQuantityBreak || retail.FinalCents != 46265 {
+		t.Fatalf("the break wins off the anchor when nothing beats it: 46265, got %+v", retail)
 	}
-	if !strings.Contains(bd.Detail, "Contractor, Pavers: 18% off") || !strings.Contains(bd.Detail, "Full-skid −5%") {
-		t.Fatalf("breakdown detail must show BOTH the base source AND the stacked break, got %q", bd.Detail)
+	if !strings.Contains(retail.Detail, "Full-skid −5%") {
+		t.Fatalf("the winning break is named on the breakdown, got %q", retail.Detail)
 	}
 }
 
-// - F4c: an ABS_OFF break stacks as a flat discount and is clamped to ≥ 0 -
-func TestResolve_AbsOffBreak_StacksAndClamps(t *testing.T) {
+// - F4c: an ABS_OFF break prices off the ANCHOR under D1 and is clamped to ≥ 0 -
+func TestResolve_AbsOffBreak_ReplacesAndClamps(t *testing.T) {
 	st := &fakeStore{
 		listPrice: &ListPrice{"blu60", 48700, "SF"},
 		rules:     []Rule{{ID: "r-cat", Scope: ScopeTierCategory, CustomerType: "CONTRACTOR", CategoryID: "pavers", CalcType: CalcPctOffList, DiscountBps: p64(1800), PriceUOM: "SF", Priority: 40, IsActive: true}},
@@ -813,16 +821,46 @@ func TestResolve_AbsOffBreak_StacksAndClamps(t *testing.T) {
 			FromQty: 0, ValueType: BreakAbsOff, DiscountCents: p64(2000), PriceUOM: "SF",
 		}},
 	}
-	// base = 48700 × 0.82 = 39934; flat −2000 ¢ → 37934.
+	// the flat −2000 ¢ prices off the anchor: 48700 − 2000 = 46700, which LOSES to the tier's 39934.
 	bd := resolve(t, newSvc(st, "pavers"), base(ResolveInput{CategoryID: "pavers", QtyEntered: 10, UOMEntered: "SF"}))
-	if bd.Source != SourceTierCategory || bd.FinalCents != 37934 {
-		t.Fatalf("ABS_OFF stacks flat: 39934 − 2000 = 37934 (source stays TIER_CATEGORY), got %+v", bd)
+	if bd.Source != SourceTierCategory || bd.FinalCents != 39934 {
+		t.Fatalf("ABS_OFF prices off the anchor and loses to the tier: 39934 stands, got %+v", bd)
 	}
-	// A flat discount larger than the base clamps to 0, never negative, never above the base.
+	// A flat discount larger than the anchor clamps to 0, never negative; 0 wins the contest.
 	st.breaks[0].DiscountCents = p64(99999999)
 	bd2 := resolve(t, newSvc(st, "pavers"), base(ResolveInput{CategoryID: "pavers", QtyEntered: 10, UOMEntered: "SF"}))
-	if bd2.FinalCents != 0 {
-		t.Fatalf("an over-large ABS_OFF must clamp to 0, got %d", bd2.FinalCents)
+	if bd2.FinalCents != 0 || bd2.Source != SourceQuantityBreak {
+		t.Fatalf("an over-large ABS_OFF must clamp to 0 (and win as 0), got %d/%s", bd2.FinalCents, bd2.Source)
+	}
+}
+
+// - THE D1 EXIT CASES (HH-184): a line crossing a break prices AT the break, a line below it
+//   keeps the rule and tier price, and an account no break reaches is untouched. The crossing
+//   case is the one stacking answers differently: 10000 × 0.95 × 0.90 = 8550 is the bug this
+//   fixes; 9000, the break's own single price off the anchor, is the decision. -
+func TestResolve_LineCrossingABreakPricesAtTheBreak(t *testing.T) {
+	rules := []Rule{{ID: "r-def", Scope: ScopeTierDefault, CustomerType: "CONTRACTOR", CalcType: CalcPctOffList, DiscountBps: p64(500), PriceUOM: "EA", Priority: 10, IsActive: true, DetailText: "Contractor, default: 5% off"}}
+	breaks := []QuantityBreak{{
+		HeaderID: "h1", ProductID: "blu60", ThresholdUOM: "EA",
+		FromQty: 100, ValueType: BreakPctOff, DiscountBps: p64(1000), PriceUOM: "EA",
+	}}
+	// Crossing the threshold: the break replaces the tier, 10000 × 0.90 = 9000.
+	at := resolve(t, newSvc(&fakeStore{listPrice: &ListPrice{"blu60", 10000, "EA"}, rules: rules, breaks: breaks}, "pavers"),
+		base(ResolveInput{QtyEntered: 120, UOMEntered: "EA"}))
+	if at.Source != SourceQuantityBreak || at.FinalCents != 9000 {
+		t.Fatalf("crossing the break prices AT the break: want QUANTITY_BREAK/9000 (stacking would answer 8550), got %s/%d", at.Source, at.FinalCents)
+	}
+	// Below the threshold the break never matched: the rule and tier price stands, unexplained.
+	below := resolve(t, newSvc(&fakeStore{listPrice: &ListPrice{"blu60", 10000, "EA"}, rules: rules, breaks: breaks}, "pavers"),
+		base(ResolveInput{QtyEntered: 99, UOMEntered: "EA"}))
+	if below.Source != SourceTierDefault || below.FinalCents != 9500 || strings.Contains(below.Detail, "not applied") {
+		t.Fatalf("below the break the tier price 9500 stands with no break note, got %s/%d %q", below.Source, below.FinalCents, below.Detail)
+	}
+	// The account with no break at all: the plain waterfall, byte for byte, at any quantity.
+	bare := resolve(t, newSvc(&fakeStore{listPrice: &ListPrice{"blu60", 10000, "EA"}, rules: rules}, "pavers"),
+		base(ResolveInput{QtyEntered: 120, UOMEntered: "EA"}))
+	if bare.Source != SourceTierDefault || bare.FinalCents != 9500 {
+		t.Fatalf("an account with no break is unaffected: want TIER_DEFAULT/9500, got %s/%d", bare.Source, bare.FinalCents)
 	}
 }
 

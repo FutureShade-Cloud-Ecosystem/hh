@@ -101,14 +101,16 @@ func TestCounterQuote_AppliedBreakIsExplainedAsBulk(t *testing.T) {
 		breaks: []QuantityBreak{{HeaderID: "h1", ProductID: "blu60", ThresholdUOM: "SF", FromQty: 50,
 			ValueType: BreakPctOff, DiscountBps: p64(2000), PriceUOM: "SF"}},
 	}
+	// D1: the break's own single price off the anchor (48700 × 0.80 = 38960) REPLACES the tier
+	// price (41395); the stacked 33116 is the defect this replaces.
 	q := counterQuote(t, counterSvc(st), accountInput(120))
-	if q.CustomerCents != 33116 {
-		t.Fatalf("48700 × 0.85 × 0.80 = 33116: %+v", q)
+	if q.CustomerCents != 38960 {
+		t.Fatalf("48700 × 0.80 = 38960 replaces the tier price: %+v", q)
 	}
 	if q.Basis != BasisBulk {
-		t.Fatalf("when a break actually applied, BULK is the word, it is the part they can change: %+v", q)
+		t.Fatalf("when the break wins the contest, BULK is the word, it is the part they can change: %+v", q)
 	}
-	if q.SavingCents != 48700-33116 {
+	if q.SavingCents != 48700-38960 {
 		t.Fatalf("the saving is measured against RETAIL, not against the tier price: %+v", q)
 	}
 }
@@ -158,9 +160,11 @@ func TestCounterQuote_SurchargeNeverReportsANegativeSaving(t *testing.T) {
 		breaks: []QuantityBreak{{HeaderID: "h1", ProductID: "blu60", ThresholdUOM: "SF", FromQty: 1, ToQty: f64p(50),
 			ValueType: BreakSurchargePct, SurchargeBps: p64(1000), PriceUOM: "SF"}},
 	}
+	// D1: an uplift can never win the cheapest-wins contest, so the surcharge never lands at all:
+	// the walk-in pays retail, and nothing claims a saving in either direction.
 	q := counterQuote(t, counterSvc(st), retailInput(10))
-	if q.CustomerCents <= q.RetailCents {
-		t.Fatalf("a partial-skid surcharge prices ABOVE retail: %+v", q)
+	if q.CustomerCents != q.RetailCents {
+		t.Fatalf("a surcharge tier never adjusts the price under the replace rule: %+v", q)
 	}
 	if q.SavingCents != 0 || q.Basis != "" {
 		t.Fatalf("'you save -$4.10' is not a thing a counter says: %+v", q)
