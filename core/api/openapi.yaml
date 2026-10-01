@@ -14311,6 +14311,12 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/PosRefundApprovalRequired"
+        "503":
+          description: The approver credential could not be checked, or the dealer's role configuration is not wired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/pos/returns/lookup:
     get:
       operationId: posLookupReturn

@@ -87,6 +87,12 @@ func compose(pool *pgxpool.Pool, log *slog.Logger, vaultKey string) (*world, err
 		WithCardCharger(cardChargerAdapter{svc: paySvc}).
 		WithAudit(auditSvc)
 
+	// The till's role-configuration rules ride the demo compose too (RT-B):
+	// the configuration is loaded, so the seeded world's service answers
+	// the rules from the same document the server does. This compose builds
+	// no serving surface (the one-shot seeds and stops), so the approver
+	// credential source has no gate to resolve through here; the demo
+	// serve path wires it with wireTillRules like the serve role.
 	posSvc := pos.NewService(pos.NewRepository(pool)).
 		WithLineResolver(pricingSvc).
 		WithTenderTaker(tillSvc).
@@ -94,7 +100,8 @@ func compose(pool *pgxpool.Pool, log *slog.Logger, vaultKey string) (*world, err
 		WithSignatureProvider(pos.NewTypedNameSignatureProvider(payVault)).
 		WithTaxAssessor(posTaxAdapter{svc: taxSvc}).
 		WithStock(posStockAdapter{svc: inventorySvc}).
-		WithAudit(auditSvc)
+		WithAudit(auditSvc).
+		WithRoleConfig(loadRoleConfig())
 
 	orderRepo := order.NewRepository(pool)
 	orderSvc := order.NewService(orderRepo).WithAudit(auditSvc).WithAuditTrail(auditSvc)

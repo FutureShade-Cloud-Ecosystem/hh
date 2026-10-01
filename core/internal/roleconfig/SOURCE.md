@@ -52,8 +52,16 @@ both in the principal's Session 2 planning record, as D48 names them.
   Manager (X13, row 457).
 - `settings.general_manager_selling`: off (row 457: Read on the till,
   quotes and dispatch; sells nothing and commits no date).
+- `settings.refund_approval_window_seconds`: 300, the tenth setting, added
+  on the lead's ruling after the reader landed: the plan's section 3.2 and
+  the contract's approver header both name the configuration as the source
+  of the window an approver's credential may be old when the return
+  carrying it commits (X7, row 482), and the planning record's nine
+  settings name no window. The value 300 is the product default the
+  return rules carried as a constant before this setting existed; the
+  loader bounds the setting to 1 through 3600.
 
 The tests in this package hold the carried file to the record: the full
-130-cell matrix, the lists and the nine settings are asserted against the
+130-cell matrix, the lists and the ten settings are asserted against the
 decided values, and the load checks refuse anything that would break a
 wall.

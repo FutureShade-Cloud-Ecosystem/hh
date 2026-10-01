@@ -718,6 +718,7 @@
       "logistics_manager",
       "branch_manager"
     ],
-    "general_manager_selling": false
+    "general_manager_selling": false,
+  "refund_approval_window_seconds": 300
   }
 }

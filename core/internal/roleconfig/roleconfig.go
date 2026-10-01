@@ -169,7 +169,7 @@ const RoleGeneralManager = "general_manager"
 // level on it above none (X4: no money settings).
 const SurfaceMoneyDesk = "money-desk"
 
-// The JSON keys of the nine dealer settings. A misspelled key in a
+// The JSON keys of the ten dealer settings. A misspelled key in a
 // configuration is refused, not ignored, so a setting can never silently
 // fall back to a zero value.
 const (
@@ -182,10 +182,25 @@ const (
 	SettingShortageResolvers             = "shortage_resolvers"
 	SettingDispatchPolicySetters         = "dispatch_policy_setters"
 	SettingGeneralManagerSelling         = "general_manager_selling"
+	// SettingRefundApprovalWindowSeconds is how old, in seconds, the
+	// approver's credential may be when the return carrying it commits
+	// (X7, row 482, plan 3.2: the window the configuration sets). The
+	// tenth setting, added on the lead's ruling after the reader landed:
+	// the plan and the contract both name the configuration as the
+	// window's source, and the decided default holds 300.
+	SettingRefundApprovalWindowSeconds = "refund_approval_window_seconds"
 )
 
-// settingKeys lists the nine keys. Load refuses a document where one is
-// missing or one beyond these nine appears.
+// The bounds of the refund approval window, in seconds: the checks refuse
+// a setting outside them. Stated as code, not prose, per the repository
+// rule.
+const (
+	MinRefundApprovalWindowSeconds = 1
+	MaxRefundApprovalWindowSeconds = 3600
+)
+
+// settingKeys lists the ten keys. Load refuses a document where one is
+// missing or one beyond these ten appears.
 var settingKeys = []string{
 	SettingCostVisibility,
 	SettingCreditAtTill,
@@ -196,6 +211,7 @@ var settingKeys = []string{
 	SettingShortageResolvers,
 	SettingDispatchPolicySetters,
 	SettingGeneralManagerSelling,
+	SettingRefundApprovalWindowSeconds,
 }
 
 // Source names the planning record a configuration was derived from. The
@@ -264,6 +280,10 @@ type Settings struct {
 	// GeneralManagerSelling reports whether the General Manager sells and
 	// commits dates (row 457: off, Read on the till, quotes and dispatch).
 	GeneralManagerSelling bool
+	// RefundApprovalWindowSeconds is how old, in seconds, the approver's
+	// credential may be when the return carrying it commits (X7, row 482,
+	// plan 3.2). The loader bounds it to the package's window bounds.
+	RefundApprovalWindowSeconds int
 }
 
 // cellKey indexes one cell.
