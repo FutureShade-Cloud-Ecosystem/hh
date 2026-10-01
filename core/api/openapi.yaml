@@ -728,7 +728,7 @@ paths:
       tags:
         - staff-demo
       summary: Mint a demo staff session for one named flow
-      description: A documented credential bypass, pre-auth by design, mounted only when the deployment is a demo or dev deployment (config.DemoEnabled). The module refuses to register at all unless both the session issuer and the audit recorder are wired. The request carries a flow name and nothing else, so there is nowhere to put an email or a role.
+      description: "A documented credential bypass, pre-auth by design, carried by the demo build only: the routes register in a demo build's serve graph, behind the demo boot guards, and exist in no other build. The mint answers only a flow name of the closed flow table (the same pair the flows listing serves); it resolves the demo org, asks the staff authority resolver whether the flow's account holds the flow's role there, writes the session's audit row, and only then mints the token. The session issuer, the org resolver, the staff authority resolver and the audit recorder arrive by constructor, and the module refuses to register without all four. A per-address limit refuses bursts; the route takes no coarse audit row, the mint's own row is the whole record for it."
       x-role: public
       security: []
       x-source: hardscapeos_dibbits/backend/internal/demo/handler.go (RouteSession)
@@ -747,6 +747,16 @@ paths:
                 $ref: "#/components/schemas/DemoSessionResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "403":
+          description: "The mint refused: the flow's account holds no staff grant in the demo org, holds another role where the flow's should be, or is not active. The refusal names its own check."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
   /api/v1/demo/flows:
     get:
       operationId: demoListFlows
@@ -24327,6 +24337,18 @@ components:
             $ref: "#/components/schemas/Error"
     Conflict:
       description: The write conflicted with server state. For sync pushes the body is the conflict envelope; elsewhere it is the Error envelope.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: "The caller is rate limited: its allowance of attempts is spent for now, and retrying once the window has passed is the whole remedy. The body is the Error envelope."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalServerError:
+      description: The server could not complete the request; the body is the Error envelope
       content:
         application/json:
           schema:

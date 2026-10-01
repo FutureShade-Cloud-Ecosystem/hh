@@ -206,6 +206,30 @@ module stays the fail-closed stub it is today; the FIRST lane that
 touches it removes the push half and that sentence. Until then this
 entry marks the obligation.
 
+## The Counter Till cycle, lane L3 (W1): the entrypoint seam sits in main.go (recorded, work continuing)
+
+The lane's declared Touches name core/internal/demo/, demo_on.go,
+demo_off.go and the NewStaticKeySource comment, but the item's guards
+(G0's demo-check subcommand, G2's serve refusal, G3's check before the
+listener, the demo graph's substituted verifier and membership source)
+are unreachable from a build-tagged file alone: main() dispatches roles
+through a switch with no seam, and registerRoutes constructs the platform
+membership client unconditionally, so a demo box cannot boot the default
+serve path at all. The lane therefore added the smallest seam main.go
+admits: one guarded call to demoDispatch before the standard role switch,
+with the no-op stub in demo_off.go. main.go is the only production file
+outside the lane's Touches; beside it the lane added
+core/cmd/core/demoenv_inventory.go (untagged, so its deny and allow lists
+compile into the default binary as data and no /internal/demo symbol)
+and three test files there (demo_build_guard_test.go,
+demoenv_inventory_test.go, demo_on_test.go, the last carrying the demo
+tag by the lead's ruling on review finding P3-1). The default build's behavior is
+unchanged (the stub returns false before the switch), the G1 tests in
+core/cmd/core hold the default dependency closure free of
+core/internal/demo/, and the compiled-binary review command counts demo
+symbols and expects none. The lead merges: any other lane that needs a
+demo-only subcommand adds its case to demoDispatch in demo_on.go, not to
+main.go.
 ## The Counter Till demo: one frozen channel name still carries a surname token (open)
 
 W3's demo populate replaces every planted users row's display name on the
@@ -393,28 +417,39 @@ nobody tunes a surcharge expecting the counter to charge it.
   a look at the comprehensive review.
 ## The Counter Till cycle, lane L3 (W1): the entrypoint seam sits in main.go (recorded, work continuing)
 
-The lane's declared Touches name core/internal/demo/, demo_on.go,
-demo_off.go and the NewStaticKeySource comment, but the item's guards
-(G0's demo-check subcommand, G2's serve refusal, G3's check before the
-listener, the demo graph's substituted verifier and membership source)
-are unreachable from a build-tagged file alone: main() dispatches roles
-through a switch with no seam, and registerRoutes constructs the platform
-membership client unconditionally, so a demo box cannot boot the default
-serve path at all. The lane therefore added the smallest seam main.go
-admits: one guarded call to demoDispatch before the standard role switch,
-with the no-op stub in demo_off.go. main.go is the only production file
-outside the lane's Touches; beside it the lane added
-core/cmd/core/demoenv_inventory.go (untagged, so its deny and allow lists
-compile into the default binary as data and no /internal/demo symbol)
-and three test files there (demo_build_guard_test.go,
-demoenv_inventory_test.go, demo_on_test.go, the last carrying the demo
-tag by the lead's ruling on review finding P3-1). The default build's behavior is
-unchanged (the stub returns false before the switch), the G1 tests in
-core/cmd/core hold the default dependency closure free of
-core/internal/demo/, and the compiled-binary review command counts demo
-symbols and expects none. The lead merges: any other lane that needs a
-demo-only subcommand adds its case to demoDispatch in demo_on.go, not to
-main.go.
+## The Counter Till cycle, lane L3 (W2): a refused commit message amend (recorded, work continuing)
+
+W2's third commit's subject spells a window length out in words where
+the house rules want no duration in committed prose. The amend to reword
+it was refused by the repository hook (history rewrite refused in full,
+per the lane's rules), and a refusal is final, so the subject stands as
+history. The commit's content is correct; this entry deliberately quotes
+no passage of the message, and the lead may reword the message when
+landing the pull request, or let it stand.
+
+## The Counter Till cycle, lane L3 (W2), the review round: two fixes placed outside the lane's Touches, by the lead's rulings
+
+The independent review of W2 (pull request 49) returned no P1, three P2
+and seven P3 findings, and the lead's rulings placed every fix on the
+lane's branch. Two of the fixes edit files the lane's Touches never
+named, each because the ruling says so and each recorded here in the W3
+precedent's spirit: the audit middleware's carve-out table
+(selfRecordedMutations in core/internal/audit/service.go, so the demo
+session route takes no coarse HTTP row and a refused mint writes nothing
+at all, the review's P2-1), and the contract's declaration of the
+route's refusals (the demo session operation in core/api/skeleton.yaml
+gains its 403, 429 and 500, the TooManyRequests and InternalServerError
+response components join the house's table, and the stale description
+now names the demo build, the four constructor collaborators, the limit
+and the row order; the review's P2-3). Everything else sits inside the
+Touches: the limit now keys on the forwarded chain when the peer is the
+box's own loopback proxy and ignores the header from any other peer
+(P2-2), the request decoder refuses unknown fields and trailing data
+(P3-2), and the small findings (the blockers reword, the mint failure
+after the trail row, the spent allowance stated, the batched eviction,
+the exit test's rename and generic run note, the clock literals) are
+fixed in place with their tests. All seven P3s were cheap and none is
+left open.
 
 ## The Counter Till cycle, lane L4 (PX): the exit test's CI leg stays with W5 (recorded)
 
