@@ -309,6 +309,11 @@ export async function posRejectReturnRequest(
   });
 }
 
+// The document lets this call carry X-Approver-Authorization beside the caller's
+// bearer: the approver's own credential for a return above the approval amount,
+// held in memory for this one call and dropped. It rides the caller-set headers
+// (the credential is the caller's business, never a generated argument) and the
+// server never logs it.
 export async function posCreateReturn(
   client: ApiClient,
   body: PosReturnInput,

@@ -1,15 +1,17 @@
 package pos
 
 // rev8.go, DIB-488 rev 8: the role-gated margin glance (item 10), the DIB-502 suggested add-ons
-// read (item 8), and the 0170 policy validation arms (margin visibility + the curated chip set).
+// read (item 8), and the 0170 policy validation arms (the curated chip set; margin visibility
+// remains a stored dealer switch the glance no longer consults, the configuration's list decides).
 //
 // THE MARGIN GATING RULING (the commander's critical rev-8 constraint): margin % and est. profit
 // are computed SERVER-SIDE from the pricing engine's own numbers, revenue through the SAME
-// pricing.DeriveLinePrice authority the ring prices with, cost from the engine's cost source (the
-// per-branch WAC row, product_branch_costs.avg_unit_cost_cents), and they are gated at the
-// MARSHAL layer: the response struct is all-omitempty, and a caller the dealer's margin_visibility
-// does not allow receives the zero value, i.e. a `{}` payload with the fields BYTE-ABSENT. This
-// mirrors the portal's marshal-and-assert-absent idiom; dib488_rev8_test.go asserts byte-absence.
+// counter resolve the ring prices with (the till never asks the margin gate, D48 row 481), cost
+// from the engine's cost source (the per-branch WAC row, product_branch_costs.avg_unit_cost_cents),
+// and they are gated at the MARSHAL layer: the response struct is all-omitempty, and a caller the
+// dealer's role configuration's cost and margin list does not allow receives the zero value, i.e. a
+// `{}` payload with the fields BYTE-ABSENT. This mirrors the portal's marshal-and-assert-absent
+// idiom; dib488_rev8_test.go asserts byte-absence.
 
 import (
 	"context"
@@ -70,25 +72,39 @@ func validateQuickChipSet(set []string) ([]string, error) {
 	return out, nil
 }
 
-// marginAllowed answers whether THIS caller may receive margin/profit under the branch policy.
-// Fail closed: an unreadable policy or an anonymous caller receives nothing.
-func (s *Service) marginAllowed(ctx context.Context, branchID string) bool {
+// marginAllowed answers whether THIS caller may receive margin/profit, in
+// two gates. First the branch wall (X2): a branch the caller's resolved
+// authority does not reach is REFUSED, never blanked, the refusal carried
+// as the error so the handler writes the wall's 403. Then cost visibility
+// (X3): the dealer's configuration's cost and margin list decides (row
+// 343: the glance reads the configuration, not its managers only default).
+// The nil gate fails closed (the lead's P1-1 ruling): a service built with
+// no configuration refuses the read, it never falls back to the 0170
+// margin_visibility switch, whose managers only default was exactly the
+// permissive answer the configuration replaced. Fail closed likewise: an
+// unreadable policy or an unmapped role receives nothing.
+func (s *Service) marginAllowed(ctx context.Context, branchID string) (bool, error) {
+	if s.roles == nil {
+		return false, errRoleConfigUnwired()
+	}
 	caller, err := s.caller(ctx)
 	if err != nil {
-		return false
+		// An unresolved caller is the pinned empty answer (the route's guard
+		// is the door); the wall below judges a RESOLVED authority.
+		return false, nil
 	}
-	p, err := s.store.ReadPosPolicy(ctx, branchID)
+	if err := requireBranchReach(caller, branchID); err != nil {
+		return false, err
+	}
+	role, ok := canonicalRole(caller)
+	if !ok {
+		return false, nil
+	}
+	allowed, err := s.roles.SeesCostAndMargin(role)
 	if err != nil {
-		return false
+		return false, nil
 	}
-	switch p.MarginVisibility {
-	case MarginVisibilityAllStaff:
-		return true
-	case MarginVisibilityHidden:
-		return false
-	default: // MANAGER_UP, the column default ("" from a pre-0170 fake resolves here too)
-		return caller.IsManager()
-	}
+	return allowed, nil
 }
 
 // marginBpsOf computes gross margin in bps from integer cents (identity.MarginBps's arithmetic,
@@ -108,8 +124,12 @@ func (s *Service) MarginGlance(ctx context.Context, in MarginGlanceInput) (Margi
 	if in.BranchID == "" {
 		return MarginGlance{}, clientErr(http.StatusBadRequest, "pos: branch_id is required")
 	}
-	if !s.marginAllowed(ctx, in.BranchID) {
-		// THE GATE: the zero value marshals as `{}`, margin/profit BYTE-ABSENT for this caller.
+	allowed, err := s.marginAllowed(ctx, in.BranchID)
+	if err != nil {
+		return MarginGlance{}, err
+	}
+	if !allowed {
+		// THE VISIBILITY GATE: the zero value marshals as `{}`, margin/profit BYTE-ABSENT for this caller.
 		return MarginGlance{}, nil
 	}
 	if len(in.Lines) == 0 {
@@ -144,10 +164,11 @@ func (s *Service) MarginGlance(ctx context.Context, in MarginGlanceInput) (Margi
 			out.Partial = true
 			continue // this line's fields stay absent, no cost is not a 100% margin
 		}
-		// Revenue through the SAME engine the ring prices with. CostCents deliberately 0 (exactly
-		// like the ring path): the glance marries cost to revenue ITSELF below, so the resolve
-		// stays byte-identical to the terminal's own reprice, no gate/audit side effects change.
-		lp, derr := s.pricing.DeriveLinePrice(ctx, pricing.ResolveInput{
+		// Revenue through the SAME counter resolve the ring prices with (D48 row 481): the till
+		// never asks the margin gate, so this resolve carries no gate question and no audit write
+		// on either path, and the glance marries cost to revenue ITSELF below, so the numbers
+		// stay byte-identical to the terminal's own reprice.
+		lp, derr := s.pricing.DeriveCounterLinePrice(ctx, pricing.ResolveInput{
 			CustomerID:   in.CustomerID,
 			CustomerType: customerType,
 			ProductID:    li.ProductID,

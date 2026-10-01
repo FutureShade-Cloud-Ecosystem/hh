@@ -1,0 +1,26 @@
+{
+  "name": "@hardscapehouse/counter-till",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Counter Till micro-app: the demo way in (role cards, the demo adapter, X-Org hh-demo), then the sale at the counter: the branch's drawer, the priced ticket with its margin column, cash, card and account tenders, the receipt, and the branch's parked tickets",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs test/sinks.test.mjs && playwright test",
+    "acceptance": "playwright test --config test/acceptance.config.ts"
+  },
+  "dependencies": {
+    "@hardscapehouse/api-client": "0.0.0",
+    "@hardscapehouse/auth": "0.0.0",
+    "@hardscapehouse/design-system": "0.0.0",
+    "lit": "3.3.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.20.4",
+    "typescript": "5.9.3",
+    "vite": "8.3.1"
+  }
+}
