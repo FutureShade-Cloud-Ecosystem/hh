@@ -1,0 +1,24 @@
+{
+  "name": "@hardscapehouse/counter-till",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Counter Till micro-app: the demo way in (role cards from the demo flows route, the demo adapter behind the auth package's AccountSurface, X-Org hh-demo), the header with the Demo banner, the role's name and sign out, and the placeholder till",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "@hardscapehouse/api-client": "0.0.0",
+    "@hardscapehouse/auth": "0.0.0",
+    "@hardscapehouse/design-system": "0.0.0",
+    "lit": "3.3.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.1"
+  }
+}
