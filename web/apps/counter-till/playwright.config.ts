@@ -7,7 +7,9 @@
 // download rides the npm install, and it is the same browser the design
 // system's browser leg expects to find on the runner.
 import { defineConfig } from "@playwright/test";
+import { fileURLToPath } from "node:url";
 
+const appDir = fileURLToPath(new URL(".", import.meta.url));
 const appPort = process.env.CT_APP_PORT ?? "4820";
 const stubPort = process.env.CT_STUB_PORT ?? "4821";
 
@@ -24,14 +26,14 @@ export default defineConfig({
       command: "node test/stub/demo-stub.mjs",
       url: `http://127.0.0.1:${stubPort}/healthz`,
       reuseExistingServer: true,
-      cwd: __dirname,
+      cwd: appDir,
       env: { CT_STUB_PORT: stubPort },
     },
     {
       command: `npx --no-install vite --port ${appPort} --strictPort --host 127.0.0.1`,
       url: `http://127.0.0.1:${appPort}/`,
       reuseExistingServer: true,
-      cwd: __dirname,
+      cwd: appDir,
       env: { CT_STUB_PORT: stubPort, CT_APP_PORT: appPort },
     },
   ],
