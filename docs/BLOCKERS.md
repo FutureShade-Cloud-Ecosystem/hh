@@ -245,3 +245,131 @@ bearer never did either), and the generator emits a note on the one operation
 that declares the header, so the regenerated client visibly carries it. The
 lead may want this hunk re-homed when the pull request is read; the rest of
 the commit is contract sources and generated outputs only.
+
+## L1 RG (role gate): the review's rulings and recorded gaps
+
+- **The platform roles' treatment, by ruling.** The staff_role table
+  grants three tier 1 roles the matrix holds no cells for (super_admin,
+  dealer_admin, fb_operator, 0215). ROLE-ACCESS-r3 leaves them outside the
+  matrix and the lead's catalog ruling 10 keeps their seats. Ruled in the
+  PR 44 review (P1-2): a caller whose resolved roles include one of the
+  three passes the role gate's level check on every staff route, the tier
+  guard still applies its own x-role checks to them, and a route that
+  names a configuration list is not covered by the pass. Implemented as
+  the named list in core/internal/platform/authz/rolegate.go; kept on the
+  record so the ruling travels with the code.
+- **Three writes annotated at read by convention, named for the record**
+  (the PR 44 review's P2-4): PUT /api/v1/purchasing/policy, PUT
+  /api/v1/inventory/transit-days, PATCH /api/v1/quote-assist/scope-rules/
+  {code}. On these surfaces no leadership role the requireAdmin tier
+  admits holds a cell above read, so a higher level would leave the route
+  to nobody; the tier gate alone holds each wall. Each block now carries
+  its reason in place. A dealer re-shaping the matrix moves these levels
+  with it.
+- **The registered half of the completeness walk has no CI coverage**
+  (the PR 44 review's P2-5). The plain census test
+  (core/cmd/core/census_test.go) runs without the database and catches a
+  document or census annotation fault; a route registered in Go and
+  annotated nowhere is caught only by the registrar's boot panic and by
+  the database-gated composition walk, neither of which the repository's
+  CI executes. W5's acceptance run sets the gate variables and is the
+  natural home; until then the attach-time panic is the only stop.
+- **The whole-row walk composes across grants; the tier guard reads the
+  winner** (the re-read review's note b, for the comprehensive review to
+  judge on purpose). A person holding hr (tier 1, dealer-admin admin) and
+  sales_manager (tier 2, manager-home work) passes a requireAdmin route
+  annotated manager-home at read, which neither role passes alone: hr
+  fails the tier gate, the sales manager fails the requireAdmin tier.
+  That is one reading of D48's "a person holding two roles gets both",
+  implemented in rolegate.go's whole-row walk over ResolveRoles beside
+  the winner-only ResolveStaff the tier guard reads; the two gates
+  deliberately read different facts about the same grants. ResolveRoles'
+  own suite sits in internal/identity (authority_roles_test.go).
+- **Recorded, not changed** (the re-read review's notes c and d):
+  hr still reads the pricing surface's reads (rules, price files, the
+  rebate ledger, dealer-admin at admin); the PR 44 ruling covered the
+  writes, and cost and margin on the fields are the cost_visibility
+  list's job, so these reads belong to the item that reads that list;
+  the refusal wording in rolegate.go and merge.mjs says level none
+  "refuses every role" where the comment beside it correctly says it
+  would admit every role (a wording slip, three places); and apiV1Path
+  recognises a registration only behind one of five method prefixes, so
+  a methodless, HEAD or OPTIONS registration under /api/v1/ would pass
+  the registrar ungated (none exists today).
+- **The all-ten convention, for the comprehensive review's eye** (the PR
+  44 review's P3-5): nineteen routes name every surface, so every role
+  whose house-messages cell is at least read passes them, and every
+  configuration that keeps house-messages at work (the default does, for
+  all thirteen roles) leaves them open to all staff. Sound for a caller's
+  own things; POST /api/v1/attachments and POST
+  /api/v1/attachments/{id}/links are writes against any owner and deserve
+  a look at the comprehensive review.
+## The Counter Till cycle, lane L3 (W1): the entrypoint seam sits in main.go (recorded, work continuing)
+
+The lane's declared Touches name core/internal/demo/, demo_on.go,
+demo_off.go and the NewStaticKeySource comment, but the item's guards
+(G0's demo-check subcommand, G2's serve refusal, G3's check before the
+listener, the demo graph's substituted verifier and membership source)
+are unreachable from a build-tagged file alone: main() dispatches roles
+through a switch with no seam, and registerRoutes constructs the platform
+membership client unconditionally, so a demo box cannot boot the default
+serve path at all. The lane therefore added the smallest seam main.go
+admits: one guarded call to demoDispatch before the standard role switch,
+with the no-op stub in demo_off.go. main.go is the only production file
+outside the lane's Touches; beside it the lane added
+core/cmd/core/demoenv_inventory.go (untagged, so its deny and allow lists
+compile into the default binary as data and no /internal/demo symbol)
+and three test files there (demo_build_guard_test.go,
+demoenv_inventory_test.go, demo_on_test.go, the last carrying the demo
+tag by the lead's ruling on review finding P3-1). The default build's behavior is
+unchanged (the stub returns false before the switch), the G1 tests in
+core/cmd/core hold the default dependency closure free of
+core/internal/demo/, and the compiled-binary review command counts demo
+symbols and expects none. The lead merges: any other lane that needs a
+demo-only subcommand adds its case to demoDispatch in demo_on.go, not to
+main.go.
+
+## The Counter Till cycle, lane L3 (W1), review follow-ups: named gaps and their holders
+
+- **No CI leg builds or tests the demo tag (review P2-4).** The ci job runs
+  untagged only, so every demo-tagged guard and the compilation of
+  demo_on.go sit outside the check, and another lane changing a wire
+  function's signature would break the demo build with CI green. The lead
+  assigns the leg to W5, whose plan row adds the CI job with a Postgres
+  service; the interim holder is the in-team review, which runs both tag
+  suites. Until W5 lands it, a merge that touches a wire function should
+  be built with -tags demo by hand.
+- **One demo-tagged test file sits outside the plan's two places (review
+  P3-1).** core/cmd/core/demo_on_test.go carries //go:build demo because
+  only a tagged test can call demoServe. The lead accepts it: test files
+  enter no binary. The plan's sentence counts source files, and the
+  amendment is the record's to make.
+- **A boot dying between migrate and demo-populate cannot be retried
+  (review P3-6).** demo-check refuses a migrated database that is not yet
+  a demo world, which is G0 as the plan writes it, so an entrypoint that
+  stops between the two steps leaves a box demo-check refuses from then
+  on and the database has to be dropped. No change to G0; the W5
+  entrypoint answers it (each step idempotent, the pair run to completion
+  before serve).
+
+## L1 RG (role gate), post-review fix routed from W9: the demo build's registration exception
+
+W9's acceptance run found the demo build serving its staff routes by tier
+alone: demo_on.go's demoRegisterRoutes mirrored the default build's
+registerRoutes up to the role gate, so a demo box never held a demo
+bearer to the dealer's configuration. The fix attaches the same wrapping
+registrar and the same roleconfig.Default load in demoRegisterRoutes, in
+the same place main.go's registerRoutes puts them (the mirror's own rule:
+when the default wiring gains a step, the mirror gains the same step in
+the same place). Two recorded notes. First, the Touches exception: W1's
+branch owns demo_on.go, and this lane edited it for this fix by the
+lead's granted exception, recorded here as asked. The fix requires W1's
+demo build on this branch, so the lane merged till/l3-w1 into till/l1-rg
+before the fix (the merge is the lead's own stitch shape; goal carried
+the same union at b67c4f8 and f10f672, and the only conflict was this
+file, resolved keeping both lanes' entries). Second, the test seam: the
+graph carries demoMint (nil in the default build, set only by the demo
+wiring) so the demo-tagged probe can hold a real session token; the
+probe itself (rolegate_demo_test.go) hand-plants the populate's world in
+miniature on a case database of its own, including the two flow logins'
+users rows and grants the populate plants.
