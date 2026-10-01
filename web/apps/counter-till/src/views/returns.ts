@@ -368,14 +368,16 @@ export function methodWords(method: RefundMethod): string {
 function renderDraft(flow: ReturnsFlow): TemplateResult {
   const lookup = flow.lookup;
   if (lookup === null) return html``;
-  const chosenNote =
-    flow.method === null
-      ? nothing
-      : html`<p class="notice" role="status">
-          ${methodWords(flow.method)}: ${flow.method === "CARD" && flow.cardSimulated === true
-            ? "Simulated refund: nothing reached a card."
-            : methodNote(flow)}
-        </p>`;
+  // The chosen rail's words: the card rail's only when the status route's own
+  // flag says simulated, so the screen never claims it on its own.
+  let chosenNote: TemplateResult = nothing;
+  if (flow.method === "CARD" && flow.cardSimulated === true) {
+    chosenNote = html`<p class="notice" role="status" data-testid="simulated-notice">
+      Simulated refund: nothing reached a card.
+    </p>`;
+  } else if (flow.method !== null) {
+    chosenNote = html`<p class="notice" role="status">${methodWords(flow.method)}: ${methodNote(flow)}</p>`;
+  }
   return html`
     <div class="methods" role="group" aria-label="Refund method">
       ${(["CASH", "CARD", "ACCOUNT_CREDIT"] as const).map((method) => html`
