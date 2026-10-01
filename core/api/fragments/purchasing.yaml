@@ -17,6 +17,9 @@ paths:
       tags: [staff-purchasing]
       summary: List vendors from the vendor directory projection
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -37,6 +40,9 @@ paths:
       tags: [staff-purchasing]
       summary: List purchase orders
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -69,6 +75,9 @@ paths:
         caller. A USD document requires a positive fx_rate; an omitted currency
         means CAD at a rate of 1.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -95,6 +104,9 @@ paths:
       tags: [staff-purchasing]
       summary: Read one purchase order with its lines and receipts
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -120,6 +132,9 @@ paths:
         and editing one after placement is how a three-way match is quietly
         defeated.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -148,6 +163,9 @@ paths:
       tags: [staff-purchasing]
       summary: Remove a line from a draft purchase order
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -177,6 +195,9 @@ paths:
         moves to PARTIAL and RECEIVED are computed from what landed and are
         never requested here.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -210,6 +231,9 @@ paths:
         deployment with that seam unwired refuses rather than recording a
         receipt that would move no stock.
       x-role: requireManager
+      x-access:
+        surfaces: [yard-pick, buying-and-stock]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -243,6 +267,9 @@ paths:
         lies to the person planning around it. Refused on a RECEIVED, CLOSED
         or CANCELLED order.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -279,6 +306,9 @@ paths:
         expected-date route refuses. Core's receiving worklist does not
         render the column yet; the DIB-573 read half is unported.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -312,6 +342,9 @@ paths:
         no-store because the page is rendered through a role gate and a cached
         copy would leak the gated columns.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -335,6 +368,9 @@ paths:
         CSV byte stream and is not representable from the module structs; the
         download filename is the PO number.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -358,6 +394,9 @@ paths:
         cost" is an answer it receives rather than a conclusion it draws from
         a missing key. For a refused caller the body is an empty object.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -378,6 +417,9 @@ paths:
       tags: [staff-purchasing]
       summary: List the send history of one purchase order
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -407,6 +449,9 @@ paths:
         a failed send of a well-formed request is still a 200. An
         idempotency_key replays to the first send rather than sending twice.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -442,6 +487,9 @@ paths:
         The ERP source returned this list under a `lines` key; the contract
         re-envelopes it as a cursor page like every other list.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: product_id
@@ -471,6 +519,9 @@ paths:
       tags: [staff-purchasing]
       summary: List placed purchase orders with something still outstanding
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick, buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -495,6 +546,9 @@ paths:
       tags: [staff-purchasing]
       summary: Read one receiving event with its lines
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick, buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -519,6 +573,9 @@ paths:
         over exactly the lines of this receipt. A receipt already carrying a
         landed cost refuses with a conflict.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -547,6 +604,9 @@ paths:
       tags: [staff-purchasing]
       summary: List vendor bills
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -585,6 +645,9 @@ paths:
         read at; they need not match the PO's, because a vendor may invoice a
         USD order in CAD. Instalment amounts must sum to the bill total.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -611,6 +674,9 @@ paths:
       tags: [staff-purchasing]
       summary: Read one vendor bill with its match verdicts and instalments
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -636,6 +702,9 @@ paths:
         variance spelled out. An empty body is a legitimate "post it as it
         is"; only a malformed body is a 400.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -667,6 +736,9 @@ paths:
         The branch row when one exists, else the org default; the response
         says which through is_branch_override and resolved_from_default.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -688,6 +760,9 @@ paths:
       summary: Set the three-way-match tolerance for a branch or the org default
       description: An empty branch_id sets the org default.
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -717,6 +792,9 @@ paths:
         policy resolves to the restrictive default and never errors: this is a
         read path and degrades downward.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -738,6 +816,10 @@ paths:
       summary: Set the purchasing policy for a branch or the dealer default
       description: An empty branch_id sets the dealer default.
       x-role: requireAdmin
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
+        reason: "the tier gate alone holds this wall: manage on buying-and-stock is reachable by no leadership role the requireAdmin tier admits"
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -768,6 +850,9 @@ paths:
         surface that had to catch a 404 would treat the normal case as an
         error.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: vendorID
@@ -791,6 +876,9 @@ paths:
         One row per vendor. A contact needs an email or a phone: one of the
         two is what makes it a contact.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: vendorID
@@ -822,6 +910,9 @@ paths:
         Sends that already went out keep their stored recipient_kind; that is
         the whole reason the column is stored.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: vendorID
@@ -844,6 +935,9 @@ paths:
       tags: [staff-purchasing]
       summary: List the vendor's own catalogue codes for our products
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: vendorID
@@ -870,6 +964,9 @@ paths:
         factor cannot be counted and a factor with no unit names nothing. An
         empty mapping is the same as no mapping; remove it instead.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: vendorID
@@ -902,6 +999,9 @@ paths:
         The document then degrades to our SKU and our base unit and says so on
         the line: an absent mapping is visible, never papered over.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: vendorID
@@ -929,6 +1029,9 @@ paths:
         path-safe. Both sides of the comparison are normalised by one rule, so
         the stored number and the echoed string fold to the same value.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: ref
@@ -957,6 +1060,9 @@ paths:
         A scoped caller must name an accessible branch: omitting branch_id
         without global scope is refused rather than enumerating every yard.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -990,6 +1096,9 @@ paths:
         retro adjustment and on_hand carries the per-product still-on-hand
         base used to split capitalize versus sold-through at retro time.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1015,6 +1124,9 @@ paths:
       tags: [staff-landedcost]
       summary: Read one landed cost with its allocations
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1035,6 +1147,9 @@ paths:
       tags: [staff-landedcost]
       summary: Preview the allocation under one basis, with no persistence
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1067,6 +1182,9 @@ paths:
         flip commit in one transaction. Applying a non-DRAFT document is an
         idempotent no-op.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1091,6 +1209,9 @@ paths:
         portion expenses straight to COGS, split on the on_hand base captured
         at create. Retro on a non-DRAFT document is an idempotent no-op.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1116,6 +1237,9 @@ paths:
         Voiding a DRAFT refuses with a conflict; voiding a VOIDED document is
         an idempotent no-op.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"

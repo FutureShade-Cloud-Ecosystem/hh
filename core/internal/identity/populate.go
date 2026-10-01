@@ -171,11 +171,25 @@ func ProvisionOrgAnchor(ctx context.Context, db DBTX, slug, name string) (orgID 
 	}
 	// xmax is zero exactly on the insert path of the upsert, which is how
 	// the report distinguishes created from converged without a second
-	// read.
+	// read. The update leg is guarded on the value it would change, so a
+	// re-run against an anchor it already provisioned under the same name
+	// touches nothing: a one-shot that is re-run must leave the row it
+	// finds as it found it, updated_at included, or the row version moves
+	// under every idempotent caller that holds one. A quelled update
+	// returns no row, and that is the converged case, not a failure: the
+	// anchor's id is read back and reported as not-inserted.
 	err = db.QueryRow(ctx, `
 		INSERT INTO org (slug, name) VALUES ($1, $2)
 		ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, updated_at = now()
+			WHERE org.name IS DISTINCT FROM EXCLUDED.name
 		RETURNING id::text, (xmax = 0)`, normalized, name).Scan(&orgID, &inserted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if err := db.QueryRow(ctx,
+			`SELECT id::text FROM org WHERE slug = $1`, normalized).Scan(&orgID); err != nil {
+			return "", false, fmt.Errorf("identity: org anchor read-back failed: %w", err)
+		}
+		return orgID, false, nil
+	}
 	if err != nil {
 		return "", false, fmt.Errorf("identity: org anchor upsert failed: %w", err)
 	}

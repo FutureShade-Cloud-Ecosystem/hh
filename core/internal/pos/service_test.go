@@ -4,14 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	iauth "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/jackc/pgx/v5"
 )
@@ -43,22 +49,23 @@ type fakeStore struct {
 	signatures  []signatureRow
 
 	// -- W7 counter-v2 state --
-	policies       map[string]PosPolicy        // branch_id ("" = org default) → row
-	userWS         map[string]userWorkspaceRow // DIB-488 rev2: user_id → workspace ergonomics row
-	userWSWrites   int                         // upsert count, the replay tests assert "no second write"
-	cachedReturns  map[string]Return           // idempotency key → committed return
-	retCtx         map[string]returnOrderCtx   // order_id → the original-sale context
-	retLines       map[string]returnableLine   // order_line_id → the sold line (prior sums derive from returnLineRows)
-	returnRows     []returnRow
-	returnLineRows []returnLineRow
-	refundPayments map[string]string // return id → refund payment id
-	creditApplies  []creditApply
-	invoiceBalance map[string]int64 // invoice id → open balance (drives ApplyCreditToInvoice)
-	parked         map[string]ParkedTicket
-	pricingDocs    map[string]PricingOrder
-	products       map[string][2]string     // product id → {sku, name}
-	stockMeta      map[string]fakeStockMeta // DIB-488: canned glance unit meta per product
-	staff          map[string]string        // DIB-488 rev 6: user id → display name (ACTIVE staff)
+	policies        map[string]PosPolicy        // branch_id ("" = org default) → row
+	userWS          map[string]userWorkspaceRow // DIB-488 rev2: user_id → workspace ergonomics row
+	userWSWrites    int                         // upsert count, the replay tests assert "no second write"
+	cachedReturns   map[string]Return           // idempotency key → committed return
+	retCtx          map[string]returnOrderCtx   // order_id → the original-sale context
+	retLines        map[string]returnableLine   // order_line_id → the sold line (prior sums derive from returnLineRows)
+	returnRows      []returnRow
+	returnLineRows  []returnLineRow
+	refundPayments  map[string]string // return id → refund payment id
+	creditApplies   []creditApply
+	invoiceBalance  map[string]int64 // invoice id → open balance (drives ApplyCreditToInvoice)
+	parked          map[string]ParkedTicket
+	lastResumeActor string // the actor the last resume stamped (the parked fence's who-resumed)
+	pricingDocs     map[string]PricingOrder
+	products        map[string][2]string     // product id → {sku, name}
+	stockMeta       map[string]fakeStockMeta // DIB-488: canned glance unit meta per product
+	staff           map[string]string        // DIB-488 rev 6: user id → display name (ACTIVE staff)
 	// -- DIB-488 rev 8 canned state (interface compliance, the rev-1/2/5/6 fake-extension class) --
 	weights       map[string]float64  // product id → kg per base unit (absent = none on file)
 	branchCosts   map[string]int64    // product id → WAC cents at the (single) test branch
@@ -365,7 +372,19 @@ func (f *fakeStore) InsertReturn(_ context.Context, _ pgx.Tx, r returnRow) (stri
 	f.log("return")
 	f.returnRows = append(f.returnRows, r)
 	f.seq++
-	return "ret-" + itoa(f.seq), "#RET-" + itoa(f.seq), nil
+	id := "ret-" + itoa(f.seq)
+	no := "#RET-" + itoa(f.seq)
+	// The real store replays by the idempotency key (ux_pos_returns_idem
+	// then FindReturnByKey); the fake mirrors that, so the replay paths are
+	// exercisable against the harness.
+	if r.IdempotencyKey != "" {
+		f.cachedReturns[r.IdempotencyKey] = Return{
+			ReturnID: id, ReturnNo: no, OrderID: r.OrderID, InvoiceID: r.InvoiceID,
+			RefundMethod: r.RefundMethod, SubtotalCents: r.SubtotalCents, TaxCents: r.TaxCents,
+			TotalCents: r.TotalCents, FeeCents: r.FeeCents, Status: "COMMITTED",
+		}
+	}
+	return id, no, nil
 }
 
 func (f *fakeStore) InsertReturnLines(_ context.Context, _ pgx.Tx, _ string, lines []returnLineRow) error {
@@ -434,7 +453,12 @@ func (f *fakeStore) ListParkedTickets(_ context.Context, branchID string) ([]Par
 	return out, nil
 }
 
-func (f *fakeStore) MarkParkedResumed(_ context.Context, id, _ string) (ParkedTicket, error) {
+func (f *fakeStore) GetParkedTicket(_ context.Context, id string) (ParkedTicket, bool, error) {
+	t, ok := f.parked[id]
+	return t, ok, nil
+}
+
+func (f *fakeStore) MarkParkedResumed(_ context.Context, id, actor string) (ParkedTicket, error) {
 	t, ok := f.parked[id]
 	if !ok {
 		return ParkedTicket{}, errParkedNotFound
@@ -444,6 +468,7 @@ func (f *fakeStore) MarkParkedResumed(_ context.Context, id, _ string) (ParkedTi
 	}
 	t.Status = "RESUMED"
 	f.parked[id] = t
+	f.lastResumeActor = actor
 	return t, nil
 }
 
@@ -564,7 +589,9 @@ func (f *fakeStore) TopSellingApplications(_ context.Context, limit int) ([]stri
 	return f.topApps, nil
 }
 
-// fakeResolver is the pricing seam.
+// fakeResolver is the pricing seam. blocked/policy play the GATED resolve's verdict on the same
+// line (what the quote flow's floor would say); the till prices through the counter resolve and
+// ignores that verdict (D48 row 481, D49).
 type fakeResolver struct {
 	tr      *[]string
 	price   pricing.LinePrice
@@ -573,7 +600,7 @@ type fakeResolver struct {
 	err     error
 }
 
-func (r *fakeResolver) DeriveLinePrice(_ context.Context, in pricing.ResolveInput) (pricing.LinePrice, error) {
+func (r *fakeResolver) DeriveCounterLinePrice(_ context.Context, _ pricing.ResolveInput) (pricing.LinePrice, error) {
 	if r.tr != nil {
 		*r.tr = append(*r.tr, "price")
 	}
@@ -799,8 +826,24 @@ func newHarness() *harness {
 		restock: h.restock, cardRefund: h.refunder,
 		audit: h.rec, now: func() time.Time { return time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC) },
 		callerFrom: func(context.Context) (identity.StaffContext, bool) { return h.caller, true },
+		// The gated paths fail closed without a configuration (the lead's
+		// P1-1 ruling), so the harness wires the decided default through
+		// the test config builder; a test that wants another configuration
+		// or none calls WithRoleConfig after the harness.
+		roles: testRoleConfig(),
 	}
 	return h
+}
+
+// testRoleConfig is the unit tests' config builder: the decided default,
+// loaded once. A refused default is a build failure the roleconfig
+// package's own tests would have caught first.
+func testRoleConfig() *roleconfig.Config {
+	cfg, err := roleconfig.Default()
+	if err != nil {
+		panic("test harness: the decided default does not load: " + err.Error())
+	}
+	return cfg
 }
 
 func baseInput() SaleInput {
@@ -811,7 +854,7 @@ func baseInput() SaleInput {
 		CustomerID:     "cust-abc",
 		SaleType:       SaleCollectNow,
 		Tender:         TenderCash,
-		Lines:          []LineInput{{ProductID: "prod-blu", QtyEntered: 100, UOMEntered: "SF", CostCents: 20000}},
+		Lines:          []LineInput{{ProductID: "prod-blu", QtyEntered: 100, UOMEntered: "SF"}},
 	}
 }
 
@@ -1086,19 +1129,52 @@ func TestSale_LinePriced_FromResolver_NotBody(t *testing.T) {
 	}
 }
 
-// -- U8, below-floor line blocked, routes to queue -------------------------
+// -- U8, a line below the floor rings at the rule price, no block (D48 row 481, D49) --------
 
-func TestSale_BelowFloorLine_Blocked_RoutesToQueue(t *testing.T) {
+func TestSale_BelowFloorLine_RingsAtRulePrice_NoBlock(t *testing.T) {
 	h := newHarness()
+	// blocked/policy are the GATED resolve's verdict on the same line, the floor the quote flow
+	// meets. The till prices through the counter resolve and never asks that question.
 	h.resolver.blocked = true
 	h.resolver.policy = string(identity.PolicyMargin)
-	_, err := h.svc.Sale(context.Background(), baseInput())
-	var pb ErrPriceBlocked
-	if !errors.As(err, &pb) || pb.Policy != string(identity.PolicyMargin) || pb.LineNo != 1 {
-		t.Fatalf("want ErrPriceBlocked(MARGIN,line 1), got %v", err)
+	out, err := h.svc.Sale(context.Background(), baseInput())
+	if err != nil {
+		t.Fatalf("the till rings a below-floor line unblocked, got %v", err)
 	}
-	if len(h.store.orders) != 0 {
-		t.Fatalf("below-floor must never commit")
+	if out.Status != "COMMITTED" || len(h.store.orders) != 1 {
+		t.Fatalf("the ruled line commits: %+v orders=%d", out, len(h.store.orders))
+	}
+	if h.store.orderLines[0].UnitPriceCents != 39934 {
+		t.Fatalf("the line rings at the resolver's rule price, got %+v", h.store.orderLines[0])
+	}
+}
+
+// A ring body still carrying a stray cost_cents key is TAKEN: the till's line has no such field,
+// the lenient decoder drops the key, and the sale rings through the counter resolve at the rule
+// price, with or without the key (D48 row 481, D49). Driven through the real handler decode path,
+// not through a struct literal, so the wire shape is what is under test.
+func TestRing_BodyCarryingStrayCostCents_IsTaken(t *testing.T) {
+	h := newHarness()
+	body := `{"idempotency_key":"11111111-1111-4111-8111-111111111111","branch_id":"branch-trt",` +
+		`"till_session_id":"till-1","customer_id":"cust-abc","sale_type":"COLLECT_NOW","tender":"CASH",` +
+		`"cost_cents":999999,` +
+		`"lines":[{"product_id":"prod-blu","qty_entered":100,"uom_entered":"SF","cost_cents":20000}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pos/sales", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	caller := guards.StaffCaller{
+		StaffScope: authz.StaffScope{PlatformUserID: "u-harness", OrgID: "org-harness"},
+		StaffAuthority: iauth.StaffAuthority{
+			RoleID: "inside_sales", Tier: iauth.TierFrontline, Scope: iauth.ScopeBranch,
+			Branches: []string{"branch-trt"},
+		},
+	}
+	hd := NewHandler(h.svc, nil)
+	hd.staff(hd.createSale)(rec, req, caller)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("a ring body carrying a stray cost_cents key is taken: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(h.store.orderLines) != 1 || h.store.orderLines[0].UnitPriceCents != 39934 {
+		t.Fatalf("the stray key must price nothing: the line rings at the rule price, got %+v", h.store.orderLines)
 	}
 }
 

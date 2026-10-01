@@ -736,6 +736,55 @@ func TestProvisionOrgAnchorSlugLegs(t *testing.T) {
 	}
 }
 
+// TestProvisionOrgAnchorRerunWritesNothing holds the update leg's value
+// guard: a re-provision under an unchanged name reports not-inserted and
+// leaves the row exactly as it found it, row version and updated_at
+// included, while a changed name still converges. The demo populate's
+// rerun (the internal/demo exit test) holds the same fact end to end; this
+// is the one-place unit half of that proof.
+func TestProvisionOrgAnchorRerunWritesNothing(t *testing.T) {
+	pool := b4Pool(t)
+	ctx := context.Background()
+	slug := "b4-anchor-rerun"
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DELETE FROM org WHERE slug = $1`, slug); err != nil {
+			t.Fatalf("clean anchor: %v", err)
+		}
+	})
+
+	if _, inserted, err := ProvisionOrgAnchor(ctx, pool, slug, "B4 Anchor Rerun"); err != nil || !inserted {
+		t.Fatalf("first provision: inserted=%v err=%v", inserted, err)
+	}
+	var rowVersion, updatedAt, name string
+	if err := pool.QueryRow(ctx,
+		`SELECT xmin::text, updated_at::text, name FROM org WHERE slug = $1`, slug).
+		Scan(&rowVersion, &updatedAt, &name); err != nil {
+		t.Fatal(err)
+	}
+
+	_, inserted, err := ProvisionOrgAnchor(ctx, pool, slug, "B4 Anchor Rerun")
+	if err != nil || inserted {
+		t.Fatalf("unchanged re-provision: inserted=%v err=%v", inserted, err)
+	}
+	var againVersion, againUpdatedAt, againName string
+	if err := pool.QueryRow(ctx,
+		`SELECT xmin::text, updated_at::text, name FROM org WHERE slug = $1`, slug).
+		Scan(&againVersion, &againUpdatedAt, &againName); err != nil {
+		t.Fatal(err)
+	}
+	if againVersion != rowVersion || againUpdatedAt != updatedAt || againName != name {
+		t.Fatalf("the unchanged re-provision rewrote the anchor row: version %s to %s, updated_at %s to %s, name %q to %q",
+			rowVersion, againVersion, updatedAt, againUpdatedAt, name, againName)
+	}
+
+	if _, inserted, err := ProvisionOrgAnchor(ctx, pool, slug, "B4 Anchor Rerun Renamed"); err != nil || inserted {
+		t.Fatalf("renamed re-provision: inserted=%v err=%v", inserted, err)
+	}
+	if n := b4Count(t, pool, `SELECT count(*) FROM org WHERE slug = $1 AND name = 'B4 Anchor Rerun Renamed'`, slug); n != 1 {
+		t.Fatalf("the renamed re-provision did not converge the name: %d", n)
+	}
+}
+
 // The step 0 gate fails loudly on each defect class and recovers when the
 // defect is removed; the green half is the fixture run's first subtest.
 func TestSeedCoverageGateLegs(t *testing.T) {

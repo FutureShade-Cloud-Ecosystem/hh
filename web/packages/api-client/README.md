@@ -38,9 +38,12 @@ so the generator needs its install first: `npm --prefix core/api/tools ci`.
 - `src/http.ts` is the transport: an injectable `FetchLike` (default binding
   to the platform's global fetch), a base URL, and a caller-set header
   provider. It owns no identity: no token storage, no credential handling;
-  those belong to HH-4.2. The contract's shared `X-Org` header is a
-  caller-set header exactly because of that: a staff caller sets it once on
-  the client, for example `new ApiClient({ baseUrl, headers: () => ({ "X-Org": org }) })`.
+  those belong to HH-4.2. The contract's caller-set headers are headers here
+  exactly because of that: the shared `X-Org` header, which a staff caller
+  sets once on the client, for example
+  `new ApiClient({ baseUrl, headers: () => ({ "X-Org": org }) })`, and the
+  return route's `X-Approver-Authorization`, the approver's credential the
+  till supplies for one call (the generated operation's note names it).
   A header provider that throws or rejects resolves an error Result; it never
   surfaces as a rejected promise. A header value the platform would refuse
   (a control character, a bare CR or LF) is refused by the transport before

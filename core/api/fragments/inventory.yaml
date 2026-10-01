@@ -9,6 +9,9 @@ paths:
         A product with no stock rows is a normal answer: the page is empty,
         never not-found.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -33,6 +36,9 @@ paths:
       tags: [staff-inventory]
       summary: List the recent stock-move ledger for a product
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -62,6 +68,9 @@ paths:
       tags: [staff-inventory]
       summary: List sold lines awaiting a stock move (COLLECT_LATER and DELIVERED)
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -86,6 +95,9 @@ paths:
       tags: [staff-inventory]
       summary: Receive a purchase order into stock (all outstanding units, or explicit per-line quantities)
       x-role: requireManager
+      x-access:
+        surfaces: [yard-pick, buying-and-stock]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -115,6 +127,9 @@ paths:
         Every ordered branch pair is listed, configured or not: a pair with no
         row (configured false) is the one shipping with no promised arrival.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -133,6 +148,10 @@ paths:
       tags: [staff-inventory]
       summary: Store or clear one route's transit time
       x-role: requireAdmin
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
+        reason: "the tier gate alone holds this wall: manage on buying-and-stock is reachable by no leadership role the requireAdmin tier admits"
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -163,6 +182,9 @@ paths:
         stock record (a zeroed row). available_base is on_hand_base minus
         reserved_base and may be negative.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -195,6 +217,9 @@ paths:
         with every filter applied except the facet's own. in_stock_only grades
         available stock, not on-hand.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -284,6 +309,9 @@ paths:
       tags: [staff-inventory]
       summary: List the ACTIVE stock holds, newest first
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -315,6 +343,9 @@ paths:
         answers applied false, which is not an error. location_id defaults to
         branch_id.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock, quote-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -343,6 +374,9 @@ paths:
         One of reservation_id or source_ref_id is required. status defaults to
         RELEASED and must be a terminal reservation status.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -372,6 +406,9 @@ paths:
         and unwinds the projection for the HARD ones. The same service method
         runs on the jobs runner.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -393,6 +430,9 @@ paths:
         is_default is true. An omitted branch_id resolves to the system
         default too.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -417,6 +457,9 @@ paths:
         expiry, so the no-overdraft guard cannot be switched off from a
         settings screen.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -443,6 +486,9 @@ paths:
       tags: [staff-inventory]
       summary: List inter-branch transfers, newest first
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -475,6 +521,9 @@ paths:
         A draft touches no stock: the overdraft guard sits at ship, not at
         create.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -499,6 +548,9 @@ paths:
       tags: [staff-inventory]
       summary: Read one transfer with its lines
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -527,6 +579,9 @@ paths:
         clearing the field, stored as no promised arrival and never
         re-defaulted. Only a DRAFT can ship.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -557,6 +612,9 @@ paths:
       tags: [staff-inventory]
       summary: Unload the truck at the destination branch
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -580,6 +638,9 @@ paths:
       tags: [staff-inventory]
       summary: Cancel a transfer
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -608,6 +669,9 @@ paths:
         carries no promise; nothing here derives a date at read time. Rows are
         limited to the branches the caller's scope reaches.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -638,6 +702,9 @@ paths:
         order), not on-hand. on_order_degraded is true when the on-order leg
         was not measured; it is always present rather than omitted when false.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -662,6 +729,9 @@ paths:
       tags: [staff-inventory]
       summary: List the managed replenishment lines at a branch
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -688,6 +758,9 @@ paths:
         is_active to true so editing a quantity never silently retires the
         line.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -716,6 +789,9 @@ paths:
         comes from the catalogue skid quantity where known. Re-runnable; never
         overwrites a line a person has tuned.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -745,6 +821,9 @@ paths:
         the draft carried alongside the error, so the surface can show what
         would have been ordered.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -778,6 +857,9 @@ paths:
         DRAFT, never an ordered PO. The same 503-with-draft posture as
         shortfall/create-po applies when purchasing is unbound.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -811,6 +893,9 @@ paths:
         branch and the position. Idempotent per product and branch within the
         posting cycle; a repeat answers posted false.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -842,6 +927,9 @@ paths:
       tags: [staff-invcount]
       summary: List count sheets
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -870,6 +958,9 @@ paths:
       tags: [staff-invcount]
       summary: Open a new OPEN count sheet for a branch
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -894,6 +985,9 @@ paths:
       tags: [staff-invcount]
       summary: Read a sheet with its lines and the variance summary
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -916,6 +1010,9 @@ paths:
       tags: [staff-invcount]
       summary: Capture the on-hand snapshot onto the sheet and flip it FROZEN
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -939,6 +1036,9 @@ paths:
       tags: [staff-invcount]
       summary: Submit the maker's counted quantities and reasons; flips the sheet COUNTED
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -972,6 +1072,9 @@ paths:
         The checker must differ from the maker; a same-person approval is
         refused.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -999,6 +1102,9 @@ paths:
         maker. Re-posting a POSTED sheet is a no-op through the per-sheet GL
         idempotency key.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -1027,6 +1133,9 @@ paths:
       tags: [staff-invcount]
       summary: Abandon a sheet before post
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -1050,6 +1159,9 @@ paths:
       tags: [staff-invcount]
       summary: List the per-reason GL account mappings (the reason picker)
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1069,6 +1181,9 @@ paths:
       tags: [staff-invcount]
       summary: List products carrying by-design negative on-hand (sell-before-receipt detection)
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1097,6 +1212,9 @@ paths:
         GL balance seam is unbound the run completes with the subledger side
         computed and answers OUT_OF_TIE rather than failing.
       x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"

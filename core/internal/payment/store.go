@@ -197,7 +197,8 @@ func NewService(store *Store, proc Processor) *Service { return &Service{cfg: st
 
 // Simulated reports whether the wired Processor is the deterministic stub (card TEST MODE, no live
 // gateway call). Surfaced on the config-status endpoint so the POS UI can label the card rail honestly;
-// flips false the day the live RunPaymentsClient is wired in main.go.
+// it flips with the wiring: false once the composition root wires the live client (buildCardRail, on
+// the processor the selector chose), true while the stub is wired.
 func (s *Service) Simulated() bool {
 	_, ok := s.proc.(RunPaymentsStub)
 	return ok
