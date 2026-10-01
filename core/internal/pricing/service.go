@@ -290,12 +290,14 @@ func (s *Service) uomFactorFor(ctx context.Context, productID, uom string) (floa
 //	CUSTOMER_PRODUCT > CUSTOMER_OVERRIDE / CUSTOMER_CATEGORY > TIER_CATEGORY >
 //	TIER_DEFAULT (~99%) > LIST (retail anchor).
 //
-// A matching quantity break is then applied as an ADJUSTMENT ON TOP of that base, bulk breaks
-// STACK on the tier-resolved price (they no longer COMPETE as a waterfall level). So a contractor's
-// −18% Pavers base then a −5% full-skid break yields retail×0.82×0.95, not retail×0.95, and a
-// partial-skid surcharge uplifts the discounted base. PROVISIONAL: the stacking model + the break% /
-// threshold values are pending the dealer principal's confirmation. A negotiated CUSTOMER_PRODUCT contract price is
-// FINAL, no break (or override) applies on top of it.
+// A matching quantity break then competes as ONE single price computed off the retail anchor and
+// REPLACES the resolved base when strictly cheaper (D1's replace rule, never a stack on top of
+// it): a contractor's −18% Pavers base against a −5% full-skid break keeps the −18% price, and
+// the same break against the shelf price replaces it with retail×0.95. A surcharge tier is
+// structurally excluded from the win (an uplift can never be strictly cheaper), and a break with
+// no present, non-zero anchor to price from does not compete at all. PROVISIONAL: the break% /
+// threshold values are pending the dealer principal's confirmation. A negotiated CUSTOMER_PRODUCT
+// contract price is FINAL, no break (or override) applies on top of it.
 // (CUSTOMER_SUPPLIER / SUPPLIER_CATEGORY are RESERVED-UNBUILT, no product→supplier anchor.)
 func (s *Service) ResolvePrice(ctx context.Context, in ResolveInput) (Breakdown, error) {
 	return s.resolve(ctx, in, false, false)
@@ -421,7 +423,7 @@ func (s *Service) resolve(ctx context.Context, in ResolveInput, dryRun, counterT
 		source, detail, declaredUOM, calcType string
 		priceVal                              *int64 // ABSOLUTE
 		discVal, markupVal                    *int64
-		breakAdj                              *QuantityBreak // applied on top of the base (step 6)
+		breakAdj                              *QuantityBreak // the matched break, judged in step 6
 		// DIB-70. wonPromo is non-nil ONLY when a promotion actually became the base, a promo that
 		// matched and lost the never-worse guard leaves it nil, so the Breakdown never advertises a
 		// promo code on a line that is not priced at the promo.
@@ -445,10 +447,11 @@ func (s *Service) resolve(ctx context.Context, in ResolveInput, dryRun, counterT
 		if err != nil {
 			return Breakdown{}, fmt.Errorf("override: %w", err)
 		}
-		// The single applicable break (product-header preferred) is the post-resolution adjustment -
-		// whatever its kind (discount OR surcharge). A missing threshold-UOM conversion surfaces as
-		// errNoConversion rather than silently dropping the break (fix #3), a misconfigured break must
-		// fail loud, never silently undercharge.
+		// The single applicable break (product-header preferred) is selected here whatever its
+		// kind, and judged in step 6 (a discount may replace the base; a surcharge never wins).
+		// A missing threshold-UOM conversion surfaces as errNoConversion rather than silently
+		// dropping the break (fix #3), a misconfigured break must fail loud, never silently
+		// undercharge.
 		breakAdj, err = s.selectBreak(breaks, in, factor)
 		if err != nil {
 			return Breakdown{}, err
@@ -483,8 +486,8 @@ func (s *Service) resolve(ctx context.Context, in ResolveInput, dryRun, counterT
 	// The RESULT price_uom: a percentage discount is dimensionless, so it resolves in the
 	// retail anchor's UOM (apples-to-apples, the client's #1 pain). Only an ABSOLUTE set
 	// price or a MARKUP_ON_COST (cost-denominated) carries its own declared price_uom. The base
-	// calc_type is always a rule/override calc here (a break is a post-resolution adjustment, not a
-	// base calc).
+	// calc_type is always a rule/override calc here (a break prices its own single figure in step
+	// 6, it is never the base calc).
 	resultUOM := declaredUOM
 	if source != SourceList && calcType == CalcPctOffList {
 		resultUOM = listUOM
@@ -610,28 +613,48 @@ func (s *Service) resolve(ctx context.Context, in ResolveInput, dryRun, counterT
 	//    discounts. A break that LOSES the contest (the tier or a promo already beats it) leaves
 	//    the price standing and the breakdown says so, the promo's own never-worse precedent,
 	//    because silence about a volume sign the customer can read is a support call. A SURCHARGE
-	//    tier is the contest's structural loser (an uplift can never be strictly cheaper), so
-	//    under the replace rule it never adjusts the price; ADR-0015 records that loss and the
-	//    vocabulary stays for the editor and the frozen schema. When the break wins, Source
-	//    becomes QUANTITY_BREAK so the breakdown, the low-margin report and the counter all agree
-	//    on why this line is cheap, exactly the treatment a winning promotion gets. A break only
-	//    ever reaches here on the non-CUSTOMER_PRODUCT path (a contract price is final).
+	//    tier is structurally excluded from the win branch, with or without an anchor (an uplift
+	//    can never be strictly cheaper), so it never adjusts the price; ADR-0015 records that loss
+	//    and the vocabulary stays for the editor and the frozen schema. And the best-of is
+	//    ANCHORED: a break with no present, non-zero anchor to price from does not compete at all,
+	//    because off a zero anchor a discount prices at zero and an ABS_OFF-style surcharge at its
+	//    own amount, either of which would "beat" any real price and hand the till a confident
+	//    wrong number. When the break wins, Source becomes QUANTITY_BREAK so the breakdown, the
+	//    low-margin report and the counter all agree on why this line is cheap, exactly the
+	//    treatment a winning promotion gets. A break only ever reaches here on the
+	//    non-CUSTOMER_PRODUCT path (a contract price is final).
 	if breakAdj != nil {
 		if err := requireBreakValue(*breakAdj); err != nil {
 			return Breakdown{}, err
 		}
-		breakCents := breakPriceOffAnchor(*breakAdj, originalCents)
-		if breakCents < finalCents {
-			// THE BREAK WINS. Its single price replaces the tier (and a promo that had won the
-			// base): no compounding in either direction, and the breakdown tells the winner's
-			// story alone, exactly as a winning promotion replaces the detail it beat.
-			finalCents = breakCents
-			source = SourceQuantityBreak
-			wonPromo = nil // the beaten promo no longer prices this line, so it is not advertised
-			detail = breakNote(*breakAdj)
-		} else {
-			// THE BREAK LOST. The customer keeps their better single price, recorded, not silent.
-			detail = appendDetailNote(detail, breakHeldNote(*breakAdj, finalCents, breakCents))
+		switch {
+		case isSurchargeBreak(breakAdj.ValueType):
+			// STRUCTURALLY OUT OF THE WIN BRANCH, before any arithmetic: no anchor state can
+			// make an uplift strictly cheaper, so its candidate is never even computed.
+			detail = appendDetailNote(detail, breakHeldReasonNote(*breakAdj,
+				"an uplift cannot win the replace contest"))
+		case originalCents <= 0:
+			// NO ANCHOR, NO CONTEST. The standing price (an ABSOLUTE override or rule is the
+			// reachable case) holds, and the breakdown records the loss with its reason.
+			detail = appendDetailNote(detail, breakHeldReasonNote(*breakAdj,
+				"no list anchor to price the break from"))
+		default:
+			breakCents := breakPriceOffAnchor(*breakAdj, originalCents)
+			if breakCents < finalCents {
+				// THE BREAK WINS. Its single price replaces the tier (and a promo that had won the
+				// base): no compounding in either direction, and the breakdown tells the winner's
+				// story alone, exactly as a winning promotion replaces the detail it beat.
+				finalCents = breakCents
+				source = SourceQuantityBreak
+				wonPromo = nil // the beaten promo no longer prices this line, so it is not advertised
+				detail = breakNote(*breakAdj)
+			} else if breakHeldNoteWorthy(*breakAdj) {
+				// THE BREAK LOST. The customer keeps their better single price, recorded, not
+				// silent, UNLESS the band never offered anything (a 0 bps band below the first
+				// threshold is the seeded schedules' "no discount yet" floor band): a no-op
+				// explained is noise on every small line.
+				detail = appendDetailNote(detail, breakHeldNote(*breakAdj, finalCents, breakCents))
+			}
 		}
 	}
 
@@ -819,11 +842,11 @@ func (s *Service) selectRule(rules []Rule, scope string, in ResolveInput, keyMat
 }
 
 // selectBreak finds the SINGLE applicable quantity-break tier whose bucket contains the entered qty
-// (converted into the break header's threshold_uom via the catalog ConvertUOM seam), regardless of
-// kind, discount OR surcharge are both applied as adjustments on the base (step 6). Product-specific
-// headers are preferred over category headers. A missing threshold-UOM (or entered-UOM) conversion
-// for an evaluated break is SURFACED as errNoConversion (fix #3), a misconfigured break must fail
-// loud, never silently drop and undercharge.
+// (converted into the break header's threshold_uom via the catalog ConvertUOM seam), whatever its
+// kind; step 6 judges what the matched tier does (a discount may replace the base, a surcharge
+// never wins). Product-specific headers are preferred over category headers. A missing
+// threshold-UOM (or entered-UOM) conversion for an evaluated break is SURFACED as errNoConversion
+// (fix #3), a misconfigured break must fail loud, never silently drop and undercharge.
 func (s *Service) selectBreak(breaks []QuantityBreak, in ResolveInput, factor func(string) (float64, error)) (*QuantityBreak, error) {
 	if len(breaks) == 0 {
 		return nil, nil
@@ -1936,6 +1959,34 @@ func appendDetailNote(baseDetail, note string) string {
 		return note
 	}
 	return baseDetail + " · " + note
+}
+
+// breakHeldReasonNote is what the breakdown says when a matched break is kept out of the contest
+// for a stated reason rather than beaten by a number: a surcharge's structural exclusion, or no
+// non-zero anchor to price the break from.
+func breakHeldReasonNote(b QuantityBreak, reason string) string {
+	label := b.Name
+	if label == "" {
+		if isSurchargeBreak(b.ValueType) {
+			label = "partial-skid surcharge"
+		} else {
+			label = "volume break"
+		}
+	}
+	return label + " not applied, " + reason
+}
+
+// breakHeldNoteWorthy reports whether a break that lost the contest offered anything worth
+// explaining: a zero-value band (the seeded schedules' 0 bps floor below the first threshold)
+// never could beat anything, so explaining its non-application would be noise on every small line.
+func breakHeldNoteWorthy(b QuantityBreak) bool {
+	switch b.ValueType {
+	case BreakPctOff:
+		return b.DiscountBps != nil && *b.DiscountBps != 0
+	case BreakAbsOff:
+		return b.DiscountCents != nil && *b.DiscountCents != 0
+	}
+	return false // surcharges never reach the held-with-numbers branch
 }
 
 // breakHeldNote is what the breakdown says when a break matched the line's quantity and the

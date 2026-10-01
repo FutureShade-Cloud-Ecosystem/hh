@@ -152,6 +152,30 @@ func TestCounterQuote_AQualifiedLineIsOfferedNothing(t *testing.T) {
 	}
 }
 
+// - the hint WALKS THE SCHEDULE under replace: the nearest threshold can lose while a further
+//   tier wins, and the offer is the nearest one that actually beats the standing price -
+
+func TestCounterQuote_TheHintWalksPastALosingTier(t *testing.T) {
+	st := &fakeStore{
+		listPrice: &ListPrice{"blu60", 10000, "EA"},
+		rules: []Rule{{ID: "r-def", Scope: ScopeTierDefault, CustomerType: "CONTRACTOR", CalcType: CalcPctOffList,
+			DiscountBps: p64(700), PriceUOM: "EA", Priority: 10, IsActive: true}},
+		breaks: []QuantityBreak{
+			{HeaderID: "h1", ProductID: "blu60", ThresholdUOM: "EA", FromQty: 10, ToQty: f64p(20), ValueType: BreakPctOff, DiscountBps: p64(500), PriceUOM: "EA"},
+			{HeaderID: "h1", ProductID: "blu60", ThresholdUOM: "EA", FromQty: 20, ValueType: BreakPctOff, DiscountBps: p64(1500), PriceUOM: "EA"},
+		},
+	}
+	// Standing price 9300. The nearest threshold prices 9500 (worse, the old hint stopped there
+	// and went silent); the walk continues to 20 EA, where the break's 8500 wins.
+	q := counterQuote(t, counterSvc(st), accountInput(5))
+	if q.NextBreakQty != 20 || q.NextBreakUnitCents != 8500 {
+		t.Fatalf("the hint offers the nearest threshold that beats the price: 20 EA at 8500, got %+v", q)
+	}
+	if q.NextBreakSaveCents != 9300-8500 {
+		t.Fatalf("the offered saving is against what they pay now: %+v", q)
+	}
+}
+
 // - an uplift is not a saving, and crossing into one is not an opportunity -
 
 func TestCounterQuote_SurchargeNeverReportsANegativeSaving(t *testing.T) {

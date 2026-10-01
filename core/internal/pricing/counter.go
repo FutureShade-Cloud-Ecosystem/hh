@@ -242,19 +242,27 @@ func (s *Service) attachNextBreak(ctx context.Context, in ResolveInput, bd Break
 		return
 	}
 	sort.Slice(cands, func(i, j int) bool { return cands[i].fromQty < cands[j].fromQty })
-	best := cands[0]
-	at := probe
-	at.QtyEntered = best.entered
-	atBd, err := s.ResolvePricePreview(ctx, at)
-	if err != nil {
+	// THE HINT WALKS THE SCHEDULE under the replace rule (C53): the nearest threshold can LOSE the
+	// contest while a further tier wins (an account already at 7% off against a 5%-off next band
+	// and a 15%-off band above it), so the offer is the NEAREST threshold whose priced break
+	// actually beats the standing price, not merely the nearest threshold. Each candidate is
+	// priced through the ordinary waterfall, so every number considered and shown is a real
+	// resolved price, and the walk is bounded by the schedule's own tier count.
+	for _, cand := range cands {
+		at := probe
+		at.QtyEntered = cand.entered
+		atBd, err := s.ResolvePricePreview(ctx, at)
+		if err != nil {
+			return
+		}
+		// Only an offer that actually beats what they are paying now is worth a pixel.
+		if atBd.FinalCents <= 0 || atBd.FinalCents >= bd.FinalCents {
+			continue
+		}
+		q.NextBreakQty = cand.fromQty
+		q.NextBreakUOM = cand.uom
+		q.NextBreakUnitCents = atBd.FinalCents
+		q.NextBreakSaveCents = bd.FinalCents - atBd.FinalCents
 		return
 	}
-	// Only an offer that actually beats what they are paying now is worth a pixel.
-	if atBd.FinalCents <= 0 || atBd.FinalCents >= bd.FinalCents {
-		return
-	}
-	q.NextBreakQty = best.fromQty
-	q.NextBreakUOM = best.uom
-	q.NextBreakUnitCents = atBd.FinalCents
-	q.NextBreakSaveCents = bd.FinalCents - atBd.FinalCents
 }

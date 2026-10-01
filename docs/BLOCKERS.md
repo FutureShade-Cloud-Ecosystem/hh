@@ -223,3 +223,16 @@ bearer never did either), and the generator emits a note on the one operation
 that declares the header, so the regenerated client visibly carries it. The
 lead may want this hunk re-homed when the pull request is read; the rest of
 the commit is contract sources and generated outputs only.
+
+## W4 (quantity break, HH-184): the surcharge break vocabulary is inert configuration (open, for the dealers' record)
+
+Under D1's replace rule a quantity break wins only when strictly cheaper, and
+an uplift can never be, so the two surcharge value types (`SURCHARGE_PCT`,
+`SURCHARGE_ABS`, the partial-skid tiers) no longer adjust any price anywhere;
+ADR-0015 records that loss. The break editor still accepts surcharge tiers and
+the first dealer's seed still plants one (the natural-stone partial-skid
+schedule), and nothing on the editing surface tells the dealer who configures
+one that the tier can never fire. The tier's own data, its validation and its
+row survive untouched (the schema is frozen); what is owed is a dealer-facing
+note on the editor, or a seed and editor cleanup once Colton rules which, so
+nobody tunes a surcharge expecting the counter to charge it.

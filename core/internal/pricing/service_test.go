@@ -864,6 +864,68 @@ func TestResolve_LineCrossingABreakPricesAtTheBreak(t *testing.T) {
 	}
 }
 
+// - P1: NO ANCHOR, NO CONTEST. An ABSOLUTE base with no list price (or a zero one) gives the
+//   matched break nothing to price from: the standing override price holds (never the 0 the zero
+//   anchor priced), and a surcharge tier is structurally out of the win branch, so the surcharge
+//   amount alone is never a price. Both arms assert against the wrong answers. -
+func TestResolve_BreakWithoutAnAnchor_DoesNotCompete(t *testing.T) {
+	override := &Override{ID: "ov1", CustomerID: "abc", CategoryID: "pavers", CalcType: CalcAbsolute, PriceCents: p64(5000), PriceUOM: "SF"}
+	breaks := []QuantityBreak{{
+		HeaderID: "h1", ProductID: "blu60", ThresholdUOM: "SF", FromQty: 0,
+		ValueType: BreakPctOff, DiscountBps: p64(5000), PriceUOM: "SF",
+	}}
+	in := base(ResolveInput{CustomerID: "abc", CategoryID: "pavers", QtyEntered: 20, UOMEntered: "SF"})
+	// No list row at all: the discount priced off the absent anchor would answer 0.
+	bd := resolve(t, newSvc(&fakeStore{override: override, breaks: breaks}, "pavers"), in)
+	if bd.Source != SourceCustomerOverride || bd.FinalCents != 5000 {
+		t.Fatalf("the override price 5000 holds (a break off the absent anchor would answer 0), got %s/%d", bd.Source, bd.FinalCents)
+	}
+	if !strings.Contains(bd.Detail, "no list anchor to price the break from") {
+		t.Fatalf("the breakdown records why the break could not compete, got %q", bd.Detail)
+	}
+	// A list row AT zero is the same absent anchor: the override still holds.
+	bd0 := resolve(t, newSvc(&fakeStore{override: override, listPrice: &ListPrice{"blu60", 0, "SF"}, breaks: breaks}, "pavers"), in)
+	if bd0.Source != SourceCustomerOverride || bd0.FinalCents != 5000 {
+		t.Fatalf("a zero anchor is no anchor: the override 5000 holds, got %s/%d", bd0.Source, bd0.FinalCents)
+	}
+	// A SURCHARGE_ABS tier can never win at all, with or without an anchor: the surcharge amount
+	// alone (CA$3.00) is never a price, and the source never claims the break won.
+	st := &fakeStore{override: override, breaks: []QuantityBreak{{
+		HeaderID: "h2", ProductID: "blu60", Name: "Partial-skid surcharge", ThresholdUOM: "SF", FromQty: 0,
+		ValueType: BreakSurchargeAbs, SurchargeCents: p64(300), PriceUOM: "SF",
+	}}}
+	bd2 := resolve(t, newSvc(st, "pavers"), in)
+	if bd2.Source != SourceCustomerOverride || bd2.FinalCents != 5000 {
+		t.Fatalf("a surcharge tier never wins: the override 5000 holds (the surcharge amount alone would answer 300), got %s/%d", bd2.Source, bd2.FinalCents)
+	}
+	if !strings.Contains(bd2.Detail, "an uplift cannot win the replace contest") {
+		t.Fatalf("the surcharge's exclusion is recorded with its reason, got %q", bd2.Detail)
+	}
+}
+
+// - The seeded schedules' 0 bps floor band (QB1 and QB2 both carry one below the first
+//   threshold) matches every small line and offers nothing: it appends no not-applied note. -
+func TestResolve_ZeroBandBelowTheThresholdNotesNothing(t *testing.T) {
+	st := &fakeStore{
+		listPrice: &ListPrice{"blu60", 48700, "SF"},
+		rules:     []Rule{{ID: "r-cat", Scope: ScopeTierCategory, CustomerType: "CONTRACTOR", CategoryID: "pavers", CalcType: CalcPctOffList, DiscountBps: p64(1800), PriceUOM: "SF", Priority: 40, IsActive: true}},
+		breaks: []QuantityBreak{
+			{HeaderID: "h1", ProductID: "blu60", ThresholdUOM: "SF", FromQty: 0, ToQty: f64p(500), ValueType: BreakPctOff, DiscountBps: p64(0), PriceUOM: "SF"},
+			{HeaderID: "h1", ProductID: "blu60", ThresholdUOM: "SF", FromQty: 500, ValueType: BreakPctOff, DiscountBps: p64(500), PriceUOM: "SF"},
+		},
+	}
+	// The account below the threshold: the 0 bps band matched and said nothing worth saying.
+	bd := resolve(t, newSvc(st, "pavers"), base(ResolveInput{CategoryID: "pavers", QtyEntered: 240, UOMEntered: "SF"}))
+	if bd.Source != SourceTierCategory || bd.FinalCents != 39934 || strings.Contains(bd.Detail, "not applied") {
+		t.Fatalf("the floor band is silence: 39934 with no note, got %s/%d %q", bd.Source, bd.FinalCents, bd.Detail)
+	}
+	// The walk-in at list: the band's candidate equals the price, again nothing to explain.
+	retail := resolve(t, newSvc(st, "pavers"), base(ResolveInput{CustomerType: "RETAIL", CategoryID: "pavers", QtyEntered: 240, UOMEntered: "SF"}))
+	if retail.Source != SourceList || retail.FinalCents != 48700 || strings.Contains(retail.Detail, "not applied") {
+		t.Fatalf("at list the floor band changes and explains nothing, got %s/%d %q", retail.Source, retail.FinalCents, retail.Detail)
+	}
+}
+
 // - F6: an unknown product (catalog seam not-found) maps to pricing errNotFound (→ 404) -
 // Fix #6: GetCategory's product not-found previously surfaced as a generic 500.
 func TestResolve_ProductNotFound_MapsToNotFound(t *testing.T) {
