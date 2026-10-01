@@ -14,6 +14,9 @@ paths:
       tags: [staff-dispatch]
       summary: List the truck registry for a branch
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -41,6 +44,9 @@ paths:
       tags: [staff-dispatch]
       summary: Register a truck (a truck row outlives every run on it)
       x-role: requireManager
+      x-access:
+        surfaces: [dispatch-board]
+        level: manage
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -66,6 +72,9 @@ paths:
       tags: [staff-dispatch]
       summary: List the driver registry for a branch
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -93,6 +102,9 @@ paths:
       tags: [staff-dispatch]
       summary: Register a driver
       x-role: requireManager
+      x-access:
+        surfaces: [dispatch-board]
+        level: manage
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -120,6 +132,9 @@ paths:
       tags: [staff-dispatch]
       summary: Read the board for one branch and date (runs, stops, unassigned lane)
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -151,6 +166,9 @@ paths:
         through the order seam. commit_state is an intent, not an assertion;
         asking for COMMITTED without the commit capability is refused.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -178,6 +196,9 @@ paths:
       tags: [staff-dispatch]
       summary: Read one stop with its photo metadata and MTO classification
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -198,6 +219,9 @@ paths:
       tags: [staff-dispatch]
       summary: Put a stop on a run at a position (stop_no 0 appends)
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -230,6 +254,9 @@ paths:
         CANCELLED, EN_ROUTE to DELIVERED or FAILED; terminal states admit no
         further move. An illegal move answers 409, never 400.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board, drive-run]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -258,6 +285,9 @@ paths:
       tags: [staff-dispatch]
       summary: Capture the proof-of-delivery attestation (typed name plus explicit affirmative)
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board, drive-run]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -290,6 +320,9 @@ paths:
         multipart, so no JSON schema applies; the byte size is bounded server
         side. The caption rides in the query string.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board, drive-run]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -327,6 +360,9 @@ paths:
         The response is the raw image, not JSON; the Content-Type is the one
         recorded at upload. Evidence caches privately, never in a shared cache.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board, drive-run]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -352,6 +388,9 @@ paths:
       tags: [staff-dispatch]
       summary: List runs for a branch, optionally for one date
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -379,6 +418,9 @@ paths:
       tags: [staff-dispatch]
       summary: Open a run for a branch and date (truck and driver may be settled later)
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -407,6 +449,9 @@ paths:
         An id lookup answers 403 across branches; the number lookup on
         run-by-no answers 404 instead. The two are deliberately separate paths.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board, drive-run]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -430,6 +475,9 @@ paths:
         A number lookup answers 404 where the id lookup answers 403, so a run
         number is not an existence oracle for a branch the caller cannot see.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -453,6 +501,9 @@ paths:
       tags: [staff-dispatch]
       summary: Assign the truck and driver on a run
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -481,6 +532,9 @@ paths:
       tags: [staff-dispatch]
       summary: Dispatch a run (a run needs both a truck and a driver first)
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -502,6 +556,9 @@ paths:
       tags: [staff-dispatch]
       summary: Complete a run (refused while stops are still in flight)
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board, drive-run]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -523,6 +580,9 @@ paths:
       tags: [staff-dispatch]
       summary: Cancel a planned run (a dispatched run cannot be cancelled)
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -549,6 +609,9 @@ paths:
         on any machine. Served no-store because a cached copy would show stops
         that have since moved.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -568,6 +631,9 @@ paths:
       tags: [staff-dispatch]
       summary: Record a manifest print through the shared print queue (DELIVERY_DOC)
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -596,6 +662,9 @@ paths:
         caller the dealer's load_value_visibility refuses; value_visible says
         whether an absence means refused or unpriced.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -623,6 +692,9 @@ paths:
       tags: [staff-dispatch]
       summary: Read per-date load counts over a range
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -659,6 +731,9 @@ paths:
         gaps_checked false means the availability seam did not answer, so an
         empty list must not be read as the yard being clear.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -688,6 +763,9 @@ paths:
       tags: [staff-dispatch]
       summary: List the procurement gaps for one order (the yard's view)
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -720,6 +798,9 @@ paths:
         a failed request. Each stop is branch-fenced individually, so a list is
         not a way around the fence.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -749,6 +830,9 @@ paths:
         to match the policy write, because somebody who may change the rules
         may see who changed them.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -773,6 +857,9 @@ paths:
       tags: [staff-dispatch]
       summary: Read the effective dispatch policy for a branch
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -798,6 +885,9 @@ paths:
         fire; omitted knobs normalise to the column defaults rather than to
         zero.
       x-role: requireManager
+      x-access:
+        surfaces: [dispatch-board]
+        level: manage
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -828,6 +918,9 @@ paths:
         reopen_policy and the caller's own authority, answering 403 when this
         person may not and 409 when the load's state refuses.
       x-role: requireManager
+      x-access:
+        surfaces: [dispatch-board]
+        level: manage
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -856,6 +949,9 @@ paths:
       tags: [staff-dispatch]
       summary: Reopen a whole run, returning its loads to REQUESTED
       x-role: requireManager
+      x-access:
+        surfaces: [dispatch-board]
+        level: manage
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -884,6 +980,9 @@ paths:
       tags: [staff-dispatch]
       summary: Clear a run's reopen marker once its loads are committed again
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -909,6 +1008,9 @@ paths:
         a caller with the commit capability may commit, so a salesperson is
         refused whatever they send. A COMMITTED load refuses its own mutation.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -942,6 +1044,9 @@ paths:
         Not lock-guarded: recording what a load actually weighs is the yard
         telling the truth about the plan, not a change to it. Never money.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -975,6 +1080,9 @@ paths:
         the quoted baseline does not apply: it parks on the approvals queue and
         the response carries it under parked with nothing written.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1007,6 +1115,9 @@ paths:
         whose, and the figures are absent from the payload, not blanked on a
         screen.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1032,6 +1143,9 @@ paths:
         looks like intelligence. A Pro build satisfies the seam and the route
         starts answering; nothing else changes.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1054,6 +1168,9 @@ paths:
         The only read that populates stop_lines: what comes off the truck at
         each stop, with no money field of any kind on the line type.
       x-role: requireStaff
+      x-access:
+        surfaces: [drive-run]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1087,6 +1204,9 @@ paths:
         ever; it is served no-store. One live code per order; a second mint is
         a 409 until the first is revoked.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch, requirePicked]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1113,6 +1233,9 @@ paths:
       tags: [staff-dispatch]
       summary: List an order's pickup codes (never the raw tokens)
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1143,6 +1266,9 @@ paths:
         Revocation is an explicit act so a reprint is a decision, not a side
         effect. A code that is not live answers 409.
       x-role: requireManager
+      x-access:
+        surfaces: [dispatch-board]
+        level: manage
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1166,6 +1292,9 @@ paths:
       tags: [staff-dispatch]
       summary: Classify a load as STANDARD, MTO or MIXED
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1194,6 +1323,9 @@ paths:
       tags: [staff-dispatch]
       summary: Fold late-arriving photos into the stop's POD record
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board, drive-run]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1218,6 +1350,9 @@ paths:
         The move is refused with 409 once the stop has left the planning stage:
         a delivery that has gone is a fact, not a plan.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1246,6 +1381,9 @@ paths:
       tags: [staff-dispatch]
       summary: Read one stop's reschedule trail
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1272,6 +1410,9 @@ paths:
         state cached on a delivery row is wrong the moment the customer pays.
         The reason sentence is written for a driver to read at the gate.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1292,6 +1433,9 @@ paths:
       tags: [staff-dispatch]
       summary: Move a planned run and its stops to another date, with a reason
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1320,6 +1464,9 @@ paths:
       tags: [staff-dispatch]
       summary: Read one run's reschedule trail
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1342,6 +1489,9 @@ paths:
       tags: [staff-dispatch]
       summary: Read the payment banners for every stop on a run
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1368,6 +1518,9 @@ paths:
         the load has already reached answers 409. stop_id is optional because
         RECEIVED and YARD happen before any delivery is scheduled.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1399,6 +1552,9 @@ paths:
         DELIVERED: an order with three pallets and two delivered is not a
         delivered order.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       x-guards: [requireBranch]
       parameters:
         - $ref: "#/components/parameters/XOrg"
