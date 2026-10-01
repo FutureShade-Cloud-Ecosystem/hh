@@ -176,6 +176,30 @@ func TestRefuseUnparsableDocument(t *testing.T) {
 	}
 }
 
+// Validate is the checks' entry for a document a caller holds
+// unmarshalled: the same refusals Load returns after it parses, and on the
+// clean document the same Config the guards read.
+func TestValidateDirect(t *testing.T) {
+	doc := docFromDefault(t)
+	doc.Settings[SettingRefundApprovers] = json.RawMessage(`["hr"]`)
+	cfg, err := Validate(&doc)
+	if err == nil || cfg != nil {
+		t.Fatal("Validate accepted HR on the refund approvers list")
+	}
+	var verr *ValidationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("the Validate refusal is a %T, wanted a *ValidationError: %v", err, err)
+	}
+	clean := docFromDefault(t)
+	got, err := Validate(&clean)
+	if err != nil {
+		t.Fatalf("Validate refused the decided default: %v", err)
+	}
+	if level, err := got.Level("inside_sales", "counter-till"); err != nil || level != LevelWork {
+		t.Errorf("the validated default reads inside_sales on counter-till as %s, %v", level, err)
+	}
+}
+
 // The startup contract: the core's startup path loads its configuration
 // and stops on the error. This test walks the path a startup walks: with a
 // refused configuration, no Config exists to guard with, and the refusal

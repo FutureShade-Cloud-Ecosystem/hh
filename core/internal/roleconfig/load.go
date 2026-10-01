@@ -22,6 +22,14 @@ func Load(data []byte) (*Config, error) {
 	return validate(&doc)
 }
 
+// Validate runs the load checks over a document already in memory: the
+// same checks Load runs after it parses, the same refusal. The startup
+// path and the tests call Load or Default; Validate is the entry for a
+// caller holding the document unmarshalled.
+func Validate(doc *Document) (*Config, error) {
+	return validate(doc)
+}
+
 // Default loads the embedded decided default (D48). The startup path calls
 // this and stops on the error.
 func Default() (*Config, error) {
