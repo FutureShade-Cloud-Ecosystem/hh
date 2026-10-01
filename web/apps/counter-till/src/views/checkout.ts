@@ -1,11 +1,11 @@
 // The tender and the receipt: how a sale settles and what the customer walks
 // away with. The card tender sends the fixed demo token and nothing else: no
-// card number field exists in this app and no tokenizing script is loaded, so
-// the second source scan has nothing to find. The simulated notice is value
-// driven: it renders exactly when the status route's simulated answered true,
-// on the tender and again on the receipt, and never when it answered false or
-// did not answer. The change due is the core's figure, read off the committed
-// sale; this screen computes no money of its own.
+// field in this app takes a card's digits, and no script that reads a card is
+// loaded, so the second source scan has nothing to find. The simulated notice
+// is value driven: it renders exactly when the status route's simulated
+// answered true, on the tender and again on the receipt, and never when it
+// answered false or did not answer. The change due is the core's figure, read
+// off the committed sale; this screen computes no money of its own.
 import { css, html, nothing, type TemplateResult } from "lit";
 
 export type TenderChoice = "CASH" | "CARD" | "ACCOUNT";
@@ -41,7 +41,7 @@ export interface ReceiptView {
   changeDue: string | null;
   simulated: boolean | null;
   /** The account sale's after-state: the invoice and the fresh balance. */
-  account: { name: string; accountNo: string; balance: string | null } | null;
+  account: { name: string; accountNo: string; invoiceNo: string; balance: string | null } | null;
 }
 
 export const checkoutStyles = css`
@@ -219,7 +219,7 @@ export function renderReceipt(view: ReceiptView): TemplateResult {
       ${view.account === null
         ? nothing
         : html`<p data-testid="receipt-account">
-            Billed to ${view.account.name} (${view.account.accountNo}):
+            Billed to ${view.account.name} (${view.account.accountNo}) on invoice ${view.account.invoiceNo}:
             the account's balance is now
             ${view.account.balance === null
               ? html`<span class="unpriced">(not answered)</span>`

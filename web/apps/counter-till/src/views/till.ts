@@ -127,12 +127,12 @@ export const tillStyles = css`
     align-items: center;
     margin: 0 0 var(--hh-s-8);
   }
-  form.search label {
+  form.search label, .search label {
     min-width: 100%;
     color: var(--hh-text-dim);
     font-size: var(--hh-s-12);
   }
-  form.search input {
+  form.search input, .search input {
     flex: 1;
     min-width: 160px;
     min-height: 44px;
@@ -144,7 +144,7 @@ export const tillStyles = css`
     font-family: inherit;
     font-size: var(--hh-s-16);
   }
-  form.search input:focus-visible {
+  form.search input:focus-visible, .search input:focus-visible {
     outline: 2px solid var(--hh-focus-ring);
     outline-offset: 2px;
   }
@@ -275,7 +275,7 @@ function renderSearch(panel: SearchPanel): TemplateResult {
   return html`
     <section class="panel" aria-label="Product search">
       <h3>Products</h3>
-      <form class="search" data-form="product-search">
+      <div class="search">
         <label for="product-search-input">Search the catalogue by sku or name</label>
         <input
           id="product-search-input"
@@ -284,8 +284,8 @@ function renderSearch(panel: SearchPanel): TemplateResult {
           autocomplete="off"
           placeholder="for example, Holland"
         />
-        <button type="submit" class="btn-primary">Search</button>
-      </form>
+        <button type="button" class="btn-primary" data-action="search-products">Search</button>
+      </div>
       ${panel.state === "loading"
         ? html`<p class="notice" role="status">Searching the catalogue.</p>`
         : nothing}
@@ -304,6 +304,15 @@ function renderSearch(panel: SearchPanel): TemplateResult {
                     <span class="sku">${hit.sku}</span>
                     <span class="name">${hit.name}</span>
                     <span class="sold-by">sold by ${hit.soldBy}</span>
+                    <button
+                      type="button"
+                      class="btn-primary"
+                      data-action="add-line"
+                      data-product-id=${hit.productId}
+                      aria-label="Add ${hit.name} to the ticket"
+                    >
+                      Add
+                    </button>
                   </li>
                 `,
               )}
@@ -355,7 +364,7 @@ function renderCustomer(panel: CustomerPanel): TemplateResult {
       ${picked.kind === "account" && picked.standingMessage !== null
         ? html`<p class="notice" role="status">${picked.standingMessage}</p>`
         : nothing}
-      <form class="search" data-form="customer-search">
+      <div class="search">
         <label for="customer-search-input">Find an account by name or account number</label>
         <input
           id="customer-search-input"
@@ -364,8 +373,8 @@ function renderCustomer(panel: CustomerPanel): TemplateResult {
           autocomplete="off"
           placeholder="for example, Fenwick"
         />
-        <button type="submit" class="btn-secondary">Find</button>
-      </form>
+        <button type="button" class="btn-secondary" data-action="search-customers">Find</button>
+      </div>
       ${panel.searchState === "loading"
         ? html`<p class="notice" role="status">Searching the accounts.</p>`
         : nothing}

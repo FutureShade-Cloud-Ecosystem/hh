@@ -11,8 +11,8 @@
 // harness and a hand-run dev server can point at the same stub.
 import { defineConfig } from "vite";
 
-const stubPort = process.env.CT_STUB_PORT ?? "4821";
-const appPort = process.env.CT_APP_PORT ?? "4820";
+const stubPort = process.env.CT_STUB_PORT ?? "4827";
+const appPort = process.env.CT_APP_PORT ?? "4826";
 
 export default defineConfig({
   server: {

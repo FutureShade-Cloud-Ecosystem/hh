@@ -186,15 +186,16 @@ export class CounterTillApp extends HHElement {
     // the HOST and read the control off composedPath(), never @click in a
     // template and never event.target.closest, because the shadow boundary
     // retargets the target to this element (the design system's README holds
-    // both halves).
+    // both halves). Click is composed, so the host hears it; the search
+    // panels are therefore plain buttons with data-action, never forms (a
+    // form's submit is not composed, and a host listener would never see it:
+    // measured, not assumed).
     this.addEventListener("click", this.#onHostClick);
-    this.addEventListener("submit", this.#onHostSubmit);
     void this.#loadFlows();
   }
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
-    this.removeEventListener("submit", this.#onHostSubmit);
     super.disconnectedCallback();
   }
 
@@ -209,6 +210,14 @@ export class CounterTillApp extends HHElement {
     }
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
+    }
+    if (control.getAttribute("data-action") === "search-products") {
+      const input = this.renderRoot.querySelector<HTMLInputElement>('input[data-input="product-search"]');
+      void this.#searchProducts(input instanceof HTMLInputElement ? input.value : "");
+    }
+    if (control.getAttribute("data-action") === "search-customers") {
+      const input = this.renderRoot.querySelector<HTMLInputElement>('input[data-input="customer-search"]');
+      void this.#searchCustomers(input instanceof HTMLInputElement ? input.value : "");
     }
     if (control.getAttribute("data-action") === "retry-drawer") {
       void this.#ensureDrawer();
@@ -256,23 +265,6 @@ export class CounterTillApp extends HHElement {
     if (control.getAttribute("data-action") === "resume-ticket") {
       const ticketId = control.getAttribute("data-ticket-id");
       if (typeof ticketId === "string" && ticketId !== "") void this.#resumeTicket(ticketId);
-    }
-  };
-
-  readonly #onHostSubmit = (event: Event): void => {
-    const form = event
-      .composedPath()
-      .find((node): node is Element => node instanceof Element && node.hasAttribute("data-form"));
-    if (form === undefined) return;
-    event.preventDefault();
-    const kind = form.getAttribute("data-form");
-    if (kind === "product-search") {
-      const input = form.querySelector('[data-input="product-search"]');
-      void this.#searchProducts(input instanceof HTMLInputElement ? input.value : "");
-    }
-    if (kind === "customer-search") {
-      const input = form.querySelector('[data-input="customer-search"]');
-      void this.#searchCustomers(input instanceof HTMLInputElement ? input.value : "");
     }
   };
 
@@ -850,6 +842,7 @@ export class CounterTillApp extends HHElement {
           ? {
               name: this.#customer.customer.name,
               accountNo: this.#customer.customer.accountNo,
+              invoiceNo: sale.invoiceNo,
               balance: this.#receiptBalance,
             }
           : null,

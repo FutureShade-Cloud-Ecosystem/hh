@@ -72,8 +72,9 @@ export interface TicketItem {
 
 /**
  * The card tender's token: the fixed demo token the simulator requires to be
- * non-empty. This app has no card number field and loads no card tokenization
- * script: the token is a constant, and the second source scan holds that.
+ * non-empty. No field in this app takes a card's digits, and no script that
+ * reads a card is loaded: the token is a constant, and the second source scan
+ * holds that.
  */
 export const DEMO_CARD_TOKEN = "demo-card-token";
 
