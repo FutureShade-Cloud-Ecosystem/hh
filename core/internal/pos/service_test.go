@@ -1088,19 +1088,23 @@ func TestSale_LinePriced_FromResolver_NotBody(t *testing.T) {
 	}
 }
 
-// -- U8, below-floor line blocked, routes to queue -------------------------
+// -- U8, a line below the floor rings at the rule price, no block (D48 row 481, D49) --------
 
-func TestSale_BelowFloorLine_Blocked_RoutesToQueue(t *testing.T) {
+func TestSale_BelowFloorLine_RingsAtRulePrice_NoBlock(t *testing.T) {
 	h := newHarness()
+	// blocked/policy are the GATED resolve's verdict on the same line, the floor the quote flow
+	// meets. The till prices through the counter resolve and never asks that question.
 	h.resolver.blocked = true
 	h.resolver.policy = string(identity.PolicyMargin)
-	_, err := h.svc.Sale(context.Background(), baseInput())
-	var pb ErrPriceBlocked
-	if !errors.As(err, &pb) || pb.Policy != string(identity.PolicyMargin) || pb.LineNo != 1 {
-		t.Fatalf("want ErrPriceBlocked(MARGIN,line 1), got %v", err)
+	out, err := h.svc.Sale(context.Background(), baseInput())
+	if err != nil {
+		t.Fatalf("the till rings a below-floor line unblocked, got %v", err)
 	}
-	if len(h.store.orders) != 0 {
-		t.Fatalf("below-floor must never commit")
+	if out.Status != "COMMITTED" || len(h.store.orders) != 1 {
+		t.Fatalf("the ruled line commits: %+v orders=%d", out, len(h.store.orders))
+	}
+	if h.store.orderLines[0].UnitPriceCents != 39934 {
+		t.Fatalf("the line rings at the resolver's rule price, got %+v", h.store.orderLines[0])
 	}
 }
 

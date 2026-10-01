@@ -691,17 +691,22 @@ func TestPricingOrder_SnapshotsListVsOffered_TotalsAndValidity(t *testing.T) {
 	}
 }
 
-func TestPricingOrder_BlockedLine_RoutesLikeSale(t *testing.T) {
+// The till's pricing doc prices through the counter resolve too (D48 row 481, D49): a line the
+// gated resolve would refuse below the floor is priced and the document is created.
+func TestPricingOrder_BelowFloorLine_IsCreated_NoBlock(t *testing.T) {
 	h := newHarness()
+	// The GATED resolve's verdict on the same line; the pricing order never asks it.
 	h.resolver.blocked = true
 	h.resolver.policy = "MARGIN_FLOOR"
-	_, err := h.svc.CreatePricingOrder(context.Background(), PricingOrderInput{
+	po, err := h.svc.CreatePricingOrder(context.Background(), PricingOrderInput{
 		BranchID: "branch-trt",
 		Lines:    []PricingOrderLineInput{{ProductID: "prod-blu", QtyEntered: 1, UOMEntered: "EA"}},
 	})
-	var pb ErrPriceBlocked
-	if !errors.As(err, &pb) {
-		t.Fatalf("a below-floor pricing line must block, got %v", err)
+	if err != nil {
+		t.Fatalf("the till's pricing order is created below the floor, got %v", err)
+	}
+	if po.DocNo == "" || len(po.Lines) != 1 || po.Lines[0].UnitPriceCents != 39934 {
+		t.Fatalf("the doc carries the resolver's rule price: %+v", po)
 	}
 }
 

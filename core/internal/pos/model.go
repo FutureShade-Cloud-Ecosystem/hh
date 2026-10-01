@@ -353,19 +353,6 @@ func clientErr(status int, format string, a ...any) error {
 	return clientError{status: status, msg: fmt.Sprintf(format, a...)}
 }
 
-// ErrPriceBlocked was the till's below-floor refusal (routes to the 0016 queue). The till no
-// longer refuses a line as blocked (D48 row 481, D49): nothing produces it and the handler no
-// longer maps it; the type goes when the last tests asserting the old refusal are brought to
-// the ruling.
-type ErrPriceBlocked struct {
-	Policy string
-	LineNo int
-}
-
-func (e ErrPriceBlocked) Error() string {
-	return fmt.Sprintf("pos: line %d price blocked (%s)", e.LineNo, e.Policy)
-}
-
 // ErrCreditBlocked aborts an ACCOUNT sale that fails the credit gate.
 type ErrCreditBlocked struct{ Policy string }
 
