@@ -270,3 +270,26 @@ the commit is contract sources and generated outputs only.
   phrase gate accept that waits for W2's mint; and the app holds a till past
   the token's expiry with nothing to re-check it against until W7's first
   core call. W5, W9, W2 and W7 hold the closures, per the plan.
+
+## L5 W8 (the returns desk's review round): the P3s not closed in code
+
+- **P3-1 (residue: the dialog is not a modal surface).** The Manager approval
+  dialog is a styled section carrying the dialog role; while it is open the
+  desk's fields and the find row are disabled (this round), so nothing drafts
+  or refinds under it and the dead-cards state the review reproduced is gone.
+  What remains is focus and reading order: nothing behind it is inert, and a
+  keyboard user can still reach the chrome. A truly modal surface (the inert
+  attribute, or a native dialog element) is a pattern decision that belongs
+  to the design system's kits, which this lane consumes read only.
+- **P3-8 (carried, unchanged by this round).** The Z report assertion proves
+  the app sends a cash return naming the open drawer and that the stub's
+  counter moves; the real drawer's expected cash is W9's run on the image.
+  Screen 10 (a Kingston sale refused before any money moves, by every refund
+  method) has no test here beyond the unknown number's refusal in words.
+- **The receipt's approver line is display wording, per the ruling on P2-8.**
+  On the approver's own path the receipt names the caller from the session
+  (display name and role) and the dialog path names the approver the dialog
+  minted; the contract's PosReturn carries no approver, so neither line is a
+  server-stated fact. The server's audit row holds the record. If a later
+  ruling wants the receipt to quote the core, the field is the contract's to
+  add, not this app's to invent.
