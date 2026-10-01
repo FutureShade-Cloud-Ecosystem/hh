@@ -31,7 +31,7 @@ func TestMintedTokenPassesTheUnchangedVerifier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewVerifier: %v", err)
 	}
-	subject := "d7000000-0000-4000-9000-000000000da1"
+	subject := "de110000-0000-4000-9000-000000000001"
 	token, err := iss.Mint(subject)
 	if err != nil {
 		t.Fatalf("Mint: %v", err)

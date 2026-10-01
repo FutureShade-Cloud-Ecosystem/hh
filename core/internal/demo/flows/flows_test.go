@@ -43,7 +43,7 @@ func TestLookups(t *testing.T) {
 	if _, ok := Get("yard-pick"); ok {
 		t.Fatal("a flow outside the table answered")
 	}
-	a, ok = ByPlatformUserID("d7000000-0000-4000-9000-000000000da2")
+	a, ok = ByPlatformUserID("de110000-0000-4000-9000-000000000002")
 	if !ok || a.Flow != "sales-manager" {
 		t.Fatalf("ByPlatformUserID(manager id) = %+v %v", a, ok)
 	}

@@ -42,7 +42,7 @@ func TestTokenFromOneIssuerFailsOnAnother(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issuer B: %v", err)
 	}
-	token, err := boxA.Mint("d7000000-0000-4000-9000-000000000da1")
+	token, err := boxA.Mint("de110000-0000-4000-9000-000000000001")
 	if err != nil {
 		t.Fatalf("mint on A: %v", err)
 	}

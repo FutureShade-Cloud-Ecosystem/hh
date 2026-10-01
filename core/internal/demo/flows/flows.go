@@ -34,8 +34,11 @@ const ReservedDomain = "hh-demo.invalid"
 // configuration. The demo populate writes its one active configuration
 // with this id, and the database guard refuses a demo box whose active
 // payment configuration names any other: the value is the marker that
-// says the configuration on the box is the demo's invented one.
-const DemoMerchantID = "DEMO-MERCHANT"
+// says the configuration on the box is the demo's invented one. The
+// value follows the populate's pushed rows (reconciled against
+// till/l3-w3); both sides read it from here, so they agree by
+// construction.
+const DemoMerchantID = "DEMO-MERCHANT-0001"
 
 // Account is one demo role login: the flow name the entry page taps, the
 // account it stands for, and the role that account must hold in the demo
@@ -57,13 +60,15 @@ type Account struct {
 	Role string
 }
 
-// accounts is the closed table. The ids follow the fixed demo id scheme
-// the seed and the populate use, so a database rebuilt by the populate
-// carries the same accounts every build of the demo expects.
+// accounts is the closed table. The platform user ids, the emails and
+// the display names are the populate's rows, reconciled against the
+// populate's pushed branch (till/l3-w3): the mint's token sub and the
+// membership source's answers must name the users rows the populate
+// creates, so both sides read these constants and neither invents its own.
 var accounts = map[string]Account{
 	"sales": {
 		Flow:           "sales",
-		PlatformUserID: "d7000000-0000-4000-9000-000000000da1",
+		PlatformUserID: "de110000-0000-4000-9000-000000000001",
 		Email:          "sales@" + ReservedDomain,
 		DisplayName:    "Sales (demo)",
 		Label:          "Sales",
@@ -71,8 +76,8 @@ var accounts = map[string]Account{
 	},
 	"sales-manager": {
 		Flow:           "sales-manager",
-		PlatformUserID: "d7000000-0000-4000-9000-000000000da2",
-		Email:          "sales-manager@" + ReservedDomain,
+		PlatformUserID: "de110000-0000-4000-9000-000000000002",
+		Email:          "sales.manager@" + ReservedDomain,
 		DisplayName:    "Sales manager (demo)",
 		Label:          "Sales manager",
 		Role:           "sales_manager",
