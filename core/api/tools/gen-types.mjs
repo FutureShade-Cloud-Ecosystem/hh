@@ -309,6 +309,9 @@ routesOut.push(`	Tag         string // the operation's single tag`);
 routesOut.push(`	XRole       string // the x-role gate spelling`);
 routesOut.push(`	Bearer      string // staff, tenant, staff-or-tenant, or public`);
 routesOut.push(`	Addition    bool   // the operation carries x-addition (no ERP source route)`);
+routesOut.push(`	Surfaces    []string // the x-access surfaces it serves (staff operations only)`);
+routesOut.push(`	Level       string   // the x-access level it needs (staff operations only)`);
+routesOut.push(`	List        string   // the x-access named configuration list, empty when none (staff operations only)`);
 routesOut.push(`}`);
 routesOut.push(``);
 routesOut.push(`// Routes holds every operation in the document, paths in byte order and`);
@@ -328,6 +331,18 @@ const bearerOf = (op) => {
   return [...names].sort().join("+");
 };
 
+// accessOf maps one operation's x-access block to its census spelling:
+// the surfaces and level the role gate reads. Non-staff operations carry
+// no block and census them as nil and empty.
+const STAFF_ROLES = new Set(["requireStaff", "requireManager", "requireAdmin"]);
+const accessOf = (op) => {
+  if (!STAFF_ROLES.has(op["x-role"] ?? "")) return ["nil", `""`, `""`];
+  const surfaces = op["x-access"]?.surfaces ?? [];
+  const level = op["x-access"]?.level ?? "";
+  const list = op["x-access"]?.list ?? "";
+  return [`[]string{${surfaces.map((s) => JSON.stringify(s)).join(", ")}}`, JSON.stringify(level), JSON.stringify(list)];
+};
+
 let routeCount = 0;
 for (const path of Object.keys(doc.paths).sort()) {
   const item = doc.paths[path];
@@ -339,7 +354,8 @@ for (const path of Object.keys(doc.paths).sort()) {
       continue;
     }
     routeCount++;
-    routesOut.push(`	{Method: ${JSON.stringify(method.toUpperCase())}, Path: ${JSON.stringify(path)}, OperationID: ${JSON.stringify(op.operationId)}, Tag: ${JSON.stringify(op.tags?.[0] ?? "")}, XRole: ${JSON.stringify(op["x-role"] ?? "")}, Bearer: ${JSON.stringify(bearerOf(op))}, Addition: ${op["x-addition"] ? "true" : "false"}},`);
+    const [surfaces, level, list] = accessOf(op);
+    routesOut.push(`	{Method: ${JSON.stringify(method.toUpperCase())}, Path: ${JSON.stringify(path)}, OperationID: ${JSON.stringify(op.operationId)}, Tag: ${JSON.stringify(op.tags?.[0] ?? "")}, XRole: ${JSON.stringify(op["x-role"] ?? "")}, Bearer: ${JSON.stringify(bearerOf(op))}, Addition: ${op["x-addition"] ? "true" : "false"}, Surfaces: ${surfaces}, Level: ${level}, List: ${list}},`);
   }
 }
 routesOut.push(`}`);
