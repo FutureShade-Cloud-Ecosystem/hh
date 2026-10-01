@@ -36,7 +36,7 @@ func DemoCheck(ctx context.Context, lookupEnv func(string) (string, bool)) error
 		return errors.New("CORE_DATABASE_URL must be set: demo-check compares it with DATABASE_URL and refuses a box where they could drift apart")
 	}
 	if databaseURL != coreURL {
-		return errors.New("DATABASE_URL and CORE_DATABASE_URL differ: the serve role reads the first under one name and the one-shots read the other, so a mismatch here is two databases and demo-check stops the entrypoint")
+		return errors.New("DATABASE_URL and CORE_DATABASE_URL differ: the serve role reads CORE_DATABASE_URL and every one-shot reads DATABASE_URL, so a mismatch here is two databases and demo-check stops the entrypoint")
 	}
 	pool, err := authz.NewPgxPoolWithTracer(ctx, databaseURL, nil)
 	if err != nil {
@@ -92,8 +92,23 @@ func CheckDemoDatabase(ctx context.Context, pool *pgxpool.Pool) error {
 	if boxRows != 1 {
 		return fmt.Errorf("demo database check: demo_box holds %d rows, want the populate's one row", boxRows)
 	}
+	// The row must be the populate's, by the marker the populate writes:
+	// existence and a row count alone would accept any one-row table of
+	// the name. A marker column that is not there errors here and fails
+	// closed.
+	var marker string
+	if err := pool.QueryRow(ctx, `SELECT COALESCE(marker, '') FROM demo_box`).Scan(&marker); err != nil {
+		return fmt.Errorf("demo database check: demo_box marker: %w", err)
+	}
+	if marker != flows.PopulateMarker {
+		return fmt.Errorf("demo database check: demo_box does not carry the populate's marker: this is not the demo populate's world")
+	}
 
 	var outsiders int
+	// A tombstoned row is not an ACTIVE user: deleted_at is the row's
+	// end, so the count reads only rows still standing. The plan's words
+	// are "no ACTIVE user"; the tombstone is what makes a row not a user
+	// anymore, and this comment is that reading's record.
 	if err := pool.QueryRow(ctx,
 		`SELECT count(*) FROM users
 		  WHERE status = 'ACTIVE' AND deleted_at IS NULL
@@ -108,14 +123,31 @@ func CheckDemoDatabase(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("demo database check: %d ACTIVE user(s) sit outside the reserved demo domains: this is not the demo's database", outsiders)
 	}
 
-	var foreign int
+	// The payment configuration: exactly one active row, and it is the
+	// populate's invented one, the demo merchant id with no host. The
+	// merchant id alone marks nothing (it is a public constant of this
+	// tree); the empty host is the half that says the row cannot reach a
+	// processor. A second active row, another merchant, a host set, or
+	// none at all is a refusal.
+	var activeCount int
 	if err := pool.QueryRow(ctx,
-		`SELECT count(*) FROM payment_config WHERE status = 'active' AND merchant_id <> $1`,
-		flows.DemoMerchantID).Scan(&foreign); err != nil {
+		`SELECT count(*) FROM payment_config WHERE status = 'active'`).Scan(&activeCount); err != nil {
 		return fmt.Errorf("demo database check: payment configuration: %w", err)
 	}
-	if foreign > 0 {
-		return fmt.Errorf("demo database check: %d active payment configuration(s) are not the demo's invented one", foreign)
+	if activeCount != 1 {
+		return fmt.Errorf("demo database check: %d active payment configuration row(s), want exactly the populate's invented one", activeCount)
+	}
+	var merchant, host string
+	if err := pool.QueryRow(ctx,
+		`SELECT merchant_id, COALESCE(base_url, '') FROM payment_config WHERE status = 'active'`).
+		Scan(&merchant, &host); err != nil {
+		return fmt.Errorf("demo database check: payment configuration: %w", err)
+	}
+	if merchant != flows.DemoMerchantID {
+		return fmt.Errorf("demo database check: the active payment configuration's merchant id is not the populate's invented one: this is not the demo's database")
+	}
+	if host != "" {
+		return errors.New("demo database check: the active payment configuration carries a host: the demo's row must have no host, so the demo's card rail can reach no processor")
 	}
 	return nil
 }

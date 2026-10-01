@@ -33,12 +33,19 @@ const ReservedDomain = "hh-demo.invalid"
 // DemoMerchantID is the merchant id of the demo's invented payment
 // configuration. The demo populate writes its one active configuration
 // with this id, and the database guard refuses a demo box whose active
-// payment configuration names any other: the value is the marker that
-// says the configuration on the box is the demo's invented one. The
-// value follows the populate's pushed rows (reconciled against
-// till/l3-w3); both sides read it from here, so they agree by
-// construction.
+// payment configuration names any other, or whose row carries a host.
+// The values here agree with the populate's pushed rows by copy today;
+// the by-construction claim lands when the populate imports this table,
+// a named stitch for the demo image's lane.
 const DemoMerchantID = "DEMO-MERCHANT-0001"
+
+// PopulateMarker is the marker the demo populate writes into its demo_box
+// row, and the value the database guard requires there: the table's
+// existence and row count alone would accept any one-row table of the
+// name, so the guard reads the marker. Shared here so the populate and
+// the guard cannot drift apart silently; the populate carries its own
+// copy until the stitch makes it import this table.
+const PopulateMarker = "hh-demo-populate-v1"
 
 // Account is one demo role login: the flow name the entry page taps, the
 // account it stands for, and the role that account must hold in the demo
@@ -62,9 +69,11 @@ type Account struct {
 
 // accounts is the closed table. The platform user ids, the emails and
 // the display names are the populate's rows, reconciled against the
-// populate's pushed branch (till/l3-w3): the mint's token sub and the
-// membership source's answers must name the users rows the populate
-// creates, so both sides read these constants and neither invents its own.
+// populate's pushed branch: the mint's token sub and the membership
+// source's answers must name the users rows the populate creates. The
+// agreement is by copy today (the populate holds its own copies of these
+// values); it becomes by construction when the populate imports this
+// table, a named stitch for the demo image's lane.
 var accounts = map[string]Account{
 	"sales": {
 		Flow:           "sales",
