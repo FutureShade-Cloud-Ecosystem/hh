@@ -278,3 +278,14 @@ the lane's rules), and a refusal is final. The commit's content is
 correct and the wording lives only in that one local commit message; the
 lead may reword it when landing the pull request, or let it stand. Nothing
 in the code, tests or this file carries the wording.
+
+## The Counter Till cycle, lane L4 (PX): the exit test's CI leg stays with W5 (recorded)
+
+The `ci` check runs the untagged suite with no gate variable and no
+demo-tag step, so the card rail's wiring legs skip politely (they need
+`HH_CORE_TEST_DATABASE_URL`) and the G7 legs, wiring level and serve level,
+never run in CI. A green `ci` on the card rail's pull request therefore
+says nothing about the exit test; the acceptance run is the gated local
+run, executed by the lane and re-executed by the reviewer. W5 adds the CI
+job that closes this gap; recorded here so the gap is visible until that
+lands.
