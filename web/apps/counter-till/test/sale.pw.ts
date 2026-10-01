@@ -560,10 +560,8 @@ test("a late price answer is discarded: the first ask's answer never lands on th
 }) => {
   // The first price ask is held where the route stands; every later ask goes
   // straight through. When the held answer is finally released, the ticket it
-  // was asked about no longer exists. The executor assigns the resolver
-  // synchronously, before any await, so the assertion below is only for the
-  // checker: the flow analysis cannot see the assignment.
-  let releaseFirst!: () => void;
+  // was asked about no longer exists.
+  let releaseFirst: (() => void) | undefined;
   const held = new Promise<void>((resolve) => {
     releaseFirst = resolve;
   });
@@ -591,7 +589,7 @@ test("a late price answer is discarded: the first ask's answer never lands on th
   await expect(margins.nth(0)).toHaveText("30.0%");
   await expect(margins.nth(1)).toHaveText("31.0%");
 
-  releaseFirst();
+  releaseFirst?.();
   await page.waitForTimeout(600);
   // The stale answer landed on nothing: the ticket's figures are exactly the
   // newest ask's, and nothing was blanked or realigned.

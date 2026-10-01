@@ -40,6 +40,10 @@ import {
 import { formatMargin, formatMoney, parseAmountToCents } from "./money.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
 import { entryStyles, renderEntry, type FlowsState } from "./views/entry.js";
+import { ReturnsFlow } from "./returns/flow.js";
+import { OneTimeCredential } from "./returns/approval.js";
+import { RefundApprovalCapture } from "./returns/capture.js";
+import { returnsStyles, renderReturns } from "./views/returns.js";
 import {
   checkoutStyles,
   renderReceipt,
@@ -101,6 +105,7 @@ export class CounterTillApp extends HHElement {
     demoBannerStyles,
     entryStyles,
     tillStyles,
+    returnsStyles,
     checkoutStyles,
     parkedStyles,
     css`
@@ -143,11 +148,17 @@ export class CounterTillApp extends HHElement {
   readonly #sessions = new SessionStore();
   readonly #account: DemoAccount;
   readonly #controller: AuthController;
+  readonly #approverCredential: OneTimeCredential;
   readonly #tillClient: TillClient;
   #flowsState: FlowsState = { kind: "loading" };
   #busy = false;
   #message: string | null = null;
   #till: { label: string } | null = null;
+  /** The user the till's own mint was for: custody is checked against it. */
+  #clerkUserId: string | null = null;
+  /** The role code the clerk's mint stated, for the receipt's display words. */
+  #clerkRoleCode: string | null = null;
+  readonly #returns: ReturnsFlow;
   #branch: BranchRef | null = null;
   #drawer: DrawerPanel = FRESH_DRAWER_PANEL;
   #search: SearchPanel = FRESH_SEARCH_PANEL;
@@ -204,16 +215,66 @@ export class CounterTillApp extends HHElement {
 
   constructor() {
     super();
-    const client = new ApiClient({
-      baseUrl: "",
-      headers: authHeaderProvider({
-        callerClass: "staff",
-        sessions: this.#sessions,
-        activeOrg: () => DEMO_ORG,
-      }),
+    // The till's transport, wrapped so the refund approval refusal's body
+    // (the amount and the approver roles beside the envelope) reaches the
+    // returns flow: the generated client carries the error string alone.
+    const capture = new RefundApprovalCapture();
+    const staffHeaders = authHeaderProvider({
+      callerClass: "staff",
+      sessions: this.#sessions,
+      activeOrg: () => DEMO_ORG,
     });
-    this.#account = new DemoAccount({ client });
+    const client = new ApiClient({ baseUrl: "", fetch: capture.fetch, headers: staffHeaders });
+    // The demo adapter's own client carries no staff bearer: the demo routes
+    // are pre-auth by design (the tap-a-role sign-in), and the served gate
+    // holds the pages and the demo mint behind basic authentication, where a
+    // request already carrying an Authorization header of the wrong kind is
+    // refused. The adapter's asks go out bare of a credential, the browser
+    // answers the gate's challenge the way it answered the page, and the org
+    // header still rides every call the app makes.
+    const demoClient = new ApiClient({
+      baseUrl: "",
+      fetch: capture.fetch,
+      headers: async () => ({ "X-Org": DEMO_ORG }),
+    });
+    this.#account = new DemoAccount({ client: demoClient });
     this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
+    // The approver's client exists for the one return call that may carry the
+    // approver's credential (D49): its provider takes the token out of the
+    // one time slot during that send, and taking is dropping, so the token
+    // rests nowhere before and survives nothing after. The clerk's client is
+    // a different instance and never carries the credential, so no other call
+    // this app makes can leak it. Nothing here touches storage or logs.
+    const approverCredential = new OneTimeCredential();
+    this.#approverCredential = approverCredential;
+    const approverClient = new ApiClient({
+      baseUrl: "",
+      headers: async () => {
+        const headers = await staffHeaders();
+        const token = approverCredential.take();
+        if (token !== null) {
+          headers["X-Approver-Authorization"] = `Bearer ${token}`;
+        }
+        return headers;
+      },
+    });
+    this.#returns = new ReturnsFlow({
+      client,
+      approverClient,
+      account: this.#account,
+      credential: approverCredential,
+      clerk: () => {
+        const session = this.#sessions.current;
+        if (session === null) return null;
+        return {
+          name: session.user.name,
+          roleCode: this.#clerkRoleCode,
+          roleLabel: this.#till?.label ?? null,
+        };
+      },
+      capture,
+      onChange: () => this.requestUpdate(),
+    });
     this.#tillClient = new TillClient(client);
   }
 
@@ -229,12 +290,14 @@ export class CounterTillApp extends HHElement {
     // measured, not assumed). Keydown IS composed, so Enter in a search field
     // reaches the host and runs that field's search.
     this.addEventListener("click", this.#onHostClick);
+    this.addEventListener("input", this.#onHostInput);
     this.addEventListener("keydown", this.#onHostKeydown);
     void this.#loadFlows();
   }
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.removeEventListener("input", this.#onHostInput);
     this.removeEventListener("keydown", this.#onHostKeydown);
     super.disconnectedCallback();
   }
@@ -324,6 +387,59 @@ export class CounterTillApp extends HHElement {
       const ticketId = control.getAttribute("data-ticket-id");
       if (typeof ticketId === "string" && ticketId !== "") void this.#resumeTicket(ticketId);
     }
+    if (control.getAttribute("data-action") === "returns-find") {
+      void this.#returns.findSale();
+    }
+    if (control.getAttribute("data-action") === "returns-method") {
+      const method = control.getAttribute("data-method");
+      if (method !== null) this.#returns.chooseMethod(method);
+    }
+    if (control.getAttribute("data-action") === "returns-submit") {
+      void this.#returns.submit();
+    }
+    if (control.getAttribute("data-action") === "returns-another") {
+      this.#returns.startAnotherReturn();
+    }
+    if (control.getAttribute("data-action") === "returns-approve") {
+      void this.#returns.openApprovalDialog();
+    }
+    if (control.getAttribute("data-action") === "returns-approve-cancel") {
+      this.#returns.closeApprovalDialog();
+    }
+    if (control.getAttribute("data-action") === "returns-approver-flow") {
+      const approverFlow = control.getAttribute("data-flow");
+      if (approverFlow !== null && approverFlow !== "") {
+        void this.#returns.approveWithFlow(approverFlow);
+      }
+    }
+  };
+
+  // The returns desk's fields ride the same host delegation as the buttons:
+  // one input listener on the host, the control read off composedPath() by
+  // its data-field name, so a re-render strands no listener. The inputs are
+  // uncontrolled: the DOM holds what was typed, the flow hears every edit
+  // here, and a draft's fresh mount shows the flow's own defaults.
+  readonly #onHostInput = (event: Event): void => {
+    const control = event
+      .composedPath()
+      .find((node): node is Element => node instanceof Element && node.hasAttribute("data-field"));
+    if (!(control instanceof HTMLInputElement) && !(control instanceof HTMLTextAreaElement)) return;
+    const field = control.getAttribute("data-field");
+    if (field === "order-no") this.#returns.setOrderNo(control.value);
+    if (field === "qty" && control instanceof HTMLInputElement) {
+      const line = control.getAttribute("data-line") ?? "";
+      this.#returns.setQty(line, control.value);
+      // The flow keeps whole units; the field is brought to the same answer,
+      // so a typed 1.5 never sits on the screen while a 1 rides the draft.
+      const stored = this.#returns.qtyOf(line);
+      const canonical = stored === 0 ? "" : String(stored);
+      if (control.value !== canonical) control.value = canonical;
+    }
+    if (field === "note") this.#returns.setNote(control.value);
+    if (field === "restock" && control instanceof HTMLInputElement) {
+      this.#returns.setRestock(control.checked);
+    }
+    if (field === "reason-code") this.#returns.setReasonCode(control.value);
   };
 
   async #loadFlows(): Promise<void> {
@@ -353,9 +469,27 @@ export class CounterTillApp extends HHElement {
       this.requestUpdate();
       return;
     }
+    this.#clerkUserId = minted.value.user.userId;
+    this.#clerkRoleCode = minted.value.roleCode;
     this.#till = { label: this.#labelFor(flow) };
     this.requestUpdate();
     void this.#initTill();
+  }
+
+  /**
+   * The role label in the chrome, read from custody rather than cached: while
+   * the live session is the one this till minted for, the entry card's label
+   * stands; if custody were ever replaced quietly (the review round's M3b),
+   * the chrome names who the session actually carries, so the till can never
+   * show one person's role over another person's session.
+   */
+  #signedInRoleLabel(): string {
+    const session = this.#sessions.current;
+    if (session === null) return "";
+    if (this.#clerkUserId !== null && session.user.userId !== this.#clerkUserId) {
+      return session.user.name;
+    }
+    return this.#till?.label ?? session.user.name;
   }
 
   #labelFor(flow: string): string {
@@ -370,7 +504,9 @@ export class CounterTillApp extends HHElement {
    * Sign out: the controller ends the mint (the adapter drops it) and wipes
    * custody either way; the entry view with the cards comes back, because the
    * flows answer is still held. A reload signs out too: the mint lives only
-   * in this tab's memory.
+   * in this tab's memory. The returns desk is blanked with the session: the
+   * till is the next person's, and no draft, refusal or receipt of the last
+   * one stays on it.
    */
   async #signOut(): Promise<void> {
     if (this.#busy) return;
@@ -380,6 +516,9 @@ export class CounterTillApp extends HHElement {
     this.#busy = false;
     this.#till = null;
     this.#message = null;
+    this.#clerkUserId = null;
+    this.#clerkRoleCode = null;
+    this.#returns.reset();
     this.#branch = null;
     this.#drawer = FRESH_DRAWER_PANEL;
     this.#search = FRESH_SEARCH_PANEL;
@@ -490,14 +629,14 @@ export class CounterTillApp extends HHElement {
 
   async #searchCustomers(query: string): Promise<void> {
     const trimmed = query.trim();
-    if (trimmed === "") {
+    if (trimmed === "" || this.#branch === null) {
       this.#customerSearch = { state: "idle", hits: [], message: null };
       this.requestUpdate();
       return;
     }
     this.#customerSearch = { state: "loading", hits: [], message: null };
     this.requestUpdate();
-    const result = await this.#tillClient.searchCustomers(trimmed);
+    const result = await this.#tillClient.searchCustomers(trimmed, this.#branch.id);
     if (result.ok) {
       for (const row of result.value) this.#knownCustomers.set(row.id, row);
       this.#customerSearch = { state: "ready", hits: result.value, message: null };
@@ -889,8 +1028,11 @@ export class CounterTillApp extends HHElement {
     if (this.#committedAccount !== null) {
       const accountNo = this.#committedAccount.accountNo;
       const refreshedCustomerId = this.#committedAccount.customerId;
-      const refreshed = await this.#tillClient.searchCustomers(accountNo);
-      const row = refreshed.ok ? refreshed.value.find((candidate) => candidate.id === refreshedCustomerId) : undefined;
+      const refreshed =
+        this.#branch !== null
+          ? await this.#tillClient.searchCustomers(accountNo, this.#branch.id)
+          : null;
+      const row = refreshed !== null && refreshed.ok ? refreshed.value.find((candidate) => candidate.id === refreshedCustomerId) : undefined;
       this.#receiptBalance = row !== undefined ? formatMoney(row.openBalanceCents) : null;
       this.requestUpdate();
     }
@@ -1039,9 +1181,10 @@ export class CounterTillApp extends HHElement {
   }
 
   async #refreshParked(): Promise<void> {
+    if (this.#branch === null) return;
     this.#parkedState = "loading";
     this.requestUpdate();
-    const result = await this.#tillClient.listParked();
+    const result = await this.#tillClient.listParked(this.#branch.id);
     if (!result.ok) {
       this.#parkedState = "refused";
       this.#parkedMessage = result.error;
@@ -1143,7 +1286,7 @@ export class CounterTillApp extends HHElement {
             ? nothing
             : html`
                 <p class="signed-in">
-                  <span class="role-name" data-testid="signed-in-role">${this.#till.label}</span>
+                  <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
                   <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
                     Sign out
                   </button>
@@ -1157,10 +1300,16 @@ export class CounterTillApp extends HHElement {
           : html`
               ${renderTill(this.#tillView())}
               <div class="panels till-lower">
-                ${renderTender(this.#tenderPanel())}
+                <!-- The sale's tender controls stand down while a return lookup
+                     is on the desk: the refund rail's own Cash and Card are
+                     then the screen's cash and card, and two controls of one
+                     name on one screen would answer two different questions.
+                     The panel comes back when the desk clears. -->
+                ${this.#returns.lookup === null ? renderTender(this.#tenderPanel()) : nothing}
                 ${receipt === null ? nothing : renderReceipt(receipt)}
                 ${renderParked(this.#parkedPanel())}
               </div>
+              ${renderReturns(this.#returns)}
             `}
       </main>
     `;

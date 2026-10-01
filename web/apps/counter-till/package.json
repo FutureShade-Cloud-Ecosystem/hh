@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "playwright test"
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs test/sinks.test.mjs && playwright test",
+    "acceptance": "playwright test --config test/acceptance.config.ts"
   },
   "dependencies": {
     "@hardscapehouse/api-client": "0.0.0",

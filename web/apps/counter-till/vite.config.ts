@@ -23,6 +23,12 @@ export default defineConfig({
       "/api": {
         target: `http://127.0.0.1:${stubPort}`,
       },
+      // The stub's own peek route (test scaffolding, no contract path shares
+      // the namespace): proxied so the suite reads the stub's ledgers through
+      // the same origin the app uses.
+      "/_stub": {
+        target: `http://127.0.0.1:${stubPort}`,
+      },
     },
   },
   build: {
