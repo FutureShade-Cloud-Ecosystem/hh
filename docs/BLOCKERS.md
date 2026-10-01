@@ -434,3 +434,16 @@ in-team reviews cover the interim. And the serve leg of the payment
 configuration check, `GET /api/v1/payments/config` behind the demo boot
 guards, is covered by W5's image exit test, the lead having confirmed the
 assignment; W3's exit test reads the payment store in process.
+
+## W4 (quantity break, HH-184): the surcharge break vocabulary is inert configuration (open, for the dealers' record)
+
+Under D1's replace rule a quantity break wins only when strictly cheaper, and
+an uplift can never be, so the two surcharge value types (`SURCHARGE_PCT`,
+`SURCHARGE_ABS`, the partial-skid tiers) no longer adjust any price anywhere;
+ADR-0015 records that loss. The break editor still accepts surcharge tiers and
+the first dealer's seed still plants one (the natural-stone partial-skid
+schedule), and nothing on the editing surface tells the dealer who configures
+one that the tier can never fire. The tier's own data, its validation and its
+row survive untouched (the schema is frozen); what is owed is a dealer-facing
+note on the editor, or a seed and editor cleanup once Colton rules which, so
+nobody tunes a surcharge expecting the counter to charge it.
