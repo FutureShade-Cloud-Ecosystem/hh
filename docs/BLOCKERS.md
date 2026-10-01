@@ -205,3 +205,38 @@ backup into a Dibbits staging org (HH-BISTRACK-CUTOVER-RULING-r1). The
 module stays the fail-closed stub it is today; the FIRST lane that
 touches it removes the push half and that sentence. Until then this
 entry marks the obligation.
+
+## The Counter Till cycle, lane L1 (RC slice): statements the reconciled catalog lists contradict (open)
+
+The RC slice brought the ten internal surfaces' role lists in
+`docs/analysis/role-catalog.yaml` to the decided matrix (D48, D49), so each
+list now holds exactly the roles the matrix admits and no others. Three
+things are recorded here rather than edited, because the slice's Touches
+stop at the lists:
+
+- The role records' `micro_apps` lines still name surfaces the reconciled
+  lists no longer hold for them: `outside_sales` names counter-till,
+  `super_admin` names manager-home and dealer-admin, and `dealer_admin`
+  names dealer-admin.
+- In the other direction the records understate: a record's `micro_apps`
+  line omits the read level surfaces the matrix admits its role on (for
+  example `general_manager`'s line names neither counter-till, quote-desk,
+  dispatch-board nor buying-and-stock), so the role records and the surface
+  lists no longer tell one story.
+- D48 decides the thirteen staff roles only: `super_admin` and
+  `dealer_admin` hold no cells in the matrix, so after the reconciliation
+  nothing in the catalog's surface lists states the platform roles' reach
+  on the ten internal surfaces. Their access needs its own ruling before
+  anything gates on these lists for them.
+
+Also recorded for the lead: while this slice ran, uncommitted edits to
+`docs/analysis/role-catalog.yaml` and `manifest.yaml` appeared in this
+lane's worktree (`wt-l1b`, branch `till/l1-rc`) that this session did not
+make: a partial reconciliation of the same lists under the opposite
+reading (platform roles kept because the matrix is silent on them). Seven
+of its nine changed lists matched the matrix cell for cell and stand as
+written; the three deviating lists were brought to the slice's exit test
+(each list equal to the matrix's non none cells, zero differences) and the
+manifest was regenerated. A second writer wrote in this lane's worktree
+mid-slice; worth finding before the merge.
+

@@ -52,7 +52,7 @@ frontends:
   - id: counter-till
     name: Counter Till
     audience: internal
-    roles: [inside_sales, sales_manager, branch_manager, outside_sales]
+    roles: [inside_sales, sales_manager, branch_manager, yard_manager, general_manager]
     gate: role
     devices: [desktop, tablet, kiosk]
     kit: scan-and-confirm
@@ -67,7 +67,7 @@ frontends:
   - id: quote-desk
     name: Quote Desk
     audience: internal
-    roles: [inside_sales, outside_sales, sales_manager]
+    roles: [inside_sales, outside_sales, sales_manager, yard_manager, branch_manager, general_manager]
     gate: role
     devices: [tablet, desktop, phone]
     kit: guided-flow
@@ -102,7 +102,7 @@ frontends:
   - id: drive-run
     name: HH Drive
     audience: internal
-    roles: [driver]
+    roles: [driver, yard_manager, logistics_manager, branch_manager]
     gate: role
     devices: [phone]
     kit: guided-flow
@@ -119,7 +119,7 @@ frontends:
   - id: dispatch-board
     name: Dispatch and Load Building
     audience: internal
-    roles: [logistics_manager, yard_manager, branch_manager]
+    roles: [logistics_manager, yard_manager, branch_manager, sales_manager, outside_sales, yard_team, general_manager]
     gate: role
     devices: [desktop, tablet, phone]
     kit: list-detail
@@ -136,7 +136,7 @@ frontends:
   - id: buying-and-stock
     name: Buying and Stock
     audience: internal
-    roles: [procurement_manager, yard_manager, branch_manager]
+    roles: [procurement_manager, yard_manager, branch_manager, inside_sales, sales_manager, outside_sales, yard_team, payables_receivables, financial_controller, general_manager]
     gate: role
     devices: [desktop, tablet]
     kit: list-detail
@@ -152,7 +152,7 @@ frontends:
   - id: money-desk
     name: Money Desk
     audience: internal
-    roles: [financial_controller, payables_receivables, general_manager]
+    roles: [financial_controller, payables_receivables, general_manager, inside_sales, sales_manager, outside_sales, yard_manager, branch_manager, procurement_manager]
     gate: role
     devices: [desktop]
     kit: list-detail
@@ -166,7 +166,7 @@ frontends:
   - id: manager-home
     name: Manager Home
     audience: internal
-    roles: [branch_manager, sales_manager, yard_manager, logistics_manager, procurement_manager, general_manager, financial_controller, super_admin]
+    roles: [branch_manager, sales_manager, yard_manager, logistics_manager, procurement_manager, payables_receivables, general_manager, financial_controller]
     gate: role
     devices: [desktop, tablet, phone]
     kit: dashboard
@@ -181,7 +181,7 @@ frontends:
   - id: house-messages
     name: House Messages
     audience: internal
-    roles: [inside_sales, outside_sales, yard_team, driver, yard_manager, logistics_manager, branch_manager, sales_manager, procurement_manager, payables_receivables, general_manager, financial_controller, hr, super_admin]
+    roles: [inside_sales, outside_sales, yard_team, driver, yard_manager, logistics_manager, branch_manager, sales_manager, procurement_manager, payables_receivables, general_manager, financial_controller, hr]
     gate: role
     devices: [desktop, tablet, phone, kiosk]
     kit: inbox
@@ -198,7 +198,7 @@ frontends:
   - id: dealer-admin
     name: Dealer Admin
     audience: internal
-    roles: [super_admin, general_manager, hr, dealer_admin, sales_manager]
+    roles: [general_manager, hr, sales_manager, financial_controller]
     gate: role
     devices: [desktop]
     kit: list-detail
