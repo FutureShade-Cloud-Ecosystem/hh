@@ -100,7 +100,9 @@ func buildSmsBelt(pool *pgxpool.Pool, log *slog.Logger) *smsBelt {
 // topsSpine carries what the worker role needs from the tops wiring: the
 // notification port and outbox stores the loops drain, the sweeps' subjects
 // (the AR collections sweep, the credit services, the automation), and the
-// reconciler's messaging services.
+// reconciler's messaging services. The card rail service rides beside them:
+// the demo build's G7 refusal reads the service the wiring built, and the
+// default build never consumes it.
 type topsSpine struct {
 	bistrackSvc   *bistrack.Service
 	billingRepo   *billing.Repository
@@ -111,6 +113,7 @@ type topsSpine struct {
 	statementSvc  *billing.StatementService
 	invoiceWriter *billing.InvoiceWriter
 	landingSvc    *billing.ARLandingService
+	cardRail      *payment.Service
 }
 
 // wireTops constructs and registers the tops modules over the money spine
@@ -568,6 +571,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		statementSvc:  w3bStatementSvc,
 		invoiceWriter: w6cInvoiceWriter,
 		landingSvc:    arLandingSvc,
+		cardRail:      paySvc,
 	}
 }
 
