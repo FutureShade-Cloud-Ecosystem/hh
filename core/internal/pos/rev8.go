@@ -6,12 +6,12 @@ package pos
 //
 // THE MARGIN GATING RULING (the commander's critical rev-8 constraint): margin % and est. profit
 // are computed SERVER-SIDE from the pricing engine's own numbers, revenue through the SAME
-// pricing.DeriveLinePrice authority the ring prices with, cost from the engine's cost source (the
-// per-branch WAC row, product_branch_costs.avg_unit_cost_cents), and they are gated at the
-// MARSHAL layer: the response struct is all-omitempty, and a caller the dealer's role
-// configuration's cost and margin list does not allow receives the zero value, i.e. a `{}` payload
-// with the fields BYTE-ABSENT. This mirrors the portal's marshal-and-assert-absent idiom;
-// dib488_rev8_test.go asserts byte-absence.
+// counter resolve the ring prices with (the till never asks the margin gate, D48 row 481), cost
+// from the engine's cost source (the per-branch WAC row, product_branch_costs.avg_unit_cost_cents),
+// and they are gated at the MARSHAL layer: the response struct is all-omitempty, and a caller the
+// dealer's role configuration's cost and margin list does not allow receives the zero value, i.e. a
+// `{}` payload with the fields BYTE-ABSENT. This mirrors the portal's marshal-and-assert-absent
+// idiom; dib488_rev8_test.go asserts byte-absence.
 
 import (
 	"context"
@@ -164,10 +164,11 @@ func (s *Service) MarginGlance(ctx context.Context, in MarginGlanceInput) (Margi
 			out.Partial = true
 			continue // this line's fields stay absent, no cost is not a 100% margin
 		}
-		// Revenue through the SAME engine the ring prices with. CostCents deliberately 0 (exactly
-		// like the ring path): the glance marries cost to revenue ITSELF below, so the resolve
-		// stays byte-identical to the terminal's own reprice, no gate/audit side effects change.
-		lp, derr := s.pricing.DeriveLinePrice(ctx, pricing.ResolveInput{
+		// Revenue through the SAME counter resolve the ring prices with (D48 row 481): the till
+		// never asks the margin gate, so this resolve carries no gate question and no audit write
+		// on either path, and the glance marries cost to revenue ITSELF below, so the numbers
+		// stay byte-identical to the terminal's own reprice.
+		lp, derr := s.pricing.DeriveCounterLinePrice(ctx, pricing.ResolveInput{
 			CustomerID:   in.CustomerID,
 			CustomerType: customerType,
 			ProductID:    li.ProductID,

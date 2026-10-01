@@ -11,6 +11,9 @@ paths:
       tags: [staff-messaging]
       summary: List the caller's channels with per-caller unread projection
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -33,6 +36,9 @@ paths:
         envelope to the shared page shape: the ERP wire names the array
         messages and omits limit; here they are items and limit.
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -54,6 +60,9 @@ paths:
       tags: [staff-messaging]
       summary: Post a text message, optionally as a thread reply
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -81,6 +90,9 @@ paths:
       tags: [staff-messaging]
       summary: List the replies under one thread root
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -106,6 +118,9 @@ paths:
       tags: [staff-messaging]
       summary: Mark a channel read for the caller
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -135,6 +150,9 @@ paths:
         method TAP (the kiosk confirm button). Only malformed JSON is a 400
         from the decode; an unknown method is a 400 from the service.
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -171,6 +189,9 @@ paths:
         distinct users; remaining is floored at zero; complete requires at
         least one required ack.
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -196,6 +217,9 @@ paths:
       summary: List the caller's unacknowledged forced-ack messages, newest first
       description: The kiosk poll surface; only the caller's own channels are considered
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -215,6 +239,9 @@ paths:
       summary: Read the caller's notification prefs for one channel
       description: Absent rows read as the defaults (desktop on, escalation override on, mode ALL)
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -237,6 +264,9 @@ paths:
         When both mode and muted are sent, mode wins. Muting an escalation
         channel is refused with 409.
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -266,6 +296,9 @@ paths:
       summary: Read the caller's unread summary across channels
       description: The badge source; clients short-poll this when the stream is buffered
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -289,6 +322,9 @@ paths:
         /api/v1/messaging/stream. The ticket value is a credential; it is
         never logged or returned by any other route.
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -322,6 +358,9 @@ paths:
         outcome). A slow or stuck connection drops events; the client
         reconciles by polling GET /api/v1/messaging/unread.
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: ticket
@@ -353,6 +392,9 @@ paths:
         admin-masked before they leave: deleted messages are tombstoned and
         cleartext-looking identifiers are redacted. All filters are optional.
       x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: channel_id
@@ -399,6 +441,9 @@ paths:
         one: a topic on the forced-ack allowlist reads CRITICAL and locked
         whatever the stored row says.
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -421,6 +466,9 @@ paths:
         with 409; an unknown topic is 404; a class outside the CHECK set is
         400.
       x-role: requireAdmin
+      x-access:
+        surfaces: [house-messages]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: topic
@@ -457,6 +505,9 @@ paths:
         is present and false, so an undecided rule and a switched-off rule
         read identically.
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -479,6 +530,9 @@ paths:
         never from the path or body, so no route reads or changes another
         staffer's rules.
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: rule
@@ -511,6 +565,9 @@ paths:
       summary: List rep assignments, optionally filtered by rep or customer
       description: Staff readable; a rep needs to see their own book and the routing rule is not a secret
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: rep_user_id
@@ -540,6 +597,9 @@ paths:
         An empty order_id writes the customer-level default; a set order_id
         writes the per-order override (split books).
       x-role: requireAdmin
+      x-access:
+        surfaces: [house-messages]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -564,6 +624,9 @@ paths:
       summary: Remove a rep assignment
       description: The target rides the query string (customer_id plus optional order_id), matching the ERP's composite-key delete convention
       x-role: requireAdmin
+      x-access:
+        surfaces: [house-messages]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: customer_id
@@ -592,6 +655,9 @@ paths:
       summary: Preview where a message from one customer would route right now
       description: Read-only; the admin UI's before and after for an assignment change. Nothing is sent
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: customer_id
@@ -625,6 +691,9 @@ paths:
         global floor) otherwise. event_key makes the post idempotent across
         redelivery.
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -651,6 +720,9 @@ paths:
       summary: List the house queue for one channel
       description: Membership gated in the service on top of the staff gate; open=1 restricts to unclaimed conversations
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -684,6 +756,9 @@ paths:
         claim sticky: the next inbound from that customer resolves to the
         claimer. An already-claimed conversation is a 409.
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: convID
@@ -718,6 +793,9 @@ paths:
         no route accepts or returns it. Submissions are rate limited per
         user.
       x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:

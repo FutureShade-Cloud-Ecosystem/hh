@@ -38,7 +38,7 @@ const (
 	BasisContract = "CONTRACT" // a negotiated CUSTOMER_PRODUCT price (final; no break stacks on it)
 	BasisAccount  = "ACCOUNT"  // this account's own or its tier's standing discount
 	BasisPromo    = "PROMO"    // a promotion won base selection
-	BasisBulk     = "BULK"     // a quantity break adjusted the base downward
+	BasisBulk     = "BULK"     // a quantity break won the replace contest (D1): its single price beat the standing price
 )
 
 // CounterQuote is one product's price picture for one customer at one quantity.
@@ -148,36 +148,22 @@ func (s *Service) CounterQuote(ctx context.Context, in CounterQuoteInput) (Count
 	return q, nil
 }
 
-// counterBasis picks the ONE word that explains the gap. A contract price is final and cannot have
-// a break on it, so it is answered first and without a second lookup. Otherwise BULK wins over the
-// standing account discount when a discount break actually applied, because the break is the part
-// of the price the customer can change by buying more, the actionable half of the explanation.
-func counterBasis(ctx context.Context, s *Service, in ResolveInput, bd Breakdown) string {
+// counterBasis picks the ONE word that explains the gap. The resolver stamps Source with the level
+// that actually won (D1: a winning break stamps QUANTITY_BREAK, a winning promotion PROMOTION), so
+// the basis word is a pure mapping of that verdict and cannot drift from it. A contract price is
+// final and cannot have a break on it, so it is answered first. Anything left is the account's own
+// standing price: a break that merely MATCHED the line's quantity but lost the replace contest
+// changed nothing, so the honest word is the account's, never BULK.
+func counterBasis(_ context.Context, _ *Service, _ ResolveInput, bd Breakdown) string {
 	switch bd.Source {
 	case SourceCustomerProduct:
 		return BasisContract
 	case SourcePromotion:
 		return BasisPromo
-	}
-	if b, _ := s.appliedBreak(ctx, in); b != nil && !isSurchargeBreak(b.ValueType) {
+	case SourceQuantityBreak:
 		return BasisBulk
 	}
 	return BasisAccount
-}
-
-// appliedBreak re-selects the quantity break the waterfall applied for this line, using the SAME
-// store read and the SAME selectBreak the resolver used. Re-selecting rather than plumbing the
-// answer out of Breakdown keeps the shipped Breakdown contract byte-identical, no consumer of the
-// resolver has to learn a new field to keep working.
-//
-// A CUSTOMER_PRODUCT contract price never has a break on it (step 4 of the waterfall), so callers
-// must not reach here on that path; the guard below makes that safe rather than merely documented.
-func (s *Service) appliedBreak(ctx context.Context, in ResolveInput) (*QuantityBreak, error) {
-	breaks, factor, err := s.breakContext(ctx, &in)
-	if err != nil || len(breaks) == 0 {
-		return nil, err
-	}
-	return s.selectBreak(breaks, in, factor)
 }
 
 // breakContext loads the applicable breaks for a line plus the UOM factor function the threshold
@@ -256,19 +242,27 @@ func (s *Service) attachNextBreak(ctx context.Context, in ResolveInput, bd Break
 		return
 	}
 	sort.Slice(cands, func(i, j int) bool { return cands[i].fromQty < cands[j].fromQty })
-	best := cands[0]
-	at := probe
-	at.QtyEntered = best.entered
-	atBd, err := s.ResolvePricePreview(ctx, at)
-	if err != nil {
+	// THE HINT WALKS THE SCHEDULE under the replace rule (C53): the nearest threshold can LOSE the
+	// contest while a further tier wins (an account already at 7% off against a 5%-off next band
+	// and a 15%-off band above it), so the offer is the NEAREST threshold whose priced break
+	// actually beats the standing price, not merely the nearest threshold. Each candidate is
+	// priced through the ordinary waterfall, so every number considered and shown is a real
+	// resolved price, and the walk is bounded by the schedule's own tier count.
+	for _, cand := range cands {
+		at := probe
+		at.QtyEntered = cand.entered
+		atBd, err := s.ResolvePricePreview(ctx, at)
+		if err != nil {
+			return
+		}
+		// Only an offer that actually beats what they are paying now is worth a pixel.
+		if atBd.FinalCents <= 0 || atBd.FinalCents >= bd.FinalCents {
+			continue
+		}
+		q.NextBreakQty = cand.fromQty
+		q.NextBreakUOM = cand.uom
+		q.NextBreakUnitCents = atBd.FinalCents
+		q.NextBreakSaveCents = bd.FinalCents - atBd.FinalCents
 		return
 	}
-	// Only an offer that actually beats what they are paying now is worth a pixel.
-	if atBd.FinalCents <= 0 || atBd.FinalCents >= bd.FinalCents {
-		return
-	}
-	q.NextBreakQty = best.fromQty
-	q.NextBreakUOM = best.uom
-	q.NextBreakUnitCents = atBd.FinalCents
-	q.NextBreakSaveCents = bd.FinalCents - atBd.FinalCents
 }

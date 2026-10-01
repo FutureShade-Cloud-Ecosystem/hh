@@ -8,6 +8,7 @@ package pos
 import (
 	"context"
 	"errors"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -661,6 +662,104 @@ func TestParked_LinesCarryNoPrice_RepricedOnResume(t *testing.T) {
 	}
 }
 
+// The parked fence (D49 row 500, D48 row 342): a branch is a hard wall on every parked verb, the
+// writes included; a login from another branch can neither list, park onto, resume nor discard a
+// foreign branch's tickets, and by id the wall answers what a missing ticket answers, so a
+// foreign caller holding a ticket id learns nothing from it.
+func TestParked_ForeignBranch_CannotParkListResumeOrDiscard(t *testing.T) {
+	h := newHarness()
+	t1, err := h.svc.Park(context.Background(), ParkInput{
+		BranchID: "branch-trt",
+		Lines:    []ParkedLineInput{{ProductID: "prod-blu", QtyEntered: 12, UOMEntered: "SF"}},
+	})
+	if err != nil {
+		t.Fatalf("park: %v", err)
+	}
+	// A Kingston clerk, granted at the other branch only.
+	h.caller = identity.StaffContext{UserID: "u-kingston", RoleCode: "INSIDE_SALES",
+		Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
+		Branches: map[string]bool{"branch-kin": true}}
+	if _, err := h.svc.ListParked(context.Background(), "branch-trt"); !isForbidden(err) {
+		t.Fatalf("a Kingston login cannot list Trenton's tickets, got %v", err)
+	}
+	// Parking onto Trenton's list is a write across the wall: refused, and nothing planted.
+	if _, err := h.svc.Park(ctxWithActor("u-kingston"), ParkInput{
+		BranchID: "branch-trt", Notes: "should never land",
+		Lines: []ParkedLineInput{{ProductID: "prod-blu", QtyEntered: 1, UOMEntered: "SF"}},
+	}); !isForbidden(err) {
+		t.Fatalf("a Kingston login cannot park onto Trenton's list, got %v", err)
+	}
+	if _, err := h.svc.ResumeParked(context.Background(), t1.ID); !isNotFound(err) {
+		t.Fatalf("a ticket behind the wall answers what a missing ticket answers, got %v", err)
+	}
+	if err := h.svc.DiscardParked(context.Background(), t1.ID); !isNotFound(err) {
+		t.Fatalf("a ticket behind the wall answers what a missing ticket answers, got %v", err)
+	}
+	// And the refused touches moved nothing and planted nothing: Trenton still holds exactly the
+	// one ticket it parked, PARKED, and a Trenton login parks at its own branch unhindered.
+	h.caller = identity.StaffContext{UserID: "u-trenton-2", RoleCode: "INSIDE_SALES",
+		Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
+		Branches: map[string]bool{"branch-trt": true}}
+	t2, err := h.svc.Park(ctxWithActor("u-trenton-2"), ParkInput{
+		BranchID: "branch-trt",
+		Lines:    []ParkedLineInput{{ProductID: "prod-blu", QtyEntered: 12, UOMEntered: "SF"}},
+	})
+	if err != nil || t2.Status != "PARKED" {
+		t.Fatalf("a Trenton login parks at its own branch: %v %+v", err, t2)
+	}
+	list, err := h.svc.ListParked(context.Background(), "branch-trt")
+	if err != nil || len(list) != 2 {
+		t.Fatalf("exactly the branch's own two tickets, no planted row: %v %+v", err, list)
+	}
+	for _, tk := range list {
+		if tk.Notes == "should never land" {
+			t.Fatalf("the foreign park must never land on Trenton's list: %+v", list)
+		}
+	}
+}
+
+// The ruled pick-up: anyone at the counter picks up any parked sale at THEIR branch, no owner
+// check; a second clerk at the same branch resumes a ticket the first parked, and who resumed
+// stays recorded.
+func TestParked_SameBranch_SecondClerkResumes_NoOwnerCheck(t *testing.T) {
+	h := newHarness()
+	h.caller = identity.StaffContext{UserID: "u-trenton-1", RoleCode: "INSIDE_SALES",
+		Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
+		Branches: map[string]bool{"branch-trt": true}}
+	t1, err := h.svc.Park(ctxWithActor("u-trenton-1"), ParkInput{
+		BranchID: "branch-trt",
+		Lines:    []ParkedLineInput{{ProductID: "prod-blu", QtyEntered: 12, UOMEntered: "SF"}},
+	})
+	if err != nil {
+		t.Fatalf("park: %v", err)
+	}
+	// A different person at the same branch, the sales manager walking up to the same till.
+	h.caller = identity.StaffContext{UserID: "u-trenton-2", RoleCode: "SALES_MANAGER",
+		Tier: identity.TierManager, Scope: identity.ScopeBranch,
+		Branches: map[string]bool{"branch-trt": true}}
+	res, err := h.svc.ResumeParked(ctxWithActor("u-trenton-2"), t1.ID)
+	if err != nil || res.Status != "RESUMED" {
+		t.Fatalf("anyone at the branch picks up any parked sale: %v %+v", err, res)
+	}
+	if h.store.lastResumeActor != "u-trenton-2" {
+		t.Fatalf("who resumed stays recorded, got %q", h.store.lastResumeActor)
+	}
+}
+
+// isForbidden answers whether err is the 403 the branch wall answers with (the verbs where the
+// caller names the branch itself).
+func isForbidden(err error) bool {
+	var ce clientError
+	return errors.As(err, &ce) && ce.status == http.StatusForbidden
+}
+
+// isNotFound answers whether err is the 404 the by-id fence answers with, a missing ticket and
+// one behind the wall alike.
+func isNotFound(err error) bool {
+	var ce clientError
+	return errors.As(err, &ce) && ce.status == http.StatusNotFound
+}
+
 // -- pricing orders ----------------------------------------------------------
 
 func TestPricingOrder_SnapshotsListVsOffered_TotalsAndValidity(t *testing.T) {
@@ -694,17 +793,22 @@ func TestPricingOrder_SnapshotsListVsOffered_TotalsAndValidity(t *testing.T) {
 	}
 }
 
-func TestPricingOrder_BlockedLine_RoutesLikeSale(t *testing.T) {
+// The till's pricing doc prices through the counter resolve too (D48 row 481, D49): a line the
+// gated resolve would refuse below the floor is priced and the document is created.
+func TestPricingOrder_BelowFloorLine_IsCreated_NoBlock(t *testing.T) {
 	h := newHarness()
+	// The GATED resolve's verdict on the same line; the pricing order never asks it.
 	h.resolver.blocked = true
 	h.resolver.policy = "MARGIN_FLOOR"
-	_, err := h.svc.CreatePricingOrder(context.Background(), PricingOrderInput{
+	po, err := h.svc.CreatePricingOrder(context.Background(), PricingOrderInput{
 		BranchID: "branch-trt",
 		Lines:    []PricingOrderLineInput{{ProductID: "prod-blu", QtyEntered: 1, UOMEntered: "EA"}},
 	})
-	var pb ErrPriceBlocked
-	if !errors.As(err, &pb) {
-		t.Fatalf("a below-floor pricing line must block, got %v", err)
+	if err != nil {
+		t.Fatalf("the till's pricing order is created below the floor, got %v", err)
+	}
+	if po.DocNo == "" || len(po.Lines) != 1 || po.Lines[0].UnitPriceCents != 39934 {
+		t.Fatalf("the doc carries the resolver's rule price: %+v", po)
 	}
 }
 
