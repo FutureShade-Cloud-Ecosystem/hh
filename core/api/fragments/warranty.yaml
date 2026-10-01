@@ -65,7 +65,7 @@ paths:
       x-role: requireAdmin
       x-access:
         surfaces: [manager-home]
-        level: read
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: vendorID
@@ -99,7 +99,7 @@ paths:
       x-role: requireAdmin
       x-access:
         surfaces: [manager-home]
-        level: read
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: vendorID

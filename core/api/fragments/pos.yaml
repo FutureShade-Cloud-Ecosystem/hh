@@ -111,6 +111,7 @@ paths:
       x-access:
         surfaces: [counter-till]
         level: read
+        reason: computes the ticket's tax relief and writes nothing
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -257,6 +258,7 @@ paths:
       x-access:
         surfaces: [counter-till]
         level: read
+        reason: computes the ticket's margin picture and writes nothing
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -289,6 +291,7 @@ paths:
       x-access:
         surfaces: [counter-till]
         level: read
+        reason: computes a price picture for a screen of products and writes nothing
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -527,6 +530,7 @@ paths:
       x-access:
         surfaces: [counter-till]
         level: read
+        reason: the caller's own workspace row, the counter's own ergonomics
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -553,6 +557,7 @@ paths:
       x-access:
         surfaces: [counter-till]
         level: read
+        reason: the caller's own workspace row, reset to the dealer defaults
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:

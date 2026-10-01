@@ -118,6 +118,7 @@ paths:
       x-access:
         surfaces: [manager-home]
         level: read
+        reason: runs a report read and queues the artefact for print
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: code
@@ -524,6 +525,7 @@ paths:
       x-access:
         surfaces: [manager-home]
         level: read
+        reason: reads one frozen commission run and queues it for print
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"

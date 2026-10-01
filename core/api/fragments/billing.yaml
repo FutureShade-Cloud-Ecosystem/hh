@@ -1220,7 +1220,7 @@ paths:
         write-only and never appear in any response.
       x-role: requireStaff
       x-access:
-        surfaces: [dealer-admin]
+        surfaces: [counter-till]
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"

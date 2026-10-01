@@ -2203,7 +2203,7 @@ paths:
       x-role: requireStaff
       x-access:
         surfaces:
-          - dealer-admin
+          - counter-till
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -8825,6 +8825,8 @@ paths:
       x-role: requireStaff
       x-access:
         surfaces:
+          - counter-till
+          - quote-desk
           - manager-home
         level: work
       parameters:
@@ -8857,8 +8859,10 @@ paths:
       x-role: requireStaff
       x-access:
         surfaces:
+          - counter-till
+          - quote-desk
           - manager-home
-        level: read
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -9572,6 +9576,7 @@ paths:
         surfaces:
           - buying-and-stock
         level: read
+        reason: "the tier gate alone holds this wall: manage on buying-and-stock is reachable by no leadership role the requireAdmin tier admits"
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -13724,6 +13729,7 @@ paths:
         surfaces:
           - counter-till
         level: read
+        reason: computes the ticket's tax relief and writes nothing
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -13883,6 +13889,7 @@ paths:
         surfaces:
           - counter-till
         level: read
+        reason: computes the ticket's margin picture and writes nothing
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -13916,6 +13923,7 @@ paths:
         surfaces:
           - counter-till
         level: read
+        reason: computes a price picture for a screen of products and writes nothing
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -14212,6 +14220,7 @@ paths:
         surfaces:
           - counter-till
         level: read
+        reason: the caller's own workspace row, the counter's own ergonomics
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -14243,6 +14252,7 @@ paths:
         surfaces:
           - counter-till
         level: read
+        reason: the caller's own workspace row, reset to the dealer defaults
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -15306,6 +15316,7 @@ paths:
           - counter-till
           - quote-desk
         level: read
+        reason: computes one line's price through the waterfall and writes nothing
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -15392,6 +15403,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -15463,6 +15475,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -15507,6 +15520,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -15573,6 +15587,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -15654,6 +15669,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -15702,6 +15718,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -15746,6 +15763,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -15836,6 +15854,7 @@ paths:
         surfaces:
           - quote-desk
         level: read
+        reason: classifies a caller-supplied batch by margin and writes nothing
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -15949,6 +15968,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -16019,6 +16039,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -16063,6 +16084,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -16147,6 +16169,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -16250,6 +16273,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -16302,6 +16326,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -16342,6 +16367,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -16381,6 +16407,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -16431,6 +16458,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -16541,6 +16569,7 @@ paths:
         surfaces:
           - dealer-admin
         level: read
+        reason: diffs an uploaded price file against the anchor and writes nothing
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: limit
@@ -16587,6 +16616,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -16693,6 +16723,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -16733,6 +16764,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -16777,6 +16809,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -16847,6 +16880,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -16892,6 +16926,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -16964,6 +16999,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -17005,6 +17041,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -17049,6 +17086,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -17136,6 +17174,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -17176,6 +17215,7 @@ paths:
           - counter-till
           - quote-desk
         level: read
+        reason: resolves a quantity into its pick and weight views and writes nothing
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -17254,6 +17294,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -17292,6 +17333,7 @@ paths:
         surfaces:
           - dealer-admin
         level: manage
+        list: pricing_editors
       x-guards:
         - requirePathUUID
       parameters:
@@ -18197,6 +18239,7 @@ paths:
         surfaces:
           - buying-and-stock
         level: read
+        reason: "the tier gate alone holds this wall: manage on buying-and-stock is reachable by no leadership role the requireAdmin tier admits"
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -18299,7 +18342,7 @@ paths:
       x-access:
         surfaces:
           - buying-and-stock
-        level: read
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: vendorID
@@ -19048,6 +19091,7 @@ paths:
         surfaces:
           - quote-desk
         level: read
+        reason: scores alternate products against one line, read-only by contract
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -20005,6 +20049,7 @@ paths:
         surfaces:
           - quote-desk
         level: read
+        reason: "the tier gate alone holds this wall: manage on quote-desk is held by the sales manager, whom the requireAdmin tier refuses"
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: code
@@ -20170,6 +20215,7 @@ paths:
         surfaces:
           - manager-home
         level: read
+        reason: runs a report read and queues the artefact for print
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: code
@@ -20653,6 +20699,7 @@ paths:
         surfaces:
           - manager-home
         level: read
+        reason: reads one frozen commission run and queues it for print
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -22687,7 +22734,7 @@ paths:
       x-access:
         surfaces:
           - manager-home
-        level: read
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: vendorID
@@ -22725,7 +22772,7 @@ paths:
       x-access:
         surfaces:
           - manager-home
-        level: read
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: vendorID

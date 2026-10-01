@@ -5,7 +5,10 @@
 // templated paths that collide under different parameter names, and any
 // x-access fault: a staff operation without an x-access block, a non-staff
 // operation with one, a surface or level outside roleconfig's vocabulary,
-// or a staff operation whose tag has no x-access-map entry.
+// none as a route's level (a wall that cannot be switched off, D49), a
+// named list the configuration does not carry, a staff operation whose tag
+// has no x-access-map entry, and a write annotated below manage with no
+// reason saying why.
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,10 +19,25 @@ const skeleton = YAML.parse(readFileSync(join(apiDir, "skeleton.yaml"), "utf8"))
 
 // The surface and level vocabularies are roleconfig's, read from the
 // decided default's cells (D48): one source, so the document and the
-// guards can never drift apart on the words they share.
+// guards can never drift apart on the words they share. The namable lists
+// are the configuration's role-list keys: a setting whose value is a list
+// of roles, or one of the two standing lists beside the exception kinds.
 const roleconfig = YAML.parse(readFileSync(join(apiDir, "..", "internal", "roleconfig", "default.json"), "utf8"));
 const knownSurfaces = new Set(roleconfig.cells.map((c) => c.surface));
 const knownLevels = new Set(roleconfig.cells.map((c) => c.level));
+const ROLE_LIST_SETTINGS = ["cost_visibility", "refund_approvers", "pricing_editors", "shortage_resolvers", "dispatch_policy_setters"];
+const knownListKeys = new Set([
+  ...ROLE_LIST_SETTINGS.filter((k) => Array.isArray(roleconfig.settings?.[k])),
+  "floor_clearers_own_branch",
+  "delivery_date_committers",
+]);
+
+// All state is declared before any check runs, so a faulty map entry is
+// named as the fault it is instead of falling over mid-walk.
+const problems = [];
+const operationIds = new Map();
+const HTTP_METHODS = new Set(["get", "put", "post", "delete", "patch"]);
+const WRITE_METHODS = new Set(["put", "post", "patch", "delete"]);
 
 const doc = {
   openapi: skeleton.openapi,
@@ -44,11 +62,15 @@ for (const [tag, entry] of Object.entries(accessMap)) {
   if (surfaces.length === 0) problems.push(`x-access-map ${tag}: no surfaces`);
   for (const s of surfaces) if (!knownSurfaces.has(s)) problems.push(`x-access-map ${tag}: unknown surface ${s}`);
   if (!knownLevels.has(entry?.level)) problems.push(`x-access-map ${tag}: unknown level ${entry?.level}`);
+  if (entry?.level === "none") problems.push(`x-access-map ${tag}: level none refuses every role; a route level cannot be none (D49)`);
 }
 
 // checkAccess validates one operation's x-access block, returning its
 // census spelling ("surface1|surface2 at level") for the summary line.
-function checkAccess(where, op) {
+// A write annotated below manage must carry a reason saying why: the
+// convention cases where the tier gate alone can hold the wall, and the
+// read-semantics operations the POST method dresses, each say so in place.
+function checkAccess(where, method, op) {
   const xa = op["x-access"];
   const staff = STAFF_ROLES.has(op["x-role"]);
   if (!staff) {
@@ -66,14 +88,19 @@ function checkAccess(where, op) {
   }
   for (const s of surfaces) if (!knownSurfaces.has(s)) problems.push(`${where}: x-access names unknown surface ${s}`);
   if (!knownLevels.has(xa.level)) problems.push(`${where}: x-access names unknown level ${xa.level}`);
+  if (xa.level === "none") problems.push(`${where}: x-access level none refuses every role; a route level cannot be none (D49)`);
+  if (xa.list !== undefined) {
+    if (!knownListKeys.has(xa.list)) problems.push(`${where}: x-access names list ${xa.list}, which the configuration does not carry`);
+  }
+  if (WRITE_METHODS.has(method) && xa.level === "read") {
+    if (typeof xa.reason !== "string" || xa.reason.trim() === "") {
+      problems.push(`${where}: a write at read carries no reason`);
+    }
+  }
   const mapped = accessMap[op.tags?.[0]];
   if (!mapped) problems.push(`${where}: staff tag ${op.tags?.[0]} has no x-access-map entry`);
   return `${surfaces.join("|")} at ${xa.level}`;
 }
-
-const HTTP_METHODS = new Set(["get", "put", "post", "delete", "patch"]);
-const problems = [];
-const operationIds = new Map();
 
 function mergePaths(paths, source) {
   for (const [path, item] of Object.entries(paths ?? {})) {
@@ -158,7 +185,7 @@ for (const [path, item] of Object.entries(doc.paths)) {
     if (!Array.isArray(op.tags) || op.tags.length !== 1) problems.push(`${where}: must carry exactly one tag`);
     else if (!tagNames.has(op.tags[0])) problems.push(`${where}: unknown tag ${op.tags[0]}`);
     if (op["x-role"] !== undefined && (!Array.isArray(op.tags) || op.tags.length === 1)) {
-      const access = checkAccess(where, op);
+      const access = checkAccess(where, method, op);
       if (access !== null) {
         accessCount += 1;
         if (access !== (accessMap[op.tags[0]] ? `${accessMap[op.tags[0]].surfaces.join("|")} at ${accessMap[op.tags[0]].level}` : "")) exceptions.push(`${where}: ${access}`);

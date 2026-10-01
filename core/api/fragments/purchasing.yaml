@@ -819,6 +819,7 @@ paths:
       x-access:
         surfaces: [buying-and-stock]
         level: read
+        reason: "the tier gate alone holds this wall: manage on buying-and-stock is reachable by no leadership role the requireAdmin tier admits"
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -911,7 +912,7 @@ paths:
       x-role: requireManager
       x-access:
         surfaces: [buying-and-stock]
-        level: read
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: vendorID

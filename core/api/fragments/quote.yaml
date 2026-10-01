@@ -326,6 +326,7 @@ paths:
       x-access:
         surfaces: [quote-desk]
         level: read
+        reason: scores alternate products against one line, read-only by contract
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -1210,6 +1211,7 @@ paths:
       x-access:
         surfaces: [quote-desk]
         level: read
+        reason: "the tier gate alone holds this wall: manage on quote-desk is held by the sales manager, whom the requireAdmin tier refuses"
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: code

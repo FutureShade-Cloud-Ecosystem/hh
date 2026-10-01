@@ -353,7 +353,7 @@ paths:
         directly is refused.
       x-role: requireStaff
       x-access:
-        surfaces: [manager-home]
+        surfaces: [counter-till, quote-desk, manager-home]
         level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -382,8 +382,8 @@ paths:
         granted branches.
       x-role: requireStaff
       x-access:
-        surfaces: [manager-home]
-        level: read
+        surfaces: [counter-till, quote-desk, manager-home]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
