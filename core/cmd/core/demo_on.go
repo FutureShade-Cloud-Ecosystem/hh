@@ -79,27 +79,27 @@ type demoServeConfig struct {
 }
 
 func loadDemoServeConfig(getenv func(string) string) (demoServeConfig, error) {
-	required := map[string]string{
-		"CORE_DATABASE_URL":    "database URL",
-		"CORE_STAFF_AUDIENCE":  "staff audience",
-		"CORE_TENANT_AUDIENCE": "tenant audience",
-	}
+	databaseURL := strings.TrimSpace(getenv("CORE_DATABASE_URL"))
+	staff := strings.TrimSpace(getenv("CORE_STAFF_AUDIENCE"))
+	tenant := strings.TrimSpace(getenv("CORE_TENANT_AUDIENCE"))
 	var missing []string
-	for env, name := range required {
-		if strings.TrimSpace(getenv(env)) == "" {
-			missing = append(missing, name+" ("+env+")")
-		}
+	if databaseURL == "" {
+		missing = append(missing, "database URL (CORE_DATABASE_URL)")
+	}
+	if staff == "" {
+		missing = append(missing, "staff audience (CORE_STAFF_AUDIENCE)")
+	}
+	if tenant == "" {
+		missing = append(missing, "tenant audience (CORE_TENANT_AUDIENCE)")
 	}
 	if len(missing) > 0 {
 		return demoServeConfig{}, fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
 	}
-	staff := getenv("CORE_STAFF_AUDIENCE")
-	tenant := getenv("CORE_TENANT_AUDIENCE")
 	if staff == tenant {
 		return demoServeConfig{}, errors.New("staff and tenant audience values must differ")
 	}
 	cfg := demoServeConfig{
-		databaseURL:    getenv("CORE_DATABASE_URL"),
+		databaseURL:    databaseURL,
 		staffAudience:  staff,
 		tenantAudience: tenant,
 	}
@@ -120,6 +120,17 @@ func loadDemoServeConfig(getenv func(string) string) (demoServeConfig, error) {
 // and only then does the demo graph build and the listener open.
 func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)) error {
 	if err := boot.CheckDemoBox(lookupEnv); err != nil {
+		return err
+	}
+	// G4: the demo box carries no outbound provider. The deny set is the
+	// one copy in demoenv_inventory.go that the default-build inventory
+	// test holds against the source tree.
+	if err := boot.RefuseProviderVars(os.Environ(), boot.ProviderDeny{
+		Prefixes:    demoEnvDenyPrefixes,
+		Names:       demoEnvDenyNames,
+		CardVar:     demoEnvCardProcessorVar,
+		CardAllowed: demoEnvCardProcessorValue,
+	}); err != nil {
 		return err
 	}
 
