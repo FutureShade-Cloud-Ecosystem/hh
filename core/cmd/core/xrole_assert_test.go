@@ -66,6 +66,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
@@ -108,6 +109,9 @@ func newXRoleFixture(t *testing.T) *xrFixture {
 	env := newCompEnv(t)
 	reg, graph := registeredSurface(t, env)
 	tokens := plantClassificationTokens(t, env, graph.pool)
+	// The matrix legs' principals: the planted staff roles whose cells the
+	// three tier legs' roles do not reach (plan item RG).
+	plantMatrixStaff(t, env, graph.pool)
 	return &xrFixture{env: env, reg: reg, registered: reg.patterns, tokens: tokens}
 }
 
@@ -123,7 +127,15 @@ type xrLeg struct {
 
 // xrLegs is the fixed probe skeleton every family is asserted against. The
 // anonymous leg is first because the public family compares every
-// admitting body against the anonymous body.
+// admitting body against the anonymous body. The staff legs beyond the
+// three tier legs exist because the role gate holds each role to its own
+// row of the dealer's configuration (D48, plan item RG): the financial
+// controller, the branch manager, the procurement manager and the yard
+// team are the planted callers whose cells reach the routes no tier leg
+// reaches (the money desk's admin cells, the dispatch board's work cells,
+// buying and stock's manage cells, the yard pick surface), so the bearer
+// class assertion has an admitted staff caller on every staff route and
+// the family assertions observe the matrix refusing real roles.
 var xrLegs = []xrLeg{
 	{"anonymous", func(*testing.T, *xrFixture) map[string]string { return nil }},
 	{"malformed bearer", func(*testing.T, *xrFixture) map[string]string {
@@ -147,6 +159,30 @@ var xrLegs = []xrLeg{
 	{"staff tier 1 global", func(t *testing.T, fx *xrFixture) map[string]string {
 		return map[string]string{
 			"Authorization":  "Bearer " + fx.env.minter.StaffToken(t, testkit.SubGeneralMgr),
+			authz.HeaderXOrg: xrXOrg,
+		}
+	}},
+	{"staff financial controller global", func(t *testing.T, fx *xrFixture) map[string]string {
+		return map[string]string{
+			"Authorization":  "Bearer " + fx.env.minter.StaffToken(t, xrSubFinancialController),
+			authz.HeaderXOrg: xrXOrg,
+		}
+	}},
+	{"staff branch manager branch", func(t *testing.T, fx *xrFixture) map[string]string {
+		return map[string]string{
+			"Authorization":  "Bearer " + fx.env.minter.StaffToken(t, xrSubBranchManager),
+			authz.HeaderXOrg: xrXOrg,
+		}
+	}},
+	{"staff procurement manager branch", func(t *testing.T, fx *xrFixture) map[string]string {
+		return map[string]string{
+			"Authorization":  "Bearer " + fx.env.minter.StaffToken(t, xrSubProcurementManager),
+			authz.HeaderXOrg: xrXOrg,
+		}
+	}},
+	{"staff yard team branch", func(t *testing.T, fx *xrFixture) map[string]string {
+		return map[string]string{
+			"Authorization":  "Bearer " + fx.env.minter.StaffToken(t, xrSubYardTeam),
 			authz.HeaderXOrg: xrXOrg,
 		}
 	}},
@@ -219,16 +255,67 @@ func xrRefuse(status int, body []byte) xrWant { return xrWant{status: status, bo
 
 func xrShapeRefused() xrWant { return xrWant{status: http.StatusBadRequest, shape: true} }
 
+// The staff legs, their planted roles and their tiers. The role gate
+// holds each role to its own row of the dealer's configuration, so the
+// staff legs' expectations are computed from the matrix, never pinned:
+// a cell edit in the decided default moves the expectations here and the
+// composition test follows it (the tests were brought to the matrix,
+// plan item RG's third clause).
+var xrStaffLegs = []struct {
+	legName string
+	role    string
+	tier    int
+}{
+	{"staff tier 3 branch", "inside_sales", identity.TierFrontline},
+	{"staff tier 2 branch", "sales_manager", identity.TierManager},
+	{"staff tier 1 global", "general_manager", identity.TierLeadership},
+	{"staff financial controller global", "financial_controller", identity.TierLeadership},
+	{"staff branch manager branch", "branch_manager", identity.TierManager},
+	{"staff procurement manager branch", "procurement_manager", identity.TierManager},
+	{"staff yard team branch", "yard_team", identity.TierFrontline},
+}
+
+// xrMatrixAdmits answers whether the role's row of the configuration
+// reaches the route's annotated level on at least one surface the route
+// serves, the role gate's admission rule.
+func xrMatrixAdmits(t *testing.T, cfg *roleconfig.Config, route apigen.Route, role string) bool {
+	t.Helper()
+	for _, surface := range route.Surfaces {
+		ok, err := cfg.Holds(role, surface, roleconfig.Level(route.Level))
+		if err != nil {
+			t.Fatalf("matrix read for %s on %s: %v", role, surface, err)
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
 // xrFamilyFor maps the document's x-role spelling onto the expectation
 // table of one guard constructor family. The second return names the
 // family for failure messages; ok false means the spelling names no family
-// this suite can assert.
-func xrFamilyFor(xrole string) (map[string]xrWant, string, bool) {
+// this suite can assert. The staff legs of the three tier families are
+// the tier gate's answer AND the role gate's answer: a leg is admitted
+// only when its tier passes the x-role and its row of the dealer's
+// configuration reaches the route's annotated level on a served surface.
+func xrFamilyFor(t *testing.T, cfg *roleconfig.Config, route apigen.Route) (map[string]xrWant, string, bool) {
 	shape := xrShapeRefused()
 	u := xrRefuse(http.StatusUnauthorized, authz.BodyUnauthorized)
 	f := xrRefuse(http.StatusForbidden, authz.BodyForbidden)
+	staffWant := func(minTier int) map[string]xrWant {
+		wants := make(map[string]xrWant, len(xrStaffLegs))
+		for _, leg := range xrStaffLegs {
+			if leg.tier <= minTier && xrMatrixAdmits(t, cfg, route, leg.role) {
+				wants[leg.legName] = xrAdmitted()
+			} else {
+				wants[leg.legName] = f
+			}
+		}
+		return wants
+	}
 	switch {
-	case xrole == "public":
+	case xrole(route) == "public":
 		// The unguarded public leg (ADR-0020 leg 2): no credential, no
 		// header, no bearer class has any effect on the answer, so every
 		// leg must return the anonymous answer byte for byte.
@@ -237,51 +324,68 @@ func xrFamilyFor(xrole string) (map[string]xrWant, string, bool) {
 			wants[leg.name] = xrAnonIdentical()
 		}
 		return wants, "Public (unguarded)", true
-	case xrole == "requireStaff":
-		return map[string]xrWant{
+	case xrole(route) == "requireStaff":
+		wants := map[string]xrWant{
 			"anonymous": u, "malformed bearer": u,
 			"staff bearer without X-Org": shape,
-			"staff tier 3 branch":        xrAdmitted(), "staff tier 2 branch": xrAdmitted(), "staff tier 1 global": xrAdmitted(),
-			"tenant account admin": f, "tenant field crew": f, "tenant buyer": f, "tenant buyer no pay": f,
+			"tenant account admin":       f, "tenant field crew": f, "tenant buyer": f, "tenant buyer no pay": f,
 			"tenant ap finance": f, "tenant no portal row": f, "tenant bearer carrying X-Org": f,
-		}, "RequireStaff (any active grant)", true
-	case xrole == "requireManager":
-		return map[string]xrWant{
+		}
+		for name, want := range staffWant(identity.TierFrontline) {
+			wants[name] = want
+		}
+		return wants, "RequireStaff (any active grant) and the role gate", true
+	case xrole(route) == "requireManager":
+		wants := map[string]xrWant{
 			"anonymous": u, "malformed bearer": u,
 			"staff bearer without X-Org": shape,
-			"staff tier 3 branch":        f, "staff tier 2 branch": xrAdmitted(), "staff tier 1 global": xrAdmitted(),
-			"tenant account admin": f, "tenant field crew": f, "tenant buyer": f, "tenant buyer no pay": f,
+			"tenant account admin":       f, "tenant field crew": f, "tenant buyer": f, "tenant buyer no pay": f,
 			"tenant ap finance": f, "tenant no portal row": f, "tenant bearer carrying X-Org": f,
-		}, "RequireManager (tier 1 or 2)", true
-	case xrole == "requireAdmin":
-		return map[string]xrWant{
+		}
+		for name, want := range staffWant(identity.TierManager) {
+			wants[name] = want
+		}
+		return wants, "RequireManager (tier 1 or 2) and the role gate", true
+	case xrole(route) == "requireAdmin":
+		wants := map[string]xrWant{
 			"anonymous": u, "malformed bearer": u,
 			"staff bearer without X-Org": shape,
-			"staff tier 3 branch":        f, "staff tier 2 branch": f, "staff tier 1 global": xrAdmitted(),
-			"tenant account admin": f, "tenant field crew": f, "tenant buyer": f, "tenant buyer no pay": f,
+			"tenant account admin":       f, "tenant field crew": f, "tenant buyer": f, "tenant buyer no pay": f,
 			"tenant ap finance": f, "tenant no portal row": f, "tenant bearer carrying X-Org": f,
-		}, "RequireAdmin (tier 1 global)", true
-	case xrole == "tenant":
-		return map[string]xrWant{
+		}
+		for name, want := range staffWant(identity.TierLeadership) {
+			wants[name] = want
+		}
+		return wants, "RequireAdmin (tier 1 global) and the role gate", true
+	case xrole(route) == "tenant":
+		wants := map[string]xrWant{
 			"anonymous": u, "malformed bearer": u,
 			"staff bearer without X-Org": f, "staff tier 3 branch": f, "staff tier 2 branch": f, "staff tier 1 global": f,
+			"staff financial controller global": f, "staff branch manager branch": f,
+			"staff procurement manager branch": f, "staff yard team branch": f,
 			// No capability is consulted: a role that holds nothing is still
 			// admitted, and the no-row boundary is the unpinned leg guards.go
 			// records as admitted.
 			"tenant account admin": xrAdmitted(), "tenant field crew": xrAdmitted(), "tenant buyer": xrAdmitted(),
 			"tenant buyer no pay": xrAdmitted(), "tenant ap finance": xrAdmitted(), "tenant no portal row": xrAdmitted(),
 			"tenant bearer carrying X-Org": shape,
-		}, "RequireTenant (tenant bearer, portal row status)", true
-	case xrole == "scope-member":
-		return map[string]xrWant{
+		}
+		return wants, "RequireTenant (tenant bearer, portal row status)", true
+	case xrole(route) == "scope-member":
+		wants := map[string]xrWant{
 			"anonymous": u, "malformed bearer": u,
 			"staff bearer without X-Org": shape,
-			"staff tier 3 branch":        xrAdmitted(), "staff tier 2 branch": xrAdmitted(), "staff tier 1 global": xrAdmitted(),
+			// The sync surface carries no tier gate and no role gate: any
+			// staff bearer with an org selection passes the staff leg.
+			"staff tier 3 branch": xrAdmitted(), "staff tier 2 branch": xrAdmitted(), "staff tier 1 global": xrAdmitted(),
+			"staff financial controller global": xrAdmitted(), "staff branch manager branch": xrAdmitted(),
+			"staff procurement manager branch": xrAdmitted(), "staff yard team branch": xrAdmitted(),
 			"tenant account admin": xrAdmitted(), "tenant field crew": xrAdmitted(), "tenant buyer": xrAdmitted(),
 			"tenant buyer no pay": xrAdmitted(), "tenant ap finance": xrAdmitted(), "tenant no portal row": xrAdmitted(),
 			"tenant bearer carrying X-Org": shape,
-		}, "RequireSync (either bearer, G4 bearer-conditioned)", true
-	case strings.HasPrefix(xrole, "capability:"):
+		}
+		return wants, "RequireSync (either bearer, G4 bearer-conditioned)", true
+	case strings.HasPrefix(xrole(route), "capability:"):
 		// The capability family derives its tenant-leg expectations from the
 		// same carried role-to-capability model the guard reads
 		// (identity.CapabilitiesFor, pinned both-halves per capability in
@@ -294,10 +398,12 @@ func xrFamilyFor(xrole string) (map[string]xrWant, string, bool) {
 		// edit_delivery_instructions; the residual equivalence pairs
 		// (pay_invoices versus manage_payment_methods, submit_rfq versus
 		// create_orders) no canonical role splits under the carried lattice.
-		capName := identity.Capability(strings.TrimPrefix(xrole, "capability:"))
+		capName := identity.Capability(strings.TrimPrefix(xrole(route), "capability:"))
 		wants := map[string]xrWant{
 			"anonymous": u, "malformed bearer": u,
 			"staff bearer without X-Org": f, "staff tier 3 branch": f, "staff tier 2 branch": f, "staff tier 1 global": f,
+			"staff financial controller global": f, "staff branch manager branch": f,
+			"staff procurement manager branch": f, "staff yard team branch": f,
 			"tenant no portal row":         f,
 			"tenant bearer carrying X-Org": shape,
 		}
@@ -314,10 +420,13 @@ func xrFamilyFor(xrole string) (map[string]xrWant, string, bool) {
 				wants[legName] = f
 			}
 		}
-		return wants, "RequireCapability (" + xrole + ")", true
+		return wants, "RequireCapability (" + xrole(route) + ")", true
 	}
 	return nil, "", false
 }
+
+// xrole reads the census x-role spelling of one route.
+func xrole(route apigen.Route) string { return route.XRole }
 
 // xrCensusByPattern indexes the generated census by method-prefixed
 // pattern, the same index the parity test asserts both directions against,
@@ -401,11 +510,18 @@ func (fx *xrFixture) probeLeg(t *testing.T, route apigen.Route, leg xrLeg) (int,
 // TestRegisteredRouteGateMatchesDocumentXRole is the x-role equality
 // assertion: for every registered route, the gate the handler runs is
 // observed on the fixed probe skeleton and must match the expectation
-// table of the family the document's x-role names. A document x-role edit
-// without the gate, or a gate swap without the document, fails here.
+// table of the family the document's x-role names, with the staff legs'
+// expectations computed from the dealer's configuration (plan item RG:
+// the tests are brought to the matrix, never the matrix to the tests). A
+// document x-role edit without the gate, a gate swap without the
+// document, or a matrix cell edit the gate does not follow, fails here.
 func TestRegisteredRouteGateMatchesDocumentXRole(t *testing.T) {
 	fx := newXRoleFixture(t)
 	census := xrCensusByPattern(t)
+	cfg, err := roleconfig.Default()
+	if err != nil {
+		t.Fatalf("roleconfig.Default: %v", err)
+	}
 	if len(fx.registered) == 0 {
 		t.Fatal("registerRoutes registered nothing; the assertion surface is empty")
 	}
@@ -418,7 +534,7 @@ func TestRegisteredRouteGateMatchesDocumentXRole(t *testing.T) {
 			if route.XRole == "operator" {
 				t.Fatalf("x-role operator (documented for %s) names a class no guard constructor implements: RequireStaffPredicate composes it once its lane records what the class means, and asserting a family the guard layer has not decided would invent policy", route.OperationID)
 			}
-			wants, family, ok := xrFamilyFor(route.XRole)
+			wants, family, ok := xrFamilyFor(t, cfg, route)
 			if !ok {
 				t.Fatalf("document x-role %q names no gate family this suite knows", route.XRole)
 			}
@@ -507,16 +623,49 @@ func (fx *xrFixture) assertClassificationCells(t *testing.T, route apigen.Route)
 // RBAC-403. A shim registered under the wrong bearer family, or a census
 // Bearer edit without the gate, fails here even when the x-role family
 // assertion alone would pass; the sync pair is the class where the two are
-// independent (Tech Lead B3 review note). The staff probe is the tier 1
-// global leg, the one staff caller every staff-family constructor admits,
-// so the observation isolates the credential class from the x-role tier
-// gates (a tier 3 caller on a manager route is refused by the gate, not by
-// the bearer class, and would conflate the two assertions). Admitted here
-// means the gate passed (the handler's own answer, never a family
+// independent (Tech Lead B3 review note). The staff probe is the first
+// planted staff caller the dealer's configuration admits for that route
+// (the tier legs alone do not cover the routes whose cells sit with the
+// financial controller, the branch manager, the procurement manager or
+// the yard team), so the observation isolates the credential class from
+// both the x-role tier gates and the role gate. Admitted here means the
+// whole gate stack passed (the handler's own answer, never a family
 // refusal), because the served handlers are DB-backed modules.
 func TestRegisteredRouteBearerMatchesCensus(t *testing.T) {
 	fx := newXRoleFixture(t)
 	census := xrCensusByPattern(t)
+	cfg, err := roleconfig.Default()
+	if err != nil {
+		t.Fatalf("roleconfig.Default: %v", err)
+	}
+	// xrStaffAdmittedLeg names the leg whose caller the tier gate and the
+	// role gate both admit, walking the planted staff roles by tier. The
+	// sync pair carries no staff gate at all (either bearer passes its
+	// class leg), so any staff leg proves the staff class there.
+	xrStaffAdmittedLeg := func(t *testing.T, route apigen.Route) string {
+		t.Helper()
+		if route.XRole == "scope-member" {
+			return "staff tier 1 global"
+		}
+		for _, leg := range xrStaffLegs {
+			tierOK := false
+			switch route.XRole {
+			case "requireStaff":
+				tierOK = true
+			case "requireManager":
+				tierOK = leg.tier <= identity.TierManager
+			case "requireAdmin":
+				tierOK = leg.tier <= identity.TierLeadership
+			default:
+				t.Fatalf("bearer probe on x-role %q names no staff family", route.XRole)
+			}
+			if tierOK && xrMatrixAdmits(t, cfg, route, leg.role) {
+				return leg.legName
+			}
+		}
+		t.Fatalf("%s: no planted staff caller is admitted by the tier gate and the matrix together; plant the role whose row reaches this route", route.OperationID)
+		return ""
+	}
 	for _, pattern := range fx.registered {
 		route, ok := census[pattern]
 		if !ok {
@@ -545,13 +694,13 @@ func TestRegisteredRouteBearerMatchesCensus(t *testing.T) {
 			}
 			switch route.Bearer {
 			case "staff":
-				admitted("staff tier 1 global")
+				admitted(xrStaffAdmittedLeg(t, route))
 				refused("tenant account admin")
 			case "tenant":
 				admitted("tenant account admin")
 				refused("staff tier 1 global")
 			case "staff-or-tenant":
-				admitted("staff tier 1 global")
+				admitted(xrStaffAdmittedLeg(t, route))
 				admitted("tenant account admin")
 			case "public":
 				admitted("anonymous")

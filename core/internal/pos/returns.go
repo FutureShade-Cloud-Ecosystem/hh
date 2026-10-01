@@ -7,6 +7,7 @@ package pos
 
 import (
 	"context"
+	"errors"
 	"math"
 	"net/http"
 	"strings"
@@ -24,6 +25,33 @@ const qtyEpsilon = 1e-6
 // from ("rreq:" + request id). It is RESERVED: a public return may never use it (a colliding key would
 // hijack a PENDING request's replay slot and stamp the wrong money onto its decision).
 const reservedRequestKeyPrefix = "rreq:"
+
+// auditActionRefundApprovalRefused is the audit action of one return the
+// till refused for want of an approval: the row names the clerk, the sale
+// and the amount (D49).
+const auditActionRefundApprovalRefused = "REFUND_APPROVAL_REFUSED"
+
+// refundApprovalRequiredError is the error string the contract pins as the
+// discriminator of the approval refusal (the 409 body's Error envelope;
+// the approval key rides beside it, present exactly when this refusal is
+// the one the till's screen shows the manager dialog for).
+const refundApprovalRequiredError = "refund_approval_required"
+
+// ErrRefundApprovalRequired refuses one return above the configured
+// amount from a role that holds no approval: AmountCents is the
+// configured amount without approval, Approvers the role keys that hold
+// it, both as the configuration sets them (X7), and RefundCents is the
+// refused refund's own total, the fact the audit row keeps. The handler
+// maps it to the contract's 409.
+type ErrRefundApprovalRequired struct {
+	AmountCents int64
+	Approvers   []string
+	RefundCents int64
+}
+
+func (e ErrRefundApprovalRequired) Error() string {
+	return "pos: the refund is above the approval amount and the caller's role holds no approval"
+}
 
 // restocker returns the injected restock seam, defaulting to the behavior-preserving no-op.
 func (s *Service) restocker() StockRestocker {
@@ -69,12 +97,6 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 	if in.FeeBps > 0 && in.RefundMethod != RefundAccountCredit {
 		return Return{}, errFeeNeedsCredit
 	}
-	if cached, found, err := s.store.FindReturnByKey(ctx, in.IdempotencyKey); err != nil {
-		return Return{}, err
-	} else if found {
-		cached.Replayed = true
-		return cached, nil
-	}
 
 	// The original sale: must be a committed POS sale; the return runs at ITS branch.
 	oc, found, err := s.store.ReturnOrderContext(ctx, in.OrderID, in.OrderNo)
@@ -83,6 +105,27 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 	}
 	if !found {
 		return Return{}, errReturnNotFound
+	}
+	// The branch wall runs BEFORE any rail, before any write and before the
+	// idempotent replay (X2, fixing HH-218; the lead's P2-2 ruling): no
+	// processor reversal, no drawer payout and no account credit may move
+	// for a sale the caller's resolved authority does not reach, and the
+	// replay of a foreign sale refuses exactly like the first attempt, so
+	// another branch's return number, sale, invoice, payment id and money
+	// are not a thing a key alone buys. The return runs at the sale's
+	// branch; the caller brings their own grants, resolved per request by
+	// the guards, never claimed.
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return Return{}, err
+	}
+	if err := requireBranchReach(caller, oc.BranchID); err != nil {
+		return Return{}, err
+	}
+	if cached, found, err := s.replayIfAllowed(ctx, in.IdempotencyKey, caller); err != nil {
+		return Return{}, err
+	} else if found {
+		return cached, nil
 	}
 	if in.RefundMethod == RefundCash && in.TillSessionID == "" {
 		return Return{}, ErrNoOpenTill{}
@@ -94,6 +137,47 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		if s.cardRefund == nil {
 			return Return{}, errNoCardRefunder
 		}
+	}
+
+	// The gated paths fail closed (the lead's P1-1 ruling): a counter
+	// return on a service built with no role configuration refuses, it
+	// never skips the refund rule. The A-06 portal rail keeps its
+	// exemption: the queue's own decision already approved that request.
+	//
+	// The approver credential resolves BEFORE the transaction opens (the
+	// lead's P3-6 ruling): no verifier call, membership read or authority
+	// read ever runs while the sale's lines are held for update; only the
+	// comparison against the computed total stays inside. A presented
+	// credential is judged wherever it rides: a return that ends up under
+	// the amount commits ordinarily, a credential that cannot be judged
+	// refuses on its own family with its audit row.
+	var decision approverDecision
+	var judgeErr error
+	credentialJudged := false
+	// approvedHere records that the rule FIRED and the standing decision
+	// was spent: a return that needs nobody's approval commits as its
+	// caller's own decision, whoever's credential arrived (the lead's
+	// P2-B ruling: within the amount the header is inert, never consulted).
+	approvedHere := false
+	if !in.internalRail {
+		if s.roles == nil {
+			return Return{}, errRoleConfigUnwired()
+		}
+		if in.ApproverCredential != "" && s.refundMayNeedApproval(ctx, oc, in) {
+			resolved, pending, rerr := s.resolveRefundApprover(ctx, in.ApproverCredential, caller, oc)
+			decision = resolved
+			decision.pending = pending
+			judgeErr = rerr
+			credentialJudged = true
+		}
+	}
+	// The decision record's names, read before the transaction opens (the
+	// lead's P3-D ruling: no trail read under the sale's row locks).
+	approverStaff := ""
+	refusalRowID := ""
+	if decision.pending {
+		approverStaff = s.approverStaffID(ctx, decision.approver.PlatformUserID)
+		refusalRowID = s.latestRefusalRowID(ctx, oc.OrderID)
 	}
 
 	pickupStatus := PickupNone
@@ -170,6 +254,45 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 			eventLines = append(eventLines, map[string]any{"product_id": rl.ProductID, "qty_base": req.QtyBase})
 		}
 		total := subtotal + taxTotal
+
+		// The refund rule reads the dealer's configuration (X7): a return
+		// above the configured amount from a role not on the approvers list
+		// is refused HERE, after every line is guarded and before any write
+		// and any rail, so the refusal commits nothing and touches nobody.
+		// At or under the amount no approver is ever asked. The A-06 portal
+		// rail skips this gate: the queue's own decision already approved
+		// that request, and the counter rule is not a second veto over it.
+		//
+		// The manager's credential at the clerk's till (row 482): the same
+		// return carried again with the approver's credential in its header
+		// commits as the manager's decision when the credential qualified
+		// in the pre-transaction resolution (approver.go); anything short of
+		// that leaves the standing refusal in place.
+		if !in.internalRail {
+			refusal, refused := s.refundApprovalRefusal(total, caller)
+			// Above the amount, a presented credential must qualify,
+			// whoever carried it (the lead's P2-B ruling): a failed
+			// judgment refuses on its own family, a credential that does
+			// not qualify refuses with the contract's body, the configured
+			// amount and the configured approvers, never null and never
+			// zero. Within the amount nothing here stirs: the header is
+			// inert.
+			if credentialJudged && total > s.roles.RefundAmountWithoutApprovalCents() {
+				if judgeErr != nil {
+					return judgeErr
+				}
+				if !decision.pending {
+					refusal = s.standingRefusalFor(total)
+					refused = true
+				}
+			}
+			if refused {
+				if !decision.pending {
+					return refusal
+				}
+				approvedHere = true
+			}
+		}
 
 		// A-06 restocking fee, derived from the ACTUAL committed subtotal (round half-up) so the fee is
 		// exact under partial/capped refunds. fee ≤ subtotal ≤ total by construction (bps ≤ 10000), so the
@@ -249,12 +372,31 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 			}
 		}
 
-		// 5. The money-side GL event (DR revenue + DR HST / CR the refund rail).
-		if err := s.store.EmitEvent(ctx, tx, "pos.return.committed", map[string]any{
+		// 5. The money-side GL event (DR revenue + DR HST / CR the refund rail). A committed
+		//    manager decision names the decision in the record: the approver who decided and the
+		//    clerk who rang it in one identifier space (the linked staff users ids, the lead's
+		//    P3-3 ruling), the platform subject beside them as the directory reference, and the
+		//    refusal the decision answers, cited by its own audit row id where the trail can
+		//    name one (row 482, D49).
+		committed := map[string]any{
 			"return_id": returnID, "order_id": oc.OrderID, "invoice_id": oc.InvoiceID,
 			"refund_method": in.RefundMethod, "subtotal_cents": subtotal, "tax_cents": taxTotal,
 			"total_cents": total, "fee_cents": feeCents, "branch_id": oc.BranchID,
-		}); err != nil {
+		}
+		if approvedHere {
+			committed["decided_by"] = approverStaff
+			committed["decided_by_subject"] = decision.approver.PlatformUserID
+			committed["decided_by_role"] = decision.approver.RoleID
+			committed["rang_by"] = actor
+			committed["approval"] = map[string]any{
+				"refusal":      refundApprovalRequiredError,
+				"refund_cents": total,
+			}
+			if refusalRowID != "" {
+				committed["approval"].(map[string]any)["refusal_id"] = refusalRowID
+			}
+		}
+		if err := s.store.EmitEvent(ctx, tx, "pos.return.committed", committed); err != nil {
 			return err
 		}
 
@@ -266,22 +408,142 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		return nil
 	})
 	if err != nil {
-		// A concurrent duplicate hit ux_pos_returns_idem and rolled back, surface the winner (replay).
+		// The approval refusal writes its own audit row naming the clerk,
+		// the sale and the amount (D49): the money asked for, refused at
+		// the counter, is exactly the fact the trail exists to keep.
+		var refusal ErrRefundApprovalRequired
+		if errors.As(err, &refusal) {
+			s.record(ctx, audit.SensitiveAccess{
+				Action: auditActionRefundApprovalRefused, EntityType: "pos.return", EntityID: oc.OrderID,
+				ActorID: actor, BranchID: oc.BranchID, Purpose: "POS_RETURN",
+				Reason: refundApprovalRequiredError,
+				Extra:  map[string]any{"amount_cents": refusal.RefundCents},
+			})
+			return Return{}, refusal
+		}
+		// A concurrent duplicate hit ux_pos_returns_idem and rolled back, surface the winner (replay),
+		// judged against the winner's own sale by the same wall.
 		if isUniqueViolationErr(err) {
-			if cached, found, ferr := s.store.FindReturnByKey(ctx, in.IdempotencyKey); ferr == nil && found {
-				cached.Replayed = true
+			if cached, found, ferr := s.replayIfAllowed(ctx, in.IdempotencyKey, caller); ferr == nil && found {
 				return cached, nil
 			}
 		}
 		return Return{}, err
 	}
 
-	s.record(ctx, audit.SensitiveAccess{
+	completed := audit.SensitiveAccess{
 		Action: audit.ActReturnCompleted, EntityType: "pos.return", EntityID: out.ReturnID,
 		ActorID: actor, BranchID: oc.BranchID, Purpose: "POS_RETURN", Reason: in.RefundMethod,
 		Extra: map[string]any{"return_no": out.ReturnNo, "total_cents": out.TotalCents},
-	})
+	}
+	if approvedHere {
+		// The manager's decision, beside the clerk who rang it (row 482).
+		// Both people are named in one identifier space, the linked staff
+		// users id (the lead's P2-4 ruling: the platform subject is a
+		// directory string the audit chokepoint may redact), and the
+		// platform subject rides subject_ref as the directory reference.
+		// approver_id, amount_cents and subject_ref are allowlisted audit
+		// keys, so these are the facts the row keeps; amount_cents is the
+		// audit vocabulary's own name for an integer money fact, here the
+		// refused refund's total.
+		if approverStaff != "" {
+			completed.Extra["approver_id"] = approverStaff
+		}
+		completed.Extra["subject_ref"] = decision.approver.PlatformUserID
+		completed.Extra["amount_cents"] = out.TotalCents
+		completed.Reason = refundApprovalRequiredError
+	}
+	s.record(ctx, completed)
 	return out, nil
+}
+
+// replayIfAllowed answers an idempotent replay only to a caller the wall
+// admits to the REPLAYED return's own sale (the lead's P2-2R ruling): the
+// key is not a bearer of the answer, so the branch reach is judged against
+// the cached return's sale, and a foreign clerk refuses identically to a
+// first attempt whatever sale their own request body names.
+func (s *Service) replayIfAllowed(ctx context.Context, key string, caller identity.StaffContext) (Return, bool, error) {
+	cached, found, err := s.store.FindReturnByKey(ctx, key)
+	if err != nil || !found {
+		return Return{}, false, err
+	}
+	oc, found, err := s.store.ReturnOrderContext(ctx, cached.OrderID, "")
+	if err != nil {
+		return Return{}, false, err
+	}
+	if !found {
+		return Return{}, false, errReturnNotFound
+	}
+	if err := requireBranchReach(caller, oc.BranchID); err != nil {
+		return Return{}, false, err
+	}
+	cached.Replayed = true
+	return cached, true, nil
+}
+
+// standingRefusalFor builds the contract's refusal for one computed
+// return: the configured threshold and the configured approver roles,
+// never null and never zero, whatever the refund's own total (the lead's
+// P2-B ruling).
+func (s *Service) standingRefusalFor(totalCents int64) ErrRefundApprovalRequired {
+	return ErrRefundApprovalRequired{
+		AmountCents: s.roles.RefundAmountWithoutApprovalCents(),
+		Approvers:   s.roles.RefundApprovers(),
+		RefundCents: totalCents,
+	}
+}
+
+// refundMayNeedApproval answers, from the sale's lines without locks,
+// whether the requested return COULD land above the configured amount: the
+// sum over the requested lines of their original totals and tax, which
+// over-approximates every remaining refund. A false answer makes the
+// credential header inert (nothing needs authorization, nothing is
+// consulted); a true one is only a prospect, the transaction's own total
+// decides. An unreadable read judges the credential: fail closed.
+func (s *Service) refundMayNeedApproval(ctx context.Context, oc returnOrderCtx, in ReturnInput) bool {
+	lines, err := s.store.ListReturnableLines(ctx, oc.OrderID)
+	if err != nil {
+		return true
+	}
+	requested := make(map[string]bool, len(in.Lines))
+	for _, ln := range in.Lines {
+		requested[ln.OrderLineID] = true
+	}
+	var prospective int64
+	for _, v := range lines {
+		if requested[v.OrderLineID] {
+			prospective += v.LineTotalCents + v.TaxCents
+		}
+	}
+	return prospective > s.roles.RefundAmountWithoutApprovalCents()
+}
+
+// refundApprovalRefusal answers the configured approval rule (X7) for one
+// computed return total: ok false when the total sits at or under the
+// amount, or when the caller's role holds the approval. The caller has
+// already refused a service built with no configuration (the nil gate
+// fails closed); the configured amount is integer cents and the comparison
+// is integer against integer; a role outside the configuration's
+// vocabulary is on no approvers list, fail closed.
+func (s *Service) refundApprovalRefusal(totalCents int64, caller identity.StaffContext) (ErrRefundApprovalRequired, bool) {
+	amount := s.roles.RefundAmountWithoutApprovalCents()
+	if totalCents <= amount {
+		return ErrRefundApprovalRequired{}, false
+	}
+	approved := false
+	if role, ok := canonicalRole(caller); ok {
+		if holds, err := s.roles.ApprovesRefundAboveAmount(role); err == nil {
+			approved = holds
+		}
+	}
+	if approved {
+		return ErrRefundApprovalRequired{}, false
+	}
+	return ErrRefundApprovalRequired{
+		AmountCents: amount,
+		Approvers:   s.roles.RefundApprovers(),
+		RefundCents: totalCents,
+	}, true
 }
 
 // applyAccountCredit books the ACCOUNT_CREDIT rail: offset the original invoice first (floor 0; PAID
@@ -324,6 +586,8 @@ func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOr
 
 // LookupReturn is the pre-return read: the original committed sale + its lines with prior-return
 // sums netted, so the counter can build the per-line qty entry. Read-only, the commit re-guards.
+// The branch wall answers before the lines are read (X2): another branch's sale is refused, its
+// returnable quantities are not a thing this counter gets to browse.
 func (s *Service) LookupReturn(ctx context.Context, orderID, orderNo string) (ReturnLookup, error) {
 	if orderID == "" && orderNo == "" {
 		return ReturnLookup{}, clientErr(http.StatusBadRequest, "pos: order_id or order_no is required")
@@ -334,6 +598,13 @@ func (s *Service) LookupReturn(ctx context.Context, orderID, orderNo string) (Re
 	}
 	if !found {
 		return ReturnLookup{}, errReturnNotFound
+	}
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return ReturnLookup{}, err
+	}
+	if err := requireBranchReach(caller, oc.BranchID); err != nil {
+		return ReturnLookup{}, err
 	}
 	lines, err := s.store.ListReturnableLines(ctx, oc.OrderID)
 	if err != nil {

@@ -25,6 +25,9 @@ paths:
       tags: [staff-assist]
       summary: List the commands the caller may run, already filtered by tier
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -46,6 +49,9 @@ paths:
         answers 403 with one deliberately identical sentence, and a lookup
         whose backing capability is not wired on this deployment answers 503.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -82,6 +88,9 @@ paths:
         per-person spend from non-admins. Reaching the caller's allowance is
         an ordinary answer (limit_reached), never an error.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -115,6 +124,9 @@ paths:
         when the deployment lets non-admins see their own spend. A person
         refused for hitting a limit has to be able to see what the limit was.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -132,6 +144,9 @@ paths:
       tags: [staff-assist]
       summary: Read the per-person spend report for the current period
       x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -149,6 +164,9 @@ paths:
       tags: [staff-assist]
       summary: Read the role defaults, the per-user overrides and the code default
       x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -166,6 +184,9 @@ paths:
       tags: [staff-assist]
       summary: Set a role's default token allowance
       x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: role
@@ -195,6 +216,9 @@ paths:
       tags: [staff-assist]
       summary: Set one person's override allowance (whole-or-absent, replaces the role default)
       x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: user
@@ -223,6 +247,9 @@ paths:
       tags: [staff-assist]
       summary: Reset one person to their role default (idempotent)
       x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: user
@@ -250,6 +277,9 @@ paths:
         a boolean. No route in this module can return a character of the
         credential itself.
       x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -266,6 +296,9 @@ paths:
       tags: [staff-assist]
       summary: Set one assistant configuration key
       x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -444,6 +477,9 @@ paths:
         Only the columns in the editable allowlist are accepted; anything else
         is a 400. Money never moves through this route.
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -474,6 +510,9 @@ paths:
         returns no rows rather than the whole catalogue; limit is clamped by
         the service.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: q
@@ -502,6 +541,9 @@ paths:
         and trigram similarity last. A term shorter than two characters
         answers an empty list, never an error.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: q
@@ -537,6 +579,9 @@ paths:
         Barcode first, then sku, both exact. A code that resolves to nothing
         is a 404, not an empty search result.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: code
@@ -574,6 +619,9 @@ paths:
         the conversions between them. A missing number is null, never zero. No
         ids means every active product.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: ids
@@ -632,6 +680,9 @@ paths:
         with it. The image metadata model is the skeleton's ProductImage
         (D11); this route moves only the bytes.
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -680,6 +731,9 @@ paths:
       tags: [staff-product]
       summary: Remove the product's catalogue thumbnail (idempotent)
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -710,6 +764,9 @@ paths:
         body the client is trusted to hide. This route has no error branch;
         the read degrades downward by construction.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -736,6 +793,9 @@ paths:
         there is no user id field and there must never be one. A validation
         refusal is a 422 whose message says which rule the edit broke.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -768,6 +828,9 @@ paths:
         The chapter comes from the path and nothing comes from a body; the
         caller is always the authenticated caller.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: chapter_key
@@ -800,6 +863,9 @@ paths:
         structure and are deliberately not here, and the keys are add-only
         identifiers that are never rewritten.
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: admin
       x-guards: [requirePlatformAdmin]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -834,6 +900,9 @@ paths:
         demo_mode only: dealer_enabled belongs to the dealer's own gate and is
         deliberately not on this route.
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: admin
       x-guards: [requirePlatformAdmin]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -870,6 +939,9 @@ paths:
         house account is excluded server-side. branch_id is fenced against the
         caller's own grants.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: q
@@ -904,6 +976,9 @@ paths:
         server-side (Canadian postal code and province) before insert, and an
         account_no already in use is a 409.
       x-role: requireManager
+      x-access:
+        surfaces: [counter-till, quote-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -932,6 +1007,9 @@ paths:
         Same Canadian postal and province enforcement as create. An empty
         object clears the address.
       x-role: requireManager
+      x-access:
+        surfaces: [counter-till, quote-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -963,6 +1041,9 @@ paths:
         answer. The cleartext number is never returned; phone_masked shows its
         last two digits only.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -991,6 +1072,9 @@ paths:
         on file; revoking ignores the number, because you must remember the
         number you may not text.
       x-role: requireManager
+      x-access:
+        surfaces: [counter-till, quote-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1031,6 +1115,9 @@ paths:
         must never be stale. Per-document branch authority is checked in the
         service on top of the staff gate.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1053,6 +1140,9 @@ paths:
         doc_type is refused at the service boundary with a 400 naming the
         value.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: doc_type
@@ -1090,6 +1180,9 @@ paths:
         caller; is_system_default is the dealer-wide fact, unfenced. Read-only:
         this module never writes locations or system settings.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
