@@ -312,10 +312,11 @@ test('the walk finds this package and names the workspace packages it must also 
   }
   // The dependents are computed, not hard-coded: this records what the gate
   // covers beyond this package, so an empty list is a stated fact, not a
-  // silence.
+  // silence. The Counter Till app is the workspace's first dependent
+  // (web/apps/counter-till): its sources are scanned by the gates below.
   assert.deepEqual(
     dependentPackages().map((d) => d.name),
-    [],
+    ['@hardscapehouse/counter-till'],
     'a package now depends on @hardscapehouse/design-system; its sources are scanned below, and this lock must name it deliberately',
   );
 });
