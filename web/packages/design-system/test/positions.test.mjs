@@ -599,6 +599,50 @@ test('every html and svg template in any package that depends on this one sits i
   );
 });
 
+// ── the ported surface's allowance, proven narrow ────────────────────────────────
+//
+// The allowance is the lead's parity ruling (docs/BLOCKERS.md): the ported POS
+// surface keeps the reference's Lit idioms, and the gate names the directory
+// and the exact binding positions it uses rather than opening a wildcard. The
+// guards below hold each edge of that shape, so a clean dependents scan above
+// is evidence and not blindness.
+
+const PORTED_FILE = 'apps/counter-till/src/ported/pos-terminal.ts';
+const HH_FILE = 'apps/counter-till/src/views/till.ts';
+
+test('the ported surface allowance is narrow: the directory, the names, and nothing beyond', () => {
+  const refusalsOf = (source, file) => refusedBy(auditSource(source, file));
+
+  // The same event binding: refused outside the prefix, allowed inside it.
+  const click = `html\`<button @click=\${'x'}>go</button>\``;
+  assert.ok(refusalsOf(click, HH_FILE).length > 0, 'an @click outside the ported prefix must stay refused');
+  assert.deepEqual(refusalsOf(click, PORTED_FILE), [], 'an @click inside the ported prefix is allowed');
+
+  // A binding name the ported files do not use is refused even inside the prefix.
+  const planted = `html\`<button @frobnicate=\${'x'}>go</button>\``;
+  assert.ok(refusalsOf(planted, PORTED_FILE).length > 0, 'an unlisted binding name must stay refused inside the prefix');
+  const plantedBool = `html\`<button ?frobnicate=\${true}>go</button>\``;
+  assert.ok(refusalsOf(plantedBool, PORTED_FILE).length > 0, 'an unlisted boolean must stay refused inside the prefix');
+
+  // The raw-markup refusals keep biting inside the prefix.
+  const srcdoc = `html\`<iframe srcdoc=\${'x'}></iframe>\``;
+  assert.ok(refusalsOf(srcdoc, PORTED_FILE).length > 0, 'srcdoc must stay refused inside the prefix');
+
+  // Bound values on the ported attributes: quoted or whole-unquoted inside,
+  // refused outside; a partial unquoted value stays refused inside.
+  const tab = `html\`<button tabindex=\${'0'}>go</button>\``;
+  assert.ok(refusalsOf(tab, HH_FILE).length > 0, 'a tabindex binding outside the prefix must stay refused');
+  assert.deepEqual(refusalsOf(tab, PORTED_FILE), [], 'a whole unquoted tabindex inside the prefix is allowed');
+  const partial = `html\`<div tabindex=row-\${'0'}>t</div>\``;
+  assert.ok(refusalsOf(partial, PORTED_FILE).length > 0, 'a partial unquoted value must stay refused inside the prefix');
+
+  // style is the one deliberate admission past the gate's own refusal, inside
+  // the prefix only.
+  const style = `html\`<div style=\${'left: 4px'}>t</div>\``;
+  assert.ok(refusalsOf(style, HH_FILE).length > 0, 'a style binding outside the prefix must stay refused');
+  assert.deepEqual(refusalsOf(style, PORTED_FILE), [], "a style binding inside the prefix is the ruling's allowance");
+});
+
 test('no walked file of this package imports anything the import list does not name', () => {
   const offences = [];
   for (const { rel, text } of everyPackageSource()) {

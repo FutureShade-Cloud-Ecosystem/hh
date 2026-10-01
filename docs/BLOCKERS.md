@@ -1091,3 +1091,19 @@ users rows and grants the populate plants.
   ("every html and svg template in any package that depends on this one sits
   in an allowed position") fails, and the failure is the record, not a
   surprise: every other suite in the loop is green on this branch.
+
+  The lead has ruled on it (the fix commit that follows the ruling): the
+  positions gate's allowance grows deliberately for the ported directory, per
+  the dependents lock's own mechanism ("this lock must name it deliberately").
+  The entry is the ported prefix named in the gate's lib
+  (`apps/counter-till/src/ported/`) with the binding positions enumerated by
+  name: the . and @ bindings the ported files use, their boolean bindings
+  besides ?disabled, the attributes they bind values onto, and a whole-value
+  src for the thumbnail route; style is the one deliberate admission past the
+  gate's own security refusal, and the raw-markup refusals keep biting inside
+  the prefix. Converting the ported templates to host delegation stays the
+  rewrite row 563 forbids, so the ported code keeps the reference's idiom;
+  every HH-written file outside the prefix is held exactly as before, a new
+  binding position inside the prefix is still refused until it is added on
+  purpose, and the gate's own narrowness guards pin those edges. The design
+  system's suite is green on the strength of that entry.

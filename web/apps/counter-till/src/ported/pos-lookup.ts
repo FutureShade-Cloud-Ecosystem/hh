@@ -272,7 +272,7 @@ export class HosPosLookup extends LitElement {
       <div class="bar">
         <div class="seg" role="group" aria-label="Search scope">
           <button
-            class="${this.scope === 'session' ? 'active' : ''}
+            class="${this.scope === 'session' ? 'active' : ''}"
             ?disabled=${noSession}
             aria-label=${noSession ? 'Open a till session to search this shift' : 'Sales rung on this drawer session'}
             @click=${() => this.setScope('session')}
@@ -280,7 +280,7 @@ export class HosPosLookup extends LitElement {
             This shift
           </button>
           <button
-            class="${this.scope === 'branch' ? 'active' : ''}
+            class="${this.scope === 'branch' ? 'active' : ''}"
             title="Every sale this branch has rung"
             @click=${() => this.setScope('branch')}
           >

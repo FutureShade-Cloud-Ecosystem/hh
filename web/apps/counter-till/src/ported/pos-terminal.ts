@@ -4831,7 +4831,7 @@ export class HosPosTerminal extends LitElement {
             ${/* rev 5: aria-pressed on every tile group: the selected state was class-only. */ ''}
             <div class="custmode" data-testid="pos-customer-mode" role="group" aria-label="Customer type">
               <button
-                class="${this.walkInConfirmed && !this.customer ? 'active' : ''}
+                class="${this.walkInConfirmed && !this.customer ? 'active' : ''}"
                 aria-pressed=${this.walkInConfirmed && !this.customer ? 'true' : 'false'}
                 title="Cash / walk-in customer: no account on the sale."
                 @click=${() => void this.chooseWalkIn()}
@@ -4839,7 +4839,7 @@ export class HosPosTerminal extends LitElement {
                 Walk-in
               </button>
               <button
-                class="${this.customer ? 'active' : ''}
+                class="${this.customer ? 'active' : ''}"
                 aria-pressed=${this.customer ? 'true' : 'false'}
                 title="Charge-account customer: opens the account picker."
                 @click=${() => this.openPicker()}
@@ -5020,7 +5020,7 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
         <summary>Browse products</summary>
         <span class="viewflip" role="group" aria-label="Results view">
           <button
-            class="${this.wsLookupPresentation === 'CARDS' ? 'active' : ''}
+            class="${this.wsLookupPresentation === 'CARDS' ? 'active' : ''}"
             data-testid="lookup-view-cards"
             aria-pressed=${this.wsLookupPresentation === 'CARDS' ? 'true' : 'false'}
             title="Card view: the product-card grid"
@@ -5029,7 +5029,7 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
             Cards
           </button>
           <button
-            class="${this.wsLookupPresentation === 'ROWS' ? 'active' : ''}
+            class="${this.wsLookupPresentation === 'ROWS' ? 'active' : ''}"
             data-testid="lookup-view-rows"
             aria-pressed=${this.wsLookupPresentation === 'ROWS' ? 'true' : 'false'}
             title="Row view: one product per compact row: name, SKU, price and branch stock"
@@ -5069,7 +5069,7 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
         : html`<div class="ticketbar">
               <span class="viewflip" role="group" aria-label="Ticket view">
                 <button
-                  class="${this.presentation === 'LINES' ? 'active' : ''}
+                  class="${this.presentation === 'LINES' ? 'active' : ''}"
                   data-testid="ticket-view-lines"
                   aria-pressed=${this.presentation === 'LINES' ? 'true' : 'false'}
                   title="Line view: one dense row per item"
@@ -5078,7 +5078,7 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
                   Lines
                 </button>
                 <button
-                  class="${this.presentation === 'CARDS' ? 'active' : ''}
+                  class="${this.presentation === 'CARDS' ? 'active' : ''}"
                   data-testid="ticket-view-cards"
                   aria-pressed=${this.presentation === 'CARDS' ? 'true' : 'false'}
                   title="Card view: one card per item, with its picture"
@@ -5096,7 +5096,7 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
             <label id="fulfil-label">Fulfilment</label>
             <div class="fulfil" role="group" aria-labelledby="fulfil-label">
               <button
-                class="${this.saleType === 'COLLECT_NOW' ? 'active' : ''}
+                class="${this.saleType === 'COLLECT_NOW' ? 'active' : ''}"
                 aria-pressed=${this.saleType === 'COLLECT_NOW' ? 'true' : 'false'}
                 title="Collect now (counter)"
                 @click=${() => (this.saleType = 'COLLECT_NOW')}
@@ -5108,7 +5108,7 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
                 Collect now
               </button>
               <button
-                class="${this.saleType === 'COLLECT_LATER' ? 'active' : ''}
+                class="${this.saleType === 'COLLECT_LATER' ? 'active' : ''}"
                 aria-pressed=${this.saleType === 'COLLECT_LATER' ? 'true' : 'false'}
                 title="Collect later (will-call)"
                 @click=${() => (this.saleType = 'COLLECT_LATER')}
@@ -5120,7 +5120,7 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
                 Will-call
               </button>
               <button
-                class="${this.saleType === 'DELIVERED' ? 'active' : ''}
+                class="${this.saleType === 'DELIVERED' ? 'active' : ''}"
                 aria-pressed=${this.saleType === 'DELIVERED' ? 'true' : 'false'}
                 title="Delivered"
                 @click=${() => (this.saleType = 'DELIVERED')}
@@ -5133,7 +5133,7 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
                 Delivery
               </button>
               <button
-                class="${this.saleType === 'COD' ? 'active' : ''}
+                class="${this.saleType === 'COD' ? 'active' : ''}"
                 aria-pressed=${this.saleType === 'COD' ? 'true' : 'false'}
                 ?disabled=${this.codEnabled !== true}
                 title=${this.codEnabled === false
@@ -5266,7 +5266,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                grid/rail rule); Tab passes straight through to the CTA. */ ''}
             <div class="paytiles" role="group" aria-label="Payment method" @keydown=${(e: KeyboardEvent) => this.onPayTilesKey(e)} data-testid="pos-paytiles">
               <button
-                class="${this.payMethod === 'ACCOUNT' ? 'active' : ''}
+                class="${this.payMethod === 'ACCOUNT' ? 'active' : ''}"
                 aria-pressed=${this.payMethod === 'ACCOUNT' ? 'true' : 'false'}
                 tabindex=${this.payTileIdx === 0 ? '0' : '-1'}
                 ?disabled=${this.ringBusy() || this.ringDone()}
@@ -5287,7 +5287,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                 Charge Account
               </button>
               <button
-                class="${this.payMethod === 'CASH' ? 'active' : ''}
+                class="${this.payMethod === 'CASH' ? 'active' : ''}"
                 aria-pressed=${this.payMethod === 'CASH' ? 'true' : 'false'}
                 tabindex=${this.payTileIdx === 1 ? '0' : '-1'}
                 ?disabled=${this.ringBusy() || this.ringDone()}
@@ -5304,7 +5304,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                 Cash
               </button>
               <button
-                class="${this.payMethod === 'CARD' ? 'active' : ''}
+                class="${this.payMethod === 'CARD' ? 'active' : ''}"
                 aria-pressed=${this.payMethod === 'CARD' ? 'true' : 'false'}
                 tabindex=${this.payTileIdx === 2 ? '0' : '-1'}
                 ?disabled=${this.ringBusy() || this.ringDone()}
@@ -5323,7 +5323,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                  before it is committed: there is nothing to ring until the legs add up. */ ''}
               <button
                 data-testid="tender-split"
-                class="${this.payMethod === 'SPLIT' ? 'active' : ''}
+                class="${this.payMethod === 'SPLIT' ? 'active' : ''}"
                 aria-pressed=${this.payMethod === 'SPLIT' ? 'true' : 'false'}
                 tabindex=${this.payTileIdx === 3 ? '0' : '-1'}
                 ?disabled=${this.ringBusy() || this.ringDone()}
@@ -5718,7 +5718,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
             ${this.renderOrderOpenRow()}
           </details>
           ${this.utilMsg
-            ? html`<div class="banner ${this.utilTone}" role="${this.utilTone === 'bad' ? 'alert' : 'status'}>${this.utilMsg}</div>`
+            ? html`<div class="banner ${this.utilTone}" role="${this.utilTone === 'bad' ? 'alert' : 'status'}">${this.utilMsg}</div>`
             : nothing}
 
           

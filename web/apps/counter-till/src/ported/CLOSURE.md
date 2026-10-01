@@ -188,14 +188,25 @@ to input string, `pos-terminal.ts` `taxLabel`'s basis points to percent,
   `readPanelLayoutRaw` / `writePanelLayoutRaw` / `clearPanelLayoutRaw` seams
   in ports.ts with the same versioned key, so the wiring item picks the
   backing store.
-- The design system's template fence, as far as a port can go (docs/BLOCKERS.md
-  records the one part it cannot): the receipt window write is the
-  `printReceiptInto` seam, the icon builder opens from static per-size
-  branches (12, 19 and the 20 default) because `width` and `height` take no
-  bound value, `d`, `class` and `role` bindings are quoted, the `html` name
-  appears only in its import and its tag positions, and the six tooltip
-  bindings moved from `title` to the allowed `aria-label` namespace, which
-  loses the hover tooltip until the polish item brings a tooltip primitive.
+- The design system's template fence, under the parity ruling (docs/BLOCKERS.md
+  holds the ruling and its ground): what a port could satisfy at source it did,
+  and the rest is a deliberate, enumerated allowance in the gate for this
+  directory alone. Satisfied at source: the receipt window write is the
+  `printReceiptInto` seam, the panel layout persistence is the store seams, the
+  icon builder opens from static per-size branches, `d`, `class` and `role`
+  bindings are quoted, the `html` name keeps to its two places, the tooltip
+  bindings moved to the allowed `aria-label` namespace (hover lost until the
+  polish item brings a tooltip primitive), and the panels' style geometry is
+  spelled as a flat concatenation so the gate's parser can judge it. Allowed by
+  the ruling, inside the ported prefix only and enumerated by name: the
+  surface's `@event` and `.property` bindings, its boolean bindings besides
+  `?disabled`, bound values on `title`, `tabindex`, `value`, `id`, `label`,
+  `alt`, `placeholder`, `name`, `max`, `slot` and the boundary screens'
+  `branch-id`, `order-id` and `doc-id`, and a whole-value `src` on the
+  thumbnail route, with `style` the one deliberate admission past the gate's
+  own security refusal. The gate's narrowness guards hold every edge of that
+  shape, and the polish item still converges the surface onto the kit
+  discipline.
 
 ## Reference tests brought along
 
