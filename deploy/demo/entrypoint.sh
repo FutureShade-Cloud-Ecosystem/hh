@@ -7,7 +7,8 @@
 #   1. wait, bounded, for the database to accept connections
 #   2. classify the database's shape (empty, building, built, foreign)
 #   3. core demo-check (the G0 guard) before anything writes
-#   4. core migrate, core demoseed -apply, core demo-populate
+#   4. the image's build marker on a fresh database, then core migrate,
+#      core demoseed -apply, core demo-populate
 #   5. core serve on a loopback port, Caddy in front on the public port
 #
 # Both database variables are set here from the one variable the operator
@@ -19,19 +20,21 @@
 # between migrate and demo-populate leaves a database demo-check refuses:
 # the migration set is applied but the populate's demo_box row is absent,
 # and the guard reads that as a world that was never built. The answer is
-# in step 2's classifier: such a database is still the demo's own world,
-# nothing in it but what the migration set, the seed and the populate
-# write, so the next boot RESUMES the build (migrate completes whatever it
-# had not applied, the seed writes only its missing rows, the populate
-# completes and writes its row), and demo-check still runs before serve,
-# when the world is whole. The resume path is the one state where
-# demo-check cannot run first, because the guard refuses an interrupted
-# build by design; there the classifier is what stands before the writes,
-# and it admits only a database whose org anchor is absent or is the
-# demo's own. Any other shape (a schema that is not the demo's) is refused
-# before anything runs, and the refusal names the recovery: recreate the
-# database resource, and the demo world builds from nothing on the fresh
-# database. Every write on every path stays forward only and idempotent.
+# the image's own build marker: on a fresh database the entrypoint creates
+# demo_build_marker (one row recording the build started; outside the
+# migration chain, the same discipline as the populate's demo_box) before
+# migrate runs, so the image only ever resumes a build it started. A
+# database holding a schema with no marker is not this image's build,
+# whatever it holds, and is refused with the recovery named before
+# anything writes: every database of the source product below the org
+# migration has exactly that shape, and none of them is the demo's (the
+# review's P1-1). The resume path itself runs the populate's own refusals
+# as guarded probes before it continues (no org other than the demo's, no
+# user outside the migrations' planted set, no payment configuration the
+# populate did not write), so a database carrying the marker but holding a
+# real user or a real configuration is refused before migrate or the seed
+# write a row (the review's P1-2). Every write on every path stays forward
+# only and idempotent.
 set -eu
 
 log() { echo "entrypoint: $*"; }
@@ -45,7 +48,7 @@ fail() { echo "entrypoint: $*" >&2; exit 1; }
 # Caddy's basic authentication wants the hash, and the likeliest mistake
 # is the phrase pasted where the hash belongs. The refusal names the
 # mistake and repeats no value. The variable is unset here, before any
-# child process starts, so the core and Caddy carry no copy of it; the
+# child process starts, so the core and Caddy inherit no copy of it; the
 # value reaches Caddy's configuration generation alone, through the shell
 # variable captured below, which is never exported.
 # --------------------------------------------------------------------------
@@ -86,8 +89,8 @@ export CORE_STAFF_AUDIENCE="${CORE_STAFF_AUDIENCE:-hh-staff}"
 export CORE_TENANT_AUDIENCE="${CORE_TENANT_AUDIENCE:-hh-tenant}"
 
 # The public port is the platform's PORT. The core listens on a loopback
-# port only: it is never reachable except through Caddy, which is the gate
-# every page and every mint request passes.
+# port only: it is never reachable except through Caddy, which fronts
+# every page and every mint request.
 GATE_PORT="${PORT:-8080}"
 CORE_INTERNAL_PORT="${CORE_INTERNAL_PORT:-9090}"
 export CORE_LISTEN_ADDR="127.0.0.1:${CORE_INTERNAL_PORT}"
@@ -118,11 +121,14 @@ unset PGCONNECT_TIMEOUT
 # absent table would fail the whole classification, because PostgreSQL
 # computes aggregates before it chooses a CASE branch). The states:
 #
-#   empty     no schema_migrations table: a fresh database the build fills
-#   building  the migration set applied, the populate's demo_box row
-#             absent, and the org anchor absent or the demo's own: the
-#             interrupted build the resume path serves (see the header)
-#   foreign   a schema that is not the demo's: refused, recovery named
+#   empty     no schema_migrations, no marker, no user table at all: a
+#             fresh database the build fills
+#   foreign   anything else without this image's build marker: a schema
+#             this image did not start, refused with the recovery named
+#             before anything writes
+#   building  the marker present, the populate's demo_box row absent: the
+#             interrupted build of the demo's own world that the resume
+#             path serves, after the refusals below (see the header)
 #   built     the populate's row present: a whole demo world
 # --------------------------------------------------------------------------
 has_table() {
@@ -131,21 +137,65 @@ has_table() {
 		  WHERE table_schema = current_schema() AND table_name = '$1'")" -gt 0 ]
 }
 
-if ! has_table schema_migrations; then
+user_table_count() {
+	psql "$DATABASE_URL" -tAqc \
+		"SELECT count(*) FROM information_schema.tables
+		  WHERE table_schema NOT IN ('pg_catalog', 'information_schema')"
+}
+
+if ! has_table schema_migrations && ! has_table demo_build_marker && [ "$(user_table_count)" -eq 0 ]; then
 	STATE=empty
+elif ! has_table demo_build_marker; then
+	STATE=foreign
 elif has_table demo_box; then
 	STATE=built
-elif ! has_table org; then
-	STATE=building
 else
-	ORG_COUNT="$(psql "$DATABASE_URL" -tAqc 'SELECT count(*) FROM org')"
-	ORG_SLUG="$(psql "$DATABASE_URL" -tAqc 'SELECT min(slug::text) FROM org')"
-	if [ "$ORG_COUNT" -eq 0 ] || { [ "$ORG_COUNT" -eq 1 ] && [ "$ORG_SLUG" = "hh-demo" ]; }; then
-		STATE=building
-	else
-		STATE=foreign
-	fi
+	STATE=building
 fi
+
+# --------------------------------------------------------------------------
+# The resume path's refusals (the review's P1-2): a database carrying this
+# image's marker but not the populate's row is resumed only when it is
+# still the world this image builds. The probes mirror the populate's own
+# refusals (the exemption sets are its planted set and its one payment
+# configuration, copied from core/internal/demo/populate.go and
+# populate_refuse.go, and each probe guards its own table so a build
+# stopped before a table existed reads as empty), and they run before
+# migrate or the seed write a row. Every refusal names the recovery.
+# --------------------------------------------------------------------------
+resume_refusals() {
+	if has_table org; then
+		foreign_orgs="$(psql "$DATABASE_URL" -tAqc \
+			"SELECT count(*) FROM org WHERE lower(slug::text) <> 'hh-demo'")"
+		[ "$foreign_orgs" -eq 0 ] || \
+			fail "the build this image started holds $foreign_orgs org row(s) other than the demo's own, so this is not the demo's world: nothing here may write to it, and the recovery is to recreate the database resource"
+	fi
+	if has_table users; then
+		foreign_users="$(psql "$DATABASE_URL" -tAqc "
+			SELECT count(*) FROM users
+			 WHERE lower(email::text) <> 'scrubbed-0009@example.invalid'
+			   AND id::text NOT IN (
+			     'd7000000-0000-4000-9000-000000000010',
+			     'd7000000-0000-4000-9000-0000000000da',
+			     '40000061-0000-4000-9000-000000000001',
+			     '40000061-0000-4000-9000-000000000002',
+			     '40000061-0000-4000-9000-000000000003',
+			     '40000061-0000-4000-9000-000000000004',
+			     'd0200000-0000-4000-9000-000000000001',
+			     'd0200000-0000-4000-9000-000000000002',
+			     'd0200000-0000-4000-9000-000000000003',
+			     'de110000-0000-4000-9000-000000000001',
+			     'de110000-0000-4000-9000-000000000002')")"
+		[ "$foreign_users" -eq 0 ] || \
+			fail "the build this image started holds $foreign_users user row(s) outside the migrations' planted set and the demo accounts, so this is not the demo's world: nothing here may write to it, and the recovery is to recreate the database resource"
+	fi
+	if has_table payment_config; then
+		foreign_pay="$(psql "$DATABASE_URL" -tAqc \
+			"SELECT count(*) FROM payment_config WHERE id <> 'de110000-0000-4000-9000-0000000000ca'::uuid")"
+		[ "$foreign_pay" -eq 0 ] || \
+			fail "the build this image started holds $foreign_pay payment configuration row(s) the demo populate did not write, so this is not the demo's world: nothing here may write to it, and the recovery is to recreate the database resource"
+	fi
+}
 
 case "$STATE" in
 	empty|built)
@@ -157,10 +207,11 @@ case "$STATE" in
 		core demo-check
 		;;
 	building)
-		log "the database holds an interrupted build of the demo world (migrations present, the populate's row absent, nothing but the demo's own org): resuming the build, every step idempotent and forward only, demo-check before serve"
+		resume_refusals
+		log "resuming the build this image started (its marker row is present, the populate's row absent): the populate's own refusals ran first, every step idempotent and forward only, demo-check before serve"
 		;;
 	foreign)
-		fail "the database holds a schema that is not the demo's world, and demo-check would refuse it: nothing here may write to it, and the recovery is to recreate the database resource so the demo world builds from nothing on the fresh database"
+		fail "the database holds a schema but not this image's build marker, so this image did not start the build and writes nothing to it: the recovery is to recreate the database resource, and the demo world builds from nothing on the fresh database"
 		;;
 	*)
 		fail "the database's shape could not be classified (state: $STATE): the container exits so the platform can retry the boot"
@@ -168,11 +219,19 @@ case "$STATE" in
 esac
 
 # --------------------------------------------------------------------------
-# Step 4: the build, in the plan's order, idempotent on every path. migrate
-# applies only what it has not, the seed writes only its missing rows in
-# one transaction, the populate completes the world and writes its own
-# marker row; each refuses on a database it must not touch.
+# Step 4: the marker on a fresh database, then the build, in the plan's
+# order, idempotent on every path. The marker is written before migrate
+# runs, so only builds this image started are ever resumed (the review's
+# P1-1); it lives outside the migration chain like the populate's demo_box,
+# and nothing but this script ever writes it. migrate applies only what it
+# has not, the seed writes only its missing rows in one transaction, the
+# populate completes the world and writes its own marker row.
 # --------------------------------------------------------------------------
+if [ "$STATE" = empty ]; then
+	psql "$DATABASE_URL" -qc "CREATE TABLE IF NOT EXISTS demo_build_marker (started timestamptz NOT NULL DEFAULT now())"
+	psql "$DATABASE_URL" -qc "INSERT INTO demo_build_marker SELECT now() WHERE NOT EXISTS (SELECT 1 FROM demo_build_marker)"
+fi
+
 core migrate
 core demoseed -apply
 core demo-populate
@@ -220,10 +279,13 @@ GATE_CONFIG="$(sed -e "s|__GATE_PORT__|${GATE_PORT}|g" \
                     -e "s|__UPSTREAM__|${UPSTREAM}|g" \
                     -e "s|__GATE_HASH__|${HASH_VALUE}|g" \
                     /srv/templates/Caddyfile.template)"
-unset HASH_VALUE
 
 printf '%s\n' "$GATE_CONFIG" | caddy run --config - --adapter caddyfile &
 CADDY_PID=$!
+# The pipeline forked above carries its own copy of both values; the
+# parent's copies go now, so no shell variable holds the hash a moment
+# longer than the gate's configuration needs it.
+unset GATE_CONFIG HASH_VALUE
 
 trap 'kill "$CORE_PID" "$CADDY_PID" 2>/dev/null; exit 0' TERM INT
 
@@ -234,7 +296,7 @@ while :; do
 	fi
 	if ! kill -0 "$CADDY_PID" 2>/dev/null; then
 		kill "$CORE_PID" 2>/dev/null || true
-		fail "the gate proxy stopped: the container exits so the platform retries the boot"
+		fail "the proxy stopped: the container exits so the platform retries the boot"
 	fi
 	sleep 1
 done
