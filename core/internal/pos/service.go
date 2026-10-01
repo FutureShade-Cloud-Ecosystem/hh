@@ -18,8 +18,14 @@ import (
 // -- injected sibling seams (all interfaces so tests fake them) --------------
 
 // LineResolver is satisfied by *pricing.Service, the server-side price authority (US-A19-04).
+// The till prices every line through the COUNTER resolve (D48 row 481, D49): the price the
+// customer's rules and tiers give, accepted as it resolves. The gated resolve has no method on
+// this seam, so the sale and the pricing order cannot ask the floor through it. The price
+// display is the one door back: counterQuoter type-asserts the same service to CounterQuoter,
+// whose preview runs the gated resolve in dry-run, read-only, it can write no BYPASS row and
+// exposes no block.
 type LineResolver interface {
-	DeriveLinePrice(ctx context.Context, in pricing.ResolveInput) (pricing.LinePrice, error)
+	DeriveCounterLinePrice(ctx context.Context, in pricing.ResolveInput) (pricing.LinePrice, error)
 }
 
 // TenderTaker is satisfied by *till.Service (A-03), the SOLE writer of payments + till_movements rows.
@@ -146,6 +152,9 @@ type posStore interface {
 	// parked tickets
 	InsertParkedTicket(ctx context.Context, t ParkedTicket, actor string) (ParkedTicket, error)
 	ListParkedTickets(ctx context.Context, branchID string) ([]ParkedTicket, error)
+	// GetParkedTicket reads one ticket whatever its status, the parked fence's pre-read
+	// (policy.go holds the branch wall on resume and discard before any write).
+	GetParkedTicket(ctx context.Context, id string) (ParkedTicket, bool, error)
 	MarkParkedResumed(ctx context.Context, id, actor string) (ParkedTicket, error)
 	MarkParkedDiscarded(ctx context.Context, id string) error
 	// A-06 portal return requests (0045 tables; the request is INTENT ONLY, no money/stock writes).
@@ -433,18 +442,20 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 		return Sale{}, err
 	}
 
-	// 3. Price every line via the engine (the cashier never types a price). A blocked line aborts.
+	// 3. Price every line through the counter resolve (the cashier never types a price, and the
+	// price the customer's rules and tiers give is accepted: no margin floor at the till, D48 row
+	// 481, D49). A line that cannot be priced at all (no retail anchor, no uom conversion) is
+	// still a client-correctable 4xx, never a plausible zero.
 	lines := make([]orderLineRow, len(in.Lines))
 	var subtotal int64
 	for i, li := range in.Lines {
-		lp, err := s.pricing.DeriveLinePrice(ctx, pricing.ResolveInput{
+		lp, err := s.pricing.DeriveCounterLinePrice(ctx, pricing.ResolveInput{
 			CustomerID:   customerID,
 			CustomerType: cust.CustomerType,
 			ProductID:    li.ProductID,
 			BranchID:     in.BranchID,
 			QtyEntered:   li.QtyEntered,
 			UOMEntered:   li.UOMEntered,
-			CostCents:    li.CostCents,
 		})
 		if err != nil {
 			// A pricing FAILURE (e.g. a walk-in RETAIL line with no retail anchor or no uom conversion
@@ -458,9 +469,6 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 				return Sale{}, clientErr(st, "line %d: %s", i+1, msg)
 			}
 			return Sale{}, err
-		}
-		if lp.Breakdown.Blocked {
-			return Sale{}, ErrPriceBlocked{Policy: lp.Breakdown.BlockPolicy, LineNo: i + 1}
 		}
 		lines[i] = orderLineRow{
 			LineNo:         i + 1,

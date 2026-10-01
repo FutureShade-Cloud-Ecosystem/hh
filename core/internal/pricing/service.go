@@ -298,7 +298,7 @@ func (s *Service) uomFactorFor(ctx context.Context, productID, uom string) (floa
 // FINAL, no break (or override) applies on top of it.
 // (CUSTOMER_SUPPLIER / SUPPLIER_CATEGORY are RESERVED-UNBUILT, no product→supplier anchor.)
 func (s *Service) ResolvePrice(ctx context.Context, in ResolveInput) (Breakdown, error) {
-	return s.resolve(ctx, in, false)
+	return s.resolve(ctx, in, false, false)
 }
 
 // ResolvePricePreview is ResolvePrice with the audit write suppressed: a strictly READ-ONLY evaluation
@@ -317,7 +317,7 @@ func (s *Service) ResolvePrice(ctx context.Context, in ResolveInput) (Breakdown,
 // Callers that are actually pricing something must use ResolvePrice: a live disabled-enforcement line
 // must still be recorded.
 func (s *Service) ResolvePricePreview(ctx context.Context, in ResolveInput) (Breakdown, error) {
-	return s.resolve(ctx, in, true)
+	return s.resolve(ctx, in, true, false)
 }
 
 // resolve is the shared waterfall. dryRun=true is a READ-ONLY evaluation that NEVER mutates the
@@ -325,7 +325,11 @@ func (s *Service) ResolvePricePreview(ctx context.Context, in ResolveInput) (Bre
 // low-margin preview (LowMarginReport) uses dryRun so a preview cannot pollute the audit trail
 // with phantom BYPASS rows (finding #5). The live resolve (ResolvePrice / DeriveLinePrice) uses
 // dryRun=false so a real disabled-enforcement line is still recorded (no silent bypass).
-func (s *Service) resolve(ctx context.Context, in ResolveInput, dryRun bool) (Breakdown, error) {
+//
+// counterTill=true is the till's resolve (ResolveCounterPrice, counter_resolve.go): the waterfall
+// above is identical, and the margin gate step at the bottom is never reached, the floor is the
+// quote flow's question and the till's ruled price is accepted as it resolves (D48 row 481, D49).
+func (s *Service) resolve(ctx context.Context, in ResolveInput, dryRun, counterTill bool) (Breakdown, error) {
 	if in.ProductID == "" {
 		return Breakdown{}, badReq("product_id is required")
 	}
@@ -664,6 +668,14 @@ func (s *Service) resolve(ctx context.Context, in ResolveInput, dryRun bool) (Br
 	}
 	if wonPromo != nil {
 		bd.PromoCode, bd.PromoName = wonPromo.promo.Code, wonPromo.promo.Name
+	}
+
+	// THE COUNTER RESOLVE STOPS HERE (counter_resolve.go). The till's line is priced: the rule
+	// and tier waterfall above decided it and that price is accepted. The gate below is the quote
+	// flow's question, so the till path returns before it: no gate check, no blocked line, no
+	// BYPASS row, and the policy reads below never run for a till line.
+	if counterTill {
+		return bd, nil
 	}
 
 	// 7. Margin gate (reuse A-20, additive) unless enforcement is disabled.
@@ -1519,7 +1531,7 @@ func (s *Service) LowMarginReport(ctx context.Context, inputs []ResolveInput) ([
 			continue
 		}
 		// Dry-run resolve: a read-only preview must NOT write to the audit log (finding #5).
-		bd, err := s.resolve(ctx, in, true)
+		bd, err := s.resolve(ctx, in, true, false)
 		if err != nil {
 			out = append(out, invalidEntry(in, resolveErrReason(err)))
 			continue
