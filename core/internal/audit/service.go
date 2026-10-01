@@ -167,9 +167,27 @@ var mutating = map[string]bool{
 	http.MethodDelete: true,
 }
 
-// Middleware records every mutating /api/... request (except login) AFTER it completes. Recording is
+// selfRecordedMutations names the mutating routes that write their own
+// trail rows through the Recorder seam and take no coarse row. The coarse
+// row is per call whatever the status, so on a pre-auth route it would let
+// a stranger's refused burst write a row per call: exactly the defect the
+// route's own bounded record exists to prevent. A route joins this table
+// when its module owns a finer record than the coarse row, by review, and
+// the route's own row is then the whole record for it.
+var selfRecordedMutations = map[string]bool{
+	// The demo session mint writes DEMO_SESSION_MINTED through the
+	// Recorder, before the token, and the per-address limit bounds it.
+	"/api/v1/demo/session": true,
+}
+
+// Middleware records every mutating /api/... request (except the routes
+// carved out below) AFTER it completes. Recording is
 // best-effort + async so it never adds latency to, or fails, the request (US-A2). It also reads/echoes/
 // threads/persists X-Request-Id so the coarse row correlates with the request's Recorder rows (US-A5).
+//
+// Two carve outs, each a table: /api/v1/auth/login, whose attempts carry
+// credentials no trail needs, and selfRecordedMutations, whose routes
+// write their own finer rows and must not also land a coarse row per call.
 //
 // The persisted path never carries a public route's credential: elidePublicToken (below) scrubs the
 // token segment of the public token route families to the fixed "{token}" placeholder before the row
@@ -183,7 +201,8 @@ func (s *Service) Middleware(authn Authenticator) func(http.Handler) http.Handle
 			r = r.WithContext(withRequestID(r.Context(), reqID))
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rec, r)
-			if mutating[r.Method] && strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/v1/auth/login" {
+			if mutating[r.Method] && strings.HasPrefix(r.URL.Path, "/api/") &&
+				r.URL.Path != "/api/v1/auth/login" && !selfRecordedMutations[r.URL.Path] {
 				uid, role := authn.Actor(r)
 				e := Entry{
 					Action:     httpAction(r.Method),

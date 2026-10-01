@@ -331,11 +331,20 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
-	// The demo module's mint routes (POST /api/v1/demo/session and
-	// GET /api/v1/demo/flows, the parity ledger's demo pair) register
-	// here when their lane lands: the mint builds on this file's issuer,
-	// the gate above and the closed flow table, and registers on the
-	// public leg the tenant config uses.
+	// The demo module's mint routes (W2): the tap-a-role sign-in, the
+	// parity ledger's demo pair, pre-auth by design and registered on the
+	// public leg the tenant config uses. The module builds on this file's
+	// issuer, the org resolver and the staff resolver above, the audit
+	// recorder the money spine already writes its trail with, and the
+	// closed flow table; the per-address limit arrives by constructor too
+	// and the wiring names none, so the default allowance stands.
+	mint, err := demo.NewMint(demo.MintDeps{Minter: iss, Orgs: orgs, Staff: staff, Audit: money.auditSvc})
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	r.Handle("GET /api/v1/demo/flows", g.Public(http.HandlerFunc(mint.Flows)))
+	r.Handle("POST /api/v1/demo/session", g.Public(http.HandlerFunc(mint.Session)))
 
 	return &appGraph{
 		cfg: cfg, log: log, pool: pool, verify: verifier, link: linkedUserID(pool), g: g,
