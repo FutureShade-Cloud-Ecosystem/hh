@@ -1,5 +1,5 @@
 # Origin: `analysis/role-catalog.yaml` in `futurebuildai/hh_pro_dibbits` at commit 829d387baec93556ffa0e9242f4091e9be9544ec (read only source).
-# Copied into `hh/docs/analysis/` by Session HH-2 lane HH-2.5; content below this header is unchanged except the role lines a recorded decision has touched: the `public-desk` roles line, amended by D23, and the internal surfaces' role lists, reconciled to the decided access matrix by D48 (the counter till's list also by D49).
+# Copied into `hh/docs/analysis/` by Session HH-2 lane HH-2.5; content below this header is unchanged except the role lines a recorded decision has touched: the `public-desk` roles line, amended by D23, and the internal surfaces' role lists, reconciled to the decided access matrix by D48.
 # This copy is the live role catalog from D23 onward; the copy in hh_pro_dibbits is frozen at the close of HH-1.
 # In-body `analysis/...` paths resolve to `docs/analysis/...` in this copy.
 
@@ -523,7 +523,7 @@ micro_apps:
   - id: counter-till
     name: Counter Till
     audience: internal
-    roles: [inside_sales, sales_manager, branch_manager, yard_manager, general_manager] # reconciled to the decided matrix (DECISIONS.md D48, D49): outside_sales leaves, the matrix holds it at none and D49 takes it off the till; yard_manager joins at work, general_manager at read
+    roles: [inside_sales, sales_manager, branch_manager, yard_manager, general_manager] # reconciled to the decided matrix (DECISIONS.md D48): outside_sales leaves, the matrix holds it at none (the till's own rules stand at D49); yard_manager joins at work, general_manager at read
     devices: [desktop, tablet, kiosk]
     kit: scan-and-confirm
     brand: fb-tokens
@@ -771,7 +771,7 @@ micro_apps:
   - id: manager-home
     name: Manager Home
     audience: internal
-    roles: [branch_manager, sales_manager, yard_manager, logistics_manager, procurement_manager, payables_receivables, general_manager, financial_controller] # reconciled to the decided matrix (DECISIONS.md D48): payables_receivables joins at work, super_admin leaves, the list holds the roles the matrix admits and no others
+    roles: [branch_manager, sales_manager, yard_manager, logistics_manager, procurement_manager, payables_receivables, general_manager, financial_controller, super_admin] # reconciled to the decided matrix (DECISIONS.md D48): payables_receivables joins at work; super_admin stays, the matrix decides the thirteen staff roles and the record keeps the platform roles outside it (ROLE-ACCESS-r3)
     devices: [desktop, tablet, phone]
     kit: dashboard
     brand: fb-tokens
@@ -805,7 +805,7 @@ micro_apps:
   - id: house-messages
     name: House Messages
     audience: internal
-    roles: [inside_sales, outside_sales, yard_team, driver, yard_manager, logistics_manager, branch_manager, sales_manager, procurement_manager, payables_receivables, general_manager, financial_controller, hr] # reconciled to the decided matrix (DECISIONS.md D48): super_admin leaves, the list holds the roles the matrix admits and no others
+    roles: [inside_sales, outside_sales, yard_team, driver, yard_manager, logistics_manager, branch_manager, sales_manager, procurement_manager, payables_receivables, general_manager, financial_controller, hr, super_admin] # reconciled to the decided matrix (DECISIONS.md D48): the thirteen staff roles at the matrix's levels; super_admin stays, the matrix decides the thirteen staff roles and the record keeps the platform roles outside it (ROLE-ACCESS-r3)
     devices: [desktop, tablet, phone, kiosk]
     kit: inbox
     brand: fb-tokens
@@ -841,7 +841,7 @@ micro_apps:
   - id: dealer-admin
     name: Dealer Admin
     audience: internal
-    roles: [general_manager, hr, sales_manager, financial_controller] # reconciled to the decided matrix (DECISIONS.md D48): financial_controller joins at read, super_admin and dealer_admin leave, the list holds the roles the matrix admits and no others
+    roles: [super_admin, general_manager, hr, dealer_admin, sales_manager, financial_controller] # reconciled to the decided matrix (DECISIONS.md D48): financial_controller joins at read; super_admin and dealer_admin stay, the matrix decides the thirteen staff roles and the record keeps the platform roles outside it (ROLE-ACCESS-r3)
     devices: [desktop]
     kit: list-detail
     brand: fb-tokens

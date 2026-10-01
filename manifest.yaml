@@ -166,7 +166,7 @@ frontends:
   - id: manager-home
     name: Manager Home
     audience: internal
-    roles: [branch_manager, sales_manager, yard_manager, logistics_manager, procurement_manager, payables_receivables, general_manager, financial_controller]
+    roles: [branch_manager, sales_manager, yard_manager, logistics_manager, procurement_manager, payables_receivables, general_manager, financial_controller, super_admin]
     gate: role
     devices: [desktop, tablet, phone]
     kit: dashboard
@@ -181,7 +181,7 @@ frontends:
   - id: house-messages
     name: House Messages
     audience: internal
-    roles: [inside_sales, outside_sales, yard_team, driver, yard_manager, logistics_manager, branch_manager, sales_manager, procurement_manager, payables_receivables, general_manager, financial_controller, hr]
+    roles: [inside_sales, outside_sales, yard_team, driver, yard_manager, logistics_manager, branch_manager, sales_manager, procurement_manager, payables_receivables, general_manager, financial_controller, hr, super_admin]
     gate: role
     devices: [desktop, tablet, phone, kiosk]
     kit: inbox
@@ -198,7 +198,7 @@ frontends:
   - id: dealer-admin
     name: Dealer Admin
     audience: internal
-    roles: [general_manager, hr, sales_manager, financial_controller]
+    roles: [super_admin, general_manager, hr, dealer_admin, sales_manager, financial_controller]
     gate: role
     devices: [desktop]
     kit: list-detail
