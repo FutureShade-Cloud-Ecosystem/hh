@@ -101,7 +101,7 @@ export function rememberRecent(
  * It NEVER adds a row the server did not return and never removes one. A recent account that does
  * not match the current query simply is not in `results` and does not appear: the recency list is
  * a re-ordering of the truth, not a second source of it. That distinction is what stops a stale
- * localStorage entry from resurrecting a deactivated account in front of the user.
+ * stored entry from resurrecting a deactivated account in front of the user.
  */
 export function orderResults<T extends { id: string }>(
   results: readonly T[],

@@ -22,10 +22,11 @@
 // across tills: that is the 0166 ruling and 0220 extends it. These COORDINATES do not, and must
 // not: they are measured in the pixels of the screen they were arranged on, and a counter person
 // moves between a 27-inch till and a back-office laptop. Carrying x=1400 from the first to the
-// second puts a panel off the side of it. So the boxes live in localStorage beside the floating
+// second puts a panel off the side of it. So the boxes live in the host's store beside the floating
 // assistant's, and every read is clamped to the box it is being read INTO.
 
 import type { FlowStepId } from './_pos-flow.js';
+import { clearPanelLayoutRaw, readPanelLayoutRaw, writePanelLayoutRaw } from './ports.js';
 
 /** One panel's box, in pixels relative to the panel area's top-left. */
 export interface PanelBox {
@@ -174,7 +175,7 @@ export function resizeBox(from: PanelBox, dx: number, dy: number, edges: PanelEd
  * normalizeLayout: a stored layout, made safe for the area it is about to be painted into.
  *
  * Every box is clamped, and a panel the stored layout has never heard of (a build that adds a fifth
- * step, a truncated write, somebody's hand-edited localStorage) takes its box from the default
+ * step, a truncated write, somebody's hand-edited store entry) takes its box from the default
  * tiling rather than from nothing. The result is always total over the four steps, which is what
  * lets the caller index it without a guard at every use.
  */
@@ -228,7 +229,7 @@ export interface StoredPanels {
   order: FlowStepId[];
 }
 
-// ── side effects (browser only; never executed at import, so this module stays test-loadable) ────
+// ── side effects (host only; never executed at import, so this module stays test-loadable) ──────
 
 /**
  * The key. Per device, never per account: see this file's header for the argument.
@@ -239,10 +240,12 @@ export interface StoredPanels {
  */
 export const PANELS_KEY = 'hos-pos-panels-v1';
 
-/** readPanels: whatever this device remembers, or null. Storage that throws answers null. */
+/** readPanels: whatever this device remembers, or null. A store that throws answers null.
+ * HH note: the reference read the browser's local store here; the ported module asks the host
+ * seam instead (ports.ts, named in CLOSURE.md), same key, same raw-string contract. */
 export function readPanels(): StoredPanels | null {
   try {
-    const raw = localStorage.getItem(PANELS_KEY);
+    const raw = readPanelLayoutRaw(PANELS_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { boxes?: unknown; order?: unknown };
     if (!parsed || typeof parsed !== 'object') return null;
@@ -255,10 +258,10 @@ export function readPanels(): StoredPanels | null {
   }
 }
 
-/** writePanels: best effort. A private window with storage disabled just forgets, silently. */
+/** writePanels: best effort. A private window whose store refuses just forgets, silently. */
 export function writePanels(v: StoredPanels): void {
   try {
-    localStorage.setItem(PANELS_KEY, JSON.stringify(v));
+    writePanelLayoutRaw(PANELS_KEY, JSON.stringify(v));
   } catch {
  /* a layout is not worth an error on a till */
   }
@@ -267,7 +270,7 @@ export function writePanels(v: StoredPanels): void {
 /** clearPanels: Reset layout. The next read returns the default tiling for the current area. */
 export function clearPanels(): void {
   try {
-    localStorage.removeItem(PANELS_KEY);
+    clearPanelLayoutRaw(PANELS_KEY);
   } catch {
  /* as above */
   }

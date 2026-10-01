@@ -146,14 +146,15 @@ export interface TxbarSegment {
 }
 
 /**
- * txbarSegments: WHAT the bar says. Items + weight always (the honest em-dash when no line has a
- * weight); the margin/profit segments exist ONLY when the role-gated data is present AND the
- * quick-hide is off: an absent segment, never a masked value.
+ * txbarSegments: WHAT the bar says. Items + weight always (an explicit placeholder when no line
+ * has a weight: the reference drew a bare rule there, a character the house forbids, so the
+ * placeholder names the fact instead); the margin/profit segments exist ONLY when the role-gated
+ * data is present AND the quick-hide is off: an absent segment, never a masked value.
  */
 export function txbarSegments(f: TxbarFacts, moneyFmt: (cents: number) => string): TxbarSegment[] {
   const out: TxbarSegment[] = [
     { id: 'items', text: `${f.itemCount} Item${f.itemCount === 1 ? '' : 's'}` },
-    { id: 'weight', text: `Total Weight ${f.totalWeightLbs === null ? ':' : formatLbs(f.totalWeightLbs)}` },
+    { id: 'weight', text: `Total Weight ${f.totalWeightLbs === null ? '(not weighed)' : formatLbs(f.totalWeightLbs)}` },
   ];
   if (!f.marginHidden && f.marginBps !== undefined) {
     out.push({ id: 'margin', text: `Margin ${marginPctLabel(f.marginBps)}` });

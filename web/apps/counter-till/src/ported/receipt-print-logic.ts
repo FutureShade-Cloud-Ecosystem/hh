@@ -3,7 +3,7 @@
 // receipt-print-logic.ts: the pure, DOM-free half of the DIB-410 receipt print flow.
 //
 // Split out from receipt-print.ts so it can be unit-tested on the Node runner: the api.ts helper
-// reads sessionStorage at module load, so anything importing it cannot be imported by a DOM-free
+// reads the session store at module load, so anything importing it cannot be imported by a DOM-free
 // test. Same reason _pos.ts exists.
 
 /** The receipt route for one sale (accepts the pos_sale id OR the order id: the server resolves both). */

@@ -274,7 +274,7 @@ export class HosPosTerminal extends LitElement {
   @state() private dateError = '';
  // DIB-196 (Ryan Rood): when true, adding a product jumps focus to its quantity box (BisTrack's
  // per-terminal "ask for quantity" posture) instead of silently defaulting the line to qty 1.
- // In-memory only: a per-terminal preference, deliberately NOT persisted to localStorage.
+ // In-memory only: a per-terminal preference, deliberately never persisted.
   @state() private promptQtyOnAdd = false;
   @state() private ring: Ring = { state: 'idle' };
   @state() private reliefReason = '';

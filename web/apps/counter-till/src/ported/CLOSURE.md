@@ -66,7 +66,7 @@ token sheet rebased onto the HH design system (see Styles below).
 | _pos-searchdrop.ts | 213 | |
 | _pos-stock.ts | 81 | |
 | _pos-workspace.ts | 393 | |
-| _pos-panels.ts | 272 | |
+| _pos-panels.ts | 272 | detached layout persistence behind a port seam |
 | _pos-hotlist.ts | 198 | |
 | _pos-split.ts | 119 | typed-amount parse rerouted |
 | _pos-add-dedupe.ts | 217 | |
@@ -108,6 +108,9 @@ token sheet rebased onto the HH design system (see Styles below).
   `canSeeGate`, `visibleModuleKeys`.
 - `_related-docs.ts`: the related-documents drawer's logic belongs to the
   order screens. Only its `RelatedDoc` shape is declared here.
+- The browser's local store: the reference's detached panel layout persisted
+  to it directly. Seams: `readPanelLayoutRaw`, `writePanelLayoutRaw`,
+  `clearPanelLayoutRaw`, called with the reference's versioned key.
 - The neighbouring screens `pos-terminal.ts` side-effect imports and embeds as
   custom elements: `till-close`, `pricing-doc`, `order-history`,
   `order-lifecycle`, `order-edit`, `order-edits`, `order-duplicate`,
@@ -166,14 +169,25 @@ to input string, `pos-terminal.ts` `taxLabel`'s basis points to percent,
 ## Sweeps carried through the port
 
 - No em or en dash survives anywhere in the ported files, comments or strings.
+  One rendered string changed shape because of it: the ticket footer's
+  unknown-weight mark was a bare rule character in the reference and now reads
+  `(not weighed)`, pinned by the ported test.
 - No calendar reference survives in committed prose; the reference dated its
-  rulings in comments and those dates are gone.
+  rulings in comments and those dates are gone. The one calendar literal left
+  in the tree is a date parser's own test fixtures, shifted to a neutral year:
+  a parser test has to feed the parser dates.
 - The reference's tracker references (`GABLE:slug`) are gone, reworded to name
   the ticket by its slug; the product prefix `hos-` on custom elements and
   tokens is the reference surface's own vocabulary and stays, flagged for the
   polish item.
 - No Gable name, logo or colour was found in the ported files: the reference's
   token sheet is already the company's gold-on-navy rebrand.
+- This app's credential sink rule (no browser storage, console or channel in
+  any source) holds over the port: the reference read and wrote the browser's
+  local store for the detached panel layout, and that persistence is now the
+  `readPanelLayoutRaw` / `writePanelLayoutRaw` / `clearPanelLayoutRaw` seams
+  in ports.ts with the same versioned key, so the wiring item picks the
+  backing store.
 
 ## Reference tests brought along
 
@@ -191,12 +205,32 @@ rather than on a defect:
   `quick-action-guard.test.mjs`, `pos-signature-logic.test.mjs`,
   `receipt-print.test.mjs`.
 
+Four brought files carried halves that asserted invariants over the reference
+repository's own tree rather than over the module they test; those halves
+stayed with the reference, each marked where it was cut:
+
+- `_pos-add-dedupe.test.mjs`: the whole-tree add-path census walked the
+  reference src and named its quote-line writers; the wiring work item owes
+  this app its own census when the surface mounts.
+- `_pos-hotkeys.test.mjs`: the default-roster cross-check read the reference
+  Go core's hotkey file; the wiring item re-pins the two rosters against each
+  other when the seam is live.
+- `_pos-rev8.test.mjs`: the pane-head half read the reference app's shell
+  element, which HH replaces with its own.
+- `_pos-workspace.test.mjs`: the divider's accessibility floor read the
+  reference's quote work area, the one screen there that still shipped a
+  splitter.
+- `modal-focus.test.mjs`: the modal census is rebased onto the six ported
+  modal-class components; the non-dismissable-modals gate read
+  `kiosk-takeover.ts` and `till-close.ts`, which are not ported, and stayed
+  with the reference.
+
 Left out, with reasons:
 
 - `_pos.test.mjs` and `_pos-split.test.mjs`: their cases drive the rerouted
-  money seams (`cashTenderedPlan`, the deposit balance, `parseAmountCents`),
-  which refuse until the host implements them; the wiring item ports them
-  against its implementations.
+  money seams (`cashTenderedPlan`, the deposit balance, `parseAmountCents`,
+  the split verdict and remainder), which refuse until the host implements
+  them; the wiring item ports them against its implementations.
 - `hotkey-logic.test.mjs` and `_platform-hotkeys.test.mjs`: they read the nav
   gate table and registry, which are host seams now.
 - `_money-format.test.mjs`: it is a meta test that walks the reference's own

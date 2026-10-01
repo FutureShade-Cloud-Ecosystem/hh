@@ -4,7 +4,7 @@
 //
 // WHY THIS FILE EXISTS AT ALL. The tender vocabulary is not one screen's private business: the same
 // two columns are rendered by the payment inspector (payment-history.ts), the past-sale reopen
-// (pos-lookup.ts), the drawer Z-report (till-close.ts) and the NSF queue (ar-console.ts). Four
+// (pos-lookup.ts), the drawer Z-report (till-close.ts) and the NSF queue (the AR console). Four
 // components, one fact. Before this file each of them printed the stored value straight through, so
 // there was no map to disagree with: and no place to put one either. The house rule is that
 // lifecycle knowledge lives in the matrix and never branched in a component, so the matrix had to be

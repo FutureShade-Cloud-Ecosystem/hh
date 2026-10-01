@@ -33,7 +33,7 @@ import { rowStripe } from './styles/row-stripe.js';
  * 1. The receipt document carries a reprint counter, and that counter is only honest if every
  * reprint increments it: so this asks the server for the document rather than re-rendering the
  * sale from the reopen payload it already holds.
- * 2. The receipt route is STAFF-GATED and the staff session is a Bearer token in sessionStorage. A
+ * 2. The receipt route is STAFF-GATED and the staff session is a Bearer token in the session store. A
  * `window.open('/api/v1/pos/sales/…/receipt')` is a plain navigation with no Authorization
  * header: it renders `{"error":"unauthorized"}` in a window facing the customer. printReceipt()
  * (DIB-410) fetches with the token and writes the document into a blank window, which is why it

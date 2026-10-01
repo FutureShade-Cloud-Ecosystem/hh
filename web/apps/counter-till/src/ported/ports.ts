@@ -351,3 +351,29 @@ export function availableCreditCents(customer: {
 }): number {
   return unwired('availableCreditCents');
 }
+
+// ---------------------------------------------------------------------------
+// The detached panel layout's persisted store
+// ---------------------------------------------------------------------------
+//
+// The reference kept the multi-card surface's box positions in the browser's
+// local store, per device, under a versioned key. In HH the host owns
+// persistence (this app's credential sink rule reserves the browser's stores),
+// so the ported panel module asks these seams with the same key and the same
+// raw-string contract; the wiring item picks the backing store, possibly the
+// server-side workspace preferences the surface already saves.
+
+/** Whatever the device remembers under this key, as the stored string, or null. */
+export function readPanelLayoutRaw(key: string): string | null {
+  return unwired('readPanelLayoutRaw');
+}
+
+/** Best effort persist of the stored string under this key. A refusing store just forgets. */
+export function writePanelLayoutRaw(key: string, value: string): void {
+  return unwired('writePanelLayoutRaw');
+}
+
+/** Forget the layout under this key; the next read returns the default tiling. */
+export function clearPanelLayoutRaw(key: string): void {
+  return unwired('clearPanelLayoutRaw');
+}

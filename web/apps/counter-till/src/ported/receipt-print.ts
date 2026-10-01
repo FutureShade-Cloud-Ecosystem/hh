@@ -3,7 +3,7 @@
 // receipt-print.ts: DIB-410 counter receipt: the network half of the print flow.
 //
 // WHY THE HTML IS FETCHED AND NOT NAVIGATED TO. The receipt route is staff-gated and the staff
-// session is a Bearer token held in sessionStorage (api.ts): `window.open('/api/v1/pos/sales/…')`
+// session is a Bearer token held in the browser's session store (the host's): `window.open('/api/v1/pos/sales/…')`
 // sends no Authorization header, so it would render a 401 in the customer-facing window. So the
 // document is FETCHED with the token, then written into a blank window that is printed. Same result,
 // and it keeps the auth model intact.
