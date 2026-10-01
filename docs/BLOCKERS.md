@@ -365,3 +365,17 @@ the two clauses that hold under both keyings: the allowance is bounded,
 and rotating forged `X-Forwarded-For` values buy no bucket. When the core
 reads the chain, that same leg proves the two-bucket behavior the
 reviewer asked for, with no script change.
+
+## The Counter Till cycle, lane L3 (W5): the demoseed integration suite's migration glob resolves nowhere since the fold (recorded, not this lane's file)
+
+The composition suite at `core/cmd/core/demoseed_integration_test.go`
+globs its migrations at `filepath.Join("..", "..", "migrations", "*.sql")`
+relative to the package directory, which resolves to `core/migrations`
+and finds nothing: the migration set lives at `core/db/migrations`, and
+the suite's own header still names the ERP's `./cmd/demoseed/...` layout
+the fold replaced. Every test in the file fails at "no migrations found"
+wherever it runs, so the suite's database legs cannot be gated into CI
+(the demo job leaves the step out and says why, in the workflow). The fix
+is one glob argument in a file outside this lane's declared Touches;
+recorded so the owning lane lands it and the composition legs return to
+the demo job's coverage.
