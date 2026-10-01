@@ -12,7 +12,9 @@
 # this branch has it. The union assembles in the scratch directory the lane
 # was granted (SCRATCH); nothing is ever written into WT_GOAL.
 #
-# Needs: docker, node, npm, bun, and network access to pull the base images.
+# Needs: docker, node (22, the version CI names: the stub suite's TypeScript
+# import fails under 20), npm, bun, and network access to pull the base
+# images.
 # The throwaway Postgres is hh-till-l5d-pg on 127.0.0.1:5603, on the lane's
 # network, and everything (containers, databases, network, image, scratch
 # context) is removed afterwards. The gate phrase and its hash are generated
@@ -52,6 +54,11 @@ pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*"; FAILURES=$((FAILURES + 1)); }
 
 random_hex() { openssl rand -hex "$1"; }
+
+case "$(node --version)" in
+	v22.*) ;;
+	*) echo "node 22 is required (CI's version); found $(node --version)" >&2; exit 1 ;;
+esac
 
 freshdb() {
 	docker exec "$PG_NAME" psql -U postgres -q \
@@ -96,8 +103,13 @@ if [ ! -f "$SCRATCH/context/deploy/demo/Dockerfile" ]; then
 fi
 rm -rf "$SCRATCH/context/$APP"
 mkdir -p "$SCRATCH/context/$APP"
-tar -C "$APP" --exclude=node_modules --exclude=dist --exclude=test-results -cf - . | tar -C "$SCRATCH/context/$APP" -xf -
-pass "the union context assembles (goal head, the app from this lane)"
+tar -C "$APP" --exclude=node_modules --exclude=dist --exclude=test-results --exclude=acceptance-screens -cf - . | tar -C "$SCRATCH/context/$APP" -xf -
+# The review round's one granted exception outside the app: the demo
+# populate's dealer name rename (docs/BLOCKERS.md, the W9 section). This
+# branch's file is the goal's plus exactly that edit, so the overlay is the
+# exception and nothing else, and the lead's merge carries it into till/goal.
+cp core/internal/demo/populate.go "$SCRATCH/context/core/internal/demo/populate.go"
+pass "the union context assembles (goal head, the app and the granted populate file from this lane)"
 
 echo "== building the image"
 docker build -f "$SCRATCH/context/deploy/demo/Dockerfile" -t "$IMAGE" "$SCRATCH/context" >/dev/null || {
@@ -114,7 +126,7 @@ docker run -d --name "$PG_NAME" --network "$NET" -p "127.0.0.1:$PG_PORT:5432" \
 until docker exec "$PG_NAME" pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
 pass "the throwaway Postgres answers"
 
-PHRASE="walnut bramble ledger crevice $(random_hex 8)"
+PHRASE="$(random_hex 8) $(random_hex 8) $(random_hex 8)"
 HASH="$(printf '%s\n' "$PHRASE" | docker run --rm -i --entrypoint caddy "$IMAGE" hash-password)"
 case "$HASH" in
 	'$2a'*|'$2b'*|'$2y'*) pass "the generated gate value is a bcrypt hash" ;;
@@ -146,6 +158,11 @@ case "$page" in
 	*"testers' brief"*) pass "the app serves the testers' page" ;;
 	*) fail "the testers' page did not serve" ;;
 esac
+KGN_LINE="$(docker exec "$PG_NAME" psql -U postgres -d w9_exit -tAc \
+	"SELECT ol.id::text FROM order_lines ol JOIN orders o ON o.id = ol.order_id
+	  WHERE o.order_no = 'DEMO-KGN-S01' LIMIT 1" | tr -d '[:space:]')"
+[ -n "$KGN_LINE" ] || { fail "the harness could not read the Kingston sale's line id"; exit 1; }
+pass "the harness holds the Kingston sale's line id for the three-rail leg"
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
 	*'"flow":"sales"'*'"flow":"sales-manager"'*) pass "the flows table answers its two rows" ;;
@@ -157,15 +174,58 @@ SHOT_DIR="$(pwd)/$APP/acceptance-screens"
 rm -rf "$SHOT_DIR"
 cd "$APP"
 if CI=true CT_IMAGE_URL="$BASE" CT_GATE_PHRASE="$PHRASE" CT_SHOT_DIR="$SHOT_DIR" \
+	CT_KGN_LINE="$KGN_LINE" \
 	npx --no-install playwright test --config test/acceptance.config.ts --grep-invert restart; then
 	pass "the acceptance run is green"
 else
 	fail "the acceptance run failed"
 	FAILURES=$((FAILURES + 1))
 fi
-screens="$(find "$SHOT_DIR" -name '*.png' 2>/dev/null | wc -l)"
-[ "$screens" -ge 20 ] && pass "the run produced $screens screenshots (per screen per role)" \
-	|| fail "the run produced only $screens screenshots"
+# The run's screenshots, held to the exact set: every screen of both passes
+# named, none missing, none extra.
+expected="00-world-flows
+40-claims-testers-page
+manager-01-way-in
+manager-02-drawer
+manager-03-sale
+manager-04-contractor-pavers
+manager-05-credit-refused
+manager-06-receipt-card
+manager-07-parked
+manager-08-return-within
+manager-09-own-refund
+manager-10-kingston
+manager-11-beyond
+sales-01-way-in
+sales-02-drawer
+sales-03-sale
+sales-04-below-floor-populated
+sales-04-below-floor-rung
+sales-04-contractor-pavers
+sales-05-credit-refused
+sales-06-receipt-account
+sales-06-receipt-card
+sales-06-receipt-cash
+sales-07-parked
+sales-08-return-within
+sales-09-approved
+sales-09-dialog
+sales-09-refused
+sales-10-kingston
+sales-11-beyond"
+actual="$(cd "$SHOT_DIR" && ls *.png 2>/dev/null | sed 's/\.png$//' | sort)"
+missing=""
+for name in $expected; do
+	printf '%s\n' "$actual" | grep -qx "$name" || missing="$missing $name"
+done
+extra=""
+for name in $actual; do
+	printf '%s\n' "$expected" | grep -qx "$name" || extra="$extra $name"
+done
+count="$(printf '%s\n' "$actual" | grep -c . || true)"
+[ "$count" = "30" ] && [ -z "$missing" ] && [ -z "$extra" ] \
+	&& pass "the run produced exactly its 30 named screenshots" \
+	|| fail "the screenshots drifted (count $count, missing:$missing, extra:$extra)"
 cd - >/dev/null
 
 echo "== the restart leg: a restart signs everyone out"
@@ -186,6 +246,10 @@ else
 	fail "the restart leg failed"
 	FAILURES=$((FAILURES + 1))
 fi
+restart_shots="$(cd "$SHOT_DIR" && ls *.png 2>/dev/null | wc -l | tr -d ' ')"
+[ "$restart_shots" = "31" ] \
+	&& pass "the restart leg's own screenshot sits beside the story's thirty" \
+	|| fail "the restart leg left $restart_shots screenshots, want 31"
 cd - >/dev/null
 
 echo "== both lanes' existing suites (the stub harness)"

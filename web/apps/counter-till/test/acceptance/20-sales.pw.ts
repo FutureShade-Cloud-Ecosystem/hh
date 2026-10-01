@@ -8,8 +8,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
   SEEDED,
+  SEEDED_IDS,
+  TRENTON_ID,
   dollars,
   expectedCash,
+  marginPercent,
   mint,
   openDrawer,
   paceMint,
@@ -19,6 +22,7 @@ import {
   shot,
   signIn,
   staffGet,
+  staffPost,
 } from "./helpers.js";
 
 async function ringCash(page: Page, tendered: string): Promise<string> {
@@ -53,7 +57,8 @@ test("the drawer: the branch's MAIN counter drawer, found or opened on first use
   page,
 }, testInfo) => {
   await signIn(page, "Sales");
-  await expect(page.getByTestId("drawer-status")).toContainText("Trenton");
+  // The strip names the invented dealer, not the migrated trading name.
+  await expect(page.getByTestId("drawer-status")).toContainText("Hardscape House (demo), Trenton");
   await expect(page.getByTestId("drawer-status")).toContainText("MAIN: open with a float of $200.00");
   await shot(page, "sales-02-drawer", testInfo);
 });
@@ -85,14 +90,31 @@ test("a contractor's pavers: the account price rings, and a below floor line rin
   await shot(page, "sales-04-contractor-pavers", testInfo);
 
   // The floor is the quote flow's: a line priced below the floor margin rings
-  // anyway, its low margin shown in the column.
+  // anyway, its low margin shown in the column. The column's words are held
+  // to the glance's own answer for this line, and the glance's basis points
+  // are held below the bulk category's floor of 20 percent, so the screen
+  // shows a genuinely below floor margin and the sale rings regardless.
   await pickCustomer(page, "Quinte", "Quinte Paving & Design (demo)");
   await searchAndAdd(page, "DEMO-AGG-GA", "Granular A (demo)");
   await expect(page.getByTestId("line-unit-price").last()).toHaveText("$29.25");
-  await expect(page.getByTestId("line-margin").last()).toContainText("%");
+  const bearer = await mint(page, "sales");
+  const glanced = await staffPost(page, bearer, "/api/v1/pos/margin-glance", {
+    branch_id: TRENTON_ID,
+    customer_id: SEEDED_IDS.quinteC03,
+    customer_type: "CONTRACTOR",
+    lines: [{ product_id: SEEDED_IDS.granularA, qty_entered: 1, uom_entered: "T" }],
+  });
+  expect(glanced.status).toBe(200);
+  const glanceLines = glanced.body.lines as Array<{ margin_bps?: number }>;
+  expect(glanceLines).toHaveLength(1);
+  const belowFloorBps = glanceLines[0].margin_bps as number;
+  expect(belowFloorBps).toBeLessThan(2000);
+  await expect(page.getByTestId("line-margin").last()).toHaveText(marginPercent(belowFloorBps));
+  // The shot holds the populated ticket, so the picture shows the low margin
+  // the column carries, before the ring empties it.
+  await shot(page, "sales-04-below-floor-populated", testInfo);
   const orderId = await ringCash(page, "100.00");
   await expect(page.getByTestId("receipt")).toBeVisible();
-  const bearer = await mint(page, "sales");
   const sale = await readSale(page, bearer, orderId);
   expect(sale.total_cents).toBeLessThan(10000);
   await shot(page, "sales-04-below-floor-rung", testInfo);
@@ -102,7 +124,7 @@ test("an account the credit gate refuses: refused in words, cash and card intact
   page,
 }, testInfo) => {
   await signIn(page, "Sales");
-  await pickCustomer(page, "Lachance", "D. Lachance (demo retail)");
+  await pickCustomer(page, "DEMO-C07", "DEMO-C07");
   await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page.getByRole("button", { name: "Ring the sale" }).click();
@@ -189,6 +211,10 @@ test("parked sales: the branch's list, a park and a pickup, never the other bran
   await page.getByRole("button", { name: "Park this ticket" }).click();
   const parked = page.getByTestId("parked-list").getByTestId("parked-ticket");
   await expect(parked).toHaveCount(2);
+  // The parked header names the invented dealer, as the drawer strip does.
+  await expect(page.getByLabel("Parked tickets")).toContainText(
+    "On this branch's counter: Hardscape House (demo), Trenton.",
+  );
   // The seed's Trenton walk-in ticket is on the list; Kingston's never is.
   await expect(page.getByTestId("parked-list")).toContainText(SEEDED.trentonTicket);
   await expect(page.getByTestId("parked-list")).not.toContainText(SEEDED.kingstonTicket);
@@ -219,6 +245,20 @@ test("a return within 250.00: refunded in cash, and the drawer's expected cash d
   const bearer = await mint(page, "sales");
   const drawerId = await openDrawer(page, bearer);
   const before = await expectedCash(page, bearer, drawerId);
+  await page.getByLabel("Sale number").fill(orderNo);
+  await page.getByRole("button", { name: "Find sale" }).click();
+  await expect(page.getByTestId("returns-sale")).toContainText(orderNo);
+  // The seeded card sale beside it: the desk cannot send its refund by card
+  // at all, the method greyed with its reason in words (the page's advice to
+  // refund such a sale in cash or to the account).
+  await page.getByLabel("Sale number").fill(SEEDED.trentonCardSale);
+  await page.getByRole("button", { name: "Find sale" }).click();
+  await expect(page.getByTestId("returns-sale")).toContainText(SEEDED.trentonCardSale);
+  await expect(page.getByRole("button", { name: "Card", exact: true })).toBeDisabled();
+  await expect(page.getByTestId("returns")).toContainText(
+    "No card refund: this sale was not paid by card",
+  );
+  // Back to the rung sale for this screen's own return.
   await page.getByLabel("Sale number").fill(orderNo);
   await page.getByRole("button", { name: "Find sale" }).click();
   await expect(page.getByTestId("returns-sale")).toContainText(orderNo);
@@ -285,6 +325,29 @@ test("a return above 250.00: refused with the amount and approvers named, comple
   // The till is still the clerk's.
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  // The approved refund went through once: the core holds exactly one return
+  // for the sale (its line fully returned) and exactly one drawer movement
+  // paying it out of the shared drawer, named for the return.
+  const bearer2 = await mint(page, "sales");
+  const after = await staffGet(
+    page,
+    bearer2,
+    `/api/v1/pos/returns/lookup?order_no=${encodeURIComponent(orderNo)}`,
+  );
+  expect(after.status).toBe(200);
+  const afterLines = after.body.lines as Array<{ qty_sold: number; qty_returned: number }>;
+  expect(afterLines).toHaveLength(1);
+  expect(afterLines[0].qty_sold).toBe(60);
+  expect(afterLines[0].qty_returned).toBe(60);
+  const drawerId = await openDrawer(page, bearer2);
+  const detail = await staffGet(page, bearer2, `/api/v1/till/sessions/${drawerId}`);
+  const movements = detail.body.movements as Array<{
+    movement_type: string;
+    amount_cents: number;
+    reference: string;
+  }>;
+  const payouts = movements.filter((m) => m.movement_type === "PAID_OUT" && m.amount_cents === 84750);
+  expect(payouts, "exactly one drawer movement carries the approved refund").toHaveLength(1);
   await shot(page, "sales-09-approved", testInfo);
 });
 
@@ -299,14 +362,22 @@ test("a Kingston sale: refused in words before anything lays out", async ({ page
   await shot(page, "sales-10-kingston", testInfo);
 });
 
-test("beyond the till: sign out returns the cards, and a fresh page has no session", async ({
+test("beyond the till: sign out, a reload, and a fresh page each leave the till nobody's", async ({
   page,
 }, testInfo) => {
   await signIn(page, "Sales");
+  // The page tells the tester a reload ends the session, and the box works
+  // exactly that way: the mint lives in the tab alone, so a signed in reload
+  // returns the cards, not the till.
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+  await expect(page.getByTestId("signed-in-role")).toHaveCount(0);
+  await shot(page, "sales-11-beyond", testInfo);
+  // Sign out lands on the same place, deliberately.
+  await signIn(page, "Sales");
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
-  await shot(page, "sales-11-beyond", testInfo);
-  // The mint lives in this tab alone: a fresh page is nobody's till.
+  // And a fresh page is nobody's till either.
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await expect(page.getByTestId("signed-in-role")).toHaveCount(0);

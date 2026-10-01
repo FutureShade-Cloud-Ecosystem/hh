@@ -473,46 +473,76 @@ The acceptance run drove the eleven screens as each role against the local
 image built from the goal's integration branch head (till/goal d028c4d) with
 this lane's app work. Four findings belong to other lanes' files; each one is
 worked around inside this lane's Touches so the run proves every screen's
-substance, and each needs its owner's close.
+substance, and each needs its owner's close. A fifth entry records the one
+edit outside this lane's Touches the lead granted.
 
 - **The demo world homes C01 and C09 to Kingston, while the demo logins reach
-  Trenton alone.** The seed writes its customers onto `b.in.Branches[i]`, and
-  on a migrated database that order puts branch 0 at Kingston: C01 (the
-  contractor whose 18 percent paver price the plan's screen 4 names) and C09
-  (the account on hold the plan's screen 5 names) come out homed to Kingston,
-  and the customer picker is fenced to the caller's own branch server-side, so
-  the Trenton counter cannot reach either row. The run proves screen 4 with
-  C02 (a Trenton contractor, 12 percent off pavers) and C03 (Trenton, 10
-  percent off bulk, whose Granular A sits below the 20 percent bulk floor and
-  rings anyway), and screen 5 with C07 (a Trenton retail account whose zero
-  limit the credit gate refuses in words, the same refusal the hold would
-  show). The lead closes this inside the goal by either moving the two
-  accounts' home branch in the seed or granting the demo logins nothing more
-  and renaming the plan's rows; it is W3 and the seed's file, not this lane's.
+  Trenton alone.** The seed plan places C01, C04, C06, C08 and C09 on branch
+  index 0 by design, and on the migrated database the seed's branch resolution
+  puts index 0 at Kingston (the plan's rows against the seed's branch
+  resolution, not an ordering accident): C01 (the contractor whose 18 percent
+  paver price the plan's screen 4 names) and C09 (the account on hold the plan's
+  screen 5 names) come out homed to Kingston, and the customer picker is fenced
+  to the caller's own branch server-side, so the Trenton counter cannot reach
+  either row. The run proves screen 4 with C02 (a Trenton contractor, 12
+  percent off pavers) and C03 (Trenton, 10 percent off bulk, whose Granular A
+  sits below the 20 percent bulk floor and rings anyway), and screen 5 with
+  C07 (a Trenton retail account whose zero limit the credit gate refuses in
+  words, the same refusal the hold would show); the testers' page words the
+  hold account's absence accordingly. Owner: W3's lane (the demo seed and
+  populate), the lead to rule the rows or the grants.
 - **No seeded sale at Trenton crosses the refund approval amount as a return.**
   DEMO-TRT-S09 is the seeded sale above 250.00 (251.71 with the seed's tax),
   but the return rail recomputes a return's amounts from the line, and the
   seeded line's own tax answer is zero: the whole line refunds at 222.75, under
   the threshold. The run crosses the amount with a sale it rings itself (sixty
-  wall blocks, 847.50). The seed's tax on counter sales and the return rail's
-  tax answer disagree; which one moves is the seed lane's call, recorded here
-  so the disagreement does not read as the return rail's defect.
-- **The demo build's serve wiring does not attach the role gate.** main.go's
-  `registerRoutes` wraps its registrar in `authz.NewRoleGateRegistrar`;
-  demo_on.go's `demoRegisterRoutes` (the wiring the demo image serves) builds
-  the same graph on the raw registrar, so on the demo box the role gate does
-  not run and any staff route the tier gate admits is served to the clerk
-  (a dispatch read answers 200 to inside_sales, which the role gate's own
-  tests hold shut). The plan's screen 11 manager cell (dispatch reads and
-  price rule writes admitted to the manager and refused to Sales) is provable
-  on this box only on the price rule write, whose refusal is the tier gate's; the
-  run asserts exactly that and no more. The fix is demo_on.go's to build the
-  same gate main.go builds; it is one wiring block, core, not this lane's.
+  wall blocks, 847.50). The seed's tax on its counter sales and the return
+  rail's tax answer disagree; owner: W3's lane for the seed's tax, with RT-B's
+  lane the other side of the disagreement, so neither reads the record as its
+  own defect alone.
+- **The demo build's serve wiring did not attach the role gate: found, routed,
+  and fixed while this round ran.** Confirmed at source on till/goal d028c4d:
+  `authz.NewRoleGateRegistrar` wraps the registrar in main.go's
+  `registerRoutes` (core/cmd/core/main.go:292) and appeared nowhere in
+  demo_on.go, whose `demoRegisterRoutes` built the demo box's graph on the raw
+  registrar, so on the demo box the role gate never ran and the tier gate
+  stood alone. Probed on the image (the review round's probes, reproduced):
+  the trucks, drivers, board, runs and loadboard reads (three routes) and the
+  two policy reads answered 403 to BOTH logins, and the will-call and
+  scan-trail reads passed the gate for both (their own validation answering
+  next), so the plan's screen 11 manager cell failed on both halves: the clerk
+  was admitted to some dispatch reads, and the manager was refused most. The
+  lead routed the fix to RG's lane, which landed it on till/goal (merge
+  a884020: the demo build loads the decided default and wraps every demo
+  registration through the same registrar, with its own probe and bite). The
+  exit run now builds from the head that carries the attach, the run asserts
+  the matrix holding (a dispatch read refused to the clerk, admitted to the
+  manager; the price rule write beside it), and the testers' page states the
+  matrix as holding. The asymmetric beyond-the-till reads the review probed
+  (will-call and the scan trail admitted to the manager only once the gate
+  stands, the transaction trail admitted to either, none fenced to a branch
+  yet) are the testers' page's own known-issues entry, asserted by the run.
 - **The parked list serves a bare array against the contract's page shape.**
   `GET /api/v1/pos/parked` answers `PosParkedTicketPage` in the contract (an
   object with `items`), and the served core answers the bare array instead, so
   the app's field-by-field read refused the whole list. This lane's app now
-  reads both shapes and refuses anything else; the server (or the contract) is
-  the side to reconcile, and the same pass may want to look at the counter
-  search's optional `sold_by`, which the served core leaves out of every hit
-  (the app falls back to the required `base_uom`).
+  reads both shapes and refuses anything else; the same pass may want the
+  counter search's optional `sold_by` looked at, which the served core leaves
+  out of every hit (the app falls back to the required `base_uom`). Owner:
+  RT-B's lane for the served route's shape, with W7's lane as the contract's
+  owner for whichever side moves.
+- **The demo database's dealer display words, replaced by the populate
+  (the lead's granted exception to this lane's Touches, the review round's
+  P2-1).** Migrations 0003 and 0014 plant the two demo branches' names with
+  the first dealer's real trading name joined to the city by an em dash, and
+  the till's drawer strip and parked list header render the branch name
+  verbatim, so every till screen showed the real trading name while the
+  testers' page said the box carries one invented dealer. The lead granted
+  one edit in W3's file, core/internal/demo/populate.go: the populate's own
+  rename discipline now converges the two demo branches' display names onto
+  the invented trading name (Hardscape House (demo), Trenton and Hardscape
+  House (demo), Kingston), each update guarded on the value it would write so
+  a re-run writes nothing, counted in the run report; the org anchor's name
+  was already the identity program's to converge. The acceptance run asserts
+  the invented name on the drawer strip and the parked list header, and the
+  screenshots show it.

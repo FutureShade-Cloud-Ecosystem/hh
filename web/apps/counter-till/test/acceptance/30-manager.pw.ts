@@ -71,7 +71,7 @@ test("an account the credit gate refuses: the same words to the manager", async 
   page,
 }, testInfo) => {
   await signIn(page, "Sales manager");
-  await pickCustomer(page, "Lachance", "D. Lachance (demo retail)");
+  await pickCustomer(page, "DEMO-C07", "DEMO-C07");
   await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page.getByRole("button", { name: "Ring the sale" }).click();
@@ -95,30 +95,47 @@ test("tender and receipt: a card sale under the manager carries the same simulat
   await shot(page, "manager-06-receipt-card", testInfo);
 });
 
-test("parked sales: the manager parks one and picks it up, whoever the ticket belongs to", async ({
+test("parked sales: a ticket parks and either role picks it up, at the same counter", async ({
   page,
 }, testInfo) => {
-  await signIn(page, "Sales manager");
-  // The list is the branch's own (the clerk's round may have left tickets
-  // waiting; the other branch's never shows), and anyone at the counter
-  // resumes any of them. This pass parks its own ticket and picks that one
-  // up, so the screen's story runs on whatever world it meets.
+  // The hand-over the till's rules name, on the image and across the two
+  // logins: the manager parks, the clerk picks it up; the clerk parks, the
+  // manager picks it up. Each pickup re-prices the ticket through the engine,
+  // and the other branch's ticket never shows at any point.
   const list = page.getByTestId("parked-list");
-  await expect(list).not.toContainText(SEEDED.kingstonTicket);
+  const park = async () => {
+    await searchAndAdd(page, "DEMO-MULCH-BLACK", "Black Cedar Mulch (demo)");
+    await page.getByRole("button", { name: "Park this ticket" }).click();
+  };
+  const resumeFirst = async () => {
+    const rows = list.getByTestId("parked-ticket");
+    await rows.first().getByRole("button", { name: "Resume" }).click();
+    await expect(page.getByTestId("ticket-line")).toHaveCount(1);
+    await expect(page.getByTestId("line-unit-price").first()).toContainText("$");
+    await page.getByRole("button", { name: "Park this ticket" }).click();
+    await expect(list).not.toContainText(SEEDED.kingstonTicket);
+  };
+
+  await signIn(page, "Sales manager");
+  // The list's first read is in flight at sign-in; wait for it to land
+  // before counting what the world left waiting.
+  await expect(page.getByText("Reading the parked tickets.")).toHaveCount(0);
   const before = await list.getByTestId("parked-ticket").count();
-  await searchAndAdd(page, "DEMO-MULCH-BLACK", "Black Cedar Mulch (demo)");
-  await page.getByRole("button", { name: "Park this ticket" }).click();
-  const rows = list.getByTestId("parked-ticket");
-  await expect(rows).toHaveCount(before + 1);
-  await shot(page, "manager-07-parked", testInfo);
-  // The fresh park is the list's newest row.
-  await rows.first().getByRole("button", { name: "Resume" }).click();
-  await expect(page.getByTestId("ticket-line")).toHaveCount(1);
-  await expect(page.getByTestId("line-unit-price").first()).toContainText("$");
-  // The till's ticket goes back to the list for whoever comes next.
-  await page.getByRole("button", { name: "Park this ticket" }).click();
-  await expect(rows).toHaveCount(before + 1);
   await expect(list).not.toContainText(SEEDED.kingstonTicket);
+  await park();
+  await expect(list.getByTestId("parked-ticket")).toHaveCount(before + 1);
+  await shot(page, "manager-07-parked", testInfo);
+  await resumeFirst();
+
+  // The manager's ticket waits; the clerk picks it up.
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await signIn(page, "Sales");
+  await resumeFirst();
+
+  // And the clerk's ticket waits; the manager picks it up.
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await signIn(page, "Sales manager");
+  await resumeFirst();
 });
 
 test("a return within 250.00 under the manager: refunded, and the drawer drops by it", async ({
@@ -198,10 +215,23 @@ test("beyond the till: the manager's reach past the counter's walls, and the car
   await signIn(page, "Sales manager");
   const manager = await mint(page, "sales-manager");
   const clerk = await mint(page, "sales");
+  // The role matrix holds on the demo box: a dispatch read the manager's
+  // configuration admits is refused to the clerk.
+  const clerkDispatch = await staffGet(
+    page,
+    clerk,
+    `/api/v1/dispatch/trucks?branch_id=${TRENTON_ID}`,
+  );
+  expect(clerkDispatch.status).toBe(403);
+  const managerDispatch = await staffGet(
+    page,
+    manager,
+    `/api/v1/dispatch/trucks?branch_id=${TRENTON_ID}`,
+  );
+  expect(managerDispatch.status).toBe(200);
   // A price rule write: refused to the clerk, past the gate for the manager
   // (the route's own validation refuses the empty body, and nothing is
-  // written). The demo box holds this difference by the tier gate; the role
-  // gate's attach point is the goal wiring's to close (docs/BLOCKERS.md).
+  // written).
   const clerkWrite = await staffPost(page, clerk, "/api/v1/pricing/rules", {});
   expect(clerkWrite.status).toBe(403);
   const managerWrite = await staffPost(page, manager, "/api/v1/pricing/rules", {});

@@ -58,8 +58,8 @@
 <p class="note">What the two working roles do differently is the big refund (below), and the manager's wider reach, which has no screen of its own in this release.</p>
 
 <h2>The demo world</h2>
-<p>The box carries one invented dealer with two branches, Trenton and Kingston, and the counter works Trenton. Every product and account on it is invented for the demo.</p>
-<p data-claim="world-invented">There are ten demo products and nine demo customers, and every one of their names carries <strong>(demo)</strong>. Every product code begins with <code>DEMO-</code>.</p>
+<p>The box carries one invented dealer, Hardscape House (demo), with two branches, Trenton and Kingston, and the counter works Trenton. Every product and account on it is invented for the demo.</p>
+<p data-claim="world-invented">There are ten demo products and nine demo customers, and every one of their names carries <strong>(demo)</strong>. Every product code begins with <code>DEMO-</code>. Beside the nine, the account picker also lists a few placeholder rows left over from the starting data, named as scrubbed placeholders: part of the invented world, not accounts to bill.</p>
 <ul>
   <li>Holland Paver, Charcoal (demo), <code>DEMO-PAV-HOLLAND</code></li>
   <li>Brussels Dimensional, Sandstone (demo), <code>DEMO-PAV-BRUSSELS</code></li>
@@ -72,13 +72,14 @@
   <li>Black Cedar Mulch (demo), <code>DEMO-MULCH-BLACK</code></li>
   <li>Aluminum Edging 8ft (demo), <code>DEMO-EDGE-ALU</code></li>
 </ul>
-<p>The nine accounts, all invented: Northline Hardscapes Ltd (C01), Bay Ridge Landscaping (C02), Quinte Paving and Design (C03), Harbourview Builders (C04), Cedar Hollow Homes (C05), County of Hastings (C08), Stonebrook Contracting (C09, on a credit hold), and two retail walk-up accounts (C06 and C07). The counter's account picker shows the accounts that belong to the branch the till works, so at Trenton you will see the Trenton ones.</p>
+<p>The nine accounts, all invented: Northline Hardscapes Ltd (C01), Bay Ridge Landscaping (C02), Quinte Paving and Design (C03), Harbourview Builders (C04), Cedar Hollow Homes (C05), County of Hastings (C08), Stonebrook Contracting (C09, on a credit hold), and two retail walk-up accounts (C06 and C07, one of them carrying a zero credit limit). The counter's account picker shows the accounts that belong to the branch the till works, so at Trenton you will see the Trenton ones: the refusal you can meet at this counter is the zero limit account, and the account on a hold sits at the other branch, on the far side of the branch fence.</p>
 <p data-claim="world-dated">Before each round of testing the box is wiped back to its starting world, and the world's history is written again at that moment: the box is dated to the moment it was rebuilt, so what you see always reads as current.</p>
 
 <h2>Two kinds of sale</h2>
 <p data-claim="engine-prices">The till rings a <strong>counter sale</strong>: every line is priced by the pricing engine at that customer's own price, and there is no price field to type into. What a customer pays comes from the dealer's pricing rules and tiers, never from the person at the counter.</p>
 <p data-claim="margin-both">Beside each price sits a margin column, and it answers for both logins: who sees cost and margin is the dealer's own configuration.</p>
 <p data-claim="no-floor">The till asks no floor. A contractor's price can sit below the dealer's floor margin, and at the counter that line rings anyway, with the low margin shown in the column. That is on purpose: the floor belongs to the quote flow, and it arrives with Quote Desk, the module after this one.</p>
+<p>The other kind of sale is the quote, and it is not on this box yet: a quote is agreed at its price and becomes an order through its own flow, and that flow is where the floor margin lives. It comes with Quote Desk.</p>
 
 <h2>Tenders and receipts</h2>
 <p data-claim="cash-change">Cash asks how much was tendered and shows the change due on the receipt.</p>
@@ -92,8 +93,9 @@
 <p data-claim="manager-own">Signed in as the Sales manager, the same refund completes at once with no second approval.</p>
 
 <h2>The walls</h2>
-<p data-claim="other-branch">Each role reaches only its own screens, and one branch never sees another's. A sale that belongs to Kingston is refused at this counter before any money moves, for every refund method, even though the sale number is real.</p>
-<p data-claim="credit-refused">The credit gate refuses an account sale in words, to both logins: an account over its limit, or on a hold, cannot carry a sale on account. Cash and card still work. Credit exceptions belong to leadership, and no leadership login exists in this release, so nobody on this box can release a hold.</p>
+<p data-claim="other-branch">One branch never sees another's. A sale that belongs to Kingston is refused at this counter before any money moves, whichever of the three refund ways is tried, even though the sale number is real; the cash and account rails name the branch fence, and the card rail refuses a seeded card sale first for its missing card reference.</p>
+<p data-claim="role-matrix">Each role reaches only its own screens. Beyond the till, the matrix holds on this box too: through browser tools, the manager's sign-in reaches dispatch reads that the clerk's is refused, though no screen for them exists in this release.</p>
+<p data-claim="credit-refused">The credit gate refuses an account sale in words, to both logins: an account over its limit, or on a hold, cannot carry a sale on account. At this counter you will meet that refusal on the zero limit walk-up account; cash and card still work. Credit exceptions belong to leadership, and no leadership login exists in this release, so nobody on this box can release a hold.</p>
 <p data-claim="parked-branch">A ticket can be parked and picked up again by anyone at the same counter, whatever role they signed in as. The parked list is this branch's own: a ticket parked at Kingston never shows at Trenton.</p>
 
 <h2>The drawer</h2>
@@ -104,7 +106,7 @@
   <li data-claim="known-seeded-card">The card sales that come with the starting world carry no card reference, so a card refund of one is refused. Refund such a sale in cash or to the account, or return a card sale you rang yourself in this round.</li>
   <li data-claim="restart">A restart of the box signs everyone out. Sign in again from the role cards.</li>
   <li data-claim="signout-reload">Signing out, or just reloading the page, ends the session: the till keeps no session between visits.</li>
-  <li>With browser developer tools, some reads beyond the till (the reports and the audit trail) are reachable, and those reads are not fenced to a branch yet, so a technical tester can read across branches with them. This is known, and it is named here rather than hidden: the fence work for those reads is a later item, and no Branch Manager login exists on this box.</li>
+  <li data-claim="beyond-reads">With browser developer tools, a technical tester reaches a few reads beyond the till, and none of them is fenced to a branch yet: the manager's sign-in reaches the will-call queue and the scan trail, either sign-in reaches the transaction trail, and the audit list stays walled to both. This is known, and it is named here rather than hidden: the fence work for those reads is a later item, and no Branch Manager login exists on this box.</li>
 </ul>
 
 <h2>Where feedback goes</h2>

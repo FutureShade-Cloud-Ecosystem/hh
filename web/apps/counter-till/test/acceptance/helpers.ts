@@ -22,6 +22,19 @@ export const SEEDED = {
   kingstonTicket: "#PARK-DEMO-01",
   /** Trenton's seeded walk-in ticket: on the list, resumable by anyone. */
   trentonTicket: "#PARK-DEMO-02",
+  /** Trenton's seeded card sale: paid by card, carrying no card reference. */
+  trentonCardSale: "DEMO-TRT-S03",
+};
+
+/**
+ * Two of the seed's stable ids, fixed by the seed's own id scheme: the
+ * Trenton contractor whose bulk rule puts Granular A below the floor, and
+ * that product. The below floor leg reads the glance for exactly this line
+ * and holds the screen's column to its answer.
+ */
+export const SEEDED_IDS = {
+  quinteC03: "02969883-fda1-5281-b306-014ad3a2b655",
+  granularA: "b7fd983f-04d3-5d01-9fec-9deaee0714e6",
 };
 
 /**
@@ -56,6 +69,16 @@ export function houseDay(): string {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
+}
+
+/** The dealer's day the given count of house zone days before this one. */
+export function houseDaysAgo(days: number): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Toronto",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(Date.now() - days * 24 * 60 * 60 * 1000));
 }
 
 /**
@@ -177,6 +200,14 @@ export async function expectedCash(page: Page, bearer: string, drawerId: string)
   return cash?.expected_cents as number;
 }
 
+/**
+ * The invented trading name the demo populate writes onto the branch rows
+ * (the review round's P2-1): every till screen's drawer strip and parked list
+ * header carries it, and the first dealer's real trading name appears
+ * nowhere.
+ */
+export const DEMO_DEALER = "Hardscape House (demo)";
+
 /** Tap a role card and wait until the till answers under that role's name. */
 export async function signIn(page: Page, role: Role): Promise<void> {
   await page.goto("/");
@@ -184,7 +215,9 @@ export async function signIn(page: Page, role: Role): Promise<void> {
   await paceMint(page);
   await page.getByRole("button", { name: role, exact: true }).click();
   await expect(page.getByTestId("signed-in-role")).toHaveText(role);
-  // The till's own start: the branch resolved, the drawer found or opened.
+  // The till's own start: the branch resolved, the drawer found or opened,
+  // named for the invented dealer the populate wrote, not the migrated name.
+  await expect(page.getByTestId("drawer-status")).toContainText(DEMO_DEALER);
   await expect(page.getByTestId("drawer-status")).toContainText("MAIN: open with a float of $200.00");
 }
 
@@ -197,17 +230,22 @@ export async function searchAndAdd(page: Page, query: string, hitName: string): 
   await hit.click();
 }
 
-/** Find an account by a word of its name and pick the row that names it. */
-export async function pickCustomer(page: Page, query: string, name: string): Promise<void> {
+/**
+ * Find an account by a word of its number or name and pick the row that
+ * names it. The picked panel is held to the expected words on the whole
+ * Customer section: the strong carries the display name and the account
+ * number sits beside it, so the caller may name either.
+ */
+export async function pickCustomer(page: Page, query: string, expected: string): Promise<void> {
   await page.getByLabel("Find an account by name or account number").fill(query);
   await page.getByRole("button", { name: "Find", exact: true }).click();
   const row = page
     .getByTestId("customer-hits")
     .getByRole("listitem")
-    .filter({ hasText: name });
+    .filter({ hasText: expected });
   await expect(row).toHaveCount(1);
   await row.getByRole("button", { name: "Use" }).click();
-  await expect(page.getByTestId("customer-name")).toContainText(name);
+  await expect(page.getByLabel("Customer")).toContainText(expected);
 }
 
 /**

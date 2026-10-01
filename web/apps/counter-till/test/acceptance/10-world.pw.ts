@@ -12,8 +12,10 @@ import {
   SEEDED,
   TRENTON_ID,
   houseDay,
+  houseDaysAgo,
   marginPercent,
   mint,
+  openDrawer,
   shot,
   staffGet,
   staffPost,
@@ -104,6 +106,11 @@ test("the account picker answers the branch's demo accounts, every name carrying
   for (const accountNo of ["DEMO-C02", "DEMO-C03", "DEMO-C05", "DEMO-C07"]) {
     expect(rows.some((row) => row.account_no === accountNo)).toBe(true);
   }
+  // Beside the nine, the picker lists the migration-planted placeholder rows
+  // the starting data carries, named as scrubbed placeholders: part of the
+  // invented world, never accounts to bill, and the page says so.
+  const scrubbed = rows.filter((row) => String(row.name).startsWith("Scrubbed Party"));
+  expect(scrubbed.length).toBeGreaterThanOrEqual(1);
 });
 
 test("the clerk's margin glance answers: the configuration names who sees cost and margin", async ({
@@ -134,16 +141,29 @@ test("the clerk's margin glance answers: the configuration names who sees cost a
   expect(marginPercent(lines[0].margin_bps as number)).toMatch(/%$/);
 });
 
-test("the walls the served box holds: a price rule write refused to the clerk, past the gate for the manager", async ({
+test("the walls the box holds: the role matrix, and the price rule write beside it", async ({
   page,
 }) => {
   const manager = await mint(page, "sales-manager");
   const clerk = await mint(page, "sales");
+  // The role matrix holds on the demo box (the gate's attach landed on the
+  // goal, a884020): a dispatch read the manager's configuration admits is
+  // refused to the clerk, before anything else answers.
+  const clerkDispatch = await staffGet(
+    page,
+    clerk,
+    `/api/v1/dispatch/trucks?branch_id=${TRENTON_ID}`,
+  );
+  expect(clerkDispatch.status).toBe(403);
+  const managerDispatch = await staffGet(
+    page,
+    manager,
+    `/api/v1/dispatch/trucks?branch_id=${TRENTON_ID}`,
+  );
+  expect(managerDispatch.status).toBe(200);
   // A price rule write: refused to the clerk, and the manager's empty body is
   // refused by the route's own validation (400), which is past the gate, and
-  // writes nothing. The demo box holds this difference by the tier gate; the
-  // role gate's attach point is the goal wiring's to close (docs/BLOCKERS.md
-  // records the gap this box serves).
+  // writes nothing.
   const clerkWrite = await staffPost(page, clerk, "/api/v1/pricing/rules", {});
   expect(clerkWrite.status).toBe(403);
   const managerWrite = await staffPost(page, manager, "/api/v1/pricing/rules", {});
@@ -172,7 +192,9 @@ test("the seeded card sale carries no card reference, so the desk cannot refund 
   expect(lookup.body.card_refundable).toBe(false);
 });
 
-test("a Kingston sale is refused at this counter, and its ticket never shows", async ({ page }) => {
+test("a Kingston sale is refused at this counter: the lookup, its ticket, and all three refund rails", async ({
+  page,
+}) => {
   const bearer = await mint(page, "sales");
   const lookup = await staffGet(
     page,
@@ -199,21 +221,100 @@ test("a Kingston sale is refused at this counter, and its ticket never shows", a
     `/api/v1/pos/parked?branch_id=${KINGSTON_ID}`,
   );
   expect(kingstonParked.status).toBe(403);
+
+  // All three refund rails against the Kingston sale itself, before any
+  // money moves. The wall refuses the lookup that would hand this counter
+  // the sale's lines, so the exit harness reads one line id of the Kingston
+  // sale from the throwaway database it owns (CT_KGN_LINE) and the sends go
+  // out against the real row: cash from the open drawer, card, and account
+  // credit, each refused with the branch wall's words.
+  const lineId = process.env.CT_KGN_LINE ?? "";
+  expect(lineId, "the exit harness supplies the Kingston sale's line id").not.toBe("");
+  const drawerId = await openDrawer(page, bearer);
+  for (const method of ["CASH", "CARD", "ACCOUNT_CREDIT"]) {
+    const sent = await staffPost(page, bearer, "/api/v1/pos/returns", {
+      idempotency_key: crypto.randomUUID(),
+      order_id: "",
+      order_no: SEEDED.kingstonSale,
+      lines: [{ order_line_id: lineId, qty_base: 1, reason_code: "OTHER" }],
+      refund_method: method,
+      reason: "",
+      restock: true,
+      till_session_id: drawerId,
+    });
+    expect(sent.status, `${method} against the Kingston sale is refused`).toBe(403);
+    expect(String(sent.body.error), `${method} names the branch wall`).toContain("not reachable");
+  }
 });
 
 test("the world's newest rows are dated to the moment the box was rebuilt", async ({ page }) => {
   const bearer = await mint(page, "sales");
   // The seed writes its day-keyed counter sale under a stamp of its own
-  // rebuild's house zone day; the run reads the same stamp off its own clock
-  // and asks the returns desk for that sale.
-  const stamp = houseDay().replaceAll("-", "");
-  const orderNo = `DEMO-TRT-T2-${stamp}`;
-  const lookup = await staffGet(
+  // rebuild's house zone day; the run reads the stamp off its own clock and
+  // asks the returns desk for that sale. The rebuild and the run sit on the
+  // same day for every honest run of this suite, and a run that starts just
+  // either side of the house zone's day change reads both stamps rather
+  // than failing the box for the clock's turn.
+  const today = houseDay().replaceAll("-", "");
+  const yesterday = houseDaysAgo(1).replaceAll("-", "");
+  const candidates = [...new Set([today, yesterday])];
+  let found = false;
+  let lastStatus = 0;
+  for (const stamp of candidates) {
+    const orderNo = `DEMO-TRT-T2-${stamp}`;
+    const lookup = await staffGet(
+      page,
+      bearer,
+      `/api/v1/pos/returns/lookup?order_no=${encodeURIComponent(orderNo)}`,
+    );
+    lastStatus = lookup.status;
+    if (lookup.status === 200) {
+      expect(lookup.body.order_no).toBe(orderNo);
+      expect(lookup.body.branch_id).toBe(TRENTON_ID);
+      found = true;
+      break;
+    }
+  }
+  expect(found, `the day-keyed sale answers under one of the run's own stamps (last ${lastStatus})`).toBe(true);
+});
+
+test("the reads a technical tester reaches: the manager's reach the clerk's lacks, none fenced to a branch", async ({
+  page,
+}) => {
+  const clerk = await mint(page, "sales");
+  const manager = await mint(page, "sales-manager");
+  // The box's own truth about the reads beyond the till, under the role
+  // matrix: the manager's sign-in reaches the will-call queue and the scan
+  // trail (their own validation answers next, 400), either sign-in reaches
+  // the transaction trail, and the audit list is walled to both. None of the
+  // three is fenced to a branch yet. The page's known issues say exactly
+  // this and no more.
+  const clerkWillCall = await staffGet(
     page,
-    bearer,
-    `/api/v1/pos/returns/lookup?order_no=${encodeURIComponent(orderNo)}`,
+    clerk,
+    `/api/v1/dispatch/will-call?branch_id=${TRENTON_ID}`,
   );
-  expect(lookup.status).toBe(200);
-  expect(lookup.body.order_no).toBe(orderNo);
-  expect(lookup.body.branch_id).toBe(TRENTON_ID);
+  expect(clerkWillCall.status).toBe(403);
+  const clerkScanTrail = await staffGet(
+    page,
+    clerk,
+    `/api/v1/dispatch/scan-trail?branch_id=${TRENTON_ID}`,
+  );
+  expect(clerkScanTrail.status).toBe(403);
+  for (const [who, bearer] of [
+    ["the clerk", clerk],
+    ["the manager", manager],
+  ] as const) {
+    const trail = await staffGet(page, bearer, "/api/v1/audit/transaction/pos.sale/x");
+    expect(trail.status, `the transaction trail answers ${who} past the gate`).toBe(400);
+    const audit = await staffGet(page, bearer, "/api/v1/audit?limit=5");
+    expect(audit.status, `the audit list stays walled for ${who}`).toBe(403);
+  }
+  for (const path of [
+    `/api/v1/dispatch/will-call?branch_id=${TRENTON_ID}`,
+    `/api/v1/dispatch/scan-trail?branch_id=${TRENTON_ID}`,
+  ]) {
+    const answer = await staffGet(page, manager, path);
+    expect(answer.status, `${path} is past the gate for the manager`).toBe(400);
+  }
 });
