@@ -57,6 +57,12 @@ func demoDispatch(role string, args []string) bool {
 			os.Exit(1)
 		}
 		return true
+	case "demo-check":
+		if err := boot.DemoCheck(context.Background(), os.LookupEnv); err != nil {
+			fmt.Fprintln(os.Stderr, "core: demo-check:", err)
+			os.Exit(1)
+		}
+		return true
 	}
 	return false
 }
@@ -197,6 +203,13 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	// default build.
 	pool, err := authz.NewPgxPoolWithTracer(context.Background(), demoCfg.databaseURL, nil)
 	if err != nil {
+		return nil, err
+	}
+
+	// G3: the database must be the demo's invented world, and the check
+	// runs here, before anything registers or serves.
+	if err := boot.CheckDemoDatabase(context.Background(), pool); err != nil {
+		pool.Close()
 		return nil, err
 	}
 
