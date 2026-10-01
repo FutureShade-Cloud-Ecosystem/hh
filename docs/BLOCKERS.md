@@ -336,3 +336,32 @@ system at all.
   phrase gate accept that waits for W2's mint; and the app holds a till past
   the token's expiry with nothing to re-check it against until W7's first
   core call. W5, W9, W2 and W7 hold the closures, per the plan.
+
+## The Counter Till cycle, lane L3 (W5): the mint's limit still keys on the connection's peer alone, so the reviewer's two-bucket clause waits for W2's keying (recorded, work continuing)
+
+W2's review, routed to W5: the mint's per-address limit reads the
+forwarded chain only when the immediate peer is loopback, and trusts the
+leftmost element, so the image's Caddy must overwrite `X-Forwarded-For`
+with the address it saw itself, never append from the client. The image's
+half is done and proven: every proxy leg in
+`deploy/demo/Caddyfile.template` replaces the header with Caddy's own
+remote host, and the exit test proves at the traffic level (a capture
+behind the image's Caddy) that a client-written value never survives the
+proxy, so it can buy no bucket under either keying.
+
+The clause that cannot hold yet: two distinct client addresses behind the
+image's own Caddy still share one limit bucket, because the core on this
+branch never reads the forwarded chain at all. The limit's address is
+`clientAddress` in `core/internal/demo/session.go`, the connection's host
+only (the W2 commit message says the same: keyed by the connection's
+host), so behind any proxy, the image's own Caddy included, every visitor
+is the proxy's loopback address and the allowance is one shared bucket.
+That is the conservative failure (a burst is still bounded), and the
+reviewer's described keying (read the chain when the immediate peer is
+loopback, trust the proxy's single element) is W2's surface, not the
+image's: this lane touches no core Go. Until W2's keying lands, the
+phrase gate and the boot guards carry the box, and the exit test asserts
+the two clauses that hold under both keyings: the allowance is bounded,
+and rotating forged `X-Forwarded-For` values buy no bucket. When the core
+reads the chain, that same leg proves the two-bucket behavior the
+reviewer asked for, with no script change.

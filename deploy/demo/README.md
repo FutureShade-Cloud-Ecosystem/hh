@@ -92,3 +92,31 @@ tokens the first refuses and sign testers out on every balancing decision,
 and both replicas would run the populate against one database. One
 replica is also the plan's G5: a restart signs every tester out, and there
 is no second box sharing the work.
+
+## The exit test
+
+`deploy/demo/exit-test.sh` drives the built image end to end against a
+throwaway local Postgres (container `hh-till-l3d-pg` on `127.0.0.1:5599`,
+started by the script when absent): the image builds; on a clean database
+it answers `/healthz` (no phrase asked), the flows listing with the two
+flows, the app's first page (refused without the phrase, served with it),
+and `/api/v1/payments/config` with `simulated: true`; the gate refuses the
+mint without the phrase and still admits a staff call with a valid demo
+bearer and no phrase; without the hash value the image exits before serve
+and before anything writes; an interrupted build resumes and reaches
+serve; a database that is not the demo's is refused before migrate, the
+recovery named and the migration record untouched; the forwarded address
+discipline is proven at the traffic level (one capture behind the image's
+Caddy: a client-written value never survives the proxy) and at the mint
+(rotating forged values buy the limit no bucket); and the phrase's hash
+sits on no file in the writable layer and in no served process's
+environment. The phrase and its hash are generated inside the script,
+held in shell variables, and never written to a file or printed.
+
+One clause of the mint's limit proof waits on the core, not the image: two
+distinct client addresses behind the proxy hold two separate buckets only
+once the core's limit reads the forwarded chain (it keys on the
+connection's peer alone on this branch). That is recorded in
+`docs/BLOCKERS.md`; the script asserts the two clauses that hold under
+either keying, so it does not flip when the core's keying lands.
+
