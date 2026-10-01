@@ -33,7 +33,6 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/config"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/boot"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/issuer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/membership"
@@ -64,14 +63,6 @@ func demoDispatch(role string, args []string) bool {
 			os.Exit(1)
 		}
 		return true
-	case "demo-populate":
-		// W3's one-shot, stitched into W1's dispatch when the branches met:
-		// it handles its own errors and exits; false never happens on this path.
-		if err := demo.PopulateMain(args, os.Stdout, os.Getenv); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		os.Exit(0)
 	}
 	return false
 }
