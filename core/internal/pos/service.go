@@ -10,6 +10,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/moneyutil"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -18,8 +19,14 @@ import (
 // -- injected sibling seams (all interfaces so tests fake them) --------------
 
 // LineResolver is satisfied by *pricing.Service, the server-side price authority (US-A19-04).
+// The till prices every line through the COUNTER resolve (D48 row 481, D49): the price the
+// customer's rules and tiers give, accepted as it resolves. The gated resolve has no method on
+// this seam, so the sale and the pricing order cannot ask the floor through it. The price
+// display is the one door back: counterQuoter type-asserts the same service to CounterQuoter,
+// whose preview runs the gated resolve in dry-run, read-only, it can write no BYPASS row and
+// exposes no block.
 type LineResolver interface {
-	DeriveLinePrice(ctx context.Context, in pricing.ResolveInput) (pricing.LinePrice, error)
+	DeriveCounterLinePrice(ctx context.Context, in pricing.ResolveInput) (pricing.LinePrice, error)
 }
 
 // TenderTaker is satisfied by *till.Service (A-03), the SOLE writer of payments + till_movements rows.
@@ -146,6 +153,9 @@ type posStore interface {
 	// parked tickets
 	InsertParkedTicket(ctx context.Context, t ParkedTicket, actor string) (ParkedTicket, error)
 	ListParkedTickets(ctx context.Context, branchID string) ([]ParkedTicket, error)
+	// GetParkedTicket reads one ticket whatever its status, the parked fence's pre-read
+	// (policy.go holds the branch wall on resume and discard before any write).
+	GetParkedTicket(ctx context.Context, id string) (ParkedTicket, bool, error)
 	MarkParkedResumed(ctx context.Context, id, actor string) (ParkedTicket, error)
 	MarkParkedDiscarded(ctx context.Context, id string) error
 	// A-06 portal return requests (0045 tables; the request is INTENT ONLY, no money/stock writes).
@@ -191,6 +201,25 @@ type Service struct {
 	// trail is the audit READ seam behind the counter settings change history (policy_history.go).
 	// Nil is an empty history, never an error.
 	trail PolicyTrailReader
+	// roles is the dealer's role configuration the till's rules read (D49):
+	// the glance's cost and margin list (X3), the refund amount and its
+	// approvers (X7), the approval window. The startup path loads it
+	// (roleconfig.Default or Load) and stops on the error, and the gated
+	// paths refuse when it is absent (the nil gate fails closed, the lead's
+	// ruling): a service without a configuration refuses the glance and the
+	// gated returns, it never answers them permissively.
+	roles *roleconfig.Config
+	// approver resolves the manager's credential carried beside the clerk's
+	// bearer on a return above the amount (row 482). Nil until wired; the
+	// approval path refuses operationally when a credential arrives while
+	// the resolver is absent, never commits on one.
+	approver ApproverSource
+	// userLink resolves the ERP users.id a platform user id links to, the
+	// B4 linkage the composition root supplies. The committed decision uses
+	// it to name the approver in one identifier space with the clerk
+	// (staff users ids) on the record and the audit row (the lead's
+	// P2-4/P3-3 rulings); nil leaves the platform subject as the only name.
+	userLink identity.UserIDLinker
 	// actorNames turns an audit actor id into the person's name for that same history. Nil degrades
 	// every row to its role word, which is what the history said before names existed.
 	actorNames ActorNameResolver
@@ -264,6 +293,26 @@ func (s *Service) WithSignatureProvider(p SignatureProvider) *Service { s.sig = 
 
 // WithAudit injects the A-21 Recorder.
 func (s *Service) WithAudit(r audit.Recorder) *Service { s.audit = r; return s }
+
+// WithRoleConfig injects the dealer's role configuration the till's rules
+// read (D49): the glance's cost and margin list (X3), the refund amount
+// without approval, the approvers above it and the approval window (X7).
+// The configuration a caller hands over must be a loaded one
+// (roleconfig.Default, Load or Validate): a refused configuration yields
+// no Config to guard with.
+func (s *Service) WithRoleConfig(c *roleconfig.Config) *Service { s.roles = c; return s }
+
+// WithUserLinker injects the ERP users.id linker the committed decision
+// uses to name the approver in the same identifier space as the clerk.
+func (s *Service) WithUserLinker(l identity.UserIDLinker) *Service { s.userLink = l; return s }
+
+// errRoleConfigUnwired is the operational refusal of a gated read or rule
+// on a service built with no role configuration: the nil gate fails
+// closed (the lead's P1-1 ruling), so a miswire refuses loudly instead of
+// answering permissively.
+func errRoleConfigUnwired() error {
+	return clientErr(http.StatusServiceUnavailable, "pos: the dealer's role configuration is not wired")
+}
 
 // WithClock injects a deterministic clock (tests).
 func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }
@@ -433,18 +482,20 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 		return Sale{}, err
 	}
 
-	// 3. Price every line via the engine (the cashier never types a price). A blocked line aborts.
+	// 3. Price every line through the counter resolve (the cashier never types a price, and the
+	// price the customer's rules and tiers give is accepted: no margin floor at the till, D48 row
+	// 481, D49). A line that cannot be priced at all (no retail anchor, no uom conversion) is
+	// still a client-correctable 4xx, never a plausible zero.
 	lines := make([]orderLineRow, len(in.Lines))
 	var subtotal int64
 	for i, li := range in.Lines {
-		lp, err := s.pricing.DeriveLinePrice(ctx, pricing.ResolveInput{
+		lp, err := s.pricing.DeriveCounterLinePrice(ctx, pricing.ResolveInput{
 			CustomerID:   customerID,
 			CustomerType: cust.CustomerType,
 			ProductID:    li.ProductID,
 			BranchID:     in.BranchID,
 			QtyEntered:   li.QtyEntered,
 			UOMEntered:   li.UOMEntered,
-			CostCents:    li.CostCents,
 		})
 		if err != nil {
 			// A pricing FAILURE (e.g. a walk-in RETAIL line with no retail anchor or no uom conversion
@@ -458,9 +509,6 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 				return Sale{}, clientErr(st, "line %d: %s", i+1, msg)
 			}
 			return Sale{}, err
-		}
-		if lp.Breakdown.Blocked {
-			return Sale{}, ErrPriceBlocked{Policy: lp.Breakdown.BlockPolicy, LineNo: i + 1}
 		}
 		lines[i] = orderLineRow{
 			LineNo:         i + 1,

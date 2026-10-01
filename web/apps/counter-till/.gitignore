@@ -1,3 +1,5 @@
 # Playwright's run artifacts stay beside the app, out of git.
 test-results/
 playwright-report/
+# The acceptance run's screenshots: produced on demand, carried by no commit.
+acceptance-screens/

@@ -48,7 +48,10 @@ func assertNoCostBytes(t *testing.T, label string, v any) {
 }
 
 func frontline() identity.StaffContext {
-	return identity.StaffContext{UserID: "u-counter", RoleCode: "INSIDE_SALES",
+	// A frontline caller the decided configuration keeps OFF the cost and
+	// margin list (X3: hidden from the yard team): the sweep's byte-absence
+	// claims are about a caller with no margin eyes.
+	return identity.StaffContext{UserID: "u-counter", RoleCode: "YARD_TEAM",
 		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
 }
 
@@ -60,8 +63,8 @@ func TestCounterPayloads_ClerkReceivesNoCostOrMarginBytes(t *testing.T) {
 	h.store.branchCosts = map[string]int64{"prod-paver": 60} // a cost EXISTS to be leaked
 	ctx := context.Background()
 
-	// 1. The margin glance, the one read that is ABOUT margin. Under MANAGER_UP (the default) a
-	//    frontline caller's payload is `{}`.
+	// 1. The margin glance, the one read that is ABOUT margin. A caller the
+	//    configuration keeps off the cost and margin list gets `{}`.
 	glance, err := h.svc.MarginGlance(ctx, marginInput())
 	if err != nil {
 		t.Fatalf("glance: %v", err)
@@ -113,14 +116,13 @@ func TestCounterPayloads_ClerkReceivesNoCostOrMarginBytes(t *testing.T) {
 }
 
 func TestCounterPayloads_TheGateIsTheDEALERSSwitchNotTheCallersTier(t *testing.T) {
-	// ALL_STAFF means a clerk DOES receive margin, the gate is a dealer decision, not a hard-coded
-	// tier rule. Pinned because a "fix" that simply refused frontline callers everywhere would pass
-	// every absence test above while removing a configuration the dealer paid for.
+	// The configuration's list means a named role DOES receive margin, the gate is a dealer
+	// decision, not a hard-coded tier rule. Pinned because a "fix" that simply refused frontline
+	// callers everywhere would pass every absence test above while removing a configuration the
+	// dealer paid for: the decided list names Inside Sales (X3, row 343), so the clerk sees margin.
 	h := newHarness()
-	h.caller = frontline()
-	p := h.store.policies[""]
-	p.MarginVisibility = MarginVisibilityAllStaff
-	h.store.policies[""] = p
+	h.caller = identity.StaffContext{UserID: "u-clerk", RoleCode: "INSIDE_SALES",
+		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
 	h.store.branchCosts = map[string]int64{"prod-paver": 60}
 	out, err := h.svc.MarginGlance(context.Background(), marginInput())
 	if err != nil {

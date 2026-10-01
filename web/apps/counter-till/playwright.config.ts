@@ -39,6 +39,14 @@ const stubPort = process.env.CT_STUB_PORT ?? String(20000 + slot + 1);
 export default defineConfig({
   testDir: "./test",
   testMatch: "**/*.pw.ts",
+  // The W9 acceptance run is its own suite against the demo image itself
+  // (test/acceptance.config.ts): the stub's web servers below serve the
+  // lanes' suites only, and the acceptance specs must never run against them.
+  testIgnore: "**/acceptance/**",
+  // The stub holds the demo world in memory (an open drawer, committed
+  // sales, parked tickets), so the suite runs its tests in order, one
+  // worker, and each test reads only what it itself caused.
+  workers: 1,
   use: {
     baseURL: `http://127.0.0.1:${appPort}`,
     channel: "chrome",

@@ -74,7 +74,7 @@ func TestIntegration_SplitTender_Commits(t *testing.T) {
 	probe := SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, TillSessionID: sessionID, CustomerID: walkInID(t, pool),
 		SaleType: SaleCollectNow, Tender: TenderCash,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 10, UOMEntered: "SF", CostCents: 100}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 10, UOMEntered: "SF"}},
 	}
 	priced, err := svc.Sale(sctx, probe)
 	if err != nil {
@@ -90,7 +90,7 @@ func TestIntegration_SplitTender_Commits(t *testing.T) {
 	in := SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, TillSessionID: sessionID, CustomerID: walkInID(t, pool),
 		SaleType: SaleCollectNow,
-		Lines:    []LineInput{{ProductID: productID, QtyEntered: 10, UOMEntered: "SF", CostCents: 100}},
+		Lines:    []LineInput{{ProductID: productID, QtyEntered: 10, UOMEntered: "SF"}},
 		Tenders: []TenderLegInput{
 			{Method: TenderCash, AmountCents: cash},
 			{Method: TenderCard, AmountCents: card, PaymentToken: "tok_stub"},
@@ -180,7 +180,7 @@ func TestIntegration_SplitTender_DeferredSumGuard(t *testing.T) {
 	base, err := svc.Sale(sctx, SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, TillSessionID: sessionID, CustomerID: walkInID(t, pool),
 		SaleType: SaleCollectNow, Tender: TenderCash,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF", CostCents: 100}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF"}},
 	})
 	if err != nil {
 		t.Fatalf("base sale: %v", err)
@@ -306,7 +306,7 @@ func TestIntegration_LookupSales_BranchFence(t *testing.T) {
 	sale, err := svc.Sale(globalCtx(t, pool), SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, TillSessionID: sessionID, CustomerID: walkInID(t, pool),
 		SaleType: SaleCollectNow, Tender: TenderCash,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 3, UOMEntered: "SF", CostCents: 100}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 3, UOMEntered: "SF"}},
 	})
 	if err != nil {
 		t.Fatalf("fixture sale: %v", err)

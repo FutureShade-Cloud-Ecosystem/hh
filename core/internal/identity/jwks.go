@@ -238,7 +238,11 @@ type staticKeys struct {
 }
 
 // NewStaticKeySource returns a KeySource over a fixed key set. Test
-// support: production serves its keys through a JWK Set endpoint.
+// support: production serves its keys through a JWK Set endpoint. The
+// demo build (core/internal/demo/issuer) is this constructor's one
+// non-test caller: it hands the verifier the public half of the key its
+// in-memory demo issuer generated, which is why the demo build needs no
+// JWK Set URL and serves no key set route.
 func NewStaticKeySource(keys map[string]crypto.PublicKey) KeySource {
 	copied := make(map[string]crypto.PublicKey, len(keys))
 	for k, v := range keys {
