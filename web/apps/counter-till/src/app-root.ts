@@ -207,7 +207,9 @@ export class CounterTillApp extends HHElement {
 
   async #loadFlows(): Promise<void> {
     const result = await this.#account.listFlows();
-    this.#flowsState = result.ok ? { kind: "ready", flows: result.value } : { kind: "unavailable" };
+    this.#flowsState = result.ok
+      ? { kind: "ready", flows: result.value }
+      : { kind: "unavailable", status: result.status ?? null };
     this.requestUpdate();
   }
 
@@ -263,7 +265,12 @@ export class CounterTillApp extends HHElement {
   }
 
   render(): TemplateResult {
-    const demoPresent = this.#till !== null || this.#flowsState.kind === "ready";
+    // The banner's rule is "only once the flows route has answered with
+    // cards": an error answer and an empty answer alike are not the demo
+    // showing itself, so neither gets to look like one.
+    const demoPresent =
+      this.#till !== null ||
+      (this.#flowsState.kind === "ready" && this.#flowsState.flows.length > 0);
     return html`
       <header>
         ${demoPresent ? demoBanner() : nothing}

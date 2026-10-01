@@ -361,16 +361,32 @@ function callerFromRequest(request) {
 }
 
 const server = createServer(async (request, response) => {
+function respondJson(response, status, payload, extraHeaders = {}) {
+  response.writeHead(status, { "content-type": "application/json", ...extraHeaders });
+  response.end(JSON.stringify(payload));
+}
+
+// The test suite asserts the app sends the demo org on its demo calls, so the
+// stub echoes the org it received back as a response header: a wrong or
+// missing X-Org on the app side fails the suite right here, which is where a
+// slip in the client configuration would surface on the real box too (the
+// core's membership source answers for hh-demo and nothing else).
+function sawOrg(request) {
+  return { "x-stub-saw-org": request.headers["x-org"] ?? "" };
+}
+
+const server = createServer((request, response) => {
   const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
   if (request.method === "GET" && url.pathname === "/healthz") {
     respondJson(response, 200, { ok: true });
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/v1/demo/flows") {
-    respondJson(response, 200, { flows: FLOWS });
+    respondJson(response, 200, { flows: FLOWS }, sawOrg(request));
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/v1/demo/session") {
+    const org = sawOrg(request);
     let body = "";
     request.on("data", (chunk) => {
       body += chunk;
@@ -381,14 +397,14 @@ const server = createServer(async (request, response) => {
         const parsed = JSON.parse(body);
         flow = parsed === null || typeof parsed !== "object" ? undefined : parsed.flow;
       } catch {
-        respondJson(response, 400, { error: "the request body is not JSON" });
+        respondJson(response, 400, { error: "the request body is not JSON" }, org);
         return;
       }
       if (typeof flow !== "string" || !Object.hasOwn(USERS, flow)) {
-        respondJson(response, 400, { error: "unknown flow" });
+        respondJson(response, 400, { error: "unknown flow" }, org);
         return;
       }
-      respondJson(response, 200, { token: mintToken(flow), user: USERS[flow], flow });
+      respondJson(response, 200, { token: mintToken(flow), user: USERS[flow], flow }, org);
     });
     return;
   }
@@ -518,6 +534,11 @@ const server = createServer(async (request, response) => {
     }
     respondJson(response, 404, { error: "not found" });
   });
+
+server.on("error", (error) => {
+  console.error(`demo stub could not listen on 127.0.0.1:${port}: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+});
 
 server.keepAliveTimeout = 120 * 1000;
 server.headersTimeout = 125 * 1000;
