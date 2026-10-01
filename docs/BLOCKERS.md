@@ -535,6 +535,114 @@ lands.
   a look at the comprehensive review.
 ## The Counter Till cycle, lane L3 (W2): a refused commit message amend (recorded, work continuing)
 
+W2's third commit's subject carried the words "half a minute" where the
+house rules want no duration in committed prose. The amend to reword it
+was refused by the repository hook (history rewrite refused in full, per
+the lane's rules), and a refusal is final. The commit's content is
+correct and the wording lives only in that one local commit message; the
+lead may reword it when landing the pull request, or let it stand. Nothing
+in the code, tests or this file carries the wording.
+
+## The Counter Till cycle, lane L4 (PX): the exit test's CI leg stays with W5 (recorded)
+
+The `ci` check runs the untagged suite with no gate variable and no
+demo-tag step, so the card rail's wiring legs skip politely (they need
+`HH_CORE_TEST_DATABASE_URL`) and the G7 legs, wiring level and serve level,
+never run in CI. A green `ci` on the card rail's pull request therefore
+says nothing about the exit test; the acceptance run is the gated local
+run, executed by the lane and re-executed by the reviewer. W5 adds the CI
+job that closes this gap; recorded here so the gap is visible until that
+lands.
+## L5 (W6): the design system's gates demanded one edit inside web/packages (made, flagged)
+
+The Counter Till app consumes `@hardscapehouse/design-system` (tokens, the
+base element, the primitives), which makes it the first workspace package the
+design system's gates treat as a dependent: those gates scan every workspace
+package that depends on the design system, by manifest or by import, and one
+of them is written to fail on a new dependent until its lock names the
+package deliberately (`test/no-raw-markup.test.mjs`, the lock's own message:
+"a package now depends on @hardscapehouse/design-system; its sources are
+scanned below, and this lock must name it deliberately").
+
+Naming it is a one-list edit inside `web/packages/design-system/test/`, which
+is outside this lane's declared Touches (web/packages are off limits except
+consuming them). Recorded and done rather than left red: the edit names the
+app in the lock and nothing else, the gates' own audits over the app's
+sources pass on the app's own merits (templates in allowed positions, no raw
+markup), and the app's templates were rewritten to the kits' host delegation
+rule so the positions gate accepts them without any gate change. If the lead
+or a reviewer rules the lock edit out of bounds for this lane, it reverts as
+one line and the decision it forces is whether the app may consume the design
+system at all.
+
+### Review round (pull request 37): the accepted shape of the lock edit, and three findings recorded, not fixed
+
+- **P3-1, the lock edit's shape.** The dependents lock edit carries one
+  comment sentence beside the list entry ("The Counter Till app is the
+  workspace's first dependent"); the functional change is the one list line,
+  `[]` to `['@hardscapehouse/counter-till']`. The lead has accepted this
+  shape; recorded so the acceptance and the diff match.
+- **P3-4 (recorded, unreachable).** The entry page's Coming list is a fixed
+  list beside the dynamic card list, with no reconciliation between them: a
+  flows row whose label equals one of the eleven would show as a live card
+  and as Coming at once. The demo's flow table is closed at two rows in this
+  release, so no path reaches it.
+- **P3-5 (recorded, unreachable).** The demo adapter keeps the mint in
+  memory even when custody refuses the adoption, so the seam's getSession
+  and createJWT would answer from a refused mint. Custody refuses only an
+  unusable or expired mint, which the adapter's own validation screens
+  first, and no path reaches those two operations before a successful
+  adoption.
+- **P3-7 (carried, not a defect of the app slice).** The exit test's own
+  words run on the W5 image and against a default-build core, neither of
+  which exists yet; the header provider sends X-Org on the two public demo
+  calls as well as on staff calls, and whether the real routes and the
+  phrase gate accept that waits for W2's mint; and the app holds a till past
+  the token's expiry with nothing to re-check it against until W7's first
+  core call. W5, W9, W2 and W7 hold the closures, per the plan.
+
+## The Counter Till cycle, lane L3 (W5): the mint's limit still keys on the connection's peer alone, so the reviewer's two-bucket clause waits for W2's keying (recorded, work continuing)
+
+W2's review, routed to W5: the mint's per-address limit reads the
+forwarded chain only when the immediate peer is loopback, and trusts the
+leftmost element, so the image's Caddy must overwrite `X-Forwarded-For`
+with the address it saw itself, never append from the client. The image's
+half is done and proven: every proxy leg in
+`deploy/demo/Caddyfile.template` replaces the header with Caddy's own
+remote host, and the exit test proves at the traffic level (a capture
+behind the image's Caddy) that a client-written value never survives the
+proxy, so it can buy no bucket under either keying.
+
+The clause that cannot hold yet: two distinct client addresses behind the
+image's own Caddy still share one limit bucket, because the core on this
+branch never reads the forwarded chain at all. The limit's address is
+`clientAddress` in `core/internal/demo/session.go`, the connection's host
+only (the W2 commit message says the same: keyed by the connection's
+host), so behind any proxy, the image's own Caddy included, every visitor
+is the proxy's loopback address and the allowance is one shared bucket.
+That is the conservative failure (a burst is still bounded), and the
+reviewer's described keying (read the chain when the immediate peer is
+loopback, trust the proxy's single element) is W2's surface, not the
+image's: this lane touches no core Go. Until W2's keying lands, the
+phrase gate and the boot guards carry the box, and the exit test asserts
+the two clauses that hold under both keyings: the allowance is bounded,
+and rotating forged `X-Forwarded-For` values buy no bucket. When the core
+reads the chain, that same leg proves the two-bucket behavior the
+reviewer asked for, with no script change.
+
+## The Counter Till cycle, lane L3 (W5): the demoseed integration suite's migration glob resolves nowhere since the fold (recorded, not this lane's file)
+
+The composition suite at `core/cmd/core/demoseed_integration_test.go`
+globs its migrations at `filepath.Join("..", "..", "migrations", "*.sql")`
+relative to the package directory, which resolves to `core/migrations`
+and finds nothing: the migration set lives at `core/db/migrations`, and
+the suite's own header still names the ERP's `./cmd/demoseed/...` layout
+the fold replaced. Every test in the file fails at "no migrations found"
+wherever it runs, so the suite's database legs cannot be gated into CI
+(the demo job leaves the step out and says why, in the workflow). The fix
+is one glob argument in a file outside this lane's declared Touches;
+recorded so the owning lane lands it and the composition legs return to
+the demo job's coverage.
 W2's third commit's subject spells a window length out in words where
 the house rules want no duration in committed prose. The amend to reword
 it was refused by the repository hook (history rewrite refused in full,
