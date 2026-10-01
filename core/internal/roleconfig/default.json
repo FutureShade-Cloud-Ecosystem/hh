@@ -1,0 +1,723 @@
+{
+  "source": {
+    "planning_data": "role-access-r3.json",
+    "planning_data_sha256": "8f9dc29430750629fe250dbc0b5d9ce6edf14fc8e422b40239392aec18528092",
+    "planning_doc": "ROLE-ACCESS-r3.md",
+    "planning_doc_sha256": "7801e4cd398c725d14bad33e9371b938fa4cc0608dc1a6da3002d674338b6733"
+  },
+  "cells": [
+    {
+      "role": "inside_sales",
+      "surface": "counter-till",
+      "level": "work"
+    },
+    {
+      "role": "inside_sales",
+      "surface": "quote-desk",
+      "level": "work"
+    },
+    {
+      "role": "inside_sales",
+      "surface": "yard-pick",
+      "level": "none"
+    },
+    {
+      "role": "inside_sales",
+      "surface": "drive-run",
+      "level": "none"
+    },
+    {
+      "role": "inside_sales",
+      "surface": "dispatch-board",
+      "level": "none"
+    },
+    {
+      "role": "inside_sales",
+      "surface": "buying-and-stock",
+      "level": "read"
+    },
+    {
+      "role": "inside_sales",
+      "surface": "money-desk",
+      "level": "read"
+    },
+    {
+      "role": "inside_sales",
+      "surface": "manager-home",
+      "level": "none"
+    },
+    {
+      "role": "inside_sales",
+      "surface": "house-messages",
+      "level": "work"
+    },
+    {
+      "role": "inside_sales",
+      "surface": "dealer-admin",
+      "level": "none"
+    },
+    {
+      "role": "sales_manager",
+      "surface": "counter-till",
+      "level": "manage"
+    },
+    {
+      "role": "sales_manager",
+      "surface": "quote-desk",
+      "level": "manage"
+    },
+    {
+      "role": "sales_manager",
+      "surface": "yard-pick",
+      "level": "none"
+    },
+    {
+      "role": "sales_manager",
+      "surface": "drive-run",
+      "level": "none"
+    },
+    {
+      "role": "sales_manager",
+      "surface": "dispatch-board",
+      "level": "read"
+    },
+    {
+      "role": "sales_manager",
+      "surface": "buying-and-stock",
+      "level": "read"
+    },
+    {
+      "role": "sales_manager",
+      "surface": "money-desk",
+      "level": "read"
+    },
+    {
+      "role": "sales_manager",
+      "surface": "manager-home",
+      "level": "work"
+    },
+    {
+      "role": "sales_manager",
+      "surface": "house-messages",
+      "level": "work"
+    },
+    {
+      "role": "sales_manager",
+      "surface": "dealer-admin",
+      "level": "manage"
+    },
+    {
+      "role": "outside_sales",
+      "surface": "counter-till",
+      "level": "none"
+    },
+    {
+      "role": "outside_sales",
+      "surface": "quote-desk",
+      "level": "work"
+    },
+    {
+      "role": "outside_sales",
+      "surface": "yard-pick",
+      "level": "none"
+    },
+    {
+      "role": "outside_sales",
+      "surface": "drive-run",
+      "level": "none"
+    },
+    {
+      "role": "outside_sales",
+      "surface": "dispatch-board",
+      "level": "read"
+    },
+    {
+      "role": "outside_sales",
+      "surface": "buying-and-stock",
+      "level": "read"
+    },
+    {
+      "role": "outside_sales",
+      "surface": "money-desk",
+      "level": "read"
+    },
+    {
+      "role": "outside_sales",
+      "surface": "manager-home",
+      "level": "none"
+    },
+    {
+      "role": "outside_sales",
+      "surface": "house-messages",
+      "level": "work"
+    },
+    {
+      "role": "outside_sales",
+      "surface": "dealer-admin",
+      "level": "none"
+    },
+    {
+      "role": "yard_team",
+      "surface": "counter-till",
+      "level": "none"
+    },
+    {
+      "role": "yard_team",
+      "surface": "quote-desk",
+      "level": "none"
+    },
+    {
+      "role": "yard_team",
+      "surface": "yard-pick",
+      "level": "work"
+    },
+    {
+      "role": "yard_team",
+      "surface": "drive-run",
+      "level": "none"
+    },
+    {
+      "role": "yard_team",
+      "surface": "dispatch-board",
+      "level": "read"
+    },
+    {
+      "role": "yard_team",
+      "surface": "buying-and-stock",
+      "level": "read"
+    },
+    {
+      "role": "yard_team",
+      "surface": "money-desk",
+      "level": "none"
+    },
+    {
+      "role": "yard_team",
+      "surface": "manager-home",
+      "level": "none"
+    },
+    {
+      "role": "yard_team",
+      "surface": "house-messages",
+      "level": "work"
+    },
+    {
+      "role": "yard_team",
+      "surface": "dealer-admin",
+      "level": "none"
+    },
+    {
+      "role": "yard_manager",
+      "surface": "counter-till",
+      "level": "work"
+    },
+    {
+      "role": "yard_manager",
+      "surface": "quote-desk",
+      "level": "work"
+    },
+    {
+      "role": "yard_manager",
+      "surface": "yard-pick",
+      "level": "manage"
+    },
+    {
+      "role": "yard_manager",
+      "surface": "drive-run",
+      "level": "read"
+    },
+    {
+      "role": "yard_manager",
+      "surface": "dispatch-board",
+      "level": "work"
+    },
+    {
+      "role": "yard_manager",
+      "surface": "buying-and-stock",
+      "level": "work"
+    },
+    {
+      "role": "yard_manager",
+      "surface": "money-desk",
+      "level": "read"
+    },
+    {
+      "role": "yard_manager",
+      "surface": "manager-home",
+      "level": "work"
+    },
+    {
+      "role": "yard_manager",
+      "surface": "house-messages",
+      "level": "work"
+    },
+    {
+      "role": "yard_manager",
+      "surface": "dealer-admin",
+      "level": "none"
+    },
+    {
+      "role": "logistics_manager",
+      "surface": "counter-till",
+      "level": "none"
+    },
+    {
+      "role": "logistics_manager",
+      "surface": "quote-desk",
+      "level": "none"
+    },
+    {
+      "role": "logistics_manager",
+      "surface": "yard-pick",
+      "level": "none"
+    },
+    {
+      "role": "logistics_manager",
+      "surface": "drive-run",
+      "level": "read"
+    },
+    {
+      "role": "logistics_manager",
+      "surface": "dispatch-board",
+      "level": "manage"
+    },
+    {
+      "role": "logistics_manager",
+      "surface": "buying-and-stock",
+      "level": "none"
+    },
+    {
+      "role": "logistics_manager",
+      "surface": "money-desk",
+      "level": "none"
+    },
+    {
+      "role": "logistics_manager",
+      "surface": "manager-home",
+      "level": "work"
+    },
+    {
+      "role": "logistics_manager",
+      "surface": "house-messages",
+      "level": "work"
+    },
+    {
+      "role": "logistics_manager",
+      "surface": "dealer-admin",
+      "level": "none"
+    },
+    {
+      "role": "driver",
+      "surface": "counter-till",
+      "level": "none"
+    },
+    {
+      "role": "driver",
+      "surface": "quote-desk",
+      "level": "none"
+    },
+    {
+      "role": "driver",
+      "surface": "yard-pick",
+      "level": "none"
+    },
+    {
+      "role": "driver",
+      "surface": "drive-run",
+      "level": "work"
+    },
+    {
+      "role": "driver",
+      "surface": "dispatch-board",
+      "level": "none"
+    },
+    {
+      "role": "driver",
+      "surface": "buying-and-stock",
+      "level": "none"
+    },
+    {
+      "role": "driver",
+      "surface": "money-desk",
+      "level": "none"
+    },
+    {
+      "role": "driver",
+      "surface": "manager-home",
+      "level": "none"
+    },
+    {
+      "role": "driver",
+      "surface": "house-messages",
+      "level": "work"
+    },
+    {
+      "role": "driver",
+      "surface": "dealer-admin",
+      "level": "none"
+    },
+    {
+      "role": "branch_manager",
+      "surface": "counter-till",
+      "level": "manage"
+    },
+    {
+      "role": "branch_manager",
+      "surface": "quote-desk",
+      "level": "work"
+    },
+    {
+      "role": "branch_manager",
+      "surface": "yard-pick",
+      "level": "none"
+    },
+    {
+      "role": "branch_manager",
+      "surface": "drive-run",
+      "level": "read"
+    },
+    {
+      "role": "branch_manager",
+      "surface": "dispatch-board",
+      "level": "manage"
+    },
+    {
+      "role": "branch_manager",
+      "surface": "buying-and-stock",
+      "level": "read"
+    },
+    {
+      "role": "branch_manager",
+      "surface": "money-desk",
+      "level": "read"
+    },
+    {
+      "role": "branch_manager",
+      "surface": "manager-home",
+      "level": "work"
+    },
+    {
+      "role": "branch_manager",
+      "surface": "house-messages",
+      "level": "work"
+    },
+    {
+      "role": "branch_manager",
+      "surface": "dealer-admin",
+      "level": "none"
+    },
+    {
+      "role": "procurement_manager",
+      "surface": "counter-till",
+      "level": "none"
+    },
+    {
+      "role": "procurement_manager",
+      "surface": "quote-desk",
+      "level": "none"
+    },
+    {
+      "role": "procurement_manager",
+      "surface": "yard-pick",
+      "level": "none"
+    },
+    {
+      "role": "procurement_manager",
+      "surface": "drive-run",
+      "level": "none"
+    },
+    {
+      "role": "procurement_manager",
+      "surface": "dispatch-board",
+      "level": "none"
+    },
+    {
+      "role": "procurement_manager",
+      "surface": "buying-and-stock",
+      "level": "manage"
+    },
+    {
+      "role": "procurement_manager",
+      "surface": "money-desk",
+      "level": "read"
+    },
+    {
+      "role": "procurement_manager",
+      "surface": "manager-home",
+      "level": "work"
+    },
+    {
+      "role": "procurement_manager",
+      "surface": "house-messages",
+      "level": "work"
+    },
+    {
+      "role": "procurement_manager",
+      "surface": "dealer-admin",
+      "level": "none"
+    },
+    {
+      "role": "payables_receivables",
+      "surface": "counter-till",
+      "level": "none"
+    },
+    {
+      "role": "payables_receivables",
+      "surface": "quote-desk",
+      "level": "none"
+    },
+    {
+      "role": "payables_receivables",
+      "surface": "yard-pick",
+      "level": "none"
+    },
+    {
+      "role": "payables_receivables",
+      "surface": "drive-run",
+      "level": "none"
+    },
+    {
+      "role": "payables_receivables",
+      "surface": "dispatch-board",
+      "level": "none"
+    },
+    {
+      "role": "payables_receivables",
+      "surface": "buying-and-stock",
+      "level": "read"
+    },
+    {
+      "role": "payables_receivables",
+      "surface": "money-desk",
+      "level": "work"
+    },
+    {
+      "role": "payables_receivables",
+      "surface": "manager-home",
+      "level": "work"
+    },
+    {
+      "role": "payables_receivables",
+      "surface": "house-messages",
+      "level": "work"
+    },
+    {
+      "role": "payables_receivables",
+      "surface": "dealer-admin",
+      "level": "none"
+    },
+    {
+      "role": "financial_controller",
+      "surface": "counter-till",
+      "level": "none"
+    },
+    {
+      "role": "financial_controller",
+      "surface": "quote-desk",
+      "level": "none"
+    },
+    {
+      "role": "financial_controller",
+      "surface": "yard-pick",
+      "level": "none"
+    },
+    {
+      "role": "financial_controller",
+      "surface": "drive-run",
+      "level": "none"
+    },
+    {
+      "role": "financial_controller",
+      "surface": "dispatch-board",
+      "level": "none"
+    },
+    {
+      "role": "financial_controller",
+      "surface": "buying-and-stock",
+      "level": "read"
+    },
+    {
+      "role": "financial_controller",
+      "surface": "money-desk",
+      "level": "admin"
+    },
+    {
+      "role": "financial_controller",
+      "surface": "manager-home",
+      "level": "manage"
+    },
+    {
+      "role": "financial_controller",
+      "surface": "house-messages",
+      "level": "work"
+    },
+    {
+      "role": "financial_controller",
+      "surface": "dealer-admin",
+      "level": "read"
+    },
+    {
+      "role": "general_manager",
+      "surface": "counter-till",
+      "level": "read"
+    },
+    {
+      "role": "general_manager",
+      "surface": "quote-desk",
+      "level": "read"
+    },
+    {
+      "role": "general_manager",
+      "surface": "yard-pick",
+      "level": "none"
+    },
+    {
+      "role": "general_manager",
+      "surface": "drive-run",
+      "level": "none"
+    },
+    {
+      "role": "general_manager",
+      "surface": "dispatch-board",
+      "level": "read"
+    },
+    {
+      "role": "general_manager",
+      "surface": "buying-and-stock",
+      "level": "read"
+    },
+    {
+      "role": "general_manager",
+      "surface": "money-desk",
+      "level": "manage"
+    },
+    {
+      "role": "general_manager",
+      "surface": "manager-home",
+      "level": "manage"
+    },
+    {
+      "role": "general_manager",
+      "surface": "house-messages",
+      "level": "admin"
+    },
+    {
+      "role": "general_manager",
+      "surface": "dealer-admin",
+      "level": "admin"
+    },
+    {
+      "role": "hr",
+      "surface": "counter-till",
+      "level": "none"
+    },
+    {
+      "role": "hr",
+      "surface": "quote-desk",
+      "level": "none"
+    },
+    {
+      "role": "hr",
+      "surface": "yard-pick",
+      "level": "none"
+    },
+    {
+      "role": "hr",
+      "surface": "drive-run",
+      "level": "none"
+    },
+    {
+      "role": "hr",
+      "surface": "dispatch-board",
+      "level": "none"
+    },
+    {
+      "role": "hr",
+      "surface": "buying-and-stock",
+      "level": "none"
+    },
+    {
+      "role": "hr",
+      "surface": "money-desk",
+      "level": "none"
+    },
+    {
+      "role": "hr",
+      "surface": "manager-home",
+      "level": "none"
+    },
+    {
+      "role": "hr",
+      "surface": "house-messages",
+      "level": "work"
+    },
+    {
+      "role": "hr",
+      "surface": "dealer-admin",
+      "level": "admin"
+    }
+  ],
+  "lists": {
+    "exception_approvers": {
+      "floor": [
+        "financial_controller",
+        "general_manager"
+      ],
+      "journal": [
+        "financial_controller",
+        "general_manager"
+      ],
+      "freight": [
+        "financial_controller",
+        "general_manager"
+      ],
+      "credit_cod": [
+        "financial_controller",
+        "general_manager"
+      ]
+    },
+    "floor_clearers_own_branch": [
+      "sales_manager",
+      "branch_manager"
+    ],
+    "delivery_date_committers": [
+      "yard_manager",
+      "logistics_manager",
+      "branch_manager"
+    ]
+  },
+  "settings": {
+    "cost_visibility": [
+      "inside_sales",
+      "outside_sales",
+      "sales_manager",
+      "yard_manager",
+      "logistics_manager",
+      "branch_manager",
+      "procurement_manager",
+      "payables_receivables",
+      "financial_controller",
+      "general_manager"
+    ],
+    "credit_at_till": true,
+    "refund_amount_without_approval_cents": 25000,
+    "refund_approvers": [
+      "sales_manager",
+      "branch_manager"
+    ],
+    "manager_own_branch_floor_clearing": true,
+    "pricing_editors": [
+      "sales_manager",
+      "general_manager"
+    ],
+    "shortage_resolvers": [
+      "yard_team",
+      "yard_manager"
+    ],
+    "dispatch_policy_setters": [
+      "logistics_manager",
+      "branch_manager"
+    ],
+    "general_manager_selling": false
+  }
+}
