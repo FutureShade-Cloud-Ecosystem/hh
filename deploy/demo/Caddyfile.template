@@ -1,7 +1,9 @@
 # The demo image's Caddy configuration template (plan r7 section 5, the
 # Railway shape). The entrypoint substitutes the placeholders and pipes the
-# result to Caddy on standard input, so no generated configuration and no
-# secret ever sits on a filesystem inside the container.
+# result to Caddy on standard input; Caddy's autosave of the adapted
+# configuration is pointed at the container's shared-memory tmpfs, so
+# nothing generated and no secret reaches the image's layers, a volume, or
+# anything that outlives the container.
 #
 # Placeholders:
 #   __GATE_PORT__  the public port Caddy listens on (the platform's PORT)
