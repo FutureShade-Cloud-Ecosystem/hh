@@ -60,7 +60,7 @@ func TestResolveCounter_EnforcementDisabled_WritesNothing(t *testing.T) {
 		catPolicy: &CategoryPolicy{CategoryID: "aggregates", MarginTargetBps: 1500, MarginFloorBps: 1000, EnforcementDisabled: true},
 	}
 	lp, err := newSvc(st, "aggregates").DeriveCounterLinePrice(context.Background(),
-		base(ResolveInput{CategoryID: "aggregates", UOMEntered: "EA", CostCents: 9800, UserID: "ryan"}))
+		base(ResolveInput{CategoryID: "aggregates", UOMEntered: "EA", CostCents: 9800, UserID: "u-clerk"}))
 	if err != nil {
 		t.Fatalf("counter resolve: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestResolveCounter_EnforcementDisabled_WritesNothing(t *testing.T) {
 		t.Fatalf("a till line must write no audit rows at all, got %+v", st.audits)
 	}
 	// And the gated resolve of the same line still records, unchanged.
-	bd := resolve(t, newSvc(st, "aggregates"), base(ResolveInput{CategoryID: "aggregates", UOMEntered: "EA", CostCents: 9800, UserID: "ryan"}))
+	bd := resolve(t, newSvc(st, "aggregates"), base(ResolveInput{CategoryID: "aggregates", UOMEntered: "EA", CostCents: 9800, UserID: "u-clerk"}))
 	if bd.BypassReason == "" {
 		t.Fatalf("the gated resolve must keep the disabled bypass reason, got %+v", bd)
 	}
