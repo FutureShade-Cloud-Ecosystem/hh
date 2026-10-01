@@ -369,7 +369,7 @@ function renderDraft(flow: ReturnsFlow): TemplateResult {
   if (lookup === null) return html``;
   // The chosen rail's words: the card rail's only when the status route's own
   // flag says simulated, so the screen never claims it on its own.
-  let chosenNote: TemplateResult = nothing;
+  let chosenNote: TemplateResult | typeof nothing = nothing;
   if (flow.method === "CARD" && flow.cardSimulated === true) {
     chosenNote = html`<p class="notice" role="status" data-testid="simulated-notice">
       Simulated refund: nothing reached a card.
