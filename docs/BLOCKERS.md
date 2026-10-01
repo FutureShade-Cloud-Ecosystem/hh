@@ -206,6 +206,50 @@ module stays the fail-closed stub it is today; the FIRST lane that
 touches it removes the push half and that sentence. Until then this
 entry marks the obligation.
 
+## The Counter Till demo: one frozen channel name still carries a surname token (open)
+
+W3's demo populate replaces every planted users row's display name on the
+demo database (the two real-domain rows deactivated and renamed with it, the
+placeholder names replaced with invented ones), which is the recorded scope.
+One display surface the migrations plant is outside that scope and outside
+the lane's Touches: migration 0060 names the DM channel it plants with a
+text label that carries the same surname token the plan's data section
+(PLAN-HH-ROLE-DEMO-r7, "Data") already raises for 0060's users row. The
+schema is frozen, so no migration can fix it, and msg_channels is the
+messaging module's table, so the populate writing it would be a cross-module
+write nothing recorded asks for. A tester can meet the token at present only
+through the messaging API (the Counter Till's screens never render channel
+names). Decision wanted: either the demo populate takes on one guarded
+rename of that channel's label on the demo database only, or the record
+matter joins 0060's and 0200's under the same ruling. Recorded and
+continued; nothing in W3's exit tests waits on it.
+
+## The demo populate's review round: one fix outside the lane's Touches, and two assignments named (closed)
+
+The independent review of W3 (pull request 38) found that a rerun of the
+populate wrote one row it reported it had not: `identity.ProvisionOrgAnchor`'s
+upsert (core/internal/identity/populate.go) rewrote the org anchor's name and
+updated_at on every run. The fix is the review's own suggestion, minimal and
+one place: the upsert's update leg is guarded on the value it would change
+(`WHERE org.name IS DISTINCT FROM EXCLUDED.name`), so an unchanged anchor is
+left untouched, row version and updated_at included, and a renamed one still
+converges. Recorded here because the file is outside the lane's declared
+Touches: this is the same exception class the identity population program
+already carries (a one-shot provisioning tool that reads and writes across
+module tables by design, the B3 review's recorded exception), the change is
+guarded and tested at both levels (a unit leg beside the anchor's own tests
+in the identity package, and the demo populate's rerun fingerprint over every
+row it writes), and no caller's behaviour moves: inserted stays true only on
+the insert path.
+
+Two legs the review found unowned are assigned, not open. The `ci` check
+compiles and runs no demo-tag job, so the demo build and its tests sit
+outside the workflow's gate: the lead has assigned the demo CI job (with a
+Postgres service) to W5's pull request, whose plan row adds a CI job, and the
+in-team reviews cover the interim. And the serve leg of the payment
+configuration check, `GET /api/v1/payments/config` behind the demo boot
+guards, is covered by W5's image exit test, the lead having confirmed the
+assignment; W3's exit test reads the payment store in process.
 ## The Counter Till cycle, lane L1 (RC slice): statements the reconciled catalog lists contradict (open)
 
 The RC slice brought the ten internal surfaces' role lists in
