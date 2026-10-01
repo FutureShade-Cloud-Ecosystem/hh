@@ -268,3 +268,13 @@ in-team reviews cover the interim. And the serve leg of the payment
 configuration check, `GET /api/v1/payments/config` behind the demo boot
 guards, is covered by W5's image exit test, the lead having confirmed the
 assignment; W3's exit test reads the payment store in process.
+
+## The Counter Till cycle, lane L3 (W2): a refused commit message amend (recorded, work continuing)
+
+W2's third commit's subject carried the words "half a minute" where the
+house rules want no duration in committed prose. The amend to reword it
+was refused by the repository hook (history rewrite refused in full, per
+the lane's rules), and a refusal is final. The commit's content is
+correct and the wording lives only in that one local commit message; the
+lead may reword it when landing the pull request, or let it stand. Nothing
+in the code, tests or this file carries the wording.
