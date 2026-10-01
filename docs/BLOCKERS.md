@@ -228,3 +228,20 @@ stop at the lists:
   dealer-admin as the record names them, at levels the matrix says nothing
   about, so any change to those seats is a ruling of its own and no part
   of this reconciliation.
+## L2 (till contract): the client generator needed the approver header in its allowlist (recorded, done in this lane)
+
+The till's contract commit declares `X-Approver-Authorization` as a header
+parameter on `POST /api/v1/pos/returns`, and `scripts/gen-client/gen-client.mjs`
+refused every header parameter but the shared `X-Org`, so the regeneration the
+contract change requires failed outright. The lane's declared Touches name the
+contract sources and the generated outputs, not the generator, but the web
+api-client's own idempotence gate runs this generator against the committed
+tree, so without the change the committed gen tree could never be regenerated
+again and the package's suite would stay red for every lane above this one in
+the stack. The lane made the smallest change that unblocks the whole stack:
+the allowlist gains the one named header (it rides the transport's caller-set
+headers exactly like X-Org; the generated signature carries no credential, the
+bearer never did either), and the generator emits a note on the one operation
+that declares the header, so the regenerated client visibly carries it. The
+lead may want this hunk re-homed when the pull request is read; the rest of
+the commit is contract sources and generated outputs only.

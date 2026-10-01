@@ -605,6 +605,7 @@ export const SCHEMA_NAMES: readonly string[] = [
   "PosPickupInput",
   "PosReturnInput",
   "PosReturn",
+  "PosRefundApproval",
   "PosReturnableLine",
   "PosReturnLookup",
   "PosReturnPickup",

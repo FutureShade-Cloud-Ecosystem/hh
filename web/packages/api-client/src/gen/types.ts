@@ -3800,7 +3800,6 @@ export type PosLineInput = {
   product_id: string;
   qty_entered: number;
   uom_entered: string;
-  cost_cents: number;
 };
 export type PosTenderLegInput = {
   method: "ACCOUNT" | "CASH" | "CARD" | "CHEQUE";
@@ -4158,6 +4157,10 @@ export type PosReturn = {
   pickup_status: "NONE" | "REQUESTED" | "SCHEDULED" | "DONE";
   status: "COMMITTED";
   replayed: boolean;
+};
+export type PosRefundApproval = {
+  amount_cents: number;
+  approvers: string[];
 };
 export type PosReturnableLine = {
   order_line_id: string;
