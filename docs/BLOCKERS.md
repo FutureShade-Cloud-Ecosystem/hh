@@ -416,6 +416,16 @@ symbols and expects none. The lead merges: any other lane that needs a
 demo-only subcommand adds its case to demoDispatch in demo_on.go, not to
 main.go.
 
+## The Counter Till cycle, lane L4 (PX): the exit test's CI leg stays with W5 (recorded)
+
+The `ci` check runs the untagged suite with no gate variable and no
+demo-tag step, so the card rail's wiring legs skip politely (they need
+`HH_CORE_TEST_DATABASE_URL`) and the G7 legs, wiring level and serve level,
+never run in CI. A green `ci` on the card rail's pull request therefore
+says nothing about the exit test; the acceptance run is the gated local
+run, executed by the lane and re-executed by the reviewer. W5 adds the CI
+job that closes this gap; recorded here so the gap is visible until that
+lands.
 ## The Counter Till cycle, lane L3 (W1), review follow-ups: named gaps and their holders
 
 - **No CI leg builds or tests the demo tag (review P2-4).** The ci job runs

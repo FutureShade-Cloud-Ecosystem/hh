@@ -38,7 +38,8 @@ func NewHandler(store *Store, log *slog.Logger) *Handler {
 }
 
 // WithSimulated marks the card rail as TEST MODE (deterministic stub, no live gateway) on the status
-// response, so the POS UI can badge the card tender honestly. Set from Service.Simulated() in main.go.
+// response, so the POS UI can badge the card tender honestly. Set from Service.Simulated() at the
+// composition root, so the answer always describes the rail that was actually wired.
 func (h *Handler) WithSimulated(sim bool) *Handler {
 	h.simulated = sim
 	return h

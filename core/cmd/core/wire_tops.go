@@ -100,7 +100,11 @@ func buildSmsBelt(pool *pgxpool.Pool, log *slog.Logger) *smsBelt {
 // topsSpine carries what the worker role needs from the tops wiring: the
 // notification port and outbox stores the loops drain, the sweeps' subjects
 // (the AR collections sweep, the credit services, the automation), and the
-// reconciler's messaging services.
+// reconciler's messaging services. The card rail rides beside them: the
+// wired service and the two seam adapters, the very values the till and pos
+// received, so the demo build's G7 refusal reads the service the wiring
+// built and the card rail test pins the handoff (the default build's serve
+// path never reads them; the worker never reads any of it).
 type topsSpine struct {
 	bistrackSvc   *bistrack.Service
 	billingRepo   *billing.Repository
@@ -111,6 +115,9 @@ type topsSpine struct {
 	statementSvc  *billing.StatementService
 	invoiceWriter *billing.InvoiceWriter
 	landingSvc    *billing.ARLandingService
+	cardRail      *payment.Service
+	cardCharger   cardChargerAdapter
+	cardRefunder  posCardRefunderAdapter
 }
 
 // wireTops constructs and registers the tops modules over the money spine
@@ -186,27 +193,28 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithProjects(portal.NewProjectsService(portal.NewProjectRepository(pool)))
 	portalHandler.RegisterRoutes(r, g)
 
-	// RUN-PAY (W4): card rail. The vault init failure is a boot refusal
-	// exactly as at the pin (a payment credential sealed under a lost key is
-	// worse than no payment rail).
-	payVault, err := payment.NewVault(cfg.PaymentVaultKey)
-	if err != nil {
-		panic("payment vault init failed: " + err.Error())
-	}
-	payStore := payment.NewStore(pool, payVault)
-	paySvc := payment.NewService(payStore, payment.RunPaymentsStub{})
-	payment.NewHandler(payStore, log).WithUserLinker(link).RegisterRoutes(r, g)
-	// DIB-416: the POS card rail selection is FATAL, the same fail-closed
-	// posture the payments gateway selector carries.
-	if _, cardErr := payment.SelectCardProcessor(payment.LoadCardRailConfig()); cardErr != nil {
-		panic("POS card rail selection refused to boot (DIB-416): " + cardErr.Error())
-	}
+	// RUN-PAY (W4): the card rail builds and registers in buildCardRail
+	// (end of file): the vault, the store, the service over the processor
+	// the selector chose, and the config handler whose simulated flag reads
+	// that service. The same vault returns for pos's signature providers,
+	// its other consumer.
+	paySvc, payVault := buildCardRail(r, g, pool, cfg, link, log)
+
+	// The card rail's two seam adapters, each built ONCE over the service
+	// the selector chose and handed to its seam from this one value: the
+	// till's charger here, the pos refunder further down. The same values
+	// ride the spine as the wiring witnesses, so the card rail test pins
+	// the handoff itself: what charges and what refunds is the rail the
+	// selector chose, not a sibling construction (the HH-178 shape again
+	// would fail the test, not only the reader).
+	cardCharger := cardChargerAdapter{svc: paySvc}
+	cardRefunder := posCardRefunderAdapter{svc: paySvc}
 
 	// A-03 till: the CARD branch's charger seam closes here (payment has
 	// landed): the creds-free adapter, credentials never crossing into the
 	// till module.
 	tillSvc := till.NewService(ops.tillRepo).
-		WithCardCharger(cardChargerAdapter{svc: paySvc}).
+		WithCardCharger(cardCharger).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc)
 
@@ -309,7 +317,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	posSvc.WithTaxAssessor(posTaxAdapter{svc: taxSvc}).
 		WithStock(posStockAdapter{svc: inventorySvc}).
 		WithRestocker(posRestockAdapter{svc: inventorySvc}).
-		WithCardRefunder(posCardRefunderAdapter{svc: paySvc})
+		WithCardRefunder(cardRefunder)
 
 	// M6 compliance: the 45-day release registry, and lien's two seams that
 	// close here (the holdback facts over billing, the calendar registrar).
@@ -580,5 +588,41 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		statementSvc:  w3bStatementSvc,
 		invoiceWriter: w6cInvoiceWriter,
 		landingSvc:    arLandingSvc,
+		cardRail:      paySvc,
+		cardCharger:   cardCharger,
+		cardRefunder:  cardRefunder,
 	}
+}
+
+// buildCardRail is the RUN-PAY (W4) card rail, the fold's one construction
+// of it and the one place that knows which rail is wired: the vault, the
+// store, the service over the SELECTED processor, and the config handler
+// registered beside it. The processor the selector chooses is the one the
+// service wires (HH-178), so the till's card charges (the charger seam)
+// and the pos card refunds (the refunder seam) both ride the rail the
+// setting names. The status route's simulated flag reads the wired
+// service's own Simulated, never a handler default (HH-187): the screen
+// badge and the demo build's refusal to serve on a live rail (G7) both
+// read that one fact. The vault returns beside the service: pos's signature
+// providers seal through the same vault, its other consumer. The vault and
+// the selector failures are boot refusals exactly as at the pin (a payment
+// credential sealed under a lost key, or a card rail that cannot say where
+// a charge would go, is worse than no payment rail); the selector's own
+// guard keeps its meaning unchanged (DIB-416): production still refuses to
+// boot on a simulated rail.
+func buildCardRail(r httpx.Registrar, g *guards.Guards, pool *pgxpool.Pool, cfg config.Config, link identity.UserIDLinker, log *slog.Logger) (*payment.Service, *payment.Vault) {
+	payVault, err := payment.NewVault(cfg.PaymentVaultKey)
+	if err != nil {
+		panic("payment vault init failed: " + err.Error())
+	}
+	payStore := payment.NewStore(pool, payVault)
+	// DIB-416: the POS card rail selection is FATAL, the same fail-closed
+	// posture the payments gateway selector carries.
+	cardProc, cardErr := payment.SelectCardProcessor(payment.LoadCardRailConfig())
+	if cardErr != nil {
+		panic("POS card rail selection refused to boot (DIB-416): " + cardErr.Error())
+	}
+	paySvc := payment.NewService(payStore, cardProc)
+	payment.NewHandler(payStore, log).WithUserLinker(link).WithSimulated(paySvc.Simulated()).RegisterRoutes(r, g)
+	return paySvc, payVault
 }
