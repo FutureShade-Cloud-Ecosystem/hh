@@ -10,6 +10,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/moneyutil"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -191,6 +192,13 @@ type Service struct {
 	// trail is the audit READ seam behind the counter settings change history (policy_history.go).
 	// Nil is an empty history, never an error.
 	trail PolicyTrailReader
+	// roles is the dealer's role configuration the till's rules read (D49):
+	// the glance's cost and margin list (X3), the refund amount and its
+	// approvers (X7). The startup path loads it through roleconfig.Default
+	// (or Load) and stops on the error. Nil keeps a directly-built service
+	// (the unit harness, a composition predating the wiring) on the
+	// pre-configuration behavior the older tests pin.
+	roles *roleconfig.Config
 	// actorNames turns an audit actor id into the person's name for that same history. Nil degrades
 	// every row to its role word, which is what the history said before names existed.
 	actorNames ActorNameResolver
@@ -264,6 +272,13 @@ func (s *Service) WithSignatureProvider(p SignatureProvider) *Service { s.sig = 
 
 // WithAudit injects the A-21 Recorder.
 func (s *Service) WithAudit(r audit.Recorder) *Service { s.audit = r; return s }
+
+// WithRoleConfig injects the dealer's role configuration the till's rules
+// read (D49): the glance's cost and margin list (X3), the refund amount
+// without approval and the approvers above it (X7). The configuration a
+// caller hands over must be a loaded one (roleconfig.Default, Load or
+// Validate): a refused configuration yields no Config to guard with.
+func (s *Service) WithRoleConfig(c *roleconfig.Config) *Service { s.roles = c; return s }
 
 // WithClock injects a deterministic clock (tests).
 func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }

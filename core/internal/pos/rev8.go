@@ -70,24 +70,50 @@ func validateQuickChipSet(set []string) ([]string, error) {
 	return out, nil
 }
 
-// marginAllowed answers whether THIS caller may receive margin/profit under the branch policy.
-// Fail closed: an unreadable policy or an anonymous caller receives nothing.
-func (s *Service) marginAllowed(ctx context.Context, branchID string) bool {
+// marginAllowed answers whether THIS caller may receive margin/profit, in
+// two gates. First the branch wall (X2): a branch the caller's resolved
+// authority does not reach is REFUSED, never blanked, the refusal carried
+// as the error so the handler writes the wall's 403. Then cost visibility
+// (X3): when the dealer's role configuration is wired, the configuration's
+// cost and margin list decides and the 0170 margin_visibility switch does
+// not (row 343: the glance reads the configuration, not its managers only
+// default). The switch answers only for a service built with no
+// configuration wired (the unit harness and any composition predating the
+// wiring), the behavior the rev-8 gate tests pin. Fail closed: an
+// unreadable policy, an unmapped role or an anonymous caller receives
+// nothing.
+func (s *Service) marginAllowed(ctx context.Context, branchID string) (bool, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
-		return false
+		// An unresolved caller is the pinned empty answer (the route's guard
+		// is the door); the wall below judges a RESOLVED authority.
+		return false, nil
+	}
+	if err := requireBranchReach(caller, branchID); err != nil {
+		return false, err
+	}
+	if s.roles != nil {
+		role, ok := canonicalRole(caller)
+		if !ok {
+			return false, nil
+		}
+		allowed, err := s.roles.SeesCostAndMargin(role)
+		if err != nil {
+			return false, nil
+		}
+		return allowed, nil
 	}
 	p, err := s.store.ReadPosPolicy(ctx, branchID)
 	if err != nil {
-		return false
+		return false, nil
 	}
 	switch p.MarginVisibility {
 	case MarginVisibilityAllStaff:
-		return true
+		return true, nil
 	case MarginVisibilityHidden:
-		return false
+		return false, nil
 	default: // MANAGER_UP, the column default ("" from a pre-0170 fake resolves here too)
-		return caller.IsManager()
+		return caller.IsManager(), nil
 	}
 }
 
@@ -108,8 +134,12 @@ func (s *Service) MarginGlance(ctx context.Context, in MarginGlanceInput) (Margi
 	if in.BranchID == "" {
 		return MarginGlance{}, clientErr(http.StatusBadRequest, "pos: branch_id is required")
 	}
-	if !s.marginAllowed(ctx, in.BranchID) {
-		// THE GATE: the zero value marshals as `{}`, margin/profit BYTE-ABSENT for this caller.
+	allowed, err := s.marginAllowed(ctx, in.BranchID)
+	if err != nil {
+		return MarginGlance{}, err
+	}
+	if !allowed {
+		// THE VISIBILITY GATE: the zero value marshals as `{}`, margin/profit BYTE-ABSENT for this caller.
 		return MarginGlance{}, nil
 	}
 	if len(in.Lines) == 0 {
