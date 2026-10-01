@@ -244,3 +244,22 @@ bearer never did either), and the generator emits a note on the one operation
 that declares the header, so the regenerated client visibly carries it. The
 lead may want this hunk re-homed when the pull request is read; the rest of
 the commit is contract sources and generated outputs only.
+## L5 (the sale at the counter): two findings recorded, both handled in this lane
+
+- **The two harnesses of the two app lanes shared one port pair.** W6's
+  Playwright and Vite defaults (4820 and 4821) are inherited by every lane
+  that copies them, and Playwright's `reuseExistingServer` then silently
+  drives whichever app is already up: this lane's first exit-test run drove
+  the other app lane's dev server and failed against its screens. This lane
+  moved its own defaults to 4826 and 4827 (both files, and the app README),
+  which leaves the old pair free; any later app lane should pick its own pair
+  the same way, or the two suites will interleave again.
+- **A form's submit event never crosses a shadow root.** The searches were
+  first written as forms with the listener on the host, the same delegation
+  the design system's README prescribes for click; the form submitted natively
+  and the app signed itself out, because submit is not composed: the event
+  stops at the shadow root and a host listener never fires, where click does.
+  Measured in Chrome, then fixed by making every search a plain button with
+  `data-action`. The design system's README's delegation section may want a
+  sentence on this for the next dependent; that file is outside this lane's
+  Touches, so it is recorded here instead.
