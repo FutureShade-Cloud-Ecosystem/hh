@@ -100,9 +100,11 @@ func buildSmsBelt(pool *pgxpool.Pool, log *slog.Logger) *smsBelt {
 // topsSpine carries what the worker role needs from the tops wiring: the
 // notification port and outbox stores the loops drain, the sweeps' subjects
 // (the AR collections sweep, the credit services, the automation), and the
-// reconciler's messaging services. The card rail service rides beside them:
-// the demo build's G7 refusal reads the service the wiring built, and the
-// default build never consumes it.
+// reconciler's messaging services. The card rail rides beside them: the
+// wired service and the two seam adapters, the very values the till and pos
+// received, so the demo build's G7 refusal reads the service the wiring
+// built and the card rail test pins the handoff (the default build's serve
+// path never reads them; the worker never reads any of it).
 type topsSpine struct {
 	bistrackSvc   *bistrack.Service
 	billingRepo   *billing.Repository
@@ -114,6 +116,8 @@ type topsSpine struct {
 	invoiceWriter *billing.InvoiceWriter
 	landingSvc    *billing.ARLandingService
 	cardRail      *payment.Service
+	cardCharger   cardChargerAdapter
+	cardRefunder  posCardRefunderAdapter
 }
 
 // wireTops constructs and registers the tops modules over the money spine
@@ -196,11 +200,21 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// its other consumer.
 	paySvc, payVault := buildCardRail(r, g, pool, cfg, link, log)
 
+	// The card rail's two seam adapters, each built ONCE over the service
+	// the selector chose and handed to its seam from this one value: the
+	// till's charger here, the pos refunder further down. The same values
+	// ride the spine as the wiring witnesses, so the card rail test pins
+	// the handoff itself: what charges and what refunds is the rail the
+	// selector chose, not a sibling construction (the HH-178 shape again
+	// would fail the test, not only the reader).
+	cardCharger := cardChargerAdapter{svc: paySvc}
+	cardRefunder := posCardRefunderAdapter{svc: paySvc}
+
 	// A-03 till: the CARD branch's charger seam closes here (payment has
 	// landed): the creds-free adapter, credentials never crossing into the
 	// till module.
 	tillSvc := till.NewService(ops.tillRepo).
-		WithCardCharger(cardChargerAdapter{svc: paySvc}).
+		WithCardCharger(cardCharger).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc)
 
@@ -300,7 +314,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	posSvc.WithTaxAssessor(posTaxAdapter{svc: taxSvc}).
 		WithStock(posStockAdapter{svc: inventorySvc}).
 		WithRestocker(posRestockAdapter{svc: inventorySvc}).
-		WithCardRefunder(posCardRefunderAdapter{svc: paySvc})
+		WithCardRefunder(cardRefunder)
 
 	// M6 compliance: the 45-day release registry, and lien's two seams that
 	// close here (the holdback facts over billing, the calendar registrar).
@@ -572,6 +586,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		invoiceWriter: w6cInvoiceWriter,
 		landingSvc:    arLandingSvc,
 		cardRail:      paySvc,
+		cardCharger:   cardCharger,
+		cardRefunder:  cardRefunder,
 	}
 }
 
