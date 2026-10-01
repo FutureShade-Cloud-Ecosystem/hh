@@ -271,10 +271,34 @@ assignment; W3's exit test reads the payment store in process.
 
 ## The Counter Till cycle, lane L3 (W2): a refused commit message amend (recorded, work continuing)
 
-W2's third commit's subject carried the words "half a minute" where the
-house rules want no duration in committed prose. The amend to reword it
-was refused by the repository hook (history rewrite refused in full, per
-the lane's rules), and a refusal is final. The commit's content is
-correct and the wording lives only in that one local commit message; the
-lead may reword it when landing the pull request, or let it stand. Nothing
-in the code, tests or this file carries the wording.
+W2's third commit's subject spells a window length out in words where
+the house rules want no duration in committed prose. The amend to reword
+it was refused by the repository hook (history rewrite refused in full,
+per the lane's rules), and a refusal is final, so the subject stands as
+history. The commit's content is correct; this entry deliberately quotes
+no passage of the message, and the lead may reword the message when
+landing the pull request, or let it stand.
+
+## The Counter Till cycle, lane L3 (W2), the review round: two fixes placed outside the lane's Touches, by the lead's rulings
+
+The independent review of W2 (pull request 49) returned no P1, three P2
+and seven P3 findings, and the lead's rulings placed every fix on the
+lane's branch. Two of the fixes edit files the lane's Touches never
+named, each because the ruling says so and each recorded here in the W3
+precedent's spirit: the audit middleware's carve-out table
+(selfRecordedMutations in core/internal/audit/service.go, so the demo
+session route takes no coarse HTTP row and a refused mint writes nothing
+at all, the review's P2-1), and the contract's declaration of the
+route's refusals (the demo session operation in core/api/skeleton.yaml
+gains its 403, 429 and 500, the TooManyRequests and InternalServerError
+response components join the house's table, and the stale description
+now names the demo build, the four constructor collaborators, the limit
+and the row order; the review's P2-3). Everything else sits inside the
+Touches: the limit now keys on the forwarded chain when the peer is the
+box's own loopback proxy and ignores the header from any other peer
+(P2-2), the request decoder refuses unknown fields and trailing data
+(P3-2), and the small findings (the blockers reword, the mint failure
+after the trail row, the spent allowance stated, the batched eviction,
+the exit test's rename and generic run note, the clock literals) are
+fixed in place with their tests. All seven P3s were cheap and none is
+left open.

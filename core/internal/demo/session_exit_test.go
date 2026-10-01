@@ -28,12 +28,13 @@ import (
 //	a burst from one address is refused; the audit rows sit in audit_log
 //	where the ledger writes, one per minted session and no more.
 //
-//	Run: hh-till-l3c-pg up (a local Postgres on 127.0.0.1:5598), then
-//	     DATABASE_URL='postgres://hardscape:hardscape@127.0.0.1:5598/postgres?sslmode=disable' \
+//	Run: point DATABASE_URL at a throwaway local Postgres (any container
+//	or cluster on this machine; the helper refuses a non-local address),
+//	then
 //	     go test -tags demo ./internal/demo/ -run TestDemoModule -count=1 -p 1 -v
 //
 // Without DATABASE_URL the test skips, so the suite stays green wherever
-// no throwaway Postgres exists. The harness refuses a non-local address.
+// no throwaway Postgres exists.
 func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	ctx := context.Background()
 	pool, dsn := freshMigratedDB(t, "w2exit")
@@ -226,7 +227,12 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 
 	// The trail: one DEMO_SESSION_MINTED row per minted session and no
 	// more, in audit_log where the ledger writes, naming the accounts the
-	// sessions went to. The refusals left none.
+	// sessions went to. The refusals left none, of either kind: the coarse
+	// middleware takes no row for this route, so a refused mint (400, 429)
+	// leaves audit_log untouched and a successful mint leaves exactly the
+	// one module row. The coarse write is asynchronous off the response,
+	// so the count waits out its goroutines before holding the zero.
+	time.Sleep(500 * time.Millisecond)
 	var rows int
 	if err := pool.QueryRow(ctx,
 		`SELECT count(*) FROM audit_log WHERE action = 'DEMO_SESSION_MINTED'`).Scan(&rows); err != nil {
@@ -235,16 +241,26 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	if rows != 2+burstMinted {
 		t.Errorf("audit_log holds %d DEMO_SESSION_MINTED rows, want one per minted session (%d)", rows, 2+burstMinted)
 	}
-	var foreignActors int
+	var namedActors int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM audit_log
 		 WHERE action = 'DEMO_SESSION_MINTED'
 		   AND entity_type = 'demo.session'
-		   AND actor_id::text IN ('de110000-0000-4000-9000-000000000001', 'de110000-0000-4000-9000-000000000002')`).Scan(&foreignActors); err != nil {
+		   AND actor_id::text IN ('de110000-0000-4000-9000-000000000001', 'de110000-0000-4000-9000-000000000002')`).Scan(&namedActors); err != nil {
 		t.Fatalf("the audit actor read failed: %v", err)
 	}
-	if foreignActors != rows {
-		t.Errorf("%d of %d trail rows name a demo role account, want every one", foreignActors, rows)
+	if namedActors != rows {
+		t.Errorf("%d of %d trail rows name a demo role account, want every one", namedActors, rows)
+	}
+	var coarseRows int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_log
+		 WHERE action = 'HTTP.POST'
+		   AND changes->>'path' = '/api/v1/demo/session'`).Scan(&coarseRows); err != nil {
+		t.Fatalf("the coarse trail read failed: %v", err)
+	}
+	if coarseRows != 0 {
+		t.Errorf("%d coarse HTTP.POST rows name the session route, want none: the mint's own row is the whole record", coarseRows)
 	}
 }
 

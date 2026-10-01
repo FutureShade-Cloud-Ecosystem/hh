@@ -36,6 +36,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -198,12 +199,20 @@ const maxSessionBodyBytes = 4096
 // address, refuses unless the staff resolver answers the flow's role for
 // the account in the demo org, and writes the audit row before the token:
 // a flow whose account reaches nothing, or reaches the wrong role, mints
-// nothing and trails nothing.
+// nothing and trails nothing, and the coarse audit middleware takes no
+// row for this route at all, so a refused mint trails nothing anywhere.
 func (m *Mint) Session(w http.ResponseWriter, r *http.Request) {
 	var in sessionRequest
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSessionBodyBytes))
+	// The request carries a flow name and nothing else, by design: an
+	// unknown field or a trailing value is refused, not silently dropped.
+	dec.DisallowUnknownFields()
 	if err := dec.Decode(&in); err != nil {
-		httpx.Error(w, http.StatusBadRequest, "demo: the body must be one JSON object carrying the flow name")
+		httpx.Error(w, http.StatusBadRequest, "demo: the body must be one JSON object carrying only the flow name")
+		return
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		httpx.Error(w, http.StatusBadRequest, "demo: the body must be one JSON object carrying only the flow name")
 		return
 	}
 	if in.Flow == "" {
@@ -253,7 +262,11 @@ func (m *Mint) Session(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The audit row first: the bypass's trail exists by the time its
-	// credential does, and a failure to trail is a failure to mint.
+	// credential does, and a failure to trail is a failure to mint. The
+	// row is the record of an attempt that passed every check, not proof
+	// a credential left the door: an issuer failure after it leaves one
+	// MINTED row with no session, the safe direction, a credential with
+	// no row being impossible.
 	err = m.audit.Record(r.Context(), audit.SensitiveAccess{
 		Action:     auditAction,
 		EntityType: auditEntityType,
@@ -286,14 +299,36 @@ func (m *Mint) Session(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// clientAddress is the host the connection arrived from, the limit's one
-// key. The port is dropped; an address the net package cannot split is
-// taken as it stands rather than discarded, so a proxy shape the split
+// clientAddress is the limit's key: the one address a mint came from.
+// Behind the box's own proxy (the demo image's Caddy on loopback) every
+// connection's peer is the proxy, so the peer address alone would be one
+// bucket for the whole box; there, the first address of the forwarded
+// chain names the tester instead. From any other peer the header is
+// untrusted and the connection's own address stands: a direct client can
+// write any header it likes. An address the net package cannot split is
+// taken as it stands rather than discarded, so a peer shape the split
 // does not expect still counts against something.
 func clientAddress(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	if !isLoopbackHost(host) {
+		return host
+	}
+	if chain := r.Header.Get("X-Forwarded-For"); chain != "" {
+		first := strings.TrimSpace(strings.Split(chain, ",")[0])
+		if first != "" {
+			return first
+		}
 	}
 	return host
+}
+
+// isLoopbackHost reports whether the address is one of the box's own
+// loopback forms, the proxy's signature. An unparseable address is not
+// loopback: only a real loopback peer may speak for another address.
+func isLoopbackHost(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

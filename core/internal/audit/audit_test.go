@@ -289,6 +289,30 @@ func TestU6_MutatingOnly_LoginSkipped(t *testing.T) {
 	}
 }
 
+// The self-recorded routes (the demo session mint) take no coarse row:
+// their module writes the finer row through the Recorder, and the coarse
+// row would otherwise be one per call whatever the status, the per-call
+// row defect the route's own bounded record exists to prevent. A generic
+// mutating route beside it still lands exactly one coarse row, so the
+// carve out cannot quietly widen.
+func TestMiddlewareSkipsTheSelfRecordedRoutes(t *testing.T) {
+	authn := stubAuth{uid: sampleUUID, role: "sales"}
+
+	fDemo := newFakeStore()
+	runThrough(newTestService(fDemo), authn, http.MethodPost, "/api/v1/demo/session", 400, nil, nil)
+	runThrough(newTestService(fDemo), authn, http.MethodPost, "/api/v1/demo/session", 429, nil, nil)
+	if got := drain(fDemo); got != 0 {
+		t.Fatalf("demo session: want 0 coarse rows, got %d", got)
+	}
+
+	fOther := newFakeStore()
+	runThrough(newTestService(fOther), authn, http.MethodPost, "/api/v1/demo/other", 400, nil, nil)
+	waitForInserts(t, fOther, 1)
+	if fOther.count() != 1 {
+		t.Fatalf("a route beside the carve out: want 1 coarse row, got %d", fOther.count())
+	}
+}
+
 // drain gives any async insert a brief window then returns the count (used for the "expect 0" cases).
 func drain(f *fakeStore) int {
 	select {
