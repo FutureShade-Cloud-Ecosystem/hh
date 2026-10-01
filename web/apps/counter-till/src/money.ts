@@ -34,33 +34,35 @@ export function formatMoney(cents: number | null | undefined): string {
 /**
  * Format a margin the core answered in basis points as the column's percent
  * with one decimal: 1585 becomes "15.9%". Basis points are a ratio, not
- * money, so this is display rounding by integer steps: half-up at the tenth.
- * Absent (the glance's line answered nothing for this line) renders the
- * explicit placeholder, never a zero percent.
+ * money, so this is display rounding by integer steps, half away from zero on
+ * BOTH signs, so -155 and 155 disagree by sign alone. Absent (the glance's
+ * line answered nothing for this line) renders the explicit placeholder,
+ * never a zero percent.
  */
 export function formatMargin(bps: number | null | undefined): string {
   if (typeof bps !== "number" || !Number.isInteger(bps)) return MARGIN_PLACEHOLDER;
-  const tenths = Math.round(bps / 10);
-  const negative = tenths < 0;
-  const magnitude = negative ? -tenths : tenths;
-  const whole = Math.floor(magnitude / 10);
-  const tenth = magnitude - whole * 10;
-  return `${negative ? "-" : ""}${whole}.${tenth}%`;
+  const magnitude = Math.abs(bps);
+  const tenths = Math.round(magnitude / 10);
+  const whole = Math.floor(tenths / 10);
+  const tenth = tenths - whole * 10;
+  return `${bps < 0 ? "-" : ""}${whole}.${tenth}%`;
 }
 
 /**
  * Parse what the cashier typed into the cash tendered field as integer cents,
  * through the decimal string, never through a float multiply: "19.68" becomes
- * 1968, "50" becomes 5000. More than two decimal places, a sign, a thousands
- * separator, or any non-digit is refused as null: the field accepts exactly
- * what a till can be handed. The core owns every consequence (whether the
- * tendered covers the total, what the change due is); this only converts the
- * typed string into the integer the wire type carries.
+ * 1968, "50" becomes 5000. Refused as null, and nothing is sent: more than
+ * two decimal places (the one slip this parser exists to refuse: "20.005" is
+ * a mistyped "20.05", never two hundred dollars and five cents), a trailing
+ * point with no digits, a sign, a thousands separator, any non-digit, and
+ * more than nine digits before the point. The core owns every consequence
+ * (whether the tendered covers the total, what the change due is); this only
+ * converts the typed string into the integer the wire type carries.
  */
 export function parseAmountToCents(text: string): number | null {
   const trimmed = text.trim();
   if (trimmed === "") return null;
-  const match = trimmed.match(/^([0-9]+)(?:\.([0-9]*))?$/);
+  const match = trimmed.match(/^([0-9]{1,9})(?:\.([0-9]{1,2}))?$/);
   if (match === null) return null;
   const dollars = match[1];
   const fraction = (match[2] ?? "").padEnd(2, "0");

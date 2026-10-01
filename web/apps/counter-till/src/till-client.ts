@@ -20,6 +20,33 @@ import {
 export const DRAWER_STATION = "MAIN";
 
 /**
+ * The demo dealer's house zone: the same constant the core itself compiles
+ * (core/internal/dashboard/window.go, core/internal/gl/businessday.go). No
+ * route serves an organization's zone yet, and the ring's requested_date is
+ * contract-required, so the till names a day in THIS zone and never in the
+ * browser's UTC. The stub validates the day against the same zone, and the
+ * review records for a later item the served zone that should replace this
+ * constant when the core offers one.
+ */
+export const HOUSE_ZONE = "America/Toronto";
+
+/**
+ * The calendar day an instant falls on in the given zone, as the date literal
+ * the wire type carries: "2026-01-31". Through Intl's formatter, never
+ * through toISOString's UTC clock, because the dealer's day is the invariant:
+ * a sale rung at nine in the evening in Trenton is that day's sale, though
+ * the UTC clock has rolled over.
+ */
+export function houseDayInZone(zone: string, now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+/**
  * The float a first use opens the drawer with: an invented, constant amount
  * for the demo box (the real till counts denominations; this release does not
  * carry a count screen). Integer cents, and the core's till session owns it
@@ -165,8 +192,13 @@ export function parseQuantity(text: string): number | null {
   return value > 0 ? value : null;
 }
 
-/** Field-by-field validation for a parked ticket, never a cast. */
-function validateParkedTicket(value: unknown, what: string): ParkedTicket | null {
+/**
+ * Field-by-field validation for a parked ticket, never a cast. Strict by the
+ * file's own rule: a missing field is a refusal, so an unreadable line
+ * refuses the whole ticket rather than coming back as a short ticket whose
+ * line count lies.
+ */
+function validateParkedTicket(value: unknown): ParkedTicket | null {
   const record = value as unknown;
   if (!isRecord(record)) return null;
   const id = stringAt(record, "id");
@@ -177,11 +209,11 @@ function validateParkedTicket(value: unknown, what: string): ParkedTicket | null
   const lines: TicketItem[] = [];
   for (const line of rawLines) {
     const row = line as unknown;
-    if (!isRecord(row)) continue;
+    if (!isRecord(row)) return null;
     const productId = stringAt(row, "product_id");
     const uom = stringAt(row, "uom_entered");
     const qty = row["qty_entered"];
-    if (productId === null || uom === null || typeof qty !== "number" || !(qty > 0)) continue;
+    if (productId === null || uom === null || typeof qty !== "number" || !(qty > 0)) return null;
     lines.push({ productId, qty, uom });
   }
   if (lines.length === 0) return null;
@@ -495,10 +527,12 @@ export class TillClient {
     if (Array.isArray(legsRaw)) {
       for (const leg of legsRaw) {
         const row = leg as unknown;
-        if (!isRecord(row)) continue;
+        if (!isRecord(row)) return err("a tender leg on the committed sale is not readable");
         const method = stringAt(row, "method");
         const amountCents = integerAt(row, "amount_cents");
-        if (method === null || amountCents === null) continue;
+        if (method === null || amountCents === null) {
+          return err("a tender leg on the committed sale is missing its method or its amount");
+        }
         tenders.push({ method, amountCents });
       }
     }
@@ -533,8 +567,8 @@ export class TillClient {
       lines: items.map((item) => ({ product_id: item.productId, qty_entered: item.qty, uom_entered: item.uom })),
     });
     if (!result.ok) return result;
-    const validated = validateParkedTicket(result.value, "the parked ticket");
-    return validated === null ? err("the parked ticket is not readable") : ok(validated);
+    const validated = validateParkedTicket(result.value);
+    return validated === null ? err("the parked ticket the server answered is not readable") : ok(validated);
   }
 
   /** This branch's parked tickets: the fence is the server's, this read just renders it. */
@@ -547,8 +581,10 @@ export class TillClient {
     }
     const tickets: ParkedTicket[] = [];
     for (const item of record["items"]) {
-      const validated = validateParkedTicket(item, "a parked ticket row");
-      if (validated === null) continue;
+      const validated = validateParkedTicket(item);
+      if (validated === null) {
+        return err("a parked ticket row is not readable: the list is refused whole rather than shown short");
+      }
       tickets.push(validated);
     }
     return ok(tickets);
@@ -558,7 +594,7 @@ export class TillClient {
   async resumeTicket(id: string): Promise<Result<ParkedTicket>> {
     const result = await staffPos.posResumeParked(this.#client, id);
     if (!result.ok) return result;
-    const validated = validateParkedTicket(result.value, "the resumed ticket");
+    const validated = validateParkedTicket(result.value);
     return validated === null ? err("the resumed ticket is not readable") : ok(validated);
   }
 }

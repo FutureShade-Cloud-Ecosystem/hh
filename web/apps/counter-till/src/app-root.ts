@@ -1,7 +1,11 @@
 // The Counter Till's root element: the thin UI layer the house invariants ask
-// for. It renders core and package state and calls package actions; nothing
-// domain-shaped lives here (no prices, no money, no order logic: the till's
-// sale work builds on this shell later in the cycle).
+// for. It renders server and package state and calls client actions; no
+// figure on this screen is computed here: prices, margins, totals, tax and
+// change due all arrive from the core, and the one money helper formats them.
+// What lives in this element is the counter's own state machine: which panel
+// is in which state, what is in flight, and what a refusal says. The
+// boundary conversions it owns (a typed quantity, a typed amount, the house
+// zone's day) sit in plain modules beside it, held by unit tests.
 //
 // State: the entry view's flows answer (loading, unavailable, or the flow
 // rows), and the signed-in role once a card is tapped. Rendering is Lit, the
@@ -21,6 +25,8 @@ import { DemoAccount } from "./demo-account.js";
 import {
   TillClient,
   DEMO_CARD_TOKEN,
+  HOUSE_ZONE,
+  houseDayInZone,
   parseQuantity,
   type BranchRef,
   type CommittedSale,
@@ -155,6 +161,20 @@ export class CounterTillApp extends HHElement {
   #receiptBalance: string | null = null;
   #commitMessage: string | null = null;
   #commitBusy = false;
+  /**
+   * The account the committed sale was rung for, frozen at commit: the
+   * receipt speaks for the sale, not for whoever the counter is serving now.
+   */
+  #committedAccount: { name: string; accountNo: string; customerId: string } | null = null;
+  /**
+   * The ring's idempotency key, minted at the first ring attempt and held for
+   * the ticket: a lost answer followed by a second press must replay the same
+   * sale, never commit twice. Cleared when the ticket changes or a sale is
+   * known to have committed.
+   */
+  #ringKey: string | null = null;
+  /** Monotonic ticket pricing sequence: an answer older than the newest ask is discarded. */
+  #pricingSeq = 0;
   #parkedState: "loading" | "ready" | "refused" = "loading";
   #parkedRows: ParkedRow[] = [];
   #parkedMessage: string | null = null;
@@ -189,15 +209,34 @@ export class CounterTillApp extends HHElement {
     // both halves). Click is composed, so the host hears it; the search
     // panels are therefore plain buttons with data-action, never forms (a
     // form's submit is not composed, and a host listener would never see it:
-    // measured, not assumed).
+    // measured, not assumed). Keydown IS composed, so Enter in a search field
+    // reaches the host and runs that field's search.
     this.addEventListener("click", this.#onHostClick);
+    this.addEventListener("keydown", this.#onHostKeydown);
     void this.#loadFlows();
   }
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.removeEventListener("keydown", this.#onHostKeydown);
     super.disconnectedCallback();
   }
+
+  readonly #onHostKeydown = (event: KeyboardEvent): void => {
+    if (event.key !== "Enter") return;
+    const input = event
+      .composedPath()
+      .find((node): node is Element => node instanceof Element && node.hasAttribute("data-input"));
+    if (input === undefined) return;
+    event.preventDefault();
+    const kind = input.getAttribute("data-input");
+    if (kind === "product-search" && input instanceof HTMLInputElement) {
+      void this.#searchProducts(input.value);
+    }
+    if (kind === "customer-search" && input instanceof HTMLInputElement) {
+      void this.#searchCustomers(input.value);
+    }
+  };
 
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
@@ -224,12 +263,13 @@ export class CounterTillApp extends HHElement {
     }
     if (control.getAttribute("data-action") === "add-line") {
       const productId = control.getAttribute("data-product-id");
-      if (typeof productId === "string" && productId !== "") this.#addLine(productId);
+      if (typeof productId === "string" && productId !== "") void this.#addLine(productId);
     }
     if (control.getAttribute("data-action") === "remove-line") {
       const key = control.getAttribute("data-line-key");
       if (typeof key === "string" && key !== "") {
         this.#lines = this.#lines.filter((line) => line.key !== key);
+        this.#forgetRingKey();
         void this.#priceTicket();
       }
     }
@@ -256,6 +296,7 @@ export class CounterTillApp extends HHElement {
     if (control.getAttribute("data-action") === "clear-receipt") {
       this.#committed = null;
       this.#receiptBalance = null;
+      this.#committedAccount = null;
       this.#commitMessage = null;
       this.requestUpdate();
     }
@@ -336,15 +377,22 @@ export class CounterTillApp extends HHElement {
     this.#tender = "CASH";
     this.#committed = null;
     this.#receiptBalance = null;
+    this.#committedAccount = null;
     this.#commitMessage = null;
     this.#commitBusy = false;
+    this.#ringKey = null;
+    this.#pricingSeq += 1;
     this.#parkedState = "loading";
     this.#parkedRows = [];
     this.#parkedMessage = null;
     this.#parkedBusy = false;
     this.#parkMessage = null;
-    this.#knownCustomers = new Map();
-    this.#knownProducts = new Map();
+    // The display memory of accounts and products this till has met stays:
+    // the one hand-over the till's rules name is a parked ticket picked up by
+    // a different login at the same counter, and the names are how the
+    // resumed ticket says whose it is. Nothing money-shaped hangs on them:
+    // prices always come from the engine, for the customer the ticket names.
+    // They are tab memory, so a reload starts a fresh till.
     this.requestUpdate();
   }
 
@@ -456,6 +504,7 @@ export class CounterTillApp extends HHElement {
     this.#customer = { kind: "account", customer: ref };
     this.#standing = null;
     this.#standingMessage = null;
+    this.#forgetRingKey();
     this.requestUpdate();
     if (this.#branch !== null) {
       const standing = await this.#tillClient.accountStanding(this.#branch.id, ref.id);
@@ -473,6 +522,7 @@ export class CounterTillApp extends HHElement {
     this.#customer = WALK_IN_CUSTOMER;
     this.#standing = null;
     this.#standingMessage = null;
+    this.#forgetRingKey();
     this.requestUpdate();
     void this.#priceTicket();
   }
@@ -486,6 +536,7 @@ export class CounterTillApp extends HHElement {
       ...this.#lines,
       { key, product: hit, qty: 1, uom: hit.soldBy, quote: null, marginBps: null },
     ];
+    this.#forgetRingKey();
     this.requestUpdate();
     await this.updateComplete;
     // The quantity input starts at one: set once, imperatively, after the
@@ -499,52 +550,100 @@ export class CounterTillApp extends HHElement {
   }
 
   /**
-   * Read the quantity inputs off the ticket and re-price: the inputs are the
-   * shelf's words, so a value that is not a quantity refuses in words and
-   * prices nothing, rather than sending a guess to the engine.
+   * Read the quantity inputs off the ticket: the inputs are the shelf's
+   * words, and the quantities the till sends anywhere (a ring, a park) are
+   * THESE, never the last priced ones. A value that is not a quantity is a
+   * refusal in words, nothing sent.
    */
-  async #repriceFromInputs(): Promise<void> {
+  #gatherTypedQuantities(): { ok: true; typed: Map<string, number>; changed: boolean } | { ok: false; refusal: string } {
     const inputs = this.renderRoot.querySelectorAll<HTMLInputElement>("input[data-qty-key]");
     const typed: Map<string, number> = new Map();
+    let changed = false;
     for (const input of inputs) {
       const key = input.getAttribute("data-qty-key");
       if (key === null) continue;
       const parsed = parseQuantity(input.value);
       if (parsed === null) {
-        this.#pricing = "refused";
-        this.#pricingMessage = "A quantity is a number of units, like 3 or 2.5: fix it and re-price.";
-        this.requestUpdate();
-        return;
+        return { ok: false, refusal: "A quantity is a number of units, like 3 or 2.5: fix it and try again." };
       }
       typed.set(key, parsed);
+      const line = this.#lines.find((candidate) => candidate.key === key);
+      if (line !== undefined && line.qty !== parsed) changed = true;
     }
-    this.#lines = this.#lines.map((line) => ({ ...line, qty: typed.get(line.key) ?? line.qty }));
-    await this.#priceTicket();
+    return { ok: true, typed, changed };
+  }
+
+  /**
+   * Read the typed quantities and, where they differ from the priced ones,
+   * re-price first: the engine prices by quantity, so a ring or a park whose
+   * quantities changed must hear the engine again before it sends. The
+   * quantities on the ticket afterwards are the typed ones.
+   */
+  async #settleTypedQuantities(): Promise<{ ok: true; lines: TicketLine[] } | { ok: false; refusal: string }> {
+    const gathered = this.#gatherTypedQuantities();
+    if (!gathered.ok) return { ok: false, refusal: gathered.refusal };
+    const lines: TicketLine[] = this.#lines.map((line) => ({
+      ...line,
+      qty: gathered.typed.get(line.key) ?? line.qty,
+    }));
+    if (gathered.changed) {
+      this.#lines = lines;
+      this.#forgetRingKey();
+      await this.#priceTicket();
+      if (this.#pricing !== "priced") {
+        return { ok: false, refusal: "The ticket re-priced for the new quantities and the price did not answer: read the ticket and try again." };
+      }
+    }
+    return { ok: true, lines };
+  }
+
+  /**
+   * Re-price the ticket from the typed quantities. Nothing is priced here:
+   * the ask goes to the engine, and the answer lands only if it is still the
+   * newest one.
+   */
+  async #repriceFromInputs(): Promise<void> {
+    const settled = await this.#settleTypedQuantities();
+    if (!settled.ok) {
+      this.#pricing = "refused";
+      this.#pricingMessage = settled.refusal;
+      this.requestUpdate();
+    }
+  }
+
+  #forgetRingKey(): void {
+    this.#ringKey = null;
   }
 
   /**
    * Price the whole ticket through the engine, then ask the margin glance
    * about the same lines. No price is ever sent, no price is ever computed
-   * here, and a refused read blanks the ticket's figures rather than leaving
-   * stale ones beside changed quantities: an unpriced line shows its
+   * here. The ask carries a sequence number: two asks can be in flight (add,
+   * remove and a customer pick each start one), and an answer that is no
+   * longer the newest ask is discarded whole, whatever it says, so a late
+   * answer never lands its figures on lines it was not asked about. A refused
+   * ask (one that is still newest) blanks the ticket's figures rather than
+   * leaving stale ones beside changed quantities: an unpriced line shows its
    * placeholder until the engine answers again.
    */
   async #priceTicket(): Promise<void> {
     if (this.#branch === null || this.#drawer.state !== "open") return;
     if (this.#lines.length === 0) {
-      this.#lines = [];
+      this.#pricingSeq += 1;
       this.#pricing = "idle";
       this.#pricingMessage = null;
       this.#pricedForType = null;
       this.requestUpdate();
       return;
     }
+    const seq = ++this.#pricingSeq;
     const customerId = this.#customer.kind === "account" ? this.#customer.customer.id : "";
     const items = this.#lines.map((line) => ({ productId: line.product.productId, qty: line.qty, uom: line.uom }));
     this.#pricing = "pricing";
     this.#pricingMessage = null;
     this.requestUpdate();
     const priced = await this.#tillClient.priceTicket(this.#branch.id, customerId, items);
+    if (seq !== this.#pricingSeq) return; // a newer ask owns the ticket now
     if (!priced.ok) {
       this.#lines = this.#lines.map((line) => ({ ...line, quote: null, marginBps: null }));
       this.#pricing = "refused";
@@ -553,8 +652,19 @@ export class CounterTillApp extends HHElement {
       this.requestUpdate();
       return;
     }
-    const quotes = priced.value.quotes;
-    this.#lines = this.#lines.map((line, index) => ({ ...line, quote: quotes[index] ?? null }));
+    // The quotes ride index-aligned with the ask; each one names its own
+    // product, and an answer that does not match line for line is refused
+    // whole rather than realigned by position.
+    const misaligned = priced.value.quotes.some((quote, index) => quote.productId !== items[index]?.productId);
+    if (misaligned) {
+      this.#lines = this.#lines.map((line) => ({ ...line, quote: null, marginBps: null }));
+      this.#pricing = "refused";
+      this.#pricingMessage = "The price read answered for different products than the ticket asked about.";
+      this.#pricedForType = null;
+      this.requestUpdate();
+      return;
+    }
+    this.#lines = this.#lines.map((line, index) => ({ ...line, quote: priced.value.quotes[index] }));
     this.#pricedForType = priced.value.customerType;
     const glanced = await this.#tillClient.glanceMargins(
       this.#branch.id,
@@ -562,6 +672,7 @@ export class CounterTillApp extends HHElement {
       priced.value.customerType,
       items,
     );
+    if (seq !== this.#pricingSeq) return; // a newer ask owns the ticket now
     if (glanced.ok) {
       this.#lines = this.#lines.map((line, index) => ({ ...line, marginBps: glanced.value.marginBps[index] ?? null }));
       this.#pricing = "priced";
@@ -625,15 +736,25 @@ export class CounterTillApp extends HHElement {
 
   /**
    * Ring the sale. The till checks only what it must before the call (a
-   * drawer, priced lines, a typed cash amount): every business rule, the
-   * change due included, is the server's. A refusal lands in words, the
-   * credit gate's above all, and nothing is cleared: the ticket stands until
-   * a sale actually commits.
+   * drawer, priced lines, the typed quantities, a typed cash amount): every
+   * business rule, the change due included, is the server's. The quantities
+   * sent are the ones on the screen: where the typed ones differ from the
+   * priced ones, the ticket re-prices first, because the engine prices by
+   * quantity. The ring's key is minted once and held for the ticket, so a
+   * lost answer and a second press replay the same sale instead of committing
+   * twice. A refusal lands in words, the credit gate's above all, and nothing
+   * is cleared: the ticket stands until a sale actually commits.
    */
   async #commitSale(): Promise<void> {
     if (this.#branch === null || this.#drawerId === null) return;
     if (this.#lines.length === 0) return;
-    const unpriced = this.#lines.some((line) => line.quote === null || line.quote.unitCents === null);
+    const settled = await this.#settleTypedQuantities();
+    if (!settled.ok) {
+      this.#commitMessage = settled.refusal;
+      this.requestUpdate();
+      return;
+    }
+    const unpriced = settled.lines.some((line) => line.quote === null || line.quote.unitCents === null);
     if (unpriced) {
       this.#commitMessage = "A line on the ticket has no price yet: re-price the ticket first.";
       this.requestUpdate();
@@ -656,14 +777,14 @@ export class CounterTillApp extends HHElement {
       }
     }
     const ring: SaleRing = {
-      idempotencyKey: crypto.randomUUID(),
+      idempotencyKey: this.#ringKey ?? (this.#ringKey = crypto.randomUUID()),
       branchId: this.#branch.id,
       tillSessionId: this.#drawerId,
       customerId,
       tender: this.#tender,
       cashTenderedCents: this.#tender === "CASH" ? cashCents : null,
-      requestedDate: new Date().toISOString().slice(0, 10),
-      items: this.#lines.map((line) => ({ productId: line.product.productId, qty: line.qty, uom: line.uom })),
+      requestedDate: houseDayInZone(HOUSE_ZONE),
+      items: settled.lines.map((line) => ({ productId: line.product.productId, qty: line.qty, uom: line.uom })),
     };
     this.#commitBusy = true;
     this.#commitMessage = null;
@@ -675,8 +796,19 @@ export class CounterTillApp extends HHElement {
       this.requestUpdate();
       return;
     }
+    // Committed: the receipt is the sale's, with the customer it was rung for
+    // frozen into it, and the ticket's key is spent.
     this.#committed = result.value;
     this.#receiptBalance = null;
+    this.#committedAccount =
+      this.#customer.kind === "account"
+        ? {
+            name: this.#customer.customer.name,
+            accountNo: this.#customer.customer.accountNo,
+            customerId: this.#customer.customer.id,
+          }
+        : null;
+    this.#ringKey = null;
     this.#lines = [];
     this.#pricing = "idle";
     this.#pricingMessage = null;
@@ -686,10 +818,11 @@ export class CounterTillApp extends HHElement {
     // An account sale bills the account: the receipt's balance is a fresh
     // read, not the sale total added to a remembered one, so the till never
     // does that arithmetic. Until the read answers, the balance row says so.
-    if (this.#tender === "ACCOUNT" && this.#customer.kind === "account") {
-      const accountNo = this.#customer.customer.accountNo;
+    if (this.#committedAccount !== null) {
+      const accountNo = this.#committedAccount.accountNo;
+      const refreshedCustomerId = this.#committedAccount.customerId;
       const refreshed = await this.#tillClient.searchCustomers(accountNo);
-      const row = refreshed.ok ? refreshed.value.find((candidate) => candidate.id === customerId) : undefined;
+      const row = refreshed.ok ? refreshed.value.find((candidate) => candidate.id === refreshedCustomerId) : undefined;
       this.#receiptBalance = row !== undefined ? formatMoney(row.openBalanceCents) : null;
       this.requestUpdate();
     }
@@ -713,12 +846,20 @@ export class CounterTillApp extends HHElement {
   /**
    * Park the ticket and list this branch's parked tickets. The ticket parks
    * as quantities and units: no price leaves this app on it, so nothing
-   * stale can come back.
+   * stale can come back. The quantities parked are the typed ones on the
+   * screen; where they differ from the priced ones the ticket re-prices
+   * first, the same as a ring.
    */
   async #parkTicket(): Promise<void> {
     if (this.#branch === null) return;
     if (this.#lines.length === 0) {
       this.#parkMessage = "Nothing to park: the ticket has no lines.";
+      this.requestUpdate();
+      return;
+    }
+    const settled = await this.#settleTypedQuantities();
+    if (!settled.ok) {
+      this.#parkMessage = settled.refusal;
       this.requestUpdate();
       return;
     }
@@ -729,7 +870,7 @@ export class CounterTillApp extends HHElement {
     const parked = await this.#tillClient.parkTicket(
       this.#branch.id,
       customerId,
-      this.#lines.map((line) => ({ productId: line.product.productId, qty: line.qty, uom: line.uom })),
+      settled.lines.map((line) => ({ productId: line.product.productId, qty: line.qty, uom: line.uom })),
     );
     if (!parked.ok) {
       this.#parkedBusy = false;
@@ -741,18 +882,27 @@ export class CounterTillApp extends HHElement {
     this.#pricing = "idle";
     this.#pricingMessage = null;
     this.#pricedForType = null;
+    this.#ringKey = null;
     this.#parkedBusy = false;
     this.requestUpdate();
     await this.#refreshParked();
   }
 
   /**
-   * Put a parked ticket back on the counter. Its lines arrive without
-   * prices, so the till prices them exactly as it prices any ticket: through
-   * the engine, in the next breath.
+   * Put a parked ticket back on the counter. The ticket on the counter comes
+   * first: a resume replaces it, so with lines already on the ticket the
+   * resume refuses in words rather than throwing someone's work away. The
+   * resumed ticket's lines arrive without prices, so the till prices them
+   * exactly as it prices any ticket: through the engine, for the customer the
+   * ticket names.
    */
   async #resumeTicket(ticketId: string): Promise<void> {
     if (this.#branch === null) return;
+    if (this.#lines.length > 0) {
+      this.#parkMessage = "Lines are on the ticket: ring them or park them before resuming another ticket.";
+      this.requestUpdate();
+      return;
+    }
     this.#parkedBusy = true;
     this.#parkMessage = null;
     this.requestUpdate();
@@ -775,6 +925,7 @@ export class CounterTillApp extends HHElement {
         marginBps: null,
       };
     });
+    this.#ringKey = null;
     this.#parkedBusy = false;
     this.requestUpdate();
     await this.updateComplete;
@@ -789,20 +940,28 @@ export class CounterTillApp extends HHElement {
       this.#customer = WALK_IN_CUSTOMER;
       this.#standing = null;
       this.#standingMessage = null;
+      this.requestUpdate();
       await this.#priceTicket();
-      return;
+    } else {
+      const known = this.#knownCustomers.get(ticket.customerId);
+      if (known !== undefined) {
+        await this.#adoptCustomer(known);
+      } else {
+        // The ticket names an account this till has not read: it prices for
+        // nobody else, and says so. The lines stand unpriced (and the ring
+        // holds) until someone picks the account and the engine prices for
+        // the account it names.
+        this.#customer = WALK_IN_CUSTOMER;
+        this.#standing = null;
+        this.#standingMessage = null;
+        this.#pricingMessage =
+          "The ticket belongs to an account this till has not read, so it is not priced: search the account, pick it, and the engine prices the lines for it.";
+        this.requestUpdate();
+      }
     }
-    const known = this.#knownCustomers.get(ticket.customerId);
-    if (known !== undefined) {
-      await this.#adoptCustomer(known);
-      return;
-    }
-    // The ticket names an account this till has not met: it prices for the
-    // walk-in rather than guessing the account's rule, and says so.
-    this.#customer = WALK_IN_CUSTOMER;
-    await this.#priceTicket();
-    this.#pricingMessage = "The ticket's account is not known to this till: these lines priced for the walk-in.";
-    this.requestUpdate();
+    // The ticket has left the parked list: read it again so the row goes with
+    // it.
+    await this.#refreshParked();
   }
 
   async #refreshParked(): Promise<void> {
@@ -816,11 +975,14 @@ export class CounterTillApp extends HHElement {
       this.#parkedState = "ready";
       this.#parkedMessage = null;
       this.#parkedRows = result.value.map((ticket) => {
-        const known = ticket.customerId === "" ? undefined : this.#knownCustomers.get(ticket.customerId);
+        if (ticket.customerId === "") {
+          return { id: ticket.id, ticketNo: ticket.ticketNo, customerLabel: "Walk-in", lineCount: ticket.lines.length };
+        }
+        const known = this.#knownCustomers.get(ticket.customerId);
         return {
           id: ticket.id,
           ticketNo: ticket.ticketNo,
-          customerLabel: known === undefined ? null : `${known.name} (${known.accountNo})`,
+          customerLabel: known !== undefined ? `${known.name} (${known.accountNo})` : "An account this till has not read",
           lineCount: ticket.lines.length,
         };
       });
@@ -855,11 +1017,13 @@ export class CounterTillApp extends HHElement {
       // The notice belongs to the card rail: it rides the status route's
       // value, and only on a card sale's receipt.
       simulated: sale.tender === "CARD" ? this.#simulated : null,
+      // The account frozen at commit, not the counter's current customer: the
+      // receipt speaks for the sale that was rung.
       account:
-        sale.tender === "ACCOUNT" && this.#customer.kind === "account"
+        sale.tender === "ACCOUNT" && this.#committedAccount !== null
           ? {
-              name: this.#customer.customer.name,
-              accountNo: this.#customer.customer.accountNo,
+              name: this.#committedAccount.name,
+              accountNo: this.#committedAccount.accountNo,
               invoiceNo: sale.invoiceNo,
               balance: this.#receiptBalance,
             }

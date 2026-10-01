@@ -230,6 +230,22 @@ const WALK_IN = {
 
 const HST_RATE_BPS = 1300; // the Ontario rate, as basis points
 
+// The dealer's house zone: the same constant the core itself compiles. The
+// ring's requested date must be THIS zone's calendar day, which is the
+// invariant "daily means the dealer's day" held at the counter: a till that
+// asks in the browser's UTC day is refused, and the two days differ every
+// evening house time.
+const HOUSE_ZONE = "America/Toronto";
+
+function houseDay(now = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: HOUSE_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
 // ---------------------------------------------------------------------------
 // The stub's state, held in memory. A restart of the stub is a fresh world,
 // which is what the plan's wipe-before-each-round posture means locally.
@@ -743,6 +759,12 @@ const server = createServer((request, response) => {
       const tender = parsed.tender;
       if (tender === "ACCOUNT" && customer.id === "") {
         respondJson(response, 400, { error: "the walk-in has no account to bill" });
+        return;
+      }
+      if (parsed.requested_date !== houseDay()) {
+        respondJson(response, 400, {
+          error: `the sale's requested date is not the dealer's day in the house zone (${HOUSE_ZONE})`,
+        });
         return;
       }
       const idempotencyKey = typeof parsed.idempotency_key === "string" ? parsed.idempotency_key : "";

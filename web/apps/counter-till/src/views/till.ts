@@ -481,9 +481,9 @@ function renderTicket(panel: TicketPanel): TemplateResult {
       ${panel.pricing === "pricing"
         ? html`<p class="notice" role="status">Pricing the ticket.</p>`
         : nothing}
-      ${panel.pricing === "refused"
-        ? html`<p class="notice" role="status">${panel.message}</p>`
-        : nothing}
+      ${panel.message === null
+        ? nothing
+        : html`<p class="notice" role="status" data-testid="ticket-message">${panel.message}</p>`}
       <div class="ticket-tools">
         <button
           type="button"
@@ -495,7 +495,7 @@ function renderTicket(panel: TicketPanel): TemplateResult {
         </button>
         ${panel.customerType === null
           ? nothing
-          : html`<span class="sold-by">priced for: ${panel.customerType}</span>`}
+          : html`<span class="sold-by" data-testid="ticket-panel-priced-for">priced for: ${panel.customerType}</span>`}
       </div>
     </section>
   `;

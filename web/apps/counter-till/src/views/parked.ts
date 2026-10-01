@@ -9,8 +9,13 @@ import { css, html, nothing, type TemplateResult } from "lit";
 export interface ParkedRow {
   id: string;
   ticketNo: string;
-  /** The account's name when this till knows it, else null (the walk-in parks with no account at all). */
-  customerLabel: string | null;
+  /**
+   * The till's own words for whose ticket this is: "Walk-in" for a ticket
+   * parked with no account, the account's name and number when this till has
+   * read it, and an honest unknown when it has not (the label never claims a
+   * walk-in for an account's ticket).
+   */
+  customerLabel: string;
   lineCount: number;
 }
 
@@ -76,9 +81,7 @@ export function renderParked(panel: ParkedPanel): TemplateResult {
                 (row) => html`
                   <li data-testid="parked-ticket">
                     <span class="ticket-no">${row.ticketNo}</span>
-                    <span class="customer-label">
-                      ${row.customerLabel === null ? "Walk-in" : row.customerLabel}
-                    </span>
+                    <span class="customer-label" data-testid="parked-customer">${row.customerLabel}</span>
                     <span class="line-count">${row.lineCount} ${row.lineCount === 1 ? "line" : "lines"}</span>
                     <button
                       type="button"
@@ -95,7 +98,9 @@ export function renderParked(panel: ParkedPanel): TemplateResult {
             </ul>
           `
         : nothing}
-      ${panel.parkMessage === null ? nothing : html`<p class="notice" role="alert">${panel.parkMessage}</p>`}
+      ${panel.parkMessage === null
+        ? nothing
+        : html`<p class="notice" role="alert" data-testid="parked-panel-note">${panel.parkMessage}</p>`}
       <div class="ticket-tools">
         <button
           type="button"
