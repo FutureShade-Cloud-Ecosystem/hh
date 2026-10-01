@@ -194,6 +194,9 @@ func demoseedRun(t *testing.T, dsn string) demoseedPlanOutput {
 			if err != nil {
 				t.Fatalf("demoseed -plan clock line %q does not parse: %v", v, err)
 			}
+			// The report prints the clock at whole-second precision, so every world-stamp
+			// comparison truncates the row stamps to that same precision: the test asserts
+			// against the clock the report states, never a finer one.
 			parsed.clock = at
 		}
 		if rest, ok := strings.CutPrefix(line, "  plan           "); ok {
@@ -967,7 +970,8 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 	}
 
 	// 18. the world in the database: one org; the newest seeded counter sale on the run's day;
-	// the world's first and last dates against the -plan report.
+	// the world's own rows for the rest (the lead's W0 ruling: the test asserts the world, not
+	// the report).
 	var orgCount, demoOrgCount int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*), count(*) FILTER (WHERE slug = $1) FROM org`, demoOrgSlug).
@@ -990,6 +994,10 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 			newestSeeded.UTC().Format(time.RFC3339), plan.clock.Format(time.RFC3339))
 	}
 
+	// What the world guarantees: its written history (every account, product, order, invoice,
+	// payment and stock fact the seed writes) ends at the run's clock, nothing written after it.
+	// Its earliest written row is the earliest dated fact this test reads over the seeded tables,
+	// and it is recorded rather than pinned to a figure.
 	var worldOldest, worldNewest time.Time
 	if err := pool.QueryRow(ctx, `
 		SELECT min(d), max(d) FROM (
@@ -1001,18 +1009,53 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 			UNION ALL SELECT created_at      FROM payments     WHERE metadata->>'demo_seed' = $1
 			UNION ALL SELECT created_at      FROM stock_moves  WHERE metadata->>'demo_seed' = $1
 		) t`, demoSeedMarker).Scan(&worldOldest, &worldNewest); err != nil {
-		t.Fatalf("reading the world's first and last dates: %v", err)
+		t.Fatalf("reading the world's written span: %v", err)
 	}
-	firstGot := worldOldest.UTC().Format("2006-01-02")
-	lastGot := worldNewest.UTC().Format("2006-01-02")
-	if firstGot != plan.firstDate {
-		t.Errorf("the world's first date is %s, demoseed -plan reports %s for the run's clock", firstGot, plan.firstDate)
+	if worldNewest.Truncate(time.Second).After(plan.clock) {
+		t.Fatalf("the world's newest written row is %s, after the run's clock %s: the written history does not end at the clock",
+			worldNewest.UTC().Format(time.RFC3339), plan.clock.Format(time.RFC3339))
 	}
-	if lastGot != plan.lastDate {
-		t.Errorf("the world's last date is %s, demoseed -plan reports %s for the run's clock", lastGot, plan.lastDate)
+	t.Logf("RECORDED: the world's earliest written row is dated %s, the earliest dated fact the test reads over the seeded tables",
+		worldOldest.UTC().Format("2006-01-02"))
+
+	// Dated facts that reach past the clock are the world's forward calendar, not its end: a
+	// seeded account invoice's due date (the customer's terms added), the furthest scheduled
+	// delivery, and the planned runs' and stops' own service-day row stamps. Recorded, never
+	// treated as the world's span.
+	var furthestDue, furthestScheduled, furthestPlannedStamp time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT max(due_date) FROM invoices WHERE metadata->>'demo_seed' = $1`, demoSeedMarker).
+		Scan(&furthestDue); err != nil {
+		t.Fatalf("reading the furthest seeded invoice due date: %v", err)
 	}
-	t.Logf("the world in the database is dated %s .. %s; the -plan report says %s .. %s",
-		firstGot, lastGot, plan.firstDate, plan.lastDate)
+	if err := pool.QueryRow(ctx, `
+		SELECT max(d) FROM (
+			       SELECT scheduled_date AS d FROM delivery_runs
+			UNION ALL SELECT scheduled_date      FROM delivery_stops
+		) t`).Scan(&furthestScheduled); err != nil {
+		t.Fatalf("reading the furthest scheduled delivery: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT max(d) FROM (
+			       SELECT created_at AS d FROM delivery_runs
+			UNION ALL SELECT created_at      FROM delivery_stops
+		) t`).Scan(&furthestPlannedStamp); err != nil {
+		t.Fatalf("reading the planned deliveries' row stamps: %v", err)
+	}
+	t.Logf("RECORDED: dated facts past the clock: the furthest seeded invoice due date %s, the furthest scheduled delivery %s, the planned deliveries' own row stamps to %s",
+		furthestDue.UTC().Format("2006-01-02"), furthestScheduled.UTC().Format("2006-01-02"), furthestPlannedStamp.UTC().Format("2006-01-02"))
+
+	// demoseed -plan's two figures, recorded with what each figure actually is (the lead's W0
+	// ruling: the report's wording overstates its span, fixing the report is outside this
+	// cycle's path, and the finding goes to the goal report).
+	var oldestInvoiceIssue time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT min(created_at) FROM invoices WHERE metadata->>'demo_seed' = $1`, demoSeedMarker).
+		Scan(&oldestInvoiceIssue); err != nil {
+		t.Fatalf("reading the oldest seeded invoice: %v", err)
+	}
+	t.Logf("RECORDED: demoseed -plan's first figure %s is the oldest seeded invoice issue date (the database answers %s), its last figure %s is the furthest scheduled delivery (the database answers %s)",
+		plan.firstDate, oldestInvoiceIssue.UTC().Format("2006-01-02"), plan.lastDate, furthestScheduled.UTC().Format("2006-01-02"))
 
 	// 19. the drawer's expected cash: its float plus the cash sale less the cash refund.
 	zRsp := sales.call("GET", "/api/v1/till/sessions/"+drawer.ID+"/zreport", nil)

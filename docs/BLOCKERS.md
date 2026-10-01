@@ -241,3 +241,16 @@ from the built rows, or word the report line as what it is.
 Recorded by lane L0, item W0 (`TestDemoWorld_CounterTill`,
 `core/cmd/core/demoworld_countertill_test.go`). Per the plan's rule for a W0
 gap, the lead closes it inside the goal or puts it to Colton.
+
+- Ruled by the lead, lane L0 amended: the test asserts the world, not the
+  report. The failing equality is replaced by the world's own guarantees
+  (its written history ends at the run's clock, nothing written after it,
+  and its newest business rows, the seeded counter sales, are the run's
+  day), and dated facts that reach past the clock (a seeded account
+  invoice's due date, the furthest scheduled delivery, the planned runs'
+  and stops' own service-day row stamps) are recorded, not treated as the
+  world's end. Both report figures moved to the recorded list, each named
+  for what it actually is (the oldest seeded invoice issue date; the
+  furthest scheduled delivery), so the goal report carries the finding
+  exactly. Fixing the report's wording is outside this cycle's path and
+  goes to the goal report with the recorded values.
