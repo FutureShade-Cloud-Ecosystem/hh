@@ -31,8 +31,8 @@ const (
 )
 
 // levelRank orders the levels so a guard can ask whether a role's level
-// reaches a route's level. Unknown levels rank below everything, which the
-// load checks make unreachable in a loaded Config.
+// reaches a route's level. A name outside the five is in the map by no
+// door: AtLeast and Holds refuse it, never rank it.
 var levelRank = map[Level]int{
 	LevelNone:   0,
 	LevelRead:   1,
@@ -41,9 +41,19 @@ var levelRank = map[Level]int{
 	LevelAdmin:  4,
 }
 
-// AtLeast reports whether the level reaches want.
+// AtLeast reports whether the level reaches want. An unknown level on
+// either side reaches nothing: a typo or an empty name answers false,
+// never true.
 func (l Level) AtLeast(want Level) bool {
-	return levelRank[l] >= levelRank[want]
+	lr, ok := levelRank[l]
+	if !ok {
+		return false
+	}
+	wr, ok := levelRank[want]
+	if !ok {
+		return false
+	}
+	return lr >= wr
 }
 
 // ExceptionKind names a kind of exception whose approvers the
@@ -145,6 +155,19 @@ func IsSurface(s string) bool {
 // money (D49's example: the configuration's checks refuse a setting that
 // would break a wall; X4: HR holds no money power).
 const RoleHR = "hr"
+
+// RoleInsideSales is the counter clerk's role id: the clerk rings a
+// refund, so the walls refuse it on the refund approvers list (the lead's
+// ruling: the clerk never approves its own refund class).
+const RoleInsideSales = "inside_sales"
+
+// RoleGeneralManager is the General Manager's role id: general_manager_selling,
+// when a dealer turns it on, adds this role to the delivery date committers.
+const RoleGeneralManager = "general_manager"
+
+// SurfaceMoneyDesk is the money surface's id. The walls refuse HR any
+// level on it above none (X4: no money settings).
+const SurfaceMoneyDesk = "money-desk"
 
 // The JSON keys of the nine dealer settings. A misspelled key in a
 // configuration is refused, not ignored, so a setting can never silently
