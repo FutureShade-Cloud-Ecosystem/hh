@@ -119,6 +119,10 @@ func (s *Service) UpdatePolicy(ctx context.Context, p PosPolicy) (PosPolicy, err
 }
 
 // Park saves a ticket for later (no order, no stock effect, no AR, prices re-derive on resume).
+//
+// THE PARKED FENCE (D49 row 500, D48 row 342): a branch is a hard wall on writes too, so the
+// caller must reach the branch it parks ONTO before the write; a login from another branch
+// cannot plant a ticket on a foreign branch's parked list.
 func (s *Service) Park(ctx context.Context, in ParkInput) (ParkedTicket, error) {
 	if in.BranchID == "" {
 		return ParkedTicket{}, clientErr(http.StatusBadRequest, "pos: branch_id is required")
@@ -130,6 +134,13 @@ func (s *Service) Park(ctx context.Context, in ParkInput) (ParkedTicket, error) 
 		if ln.ProductID == "" || ln.QtyEntered <= 0 {
 			return ParkedTicket{}, clientErr(http.StatusUnprocessableEntity, "pos: every parked line needs a product_id and a positive qty_entered")
 		}
+	}
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return ParkedTicket{}, err
+	}
+	if !caller.CanAccessBranch(in.BranchID) {
+		return ParkedTicket{}, clientErr(http.StatusForbidden, "pos: caller cannot access branch %s", in.BranchID)
 	}
 	saleType := in.SaleType
 	if saleType == "" {
@@ -187,9 +198,11 @@ func (s *Service) DiscardParked(ctx context.Context, id string) error {
 	return s.store.MarkParkedDiscarded(ctx, id)
 }
 
-// parkedBranchAccess is the by-id half of the parked fence: the ticket must exist (404) and sit
-// in a branch the caller reaches (403), both read before any write, so a foreign branch's ticket
-// is refused on its branch and not on its status.
+// parkedBranchAccess is the by-id half of the parked fence, read before any write. Behind the
+// wall answers what a missing ticket answers: the same 404 either way, so a caller holding a
+// foreign ticket's id learns nothing from it, not that it exists and not where it sits. (The
+// list's 403 names no ticket: the caller names the branch itself there, so there is nothing to
+// learn.)
 func (s *Service) parkedBranchAccess(ctx context.Context, id string) error {
 	t, found, err := s.store.GetParkedTicket(ctx, id)
 	if err != nil {
@@ -203,7 +216,7 @@ func (s *Service) parkedBranchAccess(ctx context.Context, id string) error {
 		return err
 	}
 	if !caller.CanAccessBranch(t.BranchID) {
-		return clientErr(http.StatusForbidden, "pos: caller cannot access branch %s", t.BranchID)
+		return errParkedNotFound
 	}
 	return nil
 }

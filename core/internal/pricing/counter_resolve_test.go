@@ -38,7 +38,7 @@ func TestResolveCounter_BelowFloor_NotBlocked_NoBypassRow(t *testing.T) {
 }
 
 // The pairing, arm two: the SAME line through the gated resolve (what POST
-// /api/v1/pricing/resolve and the quote path call) is blocked exactly as today. The floor
+// /api/v1/pricing/resolve and the quote path call) is blocked unchanged. The floor
 // question lives there alone.
 func TestResolveCounter_SameLineThroughGatedResolve_Blocked(t *testing.T) {
 	st := &fakeStore{
@@ -47,7 +47,7 @@ func TestResolveCounter_SameLineThroughGatedResolve_Blocked(t *testing.T) {
 	}
 	bd := resolve(t, newSvc(st, "pavers"), base(ResolveInput{CategoryID: "pavers", UOMEntered: "EA", CostCents: 8500}))
 	if !bd.Blocked || bd.BlockPolicy != BlockMarginBelowMinimum || bd.FloorBps != 2000 {
-		t.Fatalf("the gated resolve of the same line must block as today, got %+v", bd)
+		t.Fatalf("the gated resolve of the same line must block unchanged, got %+v", bd)
 	}
 }
 

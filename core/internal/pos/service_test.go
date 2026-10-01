@@ -4,13 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	iauth "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/jackc/pgx/v5"
@@ -1112,6 +1117,35 @@ func TestSale_BelowFloorLine_RingsAtRulePrice_NoBlock(t *testing.T) {
 	}
 	if h.store.orderLines[0].UnitPriceCents != 39934 {
 		t.Fatalf("the line rings at the resolver's rule price, got %+v", h.store.orderLines[0])
+	}
+}
+
+// A ring body still carrying a stray cost_cents key is TAKEN: the till's line has no such field,
+// the lenient decoder drops the key, and the sale rings through the counter resolve at the rule
+// price, with or without the key (D48 row 481, D49). Driven through the real handler decode path,
+// not through a struct literal, so the wire shape is what is under test.
+func TestRing_BodyCarryingStrayCostCents_IsTaken(t *testing.T) {
+	h := newHarness()
+	body := `{"idempotency_key":"11111111-1111-4111-8111-111111111111","branch_id":"branch-trt",` +
+		`"till_session_id":"till-1","customer_id":"cust-abc","sale_type":"COLLECT_NOW","tender":"CASH",` +
+		`"cost_cents":999999,` +
+		`"lines":[{"product_id":"prod-blu","qty_entered":100,"uom_entered":"SF","cost_cents":20000}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pos/sales", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	caller := guards.StaffCaller{
+		StaffScope: authz.StaffScope{PlatformUserID: "u-harness", OrgID: "org-harness"},
+		StaffAuthority: iauth.StaffAuthority{
+			RoleID: "inside_sales", Tier: iauth.TierFrontline, Scope: iauth.ScopeBranch,
+			Branches: []string{"branch-trt"},
+		},
+	}
+	hd := NewHandler(h.svc, nil)
+	hd.staff(hd.createSale)(rec, req, caller)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("a ring body carrying a stray cost_cents key is taken: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(h.store.orderLines) != 1 || h.store.orderLines[0].UnitPriceCents != 39934 {
+		t.Fatalf("the stray key must price nothing: the line rings at the rule price, got %+v", h.store.orderLines)
 	}
 }
 
