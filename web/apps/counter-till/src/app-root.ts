@@ -21,6 +21,8 @@ import { DemoAccount } from "./demo-account.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
 import { entryStyles, renderEntry, type FlowsState } from "./views/entry.js";
 import { tillStyles, renderTill } from "./views/till.js";
+import { ReturnsFlow } from "./returns/flow.js";
+import { returnsStyles, renderReturns } from "./views/returns.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -30,6 +32,7 @@ export class CounterTillApp extends HHElement {
     demoBannerStyles,
     entryStyles,
     tillStyles,
+    returnsStyles,
     css`
       :host {
         display: block;
@@ -74,6 +77,7 @@ export class CounterTillApp extends HHElement {
   #busy = false;
   #message: string | null = null;
   #till: { label: string } | null = null;
+  readonly #returns: ReturnsFlow;
 
   constructor() {
     super();
@@ -87,6 +91,10 @@ export class CounterTillApp extends HHElement {
     });
     this.#account = new DemoAccount({ client });
     this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
+    this.#returns = new ReturnsFlow({
+      client,
+      onChange: () => this.requestUpdate(),
+    });
   }
 
   connectedCallback(): void {
@@ -97,11 +105,13 @@ export class CounterTillApp extends HHElement {
     // retargets the target to this element (the design system's README holds
     // both halves).
     this.addEventListener("click", this.#onHostClick);
+    this.addEventListener("input", this.#onHostInput);
     void this.#loadFlows();
   }
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.removeEventListener("input", this.#onHostInput);
     super.disconnectedCallback();
   }
 
@@ -117,6 +127,21 @@ export class CounterTillApp extends HHElement {
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
     }
+    if (control.getAttribute("data-action") === "returns-find") {
+      void this.#returns.findSale();
+    }
+  };
+
+  // The returns desk's fields ride the same host delegation as the buttons:
+  // one input listener on the host, the control read off composedPath() by
+  // its data-field name, so a re-render strands no listener.
+  readonly #onHostInput = (event: Event): void => {
+    const control = event
+      .composedPath()
+      .find((node): node is Element => node instanceof Element && node.hasAttribute("data-field"));
+    if (!(control instanceof HTMLInputElement) && !(control instanceof HTMLTextAreaElement)) return;
+    const field = control.getAttribute("data-field");
+    if (field === "order-no") this.#returns.setOrderNo(control.value);
   };
 
   async #loadFlows(): Promise<void> {
@@ -195,7 +220,7 @@ export class CounterTillApp extends HHElement {
       <main>
         ${this.#till === null
           ? renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })
-          : renderTill()}
+          : html`${renderTill()}${renderReturns(this.#returns)}`}
       </main>
     `;
   }
