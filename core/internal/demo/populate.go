@@ -79,6 +79,11 @@ const (
 	// Trenton, the till's branch (migration 0003's root branch; 0060
 	// cites the same id). Every grant the demo world carries points here.
 	trentonBranchID = "5d1b3f6e-0000-4000-9000-000000000001"
+
+	// Kingston, the seed's second branch (migration 0003's pair, the id
+	// the locations table carries). No demo login reaches it; only the
+	// dealer-name rename below touches its row.
+	kingstonBranchID = "5d1b3f6e-0000-4000-9000-000000000002"
 )
 
 // The invented card rail values. The merchant id names no real merchant
@@ -192,6 +197,7 @@ type Report struct {
 	UserRolesCreated     int
 	BranchGrantsCreated  int
 	DisplayNamesRenamed  int
+	DealerNamesReplaced  int
 	UsersDeactivated     int
 	EmailsMoved          int
 	CredentialsCleared   int
@@ -305,6 +311,20 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 	report.UsersDeactivated = deactivated
 	report.EmailsMoved = moved
 	report.CredentialsCleared = cleared
+	if err != nil {
+		return report, err
+	}
+
+	// The dealer's own display words: the org anchor's name and the two
+	// demo branches' names carry the invented trading name, so no screen
+	// (the till's drawer strip and parked list header above all) renders
+	// the first dealer's real trading name from the demo database. The
+	// updates are guarded on the value they would write, so a re-run
+	// touches nothing, the same discipline the planted renames follow.
+	// Recorded in docs/BLOCKERS.md as the lead's granted exception to this
+	// lane's Touches (the review round's P2-1).
+	dealerNames, err := renameDemoDealer(ctx, tx)
+	report.DealerNamesReplaced = dealerNames
 	if err != nil {
 		return report, err
 	}
@@ -508,6 +528,32 @@ func scrubPlantedUsers(ctx context.Context, tx pgx.Tx, now time.Time) (renamed, 
 	return renamed, deactivated, moved, cleared, nil
 }
 
+// renameDemoDealer converges the demo database's branch display words onto
+// the invented trading name. The org anchor's name is already the identity
+// program's to converge (ProvisionOrgAnchor's guarded upsert writes the
+// configured name on every run); what it does not reach are the two demo
+// branches' names, which the migrations plant with the first dealer's real
+// trading name joined to the city by an em dash (migrations 0003 and 0014)
+// and which the till's screens render verbatim (the drawer strip, the parked
+// list header). Each update is guarded on the value it would write, so a
+// re-run writes nothing, and the count is only what this run changed.
+func renameDemoDealer(ctx context.Context, tx pgx.Tx) (replaced int, err error) {
+	for _, branch := range []struct{ id, name string }{
+		{trentonBranchID, "Hardscape House (demo), Trenton"},
+		{kingstonBranchID, "Hardscape House (demo), Kingston"},
+	} {
+		tag, err := tx.Exec(ctx,
+			`UPDATE locations SET name = $2, updated_at = now()
+			  WHERE id = $1::uuid AND name IS DISTINCT FROM $2`,
+			branch.id, branch.name)
+		if err != nil {
+			return 0, fmt.Errorf("demo-populate: dealer name: %w", err)
+		}
+		replaced += int(tag.RowsAffected())
+	}
+	return replaced, nil
+}
+
 // writePaymentConfig seals the invented credentials under the box's own
 // vault key (the demoseed_seal path: payment.NewVault over
 // PAYMENT_VAULT_KEY, AES-256-GCM) and inserts the one active row. No host,
@@ -570,6 +616,7 @@ func writeReport(out io.Writer, r Report) {
 		r.UsersCreated, r.UserRolesCreated, r.BranchGrantsCreated, trentonBranchID)
 	fmt.Fprintf(out, "  planted rows     %d display names replaced, %d deactivated, %d addresses moved to %s, %d planted credentials cleared\n",
 		r.DisplayNamesRenamed, r.UsersDeactivated, r.EmailsMoved, demoDomain, r.CredentialsCleared)
+	fmt.Fprintf(out, "  dealer names     %d replaced with the invented trading name\n", r.DealerNamesReplaced)
 	fmt.Fprintf(out, "  staff grants     %d inserted\n", r.StaffGrantsInserted)
 	fmt.Fprintf(out, "  payment config   %d created (merchant %s, simulator, no host, surcharges off)\n",
 		r.PaymentConfigCreated, demoMerchantID)
@@ -581,7 +628,8 @@ func writeReport(out io.Writer, r Report) {
 
 func (r Report) createdNothing() bool {
 	return r.UsersCreated == 0 && r.UserRolesCreated == 0 && r.BranchGrantsCreated == 0 &&
-		r.DisplayNamesRenamed == 0 && r.UsersDeactivated == 0 && r.EmailsMoved == 0 &&
+		r.DisplayNamesRenamed == 0 && r.DealerNamesReplaced == 0 &&
+		r.UsersDeactivated == 0 && r.EmailsMoved == 0 &&
 		r.CredentialsCleared == 0 &&
 		r.PaymentConfigCreated == 0 && !r.DemoBoxCreated && r.StaffGrantsInserted == 0
 }

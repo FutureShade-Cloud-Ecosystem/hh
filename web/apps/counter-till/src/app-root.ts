@@ -225,7 +225,19 @@ export class CounterTillApp extends HHElement {
       activeOrg: () => DEMO_ORG,
     });
     const client = new ApiClient({ baseUrl: "", fetch: capture.fetch, headers: staffHeaders });
-    this.#account = new DemoAccount({ client });
+    // The demo adapter's own client carries no staff bearer: the demo routes
+    // are pre-auth by design (the tap-a-role sign-in), and the served gate
+    // holds the pages and the demo mint behind basic authentication, where a
+    // request already carrying an Authorization header of the wrong kind is
+    // refused. The adapter's asks go out bare of a credential, the browser
+    // answers the gate's challenge the way it answered the page, and the org
+    // header still rides every call the app makes.
+    const demoClient = new ApiClient({
+      baseUrl: "",
+      fetch: capture.fetch,
+      headers: async () => ({ "X-Org": DEMO_ORG }),
+    });
+    this.#account = new DemoAccount({ client: demoClient });
     this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
     // The approver's client exists for the one return call that may carry the
     // approver's credential (D49): its provider takes the token out of the
@@ -617,14 +629,14 @@ export class CounterTillApp extends HHElement {
 
   async #searchCustomers(query: string): Promise<void> {
     const trimmed = query.trim();
-    if (trimmed === "") {
+    if (trimmed === "" || this.#branch === null) {
       this.#customerSearch = { state: "idle", hits: [], message: null };
       this.requestUpdate();
       return;
     }
     this.#customerSearch = { state: "loading", hits: [], message: null };
     this.requestUpdate();
-    const result = await this.#tillClient.searchCustomers(trimmed);
+    const result = await this.#tillClient.searchCustomers(trimmed, this.#branch.id);
     if (result.ok) {
       for (const row of result.value) this.#knownCustomers.set(row.id, row);
       this.#customerSearch = { state: "ready", hits: result.value, message: null };
@@ -1016,8 +1028,11 @@ export class CounterTillApp extends HHElement {
     if (this.#committedAccount !== null) {
       const accountNo = this.#committedAccount.accountNo;
       const refreshedCustomerId = this.#committedAccount.customerId;
-      const refreshed = await this.#tillClient.searchCustomers(accountNo);
-      const row = refreshed.ok ? refreshed.value.find((candidate) => candidate.id === refreshedCustomerId) : undefined;
+      const refreshed =
+        this.#branch !== null
+          ? await this.#tillClient.searchCustomers(accountNo, this.#branch.id)
+          : null;
+      const row = refreshed !== null && refreshed.ok ? refreshed.value.find((candidate) => candidate.id === refreshedCustomerId) : undefined;
       this.#receiptBalance = row !== undefined ? formatMoney(row.openBalanceCents) : null;
       this.requestUpdate();
     }
@@ -1166,9 +1181,10 @@ export class CounterTillApp extends HHElement {
   }
 
   async #refreshParked(): Promise<void> {
+    if (this.#branch === null) return;
     this.#parkedState = "loading";
     this.requestUpdate();
-    const result = await this.#tillClient.listParked();
+    const result = await this.#tillClient.listParked(this.#branch.id);
     if (!result.ok) {
       this.#parkedState = "refused";
       this.#parkedMessage = result.error;

@@ -543,6 +543,14 @@ correct and the wording lives only in that one local commit message; the
 lead may reword it when landing the pull request, or let it stand. Nothing
 in the code, tests or this file carries the wording.
 
+W2's third commit's subject carried the words "half a minute" where the
+house rules want no duration in committed prose. The amend to reword it
+was refused by the repository hook (history rewrite refused in full, per
+the lane's rules), and a refusal is final. The commit's content is
+correct and the wording lives only in that one local commit message; the
+lead may reword it when landing the pull request, or let it stand. Nothing
+in the code, tests or this file carries the wording.
+
 ## The Counter Till cycle, lane L4 (PX): the exit test's CI leg stays with W5 (recorded)
 
 The `ci` check runs the untagged suite with no gate variable and no
@@ -574,6 +582,23 @@ rule so the positions gate accepts them without any gate change. If the lead
 or a reviewer rules the lock edit out of bounds for this lane, it reverts as
 one line and the decision it forces is whether the app may consume the design
 system at all.
+## L2 (till contract): the client generator needed the approver header in its allowlist (recorded, done in this lane)
+
+The till's contract commit declares `X-Approver-Authorization` as a header
+parameter on `POST /api/v1/pos/returns`, and `scripts/gen-client/gen-client.mjs`
+refused every header parameter but the shared `X-Org`, so the regeneration the
+contract change requires failed outright. The lane's declared Touches name the
+contract sources and the generated outputs, not the generator, but the web
+api-client's own idempotence gate runs this generator against the committed
+tree, so without the change the committed gen tree could never be regenerated
+again and the package's suite would stay red for every lane above this one in
+the stack. The lane made the smallest change that unblocks the whole stack:
+the allowlist gains the one named header (it rides the transport's caller-set
+headers exactly like X-Org; the generated signature carries no credential, the
+bearer never did either), and the generator emits a note on the one operation
+that declares the header, so the regenerated client visibly carries it. The
+lead may want this hunk re-homed when the pull request is read; the rest of
+the commit is contract sources and generated outputs only.
 
 ### Review round (pull request 37): the accepted shape of the lock edit, and three findings recorded, not fixed
 
@@ -629,6 +654,170 @@ the two clauses that hold under both keyings: the allowance is bounded,
 and rotating forged `X-Forwarded-For` values buy no bucket. When the core
 reads the chain, that same leg proves the two-bucket behavior the
 reviewer asked for, with no script change.
+## L2 (till contract): the client generator needed the approver header in its allowlist (recorded, done in this lane)
+
+The till's contract commit declares `X-Approver-Authorization` as a header
+parameter on `POST /api/v1/pos/returns`, and `scripts/gen-client/gen-client.mjs`
+refused every header parameter but the shared `X-Org`, so the regeneration the
+contract change requires failed outright. The lane's declared Touches name the
+contract sources and the generated outputs, not the generator, but the web
+api-client's own idempotence gate runs this generator against the committed
+tree, so without the change the committed gen tree could never be regenerated
+again and the package's suite would stay red for every lane above this one in
+the stack. The lane made the smallest change that unblocks the whole stack:
+the allowlist gains the one named header (it rides the transport's caller-set
+headers exactly like X-Org; the generated signature carries no credential, the
+bearer never did either), and the generator emits a note on the one operation
+that declares the header, so the regenerated client visibly carries it. The
+lead may want this hunk re-homed when the pull request is read; the rest of
+the commit is contract sources and generated outputs only.
+## L5 (the sale at the counter): two findings recorded, both handled in this lane
+
+- **The two harnesses of the two app lanes shared one port pair.** W6's
+  Playwright and Vite defaults (4820 and 4821) are inherited by every lane
+  that copies them, and Playwright's `reuseExistingServer` then silently
+  drives whichever app is already up: this lane's first exit-test run drove
+  the other app lane's dev server and failed against its screens. This lane
+  moved its own defaults to 4826 and 4827 (both files, and the app README),
+  which leaves the old pair free; any later app lane should pick its own pair
+  the same way, or the two suites will interleave again.
+- **A form's submit event never crosses a shadow root.** The searches were
+  first written as forms with the listener on the host, the same delegation
+  the design system's README prescribes for click; the form submitted natively
+  and the app signed itself out, because submit is not composed: the event
+  stops at the shadow root and a host listener never fires, where click does.
+  Measured in Chrome, then fixed by making every search a plain button with
+  `data-action`. The design system's README's delegation section may want a
+  sentence on this for the next dependent; that file is outside this lane's
+  Touches, so it is recorded here instead.
+## L5 (the review round): four findings recorded rather than closed, with their rulings
+
+- **The ticket shows no total before the ring (review P2-7).** The counter
+  price picture answers unit quotes alone, and the app rightly computes
+  nothing, so the subtotal, tax and total first appear on the receipt. The
+  lead's ruling: either a contract read (a ticket-total read off the same
+  picture) or the testers' page says it. The contract read is outside this
+  lane's Touches, so it is recorded for whoever holds the contract next; W9's
+  testers' page should carry the sentence either way.
+- **The screen's margin figure vs the plan's wording (review P3-6, second
+  half).** C01's Holland pavers carry a margin of 1585 basis points, which is
+  15.85 percent exactly; the column renders one decimal, half away from zero:
+  "15.9%". The plan's screen 4 says "about 15.8". W9's testers' page should
+  quote the screen's figure, or the core's real answer should be checked when
+  the demo world is populated for real.
+- **The counter's state machine lives in the Lit element (review P3-9).** The
+  money helper and the boundary conversions are plain modules held by unit
+  tests; the ticket's lines, quantities and pricing sequence are still fields
+  on the app root. A later item should extract that state machine into a
+  plain module with the same test, before a second screen shares it.
+- **Nothing serves the organization's zone yet (review P2-3).** The ring's
+  requested date is contract-required and no org or tenant read carries a
+  time zone, so the app computes the day in the house zone constant the core
+  itself compiles (America/Toronto), through Intl, and the stub refuses a
+  ring whose date is not the house zone's day. When the core serves a
+  configured zone, the constant should be replaced by the served value.
+## L5 W8 (the returns desk's review round): the P3s not closed in code
+
+- **P3-1 (residue: the dialog is not a modal surface).** The Manager approval
+  dialog is a styled section carrying the dialog role; while it is open the
+  desk's fields and the find row are disabled (this round), so nothing drafts
+  or refinds under it and the dead-cards state the review reproduced is gone.
+  What remains is focus and reading order: nothing behind it is inert, and a
+  keyboard user can still reach the chrome. A truly modal surface (the inert
+  attribute, or a native dialog element) is a pattern decision that belongs
+  to the design system's kits, which this lane consumes read only.
+- **P3-8 (carried, unchanged by this round).** The Z report assertion proves
+  the app sends a cash return naming the open drawer and that the stub's
+  counter moves; the real drawer's expected cash is W9's run on the image.
+  Screen 10 (a Kingston sale refused before any money moves, by every refund
+  method) has no test here beyond the unknown number's refusal in words.
+- **The receipt's approver line is display wording, per the ruling on P2-8.**
+  On the approver's own path the receipt names the caller from the session
+  (display name and role) and the dialog path names the approver the dialog
+  minted; the contract's PosReturn carries no approver, so neither line is a
+  server-stated fact. The server's audit row holds the record. If a later
+  ruling wants the receipt to quote the core, the field is the contract's to
+  add, not this app's to invent.
+
+## L5 W9 (the story end to end): what the run found on the image, recorded and worked around
+
+The acceptance run drove the eleven screens as each role against the local
+image built from the goal's integration branch head (till/goal d028c4d) with
+this lane's app work. Four findings belong to other lanes' files; each one is
+worked around inside this lane's Touches so the run proves every screen's
+substance, and each needs its owner's close. A fifth entry records the one
+edit outside this lane's Touches the lead granted.
+
+- **The demo world homes C01 and C09 to Kingston, while the demo logins reach
+  Trenton alone.** The seed plan places C01, C04, C06, C08 and C09 on branch
+  index 0 by design, and on the migrated database the seed's branch resolution
+  puts index 0 at Kingston (the plan's rows against the seed's branch
+  resolution, not an ordering accident): C01 (the contractor whose 18 percent
+  paver price the plan's screen 4 names) and C09 (the account on hold the plan's
+  screen 5 names) come out homed to Kingston, and the customer picker is fenced
+  to the caller's own branch server-side, so the Trenton counter cannot reach
+  either row. The run proves screen 4 with C02 (a Trenton contractor, 12
+  percent off pavers) and C03 (Trenton, 10 percent off bulk, whose Granular A
+  sits below the 20 percent bulk floor and rings anyway), and screen 5 with
+  C07 (a Trenton retail account whose zero limit the credit gate refuses in
+  words, the same refusal the hold would show); the testers' page words the
+  hold account's absence accordingly. Owner: W3's lane (the demo seed and
+  populate), the lead to rule the rows or the grants.
+- **No seeded sale at Trenton crosses the refund approval amount as a return.**
+  DEMO-TRT-S09 is the seeded sale above 250.00 (251.71 with the seed's tax),
+  but the return rail recomputes a return's amounts from the line, and the
+  seeded line's own tax answer is zero: the whole line refunds at 222.75, under
+  the threshold. The run crosses the amount with a sale it rings itself (sixty
+  wall blocks, 847.50). The seed's tax on its counter sales and the return
+  rail's tax answer disagree; owner: W3's lane for the seed's tax, with RT-B's
+  lane the other side of the disagreement, so neither reads the record as its
+  own defect alone.
+- **The demo build's serve wiring did not attach the role gate: found, routed,
+  and fixed while this round ran.** Confirmed at source on till/goal d028c4d:
+  `authz.NewRoleGateRegistrar` wraps the registrar in main.go's
+  `registerRoutes` (core/cmd/core/main.go:292) and appeared nowhere in
+  demo_on.go, whose `demoRegisterRoutes` built the demo box's graph on the raw
+  registrar, so on the demo box the role gate never ran and the tier gate
+  stood alone. Probed on the image (the review round's probes, reproduced):
+  the trucks, drivers, board, runs and loadboard reads (three routes) and the
+  two policy reads answered 403 to BOTH logins, and the will-call and
+  scan-trail reads passed the gate for both (their own validation answering
+  next), so the plan's screen 11 manager cell failed on both halves: the clerk
+  was admitted to some dispatch reads, and the manager was refused most. The
+  lead routed the fix to RG's lane, which landed it on till/goal (merge
+  a884020: the demo build loads the decided default and wraps every demo
+  registration through the same registrar, with its own probe and bite). The
+  exit run now builds from the head that carries the attach, the run asserts
+  the matrix holding (a dispatch read refused to the clerk, admitted to the
+  manager; the price rule write beside it), and the testers' page states the
+  matrix as holding. The asymmetric beyond-the-till reads the review probed
+  (will-call and the scan trail admitted to the manager only once the gate
+  stands, the transaction trail admitted to either, none fenced to a branch
+  yet) are the testers' page's own known-issues entry, asserted by the run.
+- **The parked list serves a bare array against the contract's page shape.**
+  `GET /api/v1/pos/parked` answers `PosParkedTicketPage` in the contract (an
+  object with `items`), and the served core answers the bare array instead, so
+  the app's field-by-field read refused the whole list. This lane's app now
+  reads both shapes and refuses anything else; the same pass may want the
+  counter search's optional `sold_by` looked at, which the served core leaves
+  out of every hit (the app falls back to the required `base_uom`). Owner:
+  RT-B's lane for the served route's shape, with W7's lane as the contract's
+  owner for whichever side moves.
+- **The demo database's dealer display words, replaced by the populate
+  (the lead's granted exception to this lane's Touches, the review round's
+  P2-1).** Migrations 0003 and 0014 plant the two demo branches' names with
+  the first dealer's real trading name joined to the city by an em dash, and
+  the till's drawer strip and parked list header render the branch name
+  verbatim, so every till screen showed the real trading name while the
+  testers' page said the box carries one invented dealer. The lead granted
+  one edit in W3's file, core/internal/demo/populate.go: the populate's own
+  rename discipline now converges the two demo branches' display names onto
+  the invented trading name (Hardscape House (demo), Trenton and Hardscape
+  House (demo), Kingston), each update guarded on the value it would write so
+  a re-run writes nothing, counted in the run report; the org anchor's name
+  was already the identity program's to converge. The acceptance run asserts
+  the invented name on the drawer strip and the parked list header, and the
+  screenshots show it.
 
 ## The Counter Till cycle, lane L3 (W5): the demoseed integration suite's migration glob resolves nowhere since the fold (recorded, not this lane's file)
 
