@@ -4,15 +4,17 @@ The Counter Till micro-app: one Vite entry, one bundle (web/apps/README.md).
 This slice is the demo way in (role cards from `GET /api/v1/demo/flows`, the
 demo adapter behind the auth package's `AccountSurface` seam, the api-client
 sending `X-Org: hh-demo`), a header with the Demo banner, the role's name and
-sign out, and the returns desk: the original sale found by its number through
-the branch fenced lookup route, its lines with what is still returnable, the
-three refund rails (cash from the drawer, card to the simulator, account
-credit), and the refund above the dealer's approval amount: refused to the
-clerk with the amount and the approver roles named, completed by a manager's
-own credential entered at the clerk's till through the Manager approval
-dialog, the token held in memory for the one call and dropped, the receipt
-naming the approver and the clerk, and the till still the clerk's. The sale at
-the counter builds on this shell elsewhere in the cycle.
+sign out, the sale at the counter (the branch's drawer, the priced ticket with
+its margin column, cash, card and account tenders, the receipt, and the
+branch's parked tickets), and the returns desk beside it: the original sale
+found by its number through the branch fenced lookup route, its lines with
+what is still returnable, the three refund rails (cash from the drawer, card
+to the simulator, account credit), and the refund above the dealer's approval
+amount: refused to the clerk with the amount and the approver roles named,
+completed by a manager's own credential entered at the clerk's till through
+the Manager approval dialog, the token held in memory for the one call and
+dropped, the receipt naming the approver and the clerk, and the till still the
+clerk's.
 
 Money is never computed here: every figure on the desk is an integer-cent
 amount the core stated, spelled by the one money helper (`src/money.ts`), and
@@ -20,21 +22,16 @@ no other module formats money.
 
 ## Running the app against the local stub
 
-<<<<<<< HEAD
 The app calls the core's routes on its own origin. Without a core, a local
-stub serves the same shapes (the contract's `DemoFlowList`,
-`DemoSessionResponse`, `PosReturnLookup`, `PosReturn`, the approval refusal's
-409, `TillOpenLookup`, `TillZReport`, and `PaymentConfigStatus`):
-=======
-The app calls the core's demo routes on its own origin. Without a core, a
-local stub serves the same shapes (the contract's `DemoFlowList`,
-`DemoSessionResponse`, and the counter routes the sale screen speaks, from
-`Branch` and `TillSessionDetail` to `PosSaleView`):
->>>>>>> origin/till/l5-w7
+stub serves the same shapes: the contract's `DemoFlowList` and
+`DemoSessionResponse`; the counter routes the sale screen speaks, from
+`Branch` and `TillSessionDetail` to `PosSaleView`; and the returns desk's
+routes, `PosReturnLookup`, `PosReturn`, the approval refusal's 409,
+`TillOpenLookup`, `TillZReport`, and `PaymentConfigStatus`:
 
 ```
-node test/stub/demo-stub.mjs        # the demo and counter routes on 127.0.0.1:4827
-npm run dev                         # the app on 127.0.0.1:4826, /api proxied to the stub
+CT_STUB_PORT=4827 node test/stub/demo-stub.mjs   # the demo, counter and returns routes
+npm run dev                                      # the app on 127.0.0.1:4826, /api proxied to the stub
 ```
 
 The port pair stays away from the cycle's other lane's pair: `CT_APP_PORT`
@@ -72,10 +69,12 @@ The suite runs one worker, in order: the stub holds the demo world in memory
 what it itself caused. `test/entry.pw.ts` holds the way in (W6's screens);
 `test/sale.pw.ts` holds the sale at the counter (W7's screens, including the
 committed sale read back through `GET /api/v1/pos/sales/{id}` and compared
-against every figure on screen); `test/scans.pw.ts` holds the two source
-scans (no money arithmetic outside the one named money helper, and no card
-path) as tests, so the CI keeps them green and not just a report.
+against every figure on screen); `test/returns.pw.ts` holds the returns desk
+(W8's screens, the approval dialog and the one time credential included);
+`test/scans.pw.ts` holds the two source scans (no money arithmetic outside
+the one named money helper, and no card path) as tests, so the CI keeps them
+green and not just a report.
 
 The stub is a development and test double only: the real routes are the core's
-(the mint is the demo build's, the pricing is the engine's), and nothing in
-the app knows the stub exists.
+(the mint is the demo build's, the pricing is the engine's, the returns rules
+are RT-B's), and nothing in the app knows the stub exists.

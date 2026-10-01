@@ -1,57 +1,42 @@
-<<<<<<< HEAD
-// The local demo stub: the demo routes and the till's return paths in the
-// contract's shapes, for the dev server's /api proxy and the Playwright
-// harness. This is a development and test double only: the real routes are
-// the core's (the mint is the demo build's, the returns rules are RT-B's),
-// and nothing in the app imports this file. When the real routes land, the
-// app and this suite keep working against them unchanged, because both speak
-// only the contract's shapes:
-//   GET  /api/v1/demo/flows            -> DemoFlowList
-//   POST /api/v1/demo/session          -> DemoSessionResponse
-//   GET  /api/v1/pos/returns/lookup    -> PosReturnLookup
-//   POST /api/v1/pos/returns           -> PosReturn (409 PosRefundApprovalRequired)
-//   GET  /api/v1/till/sessions/open    -> TillOpenLookup
+// The local demo stub: the demo routes, the counter's routes and the till's
+// return paths in the contract's shapes, for the dev server's /api proxy and
+// the Playwright harness. This is a development and test double only: the
+// real routes are the core's (the mint is the demo build's, the pricing is
+// the engine's, the returns rules are RT-B's), and nothing in the app imports
+// this file. When the real routes land, the app and this suite keep working
+// against them unchanged, because both speak only the contract's shapes:
+//   GET  /api/v1/demo/flows                 -> DemoFlowList
+//   POST /api/v1/demo/session               -> DemoSessionResponse
+//   GET  /api/v1/branches                   -> Branch[]
+//   GET  /api/v1/till/sessions/open         -> TillOpenLookup
+//   POST /api/v1/till/sessions              -> TillOpenResult
+//   GET  /api/v1/till/sessions/{id}         -> TillSessionDetail
 //   GET  /api/v1/till/sessions/{id}/zreport -> TillZReport
-//   GET  /api/v1/payments/config       -> PaymentConfigStatus
-// The demo routes are public in the contract (security: []), so the stub
-// checks no credential there; the phrase gate in front of the real demo box
-// is Caddy's (W5's image), not the routes'. The staff routes the returns desk
-// calls do carry the caller's bearer, and the stub reads the account back out
-// of the token it minted itself, because the refusal rules it stands in for
-// (the approval above the amount) are answered per role: what the real core
-// resolves from the verified token, this stub reads from its own mint.
-=======
-// The local demo stub: the demo routes and the counter's read routes in the
-// contract's shapes, for the dev server's /api proxy and the Playwright
-// harness. This is a development and test double only: the real routes are
-// the core's (the mint is the demo build's, the pricing is the engine's), and
-// nothing in the app imports this file. When the real routes land, the app
-// and this suite keep working against them unchanged, because both speak only
-// the contract's shapes:
-//   GET  /api/v1/demo/flows               -> DemoFlowList
-//   POST /api/v1/demo/session             -> DemoSessionResponse
-//   GET  /api/v1/branches                 -> Branch[]
-//   GET  /api/v1/till/sessions/open       -> TillOpenLookup
-//   POST /api/v1/till/sessions            -> TillOpenResult
-//   GET  /api/v1/till/sessions/{id}       -> TillSessionDetail
-//   GET  /api/v1/products/counter-search  -> ProductCounterSearchResults
-//   GET  /api/v1/customers/search         -> CustomerSearchResult[]
-//   GET  /api/v1/pos/account-standing     -> PosAccountStanding
-//   POST /api/v1/pos/counter-prices       -> PosCounterPrices
-//   POST /api/v1/pos/margin-glance        -> PosMarginGlance
-//   GET  /api/v1/payments/config          -> PaymentConfigStatus
-//   POST /api/v1/pos/sales                -> PosSale
-//   GET  /api/v1/pos/sales/{id}           -> PosSaleView
-//   POST /api/v1/pos/parked               -> PosParkedTicket
-//   GET  /api/v1/pos/parked               -> PosParkedTicketPage
-//   POST /api/v1/pos/parked/{id}/resume   -> PosParkedTicket
+//   GET  /api/v1/products/counter-search    -> ProductCounterSearchResults
+//   GET  /api/v1/customers/search           -> CustomerSearchResult[]
+//   GET  /api/v1/pos/account-standing       -> PosAccountStanding
+//   POST /api/v1/pos/counter-prices         -> PosCounterPrices
+//   POST /api/v1/pos/margin-glance          -> PosMarginGlance
+//   GET  /api/v1/payments/config            -> PaymentConfigStatus
+//   POST /api/v1/pos/sales                  -> PosSale
+//   GET  /api/v1/pos/sales/{id}             -> PosSaleView
+//   POST /api/v1/pos/parked                 -> PosParkedTicket
+//   GET  /api/v1/pos/parked                 -> PosParkedTicketPage
+//   POST /api/v1/pos/parked/{id}/resume     -> PosParkedTicket
+//   GET  /api/v1/pos/returns/lookup         -> PosReturnLookup
+//   POST /api/v1/pos/returns                -> PosReturn (409 PosRefundApprovalRequired)
 // The demo routes are public in the contract (security: []), so they check no
 // credential; the phrase gate in front of the real demo box is Caddy's (W5's
-// image), not the routes'. The staff routes are not public: this stub reads
-// the minted bearer the same way the core's middleware does (the token's own
-// sub claim) and refuses a call without one, so the app's header plumbing is
-// exercised exactly as it would be against the real server.
->>>>>>> origin/till/l5-w7
+// image), not the routes'. The staff routes are not public, and they answer
+// behind two readers, one per lane's suite. The counter's routes read the
+// minted bearer the way the core's middleware does (the token's own sub
+// claim), hold the demo org header beside it, and refuse a call without
+// either, so the app's header plumbing is exercised exactly as it would be
+// against the real server. The returns desk's routes and the Z report answer
+// the bearer alone and read the account back out of the token this stub
+// minted itself, because the refusal rules they stand in for (the approval
+// above the amount) are answered per role: what the real core resolves from
+// the verified token, this stub reads from its own mint.
 //
 // The mint answers a JWT-shaped token so the app's expiry read (the token's
 // exp claim) sees the same shape the real mint issues: three segments, a
@@ -282,6 +267,9 @@ const nextDocNo = (prefix) => {
 };
 
 const uuidFromCounter = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+// The returns world below spells this same helper `uuid`: two names, one id
+// spelling, because both worlds shape their ids by it.
+const uuid = uuidFromCounter;
 
 // One open drawer per branch, station MAIN: the counter's shared drawer.
 const drawers = new Map(); // branch_id -> session row
@@ -309,107 +297,21 @@ function seedParkedKingstonTicket() {
 seedParkedKingstonTicket();
 
 // ---------------------------------------------------------------------------
-// The pricing stand-in: the same waterfall-shaped table the ring and the two
-// counter reads answer from, so a line's screen figure and the committed
-// sale's figure cannot drift. Integer cents throughout.
-// ---------------------------------------------------------------------------
-
-function customerFor(customerId) {
-  if (typeof customerId !== "string" || customerId === "") return WALK_IN;
-  return CUSTOMERS.find((c) => c.id === customerId) ?? null;
-}
-
-// One resolved line: the price the engine would answer for this customer, this
-// branch, this product at this quantity. The bulk table is flat in the demo
-// world: every quantity rings at the same rule price.
-function resolveLine(customerId, productId, branchId) {
-  const product = PRODUCTS.find((p) => p.product_id === productId);
-  const customer = customerFor(customerId);
-  if (product === undefined || customer === null) return null;
-  const retail = product.list_cents;
-  const percentOff = customer.percent_off ?? 0;
-  const customerCents = percentOff === 0 ? retail : Math.round((retail * (100 - percentOff)) / 100);
-  return {
-    product,
-    customer,
-    price_uom: product.sold_by,
-    retail_cents: retail,
-    customer_cents: customerCents,
-    saving_cents: retail - customerCents,
-    basis: percentOff > 0 ? "ACCOUNT" : undefined,
-  };
-}
-
-function taxCents(subtotal) {
-  return Math.round((subtotal * HST_RATE_BPS) / 10000);
-}
-
-// A line's committed total: the rule price at the rung quantity, rounded to
-// the whole cent exactly as the engine's fixed-precision decimal does. The
-// ring, the price read and the glance all answer through this one function,
-// so a screen figure and a committed figure cannot drift.
-function lineTotalCents(unitCents, qtyEntered) {
-  return Math.round(unitCents * qtyEntered);
-}
-
-function marginBpsOf(revenue, cost) {
-  return Math.round(((revenue - cost) / revenue) * 10000);
-}
-
-// The card rail: the demo's card tender charges the simulator, so the status
-// route answers simulated: true and every capture reference begins like the
-// simulator's. When the real core lands on the integration branch before the
-// card rail fix, its route answers simulated: false; the till's notice
-// renders exactly when the value is true, so the same app serves both worlds
-// unchanged and only the words move.
-const PAYMENT_CONFIG = {
-  configured: true,
-  merchant_id: "demo-merchant",
-  processor: "simulator",
-  currency: "CAD",
-  simulated: true,
-};
-
-// The credit gate, in the shape the core's handler answers: a refusal the
-// client reads by its error word and status, with the policy named beside it.
-function creditBlocked(policy) {
-  return { status: 409, body: { error: "credit_blocked", policy, queue: "staff_approvals" } };
-}
-
-// ---------------------------------------------------------------------------
-// The mint, the auth read, and the response helpers.
-// ---------------------------------------------------------------------------
-
-function base64UrlJson(value) {
-  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
-}
-
-function mintToken(flow) {
-  const issuedAtSeconds = Math.floor(Date.now() / 1000);
-  const header = { alg: "ES256", typ: "JWT" };
-  const payload = {
-    iss: "hh-demo-stub",
-    sub: USERS[flow].user_id,
-    aud: "staff",
-    iat: issuedAtSeconds,
-    exp: issuedAtSeconds + 60 * 60,
-  };
-  return `${base64UrlJson(header)}.${base64UrlJson(payload)}.c3R1Yi1zaWduYXR1cmUtYnl0ZXM`;
-}
-
-<<<<<<< HEAD
-// The stub's till world: the demo branch's sales, the drawer, and the returns
+// The returns world: the demo branch's sales, the drawer, and the returns
 // already taken. The sale numbers are the counter's own spellings, every id
 // is uuid shaped as the contract's formats name them, the money is integer
 // cents straight from the (stubbed) core, and tax is zero in this world so
 // every figure a test reads is the line's own total. A sale numbered outside
 // this table (another branch's sale among them: the real lookup is branch
 // fenced, and a fenced sale is an invisible one) answers not found.
-const BRANCH_ID = "5d1b3f6e-0000-4000-9000-000000000001";
+//
+// BRANCH_ID is this world's own demo branch, no relation to the counter
+// world's Trenton and Kingston above: the returns desk reads the drawer for
+// the branch the found sale names, so this one answers its drawer and its Z
+// report, and the counter's routes keep fencing by the login's own grant.
+// ---------------------------------------------------------------------------
 
-// Deterministic uuid shaped ids, one per row of this invented world: the
-// digits are the world's own numbering, the shape is the contract's.
-const uuid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const BRANCH_ID = "5d1b3f6e-0000-4000-9000-000000000001";
 
 const SALES = {
   "CT-1001": {
@@ -543,10 +445,12 @@ const SALES = {
   },
 };
 
-// The drawer's world: one open session at the demo branch, with its opening
+// The drawer's world: one open session at the returns branch, with its opening
 // float and the cash that has moved through it. The Z report's expected cash
 // is read off these counters, so a cash return moving the cash out counter is
-// the same movement the Z report shows.
+// the same movement the Z report shows. It stands beside the counter world's
+// per branch drawers: that one is opened and found by the till, this one is
+// the returns desk's own, and neither answers for the other.
 const DRAWER = {
   session_id: uuid(90001),
   branch_id: BRANCH_ID,
@@ -581,6 +485,99 @@ const APPROVER_ROLES = ["sales_manager", "branch_manager"];
 
 let RETURN_SEQ = 0;
 
+// ---------------------------------------------------------------------------
+// The pricing stand-in: the same waterfall-shaped table the ring and the two
+// counter reads answer from, so a line's screen figure and the committed
+// sale's figure cannot drift. Integer cents throughout.
+// ---------------------------------------------------------------------------
+
+function customerFor(customerId) {
+  if (typeof customerId !== "string" || customerId === "") return WALK_IN;
+  return CUSTOMERS.find((c) => c.id === customerId) ?? null;
+}
+
+// One resolved line: the price the engine would answer for this customer, this
+// branch, this product at this quantity. The bulk table is flat in the demo
+// world: every quantity rings at the same rule price.
+function resolveLine(customerId, productId, branchId) {
+  const product = PRODUCTS.find((p) => p.product_id === productId);
+  const customer = customerFor(customerId);
+  if (product === undefined || customer === null) return null;
+  const retail = product.list_cents;
+  const percentOff = customer.percent_off ?? 0;
+  const customerCents = percentOff === 0 ? retail : Math.round((retail * (100 - percentOff)) / 100);
+  return {
+    product,
+    customer,
+    price_uom: product.sold_by,
+    retail_cents: retail,
+    customer_cents: customerCents,
+    saving_cents: retail - customerCents,
+    basis: percentOff > 0 ? "ACCOUNT" : undefined,
+  };
+}
+
+function taxCents(subtotal) {
+  return Math.round((subtotal * HST_RATE_BPS) / 10000);
+}
+
+// A line's committed total: the rule price at the rung quantity, rounded to
+// the whole cent exactly as the engine's fixed-precision decimal does. The
+// ring, the price read and the glance all answer through this one function,
+// so a screen figure and a committed figure cannot drift.
+function lineTotalCents(unitCents, qtyEntered) {
+  return Math.round(unitCents * qtyEntered);
+}
+
+function marginBpsOf(revenue, cost) {
+  return Math.round(((revenue - cost) / revenue) * 10000);
+}
+
+// The card rail: the demo's card tender charges the simulator, so the status
+// route answers simulated: true and every capture reference begins like the
+// simulator's. When the real core lands on the integration branch before the
+// card rail fix, its route answers simulated: false; the till's notice
+// renders exactly when the value is true, so the same app serves both worlds
+// unchanged and only the words move. One status answers both desks: the till
+// and the returns desk read the same rail, and the suites hold only the
+// simulated flag on it (true here; each suite fulfils the false side itself),
+// so the returns lane's own field spelling for the merchant and processor
+// words yields to this one constant.
+const PAYMENT_CONFIG = {
+  configured: true,
+  merchant_id: "demo-merchant",
+  processor: "simulator",
+  currency: "CAD",
+  simulated: true,
+};
+
+// The credit gate, in the shape the core's handler answers: a refusal the
+// client reads by its error word and status, with the policy named beside it.
+function creditBlocked(policy) {
+  return { status: 409, body: { error: "credit_blocked", policy, queue: "staff_approvals" } };
+}
+
+// ---------------------------------------------------------------------------
+// The mint, the auth reads, and the response helpers.
+// ---------------------------------------------------------------------------
+
+function base64UrlJson(value) {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+}
+
+function mintToken(flow) {
+  const issuedAtSeconds = Math.floor(Date.now() / 1000);
+  const header = { alg: "ES256", typ: "JWT" };
+  const payload = {
+    iss: "hh-demo-stub",
+    sub: USERS[flow].user_id,
+    aud: "staff",
+    iat: issuedAtSeconds,
+    exp: issuedAtSeconds + 60 * 60,
+  };
+  return `${base64UrlJson(header)}.${base64UrlJson(payload)}.c3R1Yi1zaWduYXR1cmUtYnl0ZXM`;
+}
+
 // The approver credential, read the way the caller's is: a bearer this stub
 // minted, carried in its own header. `present` says whether the header rode
 // the request at all; `account` is the verified approver or null. Verified
@@ -610,6 +607,98 @@ function approverFromRequest(request) {
     return { present: true, account: null };
   }
 }
+
+// The staff caller for the returns desk's routes and the Z report, read back
+// out of a bearer this stub itself minted: the payload's sub names the
+// account. Null when there is no usable bearer, and those routes answer 401
+// like the real gate does. This reader holds no org header requirement: its
+// suite reads the Z report straight, under a bare minted bearer, the way the
+// harness itself asks one.
+function callerFromRequest(request) {
+  const header = request.headers["authorization"] ?? "";
+  const match = /^Bearer (.+)$/.exec(header);
+  if (match === null) return null;
+  const parts = match[1].split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    const sub = payload === null || typeof payload !== "object" ? undefined : payload.sub;
+    if (typeof sub !== "string") return null;
+    for (const flow of Object.keys(USERS)) {
+      if (USERS[flow].user_id === sub) return { flow, account: USERS[flow] };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// The auth read the counter's routes answer behind, the way the core's
+// middleware does: the bearer's own sub claim names the account, and the
+// account's grant names the branch, and the demo org header rides beside the
+// bearer. No bearer, no unreadable bearer, an account without a grant, or a
+// call without the org header: refused before any route logic runs.
+function callerOf(request, url) {
+  const header = request.headers.authorization ?? "";
+  if (!header.startsWith("Bearer ")) return { refused: 401, error: "no bearer on a staff route" };
+  const parts = header.slice("Bearer ".length).split(".");
+  if (parts.length !== 3) return { refused: 401, error: "the bearer is not a readable token" };
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+  } catch {
+    return { refused: 401, error: "the bearer's claims are not readable" };
+  }
+  const userId = payload?.sub;
+  const branchId = ACCOUNT_BRANCH[userId];
+  if (typeof userId !== "string" || branchId === undefined) {
+    return { refused: 401, error: "the bearer names no demo account" };
+  }
+  const org = request.headers["x-org"];
+  if (org !== "hh-demo") return { refused: 400, error: "X-Org is missing or not the demo org" };
+  return { userId, branchId };
+}
+
+function respondJson(response, status, payload, extraHeaders = {}) {
+  response.writeHead(status, { "content-type": "application/json", ...extraHeaders });
+  response.end(JSON.stringify(payload));
+}
+
+// Two small body readers, one per lane's shape. The returns desk's routes read
+// the raw body and parse it after the credential checks; the counter's routes
+// parse inside the read and answer the bad body themselves.
+function readRawBody(request) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    request.on("data", (chunk) => {
+      body += chunk;
+    });
+    request.on("end", () => resolve(body));
+    request.on("error", reject);
+  });
+}
+
+function readBody(request, respond) {
+  let body = "";
+  request.on("data", (chunk) => {
+    body += chunk;
+  });
+  request.on("end", () => {
+    if (body === "") {
+      respond({});
+      return;
+    }
+    try {
+      respond(JSON.parse(body));
+    } catch {
+      respondJson(response, 400, { error: "the request body is not JSON" });
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// The returns world's own rules: what a return refuses, and how it commits.
+// ---------------------------------------------------------------------------
 
 // What the return's own rails refuse before any money moves, in the
 // contract's envelope. The approval refusal names itself in the error string
@@ -723,149 +812,8 @@ function commitReturn(caller, body, approver) {
   return answer;
 }
 
-function readBody(request) {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    request.on("data", (chunk) => {
-      body += chunk;
-    });
-    request.on("end", () => resolve(body));
-    request.on("error", reject);
-  });
-}
-
-// The staff caller, read back out of a bearer this stub itself minted: the
-// payload's sub names the account. Null when there is no usable bearer, and
-// the staff routes answer 401 like the real gate does.
-function callerFromRequest(request) {
-  const header = request.headers["authorization"] ?? "";
-  const match = /^Bearer (.+)$/.exec(header);
-  if (match === null) return null;
-  const parts = match[1].split(".");
-  if (parts.length !== 3) return null;
-  try {
-    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
-    const sub = payload === null || typeof payload !== "object" ? undefined : payload.sub;
-    if (typeof sub !== "string") return null;
-    for (const flow of Object.keys(USERS)) {
-      if (USERS[flow].user_id === sub) return { flow, account: USERS[flow] };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function respondJson(response, status, payload, extraHeaders = {}) {
-  response.writeHead(status, { "content-type": "application/json", ...extraHeaders });
-  response.end(JSON.stringify(payload));
-}
-
-// The test suite asserts the app sends the demo org on its demo calls, so the
-// stub echoes the org it received back as a response header: a wrong or
-// missing X-Org on the app side fails the suite right here, which is where a
-// slip in the client configuration would surface on the real box too (the
-// core's membership source answers for hh-demo and nothing else).
-function sawOrg(request) {
-  return { "x-stub-saw-org": request.headers["x-org"] ?? "" };
-}
-
-const server = createServer(async (request, response) => {
-  const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
-  // Every api request is sighted for the harness's peek route: the path, and
-  // whether the approver's header rode it. The credential's whole claim
-  // (one send, the approver's client alone) is asserted against this ledger.
-  if (url.pathname.startsWith("/api/")) {
-    SIGHTINGS.push({
-      path: url.pathname,
-      approverHeader: (request.headers["x-approver-authorization"] ?? "") !== "",
-    });
-  }
-  if (request.method === "GET" && url.pathname === "/healthz") {
-    respondJson(response, 200, { ok: true });
-    return;
-  }
-  if (request.method === "GET" && url.pathname === "/_stub/state") {
-    // Harness-only: the tests' read back of this stub's ledgers. No contract
-    // path shares the namespace, and the app never calls it.
-    respondJson(response, 200, {
-      keys: KEYS_SEEN,
-      lastReturnBody: LAST_RETURN_BODY,
-      sightings: SIGHTINGS,
-      returns: [...RETURN_META.entries()].map(([key, meta]) => ({ key, ...meta })),
-    });
-    return;
-  }
-  if (request.method === "GET" && url.pathname === "/api/v1/demo/flows") {
-    respondJson(response, 200, { flows: FLOWS }, sawOrg(request));
-    return;
-  }
-  if (request.method === "POST" && url.pathname === "/api/v1/demo/session") {
-    const org = sawOrg(request);
-    let body = "";
-    request.on("data", (chunk) => {
-      body += chunk;
-    });
-    request.on("end", () => {
-      let flow;
-      try {
-        const parsed = JSON.parse(body);
-        flow = parsed === null || typeof parsed !== "object" ? undefined : parsed.flow;
-      } catch {
-        respondJson(response, 400, { error: "the request body is not JSON" }, org);
-        return;
-      }
-=======
-// The auth read the core's middleware does: the bearer's own sub claim names
-// the account, and the account's grant names the branch. No bearer, no
-// unreadable bearer, or an account without a grant: refused before any route
-// logic runs.
-function callerOf(request, url) {
-  const header = request.headers.authorization ?? "";
-  if (!header.startsWith("Bearer ")) return { refused: 401, error: "no bearer on a staff route" };
-  const parts = header.slice("Bearer ".length).split(".");
-  if (parts.length !== 3) return { refused: 401, error: "the bearer is not a readable token" };
-  let payload;
-  try {
-    payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
-  } catch {
-    return { refused: 401, error: "the bearer's claims are not readable" };
-  }
-  const userId = payload?.sub;
-  const branchId = ACCOUNT_BRANCH[userId];
-  if (typeof userId !== "string" || branchId === undefined) {
-    return { refused: 401, error: "the bearer names no demo account" };
-  }
-  const org = request.headers["x-org"];
-  if (org !== "hh-demo") return { refused: 400, error: "X-Org is missing or not the demo org" };
-  return { userId, branchId };
-}
-
-function respondJson(response, status, payload) {
-  response.writeHead(status, { "content-type": "application/json" });
-  response.end(JSON.stringify(payload));
-}
-
-function readBody(request, respond) {
-  let body = "";
-  request.on("data", (chunk) => {
-    body += chunk;
-  });
-  request.on("end", () => {
-    if (body === "") {
-      respond({});
-      return;
-    }
-    try {
-      respond(JSON.parse(body));
-    } catch {
-      respondJson(response, 400, { error: "the request body is not JSON" });
-    }
-  });
-}
-
 // ---------------------------------------------------------------------------
-// The routes.
+// The routes' row helpers.
 // ---------------------------------------------------------------------------
 
 function tillSessionRow(branchId) {
@@ -911,24 +859,64 @@ function customerSearchRow(customer) {
   };
 }
 
-const server = createServer((request, response) => {
+// The test suite asserts the app sends the demo org on its demo calls, so the
+// stub echoes the org it received back as a response header: a wrong or
+// missing X-Org on the app side fails the suite right here, which is where a
+// slip in the client configuration would surface on the real box too (the
+// core's membership source answers for hh-demo and nothing else).
+function sawOrg(request) {
+  return { "x-stub-saw-org": request.headers["x-org"] ?? "" };
+}
+
+const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
   const path = url.pathname;
-
+  // Every api request is sighted for the harness's peek route: the path, and
+  // whether the approver's header rode it. The credential's whole claim
+  // (one send, the approver's client alone) is asserted against this ledger.
+  if (path.startsWith("/api/")) {
+    SIGHTINGS.push({
+      path,
+      approverHeader: (request.headers["x-approver-authorization"] ?? "") !== "",
+    });
+  }
   if (request.method === "GET" && path === "/healthz") {
     respondJson(response, 200, { ok: true });
     return;
   }
+  if (request.method === "GET" && path === "/_stub/state") {
+    // Harness-only: the tests' read back of this stub's ledgers. No contract
+    // path shares the namespace, and the app never calls it.
+    respondJson(response, 200, {
+      keys: KEYS_SEEN,
+      lastReturnBody: LAST_RETURN_BODY,
+      sightings: SIGHTINGS,
+      returns: [...RETURN_META.entries()].map(([key, meta]) => ({ key, ...meta })),
+    });
+    return;
+  }
 
-  // The demo routes stay public, exactly as the contract marks them.
+  // The demo routes stay public, exactly as the contract marks them, and echo
+  // the org they were sent for the suite's own assertion.
   if (request.method === "GET" && path === "/api/v1/demo/flows") {
-    respondJson(response, 200, { flows: FLOWS });
+    respondJson(response, 200, { flows: FLOWS }, sawOrg(request));
     return;
   }
   if (request.method === "POST" && path === "/api/v1/demo/session") {
-    readBody(request, (parsed) => {
-      const flow = parsed === null || typeof parsed !== "object" ? undefined : parsed.flow;
->>>>>>> origin/till/l5-w7
+    const org = sawOrg(request);
+    let body = "";
+    request.on("data", (chunk) => {
+      body += chunk;
+    });
+    request.on("end", () => {
+      let flow;
+      try {
+        const parsed = JSON.parse(body);
+        flow = parsed === null || typeof parsed !== "object" ? undefined : parsed.flow;
+      } catch {
+        respondJson(response, 400, { error: "the request body is not JSON" }, org);
+        return;
+      }
       if (typeof flow !== "string" || !Object.hasOwn(USERS, flow)) {
         respondJson(response, 400, { error: "unknown flow" }, org);
         return;
@@ -937,8 +925,11 @@ const server = createServer((request, response) => {
     });
     return;
   }
-<<<<<<< HEAD
-  if (request.method === "GET" && url.pathname === "/api/v1/pos/returns/lookup") {
+
+  // The returns desk's routes and the Z report: staff routes that answer the
+  // bearer alone (the reader above), ahead of the counter's own gate, because
+  // their suite's own reads carry no org header.
+  if (request.method === "GET" && path === "/api/v1/pos/returns/lookup") {
     const caller = callerFromRequest(request);
     if (caller === null) {
       respondJson(response, 401, { error: "no usable staff credential" });
@@ -956,125 +947,91 @@ const server = createServer((request, response) => {
       respondJson(response, 404, { error: "no sale with that number answers at this counter" });
       return;
     }
-      respondJson(response, 200, {
-        order_id: sale.order_id,
-        order_no: sale.order_no,
-        branch_id: sale.branch_id,
-        customer_id: sale.customer_id,
-        invoice_id: sale.invoice_id,
-        sale_tender: sale.sale_tender,
-        card_refundable: sale.card_refundable,
-        lines: sale.lines.map((line) => ({
-          ...line,
-          qty_returned: RETURNED_QTY.get(line.order_line_id) ?? 0,
-        })),
-      });
+    respondJson(response, 200, {
+      order_id: sale.order_id,
+      order_no: sale.order_no,
+      branch_id: sale.branch_id,
+      customer_id: sale.customer_id,
+      invoice_id: sale.invoice_id,
+      sale_tender: sale.sale_tender,
+      card_refundable: sale.card_refundable,
+      lines: sale.lines.map((line) => ({
+        ...line,
+        qty_returned: RETURNED_QTY.get(line.order_line_id) ?? 0,
+      })),
+    });
+    return;
+  }
+  if (
+    request.method === "GET" &&
+    path.startsWith("/api/v1/till/sessions/") &&
+    path.endsWith("/zreport")
+  ) {
+    const caller = callerFromRequest(request);
+    if (caller === null) {
+      respondJson(response, 401, { error: "no usable staff credential" });
       return;
     }
-    if (request.method === "GET" && url.pathname === "/api/v1/till/sessions/open") {
-      const caller = callerFromRequest(request);
-      if (caller === null) {
-        respondJson(response, 401, { error: "no usable staff credential" });
-        return;
-      }
-      const branchId = url.searchParams.get("branch_id");
-      const open = branchId === DRAWER.branch_id;
-      respondJson(response, 200, open ? { open: true, id: DRAWER.session_id } : { open: false });
+    const sessionId = path.split("/")[5];
+    if (sessionId !== DRAWER.session_id) {
+      respondJson(response, 404, { error: "no such till session" });
       return;
     }
+    respondJson(response, 200, {
+      session_id: DRAWER.session_id,
+      per_tender: [{ method: "CASH", total_cents: DRAWER.cash_in_cents - DRAWER.cash_out_cents }],
+      cash: {
+        opening_float_cents: DRAWER.opening_float_cents,
+        expected_cents: DRAWER.opening_float_cents + DRAWER.cash_in_cents - DRAWER.cash_out_cents,
+        counted_cents: 0,
+        over_short_cents: 0,
+      },
+      closing_float_cents: 0,
+    });
+    return;
+  }
+  if (request.method === "POST" && path === "/api/v1/pos/returns") {
+    const caller = callerFromRequest(request);
+    if (caller === null) {
+      respondJson(response, 401, { error: "no usable staff credential" });
+      return;
+    }
+    // The approver's credential beside the clerk's bearer, verified the way
+    // the real rule verifies it: the same mint, an account whose role holds
+    // the approval, a person other than the clerk. A header that is present
+    // and not valid is refused before anything else is judged.
+    const approver = approverFromRequest(request);
     if (
-      request.method === "GET" &&
-      url.pathname.startsWith("/api/v1/till/sessions/") &&
-      url.pathname.endsWith("/zreport")
+      approver.present &&
+      (approver.account === null ||
+        !APPROVER_ROLES.includes(approver.account.role_code) ||
+        approver.account.user_id === caller.account.user_id)
     ) {
-      const caller = callerFromRequest(request);
-      if (caller === null) {
-        respondJson(response, 401, { error: "no usable staff credential" });
-        return;
-      }
-      const sessionId = url.pathname.split("/")[5];
-      if (sessionId !== DRAWER.session_id) {
-        respondJson(response, 404, { error: "no such till session" });
-        return;
-      }
-      respondJson(response, 200, {
-        session_id: DRAWER.session_id,
-        per_tender: [{ method: "CASH", total_cents: DRAWER.cash_in_cents - DRAWER.cash_out_cents }],
-        cash: {
-          opening_float_cents: DRAWER.opening_float_cents,
-          expected_cents: DRAWER.opening_float_cents + DRAWER.cash_in_cents - DRAWER.cash_out_cents,
-          counted_cents: 0,
-          over_short_cents: 0,
-        },
-        closing_float_cents: 0,
-      });
+      respondJson(response, 403, { error: "the approver credential does not name an approver other than the clerk" });
       return;
     }
-    if (request.method === "GET" && url.pathname === "/api/v1/payments/config") {
-      const caller = callerFromRequest(request);
-      if (caller === null) {
-        respondJson(response, 401, { error: "no usable staff credential" });
-        return;
-      }
-      // The demo's card rail is the simulator, always (guard G7): the status
-      // route says so, and the desk's card method repeats it in words.
-      respondJson(response, 200, {
-        configured: true,
-        merchant_id: "hh-demo-merchant",
-        processor: "stub",
-        currency: "USD",
-        simulated: true,
-      });
+    let body;
+    try {
+      body = JSON.parse(await readRawBody(request));
+    } catch {
+      respondJson(response, 400, { error: "the request body is not JSON" });
       return;
     }
-    if (request.method === "POST" && url.pathname === "/api/v1/pos/returns") {
-      const caller = callerFromRequest(request);
-      if (caller === null) {
-        respondJson(response, 401, { error: "no usable staff credential" });
-        return;
-      }
-      // The approver's credential beside the clerk's bearer, verified the way
-      // the real rule verifies it: the same mint, an account whose role holds
-      // the approval, a person other than the clerk. A header that is present
-      // and not valid is refused before anything else is judged.
-      const approver = approverFromRequest(request);
-      if (
-        approver.present &&
-        (approver.account === null ||
-          !APPROVER_ROLES.includes(approver.account.role_code) ||
-          approver.account.user_id === caller.account.user_id)
-      ) {
-        respondJson(response, 403, { error: "the approver credential does not name an approver other than the clerk" });
-        return;
-      }
-      let body;
-      try {
-        body = JSON.parse(await readBody(request));
-      } catch {
-        respondJson(response, 400, { error: "the request body is not JSON" });
-        return;
-      }
-      if (body !== null && typeof body === "object" && typeof body.idempotency_key === "string") {
-        KEYS_SEEN.push(body.idempotency_key);
-        LAST_RETURN_BODY = body;
-      }
-      const refusal = returnsRefusal(caller, body, approver);
-      if (refusal !== null) {
-        respondJson(response, refusal.status, refusal.body);
-        return;
-      }
-      respondJson(response, 201, commitReturn(caller, body, approver));
+    if (body !== null && typeof body === "object" && typeof body.idempotency_key === "string") {
+      KEYS_SEEN.push(body.idempotency_key);
+      LAST_RETURN_BODY = body;
+    }
+    const refusal = returnsRefusal(caller, body, approver);
+    if (refusal !== null) {
+      respondJson(response, refusal.status, refusal.body);
       return;
     }
-    respondJson(response, 404, { error: "not found" });
-  });
+    respondJson(response, 201, commitReturn(caller, body, approver));
+    return;
+  }
 
-server.on("error", (error) => {
-  console.error(`demo stub could not listen on 127.0.0.1:${port}: ${error instanceof Error ? error.message : String(error)}`);
-  process.exit(1);
-=======
-
-  // Every route below is a staff route: the caller read comes first.
+  // Every route below is a counter route: the caller read comes first, org
+  // header and all.
   const caller = callerOf(request, url);
   if (caller.refused !== undefined) {
     respondJson(response, caller.refused, { error: caller.error });
@@ -1089,6 +1046,14 @@ server.on("error", (error) => {
 
   if (request.method === "GET" && path === "/api/v1/till/sessions/open") {
     const branchId = url.searchParams.get("branch_id") ?? "";
+    // The returns desk asks this route for the branch the found sale names
+    // (the returns world's own branch), and the answer is that world's open
+    // drawer, the session the cash rail and the Z report count. The counter's
+    // own fence follows: a login asks about its branch, or it is refused.
+    if (branchId === BRANCH_ID) {
+      respondJson(response, 200, { open: true, id: DRAWER.session_id });
+      return;
+    }
     if (branchId !== callerBranch) {
       respondJson(response, 403, { error: "that branch is not one your grant reaches" });
       return;
@@ -1303,7 +1268,7 @@ server.on("error", (error) => {
     return;
   }
 
-  // The card rail's status read: the simulated flag the till's notices ride.
+  // The card rail's status read: the simulated flag both desks' notices ride.
   if (request.method === "GET" && path === "/api/v1/payments/config") {
     respondJson(response, 200, PAYMENT_CONFIG);
     return;
@@ -1567,7 +1532,6 @@ server.on("error", (error) => {
   }
 
   respondJson(response, 404, { error: "not found" });
->>>>>>> origin/till/l5-w7
 });
 
 // The ring's response body, in the contract's PosSale shape: the committed
@@ -1594,6 +1558,11 @@ function saleResponseBody(sale, replayed) {
     tenders: sale.tenders,
   };
 }
+
+server.on("error", (error) => {
+  console.error(`demo stub could not listen on 127.0.0.1:${port}: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+});
 
 server.keepAliveTimeout = 120 * 1000;
 server.headersTimeout = 125 * 1000;

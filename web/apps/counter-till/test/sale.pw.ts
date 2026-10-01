@@ -561,7 +561,7 @@ test("a late price answer is discarded: the first ask's answer never lands on th
   // The first price ask is held where the route stands; every later ask goes
   // straight through. When the held answer is finally released, the ticket it
   // was asked about no longer exists.
-  let releaseFirst: (() => void) | null = null;
+  let releaseFirst: (() => void) | undefined;
   const held = new Promise<void>((resolve) => {
     releaseFirst = resolve;
   });

@@ -10,7 +10,6 @@ import { defineConfig } from "@playwright/test";
 import { fileURLToPath } from "node:url";
 
 const appDir = fileURLToPath(new URL(".", import.meta.url));
-<<<<<<< HEAD
 
 // Ports: hashed per worktree, and stable across every process of one run. The
 // slot is a hash of this app's own absolute path inside a bounded band below
@@ -36,13 +35,6 @@ function portSlot(text: string): number {
 const slot = portSlot(appDir) * 2;
 const appPort = process.env.CT_APP_PORT ?? String(20000 + slot);
 const stubPort = process.env.CT_STUB_PORT ?? String(20000 + slot + 1);
-=======
-// The ports sit away from the cycle's other lane (W8 runs beside this one on
-// its own worktree and its own pair): the env carries the real values when a
-// run needs a third pair.
-const appPort = process.env.CT_APP_PORT ?? "4826";
-const stubPort = process.env.CT_STUB_PORT ?? "4827";
->>>>>>> origin/till/l5-w7
 
 export default defineConfig({
   testDir: "./test",
@@ -60,25 +52,14 @@ export default defineConfig({
     {
       command: "node test/stub/demo-stub.mjs",
       url: `http://127.0.0.1:${stubPort}/healthz`,
-<<<<<<< HEAD
       reuseExistingServer: false,
-=======
-      // Reuse is a workstation convenience only: a stale server on the pair
-      // must never be driven silently, least of all by CI, so under CI a
-      // busy port fails the run instead of joining it.
-      reuseExistingServer: !process.env.CI,
->>>>>>> origin/till/l5-w7
       cwd: appDir,
       env: { CT_STUB_PORT: stubPort },
     },
     {
       command: `npx --no-install vite --port ${appPort} --strictPort --host 127.0.0.1`,
       url: `http://127.0.0.1:${appPort}/`,
-<<<<<<< HEAD
       reuseExistingServer: false,
-=======
-      reuseExistingServer: !process.env.CI,
->>>>>>> origin/till/l5-w7
       cwd: appDir,
       env: { CT_STUB_PORT: stubPort, CT_APP_PORT: appPort },
     },

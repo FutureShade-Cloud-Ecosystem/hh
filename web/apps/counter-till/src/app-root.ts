@@ -40,13 +40,10 @@ import {
 import { formatMargin, formatMoney, parseAmountToCents } from "./money.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
 import { entryStyles, renderEntry, type FlowsState } from "./views/entry.js";
-<<<<<<< HEAD
-import { tillStyles, renderTill } from "./views/till.js";
 import { ReturnsFlow } from "./returns/flow.js";
 import { OneTimeCredential } from "./returns/approval.js";
 import { RefundApprovalCapture } from "./returns/capture.js";
 import { returnsStyles, renderReturns } from "./views/returns.js";
-=======
 import {
   checkoutStyles,
   renderReceipt,
@@ -66,7 +63,6 @@ import {
   type TicketPanel,
   type TillView,
 } from "./views/till.js";
->>>>>>> origin/till/l5-w7
 
 const DEMO_ORG = "hh-demo";
 
@@ -109,12 +105,9 @@ export class CounterTillApp extends HHElement {
     demoBannerStyles,
     entryStyles,
     tillStyles,
-<<<<<<< HEAD
     returnsStyles,
-=======
     checkoutStyles,
     parkedStyles,
->>>>>>> origin/till/l5-w7
     css`
       :host {
         display: block;
@@ -155,22 +148,17 @@ export class CounterTillApp extends HHElement {
   readonly #sessions = new SessionStore();
   readonly #account: DemoAccount;
   readonly #controller: AuthController;
-<<<<<<< HEAD
   readonly #approverCredential: OneTimeCredential;
-=======
   readonly #tillClient: TillClient;
->>>>>>> origin/till/l5-w7
   #flowsState: FlowsState = { kind: "loading" };
   #busy = false;
   #message: string | null = null;
   #till: { label: string } | null = null;
-<<<<<<< HEAD
   /** The user the till's own mint was for: custody is checked against it. */
   #clerkUserId: string | null = null;
   /** The role code the clerk's mint stated, for the receipt's display words. */
   #clerkRoleCode: string | null = null;
   readonly #returns: ReturnsFlow;
-=======
   #branch: BranchRef | null = null;
   #drawer: DrawerPanel = FRESH_DRAWER_PANEL;
   #search: SearchPanel = FRESH_SEARCH_PANEL;
@@ -224,7 +212,6 @@ export class CounterTillApp extends HHElement {
   #knownCustomers: Map<string, CustomerRef> = new Map();
   /** The products this till has met, by id: a resumed ticket shows the name it searched. */
   #knownProducts: Map<string, ProductRef> = new Map();
->>>>>>> origin/till/l5-w7
 
   constructor() {
     super();
@@ -240,7 +227,6 @@ export class CounterTillApp extends HHElement {
     const client = new ApiClient({ baseUrl: "", fetch: capture.fetch, headers: staffHeaders });
     this.#account = new DemoAccount({ client });
     this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
-<<<<<<< HEAD
     // The approver's client exists for the one return call that may carry the
     // approver's credential (D49): its provider takes the token out of the
     // one time slot during that send, and taking is dropping, so the token
@@ -277,9 +263,7 @@ export class CounterTillApp extends HHElement {
       capture,
       onChange: () => this.requestUpdate(),
     });
-=======
     this.#tillClient = new TillClient(client);
->>>>>>> origin/till/l5-w7
   }
 
   connectedCallback(): void {
@@ -294,21 +278,15 @@ export class CounterTillApp extends HHElement {
     // measured, not assumed). Keydown IS composed, so Enter in a search field
     // reaches the host and runs that field's search.
     this.addEventListener("click", this.#onHostClick);
-<<<<<<< HEAD
     this.addEventListener("input", this.#onHostInput);
-=======
     this.addEventListener("keydown", this.#onHostKeydown);
->>>>>>> origin/till/l5-w7
     void this.#loadFlows();
   }
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
-<<<<<<< HEAD
     this.removeEventListener("input", this.#onHostInput);
-=======
     this.removeEventListener("keydown", this.#onHostKeydown);
->>>>>>> origin/till/l5-w7
     super.disconnectedCallback();
   }
 
@@ -340,61 +318,6 @@ export class CounterTillApp extends HHElement {
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
     }
-<<<<<<< HEAD
-    if (control.getAttribute("data-action") === "returns-find") {
-      void this.#returns.findSale();
-    }
-    if (control.getAttribute("data-action") === "returns-method") {
-      const method = control.getAttribute("data-method");
-      if (method !== null) this.#returns.chooseMethod(method);
-    }
-    if (control.getAttribute("data-action") === "returns-submit") {
-      void this.#returns.submit();
-    }
-    if (control.getAttribute("data-action") === "returns-another") {
-      this.#returns.startAnotherReturn();
-    }
-    if (control.getAttribute("data-action") === "returns-approve") {
-      void this.#returns.openApprovalDialog();
-    }
-    if (control.getAttribute("data-action") === "returns-approve-cancel") {
-      this.#returns.closeApprovalDialog();
-    }
-    if (control.getAttribute("data-action") === "returns-approver-flow") {
-      const approverFlow = control.getAttribute("data-flow");
-      if (approverFlow !== null && approverFlow !== "") {
-        void this.#returns.approveWithFlow(approverFlow);
-      }
-    }
-  };
-
-  // The returns desk's fields ride the same host delegation as the buttons:
-  // one input listener on the host, the control read off composedPath() by
-  // its data-field name, so a re-render strands no listener. The inputs are
-  // uncontrolled: the DOM holds what was typed, the flow hears every edit
-  // here, and a draft's fresh mount shows the flow's own defaults.
-  readonly #onHostInput = (event: Event): void => {
-    const control = event
-      .composedPath()
-      .find((node): node is Element => node instanceof Element && node.hasAttribute("data-field"));
-    if (!(control instanceof HTMLInputElement) && !(control instanceof HTMLTextAreaElement)) return;
-    const field = control.getAttribute("data-field");
-    if (field === "order-no") this.#returns.setOrderNo(control.value);
-    if (field === "qty" && control instanceof HTMLInputElement) {
-      const line = control.getAttribute("data-line") ?? "";
-      this.#returns.setQty(line, control.value);
-      // The flow keeps whole units; the field is brought to the same answer,
-      // so a typed 1.5 never sits on the screen while a 1 rides the draft.
-      const stored = this.#returns.qtyOf(line);
-      const canonical = stored === 0 ? "" : String(stored);
-      if (control.value !== canonical) control.value = canonical;
-    }
-    if (field === "note") this.#returns.setNote(control.value);
-    if (field === "restock" && control instanceof HTMLInputElement) {
-      this.#returns.setRestock(control.checked);
-    }
-    if (field === "reason-code") this.#returns.setReasonCode(control.value);
-=======
     if (control.getAttribute("data-action") === "search-products") {
       const input = this.renderRoot.querySelector<HTMLInputElement>('input[data-input="product-search"]');
       void this.#searchProducts(input instanceof HTMLInputElement ? input.value : "");
@@ -452,7 +375,59 @@ export class CounterTillApp extends HHElement {
       const ticketId = control.getAttribute("data-ticket-id");
       if (typeof ticketId === "string" && ticketId !== "") void this.#resumeTicket(ticketId);
     }
->>>>>>> origin/till/l5-w7
+    if (control.getAttribute("data-action") === "returns-find") {
+      void this.#returns.findSale();
+    }
+    if (control.getAttribute("data-action") === "returns-method") {
+      const method = control.getAttribute("data-method");
+      if (method !== null) this.#returns.chooseMethod(method);
+    }
+    if (control.getAttribute("data-action") === "returns-submit") {
+      void this.#returns.submit();
+    }
+    if (control.getAttribute("data-action") === "returns-another") {
+      this.#returns.startAnotherReturn();
+    }
+    if (control.getAttribute("data-action") === "returns-approve") {
+      void this.#returns.openApprovalDialog();
+    }
+    if (control.getAttribute("data-action") === "returns-approve-cancel") {
+      this.#returns.closeApprovalDialog();
+    }
+    if (control.getAttribute("data-action") === "returns-approver-flow") {
+      const approverFlow = control.getAttribute("data-flow");
+      if (approverFlow !== null && approverFlow !== "") {
+        void this.#returns.approveWithFlow(approverFlow);
+      }
+    }
+  };
+
+  // The returns desk's fields ride the same host delegation as the buttons:
+  // one input listener on the host, the control read off composedPath() by
+  // its data-field name, so a re-render strands no listener. The inputs are
+  // uncontrolled: the DOM holds what was typed, the flow hears every edit
+  // here, and a draft's fresh mount shows the flow's own defaults.
+  readonly #onHostInput = (event: Event): void => {
+    const control = event
+      .composedPath()
+      .find((node): node is Element => node instanceof Element && node.hasAttribute("data-field"));
+    if (!(control instanceof HTMLInputElement) && !(control instanceof HTMLTextAreaElement)) return;
+    const field = control.getAttribute("data-field");
+    if (field === "order-no") this.#returns.setOrderNo(control.value);
+    if (field === "qty" && control instanceof HTMLInputElement) {
+      const line = control.getAttribute("data-line") ?? "";
+      this.#returns.setQty(line, control.value);
+      // The flow keeps whole units; the field is brought to the same answer,
+      // so a typed 1.5 never sits on the screen while a 1 rides the draft.
+      const stored = this.#returns.qtyOf(line);
+      const canonical = stored === 0 ? "" : String(stored);
+      if (control.value !== canonical) control.value = canonical;
+    }
+    if (field === "note") this.#returns.setNote(control.value);
+    if (field === "restock" && control instanceof HTMLInputElement) {
+      this.#returns.setRestock(control.checked);
+    }
+    if (field === "reason-code") this.#returns.setReasonCode(control.value);
   };
 
   async #loadFlows(): Promise<void> {
@@ -529,11 +504,9 @@ export class CounterTillApp extends HHElement {
     this.#busy = false;
     this.#till = null;
     this.#message = null;
-<<<<<<< HEAD
     this.#clerkUserId = null;
     this.#clerkRoleCode = null;
     this.#returns.reset();
-=======
     this.#branch = null;
     this.#drawer = FRESH_DRAWER_PANEL;
     this.#search = FRESH_SEARCH_PANEL;
@@ -567,7 +540,6 @@ export class CounterTillApp extends HHElement {
     // resumed ticket says whose it is. Nothing money-shaped hangs on them:
     // prices always come from the engine, for the customer the ticket names.
     // They are tab memory, so a reload starts a fresh till.
->>>>>>> origin/till/l5-w7
     this.requestUpdate();
   }
 
@@ -1282,17 +1254,13 @@ export class CounterTillApp extends HHElement {
   }
 
   render(): TemplateResult {
-<<<<<<< HEAD
     // The banner's rule is "only once the flows route has answered with
     // cards": an error answer and an empty answer alike are not the demo
     // showing itself, so neither gets to look like one.
     const demoPresent =
       this.#till !== null ||
       (this.#flowsState.kind === "ready" && this.#flowsState.flows.length > 0);
-=======
-    const demoPresent = this.#till !== null || this.#flowsState.kind === "ready";
     const receipt = this.#receiptView();
->>>>>>> origin/till/l5-w7
     return html`
       <header>
         ${demoPresent ? demoBanner() : nothing}
@@ -1313,18 +1281,20 @@ export class CounterTillApp extends HHElement {
       <main>
         ${this.#till === null
           ? renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })
-<<<<<<< HEAD
-          : html`${renderTill()}${renderReturns(this.#returns)}`}
-=======
           : html`
               ${renderTill(this.#tillView())}
               <div class="panels till-lower">
-                ${renderTender(this.#tenderPanel())}
+                <!-- The sale's tender controls stand down while a return lookup
+                     is on the desk: the refund rail's own Cash and Card are
+                     then the screen's cash and card, and two controls of one
+                     name on one screen would answer two different questions.
+                     The panel comes back when the desk clears. -->
+                ${this.#returns.lookup === null ? renderTender(this.#tenderPanel()) : nothing}
                 ${receipt === null ? nothing : renderReceipt(receipt)}
                 ${renderParked(this.#parkedPanel())}
               </div>
+              ${renderReturns(this.#returns)}
             `}
->>>>>>> origin/till/l5-w7
       </main>
     `;
   }
