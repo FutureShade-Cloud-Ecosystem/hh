@@ -31,6 +31,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -115,16 +116,19 @@ func checkLocalDSN(dsn string) error {
 	return nil
 }
 
-// hostIsLocal answers for one resolved dial target: localhost, the loopback range, the IPv6
-// loopback, or a unix socket directory (an absolute path).
+// hostIsLocal answers for one resolved dial target: localhost, an address the net package
+// judges loopback (parsed, never a text prefix, so the IPv4 loopback range and the IPv6
+// loopback alike hold while a host name that merely begins like one is refused), or a unix
+// socket directory (an absolute path).
 func hostIsLocal(host string) bool {
-	switch {
-	case host == "localhost", host == "::1":
+	if host == "localhost" {
 		return true
-	case strings.HasPrefix(host, "127."):
+	}
+	if strings.HasPrefix(host, "/") {
 		return true
-	case strings.HasPrefix(host, "/"):
-		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
 	}
 	return false
 }
@@ -876,9 +880,9 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 	if remainder := halfRing.SubtotalCents * int64(rateBps) % 10000; remainder != 5000 {
 		t.Fatalf("the half-cent sale's subtotal no longer lands on a half cent at the engine's %d bps (remainder %d), the rounding assertion would not bite", rateBps, remainder)
 	}
-	if halfRing.TaxCents != 267 || halfRing.TaxCents != demoHST(halfRing.SubtotalCents, rateBps) {
-		t.Fatalf("the half-cent sale's tax is %d, want 267: 2050 at the engine's %d bps is exactly 266.5, rounded half up once (half down and half even both answer 266)",
-			halfRing.TaxCents, rateBps)
+	if formula := demoHST(halfRing.SubtotalCents, rateBps); halfRing.TaxCents != 267 || halfRing.TaxCents != formula {
+		t.Fatalf("the half-cent sale's rounding: the sale answered %d cents of tax, the half-up formula answers %d and the committed answer is 267; 2050 at the engine's %d bps is exactly 266.5, so half down or half even would answer 266",
+			halfRing.TaxCents, formula, rateBps)
 	}
 	t.Logf("the half-cent sale %s: subtotal 2050 at %d bps lands on exactly 266.5, the tax is 267, half up once",
 		halfRing.OrderNo, rateBps)
@@ -1256,6 +1260,8 @@ func TestDemoWorldHarness_RefusesNonLocalAddresses(t *testing.T) {
 		{"keyword form, remote host", "host=db.remote.example port=5432 user=hardscape password=hardscape dbname=hardscapeos sslmode=disable"},
 		{"host parameter overrides a local URL host", "postgres://hardscape@localhost:5590/hardscapeos?host=db.remote.example&sslmode=disable"},
 		{"fallback host remote", "postgres://hardscape@127.0.0.1:5590/hardscapeos?sslmode=disable&host=127.0.0.1,db.remote.example"},
+		{"host name dressed as loopback, URL form", "postgres://hardscape:hardscape@127.db.remote.example:5432/hardscapeos?sslmode=disable"},
+		{"host name dressed as loopback, keyword form", "host=127.db.remote.example port=5432 user=hardscape password=hardscape dbname=hardscapeos sslmode=disable"},
 	}
 	for _, tc := range refused {
 		t.Run(tc.name, func(t *testing.T) {
