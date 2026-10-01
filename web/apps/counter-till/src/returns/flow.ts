@@ -15,11 +15,13 @@ import {
   staffPos,
   staffTill,
   type ApiClient,
+  type PosRefundApproval,
   type PosReturn,
   type PosReturnInput,
   type PosReturnLineInput,
   type PosReturnLookup,
 } from "@hardscapehouse/api-client";
+import type { RefundApprovalCapture } from "./capture.js";
 
 /** How the original sale was paid, as the lookup's tender field spells it. */
 export type SaleTender = "ACCOUNT" | "CASH" | "CARD" | "CHEQUE";
@@ -77,6 +79,8 @@ export interface ReturnsFlowOptions {
   client: ApiClient;
   /** The clerk the till is signed in as, read at receipt time. */
   clerkName: () => string | null;
+  /** The wrapped fetch's reader for the refusal body's approval. */
+  capture: RefundApprovalCapture;
   /** Called after every state change, so the host re-renders. */
   onChange: () => void;
 }
@@ -84,6 +88,7 @@ export interface ReturnsFlowOptions {
 export class ReturnsFlow {
   readonly #client: ApiClient;
   readonly #clerkName: () => string | null;
+  readonly #capture: RefundApprovalCapture;
   readonly #onChange: () => void;
 
   /** The sale number input's live value, so a re-render keeps what is typed. */
@@ -110,10 +115,18 @@ export class ReturnsFlow {
   submitting = false;
   /** The committed return, when one is. */
   receipt: RefundReceipt | null = null;
+  /**
+   * The approval a 409 named: the dealer's amount and the roles that may
+   * approve. The desk shows both, and the approval's refusal never carries a
+   * figure of its own: the amount named is the dealer's threshold, exactly
+   * what the server said.
+   */
+  refusal: PosRefundApproval | null = null;
 
   constructor(options: ReturnsFlowOptions) {
     this.#client = options.client;
     this.#clerkName = options.clerkName;
+    this.#capture = options.capture;
     this.#onChange = options.onChange;
   }
 
@@ -163,29 +176,40 @@ export class ReturnsFlow {
     const qty = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
     if (qty === 0) delete this.quantities[orderLineId];
     else this.quantities[orderLineId] = qty;
-    this.#onChange();
+    this.#draftChanged();
   }
 
   chooseMethod(method: string): void {
     if (!REFUND_METHODS.includes(method as RefundMethod)) return;
     if (!this.methodAvailable(method as RefundMethod)) return;
     this.method = method as RefundMethod;
-    this.#onChange();
+    this.#draftChanged();
   }
 
   setReasonCode(value: string): void {
     if (!REASON_CODES.includes(value as ReasonCode)) return;
     this.reasonCode = value as ReasonCode;
-    this.#onChange();
+    this.#draftChanged();
   }
 
   setNote(value: string): void {
     this.note = value;
-    this.#onChange();
+    this.#draftChanged();
   }
 
   setRestock(value: boolean): void {
     this.restock = value;
+    this.#draftChanged();
+  }
+
+  /**
+   * A changed draft is a different return: its pending idempotency key and
+   * the refusal the last send earned belong to the draft that earned them,
+   * so both go, and the next send is a fresh one.
+   */
+  #draftChanged(): void {
+    this.refusal = null;
+    this.#pendingKey = null;
     this.#onChange();
   }
 
@@ -232,6 +256,20 @@ export class ReturnsFlow {
     const result = await staffPos.posCreateReturn(this.#client, input);
     this.submitting = false;
     if (!result.ok) {
+      if (result.status === 409 && result.error === "refund_approval_required") {
+        // The contract says a client discriminates on the error string, never
+        // on the key's presence: the approval rides the body this transport's
+        // capture kept, or the desk says the refusal without its figures.
+        const approval = this.#capture.take();
+        if (approval !== null) {
+          this.refusal = approval;
+          this.#onChange();
+          return;
+        }
+        this.notice = "The refund needs a manager whose role holds the approval, but the refusal did not say which: try again or call the desk lead.";
+        this.#onChange();
+        return;
+      }
       this.notice = `The refund was refused: ${result.error}`;
       this.#onChange();
       return;
@@ -306,6 +344,7 @@ export class ReturnsFlow {
     this.restock = true;
     this.drawer = { kind: "unknown" };
     this.cardSimulated = null;
+    this.refusal = null;
     this.#pendingKey = null;
   }
 

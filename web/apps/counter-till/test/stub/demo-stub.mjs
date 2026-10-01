@@ -177,11 +177,20 @@ const DRAWER = {
 const RETURNS_BY_KEY = new Map();
 const RETURNED_QTY = new Map();
 
+// The approval above which a refund needs a manager, and the roles that hold
+// the approval, as the demo dealer's configuration sets them (D49's 250.00
+// and its two approver roles). The real values are RT-B's configuration read;
+// this stub pins the demo's.
+const APPROVAL_AMOUNT_CENTS = 25000;
+const APPROVER_ROLES = ["sales_manager", "branch_manager"];
+
 let RETURN_SEQ = 0;
 
 // What the return's own rails refuse before any money moves, in the
-// contract's envelope. The approval refusal above the amount is the real
-// server's (RT-B's) and this stub grows it beside the desk's screen for it.
+// contract's envelope. The approval refusal names itself in the error string
+// and carries the requirement under the approval key: the amount and the
+// approver roles, present exactly on that refusal (the contract's own words),
+// so the desk can name both.
 function returnsRefusal(caller, body) {
   if (body === null || typeof body !== "object") {
     return { status: 400, body: { error: "the return's body is not readable" } };
@@ -216,7 +225,29 @@ function returnsRefusal(caller, body) {
   if (body.refund_method === "CASH" && body.till_session_id !== DRAWER.session_id) {
     return { status: 409, body: { error: "the drawer named is not the open one" } };
   }
+  const totalCents = returnTotal(sale, body.lines);
+  if (totalCents > APPROVAL_AMOUNT_CENTS && !APPROVER_ROLES.includes(caller.account.role_code)) {
+    return {
+      status: 409,
+      body: {
+        error: "refund_approval_required",
+        approval: { amount_cents: APPROVAL_AMOUNT_CENTS, approvers: APPROVER_ROLES },
+      },
+    };
+  }
   return null;
+}
+
+// The refund's total: the returned lines' own totals by their quantities, in
+// a world whose tax is zero. Stub-side arithmetic, standing in the core's
+// shoes; the app computes nothing.
+function returnTotal(sale, lines) {
+  let total = 0;
+  for (const line of lines) {
+    const saleLine = sale.lines.find((row) => row.order_line_id === line.order_line_id);
+    total += saleLine.unit_price_cents * line.qty_base;
+  }
+  return total;
 }
 
 function saleFromInput(body) {
@@ -237,10 +268,9 @@ function commitReturn(caller, body) {
   if (replay !== undefined) return { ...replay, replayed: true };
   const sale = saleFromInput(body);
   RETURN_SEQ += 1;
-  let subtotalCents = 0;
+  const subtotalCents = returnTotal(sale, body.lines);
   for (const line of body.lines) {
     const saleLine = sale.lines.find((row) => row.order_line_id === line.order_line_id);
-    subtotalCents += saleLine.unit_price_cents * line.qty_base;
     RETURNED_QTY.set(saleLine.order_line_id, (RETURNED_QTY.get(saleLine.order_line_id) ?? 0) + line.qty_base);
   }
   const answer = {

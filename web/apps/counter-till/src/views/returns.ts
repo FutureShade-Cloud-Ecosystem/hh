@@ -6,6 +6,7 @@
 // listener that a re-render would strand).
 import { css, html, nothing, type TemplateResult } from "lit";
 import { formatMoney } from "../money.js";
+import { approverLabels } from "../returns/approval.js";
 import type { RefundMethod, RefundReceipt, ReasonCode, ReturnsFlow } from "../returns/flow.js";
 
 export const returnsStyles = css`
@@ -153,6 +154,20 @@ export const returnsStyles = css`
     margin: var(--hh-s-16) 0 0;
     max-width: 480px;
   }
+  .refusal {
+    border: 1px solid var(--hh-state-stop);
+    border-radius: var(--hh-radius-control);
+    padding: var(--hh-s-16);
+    margin: var(--hh-s-16) 0 0;
+    max-width: 480px;
+  }
+  .refusal h3 {
+    font-size: var(--hh-s-16);
+    margin: 0 0 var(--hh-s-8);
+  }
+  .refusal p {
+    margin: 0 0 var(--hh-s-8);
+  }
   .receipt h3 {
     font-size: var(--hh-s-16);
     margin: 0 0 var(--hh-s-8);
@@ -182,7 +197,26 @@ export function renderReturns(flow: ReturnsFlow): TemplateResult {
       </div>
       ${flow.notice === null ? nothing : html`<p class="notice" role="status" data-testid="returns-notice">${flow.notice}</p>`}
       ${flow.lookup === null ? nothing : renderSale(flow)}
+      ${flow.refusal === null || flow.receipt !== null ? nothing : renderRefusal(flow.refusal)}
       ${flow.receipt === null ? nothing : renderReceipt(flow.receipt)}
+    </section>
+  `;
+}
+
+function renderRefusal(approval: { amount_cents: number; approvers: string[] }): TemplateResult {
+  // The roles named the way the refusal speaks them: the Sales manager, or
+  // the Branch manager. A role key with no label shows as the key itself.
+  const named = approverLabels(approval.approvers).map((role) => `the ${role}`);
+  const roles =
+    named.length === 1 ? named[0] : `${named.slice(0, -1).join(", ")}, or ${named[named.length - 1]}`;
+  return html`
+    <section class="refusal" data-testid="refund-refusal" role="alert">
+      <h3>Refused</h3>
+      <p>
+        This refund is over the dealer's approval amount of ${formatMoney(approval.amount_cents)}, so
+        this desk cannot commit it as rung.
+      </p>
+      <p>It can be committed by ${roles}: a manager whose role holds the approval.</p>
     </section>
   `;
 }

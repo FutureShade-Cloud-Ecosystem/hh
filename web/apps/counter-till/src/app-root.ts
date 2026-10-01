@@ -22,6 +22,7 @@ import { demoBanner, demoBannerStyles } from "./demo-banner.js";
 import { entryStyles, renderEntry, type FlowsState } from "./views/entry.js";
 import { tillStyles, renderTill } from "./views/till.js";
 import { ReturnsFlow } from "./returns/flow.js";
+import { RefundApprovalCapture } from "./returns/capture.js";
 import { returnsStyles, renderReturns } from "./views/returns.js";
 
 const DEMO_ORG = "hh-demo";
@@ -81,8 +82,13 @@ export class CounterTillApp extends HHElement {
 
   constructor() {
     super();
+    // The till's transport, wrapped so the refund approval refusal's body
+    // (the amount and the approver roles beside the envelope) reaches the
+    // returns flow: the generated client carries the error string alone.
+    const capture = new RefundApprovalCapture();
     const client = new ApiClient({
       baseUrl: "",
+      fetch: capture.fetch,
       headers: authHeaderProvider({
         callerClass: "staff",
         sessions: this.#sessions,
@@ -94,6 +100,7 @@ export class CounterTillApp extends HHElement {
     this.#returns = new ReturnsFlow({
       client,
       clerkName: () => this.#sessions.current?.user.name ?? null,
+      capture,
       onChange: () => this.requestUpdate(),
     });
   }
