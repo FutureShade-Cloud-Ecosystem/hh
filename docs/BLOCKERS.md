@@ -217,7 +217,13 @@ through a switch with no seam, and registerRoutes constructs the platform
 membership client unconditionally, so a demo box cannot boot the default
 serve path at all. The lane therefore added the smallest seam main.go
 admits: one guarded call to demoDispatch before the standard role switch,
-with the no-op stub in demo_off.go. The default build's behavior is
+with the no-op stub in demo_off.go. main.go is the only production file
+outside the lane's Touches; beside it the lane added
+core/cmd/core/demoenv_inventory.go (untagged, so its deny and allow lists
+compile into the default binary as data and no /internal/demo symbol)
+and three test files there (demo_build_guard_test.go,
+demoenv_inventory_test.go, demo_on_test.go, the last carrying the demo
+tag by the lead's ruling on review finding P3-1). The default build's behavior is
 unchanged (the stub returns false before the switch), the G1 tests in
 core/cmd/core hold the default dependency closure free of
 core/internal/demo/, and the compiled-binary review command counts demo
@@ -235,3 +241,25 @@ says nothing about the exit test; the acceptance run is the gated local
 run, executed by the lane and re-executed by the reviewer. W5 adds the CI
 job that closes this gap; recorded here so the gap is visible until that
 lands.
+## The Counter Till cycle, lane L3 (W1), review follow-ups: named gaps and their holders
+
+- **No CI leg builds or tests the demo tag (review P2-4).** The ci job runs
+  untagged only, so every demo-tagged guard and the compilation of
+  demo_on.go sit outside the check, and another lane changing a wire
+  function's signature would break the demo build with CI green. The lead
+  assigns the leg to W5, whose plan row adds the CI job with a Postgres
+  service; the interim holder is the in-team review, which runs both tag
+  suites. Until W5 lands it, a merge that touches a wire function should
+  be built with -tags demo by hand.
+- **One demo-tagged test file sits outside the plan's two places (review
+  P3-1).** core/cmd/core/demo_on_test.go carries //go:build demo because
+  only a tagged test can call demoServe. The lead accepts it: test files
+  enter no binary. The plan's sentence counts source files, and the
+  amendment is the record's to make.
+- **A boot dying between migrate and demo-populate cannot be retried
+  (review P3-6).** demo-check refuses a migrated database that is not yet
+  a demo world, which is G0 as the plan writes it, so an entrypoint that
+  stops between the two steps leaves a box demo-check refuses from then
+  on and the database has to be dropped. No change to G0; the W5
+  entrypoint answers it (each step idempotent, the pair run to completion
+  before serve).
