@@ -19,7 +19,7 @@ func (c *testClock) advance(d time.Duration) { c.at = c.at.Add(d) }
 // past the allowance is refused, and a refusal spends nothing, so the
 // count does not move while the burst hammers.
 func TestAddressLimitRefusesTheBurst(t *testing.T) {
-	clock := &testClock{at: time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)}
+	clock := &testClock{at: time.Unix(0, 0).UTC()}
 	l := NewAddressLimit(3, time.Minute, clock.Now)
 
 	for i := 0; i < 3; i++ {
@@ -40,7 +40,7 @@ func TestAddressLimitRefusesTheBurst(t *testing.T) {
 // The window slides: once every recorded admission sits outside it, the
 // address is admitted again.
 func TestAddressLimitReopensAfterTheWindow(t *testing.T) {
-	clock := &testClock{at: time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)}
+	clock := &testClock{at: time.Unix(0, 0).UTC()}
 	l := NewAddressLimit(2, 30*time.Second, clock.Now)
 
 	if !l.Allow("10.0.0.1") || !l.Allow("10.0.0.1") {
@@ -62,7 +62,7 @@ func TestAddressLimitReopensAfterTheWindow(t *testing.T) {
 // Addresses are independent: one address's burst never spends another
 // address's allowance.
 func TestAddressLimitKeepsAddressesApart(t *testing.T) {
-	clock := &testClock{at: time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)}
+	clock := &testClock{at: time.Unix(0, 0).UTC()}
 	l := NewAddressLimit(1, time.Minute, clock.Now)
 
 	if !l.Allow("10.0.0.1") {
@@ -80,13 +80,20 @@ func TestAddressLimitKeepsAddressesApart(t *testing.T) {
 // without end, and the sweep prefers the addresses the window has
 // already forgotten.
 func TestAddressLimitBoundsItsMap(t *testing.T) {
-	clock := &testClock{at: time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)}
+	clock := &testClock{at: time.Unix(0, 0).UTC()}
 	l := NewAddressLimit(1, time.Minute, clock.Now)
 
 	// Fill the map past its bound with fresh addresses, each spending its
-	// allowance now.
+	// allowance now. The bound must hold after every admission, not only
+	// at the end: the sweep's batching to a low-water mark keeps the
+	// eviction amortised, one pass per batch of additions rather than one
+	// pass per addition.
 	for i := 0; i < maxTrackedAddresses+100; i++ {
 		l.Allow(fmt.Sprintf("10.1.%d.%d", i/256, i%256))
+		if len(l.entries) > maxTrackedAddresses {
+			t.Fatalf("the map reached %d addresses during the flood, want it held at the bound %d",
+				len(l.entries), maxTrackedAddresses)
+		}
 	}
 	if len(l.entries) > maxTrackedAddresses {
 		t.Fatalf("the map holds %d addresses, want it held at %d", len(l.entries), maxTrackedAddresses)
