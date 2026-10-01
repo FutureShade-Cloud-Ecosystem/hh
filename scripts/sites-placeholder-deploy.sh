@@ -129,7 +129,8 @@ JSON
   npm ci --prefix "$dir" --ignore-scripts --no-audit --no-fund
   local cli="$dir/node_modules/.bin/appwrite"
   local version
-  version="$(APPWRITE_NO_UPDATE_CHECK=1 "$cli" --version)"
+  version="$(APPWRITE_NO_UPDATE_CHECK=1 "$cli" --version)" \
+    || fail "the CLI did not run: appwrite-cli-linux-x64 is missing or failed its integrity check"
   [ "$version" = "appwrite version $CLI_VERSION" ] \
     || fail "the installed CLI reports '$version', expected 'appwrite version $CLI_VERSION'"
   say "installed $version, integrity checked by npm ci against the lockfile"
