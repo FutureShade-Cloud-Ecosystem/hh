@@ -1,0 +1,143 @@
+//go:build demo
+
+package main
+
+import (
+	"os"
+	"strings"
+	"testing"
+)
+
+// The environment each wiring test starts from: a box that says demo
+// twice and a serve configuration that would load. Every test below
+// changes one thing and asserts which guard fired. The database URL is
+// made up and must never be dialed while the guards hold: a test that
+// reaches it is a test whose guard is gone, which is what the failure
+// then shows.
+func serveEnv() map[string]string {
+	return map[string]string{
+		"DEMO_MODE":            "true",
+		"APP_ENV":              "demo",
+		"CORE_DATABASE_URL":    "postgres://b3:b3@127.0.0.1:5432/b3?sslmode=disable",
+		"CORE_STAFF_AUDIENCE":  "hh-staff",
+		"CORE_TENANT_AUDIENCE": "hh-tenant",
+	}
+}
+
+func envFuncs(env map[string]string) (func(string) string, func(string) (string, bool), func() []string) {
+	getenv := func(k string) string { return env[k] }
+	lookup := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
+	environ := func() []string {
+		out := make([]string, 0, len(env))
+		for k, v := range env {
+			out = append(out, k+"="+v)
+		}
+		return out
+	}
+	return getenv, lookup, environ
+}
+
+// G2 through the serve entry: a box that has not said demo twice stops
+// demoServe before anything else runs, with the offending variable named.
+// The cases are the guard's table, replayed through the function the
+// entrypoint dispatches to, so removing the guard call from demoServe
+// fails here and not only in the boot package's own suite.
+func TestDemoServeRefusesABoxThatDoesNotSayDemo(t *testing.T) {
+	cases := []struct {
+		name  string
+		drop  string
+		set   map[string]string
+		inErr string
+	}{
+		{"environment unset", "APP_ENV", nil, "APP_ENV"},
+		{"environment dev", "", map[string]string{"APP_ENV": "dev"}, "APP_ENV"},
+		{"mode unset", "DEMO_MODE", nil, "DEMO_MODE"},
+	}
+	for _, c := range cases {
+		env := serveEnv()
+		if c.drop != "" {
+			delete(env, c.drop)
+		}
+		for k, v := range c.set {
+			env[k] = v
+		}
+		getenv, lookup, environ := envFuncs(env)
+		err := demoServe(getenv, lookup, environ)
+		if err == nil {
+			t.Fatalf("%s: demoServe accepted", c.name)
+		}
+		if !strings.Contains(err.Error(), c.inErr) {
+			t.Fatalf("%s: refusal %q does not name %s", c.name, err, c.inErr)
+		}
+	}
+}
+
+// G4 through the serve entry: one provider variable in the environment
+// picture stops demoServe before the configuration loads, naming the
+// variable. Removing the RefuseProviderVars call from demoServe fails
+// here, not only in the boot package's suite.
+func TestDemoServeRefusesAProviderVariable(t *testing.T) {
+	env := serveEnv()
+	getenv, lookup, environ := envFuncs(env)
+	picture := append(environ(), "TWILIO_AUTH_TOKEN=x")
+	err := demoServe(getenv, lookup, func() []string { return picture })
+	if err == nil {
+		t.Fatal("a provider variable in the environment picture accepted")
+	}
+	if !strings.Contains(err.Error(), "TWILIO_AUTH_TOKEN") {
+		t.Fatalf("refusal %q does not name TWILIO_AUTH_TOKEN", err)
+	}
+}
+
+// G3 through the serve entry: the database check runs inside
+// demoRegisterRoutes, before anything registers or serves, so a
+// non-demo database stops demoServe with the guard's own refusal and the
+// listener never opens. The listener address is deliberately
+// unlistenable: if the guard were removed, serve would run to the
+// listener and fail there instead, which is the failure this test
+// distinguishes. Gated on the suite's database variable (the boot suite
+// builds the same world by hand); it skips politely without it.
+func TestDemoServeChecksTheDatabaseBeforeTheListener(t *testing.T) {
+	base := os.Getenv("HH_CORE_TEST_DATABASE_URL")
+	if base == "" {
+		t.Skip("HH_CORE_TEST_DATABASE_URL is not set: the serve wiring's database leg needs a scratch database to refuse")
+	}
+	env := serveEnv()
+	env["CORE_DATABASE_URL"] = base
+	// The gate database is migrated and holds no demo org, so the guard's
+	// org check is the refusal this test expects.
+	env["CORE_LISTEN_ADDR"] = "bogus-listen-address-of-the-w1-test:0"
+	getenv, lookup, environ := envFuncs(env)
+	err := demoServe(getenv, lookup, environ)
+	if err == nil {
+		t.Fatal("a non-demo database served")
+	}
+	if !strings.Contains(err.Error(), "demo database check") {
+		t.Fatalf("refusal %q is not the database guard firing before the listener", err)
+	}
+}
+
+// P3-9: the token expiry is capped at the demo ceiling; a longer value
+// refuses at load with the variable named.
+func TestDemoServeRefusesATokenExpiryOverTheCeiling(t *testing.T) {
+	env := serveEnv()
+	env["CORE_DEMO_TOKEN_TTL"] = "24h"
+	getenv, lookup, environ := envFuncs(env)
+	err := demoServe(getenv, lookup, environ)
+	if err == nil {
+		t.Fatal("a token expiry over the ceiling accepted")
+	}
+	if !strings.Contains(err.Error(), "CORE_DEMO_TOKEN_TTL") {
+		t.Fatalf("refusal %q does not name CORE_DEMO_TOKEN_TTL", err)
+	}
+	// At the ceiling it loads: the guard fires on the excess, not the
+	// knob. This configuration gets past the guards and dies at the
+	// made-up database, which the message must show rather than a
+	// ceiling refusal.
+	env["CORE_DEMO_TOKEN_TTL"] = "1h"
+	getenv, lookup, environ = envFuncs(env)
+	err = demoServe(getenv, lookup, environ)
+	if err == nil || strings.Contains(err.Error(), "CORE_DEMO_TOKEN_TTL") {
+		t.Fatalf("an at-ceiling expiry was refused as over it: %v", err)
+	}
+}

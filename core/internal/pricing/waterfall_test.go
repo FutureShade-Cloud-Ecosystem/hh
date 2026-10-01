@@ -201,9 +201,9 @@ func TestWaterfall_PromoNeverRaisesAContractorsPrice(t *testing.T) {
 	}
 }
 
-// - ROW 3 · promo and quantity-break STACK, break on top -
+// - ROW 3 · a quantity break NEVER stacks on the promo price (D1) -
 
-func TestWaterfall_QuantityBreakStacksOnThePromoPrice(t *testing.T) {
+func TestWaterfall_QuantityBreakNeverStacksOnThePromoPrice(t *testing.T) {
 	st := &fakeStore{
 		listPrice: &ListPrice{"blu60", 10000, "EA"},
 		rules: []Rule{{
@@ -215,18 +215,77 @@ func TestWaterfall_QuantityBreakStacksOnThePromoPrice(t *testing.T) {
 			FromQty: 10, ValueType: BreakPctOff, DiscountBps: p64(1000), PriceUOM: "EA",
 		}},
 	}
-	// Tier 5% → 9500. Promo 20% → 8000 wins the base. Break 10% off 8000 → 7200.
+	// Tier 5% → 9500. Promo 20% → 8000 wins the base. The break's own single price is
+	// 10000 × 0.90 = 9000, which LOSES to the promo: the customer keeps the best single price and
+	// never the pile (stacking would answer 10000×0.80×0.90 = 7200).
 	ps := &fakePromoStore{promos: []Promotion{pctPromo("p-june", 2000)}}
 	bd := resolve(t, promoSvc(st, ps, ""), base(ResolveInput{QtyEntered: 20, UOMEntered: "EA"}))
 
-	if bd.FinalCents != 7200 {
-		t.Fatalf("break must stack ON the promo base: 10000→8000 (promo) →7200 (break), got %d", bd.FinalCents)
+	if bd.FinalCents != 8000 {
+		t.Fatalf("the break prices off the anchor and loses to the promo: 8000 stands, got %d", bd.FinalCents)
 	}
 	if bd.Source != SourcePromotion {
-		t.Fatalf("the base source stays PROMOTION; the break is an adjustment, got %s", bd.Source)
+		t.Fatalf("the promo still prices the line, got source %s", bd.Source)
 	}
-	if !strings.Contains(bd.Detail, "June Sale") {
-		t.Fatalf("the detail must name both the promo and the break, got %q", bd.Detail)
+	if !strings.Contains(bd.Detail, "June Sale") || !strings.Contains(bd.Detail, "not applied") {
+		t.Fatalf("the detail must carry both the promo story and the held break, got %q", bd.Detail)
+	}
+}
+
+// - ROW 3a · the break wins the contest when it is strictly cheaper -
+
+func TestWaterfall_QuantityBreakReplacesWhenStrictlyCheaper(t *testing.T) {
+	st := &fakeStore{
+		listPrice: &ListPrice{"blu60", 10000, "EA"},
+		rules: []Rule{{
+			ID: "r-def", Scope: ScopeTierDefault, CustomerType: "CONTRACTOR",
+			CalcType: CalcPctOffList, DiscountBps: p64(500), PriceUOM: "EA", IsActive: true,
+		}},
+		breaks: []QuantityBreak{{
+			HeaderID: "h1", ItemID: "i1", ProductID: "blu60", ThresholdUOM: "EA",
+			FromQty: 10, ValueType: BreakPctOff, DiscountBps: p64(3000), PriceUOM: "EA",
+		}},
+	}
+	// Tier 5% → 9500; promo 20% → 8000; break 30% off the anchor → 7000. The break is the best
+	// SINGLE price, so it replaces both: source QUANTITY_BREAK, and the beaten promo is no longer
+	// advertised as what prices this line.
+	ps := &fakePromoStore{promos: []Promotion{pctPromo("p-june", 2000)}}
+	bd := resolve(t, promoSvc(st, ps, ""), base(ResolveInput{QtyEntered: 20, UOMEntered: "EA"}))
+
+	if bd.Source != SourceQuantityBreak || bd.FinalCents != 7000 {
+		t.Fatalf("the break's single price 7000 replaces tier and promo, got %s/%d", bd.Source, bd.FinalCents)
+	}
+	if bd.PromoCode != "" {
+		t.Fatalf("the beaten promo must not be advertised as the price source, got %q", bd.PromoCode)
+	}
+	if !strings.Contains(bd.Detail, "volume break") {
+		t.Fatalf("the detail tells the winner's story alone, got %q", bd.Detail)
+	}
+}
+
+// - ROW 3b · the never-worse arm: the customer's standing price beats the break and STANDS -
+// The case the decision calls out by name: under the replaced model the price can be HIGHER than
+// the stacked result (the ERP gave contractors both discounts); D1 gives the best single one.
+
+func TestWaterfall_TierPriceStandsWhenTheBreakIsWorse(t *testing.T) {
+	st := &fakeStore{
+		listPrice: &ListPrice{"blu60", 10000, "EA"},
+		rules: []Rule{{
+			ID: "r-def", Scope: ScopeTierDefault, CustomerType: "CONTRACTOR",
+			CalcType: CalcPctOffList, DiscountBps: p64(1800), PriceUOM: "EA", IsActive: true,
+		}},
+		breaks: []QuantityBreak{{
+			HeaderID: "h1", ItemID: "i1", ProductID: "blu60", ThresholdUOM: "EA",
+			FromQty: 10, ValueType: BreakPctOff, DiscountBps: p64(1000), PriceUOM: "EA",
+		}},
+	}
+	// The contractor is already at 18% off (8200). The break's 10% off the anchor is 9000, worse.
+	bd := resolve(t, promoSvc(st, &fakePromoStore{}, ""), base(ResolveInput{QtyEntered: 20, UOMEntered: "EA"}))
+	if bd.Source != SourceTierDefault || bd.FinalCents != 8200 {
+		t.Fatalf("the tier price 8200 stands (stacking would answer 7380), got %s/%d", bd.Source, bd.FinalCents)
+	}
+	if !strings.Contains(bd.Detail, "not applied") {
+		t.Fatalf("the breakdown must say why the volume break did not land, got %q", bd.Detail)
 	}
 }
 
@@ -262,28 +321,29 @@ func TestWaterfall_PromoDiscountsListWhenNoRuleMatches(t *testing.T) {
 	}
 }
 
-// - ROW 5 · THE MARGIN GATE EVALUATES THE FINAL PRICE, after promo AND break -
+// - ROW 5 · THE MARGIN GATE EVALUATES THE FINAL PRICE, the break's replaced price included -
 
 func TestWaterfall_MarginFloorEvaluatesThePriceAfterPromoAndBreak(t *testing.T) {
 	// Cost 7000. Floor 1200 bps (12%). The line must clear 7954 to pass.
-	//   list 10000 → promo 15% → 8500  (margin 1765 bps: PASSES on its own)
-	//   break 10% on 8500  → 7650      (margin  911 bps: FAILS)
-	// If the gate ran on the promo price instead of the final price, this line would sail through
-	// at a margin the yard never agreed to. That is the whole point of the assertion.
+	//   list 10000 → promo 15% → 8500   (margin 1765 bps: PASSES on its own)
+	//   break 30% off the anchor → 7000 (margin    0 bps: FAILS, and it WINS the replace contest)
+	// Under D1 the break's single price REPLACES the promo price (7000 < 8500), and the gate sees
+	// the replaced price. If the gate ran on the promo price instead of the final price, this line
+	// would sail through at a margin the yard never agreed to. That is the whole point.
 	st := &fakeStore{
 		listPrice: &ListPrice{"blu60", 10000, "EA"},
 		catPolicy: &CategoryPolicy{CategoryID: "pavers", MarginTargetBps: 3000, MarginFloorBps: 1200},
 		breaks: []QuantityBreak{{
 			HeaderID: "h1", ItemID: "i1", ProductID: "blu60", ThresholdUOM: "EA",
-			FromQty: 10, ValueType: BreakPctOff, DiscountBps: p64(1000), PriceUOM: "EA",
+			FromQty: 10, ValueType: BreakPctOff, DiscountBps: p64(3000), PriceUOM: "EA",
 		}},
 	}
 	ps := &fakePromoStore{promos: []Promotion{pctPromo("p-june", 1500)}}
 	bd := resolve(t, promoSvc(st, ps, "pavers"),
 		base(ResolveInput{CustomerType: "RETAIL", QtyEntered: 20, UOMEntered: "EA", CostCents: 7000}))
 
-	if bd.FinalCents != 7650 {
-		t.Fatalf("promo then break: 10000→8500→7650, got %d", bd.FinalCents)
+	if bd.Source != SourceQuantityBreak || bd.FinalCents != 7000 {
+		t.Fatalf("the break replaces the promo price: want QUANTITY_BREAK/7000, got %s/%d", bd.Source, bd.FinalCents)
 	}
 	if !bd.Blocked || bd.BlockPolicy != BlockMarginBelowMinimum {
 		t.Fatalf("the FINAL price is below the floor and must be blocked, got blocked=%v policy=%q margin=%d floor=%d",

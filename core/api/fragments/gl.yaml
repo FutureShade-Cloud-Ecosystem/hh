@@ -16,6 +16,9 @@ paths:
       tags: [staff-gl]
       summary: List the chart of accounts
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -34,6 +37,9 @@ paths:
       tags: [staff-gl]
       summary: Add a chart-of-accounts row
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -58,6 +64,9 @@ paths:
       tags: [staff-gl]
       summary: Deactivate one account by code
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: code
@@ -114,6 +123,9 @@ paths:
           description: Inclusive upper bound on posted_at
           schema: { type: string, format: date }
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       responses:
         "200":
           description: The page of journals
@@ -135,6 +147,9 @@ paths:
         JE_OVER_THRESHOLD approval request is filed on the approvals rail. An
         unbalanced body is refused with an unprocessable-entity error.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -165,6 +180,9 @@ paths:
       tags: [staff-gl]
       summary: Read one journal with its lines
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -189,6 +207,9 @@ paths:
         creator attempting to approve their own journal is refused as
         forbidden. Approving a journal that is no longer DRAFT conflicts.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -211,6 +232,9 @@ paths:
       summary: Void a DRAFT journal
       description: A POSTED journal is corrected with a reversing journal, never voided.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -236,6 +260,9 @@ paths:
         reversal sum to zero on every account. The reversal links back via
         reverses_journal_id; the original stays POSTED.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -259,6 +286,9 @@ paths:
       tags: [staff-gl]
       summary: List recurring journal templates
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -279,6 +309,9 @@ paths:
       summary: Materialize a DRAFT journal from a recurring template
       description: The materialized journal always lands as DRAFT so a machine-generated entry is reviewed before it posts.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -302,6 +335,9 @@ paths:
       tags: [staff-gl]
       summary: Trial balance for a fiscal year (optionally one period and one branch)
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: year
@@ -339,6 +375,9 @@ paths:
         discrepancy age (gl_tieout_state): out_of_tie_since and age_days
         survive across checks.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -372,6 +411,9 @@ paths:
         BisTrack snapshot. month is required (a closing balance reconciles at
         one period end); the fixture path is fixed, never a caller input.
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: year
@@ -411,6 +453,9 @@ paths:
       tags: [staff-gl]
       summary: List fiscal periods
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -430,6 +475,9 @@ paths:
       tags: [staff-gl]
       summary: Seal a fiscal period (OPEN to CLOSED)
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -461,6 +509,9 @@ paths:
         any other caller is refused as forbidden. A reason is required, and the
         reopen is audit-stamped.
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -497,6 +548,9 @@ paths:
         sweeps the net income (or loss) into the retained-earnings equity
         account, then seals all of the year's OPEN periods.
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -524,6 +578,9 @@ paths:
       tags: [staff-gl]
       summary: Read the GL policy row (org default, or one branch)
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -551,6 +608,9 @@ paths:
         parity draft (extract artifacts pending cutover confirmation), which
         is_draft carries on the result.
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -583,6 +643,9 @@ paths:
         (text/csv, or a spreadsheet binary for xlsx; the legacy xls and excel
         spellings are accepted and answer xlsx) instead of JSON.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: year
@@ -637,6 +700,9 @@ paths:
         format=csv or format=xlsx the response streams the export file instead
         of JSON.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: year
@@ -684,6 +750,9 @@ paths:
         Consolidated only; a scoped caller is refused. With format=csv or
         format=xlsx the response streams the export file instead of JSON.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: year
@@ -717,6 +786,9 @@ paths:
         requested account_type. With format=csv or format=xlsx the response
         streams the export file instead of JSON.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: year
@@ -774,6 +846,9 @@ paths:
         the AR subledger balance. With format=csv or format=xlsx the response
         streams the export file instead of JSON.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -808,6 +883,9 @@ paths:
       tags: [staff-finstmt]
       summary: List scheduled-report registry rows
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -826,6 +904,9 @@ paths:
       tags: [staff-finstmt]
       summary: Register a scheduled report
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -850,6 +931,9 @@ paths:
       tags: [staff-finstmt]
       summary: Update a scheduled-report registry row
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -878,6 +962,9 @@ paths:
       tags: [staff-finstmt]
       summary: Delete a scheduled-report registry row
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -899,6 +986,9 @@ paths:
       summary: List bank and card accounts with unmatched-line counts
       description: CREDIT_CARD accounts are tracking-only; no card spend is booked through this surface.
       x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -923,6 +1013,9 @@ paths:
         nothing and reports duplicates). A FAILED import answers an error
         status whose body is still the BankRecImportResult audit envelope.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -952,6 +1045,9 @@ paths:
       tags: [staff-bankrec]
       summary: List statement lines
       x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -991,6 +1087,9 @@ paths:
         statement line with one target; amount_cents defaults to the line
         amount when omitted.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1023,6 +1122,9 @@ paths:
       tags: [staff-bankrec]
       summary: Unmatch a live match (history kept) and revert its line to UNMATCHED
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1049,6 +1151,9 @@ paths:
       tags: [staff-bankrec]
       summary: List match history, optionally for one statement line
       x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1074,6 +1179,9 @@ paths:
       tags: [staff-bankrec]
       summary: List match rules
       x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1101,6 +1209,9 @@ paths:
         the code; a concurrent APPROVED version for the same code conflicts.
         spec.kind must be one of the matcher kinds on BankRecRuleSpec.
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1133,6 +1244,9 @@ paths:
       tags: [staff-bankrec]
       summary: List reconciliations, optionally for one bank account
       x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1156,6 +1270,9 @@ paths:
       summary: Open (prepare) a per-account period reconciliation
       description: Computes the GL balance and the variance against the statement balance. Opening over an already COMPLETED period conflicts.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1187,6 +1304,9 @@ paths:
         bank.recon.completed outbox topic is emitted for the GL posting
         consumer.
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
