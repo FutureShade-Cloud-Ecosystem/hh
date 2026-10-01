@@ -53,7 +53,7 @@ import (
 func demoDispatch(role string, args []string) bool {
 	switch role {
 	case "serve":
-		if err := demoServe(os.Getenv, os.LookupEnv); err != nil {
+		if err := demoServe(os.Getenv, os.LookupEnv, os.Environ); err != nil {
 			fmt.Fprintln(os.Stderr, "core: serve:", err)
 			os.Exit(1)
 		}
@@ -117,6 +117,9 @@ func loadDemoServeConfig(getenv func(string) string) (demoServeConfig, error) {
 		if err != nil || d <= 0 {
 			return demoServeConfig{}, fmt.Errorf("%s must be a positive duration, got %q", issuer.TokenTTLVar, raw)
 		}
+		if d > issuer.DefaultTTL {
+			return demoServeConfig{}, fmt.Errorf("%s is longer than the demo ceiling (%s): the expiry is short by design and the configuration may lengthen it, not remove its shortness", issuer.TokenTTLVar, issuer.DefaultTTL)
+		}
 		cfg.tokenTTL = d
 	}
 	return cfg, nil
@@ -127,14 +130,20 @@ func loadDemoServeConfig(getenv func(string) string) (demoServeConfig, error) {
 // opens: the box must say demo twice (G2), the environment must carry no
 // outbound provider (G4), the database must be a demo database (G3),
 // and only then does the demo graph build and the listener open.
-func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)) error {
+func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool), environ func() []string) error {
 	if err := boot.CheckDemoBox(lookupEnv); err != nil {
 		return err
 	}
 	// G4: the demo box carries no outbound provider. The deny set is the
 	// one copy in demoenv_inventory.go that the default-build inventory
-	// test holds against the source tree.
-	if err := boot.RefuseProviderVars(os.Environ(), boot.ProviderDeny{
+	// test holds against the source tree. The environment picture arrives
+	// as an argument, the way getenv and lookupEnv do, so this call is
+	// pinned by a test through demoServe and not only inside the boot
+	// package. The allow list's CORE_ prefix is the plan's own: every
+	// future CORE_* name classes as allowed on the demo box without
+	// anyone looking at it, which is G4's stated blind spot and not an
+	// oversight of this wiring.
+	if err := boot.RefuseProviderVars(environ(), boot.ProviderDeny{
 		Prefixes:    demoEnvDenyPrefixes,
 		Names:       demoEnvDenyNames,
 		CardVar:     demoEnvCardProcessorVar,

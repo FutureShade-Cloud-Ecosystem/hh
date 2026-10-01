@@ -26,6 +26,21 @@ import (
 // (a helper body that takes the name from its own parameter) is pinned
 // per file by count, so a new one fails until someone pins it with the
 // count it should carry.
+//
+// What the scanner sees, exactly: any call whose function is a selector
+// named Getenv or LookupEnv, under any receiver or import alias (so an
+// os import under another name feeds them and is caught); any call whose
+// function is an identifier in the reader set below, or a selector whose
+// field or method carries one of those names (a reader held in a struct
+// field); and each such call's argument, when it is a string literal, a
+// constant of the file's own package, or a constant of another package of
+// this tree named through the file's imports. What it does not see: a
+// reader passed under a name outside the reader set (a helper named
+// something else), a name computed at run time, or a read through an
+// interface of another shape. The reader set and the per-file dynamic
+// site counts are the maintained half: a new shape joins them in a
+// reviewed one-line change, and the plant tests at the bottom of this
+// file prove the shapes the reviewer found stay caught.
 
 // moduleImportPath is the core module's own import path prefix; an import
 // under it resolves to a directory of this tree, whose constants the
@@ -33,13 +48,18 @@ import (
 const moduleImportPath = "github.com/FutureShade-Cloud-Ecosystem/hh/core/"
 
 // envReaderHelpers are the non-os helper names the core reads environment
-// names through, beside os.Getenv and os.LookupEnv.
+// names through, beside os.Getenv and os.LookupEnv: the configuration
+// package's three, the messaging provider's pair, the getenv and
+// lookupEnv parameter shapes the entrypoint files use, and the bare get
+// shape planted by the review (kept in the set so the shape it names
+// stays caught).
 var envReaderHelpers = map[string]bool{
 	"strEnv":    true,
 	"boolEnv":   true,
 	"intEnv":    true,
 	"env":       true,
 	"getenv":    true,
+	"get":       true,
 	"lookupEnv": true,
 }
 
@@ -47,13 +67,20 @@ var envReaderHelpers = map[string]bool{
 var envNameShape = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
 // unresolvedReaderSiteCounts pins the dynamic read sites: helper bodies
-// whose argument is the helper's own parameter. A file not listed here
-// must carry none; a listed file must carry exactly its count.
+// whose argument is the helper's own parameter, and the two local get
+// closures the widened reader set sweeps in without being environment
+// readers at all (internal/gl/bistrack_tieout.go's tie-out lookup and
+// internal/finstmt/service.go's row lookup; a base name here can stand
+// for more than one file, so a new unresolved site anywhere changes a
+// count and stops the build). A file not listed must carry none; a listed
+// file must carry exactly its count.
 var unresolvedReaderSiteCounts = map[string]int{
-	"config.go":   3,
-	"main.go":     2,
-	"policy.go":   1,
-	"provider.go": 1,
+	"bistrack_tieout.go": 2,
+	"config.go":          3,
+	"main.go":            2,
+	"policy.go":          1,
+	"provider.go":        1,
+	"service.go":         2,
 }
 
 // envInventoryDynamicNames are the names read only through the pinned
@@ -209,35 +236,7 @@ func scanEnvironmentReads(t *testing.T) map[string]bool {
 	unresolved := map[string]int{}
 	for _, files := range filesByDir {
 		for _, pf := range files {
-			imports := map[string]string{}
-			for _, imp := range pf.file.Imports {
-				path := unquoteGo(imp.Path.Value)
-				alias := filepath.Base(path)
-				if imp.Name != nil {
-					alias = imp.Name.Name
-				}
-				imports[alias] = path
-			}
-			fileBase := filepath.Base(pf.rel)
-			fileDir := filepath.Dir(pf.rel)
-			ast.Inspect(pf.file, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok || len(call.Args) == 0 {
-					return true
-				}
-				if !isEnvironmentReader(call.Fun) {
-					return true
-				}
-				name, ok := resolveEnvironmentName(call.Args[0], fileDir, constsByDir, imports)
-				if !ok {
-					unresolved[fileBase]++
-					return true
-				}
-				if envNameShape.MatchString(name) {
-					found[name] = true
-				}
-				return true
-			})
+			collectReadsFrom(pf.file, pf.rel, constsByDir, found, unresolved)
 		}
 	}
 	for file, count := range unresolved {
@@ -267,8 +266,12 @@ type parsedFile struct {
 func isEnvironmentReader(fun ast.Expr) bool {
 	switch fn := fun.(type) {
 	case *ast.SelectorExpr:
-		x, ok := fn.X.(*ast.Ident)
-		return ok && x.Name == "os" && (fn.Sel.Name == "Getenv" || fn.Sel.Name == "LookupEnv")
+		// Any receiver or alias: os.Getenv, a stdos alias of the same,
+		// and a reader held in a struct field whose name is in the
+		// reader set. A selector named Getenv or LookupEnv under
+		// something that is not os would be a coincidence worth
+		// investigating, so the conservative read treats it as a read.
+		return fn.Sel.Name == "Getenv" || fn.Sel.Name == "LookupEnv" || envReaderHelpers[fn.Sel.Name]
 	case *ast.Ident:
 		return envReaderHelpers[fn.Name]
 	}
@@ -324,4 +327,92 @@ func sortedNames(set map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// collectReadsFrom records one parsed file's environment reads into the
+// walk's tables: the literal or resolved constant arguments of the reader
+// calls, and the per-file count of dynamic sites the resolver could not
+// pin. The walk and the planted-shape tests drive the same function, so
+// what the tests prove is what the walk does.
+func collectReadsFrom(f *ast.File, rel string, constsByDir map[string]map[string]string, found map[string]bool, unresolved map[string]int) {
+	imports := map[string]string{}
+	for _, imp := range f.Imports {
+		path := unquoteGo(imp.Path.Value)
+		alias := filepath.Base(path)
+		if imp.Name != nil {
+			alias = imp.Name.Name
+		}
+		imports[alias] = path
+	}
+	fileBase := filepath.Base(rel)
+	fileDir := filepath.Dir(rel)
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return true
+		}
+		if !isEnvironmentReader(call.Fun) {
+			return true
+		}
+		name, ok := resolveEnvironmentName(call.Args[0], fileDir, constsByDir, imports)
+		if !ok {
+			// Only the shapes a helper body takes (Getenv or LookupEnv
+			// under any name, and a bare helper identifier) count as
+			// dynamic sites. A helper-word selector whose argument does
+			// not resolve (a method named get on something that is not
+			// an environment reader) cannot be told from an environment
+			// reader without dataflow, so it is left alone rather than
+			// pinned; the shapes the plant tests hold are the
+			// literal-argument ones.
+			if sel, isSel := call.Fun.(*ast.SelectorExpr); isSel && envReaderHelpers[sel.Sel.Name] {
+				return true
+			}
+			unresolved[fileBase]++
+			return true
+		}
+		if envNameShape.MatchString(name) {
+			found[name] = true
+		}
+		return true
+	})
+}
+
+// The reviewer's three planted shapes, as permanent cases: a reader held
+// in a struct field, a reader held under a bare short name, and an os
+// import under an alias. Each synthetic file goes through the same
+// collection the walk uses, and each plant must surface as a read the
+// inventory would then have to class. The shapes are kept here so a
+// scanner regression fails this test and not only a future review.
+func TestEnvironmentInventoryScannerCatchesThePlantedShapes(t *testing.T) {
+	shapes := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{"reader in a struct field", `package p
+type c struct{ getenv func(string) string }
+func f(x c) string { return x.getenv("FAKE_FIELD_PROVIDER_URL") }`, "FAKE_FIELD_PROVIDER_URL"},
+		{"reader under a bare name", `package p
+func f(get func(string) string) string { return get("FAKE_BARE_PROVIDER_URL") }`, "FAKE_BARE_PROVIDER_URL"},
+		{"os import under an alias", `package p
+import stdos "os"
+func f() string { return stdos.Getenv("FAKE_ALIAS_PROVIDER_URL") }`, "FAKE_ALIAS_PROVIDER_URL"},
+	}
+	constsByDir := map[string]map[string]string{"p": {}}
+	for _, s := range shapes {
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, s.name+".go", s.source, 0)
+		if err != nil {
+			t.Fatalf("%s: parse: %v", s.name, err)
+		}
+		found := map[string]bool{}
+		unresolved := map[string]int{}
+		collectReadsFrom(f, "plant/"+s.name+".go", constsByDir, found, unresolved)
+		for name := range unresolved {
+			t.Fatalf("%s: the shape landed as an unresolved dynamic site (%s), not a read", s.name, name)
+		}
+		if !found[s.want] {
+			t.Fatalf("%s: the planted shape was not caught: %v", s.name, found)
+		}
+	}
 }

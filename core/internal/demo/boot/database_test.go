@@ -20,15 +20,26 @@ import (
 // the variable the suite skips politely, present it must answer. The test
 // creates one database per case, builds the frozen tables the guard
 // touches with their migration shapes, and drops everything it made.
+//
+// What the gate variable must name here: a Postgres SERVER this suite may
+// create and drop databases on, with a maintenance database named
+// postgres. No migration set is required: every case here builds its own
+// tables by hand. That differs from the cmd/core fixtures, which expect
+// the same variable to name one already-migrated database; and the
+// migrated-schema leg of this guard lives in database_integration_test.go
+// under the integration tag, where the real chain is applied.
 
 const coreDBEnvVar = "HH_CORE_TEST_DATABASE_URL"
 
 // fixtureDDL builds the tables the demo database guard reads, at the
 // shapes the frozen migrations give them (org 0213, users 0004 plus
-// 0213's tombstone column and 0215's platform id, payment_config 0027,
-// schema_migrations the migrate role's bookkeeping). demo_box is the
-// populate's own table, outside the migration chain; the guard reads only
-// its existence and its row count.
+// 0213's tombstone column and 0215's platform id, payment_config 0027
+// with its base_url, schema_migrations the migrate role's bookkeeping),
+// and seeds the demo world's own rows: the demo org, the populate's one
+// active payment configuration (the demo merchant id, no host) and the
+// populate's demo_box row with its marker. The baseline is the world the
+// populate leaves; every refusal case plants one violation on it.
+// demo_box is outside the migration chain, so the fixture creates it.
 const fixtureDDL = `
 CREATE EXTENSION IF NOT EXISTS citext;
 CREATE TABLE schema_migrations (
@@ -52,12 +63,16 @@ CREATE TABLE users (
 CREATE TABLE payment_config (
 	id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 	status      TEXT NOT NULL,
-	merchant_id TEXT NOT NULL
+	merchant_id TEXT NOT NULL,
+	base_url    TEXT NOT NULL DEFAULT ''
 );
+INSERT INTO payment_config (status, merchant_id, base_url)
+	VALUES ('active', '` + flows.DemoMerchantID + `', '');
 CREATE TABLE demo_box (
-	moment TIMESTAMPTZ NOT NULL DEFAULT now()
+	moment TIMESTAMPTZ NOT NULL DEFAULT now(),
+	marker TEXT NOT NULL DEFAULT ''
 );
-INSERT INTO demo_box DEFAULT VALUES;
+INSERT INTO demo_box (marker) VALUES ('` + flows.PopulateMarker + `');
 `
 
 func insertUser(t *testing.T, pool *pgxpool.Pool, email, status string) {
@@ -68,10 +83,10 @@ func insertUser(t *testing.T, pool *pgxpool.Pool, email, status string) {
 	}
 }
 
-func insertPayment(t *testing.T, pool *pgxpool.Pool, status, merchant string) {
+func insertPayment(t *testing.T, pool *pgxpool.Pool, status, merchant, host string) {
 	t.Helper()
 	if _, err := pool.Exec(context.Background(),
-		`INSERT INTO payment_config (status, merchant_id) VALUES ($1, $2)`, status, merchant); err != nil {
+		`INSERT INTO payment_config (status, merchant_id, base_url) VALUES ($1, $2, $3)`, status, merchant, host); err != nil {
 		t.Fatalf("insert payment config: %v", err)
 	}
 }
@@ -186,9 +201,10 @@ func TestDemoCheckRefusesDivergentDatabaseVariables(t *testing.T) {
 }
 
 // G3: the guard accepts the demo world as the populate will build it: one
-// demo org, the populate's demo_box row, accounts at the reserved domain
-// and the reserved example domains, suspended outsiders, and the demo's
-// own invented payment configuration.
+// demo org, the populate's demo_box row with its marker, accounts at the
+// reserved domain and the reserved example domains, suspended outsiders,
+// and the fixture's own baseline payment configuration. The plant cases
+// below violate this world one fact at a time.
 func TestDemoDatabaseGuardAcceptsTheDemoWorld(t *testing.T) {
 	pool := openPool(t, caseDatabase(t, "demo"))
 	insertUser(t, pool, "sales@"+flows.ReservedDomain, "ACTIVE")
@@ -196,7 +212,6 @@ func TestDemoDatabaseGuardAcceptsTheDemoWorld(t *testing.T) {
 	insertUser(t, pool, "someone.example", "ACTIVE")
 	insertUser(t, pool, "someone.invalid", "ACTIVE")
 	insertUser(t, pool, "real.person@dibbits.ca", "SUSPENDED")
-	insertPayment(t, pool, "active", flows.DemoMerchantID)
 	if err := CheckDemoDatabase(context.Background(), pool); err != nil {
 		t.Fatalf("the demo world refused: %v", err)
 	}
@@ -237,8 +252,28 @@ func TestDemoDatabaseGuardRefusals(t *testing.T) {
 		{"a lookalike host outside the reserved domains", "reserved demo domains", func(t *testing.T, pool *pgxpool.Pool) {
 			insertUser(t, pool, "clerk@hh-demo.invalid.evil.com", "ACTIVE")
 		}},
-		{"an active payment configuration that is not the demo's", "payment configuration", func(t *testing.T, pool *pgxpool.Pool) {
-			insertPayment(t, pool, "active", "REAL-MERCHANT")
+		{"an active payment configuration that is not the demo's", "not the populate's invented one", func(t *testing.T, pool *pgxpool.Pool) {
+			if _, err := pool.Exec(context.Background(), `UPDATE payment_config SET merchant_id = 'REAL-MERCHANT'`); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"a host on the active payment configuration", "carries a host", func(t *testing.T, pool *pgxpool.Pool) {
+			if _, err := pool.Exec(context.Background(), `UPDATE payment_config SET base_url = 'https://live-processor.example'`); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"a second active payment configuration", "want exactly the populate's invented one", func(t *testing.T, pool *pgxpool.Pool) {
+			insertPayment(t, pool, "active", flows.DemoMerchantID, "")
+		}},
+		{"no active payment configuration", "want exactly the populate's invented one", func(t *testing.T, pool *pgxpool.Pool) {
+			if _, err := pool.Exec(context.Background(), `DELETE FROM payment_config`); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"a demo_box row that is not the populate's", "does not carry the populate's marker", func(t *testing.T, pool *pgxpool.Pool) {
+			if _, err := pool.Exec(context.Background(), `UPDATE demo_box SET marker = 'someone-elses-marker'`); err != nil {
+				t.Fatal(err)
+			}
 		}},
 	}
 	for _, c := range cases {
@@ -257,11 +292,15 @@ func TestDemoDatabaseGuardRefusals(t *testing.T) {
 }
 
 // G0, database half: demo-check runs the guard on a non-empty database,
-// so the entrypoint stops before migrate writes anything.
+// so the entrypoint stops before migrate writes anything. The refusal's
+// reason is pinned like the G3 cases: a non-demo org is named.
 func TestDemoCheckRefusesANonDemoDatabase(t *testing.T) {
 	dsn := caseDatabase(t, "nondemo")
 	pool := openPool(t, dsn)
-	if _, err := pool.Exec(context.Background(), `INSERT INTO org (slug) VALUES ('real-dealer')`); err != nil {
+	// The one org is a real dealer's, not a second org beside the demo
+	// one: the guard checks the count before the slug, so this plant
+	// reaches the slug refusal the pin expects.
+	if _, err := pool.Exec(context.Background(), `UPDATE org SET slug = 'real-dealer'`); err != nil {
 		t.Fatal(err)
 	}
 	if err := pool.Ping(context.Background()); err != nil {
@@ -272,5 +311,44 @@ func TestDemoCheckRefusesANonDemoDatabase(t *testing.T) {
 	}))
 	if err == nil {
 		t.Fatal("a non-demo database passed demo-check")
+	}
+	if !strings.Contains(err.Error(), "real-dealer") {
+		t.Fatalf("refusal %q does not pin its reason (the non-demo org), so it may be refusing for the wrong reason", err)
+	}
+}
+
+// G0, environment half, database-free: DemoCheck refuses before it
+// touches any database when the box has not said demo, or when either
+// database variable is missing. Three named refusals. The lookups come
+// from lookupOf (env_test.go), a closed map where an absent key is
+// absent.
+func TestDemoCheckRefusalsBeforeAnyDatabase(t *testing.T) {
+	dsn := "postgres://w1:unused@127.0.0.1:1/nowhere?sslmode=disable"
+	cases := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"the box does not say demo", map[string]string{
+			"DEMO_MODE": "true", "APP_ENV": "dev",
+			"DATABASE_URL": dsn, "CORE_DATABASE_URL": dsn,
+		}, "APP_ENV"},
+		{"DATABASE_URL missing", map[string]string{
+			"DEMO_MODE": "true", "APP_ENV": "demo",
+			"CORE_DATABASE_URL": dsn,
+		}, "DATABASE_URL"},
+		{"CORE_DATABASE_URL missing", map[string]string{
+			"DEMO_MODE": "true", "APP_ENV": "demo",
+			"DATABASE_URL": dsn,
+		}, "CORE_DATABASE_URL"},
+	}
+	for _, c := range cases {
+		err := DemoCheck(context.Background(), lookupOf(c.env))
+		if err == nil {
+			t.Fatalf("%s: accepted", c.name)
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("%s: refusal %q does not name %s", c.name, err, c.want)
+		}
 	}
 }
