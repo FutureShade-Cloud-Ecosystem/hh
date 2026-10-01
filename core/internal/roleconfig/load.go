@@ -399,6 +399,7 @@ func validateSettings(raw map[string]json.RawMessage) (Settings, []string) {
 	settings.ShortageResolvers = decodeRoleList(raw[SettingShortageResolvers], SettingShortageResolvers, &issues)
 	settings.DispatchPolicySetters = decodeRoleList(raw[SettingDispatchPolicySetters], SettingDispatchPolicySetters, &issues)
 	settings.GeneralManagerSelling = decodeBool(raw[SettingGeneralManagerSelling], SettingGeneralManagerSelling, &issues)
+	settings.RefundApprovalWindowSeconds = decodeWindowSeconds(raw[SettingRefundApprovalWindowSeconds], SettingRefundApprovalWindowSeconds, &issues)
 
 	// The clerk never approves its own refund class: inside_sales rings
 	// the refund, so naming it on the refund approvers empties the rule
@@ -484,6 +485,25 @@ func decodeCents(raw json.RawMessage, name string, issues *[]string) int64 {
 	}
 	if v < 0 {
 		*issues = append(*issues, fmt.Sprintf("%s is negative", name))
+	}
+	return v
+}
+
+// decodeWindowSeconds decodes the refund approval window in seconds: an
+// integer inside the package's bounds. A null, a fraction, a value below
+// the floor or above the ceiling is refused: a window of zero would refuse
+// every approval and an unbounded one would let any live token stand in
+// for a manager at the counter.
+func decodeWindowSeconds(raw json.RawMessage, name string, issues *[]string) int {
+	var v int
+	// JSON null leaves v at zero and no error, so it is refused by name.
+	if err := json.Unmarshal(raw, &v); err != nil || isJSONNull(raw) {
+		*issues = append(*issues, fmt.Sprintf("%s is not an integer count of seconds", name))
+		return 0
+	}
+	if v < MinRefundApprovalWindowSeconds || v > MaxRefundApprovalWindowSeconds {
+		*issues = append(*issues, fmt.Sprintf("%s holds %d, outside the %d to %d the window bounds",
+			name, v, MinRefundApprovalWindowSeconds, MaxRefundApprovalWindowSeconds))
 	}
 	return v
 }

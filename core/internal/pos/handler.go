@@ -164,6 +164,10 @@ func (h *Handler) createReturn(w http.ResponseWriter, r *http.Request, caller gu
 	if !decodeJSON(w, r, &in) {
 		return
 	}
+	// The approver's credential rides its own header beside the clerk's
+	// bearer (row 482): read once here, carried verbatim, never logged
+	// anywhere on this path.
+	in.ApproverCredential = r.Header.Get(approverAuthorizationHeader)
 	ret, err := h.svc.Return(r.Context(), in)
 	if err != nil {
 		h.writeErr(w, r, err)
@@ -484,9 +488,19 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var ce clientError
 	var cb ErrCreditBlocked
 	var nt ErrNoOpenTill
+	var ra ErrRefundApprovalRequired
 	switch {
 	case errors.As(err, &cb):
 		httpx.ErrorWith(w, http.StatusConflict, "credit_blocked", map[string]any{"policy": cb.Policy, "queue": "staff_approvals"})
+	case errors.As(err, &ra):
+		// The contract's PosRefundApprovalRequired: the Error envelope whose
+		// error string discriminates the approval refusal, the approval body
+		// beside it naming the configured amount and the approver role keys
+		// in the configuration's order, so the till's screen can show the
+		// manager dialog (D49, X7).
+		httpx.ErrorWith(w, http.StatusConflict, refundApprovalRequiredError, map[string]any{
+			"approval": map[string]any{"amount_cents": ra.AmountCents, "approvers": ra.Approvers},
+		})
 	case errors.As(err, &nt):
 		httpx.Error(w, http.StatusConflict, nt.Error())
 	case errors.As(err, &ce):

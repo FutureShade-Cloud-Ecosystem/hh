@@ -582,6 +582,15 @@ type ReturnInput struct {
 	// amount, and books to the fee_revenue line through pos.return.committed.fee_cents. 0 = no fee.
 	FeeBps int `json:"fee_bps,omitempty"`
 
+	// ApproverCredential is the credential carried in the contract's
+	// approver header beside the clerk's bearer on a return above the
+	// amount (row 482): the same Bearer scheme prefix as Authorization, the
+	// manager's own credential entered at the clerk's till. The handler
+	// reads it from the header once and carries it verbatim; it never
+	// arrives in a body (the json tag refuses) and nothing on the request
+	// path logs it.
+	ApproverCredential string `json:"-"`
+
 	// internalRail marks the ONE internal caller (ApproveReturnRequest) allowed to use the reserved
 	// "rreq:" idempotency-key namespace. Unexported, so it can never be set from a JSON body, a public
 	// POST /api/v1/pos/returns with an "rreq:" key is refused (422) before it can hijack a request's

@@ -70,24 +70,32 @@ type PastDue struct {
 // simply has nothing to say about standing, which is exactly what it says today.
 func (s *Service) WithAgingReader(a AgingReader) *Service { s.aging = a; return s }
 
-// balanceAllowed answers whether THIS caller may receive the balance fields under the branch
-// policy. Same shape as marginAllowed by design, one idea about visibility, applied twice.
-func (s *Service) balanceAllowed(ctx context.Context, branchID string) bool {
+// balanceAllowed answers whether THIS caller may receive the balance fields
+// under the branch policy, behind the same branch wall the glance runs (X2:
+// a branch the caller's resolved authority does not reach is REFUSED with
+// the wall's 403, never answered with an empty card). Same shape as
+// marginAllowed by design, one idea about visibility, applied twice.
+func (s *Service) balanceAllowed(ctx context.Context, branchID string) (bool, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
-		return false
+		// An unresolved caller is the pinned empty answer (the route's guard
+		// is the door); the wall below judges a RESOLVED authority.
+		return false, nil
+	}
+	if err := requireBranchReach(caller, branchID); err != nil {
+		return false, err
 	}
 	p, err := s.store.ReadPosPolicy(ctx, branchID)
 	if err != nil {
-		return false
+		return false, nil
 	}
 	switch p.BalanceVisibility {
 	case BalanceVisibilityManagerUp:
-		return caller.IsManager()
+		return caller.IsManager(), nil
 	case BalanceVisibilityHidden:
-		return false
+		return false, nil
 	default: // ALL_STAFF, the column default, and what a pre-0181 fake resolves to
-		return true
+		return true, nil
 	}
 }
 
@@ -112,7 +120,14 @@ func (s *Service) Standing(ctx context.Context, in AccountStandingInput) (Accoun
 	if in.CustomerID == "" {
 		return AccountStanding{}, nil // a walk-in has no account and no balance
 	}
-	if !s.balanceAllowed(ctx, in.BranchID) {
+	allowed, err := s.balanceAllowed(ctx, in.BranchID)
+	if err != nil {
+		// The branch wall (X2): a refusal, never an empty card, so a caller
+		// poking another branch's accounts learns the wall, not a customer
+		// who happens to look current.
+		return AccountStanding{}, err
+	}
+	if !allowed {
 		// THE GATE: byte-absent. The zero value marshals as `{}`.
 		return AccountStanding{}, nil
 	}

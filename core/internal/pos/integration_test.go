@@ -519,7 +519,15 @@ func TestIntegration_ReturnRequest_CrashWindow_RejectRefused_ApproveConverges(t 
 		t.Skipf("no seeded user: %v", err)
 	}
 	svc := realPosSvc(t, pool, stubCharger{})
-	sctx := identity.ContextWithStaffUserID(ctx, userID)
+	// The rail caller is an authorized approver: the bridged context with
+	// the global staff authority AND the linked user id, the full stamp the
+	// guard adapter builds on the request path (the return rules fence the
+	// rail caller by the same wall they fence the counter, so a bare user
+	// id stamp with no authority is refused).
+	sctx := identity.ContextWithStaff(identity.ContextWithStaffUserID(ctx, userID), identity.StaffContext{
+		UserID: userID, RoleCode: "GENERAL_MANAGER", Tier: identity.TierLeadership,
+		Scope: identity.ScopeGlobal, Status: identity.StatusActive,
+	})
 
 	// A committed ACCOUNT sale to return against.
 	sale, err := svc.Sale(ctx, SaleInput{

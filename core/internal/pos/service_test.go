@@ -17,6 +17,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/jackc/pgx/v5"
 )
@@ -371,7 +372,19 @@ func (f *fakeStore) InsertReturn(_ context.Context, _ pgx.Tx, r returnRow) (stri
 	f.log("return")
 	f.returnRows = append(f.returnRows, r)
 	f.seq++
-	return "ret-" + itoa(f.seq), "#RET-" + itoa(f.seq), nil
+	id := "ret-" + itoa(f.seq)
+	no := "#RET-" + itoa(f.seq)
+	// The real store replays by the idempotency key (ux_pos_returns_idem
+	// then FindReturnByKey); the fake mirrors that, so the replay paths are
+	// exercisable against the harness.
+	if r.IdempotencyKey != "" {
+		f.cachedReturns[r.IdempotencyKey] = Return{
+			ReturnID: id, ReturnNo: no, OrderID: r.OrderID, InvoiceID: r.InvoiceID,
+			RefundMethod: r.RefundMethod, SubtotalCents: r.SubtotalCents, TaxCents: r.TaxCents,
+			TotalCents: r.TotalCents, FeeCents: r.FeeCents, Status: "COMMITTED",
+		}
+	}
+	return id, no, nil
 }
 
 func (f *fakeStore) InsertReturnLines(_ context.Context, _ pgx.Tx, _ string, lines []returnLineRow) error {
@@ -813,8 +826,24 @@ func newHarness() *harness {
 		restock: h.restock, cardRefund: h.refunder,
 		audit: h.rec, now: func() time.Time { return time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC) },
 		callerFrom: func(context.Context) (identity.StaffContext, bool) { return h.caller, true },
+		// The gated paths fail closed without a configuration (the lead's
+		// P1-1 ruling), so the harness wires the decided default through
+		// the test config builder; a test that wants another configuration
+		// or none calls WithRoleConfig after the harness.
+		roles: testRoleConfig(),
 	}
 	return h
+}
+
+// testRoleConfig is the unit tests' config builder: the decided default,
+// loaded once. A refused default is a build failure the roleconfig
+// package's own tests would have caught first.
+func testRoleConfig() *roleconfig.Config {
+	cfg, err := roleconfig.Default()
+	if err != nil {
+		panic("test harness: the decided default does not load: " + err.Error())
+	}
+	return cfg
 }
 
 func baseInput() SaleInput {
