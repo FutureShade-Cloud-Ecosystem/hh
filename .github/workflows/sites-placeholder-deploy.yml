@@ -8,6 +8,10 @@ name: sites-placeholder-deploy
 # APPWRITE_SITES_KEY (a key holding sites.write alone) and the repository
 # variable APPWRITE_HH_PROJECT_ID, a run ends green at its gate step and
 # deploys nothing. The logic lives in scripts/sites-placeholder-deploy.sh.
+# Each step execs the script, so the script is the step's own process: on a
+# cancel the runner signals that process (SIGINT, then SIGTERM, then it kills
+# the tree), and the script's EXIT trap removes the key file. The last step
+# removes it again, for a kill the trap cannot see.
 
 on:
   workflow_dispatch:
@@ -45,7 +49,7 @@ jobs:
           # handed to the deploy step alone.
           KEY_SET: ${{ secrets.APPWRITE_SITES_KEY != '' }}
           APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_HH_PROJECT_ID }}
-        run: bash scripts/sites-placeholder-deploy.sh gate
+        run: exec bash scripts/sites-placeholder-deploy.sh gate
       - name: Set up Node
         if: steps.gate.outputs.ready == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -53,17 +57,20 @@ jobs:
           node-version: 22
       - name: Install the Appwrite CLI (pinned, integrity checked)
         if: steps.gate.outputs.ready == 'true'
-        run: bash scripts/sites-placeholder-deploy.sh install
+        run: exec bash scripts/sites-placeholder-deploy.sh install
       - name: Deploy the placeholder
         if: steps.gate.outputs.ready == 'true'
         env:
           APPWRITE_SITES_KEY: ${{ secrets.APPWRITE_SITES_KEY }}
           APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_HH_PROJECT_ID }}
           CREATE_SITE: ${{ inputs.create_site }}
-        run: bash scripts/sites-placeholder-deploy.sh deploy
+        run: exec bash scripts/sites-placeholder-deploy.sh deploy
       - name: Prove the page from outside
         if: steps.gate.outputs.ready == 'true'
         env:
           POLL_ATTEMPTS: '30'
           POLL_WAIT_SECONDS: '10'
-        run: bash scripts/sites-placeholder-deploy.sh verify
+        run: exec bash scripts/sites-placeholder-deploy.sh verify
+      - name: Remove the CLI preferences that held the key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/appwrite-home"

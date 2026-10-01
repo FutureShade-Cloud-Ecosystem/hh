@@ -141,8 +141,11 @@ JSON
 # process listing on the runner could read it. The file is the one the CLI
 # itself writes (prefs.json, session "default", fields endpoint and key), made
 # mode 0600 under a HOME of this step's own, by node reading the key from its
-# environment; the key is then unset, so no CLI process carries it, and the
-# HOME is removed when the step ends, whatever the outcome. The project comes
+# environment; the key is then unset, so no CLI process carries it. The HOME
+# is removed by this script's EXIT trap when the script ends, fails, or takes
+# SIGINT or SIGTERM (the workflow execs the script, so a cancel's signals reach
+# it and not a parent shell), and again by the workflow's last step, which runs
+# always and covers a SIGKILL the trap cannot see. The project comes
 # from APPWRITE_PROJECT_ID, which the CLI reads from its environment. No flag
 # that prints credentials (--show-secrets, --verbose, --report, client --debug)
 # is passed.
