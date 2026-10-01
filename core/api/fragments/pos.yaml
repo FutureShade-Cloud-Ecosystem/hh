@@ -1275,7 +1275,10 @@ components:
       description: >-
         The approver's own credential beside the clerk's bearer, carried once
         when a return above the dealer's approval amount commits with the
-        manager at the counter. Verified by the same verifier as any caller;
+        manager at the counter. The value carries the same Bearer scheme
+        prefix as Authorization: the string "Bearer " followed by the token,
+        so the server reads it through the same bearer parsing as any
+        caller's credential. Verified by the same verifier as any caller;
         its membership and role resolved as the gate resolves any caller;
         accepted only when issued within the short window the configuration
         sets. Never logged.
@@ -1284,19 +1287,29 @@ components:
   responses:
     PosRefundApprovalRequired:
       description: >-
-        The return is refused: the refund is above the dealer's approval
-        amount and the caller's role is not on the approvers list. The Error
-        envelope carries the requirement under the approval key, so the till's
-        screen can show the amount and the roles that may approve.
+        The return is refused, and the body is the Error envelope. The route
+        answers 409 for more than one refusal: the refund rail's own refusals
+        (a closed drawer, a refused tender write) carry the plain envelope
+        alone, while the approval refusal names itself in the error string
+        "refund_approval_required": the refund is above the dealer's approval
+        amount and the caller's role is not on the approvers list, and only
+        that refusal carries the requirement under the approval key, so the
+        till's screen can show the amount and the roles that may approve. A
+        client discriminates on the error string, never on the key's absence.
       content:
         application/json:
           schema:
             allOf:
               - $ref: "#/components/schemas/Error"
               - type: object
-                required: [approval]
                 properties:
-                  approval: { $ref: "#/components/schemas/PosRefundApproval" }
+                  approval:
+                    description: >-
+                      Present exactly when the error string is
+                      "refund_approval_required", the approval refusal; the
+                      route's other 409 refusals answer the plain envelope
+                      without the key.
+                    $ref: "#/components/schemas/PosRefundApproval"
 
   schemas:
     # ── POS: sale ring ───────────────────────────────────────────────────────
@@ -1909,7 +1922,7 @@ components:
       type: object
       description: >-
         The approval a refused return names: the amount over which the refund
-        needs a manager, and the role labels that hold the approval, as the
+        needs a manager, and the role keys that hold the approval, as the
         dealer's configuration sets them.
       required: [amount_cents, approvers]
       properties:
@@ -1919,7 +1932,10 @@ components:
           description: The approval amount, in integer cents; a refund at or under it needs no approver
         approvers:
           type: array
-          description: The role labels that may approve, in the configuration's order
+          description: >-
+            The role keys that may approve (sales_manager, branch_manager),
+            matching the configuration's keys; the till's screens map them to
+            display labels.
           minItems: 1
           items: { type: string }
     PosReturnableLine:
