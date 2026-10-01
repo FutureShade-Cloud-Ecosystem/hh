@@ -31,7 +31,9 @@ func marginInput() MarginGlanceInput {
 // -- item 10: the margin glance computes server-side, from the engine's numbers ------------------
 
 func TestMarginGlance_ManagerGetsServerComputedFields(t *testing.T) {
-	h := newHarness()                                        // harness caller is TierManager, MANAGER_UP (the default) allows it
+	h := newHarness() // the harness caller carries a listed manager role
+	h.caller = identity.StaffContext{UserID: "u-mgr", RoleCode: "SALES_MANAGER",
+		Tier: identity.TierManager, Scope: identity.ScopeGlobal}
 	h.store.branchCosts = map[string]int64{"prod-paver": 60} // WAC 60¢/base; fake engine: 10000¢ line, 100 base
 	out, err := h.svc.MarginGlance(context.Background(), marginInput())
 	if err != nil {
@@ -52,9 +54,11 @@ func TestMarginGlance_ManagerGetsServerComputedFields(t *testing.T) {
 	}
 }
 
-func TestMarginGlance_FrontlineRole_FieldsByteAbsent(t *testing.T) {
+func TestMarginGlance_RoleOffTheList_FieldsByteAbsent(t *testing.T) {
 	h := newHarness()
-	h.caller = identity.StaffContext{UserID: "u-counter", RoleCode: "INSIDE_SALES",
+	// A role the decided configuration keeps off the cost and margin list
+	// (X3 hides it from the yard team).
+	h.caller = identity.StaffContext{UserID: "u-yard", RoleCode: "YARD_TEAM",
 		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
 	h.store.branchCosts = map[string]int64{"prod-paver": 60}
 	out, err := h.svc.MarginGlance(context.Background(), marginInput())
@@ -62,21 +66,21 @@ func TestMarginGlance_FrontlineRole_FieldsByteAbsent(t *testing.T) {
 		t.Fatalf("glance: %v", err)
 	}
 	// THE MARSHAL-LAYER PROOF: marshalled exactly as the handler writes it, the payload for a
-	// non-allowed role is `{}`, margin/profit BYTE-ABSENT, not zeroed, not nulled.
+	// role off the configured list is `{}`, margin/profit BYTE-ABSENT, not zeroed, not nulled.
 	raw, _ := json.Marshal(out)
 	if string(raw) != "{}" {
-		t.Fatalf("a frontline caller under MANAGER_UP must receive {}: %s", raw)
+		t.Fatalf("a caller off the configured list must receive {}: %s", raw)
 	}
 	if strings.Contains(string(raw), "margin") || strings.Contains(string(raw), "profit") {
 		t.Fatalf("margin/profit must be byte-absent: %s", raw)
 	}
 }
 
-func TestMarginGlance_HiddenPolicy_NobodyGetsFields(t *testing.T) {
-	h := newHarness() // manager-tier caller…
-	p := h.store.policies[""]
-	p.MarginVisibility = MarginVisibilityHidden
-	h.store.policies[""] = p
+func TestMarginGlance_EmptyList_NobodyGetsFields(t *testing.T) {
+	h := newHarness() // manager-tier caller
+	// The dealer's configuration is the switch: a cost and margin list that
+	// names nobody hides the column from everyone, a manager included.
+	h.svc = h.svc.WithRoleConfig(emptyCostVisibilityConfig(t))
 	h.store.branchCosts = map[string]int64{"prod-paver": 60}
 	out, err := h.svc.MarginGlance(context.Background(), marginInput())
 	if err != nil {
@@ -84,29 +88,31 @@ func TestMarginGlance_HiddenPolicy_NobodyGetsFields(t *testing.T) {
 	}
 	raw, _ := json.Marshal(out)
 	if string(raw) != "{}" {
-		t.Fatalf("HIDDEN means nobody, a manager gets {} too: %s", raw)
+		t.Fatalf("an empty configured list means nobody, a manager gets {} too: %s", raw)
 	}
 }
 
-func TestMarginGlance_AllStaff_FrontlineGetsFields(t *testing.T) {
+func TestMarginGlance_ConfiguredList_FrontlineGetsFields(t *testing.T) {
 	h := newHarness()
+	// The decided configuration names Inside Sales on the cost and margin
+	// list (X3, row 343): the counter clerk sees margin, the dealer's
+	// decision and not the caller's tier.
 	h.caller = identity.StaffContext{UserID: "u-counter", RoleCode: "INSIDE_SALES",
 		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
-	p := h.store.policies[""]
-	p.MarginVisibility = MarginVisibilityAllStaff
-	h.store.policies[""] = p
 	h.store.branchCosts = map[string]int64{"prod-paver": 60}
 	out, err := h.svc.MarginGlance(context.Background(), marginInput())
 	if err != nil {
 		t.Fatalf("glance: %v", err)
 	}
 	if out.MarginBps == nil || out.EstProfitCents == nil {
-		t.Fatalf("ALL_STAFF admits a frontline caller: %+v", out)
+		t.Fatalf("a configured role receives margin, frontline included: %+v", out)
 	}
 }
 
 func TestMarginGlance_NoCostLine_AbsentAndFooterHonest(t *testing.T) {
 	h := newHarness()
+	h.caller = identity.StaffContext{UserID: "u-mgr", RoleCode: "SALES_MANAGER",
+		Tier: identity.TierManager, Scope: identity.ScopeGlobal}
 	h.store.branchCosts = map[string]int64{"prod-paver": 60} // prod-nocost has NO WAC row
 	in := marginInput()
 	in.Lines = append(in.Lines, LineInput{ProductID: "prod-nocost", QtyEntered: 5, UOMEntered: "EA"})

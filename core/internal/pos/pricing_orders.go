@@ -44,7 +44,7 @@ func (s *Service) CreatePricingOrder(ctx context.Context, in PricingOrderInput) 
 	lines := make([]PricingOrderLine, len(in.Lines))
 	var subtotal int64
 	for i, ln := range in.Lines {
-		lp, err := s.pricing.DeriveLinePrice(ctx, pricing.ResolveInput{
+		lp, err := s.pricing.DeriveCounterLinePrice(ctx, pricing.ResolveInput{
 			CustomerID:   in.CustomerID,
 			CustomerType: customerType,
 			ProductID:    ln.ProductID,
@@ -54,9 +54,6 @@ func (s *Service) CreatePricingOrder(ctx context.Context, in PricingOrderInput) 
 		})
 		if err != nil {
 			return PricingOrder{}, err
-		}
-		if lp.Breakdown.Blocked {
-			return PricingOrder{}, ErrPriceBlocked{Policy: lp.Breakdown.BlockPolicy, LineNo: i + 1}
 		}
 		sku, name, err := s.store.ReadProductSnapshot(ctx, ln.ProductID)
 		if err != nil {

@@ -42,9 +42,11 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/shims"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/tenantconfig"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/otelhttp"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
 // demoDispatch runs a demo-only role and reports whether it answered.
@@ -162,9 +164,15 @@ func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)
 	}
 	defer graph.pool.Close()
 
-	// G7 (the card rail's lane) slots its refusal here, after the graph
-	// is built and before the listener opens: the wired payment service
-	// must report itself simulated or the demo build does not serve.
+	// G7 (the card rail's lane): the wired card rail must report itself
+	// simulated, or the demo build does not serve. The refusal runs here,
+	// after the graph is built and before the listener opens, reading the
+	// service the wiring built and not the environment: G4's scan of what
+	// the box declared is the independent first layer, this reads what the
+	// box actually wired (plan 4A: no guard relies on another).
+	if err := demoRefuseLiveCardRail(graph.tops.cardRail); err != nil {
+		return err
+	}
 
 	// healthz: the same live database ping the default build serves.
 	mux.Handle("GET /healthz", healthzHandler(graph.pool.Ping, graph.tops.bistrackSvc.HealthStatus()))
@@ -192,6 +200,24 @@ func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
 	fmt.Println("core: serve: shutdown complete")
+	return nil
+}
+
+// demoRefuseLiveCardRail is G7 (the card rail's lane): the wired payment
+// service must report itself simulated (payment.Service.Simulated), or the
+// demo build does not serve. The check reads the service the wiring built,
+// not the environment: G4 scans what the box declared, this reads what the
+// box actually wired, so the two hold independently and a wiring that
+// drifts from the setting is still caught before the listener opens. A nil
+// service refuses too: fail closed, never serve a demo box whose rail
+// cannot say what it is.
+func demoRefuseLiveCardRail(paySvc *payment.Service) error {
+	if paySvc == nil {
+		return errors.New("G7: no card rail was wired, the demo build refuses to serve without a rail that reports itself simulated")
+	}
+	if !paySvc.Simulated() {
+		return errors.New("G7: the wired card rail is not the simulator, the demo build refuses to serve on a live rail: a demo box takes no real card charges")
+	}
 	return nil
 }
 
@@ -272,8 +298,33 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 		return nil, err
 	}
 
+	// The role configuration and the role gate: the same steps the default
+	// build's registerRoutes makes, in the same place (this mirror's own
+	// rule: when the default wiring gains a step, this mirror gains the
+	// same step in the same place). The demo world loads the same decided
+	// default and a refusal stops the demo boot; every registration below
+	// lands through the wrapping registrar, so a demo bearer is held to
+	// the dealer's configuration exactly as a platform bearer is.
+	roleCfg, err := roleconfig.Default()
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("role configuration: %w", err)
+	}
+	roleGate, err := authz.NewRoleGate(gate, staff, roleCfg)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	wired, err := authz.NewRoleGateRegistrar(r, roleGate)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	r = wired
+
 	// The proof shims, the public tenant config and the three spines: the
-	// default build's construction, unchanged, over the demo gate.
+	// default build's construction, unchanged, over the demo gate and the
+	// role gate.
 	rec := shims.NewRecorder(1024)
 	shims.RegisterRoutes(r, g, rec)
 	r.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(tenantconfig.Default())))
@@ -323,6 +374,6 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 
 	return &appGraph{
 		cfg: cfg, log: log, pool: pool, verify: verifier, link: linkedUserID(pool), g: g,
-		money: money, ops: ops, tops: tops, smsBelt: belt,
+		money: money, ops: ops, tops: tops, smsBelt: belt, demoMint: iss.Mint,
 	}, nil
 }

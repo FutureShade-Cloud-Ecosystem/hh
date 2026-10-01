@@ -45,6 +45,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/otelhttp"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
 func main() {
@@ -185,6 +186,11 @@ type appGraph struct {
 	ops     *operationsSpine
 	tops    *topsSpine
 	smsBelt *smsBelt
+	// demoMint is the demo build's session mint over the in-memory demo
+	// issuer, set only by demo_on.go's wiring; the default build's graph
+	// carries nil and mints nothing (test support and the demo session
+	// lane read it, never the default request path).
+	demoMint func(string) (string, error)
 }
 
 // registerRoutes is the one place every production registration lands: the
@@ -194,7 +200,24 @@ type appGraph struct {
 // Nothing outside this function registers on a production route surface,
 // and nothing inside it starts a loop: the dispatchers, the jobs runner,
 // the retention sweep and the reconciler start only in the worker role.
+//
+// The role configuration (D48, D49, plan item RG): the composition root is
+// the startup contract's owner. The decided default loads here and a
+// refusal stops the core: a refused configuration never reaches the gate
+// as a zero value and never falls back behind the refusal's back.
 func registerRoutes(r httpx.Registrar, getenv func(string) string) (*appGraph, error) {
+	roleCfg, err := roleconfig.Default()
+	if err != nil {
+		return nil, fmt.Errorf("role configuration: %w", err)
+	}
+	return registerRoutesWithRoleConfig(r, getenv, roleCfg)
+}
+
+// registerRoutesWithRoleConfig is registerRoutes over a caller-supplied
+// role configuration: the production entry loads the decided default and
+// calls this; the tests build a modified document and call this, which is
+// how a per dealer configuration changes admissions with no code change.
+func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string, roleCfg *roleconfig.Config) (*appGraph, error) {
 	cfg := config.Load()
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
@@ -263,6 +286,20 @@ func registerRoutes(r httpx.Registrar, getenv func(string) string) (*appGraph, e
 		pool.Close()
 		return nil, err
 	}
+	roleGate, err := authz.NewRoleGate(gate, staff, roleCfg)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	// Every registration below lands through the wrapper, so each staff
+	// route is served only through its role gate, reading the annotation
+	// the census carries for it.
+	wired, err := authz.NewRoleGateRegistrar(r, roleGate)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	r = wired
 
 	// The proof shims the real modules have not replaced: the tenant set,
 	// the sync pair and the capability route, all Phase D-owned (their

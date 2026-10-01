@@ -90,6 +90,54 @@ tags:
   - { name: staff-tour }
   - { name: staff-warranty }
 
+# The staff surface and level map (D48, D49): every staff operation carries
+# an x-access block beside its x-role, naming the surfaces it serves and the
+# level it needs on at least one of them. The map below holds each staff
+# tag's default; an operation whose own x-access differs from its tag's
+# entry is a named exception and carries its own annotation in full. The
+# surface and level vocabularies are roleconfig's, checked by merge.mjs
+# against core/internal/roleconfig/default.json.
+x-access-map:
+  operator: { surfaces: [dealer-admin], level: read }
+  staff-assist: { surfaces: [dealer-admin], level: read }
+  staff-audit: { surfaces: [dealer-admin], level: read }
+  staff-bankrec: { surfaces: [money-desk], level: read }
+  staff-billing: { surfaces: [money-desk], level: read }
+  staff-bistrack: { surfaces: [buying-and-stock], level: read }
+  staff-branches: { surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin], level: read }
+  staff-compliance: { surfaces: [manager-home], level: read }
+  staff-customer: { surfaces: [counter-till], level: read }
+  staff-customer-quote: { surfaces: [quote-desk], level: work }
+  staff-dashboard: { surfaces: [manager-home], level: read }
+  staff-dispatch: { surfaces: [dispatch-board], level: read }
+  staff-export: { surfaces: [quote-desk], level: read }
+  staff-feedback: { surfaces: [house-messages], level: work }
+  staff-finstmt: { surfaces: [money-desk], level: read }
+  staff-gl: { surfaces: [money-desk], level: read }
+  staff-identity: { surfaces: [dealer-admin], level: read }
+  staff-invcount: { surfaces: [buying-and-stock], level: read }
+  staff-inventory: { surfaces: [buying-and-stock], level: read }
+  staff-landedcost: { surfaces: [buying-and-stock], level: read }
+  staff-lien: { surfaces: [money-desk], level: read }
+  staff-messaging: { surfaces: [house-messages], level: read }
+  staff-order: { surfaces: [quote-desk], level: read }
+  staff-payment: { surfaces: [dealer-admin], level: read }
+  staff-payments: { surfaces: [money-desk], level: manage }
+  staff-pos: { surfaces: [counter-till], level: read }
+  staff-pricing: { surfaces: [dealer-admin], level: read }
+  staff-printing: { surfaces: [counter-till], level: read }
+  staff-product: { surfaces: [quote-desk], level: read }
+  staff-purchasing: { surfaces: [buying-and-stock], level: read }
+  staff-quote: { surfaces: [quote-desk], level: read }
+  staff-quoteassist: { surfaces: [quote-desk], level: read }
+  staff-reporting: { surfaces: [manager-home], level: read }
+  staff-settings: { surfaces: [dealer-admin], level: read }
+  staff-tasks: { surfaces: [yard-pick], level: read }
+  staff-tax: { surfaces: [money-desk], level: read }
+  staff-till: { surfaces: [counter-till], level: work }
+  staff-tour: { surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin], level: read }
+  staff-warranty: { surfaces: [manager-home], level: read }
+
 paths:
   # --- Part three: the sync surface ----------------------------------------
   # One pull and one push per scope declared by the manifest frontends (the
@@ -165,6 +213,9 @@ paths:
       tags: [staff-order]
       summary: Register an attachment whose bytes already landed in Appwrite Storage
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: work
       x-addition: "D10 canonical attachment entity; no ERP source route"
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -190,6 +241,9 @@ paths:
       tags: [staff-order]
       summary: Read one attachment record (never the bytes; bytes come from Appwrite Storage)
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: read
       x-addition: "D10 canonical attachment entity; no ERP source route"
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -210,6 +264,9 @@ paths:
       tags: [staff-order]
       summary: Attach one file to an owner without per-owner columns
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: work
       x-addition: "D10 polymorphic attachment_link; no ERP source route"
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -249,6 +306,9 @@ paths:
         exists, so this operation is a recorded read, not an
         implementable one.
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       x-addition: "D12 tenant_brand; no ERP source route"
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -273,6 +333,9 @@ paths:
         exists, so this operation is a recorded write, not an
         implementable one.
       x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: admin
       x-addition: "D12 tenant_brand; no ERP source route"
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -314,6 +377,9 @@ paths:
         share-link mint does. A later send of a revised quote rotates the
         token and kills the previous link with 410.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       x-addition: "G1 customer-quote send (D8); no ERP source route"
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -419,6 +485,9 @@ paths:
       tags: [operator]
       summary: Read the platform key roster with each dealer override
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       x-addition: "D4 operator read for the launcher; no ERP source route"
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -583,6 +652,9 @@ paths:
         Phase 0 of the BisTrack replacement is schema-first and structurally
         unable to sync; this read-only status is its whole surface.
       x-role: requireStaff
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
       x-source: hardscapeos_dibbits/backend/internal/bistrack/handler.go (route-descriptor table)
       parameters:
         - $ref: "#/components/parameters/XOrg"
