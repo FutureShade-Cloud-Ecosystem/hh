@@ -296,7 +296,10 @@ export class TillClient {
   /**
    * The product read route: the counter's search over the catalogue. A blank
    * or refused search is no rows, and a row this app cannot read is dropped
-   * rather than rendered half-known.
+   * rather than rendered half-known. The unit a line is sold by is the hit's
+   * own sold_by word when the server names one, and the required base_uom
+   * otherwise: the contract makes sold_by optional and base_uom required, so
+   * the base unit is the served answer, never a guess.
    */
   async searchProducts(query: string): Promise<Result<ProductRef[]>> {
     const result = await staffProduct.productCounterSearch(this.#client, { q: query });
@@ -309,7 +312,7 @@ export class TillClient {
       const productId = stringAt(item, "product_id");
       const sku = stringAt(item, "sku");
       const name = stringAt(item, "name");
-      const soldBy = stringAt(item, "sold_by");
+      const soldBy = stringAt(item, "sold_by") ?? stringAt(item, "base_uom");
       if (productId === null || sku === null || name === null || soldBy === null) continue;
       products.push({ productId, sku, name, soldBy });
     }
@@ -317,12 +320,15 @@ export class TillClient {
   }
 
   /**
-   * The account picker's read: the walk-in never comes back (the route
-   * excludes it server-side), so every row here is an account the till can
-   * bill. A row this app cannot read is dropped, not rendered half-known.
+   * The account picker's read, named for one branch: the search is fenced to
+   * the caller's own grants server-side, and a scoped caller must say which
+   * branch it is acting for, so the counter always names the branch the till
+   * resolved. The walk-in never comes back (the route excludes it
+   * server-side), so every row here is an account the till can bill. A row
+   * this app cannot read is dropped, not rendered half-known.
    */
-  async searchCustomers(query: string): Promise<Result<CustomerRef[]>> {
-    const result = await staffCustomer.customerSearch(this.#client, { q: query });
+  async searchCustomers(query: string, branchId: string): Promise<Result<CustomerRef[]>> {
+    const result = await staffCustomer.customerSearch(this.#client, { q: query, branch_id: branchId });
     if (!result.ok) return result;
     const rows = result.value;
     if (!Array.isArray(rows)) return err("the customer search did not answer a list");
@@ -571,16 +577,28 @@ export class TillClient {
     return validated === null ? err("the parked ticket the server answered is not readable") : ok(validated);
   }
 
-  /** This branch's parked tickets: the fence is the server's, this read just renders it. */
-  async listParked(): Promise<Result<ParkedTicket[]>> {
-    const result = await staffPos.posListParked(this.#client);
+  /**
+   * This branch's parked tickets: the fence is the server's, this read names
+   * the branch it acts for. The answer arrives in the contract's page shape
+   * and, on the served core today, as the bare array the page shape wraps;
+   * both carry the same rows, so both are read here and anything else is a
+   * refusal, never a half list.
+   */
+  async listParked(branchId: string): Promise<Result<ParkedTicket[]>> {
+    const result = await staffPos.posListParked(this.#client, { branch_id: branchId });
     if (!result.ok) return result;
-    const record = result.value as unknown;
-    if (!isRecord(record) || !Array.isArray(record["items"])) {
-      return err("the parked list did not answer a page");
+    const value = result.value as unknown;
+    let rows: unknown[] | null = null;
+    if (isRecord(value) && Array.isArray(value["items"])) {
+      rows = value["items"];
+    } else if (Array.isArray(value)) {
+      rows = value;
+    }
+    if (rows === null) {
+      return err("the parked list did not answer a page or a list");
     }
     const tickets: ParkedTicket[] = [];
-    for (const item of record["items"]) {
+    for (const item of rows) {
       const validated = validateParkedTicket(item);
       if (validated === null) {
         return err("a parked ticket row is not readable: the list is refused whole rather than shown short");
