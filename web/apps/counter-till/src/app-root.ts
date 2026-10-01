@@ -12,12 +12,13 @@
 // The organisation header is the demo org by construction: the whole app is
 // the demo's till, and the staff header provider refuses to send a request
 // without it, so no call ever leaves this app unresolved.
-import { html, css, type TemplateResult } from "lit";
+import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "./demo-account.js";
+import { demoBanner, demoBannerStyles } from "./demo-banner.js";
 import { entryStyles, renderEntry, type FlowsState } from "./views/entry.js";
 import { tillStyles, renderTill } from "./views/till.js";
 
@@ -26,6 +27,7 @@ const DEMO_ORG = "hh-demo";
 export class CounterTillApp extends HHElement {
   static styles = [
     baseStyles,
+    demoBannerStyles,
     entryStyles,
     tillStyles,
     css`
@@ -39,9 +41,25 @@ export class CounterTillApp extends HHElement {
         padding: var(--hh-s-16) var(--hh-s-20);
         border-bottom: 1px solid var(--hh-line);
       }
+      .title-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--hh-s-16);
+        flex-wrap: wrap;
+      }
       h1 {
         font-size: var(--hh-s-16);
         margin: 0;
+      }
+      .signed-in {
+        display: flex;
+        align-items: center;
+        gap: var(--hh-s-12);
+      }
+      .role-name {
+        margin: 0;
+        font-weight: 600;
       }
       main {
         padding: var(--hh-s-20);
@@ -113,10 +131,41 @@ export class CounterTillApp extends HHElement {
     return flow;
   }
 
+  /**
+   * Sign out: the controller ends the mint (the adapter drops it) and wipes
+   * custody either way; the entry view with the cards comes back, because the
+   * flows answer is still held. A reload signs out too: the mint lives only
+   * in this tab's memory.
+   */
+  async #signOut(): Promise<void> {
+    if (this.#busy) return;
+    this.#busy = true;
+    this.requestUpdate();
+    await this.#controller.signOut();
+    this.#busy = false;
+    this.#till = null;
+    this.#message = null;
+    this.requestUpdate();
+  }
+
   render(): TemplateResult {
+    const demoPresent = this.#till !== null || this.#flowsState.kind === "ready";
     return html`
       <header>
-        <h1>Counter Till</h1>
+        ${demoPresent ? demoBanner() : nothing}
+        <div class="title-row">
+          <h1>Counter Till</h1>
+          ${this.#till === null
+            ? nothing
+            : html`
+                <p class="signed-in">
+                  <span class="role-name" data-testid="signed-in-role">${this.#till.label}</span>
+                  <button type="button" class="btn-secondary" ?disabled=${this.#busy} @click=${() => void this.#signOut()}>
+                    Sign out
+                  </button>
+                </p>
+              `}
+        </div>
       </header>
       <main>
         ${this.#till === null
