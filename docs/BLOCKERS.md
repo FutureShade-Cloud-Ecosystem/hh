@@ -589,3 +589,48 @@ left open.
   server-stated fact. The server's audit row holds the record. If a later
   ruling wants the receipt to quote the core, the field is the contract's to
   add, not this app's to invent.
+## L5 (the sale at the counter): two findings recorded, both handled in this lane
+
+- **The two harnesses of the two app lanes shared one port pair.** W6's
+  Playwright and Vite defaults (4820 and 4821) are inherited by every lane
+  that copies them, and Playwright's `reuseExistingServer` then silently
+  drives whichever app is already up: this lane's first exit-test run drove
+  the other app lane's dev server and failed against its screens. This lane
+  moved its own defaults to 4826 and 4827 (both files, and the app README),
+  which leaves the old pair free; any later app lane should pick its own pair
+  the same way, or the two suites will interleave again.
+- **A form's submit event never crosses a shadow root.** The searches were
+  first written as forms with the listener on the host, the same delegation
+  the design system's README prescribes for click; the form submitted natively
+  and the app signed itself out, because submit is not composed: the event
+  stops at the shadow root and a host listener never fires, where click does.
+  Measured in Chrome, then fixed by making every search a plain button with
+  `data-action`. The design system's README's delegation section may want a
+  sentence on this for the next dependent; that file is outside this lane's
+  Touches, so it is recorded here instead.
+## L5 (the review round): four findings recorded rather than closed, with their rulings
+
+- **The ticket shows no total before the ring (review P2-7).** The counter
+  price picture answers unit quotes alone, and the app rightly computes
+  nothing, so the subtotal, tax and total first appear on the receipt. The
+  lead's ruling: either a contract read (a ticket-total read off the same
+  picture) or the testers' page says it. The contract read is outside this
+  lane's Touches, so it is recorded for whoever holds the contract next; W9's
+  testers' page should carry the sentence either way.
+- **The screen's margin figure vs the plan's wording (review P3-6, second
+  half).** C01's Holland pavers carry a margin of 1585 basis points, which is
+  15.85 percent exactly; the column renders one decimal, half away from zero:
+  "15.9%". The plan's screen 4 says "about 15.8". W9's testers' page should
+  quote the screen's figure, or the core's real answer should be checked when
+  the demo world is populated for real.
+- **The counter's state machine lives in the Lit element (review P3-9).** The
+  money helper and the boundary conversions are plain modules held by unit
+  tests; the ticket's lines, quantities and pricing sequence are still fields
+  on the app root. A later item should extract that state machine into a
+  plain module with the same test, before a second screen shares it.
+- **Nothing serves the organization's zone yet (review P2-3).** The ring's
+  requested date is contract-required and no org or tenant read carries a
+  time zone, so the app computes the day in the house zone constant the core
+  itself compiles (America/Toronto), through Intl, and the stub refuses a
+  ring whose date is not the house zone's day. When the core serves a
+  configured zone, the constant should be replaced by the served value.

@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "The Counter Till micro-app: the demo way in (role cards from the demo flows route, the demo adapter behind the auth package's AccountSurface, X-Org hh-demo), the header with the Demo banner, the role's name and sign out, and the placeholder till",
+  "description": "The Counter Till micro-app: the demo way in (role cards, the demo adapter, X-Org hh-demo), then the sale at the counter: the branch's drawer, the priced ticket with its margin column, cash, card and account tenders, the receipt, and the branch's parked tickets",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
