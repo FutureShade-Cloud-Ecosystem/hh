@@ -1,6 +1,9 @@
 package roleconfig
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func mustDefault(t *testing.T) *Config {
 	t.Helper()
@@ -313,6 +316,97 @@ func TestLevelQueryErrors(t *testing.T) {
 	ok, err = cfg.Holds("sales_rep", "counter-till", LevelRead)
 	if err == nil || ok {
 		t.Errorf("Holds answered for an unknown role: %v, %v", ok, err)
+	}
+}
+
+// The want is read as a string from a route's annotation, so a mistyped or
+// empty wanted level is an error from Holds, never a silent admit (the
+// wall X1's primitive must fail closed).
+func TestHoldsRefusesUnknownWant(t *testing.T) {
+	cfg := mustDefault(t)
+	for _, want := range []Level{Level("mange"), Level(""), Level("NONE")} {
+		ok, err := cfg.Holds("driver", "money-desk", want)
+		if err == nil || ok {
+			t.Errorf("Holds(driver, money-desk, %q) is %v, %v; wanted an error and false", string(want), ok, err)
+		}
+	}
+}
+
+// The folded predicates are the rules the guards call: each folds its
+// setting into its list, on and off, so no guard recombines the two by
+// hand (the predicate is the rule; the list is the data).
+func TestFoldingPredicates(t *testing.T) {
+	withSetting := func(t *testing.T, name string, value string) *Config {
+		t.Helper()
+		doc := docFromDefault(t)
+		doc.Settings[name] = json.RawMessage(value)
+		cfg, err := loadDoc(t, doc)
+		if err != nil {
+			t.Fatalf("the loader refused %s = %s: %v", name, value, err)
+		}
+		return cfg
+	}
+
+	// The default carries the floor clearing on and general_manager_selling
+	// off; both predicates read the folded rule.
+	cfg := mustDefault(t)
+	for _, role := range []string{"sales_manager", "branch_manager"} {
+		if ok, err := cfg.ClearsOwnBranchFloor(role); err != nil || !ok {
+			t.Errorf("ClearsOwnBranchFloor(%s) is %v, %v; wanted true with the setting on", role, ok, err)
+		}
+	}
+	for _, role := range []string{RoleInsideSales, "yard_manager", "general_manager", RoleHR} {
+		if ok, err := cfg.ClearsOwnBranchFloor(role); err != nil || ok {
+			t.Errorf("ClearsOwnBranchFloor(%s) is %v, %v; wanted false", role, ok, err)
+		}
+	}
+	for _, role := range []string{"yard_manager", "logistics_manager", "branch_manager"} {
+		if ok, err := cfg.CommitsDeliveryDate(role); err != nil || !ok {
+			t.Errorf("CommitsDeliveryDate(%s) is %v, %v; wanted true", role, ok, err)
+		}
+	}
+	for _, role := range []string{RoleGeneralManager, "yard_team", RoleInsideSales} {
+		if ok, err := cfg.CommitsDeliveryDate(role); err != nil || ok {
+			t.Errorf("CommitsDeliveryDate(%s) is %v, %v; wanted false with general_manager_selling off", role, ok, err)
+		}
+	}
+
+	// Off, the floor clears nobody: the setting is the rule.
+	off := withSetting(t, SettingManagerOwnBranchFloorClearing, `false`)
+	if ok, err := off.ClearsOwnBranchFloor("sales_manager"); err != nil || ok {
+		t.Errorf("ClearsOwnBranchFloor(sales_manager) is %v, %v with the setting off; wanted false", ok, err)
+	}
+	if ok, err := off.ClearsOwnBranchFloor("branch_manager"); err != nil || ok {
+		t.Errorf("ClearsOwnBranchFloor(branch_manager) is %v, %v with the setting off; wanted false", ok, err)
+	}
+	// On, explicitly, it clears for the two managers again.
+	on := withSetting(t, SettingManagerOwnBranchFloorClearing, `true`)
+	if ok, _ := on.ClearsOwnBranchFloor("sales_manager"); !ok {
+		t.Error("ClearsOwnBranchFloor(sales_manager) is false with the setting on")
+	}
+
+	// On, general_manager_selling adds the General Manager and nobody else.
+	gmSells := withSetting(t, SettingGeneralManagerSelling, `true`)
+	if ok, err := gmSells.CommitsDeliveryDate(RoleGeneralManager); err != nil || !ok {
+		t.Errorf("CommitsDeliveryDate(general_manager) is %v, %v with general_manager_selling on; wanted true", ok, err)
+	}
+	if ok, _ := gmSells.CommitsDeliveryDate("yard_team"); ok {
+		t.Error("CommitsDeliveryDate(yard_team) is true; the Yard Team commits no delivery date (X11)")
+	}
+	if ok, _ := gmSells.CommitsDeliveryDate("logistics_manager"); !ok {
+		t.Error("CommitsDeliveryDate(logistics_manager) is false with general_manager_selling on")
+	}
+	// The list stays the data: it never grows to hold the folded role.
+	if committers := gmSells.DeliveryDateCommitters(); len(committers) != 3 {
+		t.Errorf("DeliveryDateCommitters holds %d roles with general_manager_selling on, wanted the configured 3", len(committers))
+	}
+
+	// An unknown name is an error on both, never a silent answer.
+	if _, err := cfg.ClearsOwnBranchFloor("sales_rep"); err == nil {
+		t.Error("ClearsOwnBranchFloor answered for an unknown role")
+	}
+	if _, err := cfg.CommitsDeliveryDate("sales_rep"); err == nil {
+		t.Error("CommitsDeliveryDate answered for an unknown role")
 	}
 }
 

@@ -59,3 +59,24 @@ func TestLevelAtLeast(t *testing.T) {
 		t.Error("none reaches read")
 	}
 }
+
+// An unknown or empty level reaches nothing and is reached by nothing:
+// AtLeast never answers true for one, whichever side it stands on (the
+// wall X1's primitive must not fail open on a typo).
+func TestLevelAtLeastRefusesUnknown(t *testing.T) {
+	if Level("mange").AtLeast(LevelNone) {
+		t.Error("an unknown level reaches none")
+	}
+	if LevelRead.AtLeast(Level("mange")) {
+		t.Error("read reaches an unknown level")
+	}
+	if Level("").AtLeast(LevelNone) {
+		t.Error("the empty level reaches none")
+	}
+	if LevelAdmin.AtLeast(Level("")) {
+		t.Error("admin reaches the empty level")
+	}
+	if !LevelNone.AtLeast(LevelNone) {
+		t.Error("none does not reach none")
+	}
+}
