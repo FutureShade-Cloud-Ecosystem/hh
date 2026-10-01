@@ -6,7 +6,16 @@ on:
     branches:
       - main
       - 'qa/**'
+      - 'till/**'
 
+# Why till/** sits on the push trigger (the W5 review's P2-3): the
+# pull_request event cannot run when the pull request's merge ref cannot
+# be built, which is the normal state of a stacked cycle branch mid-cycle
+# (its base moves under it and the pull request reads conflicting). A push
+# run executes on the branch head directly, its check runs attach to that
+# head, and the pull request's checks tab shows them, so both jobs, the
+# demo job among them, run for the cycle's branches without waiting on a
+# clean merge. The demo job's first runs are read, not relied on.
 permissions:
   contents: read
   id-token: write
