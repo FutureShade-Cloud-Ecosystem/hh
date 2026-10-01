@@ -204,31 +204,45 @@ func seedAndPopulate(t *testing.T, bin, dsn string) (first, second string) {
 	return first, second
 }
 
-// censusUsers counts the rows a populate run could create, so the second
-// run's no-op is proven per table rather than by eyeballing its output.
-func censusUsers(t *testing.T, ctx context.Context, pool *pgxpool.Pool) map[string]int {
+// worldTables is every table the populate writes. demo_box joins only once
+// it exists (after the first populate run).
+var worldTables = []string{"users", "user_roles", "user_branch_grants", "staff_role_grant", "payment_config", "org", "demo_box"}
+
+// migratedWorldTables is worldTables before the populate has run, when no
+// demo_box table exists yet.
+var migratedWorldTables = worldTables[:len(worldTables)-1]
+
+// snapshotWorld fingerprints every row of the given tables, contents and
+// row versions, so an assertion can hold that a run changed nothing at all
+// rather than merely created nothing: any update, delete or re-dated
+// timestamp on any row moves the fingerprint.
+func snapshotWorld(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tables []string) map[string]string {
 	t.Helper()
-	out := map[string]int{}
-	for _, q := range []struct{ name, sql string }{
-		{"users", `SELECT count(*) FROM users`},
-		{"user_roles", `SELECT count(*) FROM user_roles`},
-		{"user_branch_grants", `SELECT count(*) FROM user_branch_grants`},
-		{"staff_role_grant", `SELECT count(*) FROM staff_role_grant`},
-		{"payment_config", `SELECT count(*) FROM payment_config`},
-		{"org", `SELECT count(*) FROM org`},
-	} {
-		var n int
-		if err := pool.QueryRow(ctx, q.sql).Scan(&n); err != nil {
-			t.Fatalf("census %s: %v", q.name, err)
+	out := map[string]string{}
+	for _, table := range tables {
+		var sum string
+		if err := pool.QueryRow(ctx, `
+			SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
+			  FROM (
+			    SELECT to_jsonb(r)::text AS line
+			      FROM (SELECT *, xmin::text AS row_version FROM `+table+`) r
+			  ) s`).Scan(&sum); err != nil {
+			t.Fatalf("snapshot %s: %v", table, err)
 		}
-		out[q.name] = n
+		out[table] = sum
 	}
-	var box int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM demo_box`).Scan(&box); err != nil {
-		t.Fatalf("census demo_box: %v", err)
-	}
-	out["demo_box"] = box
 	return out
+}
+
+// assertWorldUnchanged holds that a run between two snapshots touched no
+// row of any snapshotted table, naming the tables that moved.
+func assertWorldUnchanged(t *testing.T, before, after map[string]string) {
+	t.Helper()
+	for table, sum := range before {
+		if after[table] != sum {
+			t.Errorf("%s changed across a run that must have written nothing", table)
+		}
+	}
 }
 
 // -- The end-to-end exit test ----------------------------------------------------------------------
@@ -247,15 +261,15 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		t.Errorf("the second run should report it wrote nothing, it printed:\n%s", second)
 	}
 
-	// The second run created nothing, per table, not just per report.
-	before := censusUsers(t, ctx, pool)
-	third := runStep(t, bin, []string{"demo-populate", "-now", seedClock.Format(time.RFC3339)}, subEnv(t, populateEnv(dsn)))
-	after := censusUsers(t, ctx, pool)
-	for table, n := range before {
-		if after[table] != n {
-			t.Errorf("%s: %d rows before the third run, %d after, the run was not a no-op\n%s", table, n, after[table], third)
-		}
-	}
+	// The rerun changed nothing, row by row: every table the populate
+	// writes, contents and row versions, is fingerprinted before and after
+	// a further run, and the fingerprints must agree. This is the
+	// assertion that holds identity.Populate's org anchor upsert to the
+	// same discipline as the populate's own statements.
+	before := snapshotWorld(t, ctx, pool, worldTables)
+	runStep(t, bin, []string{"demo-populate", "-now", seedClock.Format(time.RFC3339)}, subEnv(t, populateEnv(dsn)))
+	after := snapshotWorld(t, ctx, pool, worldTables)
+	assertWorldUnchanged(t, before, after)
 
 	// One org, and it is the demo org.
 	var orgID string
@@ -292,40 +306,50 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		t.Errorf("grant shape or linkage defects: %+v", counts)
 	}
 
-	// No ACTIVE user outside the reserved demo domain and .example and
-	// .invalid: the two real-domain planted rows must have gone inactive.
+	// No user row at all sits outside the reserved demo domain and
+	// .example and .invalid: the two planted rows that arrived on a real
+	// domain had their addresses moved with their deactivation, so no
+	// address of a real person is anywhere in the demo database.
 	var outside int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM users
-		 WHERE status = 'ACTIVE'
-		   AND lower(email::text) NOT LIKE '%@hh-demo.invalid'
+		 WHERE lower(email::text) NOT LIKE '%@hh-demo.invalid'
 		   AND lower(email::text) NOT LIKE '%.example'
 		   AND lower(email::text) NOT LIKE '%.invalid'`).Scan(&outside); err != nil {
 		t.Fatal(err)
 	}
 	if outside != 0 {
-		t.Errorf("%d ACTIVE user(s) sit outside the reserved domains", outside)
+		t.Errorf("%d user row(s) sit outside the reserved domains", outside)
 	}
 
 	// The two role accounts are exactly as the demo sign-in will resolve them.
 	assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSIDE_SALES")
 	assertRoleAccount(t, ctx, pool, managerUserID, managerEmail, managerDisplayName, "SALES_MANAGER")
 
-	// The real-domain planted rows are inactive and renamed.
-	for id, name := range map[string]string{
-		"d7000000-0000-4000-9000-000000000010": "Platform admin (demo)",
-		"d7000000-0000-4000-9000-0000000000da": "Demo teammate (demo)",
+	// The real-domain planted rows are inactive, renamed, re-addressed on
+	// the reserved demo domain and carry no credential.
+	for _, r := range []struct{ id, name, email string }{
+		{"d7000000-0000-4000-9000-000000000010", "Platform admin (demo)", "platform.admin@hh-demo.invalid"},
+		{"d7000000-0000-4000-9000-0000000000da", "Demo teammate (demo)", "demo.teammate@hh-demo.invalid"},
 	} {
-		var status, display string
+		var status, display, gotEmail string
+		var hash *string
 		if err := pool.QueryRow(ctx,
-			`SELECT status, display_name FROM users WHERE id = $1::uuid`, id).Scan(&status, &display); err != nil {
-			t.Fatalf("planted row %s missing: %v", id, err)
+			`SELECT status, display_name, email::text, password_hash::text FROM users WHERE id = $1::uuid`, r.id).
+			Scan(&status, &display, &gotEmail, &hash); err != nil {
+			t.Fatalf("planted row %s missing: %v", r.id, err)
 		}
 		if status != "DEACTIVATED" {
-			t.Errorf("the real-domain planted row %s carries status %s, want DEACTIVATED", id, status)
+			t.Errorf("the real-domain planted row %s carries status %s, want DEACTIVATED", r.id, status)
 		}
-		if display != name {
-			t.Errorf("the real-domain planted row %s carries display name %q, want %q", id, display, name)
+		if display != r.name {
+			t.Errorf("the real-domain planted row %s carries display name %q, want %q", r.id, display, r.name)
+		}
+		if gotEmail != r.email {
+			t.Errorf("the real-domain planted row %s carries email %q, want %q", r.id, gotEmail, r.email)
+		}
+		if hash != nil {
+			t.Errorf("the planted row %s still carries a password hash", r.id)
 		}
 	}
 
@@ -370,6 +394,18 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		t.Errorf("the users rows render %d distinct display names, want exactly the 12 invented ones (saw: %v)", len(saw), saw)
 	}
 
+	// No row of the demo database carries a credential: the planted
+	// password hashes are cleared (the core has no password route) and the
+	// two role accounts are inserted without one.
+	var credentialed int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM users WHERE password_hash IS NOT NULL`).Scan(&credentialed); err != nil {
+		t.Fatal(err)
+	}
+	if credentialed != 0 {
+		t.Errorf("%d users row(s) still carry a password hash", credentialed)
+	}
+
 	// The card rail answers configured with the demo's invented merchant id,
 	// through the payment store read the way W3 owns it. (The serve leg of
 	// this check, the route behind the boot guards, is W1's to run.)
@@ -386,8 +422,10 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	}
 
 	// The demo_box row records the run's moment, and the newest seeded
-	// counter sale falls on the same run's day: the box looks current the
-	// moment it is rebuilt.
+	// counter sale falls on the same run's day. The day compare is the
+	// seed's own frame, UTC: the seed dates its world from the UTC instant
+	// it is given and the throwaway box's clock reads UTC, so the day
+	// boundary here is the one the seed itself draws.
 	var populatedAt time.Time
 	var marker string
 	if err := pool.QueryRow(ctx,
@@ -465,7 +503,8 @@ func assertRoleAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 // -- The refusals ----------------------------------------------------------------------------------
 
 // TestPopulate_RefusesASecondPaymentConfiguration: a second payment
-// configuration present, the populate refuses and writes nothing.
+// configuration present, the populate refuses and the world it found is
+// exactly the world it left.
 func TestPopulate_RefusesASecondPaymentConfiguration(t *testing.T) {
 	ctx := context.Background()
 	pool, dsn := freshMigratedDB(t, "payrefuse")
@@ -480,20 +519,46 @@ func TestPopulate_RefusesASecondPaymentConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	before := snapshotWorld(t, ctx, pool, worldTables)
 	_, err := RunPopulate(ctx, runPopulateOptions(dsn))
 	if err == nil {
 		t.Fatal("the populate ran against a database holding a second payment configuration, it must refuse")
 	}
-	if !strings.Contains(err.Error(), "payment configuration") {
-		t.Errorf("the refusal does not name the payment configuration: %v", err)
+	if !strings.Contains(err.Error(), "payment configuration row(s) the demo populate did not write") {
+		t.Errorf("the refusal does not name the second payment configuration: %v", err)
 	}
-	var box int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM demo_box`).Scan(&box); err != nil {
+	after := snapshotWorld(t, ctx, pool, worldTables)
+	assertWorldUnchanged(t, before, after)
+}
+
+// TestPopulate_RefusesADriftedPaymentConfiguration: the populate's own
+// payment row is known by its content as well as its id. A row with the
+// right id and the wrong merchant, or a host where the demo wants none, is
+// a refusal, not a run that reports the world complete.
+func TestPopulate_RefusesADriftedPaymentConfiguration(t *testing.T) {
+	ctx := context.Background()
+	pool, dsn := freshMigratedDB(t, "paydrift")
+	bin := buildDemoCore(t)
+	seedAndPopulate(t, bin, dsn)
+
+	// The drift the reviewer probed: the same row, another merchant, a
+	// host where the demo writes none.
+	if _, err := pool.Exec(ctx, `
+		UPDATE payment_config SET merchant_id = 'OTHER-MERCHANT', base_url = 'https://drift.example'
+		 WHERE id = $1::uuid`, demoPaymentConfigID); err != nil {
 		t.Fatal(err)
 	}
-	if box != 1 {
-		t.Errorf("demo_box holds %d rows after a refused run, a refusal must write nothing", box)
+
+	before := snapshotWorld(t, ctx, pool, worldTables)
+	_, err := RunPopulate(ctx, runPopulateOptions(dsn))
+	if err == nil {
+		t.Fatal("the populate ran against a drifted payment configuration, it must refuse")
 	}
+	if !strings.Contains(err.Error(), "has drifted from the values this populate writes") {
+		t.Errorf("the refusal does not name the drift: %v", err)
+	}
+	after := snapshotWorld(t, ctx, pool, worldTables)
+	assertWorldUnchanged(t, before, after)
 }
 
 // TestPopulate_RefusesAForeignUser: one user outside the planted set, the
@@ -509,20 +574,16 @@ func TestPopulate_RefusesAForeignUser(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	before := snapshotWorld(t, ctx, pool, migratedWorldTables)
 	_, err := RunPopulate(ctx, runPopulateOptions(dsn))
 	if err == nil {
 		t.Fatal("the populate ran against a database holding a foreign user, it must refuse")
 	}
-	if !strings.Contains(err.Error(), "user") {
-		t.Errorf("the refusal does not name the user check: %v", err)
+	if !strings.Contains(err.Error(), "outside the migrations' planted set") {
+		t.Errorf("the refusal does not name the planted-set check: %v", err)
 	}
-	var orgs int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM org`).Scan(&orgs); err != nil {
-		t.Fatal(err)
-	}
-	if orgs != 0 {
-		t.Errorf("a refused run provisioned %d org row(s), a refusal must write nothing", orgs)
-	}
+	after := snapshotWorld(t, ctx, pool, migratedWorldTables)
+	assertWorldUnchanged(t, before, after)
 }
 
 // TestPopulate_RefusesAForeignOrg: one org that is not hh-demo, the
@@ -536,13 +597,43 @@ func TestPopulate_RefusesAForeignOrg(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	before := snapshotWorld(t, ctx, pool, migratedWorldTables)
 	_, err := RunPopulate(ctx, runPopulateOptions(dsn))
 	if err == nil {
 		t.Fatal("the populate ran against a database holding another org, it must refuse")
 	}
-	if !strings.Contains(err.Error(), "org") {
+	if !strings.Contains(err.Error(), "org row(s) other than hh-demo") {
 		t.Errorf("the refusal does not name the org check: %v", err)
 	}
+	after := snapshotWorld(t, ctx, pool, migratedWorldTables)
+	assertWorldUnchanged(t, before, after)
+}
+
+// TestPopulate_RefusesAMissingRoleCatalogRow: the role and branch inserts
+// are INSERT ... SELECT, which write nothing without an error when the
+// catalog lacks the role, so the populate verifies the live rows and
+// refuses a demo world whose role accounts would reach nothing. The branch
+// leg rides the same verify-and-refuse path; a clean mutation of the
+// Trenton row on a migrated database is impossible (its id is behind a web
+// of restricting foreign keys), so the catalog leg carries the proof.
+func TestPopulate_RefusesAMissingRoleCatalogRow(t *testing.T) {
+	ctx := context.Background()
+	pool, dsn := freshMigratedDB(t, "rolerefuse")
+
+	if _, err := pool.Exec(ctx, `DELETE FROM roles WHERE code = 'SALES_MANAGER'`); err != nil {
+		t.Fatal(err)
+	}
+
+	before := snapshotWorld(t, ctx, pool, migratedWorldTables)
+	_, err := RunPopulate(ctx, runPopulateOptions(dsn))
+	if err == nil {
+		t.Fatal("the populate ran against a catalog missing SALES_MANAGER, it must refuse")
+	}
+	if !strings.Contains(err.Error(), "roles catalog holds no SALES_MANAGER") {
+		t.Errorf("the refusal does not name the missing role: %v", err)
+	}
+	after := snapshotWorld(t, ctx, pool, migratedWorldTables)
+	assertWorldUnchanged(t, before, after)
 }
 
 // TestPopulate_RefusesEnvironmentMistakes, with no database at all: the

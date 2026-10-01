@@ -102,8 +102,8 @@ const demoPaymentConfigID = "de110000-0000-4000-9000-0000000000ca"
 // queried (the refusal's set is a constant, so a real database's rows can
 // never talk their way into it):
 //
-//	0043  the platform owner, colton@futurebuild.ai (a real domain)
-//	0060  the demo teammate, dana.demo@futurebuild.ai (a real domain)
+//	0043  the platform owner (an address on a real domain)
+//	0060  the demo teammate (an address on a real domain)
 //	0061  four homework accounts, scrubbed-0004/0005/0006/0007@example.invalid
 //	      (0066 later moves 0006's email to scrubbed-0008@example.invalid;
 //	      the id does not move)
@@ -130,11 +130,22 @@ var plantedUserEmails = []string{
 
 // deactivatedUserIDs is the pair of planted rows whose emails sit on a
 // real domain. The demo carries no real person's account (D49), so these
-// two are made DEACTIVATED on the demo database only; the ACTIVE-domain
-// check then passes and no session can resolve them.
+// two are made DEACTIVATED on the demo database only and their addresses
+// move to the reserved demo domain under scrubbed local parts (D49's
+// "renamed" reaching the address as well as the display name): no address
+// of a real person remains anywhere in the demo database, and no session
+// can resolve either row.
 var deactivatedUserIDs = map[string]bool{
 	"d7000000-0000-4000-9000-000000000010": true,
 	"d7000000-0000-4000-9000-0000000000da": true,
+}
+
+// plantedEmailMoves is where the two real-domain addresses go: the
+// migration numbers that planted them and the scrubbed local part each
+// takes on the reserved demo domain.
+var plantedEmailMoves = []struct{ id, email string }{
+	{"d7000000-0000-4000-9000-000000000010", "platform.admin@hh-demo.invalid"},
+	{"d7000000-0000-4000-9000-0000000000da", "demo.teammate@hh-demo.invalid"},
 }
 
 // plantedDisplayNames replaces every planted row's display name with an
@@ -182,6 +193,8 @@ type Report struct {
 	BranchGrantsCreated  int
 	DisplayNamesRenamed  int
 	UsersDeactivated     int
+	EmailsMoved          int
+	CredentialsCleared   int
 	OrgInserted          bool
 	StaffGrantsInserted  int64
 	PaymentConfigCreated int
@@ -284,10 +297,14 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 	}
 
 	// The migrations' planted rows: display names replaced, the two
-	// real-domain rows made inactive, on the demo database only.
-	renamed, deactivated, err := scrubPlantedUsers(ctx, tx)
+	// real-domain addresses moved to the reserved demo domain and their
+	// rows made inactive, every planted credential cleared, on the demo
+	// database only.
+	renamed, deactivated, moved, cleared, err := scrubPlantedUsers(ctx, tx, now)
 	report.DisplayNamesRenamed = renamed
 	report.UsersDeactivated = deactivated
+	report.EmailsMoved = moved
+	report.CredentialsCleared = cleared
 	if err != nil {
 		return report, err
 	}
@@ -362,7 +379,10 @@ func insertRoleAccounts(ctx context.Context, tx pgx.Tx) (int, error) {
 // against the catalog 0015 plants) and its one branch grant at Trenton. A
 // tombstone left by anything is healed rather than honoured: the upsert
 // fires only when the row sits tombstoned, so a re-run still writes
-// nothing.
+// nothing. The inserts are INSERT ... SELECT, which writes nothing without
+// an error when the catalog lacks the role or the locations table lacks the
+// branch, so after them the live rows are verified and a missing one is a
+// refusal: the demo world must not ship role accounts that reach nothing.
 func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int, err error) {
 	for _, a := range []struct{ userID, roleCode string }{
 		{salesUserID, salesRoleCode},
@@ -391,44 +411,101 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		}
 		grants += int(tag.RowsAffected())
 	}
+	// The verify half: a live role row per account and a live branch grant
+	// per account, whatever this run inserted.
+	for _, a := range []struct{ userID, roleCode string }{
+		{salesUserID, salesRoleCode},
+		{managerUserID, managerRoleCode},
+	} {
+		var n int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM user_roles ur
+			  JOIN roles r ON r.id = ur.role_id
+			 WHERE ur.user_id = $1::uuid AND r.code = $2 AND ur.deleted_at IS NULL`,
+			a.userID, a.roleCode).Scan(&n); err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: role verify: %w", err)
+		}
+		if n == 0 {
+			return 0, 0, fmt.Errorf("demo-populate: refusing: the roles catalog holds no %s row, the %s account would reach nothing", a.roleCode, a.userID)
+		}
+	}
+	for _, userID := range []string{salesUserID, managerUserID} {
+		var n int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM user_branch_grants
+			 WHERE user_id = $1::uuid AND branch_id = $2::uuid AND deleted_at IS NULL`,
+			userID, trentonBranchID).Scan(&n); err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: branch grant verify: %w", err)
+		}
+		if n == 0 {
+			return 0, 0, fmt.Errorf("demo-populate: refusing: the locations table holds no branch %s, the account %s would reach no branch", trentonBranchID, userID)
+		}
+	}
 	return roles, grants, nil
 }
 
-// scrubPlantedUsers replaces the planted rows' display names and
-// deactivates the two real-domain rows, each update guarded on the value
-// it would change so a re-run touches nothing.
-func scrubPlantedUsers(ctx context.Context, tx pgx.Tx) (renamed, deactivated int, err error) {
+// scrubPlantedUsers rewrites the planted rows on the demo database only:
+// display names replaced with the invented ones, the two real-domain
+// addresses moved to the reserved demo domain, the two rows deactivated,
+// and every planted password hash cleared (the demo carries no credential,
+// not even a dead one: the core has no password route and no planted hash
+// belongs on a box of invented data). Each update is guarded on the value
+// it would change and dated from the run's one clock, so a re-run touches
+// nothing.
+func scrubPlantedUsers(ctx context.Context, tx pgx.Tx, now time.Time) (renamed, deactivated, moved, cleared int, err error) {
 	for _, r := range plantedDisplayNames {
 		tag, err := tx.Exec(ctx,
-			`UPDATE users SET display_name = $2, updated_at = now()
+			`UPDATE users SET display_name = $2, updated_at = $3
 			  WHERE id = $1::uuid AND display_name IS DISTINCT FROM $2`,
-			r.id, r.name)
+			r.id, r.name, now)
 		if err != nil {
-			return 0, 0, fmt.Errorf("demo-populate: planted rename: %w", err)
+			return 0, 0, 0, 0, fmt.Errorf("demo-populate: planted rename: %w", err)
 		}
 		renamed += int(tag.RowsAffected())
 	}
 	for _, r := range plantedDisplayNamesByEmail {
 		tag, err := tx.Exec(ctx,
-			`UPDATE users SET display_name = $2, updated_at = now()
+			`UPDATE users SET display_name = $2, updated_at = $3
 			  WHERE lower(email::text) = $1 AND display_name IS DISTINCT FROM $2`,
-			r.email, r.name)
+			r.email, r.name, now)
 		if err != nil {
-			return 0, 0, fmt.Errorf("demo-populate: planted rename: %w", err)
+			return 0, 0, 0, 0, fmt.Errorf("demo-populate: planted rename: %w", err)
 		}
 		renamed += int(tag.RowsAffected())
 	}
+	for _, r := range plantedEmailMoves {
+		tag, err := tx.Exec(ctx,
+			`UPDATE users SET email = $2, updated_at = $3
+			  WHERE id = $1::uuid AND email IS DISTINCT FROM $2`,
+			r.id, r.email, now)
+		if err != nil {
+			return 0, 0, 0, 0, fmt.Errorf("demo-populate: planted email move: %w", err)
+		}
+		moved += int(tag.RowsAffected())
+	}
 	for id := range deactivatedUserIDs {
 		tag, err := tx.Exec(ctx,
-			`UPDATE users SET status = 'DEACTIVATED', updated_at = now()
+			`UPDATE users SET status = 'DEACTIVATED', updated_at = $2
 			  WHERE id = $1::uuid AND status <> 'DEACTIVATED'`,
-			id)
+			id, now)
 		if err != nil {
-			return 0, 0, fmt.Errorf("demo-populate: planted deactivate: %w", err)
+			return 0, 0, 0, 0, fmt.Errorf("demo-populate: planted deactivate: %w", err)
 		}
 		deactivated += int(tag.RowsAffected())
 	}
-	return renamed, deactivated, nil
+	// The planted credentials, cleared in one guarded statement: the nine
+	// fixed ids and 0077's row by its migration-fixed email, the one
+	// planted row whose id the database minted.
+	tag, err := tx.Exec(ctx, `
+		UPDATE users SET password_hash = NULL, updated_at = $2
+		 WHERE (id = ANY($1::uuid[]) OR lower(email::text) = ANY($3))
+		   AND password_hash IS NOT NULL`,
+		plantedUserIDs, now, plantedUserEmails)
+	if err != nil {
+		return 0, 0, 0, 0, fmt.Errorf("demo-populate: planted credential clear: %w", err)
+	}
+	cleared += int(tag.RowsAffected())
+	return renamed, deactivated, moved, cleared, nil
 }
 
 // writePaymentConfig seals the invented credentials under the box's own
@@ -483,18 +560,20 @@ func writeDemoBox(ctx context.Context, tx pgx.Tx, now time.Time) (bool, error) {
 
 // writeReport prints what the run did, in the demoseed run report's
 // spirit: the clock, the counts, and the second-run line stated plainly.
+// Every figure counts what THIS RUN created or changed, never what the
+// database already held.
 func writeReport(out io.Writer, r Report) {
 	fmt.Fprintf(out, "demo-populate %s\n", demoBoxMarker)
 	fmt.Fprintf(out, "  clock            %s\n", r.Clock.Format(time.RFC3339))
 	fmt.Fprintf(out, "  org              %s (inserted: %v)\n", demoOrgSlug, r.OrgInserted)
 	fmt.Fprintf(out, "  role accounts    %d created, %d role rows, %d branch grants at %s\n",
 		r.UsersCreated, r.UserRolesCreated, r.BranchGrantsCreated, trentonBranchID)
-	fmt.Fprintf(out, "  planted rows     %d display names replaced, %d deactivated\n",
-		r.DisplayNamesRenamed, r.UsersDeactivated)
+	fmt.Fprintf(out, "  planted rows     %d display names replaced, %d deactivated, %d addresses moved to %s, %d planted credentials cleared\n",
+		r.DisplayNamesRenamed, r.UsersDeactivated, r.EmailsMoved, demoDomain, r.CredentialsCleared)
 	fmt.Fprintf(out, "  staff grants     %d inserted\n", r.StaffGrantsInserted)
 	fmt.Fprintf(out, "  payment config   %d created (merchant %s, simulator, no host, surcharges off)\n",
 		r.PaymentConfigCreated, demoMerchantID)
-	fmt.Fprintf(out, "  demo_box         row present: %v\n", r.DemoBoxCreated)
+	fmt.Fprintf(out, "  demo_box         row created: %v\n", r.DemoBoxCreated)
 	if r.createdNothing() {
 		fmt.Fprintln(out, "  the demo world was already complete, this run wrote nothing.")
 	}
@@ -502,6 +581,7 @@ func writeReport(out io.Writer, r Report) {
 
 func (r Report) createdNothing() bool {
 	return r.UsersCreated == 0 && r.UserRolesCreated == 0 && r.BranchGrantsCreated == 0 &&
-		r.DisplayNamesRenamed == 0 && r.UsersDeactivated == 0 && r.PaymentConfigCreated == 0 &&
-		!r.DemoBoxCreated && r.StaffGrantsInserted == 0
+		r.DisplayNamesRenamed == 0 && r.UsersDeactivated == 0 && r.EmailsMoved == 0 &&
+		r.CredentialsCleared == 0 &&
+		r.PaymentConfigCreated == 0 && !r.DemoBoxCreated && r.StaffGrantsInserted == 0
 }

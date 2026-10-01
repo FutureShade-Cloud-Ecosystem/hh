@@ -20,7 +20,7 @@ import (
 // aimed at a real database has no business echoing that database's emails
 // into a log.
 
-// refuseForeignWorld runs the three shape checks inside the caller's
+// refuseForeignWorld runs the shape checks inside the caller's
 // transaction, so the checks and the writes see one database.
 func refuseForeignWorld(ctx context.Context, tx pgx.Tx) error {
 	if err := refuseForeignOrg(ctx, tx); err != nil {
@@ -93,6 +93,11 @@ func refuseForeignUser(ctx context.Context, tx pgx.Tx) error {
 // own. On a fresh migrate the table is empty; after the populate it holds
 // exactly the invented row. A second configuration, present or appearing
 // between runs, is a refusal: the demo box carries exactly one card rail.
+// The populate's own row is known by its content as well as its id: a row
+// with the right id and the wrong merchant, host, processor, currency,
+// surcharge or status is not the populate's own, and a database holding it
+// has drifted from the world this command writes, which a re-run must
+// refuse rather than report as complete.
 func refuseForeignPaymentConfig(ctx context.Context, tx pgx.Tx) error {
 	var n int
 	if err := tx.QueryRow(ctx,
@@ -101,6 +106,22 @@ func refuseForeignPaymentConfig(ctx context.Context, tx pgx.Tx) error {
 	}
 	if n > 0 {
 		return fmt.Errorf("demo-populate: refusing: the database holds %d payment configuration row(s) the demo populate did not write, the demo box carries exactly one", n)
+	}
+	var drifted int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM payment_config
+		 WHERE id = $1::uuid
+		   AND (merchant_id IS DISTINCT FROM $2
+		     OR base_url IS DISTINCT FROM ''
+		     OR processor IS DISTINCT FROM $3
+		     OR currency IS DISTINCT FROM $4
+		     OR surcharge_enabled IS NOT FALSE
+		     OR status IS DISTINCT FROM 'active')`,
+		demoPaymentConfigID, demoMerchantID, demoProcessor, demoCurrency).Scan(&drifted); err != nil {
+		return fmt.Errorf("demo-populate: payment configuration check: %w", err)
+	}
+	if drifted > 0 {
+		return fmt.Errorf("demo-populate: refusing: the demo payment configuration row has drifted from the values this populate writes (merchant %s, simulator %s, no host, surcharges off, active), the demo database is not the world this command builds", demoMerchantID, demoProcessor)
 	}
 	return nil
 }
