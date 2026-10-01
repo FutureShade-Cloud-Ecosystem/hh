@@ -12,6 +12,9 @@ paths:
         The staff-side invoice book. The account position column on each row is
         gated by policy and is byte-absent for a caller the policy refuses.
       x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -68,6 +71,9 @@ paths:
       tags: [staff-billing]
       summary: Read the register policy for a branch
       x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -88,6 +94,9 @@ paths:
       tags: [staff-billing]
       summary: Write the register policy for a branch
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -119,6 +128,9 @@ paths:
         changes nothing; it answers the count and the summed balance from the
         same place the bulk actions read.
       x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -147,6 +159,9 @@ paths:
         CSV text with a Content-Disposition attachment filename, not JSON; the
         wire shape is raw text rather than a struct.
       x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: q
@@ -194,6 +209,9 @@ paths:
         caller may send. The account position is byte-absent for a caller the
         policy refuses.
       x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -216,6 +234,9 @@ paths:
         The body is rendered HTML (Content-Type text/html, Cache-Control
         no-store), not JSON. Rendering does not mark the invoice opened.
       x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -238,6 +259,9 @@ paths:
         with replayed true and posts nothing. balance_cents in the response is
         read back from the ledger after the settle.
       x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -264,6 +288,9 @@ paths:
       tags: [staff-billing]
       summary: Send one invoice to its account
       x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -293,6 +320,9 @@ paths:
         One live promise per invoice. When one already exists the route
         answers 409 with the live promise attached beside the error string.
       x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -323,6 +353,9 @@ paths:
         One open dispute per invoice. When one is already open the route
         answers 409 with the open dispute attached beside the error string.
       x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -350,6 +383,9 @@ paths:
       tags: [staff-billing]
       summary: Resolve the open dispute on one invoice
       x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -382,6 +418,9 @@ paths:
         A deliberate collections campaign against the selected accounts, which
         is why it is manager-gated while the per-invoice send is staff.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -406,6 +445,9 @@ paths:
       tags: [staff-billing]
       summary: Create one interim statement per distinct account in a selection
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -457,6 +499,9 @@ paths:
       tags: [staff-billing]
       summary: Read the AR aging worklist
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -486,6 +531,9 @@ paths:
       tags: [staff-billing]
       summary: List credit holds
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -515,6 +563,9 @@ paths:
         names who allowed it. The reason is mandatory and the expiry is
         bounded; a longer permit must go through release instead.
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -544,6 +595,9 @@ paths:
         Refuses NSF holds: those carry a stricter release requirement that
         lives on the till's own path, and this module does not lift them.
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -577,6 +631,9 @@ paths:
         off it is a dry run: would_hold and customers report the blast radius
         and nothing is placed.
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -599,6 +656,9 @@ paths:
       tags: [staff-billing]
       summary: Read the auto-hold switch and the read-only thresholds behind it
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -624,6 +684,9 @@ paths:
         bad request, never a silent false. Every flip is audited in both
         directions. Re-asserting the current value is not an error.
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -652,6 +715,9 @@ paths:
         unknown order or an internal failure answers allowed false with a
         reason that names the failure, never a 404.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: orderID
@@ -677,6 +743,9 @@ paths:
         requires customer_id. Statements are generated and the sendable ones
         marked QUEUED; delivery happens only through a wired outbox.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -701,6 +770,9 @@ paths:
       tags: [staff-billing]
       summary: Read one statement run with its statements
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -724,6 +796,9 @@ paths:
         (Content-Type text/html), the same bytes that were generated, never a
         re-render.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: customerID
@@ -763,6 +838,9 @@ paths:
         action) is byte-absent for a caller without the ar.advanced
         capability; capabilities names what the caller holds.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -789,6 +867,9 @@ paths:
       tags: [staff-billing]
       summary: Read the landing policy for a branch
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -813,6 +894,9 @@ paths:
         does not reset the rest. Every changed knob lands in the policy
         history as one row per change.
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -841,6 +925,9 @@ paths:
       tags: [staff-billing]
       summary: Read the landing policy change trail, newest first
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -869,6 +956,9 @@ paths:
         recipient; with no tagged AP contact, confirm_fallback is required and
         the fallback is recorded with its reason.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -892,6 +982,9 @@ paths:
       tags: [staff-billing]
       summary: Read the reminder send history
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -918,6 +1011,9 @@ paths:
         The black-hole list: accounts whose delivered sends have never been
         opened.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -937,6 +1033,9 @@ paths:
       tags: [staff-billing]
       summary: Evaluate every account against the black-hole rule and raise flags
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -954,6 +1053,9 @@ paths:
       tags: [staff-billing]
       summary: Resolve one paper-path flag
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -986,6 +1088,9 @@ paths:
         An untagged account answers 200 with tagged false, never 404: nobody
         having tagged a contact is a true, ordinary answer.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: customerID
@@ -1009,6 +1114,9 @@ paths:
         customer_id in the body is overwritten by the path. A contact needs an
         email or a phone; one of the two is what makes it a contact.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: customerID
@@ -1036,6 +1144,9 @@ paths:
       tags: [staff-billing]
       summary: Untag an account's accounts-payable contact
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: customerID
@@ -1108,6 +1219,9 @@ paths:
         currency, and whether the card rail is in test mode. Credentials are
         write-only and never appear in any response.
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -1128,6 +1242,9 @@ paths:
         response carries only the configured flag, the merchant id, and the
         processor.
       x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1158,6 +1275,9 @@ paths:
         A payment may be reversed at most once; a second attempt answers 409.
         Invoices the payment had settled are reopened onto the AR book.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"

@@ -14,6 +14,9 @@ paths:
       tags: [staff-warranty]
       summary: List vendor warranty profiles
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -33,6 +36,9 @@ paths:
       tags: [staff-warranty]
       summary: Read one vendor's warranty profile, including product overrides
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: vendorID
@@ -57,6 +63,9 @@ paths:
         The path is the source of truth for which vendor the profile belongs
         to; the server overwrites vendor_id from the path.
       x-role: requireAdmin
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: vendorID
@@ -88,6 +97,9 @@ paths:
         The profile is resolved from the vendor in the path, so the caller
         supplies only the product and the deviating terms.
       x-role: requireAdmin
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: vendorID
@@ -119,6 +131,9 @@ paths:
       tags: [staff-warranty]
       summary: List warranty claims
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -154,6 +169,9 @@ paths:
         opened_at supports back-dating (FR-9): when set, the claim enters with
         its true opened stamp rather than the server clock.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -183,6 +201,9 @@ paths:
       tags: [staff-warranty]
       summary: Read one warranty claim
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -205,6 +226,9 @@ paths:
       tags: [staff-warranty]
       summary: List the audit-spine events of a claim
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -229,6 +253,9 @@ paths:
       tags: [staff-warranty]
       summary: Read the claim's checklist resolved against its ticks
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -252,6 +279,9 @@ paths:
       tags: [staff-warranty]
       summary: Toggle one checklist item on a claim
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -288,6 +318,9 @@ paths:
       tags: [staff-warranty]
       summary: Assign a claim to a vendor and an owner
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -326,6 +359,9 @@ paths:
         exit transitions to REJECTED or ABANDONED are never gated. occurred_at
         supports back-dating the transition (FR-9).
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -364,6 +400,9 @@ paths:
         FR-4 seam: the body carries a reference, not file bytes; the module
         has no file storage of its own for this route.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -400,6 +439,9 @@ paths:
         settlement whose money was booked outside the module and requires a
         reason. Re-settlement of a settled claim is refused.
       x-role: requireManager
+      x-access:
+        surfaces: [manager-home]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -435,6 +477,9 @@ paths:
       tags: [staff-warranty]
       summary: List the executed settlement money paths of a claim
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -461,6 +506,9 @@ paths:
       tags: [staff-warranty]
       summary: Read the warranty metrics bundle in one call
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -482,6 +530,9 @@ paths:
       tags: [staff-warranty]
       summary: Read the Kanban columns with their claims in one call
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -512,6 +563,9 @@ paths:
         open_only defaults true: this is a worklist, and a reconciled claim
         belongs in history rather than on the board.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -541,6 +595,9 @@ paths:
       tags: [staff-warranty]
       summary: List a claim's recovery chase log, oldest first
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -568,6 +625,9 @@ paths:
         over-receipt is refused. occurred_at is back-datable, symmetric with
         capture and advance (FR-9).
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -605,6 +665,9 @@ paths:
       summary: List a claim's public-intake photos, metadata only
       description: Bytes ride the per-photo byte route; this list never carries them.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -633,6 +696,9 @@ paths:
         back and was verified against the magic bytes at intake. The checksum
         rides the ETag header, so a matching If-None-Match answers 304.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -666,6 +732,9 @@ paths:
       tags: [staff-warranty]
       summary: Read the live SLA timers plus the outstanding alerts
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -691,6 +760,9 @@ paths:
       tags: [staff-warranty]
       summary: List the configured per-phase SLA targets
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -714,6 +786,9 @@ paths:
         notify people. Idempotent: one durable alert per claim and phase,
         upserted on repeat runs.
       x-role: requireManager
+      x-access:
+        surfaces: [manager-home]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -736,6 +811,9 @@ paths:
       summary: Mark an SLA alert as seen by the acting staff member
       description: The alert is not deleted; acknowledgement is recorded on the row.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -822,6 +900,9 @@ paths:
       tags: [staff-lien]
       summary: List lien jobs
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -844,6 +925,9 @@ paths:
       tags: [staff-lien]
       summary: Create a lien job, the umbrella a holdback and release cycle attaches to
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -873,6 +957,9 @@ paths:
       tags: [staff-lien]
       summary: Read one lien job
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -895,6 +982,9 @@ paths:
       tags: [staff-lien]
       summary: Book retention rows from billing's holdback invoices, idempotently
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -917,6 +1007,9 @@ paths:
       tags: [staff-lien]
       summary: List a job's rendered lien documents
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -941,6 +1034,9 @@ paths:
       tags: [staff-lien]
       summary: Read the triage worklist, badge-classified
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -964,6 +1060,9 @@ paths:
       tags: [staff-lien]
       summary: Read outstanding holdbacks aged into buckets
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -991,6 +1090,9 @@ paths:
         rendered document carries the DRAFT banner until the shared
         review-status row flips it.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1021,6 +1123,9 @@ paths:
       tags: [staff-lien]
       summary: List every version of one lien document
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1055,6 +1160,9 @@ paths:
         release is refused. The co-signer body is optional to decode; an empty
         approval fails the dual gate.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       x-guards: [holdback-release-dual-gate]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1092,6 +1200,9 @@ paths:
       tags: [staff-compliance]
       summary: List compliance-calendar deadlines
       x-role: requireManager
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1117,6 +1228,9 @@ paths:
       tags: [staff-compliance]
       summary: List open deadlines due within the horizon, marking past-due rows OVERDUE
       x-role: requireManager
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1145,6 +1259,9 @@ paths:
         DRAFT banner from. A subject with no explicit row answers the module
         default banner, so this route always answers a banner.
       x-role: requireManager
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: subject_type
@@ -1172,6 +1289,9 @@ paths:
       summary: Set the review-status banner for a subject
       description: Manager-gated; a banner change is a row edit, not a redeploy.
       x-role: requireManager
+      x-access:
+        surfaces: [manager-home]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:

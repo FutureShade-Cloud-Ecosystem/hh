@@ -21,6 +21,9 @@ paths:
         order's lines and money. The id path segment also accepts the visible
         order number, resolved within the caller's branch scope.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -47,6 +50,9 @@ paths:
         field; an explicit empty string clears the date. The service
         re-checks the edit matrix on the resolved caller.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -78,6 +84,9 @@ paths:
       tags: [staff-order]
       summary: Move a DRAFT order to CONFIRMED
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -102,6 +111,9 @@ paths:
       tags: [staff-order]
       summary: Move a CONFIRMED order to PICKING
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -126,6 +138,9 @@ paths:
       tags: [staff-order]
       summary: Move a PICKING order to READY
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -155,6 +170,9 @@ paths:
         sale is attached, under the order row lock; a money-attached order
         answers 409 and belongs to the POS returns flow.
       x-role: requireManager
+      x-access:
+        surfaces: [quote-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -188,6 +206,9 @@ paths:
       tags: [staff-order]
       summary: Add a line to an editable order (manager only)
       x-role: requireManager
+      x-access:
+        surfaces: [quote-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -219,6 +240,9 @@ paths:
       tags: [staff-order]
       summary: Change the entered quantity on one line (manager only)
       x-role: requireManager
+      x-access:
+        surfaces: [quote-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -254,6 +278,9 @@ paths:
       tags: [staff-order]
       summary: Remove one line from an editable order (manager only)
       x-role: requireManager
+      x-access:
+        surfaces: [quote-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -287,6 +314,9 @@ paths:
         Reconstructed from the append-only audit trail (ORDER_CHANGED rows),
         oldest first. request_id groups the rows one edit emitted.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -315,6 +345,9 @@ paths:
         Reconstructed from the append-only audit trail (ORDER_STATUS_CHANGED
         rows), oldest first, with actor display names resolved server-side.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -343,6 +376,9 @@ paths:
         completions), the order's immediate documents (invoices raised,
         payments applied) and the human notes into one normalized list.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -371,6 +407,9 @@ paths:
         note the first attempt wrote with replayed set, answered 200 instead
         of 201.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -410,6 +449,9 @@ paths:
         Stamps edited-by from the session caller and edited-at server-side.
         Any active in-branch staff member may correct a note.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -446,6 +488,9 @@ paths:
       tags: [staff-order]
       summary: Read the active stock holds this order owns
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -469,6 +514,9 @@ paths:
       tags: [staff-order]
       summary: Release this order's holds and re-reserve from its current lines (manager only)
       x-role: requireManager
+      x-access:
+        surfaces: [quote-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -494,6 +542,9 @@ paths:
       tags: [staff-order]
       summary: List an order's change requests, newest first
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -521,6 +572,9 @@ paths:
         request time, through the server-side pricing seam. One open request
         per order; a second raise answers 409.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -552,6 +606,9 @@ paths:
       tags: [staff-order]
       summary: Read one change request with its priced delta
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: changeId
@@ -579,6 +636,9 @@ paths:
         the request to APPROVED for an immaterial delta, PENDING_FINANCE for
         a material one.
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: changeId
@@ -614,6 +674,9 @@ paths:
         ORDER_CHANGE_OVER_THRESHOLD), which can only narrow. An unconfigured
         branch fails open: any manager may sign.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: changeId
@@ -644,6 +707,9 @@ paths:
       tags: [staff-order]
       summary: Reject a live change request
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: changeId
@@ -674,6 +740,9 @@ paths:
       tags: [staff-order]
       summary: Withdraw a live change request
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: changeId
@@ -709,6 +778,9 @@ paths:
         order's holds, and flips the request to APPLIED. A second apply finds
         the request no longer APPROVED and answers 409.
       x-role: requireManager
+      x-access:
+        surfaces: [quote-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: changeId
@@ -734,6 +806,9 @@ paths:
       tags: [staff-order]
       summary: Read an order's multi-ship view (groups, coverage, invoicing readiness)
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -761,6 +836,9 @@ paths:
         DISPATCHED are preserved verbatim and may not be re-planned. An
         incomplete partition answers 409 naming the offending lines.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -795,6 +873,9 @@ paths:
         Reversible while no invoice has been raised against the order and
         frozen after; a frozen policy answers 409.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -831,6 +912,9 @@ paths:
         the readiness payload, so the surface shows what would be invoiced.
         A not-ready decision answers 409 with the reason.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -865,6 +949,9 @@ paths:
         READY, DISPATCHED, COMPLETE, with CANCELLED reachable from any live
         state). A group's status is independent of the order's.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: groupId
@@ -897,6 +984,9 @@ paths:
       tags: [staff-order]
       summary: Grade every line of the order for duplication (current price and availability)
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -924,6 +1014,9 @@ paths:
         returns the draft the first attempt created. Lines that cannot be
         duplicated as selected answer 409 with per-line reasons.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -960,6 +1053,9 @@ paths:
         error. window_hours lets the client word the warning from the
         server's actual setting.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -988,6 +1084,9 @@ paths:
         created_by is the resolved staff caller, never client-supplied. An
         unknown order id answers 422.
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1016,6 +1115,9 @@ paths:
       tags: [staff-tasks]
       summary: List the picking queue, filtered by status and branch
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1047,6 +1149,9 @@ paths:
       tags: [staff-tasks]
       summary: Claim a QUEUED or PUSHED task (moves it to ACCEPTED)
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1067,6 +1172,9 @@ paths:
       tags: [staff-tasks]
       summary: Accept a claimed task (moves it to IN_PROGRESS)
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1091,6 +1199,9 @@ paths:
         advance the underlying order's status unless the per-type advance
         rule (GET /api/v1/yard/advance-rules/{taskType}) is enabled.
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1118,6 +1229,9 @@ paths:
       tags: [staff-tasks]
       summary: Cancel a non-terminal task
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1147,6 +1261,9 @@ paths:
       tags: [staff-tasks]
       summary: Read the yard board (tasks joined to their tickets and open shortages)
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: read
       x-guards: [yardBranchFence]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1181,6 +1298,9 @@ paths:
       tags: [staff-tasks]
       summary: Read the raw pick-ticket feed not yet queued as tasks
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: read
       x-guards: [yardBranchFence]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1208,6 +1328,9 @@ paths:
       tags: [staff-tasks]
       summary: Read one pick (task, ticket, full shortage history and recorded pick)
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1228,6 +1351,9 @@ paths:
       summary: Stage an in-progress pick (moves it to STAGED)
       description: A blank ref is derived server-side; note may be blank.
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1258,6 +1384,9 @@ paths:
         PUT replaces the whole recorded pick with what is sent; the schema
         uniqueness on (task, order line) says the same thing in the database.
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1286,6 +1415,9 @@ paths:
       summary: Report a shortage on a pick
       description: reported_by is the resolved staff caller, never client-supplied.
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1315,6 +1447,9 @@ paths:
         The resolution text is required. Resolving an already-resolved
         shortage answers 409.
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1352,6 +1487,9 @@ paths:
         still answers 200. A unit mismatch against the requested unit answers
         400; a task that is not a weight request answers 409.
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1382,6 +1520,9 @@ paths:
         Creates a NEED_WEIGHT task; requested_by is the resolved staff
         caller. An unknown order id answers 422.
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1415,6 +1556,9 @@ paths:
         invoicing and is a deliberate write against the database, not a
         settings toggle.
       x-role: requireStaff
+      x-access:
+        surfaces: [yard-pick]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: taskType

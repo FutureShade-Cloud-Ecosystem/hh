@@ -11,6 +11,9 @@ paths:
         D8). The quote number is minted by the database. An empty valid_until
         means the quote never expires.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -37,6 +40,9 @@ paths:
         The staff quote resource is the canonical dealer_quote (DECISIONS.md
         D8). The ERP's offset page is replaced by cursor pagination here.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -68,6 +74,9 @@ paths:
         D8). The id parameter also accepts the visible quote number (for
         example "#Q-4"), resolved branch-scoped.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -94,6 +103,9 @@ paths:
         expires. Refused with 409 when the quote is frozen (accepted,
         converted, or terminal) or already expired.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -129,6 +141,9 @@ paths:
         and the quote's soft stock holds are re-derived in the same
         transaction. Quantities are decimal strings, never floats.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -164,6 +179,9 @@ paths:
         carrying disc_pct without qty_entered is a discount-only write, gated
         by the dealer's line_discounts_enabled policy knob.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -199,6 +217,9 @@ paths:
       tags: [staff-quote]
       summary: Remove a line from a dealer quote
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -232,6 +253,9 @@ paths:
         audit sequence. Readable on an expired quote; expiry stops edits, not
         the trail.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -261,6 +285,9 @@ paths:
         check runs in the service. A 409 names the refusal (credit policy,
         repeat acceptance, or a state that cannot convert).
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -296,6 +323,9 @@ paths:
         writes nothing, including no pricing audit rows: scoring goes through
         the read-only pricing preview.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -335,6 +365,9 @@ paths:
         acceptance provenance table. Asking from the quote or from any of its
         orders returns the same family.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -362,6 +395,9 @@ paths:
         family. An order with no quote behind it answers itself plus its
         downstream documents.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -389,6 +425,9 @@ paths:
         in the service, so a non-admin caller is refused with 403 naming the
         role.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -410,6 +449,9 @@ paths:
         refused rather than read as false, because this one field decides
         whether a duplicate order can be minted.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -440,6 +482,9 @@ paths:
         cost data the cost_visibility knob governs is gated at the margin
         glance, not here.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -466,6 +511,9 @@ paths:
         before any database CHECK can fire; the 422 body is the shared Error
         envelope.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -490,6 +538,9 @@ paths:
       tags: [staff-quote]
       summary: Read a quote's terms strip and summary money
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -517,6 +568,9 @@ paths:
         tax from the configured flat rate. Out-of-bounds fields are refused in
         words with 422; the 422 body is the shared Error envelope.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -552,6 +606,9 @@ paths:
         branch policy does not allow receives an empty object with every cost
         field byte-absent, never a fabricated figure.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -584,6 +641,9 @@ paths:
         CONFIRMED, REVOKED; the wire shape carries the computed live flag
         instead.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -618,6 +678,9 @@ paths:
         hash never crosses the wire. The link states are ACTIVE, CONFIRMED,
         REVOKED; each row carries the computed live flag.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -642,6 +705,9 @@ paths:
       summary: Revoke one share link immediately
       description: Subsequent use of the revoked link answers 410, not 404
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -749,6 +815,9 @@ paths:
         the message is queued, not sent. No payment link is ever included; the
         payload type has no field for one.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -784,6 +853,9 @@ paths:
         reasons), and the steps still to come, computed from the plan rather
         than stored.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -807,6 +879,9 @@ paths:
       tags: [staff-quote]
       summary: Stop a quote's follow-up cadence
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -831,6 +906,9 @@ paths:
       summary: Start or resume a quote's follow-up cadence
       description: Enabling a quote that never had a plan creates one
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -860,6 +938,9 @@ paths:
         UNKNOWN rather than failing, and seam_wired says which answer the
         client is looking at.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -886,6 +967,9 @@ paths:
         Soft holds are visible and they expire, but they do not reduce
         available stock unless the branch policy grades quote holds HARD.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -914,6 +998,9 @@ paths:
         again, dropped when the line left the quote). An unbound seam answers
         an empty status with seam_wired false.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -940,6 +1027,9 @@ paths:
         The explicit form of the sync every line write already runs: release
         all, then reserve what the quote now has, under the quote row lock.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -966,6 +1056,9 @@ paths:
         The only terminal status this endpoint writes is RELEASED; CONSUMED is
         written by the conversion path and nowhere else.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -993,6 +1086,9 @@ paths:
         present even when it has none; a missing row would read as a bug
         rather than as an answer.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: productId
@@ -1025,6 +1121,9 @@ paths:
         write a quote line. The deterministic engine is the default; the AI
         path only splits the text into phrases and never names a product.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1054,6 +1153,9 @@ paths:
         cross-branch or unknown quote is one flat 404, never an existence
         oracle.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: quote_id
@@ -1081,6 +1183,9 @@ paths:
         The admin listing deliberately returns the disabled rules too; the
         evaluator is the single place the enabled flag is honoured.
       x-role: requireAdmin
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -1102,6 +1207,9 @@ paths:
         as false, because silent, destructive defaults are the worst available
         failure mode for a config surface.
       x-role: requireAdmin
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: code

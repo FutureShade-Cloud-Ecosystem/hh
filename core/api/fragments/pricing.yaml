@@ -19,6 +19,9 @@ paths:
         has_approved_override is a request for a below-floor price, decided
         server side against the caller the guard resolved, never an assertion.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -49,6 +52,9 @@ paths:
       tags: [staff-pricing]
       summary: List pricing rules
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -82,6 +88,9 @@ paths:
       tags: [staff-pricing]
       summary: Create a pricing rule
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -113,6 +122,9 @@ paths:
       tags: [staff-pricing]
       summary: Read one pricing rule
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -138,6 +150,9 @@ paths:
         are tri-state: absent leaves the bound, an empty string clears it back
         to null, a value sets it (RFC3339 or date only).
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -170,6 +185,9 @@ paths:
       tags: [staff-pricing]
       summary: Soft-retire a pricing rule under its optimistic version
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -198,6 +216,9 @@ paths:
       tags: [staff-pricing]
       summary: List the category margin-policy grid
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -218,6 +239,9 @@ paths:
       tags: [staff-pricing]
       summary: Create or replace the margin policy for one category
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -253,6 +277,9 @@ paths:
       tags: [staff-pricing]
       summary: List the category overrides for one customer
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -277,6 +304,9 @@ paths:
       tags: [staff-pricing]
       summary: Create a customer category override
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -313,6 +343,9 @@ paths:
       tags: [staff-pricing]
       summary: Update a customer override under its optimistic version
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -345,6 +378,9 @@ paths:
       tags: [staff-pricing]
       summary: Delete a customer override under its optimistic version
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -373,6 +409,9 @@ paths:
       tags: [staff-pricing]
       summary: Read the pricing audit log, newest first
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -412,6 +451,9 @@ paths:
         breaching lines, worst first. Lines that fail validation are surfaced
         with invalid set, never silently dropped.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -449,6 +491,9 @@ paths:
         and cost-missing lines as invalid. from and to accept RFC3339 or date
         only.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -484,6 +529,9 @@ paths:
       tags: [staff-pricing]
       summary: List quantity-break schedules with their tiers
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -506,6 +554,9 @@ paths:
         adjustment stacked on the tier-resolved base, never a competing base
         price.
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -537,6 +588,9 @@ paths:
       tags: [staff-pricing]
       summary: Read one quantity-break schedule
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -557,6 +611,9 @@ paths:
       tags: [staff-pricing]
       summary: Replace a quantity-break schedule under its optimistic version
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -589,6 +646,9 @@ paths:
       tags: [staff-pricing]
       summary: Soft-retire a quantity-break schedule under its optimistic version
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -619,6 +679,9 @@ paths:
       tags: [staff-pricing]
       summary: List staged manufacturer price batches
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -648,6 +711,9 @@ paths:
       tags: [staff-pricing]
       summary: Create a staged price batch
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -678,6 +744,9 @@ paths:
       tags: [staff-pricing]
       summary: Read one price batch
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -700,6 +769,9 @@ paths:
       tags: [staff-pricing]
       summary: List the derived change lines of one batch
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -728,6 +800,9 @@ paths:
         on the source_ref query parameter. The response carries the derived line
         set with the preview, unmatched, estimated-freight and outlier subsets.
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -766,6 +841,9 @@ paths:
       tags: [staff-pricing]
       summary: Approve a staged batch (the approver must differ from the maker)
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -797,6 +875,9 @@ paths:
         Idempotent: a batch already APPLIED is a no-op returning its recorded
         applied count.
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -825,6 +906,9 @@ paths:
       tags: [staff-pricing]
       summary: Apply every approved batch whose effective date has arrived
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -843,6 +927,9 @@ paths:
       tags: [staff-pricing]
       summary: List the manufacturer CSV column-mapping profiles
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -863,6 +950,9 @@ paths:
       tags: [staff-pricing]
       summary: Replace the column mapping of one import profile
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -896,6 +986,9 @@ paths:
       tags: [staff-pricing]
       summary: Read the append-only price change log, newest first
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -927,6 +1020,9 @@ paths:
       tags: [staff-pricing]
       summary: List the manufacturers the price-file import can run for
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -954,6 +1050,9 @@ paths:
         response are gated a second time per caller and are absent entirely for
         a caller without cost visibility.
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: limit
@@ -994,6 +1093,9 @@ paths:
         the preview digest; a mismatched digest conflicts. Same multipart form
         as the preview, with digest required.
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1025,6 +1127,9 @@ paths:
       tags: [staff-pricing]
       summary: List the append-only price-import run history
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1052,6 +1157,9 @@ paths:
       tags: [staff-pricing]
       summary: List promotions
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1077,6 +1185,9 @@ paths:
         Scoped to a product or a category, not both. starts_at and ends_at are
         required: an unbounded promotion is a price change, not a promotion.
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1108,6 +1219,9 @@ paths:
       tags: [staff-pricing]
       summary: Update a promotion under its optimistic version
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1140,6 +1254,9 @@ paths:
       tags: [staff-pricing]
       summary: Retire a promotion under its optimistic version
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1168,6 +1285,9 @@ paths:
         user needs to see, so the list is staff-readable while every mutation
         is manager-only.
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1196,6 +1316,9 @@ paths:
         no price is the badge-only case: the item shows as clearance and still
         prices through the ordinary waterfall.
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1229,6 +1352,9 @@ paths:
       tags: [staff-pricing]
       summary: Clear the clearance flag on a product
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1250,6 +1376,9 @@ paths:
       tags: [staff-pricing]
       summary: List manufacturer rebate programs
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1280,6 +1409,9 @@ paths:
         Covers a product or a category, not both. vendor_id is required: a
         rebate is a claim against someone.
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1314,6 +1446,9 @@ paths:
         The vendor is immutable: changing it would silently re-attribute every
         accrual the program has already written.
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1346,6 +1481,9 @@ paths:
       tags: [staff-pricing]
       summary: Retire a rebate program under its optimistic version
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1370,6 +1508,9 @@ paths:
       tags: [staff-pricing]
       summary: Read one vendor's rebate accrual ledger with totals
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -1411,6 +1552,9 @@ paths:
         are refused on a document source type; a clawback posts as an
         ADJUSTMENT.
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1447,6 +1591,9 @@ paths:
         winning edge flags the pick unit as indivisible. A missing chain is an
         error, not a zero.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1477,6 +1624,9 @@ paths:
       tags: [staff-pricing]
       summary: List conversion edges
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1507,6 +1657,9 @@ paths:
         An edge is directed from_uom to to_uom and usable in reverse at the
         reciprocal factor. Scope is a product or a category, not both.
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1537,6 +1690,9 @@ paths:
       tags: [staff-pricing]
       summary: Delete one conversion edge
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: [requirePathUUID]
       parameters:
         - $ref: "#/components/parameters/XOrg"
