@@ -33,6 +33,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/config"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/boot"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/issuer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/membership"
@@ -45,6 +46,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/otelhttp"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
 // demoDispatch runs a demo-only role and reports whether it answered.
@@ -64,6 +66,14 @@ func demoDispatch(role string, args []string) bool {
 			os.Exit(1)
 		}
 		return true
+	case "demo-populate":
+		// W3's one-shot, stitched into W1's dispatch when the branches met:
+		// it handles its own errors and exits; false never happens on this path.
+		if err := demo.PopulateMain(args, os.Stdout, os.Getenv); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}
 	return false
 }
@@ -288,8 +298,33 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 		return nil, err
 	}
 
+	// The role configuration and the role gate: the same steps the default
+	// build's registerRoutes makes, in the same place (this mirror's own
+	// rule: when the default wiring gains a step, this mirror gains the
+	// same step in the same place). The demo world loads the same decided
+	// default and a refusal stops the demo boot; every registration below
+	// lands through the wrapping registrar, so a demo bearer is held to
+	// the dealer's configuration exactly as a platform bearer is.
+	roleCfg, err := roleconfig.Default()
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("role configuration: %w", err)
+	}
+	roleGate, err := authz.NewRoleGate(gate, staff, roleCfg)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	wired, err := authz.NewRoleGateRegistrar(r, roleGate)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	r = wired
+
 	// The proof shims, the public tenant config and the three spines: the
-	// default build's construction, unchanged, over the demo gate.
+	// default build's construction, unchanged, over the demo gate and the
+	// role gate.
 	rec := shims.NewRecorder(1024)
 	shims.RegisterRoutes(r, g, rec)
 	r.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(tenantconfig.Default())))
@@ -330,6 +365,6 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 
 	return &appGraph{
 		cfg: cfg, log: log, pool: pool, verify: verifier, link: linkedUserID(pool), g: g,
-		money: money, ops: ops, tops: tops, smsBelt: belt,
+		money: money, ops: ops, tops: tops, smsBelt: belt, demoMint: iss.Mint,
 	}, nil
 }

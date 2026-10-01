@@ -2,7 +2,13 @@
 // Assemble core/api/openapi.yaml from skeleton.yaml plus every fragment in
 // fragments/. Fails on: unparseable YAML, duplicate schema names, duplicate
 // operationIds, operations without x-role or a known tag, unresolved $refs,
-// and templated paths that collide under different parameter names.
+// templated paths that collide under different parameter names, and any
+// x-access fault: a staff operation without an x-access block, a non-staff
+// operation with one, a surface or level outside roleconfig's vocabulary,
+// none as a route's level (a wall that cannot be switched off, D49), a
+// named list the configuration does not carry, a staff operation whose tag
+// has no x-access-map entry, and a write annotated below manage with no
+// reason saying why.
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +17,28 @@ import YAML from "yaml";
 const apiDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const skeleton = YAML.parse(readFileSync(join(apiDir, "skeleton.yaml"), "utf8"));
 
+// The surface and level vocabularies are roleconfig's, read from the
+// decided default's cells (D48): one source, so the document and the
+// guards can never drift apart on the words they share. The namable lists
+// are the configuration's role-list keys: a setting whose value is a list
+// of roles, or one of the two standing lists beside the exception kinds.
+const roleconfig = YAML.parse(readFileSync(join(apiDir, "..", "internal", "roleconfig", "default.json"), "utf8"));
+const knownSurfaces = new Set(roleconfig.cells.map((c) => c.surface));
+const knownLevels = new Set(roleconfig.cells.map((c) => c.level));
+const ROLE_LIST_SETTINGS = ["cost_visibility", "refund_approvers", "pricing_editors", "shortage_resolvers", "dispatch_policy_setters"];
+const knownListKeys = new Set([
+  ...ROLE_LIST_SETTINGS.filter((k) => Array.isArray(roleconfig.settings?.[k])),
+  "floor_clearers_own_branch",
+  "delivery_date_committers",
+]);
+
+// All state is declared before any check runs, so a faulty map entry is
+// named as the fault it is instead of falling over mid-walk.
+const problems = [];
+const operationIds = new Map();
+const HTTP_METHODS = new Set(["get", "put", "post", "delete", "patch"]);
+const WRITE_METHODS = new Set(["put", "post", "patch", "delete"]);
+
 const doc = {
   openapi: skeleton.openapi,
   jsonSchemaDialect: skeleton.jsonSchemaDialect,
@@ -18,14 +46,61 @@ const doc = {
   security: skeleton.security,
   servers: skeleton.servers,
   tags: skeleton.tags ?? [],
+  "x-access-map": skeleton["x-access-map"] ?? {},
   paths: {},
   components: { ...skeleton.components, schemas: { ...(skeleton.components?.schemas ?? {}) } },
 };
 
 const tagNames = new Set(doc.tags.map((t) => t.name));
-const HTTP_METHODS = new Set(["get", "put", "post", "delete", "patch"]);
-const problems = [];
-const operationIds = new Map();
+const STAFF_ROLES = new Set(["requireStaff", "requireManager", "requireAdmin"]);
+const accessMap = doc["x-access-map"];
+let accessCount = 0;
+const exceptions = [];
+for (const [tag, entry] of Object.entries(accessMap)) {
+  if (!tagNames.has(tag)) problems.push(`x-access-map names unknown tag ${tag}`);
+  const surfaces = entry?.surfaces ?? [];
+  if (surfaces.length === 0) problems.push(`x-access-map ${tag}: no surfaces`);
+  for (const s of surfaces) if (!knownSurfaces.has(s)) problems.push(`x-access-map ${tag}: unknown surface ${s}`);
+  if (!knownLevels.has(entry?.level)) problems.push(`x-access-map ${tag}: unknown level ${entry?.level}`);
+  if (entry?.level === "none") problems.push(`x-access-map ${tag}: level none refuses every role; a route level cannot be none (D49)`);
+}
+
+// checkAccess validates one operation's x-access block, returning its
+// census spelling ("surface1|surface2 at level") for the summary line.
+// A write annotated below manage must carry a reason saying why: the
+// convention cases where the tier gate alone can hold the wall, and the
+// read-semantics operations the POST method dresses, each say so in place.
+function checkAccess(where, method, op) {
+  const xa = op["x-access"];
+  const staff = STAFF_ROLES.has(op["x-role"]);
+  if (!staff) {
+    if (xa !== undefined) problems.push(`${where}: non-staff operation carries x-access`);
+    return null;
+  }
+  if (xa === undefined) {
+    problems.push(`${where}: staff operation carries no x-access`);
+    return null;
+  }
+  const surfaces = xa.surfaces;
+  if (!Array.isArray(surfaces) || surfaces.length === 0) {
+    problems.push(`${where}: x-access carries no surfaces`);
+    return null;
+  }
+  for (const s of surfaces) if (!knownSurfaces.has(s)) problems.push(`${where}: x-access names unknown surface ${s}`);
+  if (!knownLevels.has(xa.level)) problems.push(`${where}: x-access names unknown level ${xa.level}`);
+  if (xa.level === "none") problems.push(`${where}: x-access level none refuses every role; a route level cannot be none (D49)`);
+  if (xa.list !== undefined) {
+    if (!knownListKeys.has(xa.list)) problems.push(`${where}: x-access names list ${xa.list}, which the configuration does not carry`);
+  }
+  if (WRITE_METHODS.has(method) && xa.level === "read") {
+    if (typeof xa.reason !== "string" || xa.reason.trim() === "") {
+      problems.push(`${where}: a write at read carries no reason`);
+    }
+  }
+  const mapped = accessMap[op.tags?.[0]];
+  if (!mapped) problems.push(`${where}: staff tag ${op.tags?.[0]} has no x-access-map entry`);
+  return `${surfaces.join("|")} at ${xa.level}`;
+}
 
 function mergePaths(paths, source) {
   for (const [path, item] of Object.entries(paths ?? {})) {
@@ -109,6 +184,13 @@ for (const [path, item] of Object.entries(doc.paths)) {
     if (op["x-role"] === undefined) problems.push(`${where}: missing x-role`);
     if (!Array.isArray(op.tags) || op.tags.length !== 1) problems.push(`${where}: must carry exactly one tag`);
     else if (!tagNames.has(op.tags[0])) problems.push(`${where}: unknown tag ${op.tags[0]}`);
+    if (op["x-role"] !== undefined && (!Array.isArray(op.tags) || op.tags.length === 1)) {
+      const access = checkAccess(where, method, op);
+      if (access !== null) {
+        accessCount += 1;
+        if (access !== (accessMap[op.tags[0]] ? `${accessMap[op.tags[0]].surfaces.join("|")} at ${accessMap[op.tags[0]].level}` : "")) exceptions.push(`${where}: ${access}`);
+      }
+    }
     // Every templated path parameter must be declared, inline or by $ref.
     const templated = [...path.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]);
     const sharedParams = doc.components.parameters ?? {};
@@ -163,4 +245,6 @@ const routeCount = Object.values(doc.paths).reduce(
   (n, item) => n + Object.keys(item).filter((k) => HTTP_METHODS.has(k)).length,
   0,
 );
+console.log(`x-access: ${accessCount} staff operations annotated, ${exceptions.length} exceptions to the tag map:`);
+for (const line of exceptions) console.log(`  - ${line}`);
 console.log(`openapi.yaml assembled: ${Object.keys(doc.paths).length} path keys, ${routeCount} operations, ${Object.keys(doc.components.schemas).length} schemas`);

@@ -124,8 +124,9 @@
 // returns Promise<Result<success type>>: the success schema is the lowest
 // declared 2xx response; a response whose content is not JSON resolves the raw
 // text (plain string formats) or the bytes (format: binary). The contract's
-// shared org header (X-Org) is deliberately not an operation parameter: it
-// arrives through the transport's caller-set header provider
+// caller-set headers (the shared org header X-Org, and the return route's
+// approver credential X-Approver-Authorization) are deliberately not operation
+// parameters: they arrive through the transport's caller-set header provider
 // (see web/packages/api-client/README.md).
 //
 // Request bodies: when application/json is among the declared content types it
@@ -593,8 +594,16 @@ for (const path of Object.keys(doc.paths).sort()) {
       if (resolved) declared.push(resolved);
     }
     const headerParams = declared.filter((p) => p.in === "header");
-    if (headerParams.some((p) => p.name !== "X-Org")) {
-      problems.push(`${where}: header parameter other than the shared X-Org`);
+    // Header parameters are caller-set at the transport, never generated
+    // arguments (the bearer is not one either): the shared org header, and
+    // the return route's approver credential, which the till holds in memory
+    // for that one call and drops. Any other header parameter is an unmapped
+    // shape and fails here. The allowlist is global: a listed header is
+    // accepted beside any operation that declares it, not bound to the
+    // return route; a per-operation bound would be a later tightening.
+    const KNOWN_HEADER_PARAMS = new Set(["X-Org", "X-Approver-Authorization"]);
+    if (headerParams.some((p) => !KNOWN_HEADER_PARAMS.has(p.name))) {
+      problems.push(`${where}: header parameter other than X-Org and X-Approver-Authorization`);
     }
     const queryParams = declared.filter((p) => p.in === "query");
     const pathSchemas = declared.filter((p) => p.in === "path");
@@ -620,6 +629,7 @@ for (const path of Object.keys(doc.paths).sort()) {
         pathParams,
         pathSchemas,
         queryParams,
+        approverHeader: headerParams.some((p) => p.name === "X-Approver-Authorization"),
         body,
         success,
       });
@@ -809,6 +819,13 @@ for (const tag of tagNames) {
 
       // Notes the document itself forces onto the operation.
       const notes = [];
+      if (op.approverHeader) {
+        notes.push("// The document lets this call carry X-Approver-Authorization beside the caller's");
+        notes.push("// bearer: the approver's own credential for a return above the approval amount,");
+        notes.push("// held in memory for this one call and dropped. It rides the caller-set headers");
+        notes.push("// (the credential is the caller's business, never a generated argument) and the");
+        notes.push("// server never logs it.");
+      }
       if (op.body?.kind === "multi") {
         const declared = op.body.variants.map((v, i) => (i === 0 ? v.contentType : `${v.contentType} (${op.operationId}${v.suffix})`));
         notes.push(`// The document declares this body as ${declared.join(" and ")}; the client emits one`);

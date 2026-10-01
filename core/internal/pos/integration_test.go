@@ -3,9 +3,10 @@
 // Integration tests run the real pgx Repository + the real sibling seams (pricing A-07, till A-03,
 // identity A-20) against the Postgres 16 that `make reset` provisions. They prove migration 0029 applies
 // clean (I1), the three tender types each compose paid/finalized + audited (I2/I3/I4), the replay guard
-// holds under a real DB (I5), the below-floor abort persists nothing (I7), the operator reopen reads the
-// committed sale (I8), the relief assessment returns masked + a snapshot (I9), and card_type lands on the
-// payments row (I10). Run with: make test-integration (after make reset).
+// holds under a real DB (I5), a below-floor line rings at the rule price and commits, its line equal to
+// the engine's price (I7, D48 row 481, D49), the operator reopen reads the committed sale (I8), the
+// relief assessment returns masked + a snapshot (I9), and card_type lands on the payments row (I10).
+// Run with: make test-integration (after make reset).
 //
 // A-19 is the COMPOSER, the tendered paths (I2/I4/I10) only go fully green once A-03's TakeTender writes
 // the payments row; until then those sub-checks skip on the not-implemented sentinel. The composition,
@@ -125,12 +126,10 @@ func walkInID(t *testing.T, pool *pgxpool.Pool) string {
 func aPaver(t *testing.T, pool *pgxpool.Pool) (productID, branchID string) {
 	t.Helper()
 	ctx := context.Background()
-	// Callers ring this product at UOMEntered "SF" with a per-BASE-unit CostCents stand-in, so it must
-	// be a product whose base_uom IS ITSELF 'SF' (e.g. DBS-RYMAR-TURF), factor(SF)=1, so "SF" ring
-	// qty and the per-base-unit cost stay in the same unit as the anchor with no distortion. A PC-based
-	// paver anchored per-SF (its own price_uom, e.g. DBS-UL-BRUSSELS's pieces_per_sf conversion) would
-	// instead multiply the per-piece CostCents stand-in by the pieces-per-SF factor, inflating the
-	// effective cost far past any plausible anchor and tripping the margin floor (DIB-378).
+	// A product whose base_uom IS ITSELF 'SF' (e.g. DBS-RYMAR-TURF), factor(SF)=1, so an "SF"
+	// ring qty and the SF-priced anchor stay in the same unit with no distortion. A PC-based
+	// paver anchored per-SF (its own price_uom, e.g. DBS-UL-BRUSSELS's pieces_per_sf conversion)
+	// would instead price the ring through the pieces conversion, the case DIB-378 pinned.
 	err := pool.QueryRow(ctx, `
 		SELECT p.id::text FROM products p
 		  JOIN pricing_list_prices lp ON lp.product_id = p.id AND lp.price_uom = 'SF'
@@ -212,7 +211,7 @@ func TestIntegration_CashSale_EndToEnd(t *testing.T) {
 
 	out, err := svc.Sale(globalCtx(t, pool), SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, TillSessionID: till, Tender: TenderCash, SaleType: SaleCollectNow,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 10, UOMEntered: "SF", CostCents: 1000}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 10, UOMEntered: "SF"}},
 	})
 	if isTillStub(err) {
 		t.Skipf("A-03 TakeTender not yet implemented (composer waits on the sibling): %v", err)
@@ -232,10 +231,11 @@ func TestIntegration_CashSale_EndToEnd(t *testing.T) {
 // DIB-378, fresh-DB retail-anchor completeness: before this fix, only the 4 aggregate SKUs had an
 // explicit pricing_list_prices row, so every other demo product (the exact reported repro: Banas
 // coping/step, cash tender) either derived an anchor from cost or, when cost was also unavailable at
-// ring time, 422'd with "no retail anchor for product". CostCents is deliberately 0 here, the real
-// POS never guarantees a cost at ring time, so the fix must not depend on one, proving the seeded
-// anchor (not a derived one) is what makes the Banas SKU price. UOM matches pos-terminal.ts's own
-// sold_by-else-base_uom fallback, so this reproduces exactly what the terminal actually sends.
+// ring time, 422'd with "no retail anchor for product". The ring carries no cost at all (D48 row
+// 481: the till sends no cost, the core's own reading is the only one), so the fix must not depend
+// on one, proving the seeded anchor (not a derived one) is what makes the Banas SKU price. UOM
+// matches pos-terminal.ts's own sold_by-else-base_uom fallback, so this reproduces exactly what the
+// terminal actually sends.
 func TestIntegration_FreshSeed_BanasSKU_CashSale_EndToEnd(t *testing.T) {
 	pool := intPool(t)
 	ctx := globalCtx(t, pool)
@@ -254,7 +254,7 @@ func TestIntegration_FreshSeed_BanasSKU_CashSale_EndToEnd(t *testing.T) {
 
 	out, err := svc.Sale(ctx, SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, TillSessionID: till, Tender: TenderCash, SaleType: SaleCollectNow,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 2, UOMEntered: uom, CostCents: 0}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 2, UOMEntered: uom}},
 	})
 	if isTillStub(err) {
 		t.Skipf("A-03 TakeTender not yet implemented: %v", err)
@@ -299,7 +299,7 @@ func TestIntegration_CashSale_PricingGap_IsClientErrorNot500(t *testing.T) {
 	_, saleErr := svc.Sale(ctx, SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, TillSessionID: "unused-pricing-fails-first",
 		Tender: TenderCash, SaleType: SaleCollectNow,
-		Lines: []LineInput{{ProductID: prodID, QtyEntered: 3, UOMEntered: "EA", CostCents: 0}},
+		Lines: []LineInput{{ProductID: prodID, QtyEntered: 3, UOMEntered: "EA"}},
 	})
 	if saleErr == nil {
 		t.Fatal("expected the CASH sale to fail on the unpriceable line")
@@ -324,7 +324,7 @@ func TestIntegration_AccountSale_FinalizedNoPayment(t *testing.T) {
 	svc := realPosSvc(t, pool, stubCharger{})
 	out, err := svc.Sale(ctx, SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, CustomerID: custID, Tender: TenderAccount, SaleType: SaleCollectNow,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF", CostCents: 1000}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF"}},
 	})
 	if err != nil {
 		t.Fatalf("account sale: %v", err)
@@ -379,7 +379,7 @@ func TestIntegration_POSSale_AccountTender_CrossBranchForbidden(t *testing.T) {
 	_, err := svc.Sale(scoped, SaleInput{
 		IdempotencyKey: idemKey, BranchID: otherBranch, CustomerID: custID,
 		Tender: TenderAccount, SaleType: SaleCollectNow,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF", CostCents: 1000}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF"}},
 	})
 	if err == nil {
 		t.Fatal("DIB-389: a branch-scoped caller rang an ACCOUNT sale on a branch they cannot access, and it was ACCEPTED")
@@ -410,7 +410,7 @@ func TestIntegration_POSSale_AccountTender_CrossBranchForbidden(t *testing.T) {
 	if _, err := svc.Sale(scoped, SaleInput{
 		IdempotencyKey: key(), BranchID: homeBranch, CustomerID: custID,
 		Tender: TenderAccount, SaleType: SaleCollectNow,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF", CostCents: 1000}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF"}},
 	}); err != nil {
 		t.Fatalf("DIB-389: the in-scope ACCOUNT sale must still succeed, got %v", err)
 	}
@@ -432,7 +432,7 @@ func TestIntegration_POSSale_TillSessionFromAnotherBranch_Refused(t *testing.T) 
 	_, err := svc.Sale(ctx, SaleInput{
 		IdempotencyKey: key(), BranchID: homeBranch, TillSessionID: otherTill,
 		Tender: TenderCash, SaleType: SaleCollectNow,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF", CostCents: 1000}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF"}},
 	})
 	if err == nil {
 		t.Fatal("DIB-389: a sale rang on one branch through another branch's drawer was ACCEPTED")
@@ -450,7 +450,7 @@ func TestIntegration_CardSale_GatewayRefAndCardType(t *testing.T) {
 	svc := realPosSvc(t, pool, stubCharger{})
 	out, err := svc.Sale(globalCtx(t, pool), SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, TillSessionID: till, Tender: TenderCard, CardType: "DEBIT",
-		PaymentToken: "tok_runner", Lines: []LineInput{{ProductID: productID, QtyEntered: 3, UOMEntered: "SF", CostCents: 1000}},
+		PaymentToken: "tok_runner", Lines: []LineInput{{ProductID: productID, QtyEntered: 3, UOMEntered: "SF"}},
 	})
 	if isTillStub(err) || errors.Is(err, errCardDeclined) {
 		t.Skipf("A-03 TakeTender not yet implemented: %v", err)
@@ -477,7 +477,7 @@ func TestIntegration_Idempotency_ReplayUnderRealDB(t *testing.T) {
 	svc := realPosSvc(t, pool, stubCharger{})
 	in := SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, CustomerID: custID, Tender: TenderAccount,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 2, UOMEntered: "SF", CostCents: 1000}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 2, UOMEntered: "SF"}},
 	}
 	// WALK-IN has no credit → ACCOUNT would be COD-blocked; use a real contractor instead.
 	_ = pool.QueryRow(ctx, `SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND credit_limit_cents>1000000 LIMIT 1`).Scan(&in.CustomerID)
@@ -519,12 +519,20 @@ func TestIntegration_ReturnRequest_CrashWindow_RejectRefused_ApproveConverges(t 
 		t.Skipf("no seeded user: %v", err)
 	}
 	svc := realPosSvc(t, pool, stubCharger{})
-	sctx := identity.ContextWithStaffUserID(ctx, userID)
+	// The rail caller is an authorized approver: the bridged context with
+	// the global staff authority AND the linked user id, the full stamp the
+	// guard adapter builds on the request path (the return rules fence the
+	// rail caller by the same wall they fence the counter, so a bare user
+	// id stamp with no authority is refused).
+	sctx := identity.ContextWithStaff(identity.ContextWithStaffUserID(ctx, userID), identity.StaffContext{
+		UserID: userID, RoleCode: "GENERAL_MANAGER", Tier: identity.TierLeadership,
+		Scope: identity.ScopeGlobal, Status: identity.StatusActive,
+	})
 
 	// A committed ACCOUNT sale to return against.
 	sale, err := svc.Sale(ctx, SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, CustomerID: custID, Tender: TenderAccount,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 4, UOMEntered: "SF", CostCents: 1000}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 4, UOMEntered: "SF"}},
 	})
 	if err != nil {
 		t.Fatalf("seed sale: %v", err)
@@ -594,20 +602,53 @@ func TestIntegration_ReturnRequest_CrashWindow_RejectRefused_ApproveConverges(t 
 	}
 }
 
-// I7, a below-floor line aborts; no order persists.
-func TestIntegration_BelowFloor_NoCommit(t *testing.T) {
+// I7, a line below the margin floor rings at the rule price and commits (D48 row 481, D49): the
+// till prices through the counter resolve and never asks the floor, and the committed line equals
+// the engine's own price for the same line.
+func TestIntegration_BelowFloorLine_RingsAndCommits(t *testing.T) {
 	pool := intPool(t)
 	productID, branchID := aPaver(t, pool)
 	svc := realPosSvc(t, pool, stubCharger{})
-	// A wildly-high cost basis forces the margin below the floor for ANY resolved price.
+	custID := walkInID(t, pool)
 	out, err := svc.Sale(globalCtx(t, pool), SaleInput{
-		IdempotencyKey: key(), BranchID: branchID, CustomerID: walkInID(t, pool), Tender: TenderCash,
+		IdempotencyKey: key(), BranchID: branchID, CustomerID: custID, Tender: TenderCash,
 		TillSessionID: openTill(t, pool, branchID),
-		Lines:         []LineInput{{ProductID: productID, QtyEntered: 1, UOMEntered: "SF", CostCents: 9_999_999}},
+		Lines:         []LineInput{{ProductID: productID, QtyEntered: 1, UOMEntered: "SF"}},
 	})
-	var pb ErrPriceBlocked
-	if !errors.As(err, &pb) {
-		t.Skipf("margin floor not configured to block this fixture (got %v / %+v)", err, out)
+	if err != nil {
+		t.Fatalf("the till rings the line unblocked: %v", err)
+	}
+	if out.Status != "COMMITTED" {
+		t.Fatalf("the ruled line commits: %+v", out)
+	}
+	var unit, total int64
+	if err := pool.QueryRow(context.Background(),
+		`SELECT unit_price_cents, line_total_cents FROM order_lines WHERE order_id=$1 AND line_no=1`, out.OrderID).
+		Scan(&unit, &total); err != nil {
+		t.Fatalf("read the committed line: %v", err)
+	}
+	// The engine's price for the same line, resolved through the same counter resolve the ring
+	// prices with, the customer type the sale itself resolved.
+	var custType string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT customer_type FROM customers WHERE id=$1`, custID).Scan(&custType); err != nil {
+		t.Fatalf("read the walk-in type: %v", err)
+	}
+	cat := product.NewService(product.NewRepository(pool))
+	priceSvc := pricing.NewService(pricing.NewRepository(pool)).
+		WithCategoryResolver(cat).
+		WithUOMConverter(cat).
+		WithMarginGate(pricing.NewIdentityMarginGate())
+	lp, err := priceSvc.DeriveCounterLinePrice(context.Background(), pricing.ResolveInput{
+		CustomerID: custID, CustomerType: custType, ProductID: productID,
+		BranchID: branchID, QtyEntered: 1, UOMEntered: "SF",
+	})
+	if err != nil {
+		t.Fatalf("counter resolve: %v", err)
+	}
+	if unit != lp.UnitPriceCents || total != lp.LineTotalCents {
+		t.Fatalf("the committed line must equal the engine's price: line %d/%d, engine %d/%d",
+			unit, total, lp.UnitPriceCents, lp.LineTotalCents)
 	}
 }
 
@@ -623,7 +664,7 @@ func TestIntegration_OperatorReopen(t *testing.T) {
 	svc := realPosSvc(t, pool, stubCharger{})
 	out, err := svc.Sale(ctx, SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, CustomerID: custID, Tender: TenderAccount,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 1, UOMEntered: "SF", CostCents: 1000}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 1, UOMEntered: "SF"}},
 	})
 	if err != nil {
 		t.Fatalf("sale: %v", err)
@@ -655,7 +696,7 @@ func TestIntegration_AssessRelief_MaskedAndSnapshot(t *testing.T) {
 	sale, err := svc.Sale(ctx, SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, CustomerID: custID, Tender: TenderCash,
 		TillSessionID: openTill(t, pool, branchID),
-		Lines:         []LineInput{{ProductID: productID, QtyEntered: 4, UOMEntered: "SF", CostCents: 1000}},
+		Lines:         []LineInput{{ProductID: productID, QtyEntered: 4, UOMEntered: "SF"}},
 	})
 	if isTillStub(err) {
 		t.Skipf("A-03 TakeTender not yet implemented: %v", err)

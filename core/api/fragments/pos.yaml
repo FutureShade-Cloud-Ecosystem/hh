@@ -18,6 +18,9 @@ paths:
         server-side. tender is ignored when tenders carries a split settlement
         (2 to 6 legs that must sum exactly to the sale total).
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -47,6 +50,9 @@ paths:
         inclusive civil-day bounds resolved in the dealer's own zone. A
         branch-scoped caller must name a branch it can reach.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -75,6 +81,9 @@ paths:
         The operator-reopen read. Carries no evidence identifiers and no flow
         log; the deep evidence view is an admin surface, not this route.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -99,6 +108,10 @@ paths:
         answer is masked-only; the binding collected tax stays the flat
         provisional rate while the outcome records the auditable why.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
+        reason: computes the ticket's tax relief and writes nothing
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -128,6 +141,9 @@ paths:
         attestation needs a typed name and an explicit affirmation, which this
         body cannot carry.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -157,6 +173,9 @@ paths:
         before it is stored; a blank name or a missing affirmation is refused
         before anything is written.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -186,6 +205,9 @@ paths:
         decrements or allocates; a product with no reorder point simply has no
         low threshold for that branch.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - { name: product_id, in: query, required: true, schema: { type: string, format: uuid } }
@@ -206,6 +228,9 @@ paths:
       summary: List active staff for the counter's salesperson selector
       description: Id and display name only; no email, no role.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -230,6 +255,10 @@ paths:
         object with every margin and profit field byte-absent. A line with no
         cost on file answers empty, never a fake zero.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
+        reason: computes the ticket's margin picture and writes nothing
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -259,6 +288,10 @@ paths:
         from the wire; an empty customer_id is the walk-in case and returns
         retail alone. Carries no cost, margin or floor field.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
+        reason: computes a price picture for a screen of products and writes nothing
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -288,6 +321,9 @@ paths:
         parameter is optional; an empty query is a walk-in at the default
         branch. With no curation on file the set is derived from top sellers.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
@@ -311,6 +347,9 @@ paths:
         (user, dealer, platform, default), each level whole-or-absent. An
         unreadable level ships the level below it, never a fault.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
@@ -334,6 +373,9 @@ paths:
         marshal layer; a walk-in, a current account, and a disallowed caller all
         answer an empty object.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - { name: branch_id, in: query, required: true, schema: { type: string, format: uuid } }
@@ -357,6 +399,9 @@ paths:
         product_ids is the ticket's product ids, comma-separated. An empty
         ticket or an empty answer returns an empty list, never an error.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: product_ids
@@ -382,6 +427,9 @@ paths:
       summary: Read the effective POS policy for a branch
       description: branch_id empty resolves the org-wide default row.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
@@ -399,6 +447,9 @@ paths:
       tags: [staff-pos]
       summary: Upsert the POS policy (org default or one branch)
       x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -426,6 +477,9 @@ paths:
         One row per moved knob, reconstructed from the audit trail: who moved
         which rule and what it was before. Admin, matching the policy write.
       x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -450,6 +504,9 @@ paths:
         defaults from the policy (source dealer). The override is
         whole-or-absent; there is never a field merge.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
@@ -470,6 +527,10 @@ paths:
         Self-service: one person saving their own ergonomics. A replay of the
         last accepted key returns the stored row without a second write.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
+        reason: the caller's own workspace row, the counter's own ergonomics
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -493,6 +554,10 @@ paths:
       tags: [staff-pos]
       summary: Reset the caller's workspace back to the dealer defaults
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
+        reason: the caller's own workspace row, reset to the dealer defaults
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -511,10 +576,19 @@ paths:
         One of order_id or order_no identifies the original sale. refund_method
         CASH pays out of the open drawer named by till_session_id, CARD reverses
         the original capture, ACCOUNT_CREDIT credits the customer's account.
-        fee_bps is honored only on the ACCOUNT_CREDIT rail.
+        fee_bps is honored only on the ACCOUNT_CREDIT rail. A return above the
+        dealer's approval amount is refused to a caller whose role does not
+        hold the approval, the amount and the approver roles named in the
+        refusal body; sent again with an approver's credential in
+        X-Approver-Authorization, it commits as the approver's decision, with
+        the clerk named beside them.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/XApproverAuthorization"
       requestBody:
         required: true
         content:
@@ -532,6 +606,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/PosRefundApprovalRequired" }
+        "503":
+          description: The approver credential could not be checked, or the dealer's role configuration is not wired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/pos/returns/lookup:
     get:
       operationId: posLookupReturn
@@ -541,6 +622,9 @@ paths:
         The pre-return read the counter uses to build a return, with prior
         returns netted per line. Read-only; the commit re-guards everything.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - { name: order_id, in: query, required: false, schema: { type: string, format: uuid } }
@@ -563,6 +647,9 @@ paths:
       summary: List the logistics pickup queue for a branch
       description: The REQUESTED and SCHEDULED returns waiting on a pickup.
       x-role: requireStaff
+      x-access:
+        surfaces: [dispatch-board]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -585,6 +672,9 @@ paths:
       summary: Advance a return's pickup one step (REQUESTED to SCHEDULED to DONE)
       description: The queue only walks forward; any other transition is a conflict.
       x-role: requireManager
+      x-access:
+        surfaces: [dispatch-board]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -613,6 +703,9 @@ paths:
       summary: List the portal return-request approval queue
       description: Oldest PENDING first so the queue drains in arrival order.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -641,6 +734,9 @@ paths:
         restock and the branch's restocking fee, attributed to the approver.
         Decisions serialize on the request row; a decided request is a conflict.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -665,6 +761,9 @@ paths:
         rail already committed money under this request, rejection is refused so
         the request converges with the money that moved.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -698,6 +797,9 @@ paths:
         resume, so a parked ticket never rings at a stale price. No stock
         reservation.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -721,6 +823,9 @@ paths:
       tags: [staff-pos]
       summary: List parked tickets for a branch
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -741,6 +846,9 @@ paths:
       tags: [staff-pos]
       summary: Resume a parked ticket back onto the counter
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -760,6 +868,9 @@ paths:
       tags: [staff-pos]
       summary: Discard a parked ticket
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -785,6 +896,9 @@ paths:
         AR): the client's printable price/compare document, priced by the engine
         with the list price snapshotted beside each offered price.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -808,6 +922,9 @@ paths:
       tags: [staff-pos]
       summary: List pricing documents for a branch
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -829,6 +946,9 @@ paths:
       tags: [staff-pos]
       summary: Read one pricing document
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -850,6 +970,9 @@ paths:
       tags: [staff-till]
       summary: Open a drawer session with its float
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -878,6 +1001,9 @@ paths:
         The POS terminal calls this on mount. No open drawer is an ordinary
         answer (open: false), never a not-found.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - { name: branch_id, in: query, required: true, schema: { type: string, format: uuid } }
@@ -898,6 +1024,9 @@ paths:
       tags: [staff-till]
       summary: Read one drawer session with its tenders and movements
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -917,6 +1046,9 @@ paths:
       tags: [staff-till]
       summary: Record a paid-in, paid-out, drop or lodgement against the drawer
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -944,6 +1076,9 @@ paths:
       tags: [staff-till]
       summary: Record the blind per-tender count and optional close denominations
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -972,6 +1107,9 @@ paths:
       summary: Read the Z report for a counted session
       description: Expected versus actual per tender plus the cash reconciliation block, revealed after the count.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -995,6 +1133,9 @@ paths:
         over-threshold variance closed by a non-manager requires the manager
         role and an override note.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1023,6 +1164,9 @@ paths:
       summary: Read the effective till policy for a branch
       description: branch_id empty resolves the org-wide default row.
       x-role: requireManager
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
@@ -1044,6 +1188,9 @@ paths:
       summary: List the bounced-payment queue
       description: Manager-gated; the queue exposes customer financial-distress information.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1068,6 +1215,9 @@ paths:
         caller never supplies money. A payment already marked BOUNCED is a
         conflict.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1100,6 +1250,9 @@ paths:
         applications are reconstructed from the audit trail and flagged
         reversed_by_nsf.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -1124,6 +1277,9 @@ paths:
       summary: Read which payments and credits settled an invoice, attributed
       description: The path key may be the invoice's id or the human invoice number.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -1148,6 +1304,9 @@ paths:
       summary: List credit holds
       description: Manager-gated; the list exposes customer financial-distress information.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -1171,6 +1330,9 @@ paths:
       tags: [staff-till]
       summary: Release a credit hold (mandatory reason, audited)
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1198,6 +1360,9 @@ paths:
       summary: Read the effective NSF policy for a branch
       description: branch_id empty resolves the org default.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
@@ -1215,6 +1380,9 @@ paths:
       tags: [staff-till]
       summary: Upsert the org-default NSF policy
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1240,6 +1408,9 @@ paths:
       summary: Record one declined or errored gateway attempt
       description: A successful capture is a payments row, never an attempt here.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1260,17 +1431,64 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
 
 components:
+  parameters:
+    XApproverAuthorization:
+      name: X-Approver-Authorization
+      in: header
+      required: false
+      description: >-
+        The approver's own credential beside the clerk's bearer, carried once
+        when a return above the dealer's approval amount commits with the
+        manager at the counter. The value carries the same Bearer scheme
+        prefix as Authorization: the string "Bearer " followed by the token,
+        so the server reads it through the same bearer parsing as any
+        caller's credential. Verified by the same verifier as any caller;
+        its membership and role resolved as the gate resolves any caller;
+        accepted only when issued within the short window the configuration
+        sets. Never logged.
+      schema: { type: string }
+
+  responses:
+    PosRefundApprovalRequired:
+      description: >-
+        The return is refused, and the body is the Error envelope. The route
+        answers 409 for more than one refusal: the refund rail's own refusals
+        (a closed drawer, a refused tender write) carry the plain envelope
+        alone, while the approval refusal names itself in the error string
+        "refund_approval_required": the refund is above the dealer's approval
+        amount and the caller's role is not on the approvers list, and only
+        that refusal carries the requirement under the approval key, so the
+        till's screen can show the amount and the roles that may approve. A
+        client discriminates on the error string, never on the key's absence.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Error"
+              - type: object
+                properties:
+                  approval:
+                    description: >-
+                      Present exactly when the error string is
+                      "refund_approval_required", the approval refusal; the
+                      route's other 409 refusals answer the plain envelope
+                      without the key.
+                    $ref: "#/components/schemas/PosRefundApproval"
+
   schemas:
     # ── POS: sale ring ───────────────────────────────────────────────────────
     PosLineInput:
       type: object
-      description: One cart line. The price is not in the body; it is resolved server-side.
-      required: [product_id, qty_entered, uom_entered, cost_cents]
+      description: >-
+        One cart line. The price is not in the body; it is resolved
+        server-side. The cost is not in the body either: the core reads it
+        from its own cost source, so a margin answer is never priced by the
+        caller.
+      required: [product_id, qty_entered, uom_entered]
       properties:
         product_id: { type: string, format: uuid }
         qty_entered: { type: number }
         uom_entered: { type: string }
-        cost_cents: { type: integer, format: int64 }
     PosTenderLegInput:
       type: object
       description: >-
@@ -1864,6 +2082,26 @@ components:
         pickup_status: { type: string, enum: [NONE, REQUESTED, SCHEDULED, DONE] }
         status: { type: string, enum: [COMMITTED] }
         replayed: { type: boolean }
+    PosRefundApproval:
+      type: object
+      description: >-
+        The approval a refused return names: the amount over which the refund
+        needs a manager, and the role keys that hold the approval, as the
+        dealer's configuration sets them.
+      required: [amount_cents, approvers]
+      properties:
+        amount_cents:
+          type: integer
+          format: int64
+          description: The approval amount, in integer cents; a refund at or under it needs no approver
+        approvers:
+          type: array
+          description: >-
+            The role keys that may approve (sales_manager, branch_manager),
+            matching the configuration's keys; the till's screens map them to
+            display labels.
+          minItems: 1
+          items: { type: string }
     PosReturnableLine:
       type: object
       description: One original line with prior-return sums netted for display

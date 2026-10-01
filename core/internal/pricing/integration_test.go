@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -757,20 +758,22 @@ func TestIntegration_ScopeEdit_ClearsDimsAndCollides(t *testing.T) {
 	}
 }
 
-// I10, THE STACKING TEST (A-07 fix) against the REAL seeded DB + repo + catalog seam. Proves both
-// seeded PROVISIONAL breaks apply as ADJUSTMENTS ON TOP of the tier-resolved base (they STACK), and a
-// discount break can never price above the contractor base:
+// I10, THE REPLACE TEST (D1, HH-184) against the REAL seeded DB + repo + catalog seam. Proves the
+// seeded PROVISIONAL breaks compete as ONE single price off the retail anchor and replace the
+// resolved price only when strictly cheaper; they never stack on the tier base:
 //
-//	(a) the PAVER full-skid −5% break stacks on the seeded CONTRACTOR Pavers −18% rule at/above a full
-//	    skid (1 PLT), and does NOT apply below a skid (1 SF), Source stays TIER_CATEGORY both ways.
+//	(a) the PAVER full-skid −5% break loses to the seeded CONTRACTOR Pavers −18% rule at/above a
+//	    full skid (1 PLT): the tier price stands unchanged (stacking would drop it to 7790), and
+//	    wins as a RETAIL walk-in's price off the anchor (9500 replaces 10000).
 //	(b) the NATURAL-STONE partial-skid +10% surcharge (bucketed by WEIGHT via the real ConvertUOM KG
-//	    seam) uplifts the TIER_DEFAULT base for a partial load, price UP, Source stays TIER_DEFAULT.
-func TestIntegration_SeededQuantityBreaksStack(t *testing.T) {
+//	    seam) is the contest's structural loser: an uplift can never be strictly cheaper, so the
+//	    TIER_DEFAULT base stands and the breakdown says why.
+func TestIntegration_SeededQuantityBreaksReplacePerD1(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
 	svc := realSvc(pool)
 
-	// (a) PAVER full-skid discount stacks on the seeded −18% tier rule.
+	// (a) PAVER full-skid discount against the seeded −18% tier rule.
 	var paverID string
 	if err := pool.QueryRow(ctx, `
 		SELECT p.id::text
@@ -788,47 +791,54 @@ func TestIntegration_SeededQuantityBreaksStack(t *testing.T) {
 	if under.Source != SourceTierCategory || under.FinalCents != 8200 {
 		t.Fatalf("under a skid: only the seeded −18%% rule applies → 8200, got %+v", under)
 	}
-	// at/above a full skid (1 PLT): the −5% break STACKS on the −18% base → 10000×0.82×0.95 = 7790.
-	stacked, err := svc.ResolvePrice(ctx, ResolveInput{CustomerType: "CONTRACTOR", ProductID: paverID, QtyEntered: 1, UOMEntered: "PLT"})
+	// at/above a full skid (1 PLT): the break's own single price is 10000×0.95 = 9500, the −18%
+	// tier already beats it, so the tier price STANDS (the stacking answer 7790 is the old bug).
+	above, err := svc.ResolvePrice(ctx, ResolveInput{CustomerType: "CONTRACTOR", ProductID: paverID, QtyEntered: 1, UOMEntered: "PLT"})
 	if err != nil {
 		t.Fatalf("resolve full-skid: %v", err)
 	}
-	if stacked.Source != SourceTierCategory {
-		t.Fatalf("a stacked full-skid line keeps the base source TIER_CATEGORY, got %+v", stacked)
+	if above.Source != SourceTierCategory || above.FinalCents != 8200 {
+		t.Fatalf("full-skid −5%% loses to −18%% under D1: 8200 stands, got %+v", above)
 	}
-	if stacked.FinalCents != 7790 {
-		t.Fatalf("full-skid −5%% STACKED on −18%%: 10000×0.82×0.95 = 7790, got %d (a competing break would be 9500)", stacked.FinalCents)
+	if !strings.Contains(above.Detail, "not applied") {
+		t.Fatalf("the breakdown must say why the full-skid break did not land, got %q", above.Detail)
 	}
-	if stacked.FinalCents >= under.FinalCents {
-		t.Fatalf("a bulk discount must price BELOW the contractor base %d, got %d", under.FinalCents, stacked.FinalCents)
+	// The replace win on the same schedule: a RETAIL walk-in (no rule matches) crosses the
+	// threshold and pays the break's price off the anchor, 9500, source QUANTITY_BREAK.
+	retail, err := svc.ResolvePrice(ctx, ResolveInput{CustomerType: "RETAIL", ProductID: paverID, QtyEntered: 1, UOMEntered: "PLT"})
+	if err != nil {
+		t.Fatalf("resolve full-skid retail: %v", err)
+	}
+	if retail.Source != SourceQuantityBreak || retail.FinalCents != 9500 {
+		t.Fatalf("a walk-in crossing the skid pays the break price 9500, got %+v", retail)
 	}
 
-	// (b) NATURAL-STONE partial-skid surcharge uplifts the TIER_DEFAULT base (bucketed by WEIGHT).
+	// (b) NATURAL-STONE partial-skid surcharge never lifts the TIER_DEFAULT base (bucketed by WEIGHT).
 	var stoneID, stoneUOM string
 	if err := pool.QueryRow(ctx, `SELECT id::text, base_uom::text FROM products WHERE sku='DBS-BANAS-STEP'`).Scan(&stoneID, &stoneUOM); err != nil {
 		t.Skipf("no DBS-BANAS-STEP product: %v", err)
 	}
 	withAnchor(t, pool, stoneID, 10000, stoneUOM)
 
-	// 1 piece ≈ 140 KG < the ~2000 KG partial-skid threshold → +10% on the TIER_DEFAULT (−15%) base:
-	// 10000 × 0.85 × 1.10 = 9350 (price UP). The KG bucketing goes through the real ConvertUOM seam.
+	// 1 piece ≈ 140 KG < the ~2000 KG partial-skid threshold: the surcharge tier MATCHES, and under
+	// D1 an uplift can never win the cheapest-wins contest, so the −15% base 8500 stands (the
+	// stacking answer 9350 is the old bug). The KG bucketing goes through the real ConvertUOM seam.
 	stone, err := svc.ResolvePrice(ctx, ResolveInput{CustomerType: "CONTRACTOR", ProductID: stoneID, QtyEntered: 1, UOMEntered: stoneUOM})
 	if err != nil {
 		t.Fatalf("resolve natural-stone partial skid: %v", err)
 	}
-	if stone.Source != SourceTierDefault || stone.FinalCents != 9350 {
-		t.Fatalf("partial-skid surcharge STACKED on TIER_DEFAULT: 10000×0.85×1.10 = 9350 (price UP), got %+v", stone)
+	if stone.Source != SourceTierDefault || stone.FinalCents != 8500 {
+		t.Fatalf("partial-skid surcharge never lifts the tier price: 8500 stands, got %+v", stone)
 	}
-	// The surcharge raises the price above the DISCOUNTED base (10000×0.85 = 8500), proving it stacks
-	// ON TOP of the tier discount rather than replacing it.
-	if stone.FinalCents <= 8500 {
-		t.Fatalf("a partial-skid surcharge must raise the price above the −15%% base 8500, got %d", stone.FinalCents)
+	if !strings.Contains(stone.Detail, "not applied") {
+		t.Fatalf("the breakdown must say why the surcharge never landed, got %q", stone.Detail)
 	}
 }
 
 // I11, the quantity-break editor BACKEND end-to-end on the real repo: create (header + tiers in one
-// tx) → get → resolve (the break STACKS) → retire (soft-delete) → the retired schedule stops matching.
-// Exercises the Manager-write CRUD path + the optimistic-version guard + audit, all pricing-owned.
+// tx) → get → resolve (the break REPLACES per D1) → retire (soft-delete) → the retired schedule
+// stops matching. Exercises the Manager-write CRUD path + the optimistic-version guard + audit,
+// all pricing-owned.
 func TestIntegration_QuantityBreakCRUD_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
@@ -860,13 +870,14 @@ func TestIntegration_QuantityBreakCRUD_RoundTrip(t *testing.T) {
 		t.Fatalf("get must round-trip the tier, got %+v err=%v", got, err)
 	}
 
-	// RESOLVE: the break STACKS on the TIER_DEFAULT (−15%) base → 10000 × 0.85 × 0.80 = 6800.
+	// RESOLVE: the break's own single price off the anchor REPLACES the TIER_DEFAULT (−15%) base
+	// under D1: 10000 × 0.80 = 8000 (stacking would answer 10000 × 0.85 × 0.80 = 6800).
 	bd, err := svc.ResolvePrice(ctx, ResolveInput{CustomerType: "CONTRACTOR", ProductID: prodID, QtyEntered: 5, UOMEntered: baseUOM})
 	if err != nil {
 		t.Fatalf("resolve with break: %v", err)
 	}
-	if bd.Source != SourceTierDefault || bd.FinalCents != 6800 {
-		t.Fatalf("break STACKS on TIER_DEFAULT: 10000×0.85×0.80 = 6800, got %+v", bd)
+	if bd.Source != SourceQuantityBreak || bd.FinalCents != 8000 {
+		t.Fatalf("break REPLACES the tier base: 10000×0.80 = 8000, got %+v", bd)
 	}
 
 	// RETIRE under the optimistic version, then the retired schedule stops matching → base only (8500).

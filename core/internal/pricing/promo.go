@@ -10,10 +10,11 @@ package pricing
 //
 //   * contract, promo and list are BASE-SELECTION levels, they compete to be the price the line
 //     starts from, and exactly one of them wins.
-//   * quantity-break is NOT a competing level in this codebase and has not been since the STACKING
-//     fix (service.go step 6): the matching break is an ADJUSTMENT applied ON TOP of whatever base
-//     won. Making it a base level again would re-introduce the bug that fix removed, a bulk break
-//     wiping a contractor's tier discount.
+//   * quantity-break competes the same way since D1 (service.go step 6): the matching break prices
+//     as ONE single figure off the retail anchor and replaces whichever base won when it is
+//     strictly cheaper, and never stacks. The adjustment-on-top model this replaced was the ERP's
+//     0026 stacking (HH-184): a contractor's 18% base then a 5% full-skid break yielded retail
+//     times 0.82 times 0.95, a pile of discounts the decision forbids.
 //
 // So the ruling implemented here is:
 //
@@ -28,13 +29,15 @@ package pricing
 //      is the single most embarrassing thing a pricing engine can do. When the tier base wins, the
 //      Source stays the tier level and the Detail records that the promo was considered and did not
 //      beat it, silence would look like the promo was never configured.
-//   3. QUANTITY-BREAK stacks on whichever base won (existing behaviour, unchanged), except on the
-//      contract path where the contract is final (existing behaviour, unchanged).
+//   3. QUANTITY-BREAK, when its bucket matches, prices off the anchor and REPLACES whichever base
+//      won when strictly cheaper (D1), Source becoming QUANTITY_BREAK; a break that loses leaves
+//      the base standing with the loss recorded on the Detail. It never reaches the contract path,
+//      the contract is final (existing behaviour, unchanged).
 //   4. LIST is the base of last resort (existing behaviour, unchanged).
 //   5. THE MARGIN GATE EVALUATES THE FINAL RESOLVED PRICE, after promo AND after the break. It is
 //      not evaluated on the promo base and then again on the broken price; there is one gate call
 //      and its argument is the number the customer would be charged. A promo that clears the floor
-//      alone and sinks below it once a volume break stacks on top is BLOCKED, because the blocked
+//      alone and sinks below it once a volume break replaces it is BLOCKED, because the blocked
 //      thing is the sale, not the promo.
 //
 // Clearance (DIB-154) folds into step 2 rather than being a sixth level: a clearance row with a

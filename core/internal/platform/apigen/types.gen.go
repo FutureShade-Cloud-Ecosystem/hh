@@ -4469,7 +4469,6 @@ type PosLineInput struct {
 	ProductId  string  `json:"product_id"`
 	QtyEntered float64 `json:"qty_entered"`
 	UomEntered string  `json:"uom_entered"`
-	CostCents  int64   `json:"cost_cents"`
 }
 
 type PosTenderLegInput struct {
@@ -4868,6 +4867,11 @@ type PosReturn struct {
 	PickupStatus    string  `json:"pickup_status"`
 	Status          string  `json:"status"`
 	Replayed        bool    `json:"replayed"`
+}
+
+type PosRefundApproval struct {
+	AmountCents int64    `json:"amount_cents"`
+	Approvers   []string `json:"approvers"`
 }
 
 type PosReturnableLine struct {
