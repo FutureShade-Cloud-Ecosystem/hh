@@ -18,11 +18,25 @@ import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "./demo-account.js";
+import { TillClient, type BranchRef } from "./till-client.js";
+import { formatMoney } from "./money.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
 import { entryStyles, renderEntry, type FlowsState } from "./views/entry.js";
-import { tillStyles, renderTill } from "./views/till.js";
+import { tillStyles, renderTill, type DrawerPanel, type SearchPanel, type TillView } from "./views/till.js";
 
 const DEMO_ORG = "hh-demo";
+
+const FRESH_DRAWER_PANEL: DrawerPanel = {
+  state: "resolving",
+  how: null,
+  branchName: null,
+  station: null,
+  float: null,
+  message: null,
+  busy: false,
+};
+
+const FRESH_SEARCH_PANEL: SearchPanel = { state: "idle", hits: [], message: null };
 
 export class CounterTillApp extends HHElement {
   static styles = [
@@ -70,10 +84,14 @@ export class CounterTillApp extends HHElement {
   readonly #sessions = new SessionStore();
   readonly #account: DemoAccount;
   readonly #controller: AuthController;
+  readonly #tillClient: TillClient;
   #flowsState: FlowsState = { kind: "loading" };
   #busy = false;
   #message: string | null = null;
   #till: { label: string } | null = null;
+  #branch: BranchRef | null = null;
+  #drawer: DrawerPanel = FRESH_DRAWER_PANEL;
+  #search: SearchPanel = FRESH_SEARCH_PANEL;
 
   constructor() {
     super();
@@ -87,6 +105,7 @@ export class CounterTillApp extends HHElement {
     });
     this.#account = new DemoAccount({ client });
     this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
+    this.#tillClient = new TillClient(client);
   }
 
   connectedCallback(): void {
@@ -97,11 +116,13 @@ export class CounterTillApp extends HHElement {
     // retargets the target to this element (the design system's README holds
     // both halves).
     this.addEventListener("click", this.#onHostClick);
+    this.addEventListener("submit", this.#onHostSubmit);
     void this.#loadFlows();
   }
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.removeEventListener("submit", this.#onHostSubmit);
     super.disconnectedCallback();
   }
 
@@ -116,6 +137,22 @@ export class CounterTillApp extends HHElement {
     }
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
+    }
+    if (control.getAttribute("data-action") === "retry-drawer") {
+      void this.#ensureDrawer();
+    }
+  };
+
+  readonly #onHostSubmit = (event: Event): void => {
+    const form = event
+      .composedPath()
+      .find((node): node is Element => node instanceof Element && node.hasAttribute("data-form"));
+    if (form === undefined) return;
+    event.preventDefault();
+    const kind = form.getAttribute("data-form");
+    if (kind === "product-search") {
+      const input = form.querySelector('[data-input="product-search"]');
+      void this.#searchProducts(input instanceof HTMLInputElement ? input.value : "");
     }
   };
 
@@ -146,6 +183,7 @@ export class CounterTillApp extends HHElement {
     }
     this.#till = { label: this.#labelFor(flow) };
     this.requestUpdate();
+    void this.#initTill();
   }
 
   #labelFor(flow: string): string {
@@ -170,7 +208,74 @@ export class CounterTillApp extends HHElement {
     this.#busy = false;
     this.#till = null;
     this.#message = null;
+    this.#branch = null;
+    this.#drawer = FRESH_DRAWER_PANEL;
+    this.#search = FRESH_SEARCH_PANEL;
     this.requestUpdate();
+  }
+
+  /**
+   * The till's own start: resolve the branch the login reaches, then find or
+   * open its drawer. Each step renders its own state, so a refusal names
+   * itself in words and the screen never invents a branch or a float.
+   */
+  async #initTill(): Promise<void> {
+    this.#drawer = FRESH_DRAWER_PANEL;
+    this.requestUpdate();
+    const branch = await this.#tillClient.resolveBranch();
+    if (!branch.ok) {
+      this.#drawer = { ...FRESH_DRAWER_PANEL, state: "refused", message: branch.error };
+      this.requestUpdate();
+      return;
+    }
+    this.#branch = branch.value;
+    await this.#ensureDrawer();
+  }
+
+  async #ensureDrawer(): Promise<void> {
+    if (this.#branch === null) return;
+    this.#drawer = { ...FRESH_DRAWER_PANEL, busy: true };
+    this.requestUpdate();
+    const result = await this.#tillClient.ensureDrawer(this.#branch.id);
+    if (!result.ok) {
+      this.#drawer = {
+        ...FRESH_DRAWER_PANEL,
+        state: "refused",
+        branchName: this.#branch.name,
+        message: result.error,
+      };
+    } else {
+      this.#drawer = {
+        state: "open",
+        how: result.value.how,
+        branchName: this.#branch.name,
+        station: result.value.drawer.station,
+        float: formatMoney(result.value.drawer.floatCents),
+        message: null,
+        busy: false,
+      };
+    }
+    this.requestUpdate();
+  }
+
+  async #searchProducts(query: string): Promise<void> {
+    const trimmed = query.trim();
+    if (trimmed === "") {
+      this.#search = { state: "idle", hits: [], message: null };
+      this.requestUpdate();
+      return;
+    }
+    this.#search = { state: "loading", hits: [], message: null };
+    this.requestUpdate();
+    const result = await this.#tillClient.searchProducts(trimmed);
+    this.#search = result.ok
+      ? { state: "ready", hits: result.value, message: null }
+      : { state: "refused", hits: [], message: result.error };
+    this.requestUpdate();
+  }
+
+  #tillView(): TillView {
+    return { drawer: this.#drawer, search: this.#search };
   }
 
   render(): TemplateResult {
@@ -195,7 +300,7 @@ export class CounterTillApp extends HHElement {
       <main>
         ${this.#till === null
           ? renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })
-          : renderTill()}
+          : renderTill(this.#tillView())}
       </main>
     `;
   }
