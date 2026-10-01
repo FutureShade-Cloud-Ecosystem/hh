@@ -59,11 +59,15 @@ func TestTokenFromOneIssuerFailsOnAnother(t *testing.T) {
 	}
 }
 
-// The private key never leaves memory: the issuer exposes no
-// serialization of it, so the static key source carries the public half
-// and nothing else. The assertions walk the type's interface set: any
-// method that rendered key material would have to be added here first,
-// and this test fails on the day one lands.
+// What this proves, no more: the issuer type answers to none of the
+// three conventional serialization names (JSON, text, string), so the
+// ordinary paths by which a struct's bytes leave a process are closed by
+// construction today. It is a tripwire on those names, not a proof about
+// every possible accessor: a method that handed out key material under
+// some other name would not trip it. The proof that the key never leaves
+// memory is the source itself, which holds no serialization, write or
+// log path on the private key; the review read it and this comment
+// records where the proof lives.
 func TestIssuerExposesNoKeyMaterial(t *testing.T) {
 	iss, err := New("hh-staff", 0)
 	if err != nil {
