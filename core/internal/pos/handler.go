@@ -164,6 +164,10 @@ func (h *Handler) createReturn(w http.ResponseWriter, r *http.Request, caller gu
 	if !decodeJSON(w, r, &in) {
 		return
 	}
+	// The approver's credential rides its own header beside the clerk's
+	// bearer (row 482): read once here, carried verbatim, never logged
+	// anywhere on this path.
+	in.ApproverCredential = r.Header.Get(approverAuthorizationHeader)
 	ret, err := h.svc.Return(r.Context(), in)
 	if err != nil {
 		h.writeErr(w, r, err)

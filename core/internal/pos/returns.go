@@ -148,6 +148,11 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 
 	actor := identity.StaffUserIDFromContext(ctx)
 	var out Return
+	// decision carries a qualifying approver credential out of the
+	// transaction, so the committed record and the audit row can name the
+	// decision; zero when the return is nobody's approval (the ordinary
+	// rail, or a return from a listed role).
+	var decision approverDecision
 
 	err = s.store.RunInTx(ctx, func(tx pgx.Tx) error {
 		// 1. Lock + guard every requested line, derive its refund money/tax.
@@ -218,9 +223,23 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		// At or under the amount no approver is ever asked. The A-06 portal
 		// rail skips this gate: the queue's own decision already approved
 		// that request, and the counter rule is not a second veto over it.
+		//
+		// The manager's credential at the clerk's till (row 482): the same
+		// return carried again with the approver's credential in its header
+		// commits as the manager's decision when the credential qualifies
+		// (approver.go); anything short of that leaves the standing refusal
+		// in place.
 		if !in.internalRail && s.roles != nil {
-			if refusal, refused := s.refundApprovalRefusal(total, caller); refused {
-				return refusal
+			refusal, refused := s.refundApprovalRefusal(total, caller)
+			if refused {
+				resolved, approvedByCredential, aerr := s.resolveRefundApprover(ctx, in.ApproverCredential, caller, oc)
+				if aerr != nil {
+					return aerr
+				}
+				if !approvedByCredential {
+					return refusal
+				}
+				decision = resolved
 			}
 		}
 
@@ -302,12 +321,24 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 			}
 		}
 
-		// 5. The money-side GL event (DR revenue + DR HST / CR the refund rail).
-		if err := s.store.EmitEvent(ctx, tx, "pos.return.committed", map[string]any{
+		// 5. The money-side GL event (DR revenue + DR HST / CR the refund rail). A committed
+		//    manager decision names the decision in the record: the approver who decided, the
+		//    clerk who rang it, the refusal the decision answers (row 482, D49).
+		committed := map[string]any{
 			"return_id": returnID, "order_id": oc.OrderID, "invoice_id": oc.InvoiceID,
 			"refund_method": in.RefundMethod, "subtotal_cents": subtotal, "tax_cents": taxTotal,
 			"total_cents": total, "fee_cents": feeCents, "branch_id": oc.BranchID,
-		}); err != nil {
+		}
+		if decision.approver.PlatformUserID != "" {
+			committed["decided_by"] = decision.approver.PlatformUserID
+			committed["decided_by_role"] = decision.approver.RoleID
+			committed["rang_by"] = actor
+			committed["approval"] = map[string]any{
+				"refusal":      refundApprovalRequiredError,
+				"amount_cents": total,
+			}
+		}
+		if err := s.store.EmitEvent(ctx, tx, "pos.return.committed", committed); err != nil {
 			return err
 		}
 
@@ -342,11 +373,20 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		return Return{}, err
 	}
 
-	s.record(ctx, audit.SensitiveAccess{
+	completed := audit.SensitiveAccess{
 		Action: audit.ActReturnCompleted, EntityType: "pos.return", EntityID: out.ReturnID,
 		ActorID: actor, BranchID: oc.BranchID, Purpose: "POS_RETURN", Reason: in.RefundMethod,
 		Extra: map[string]any{"return_no": out.ReturnNo, "total_cents": out.TotalCents},
-	})
+	}
+	if decision.approver.PlatformUserID != "" {
+		// The manager's decision, beside the clerk who rang it, citing the
+		// refusal it answers (row 482). approver_id and amount_cents are
+		// allowlisted audit keys, so these are the facts the row keeps.
+		completed.Extra["approver_id"] = decision.approver.PlatformUserID
+		completed.Extra["amount_cents"] = out.TotalCents
+		completed.Reason = refundApprovalRequiredError
+	}
+	s.record(ctx, completed)
 	return out, nil
 }
 

@@ -199,6 +199,11 @@ type Service struct {
 	// (the unit harness, a composition predating the wiring) on the
 	// pre-configuration behavior the older tests pin.
 	roles *roleconfig.Config
+	// approver resolves the manager's credential carried beside the clerk's
+	// bearer on a return above the amount (row 482). Nil until wired; the
+	// approval path refuses operationally when a credential arrives while
+	// the resolver is absent, never commits on one.
+	approver ApproverSource
 	// actorNames turns an audit actor id into the person's name for that same history. Nil degrades
 	// every row to its role word, which is what the history said before names existed.
 	actorNames ActorNameResolver
