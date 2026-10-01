@@ -1,0 +1,14 @@
+# The demo image's build context is the repository root (the Dockerfile
+# copies core/ and web/), so this file keeps the context to what the build
+# reads. Nothing here is a convention about the repository: it is only what
+# the image build must not carry.
+.git
+.gitignore
+**/node_modules
+**/dist
+test-results
+docs
+tauri
+agents
+statecharts
+context
