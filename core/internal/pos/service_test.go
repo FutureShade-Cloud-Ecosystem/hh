@@ -366,7 +366,19 @@ func (f *fakeStore) InsertReturn(_ context.Context, _ pgx.Tx, r returnRow) (stri
 	f.log("return")
 	f.returnRows = append(f.returnRows, r)
 	f.seq++
-	return "ret-" + itoa(f.seq), "#RET-" + itoa(f.seq), nil
+	id := "ret-" + itoa(f.seq)
+	no := "#RET-" + itoa(f.seq)
+	// The real store replays by the idempotency key (ux_pos_returns_idem
+	// then FindReturnByKey); the fake mirrors that, so the replay paths are
+	// exercisable against the harness.
+	if r.IdempotencyKey != "" {
+		f.cachedReturns[r.IdempotencyKey] = Return{
+			ReturnID: id, ReturnNo: no, OrderID: r.OrderID, InvoiceID: r.InvoiceID,
+			RefundMethod: r.RefundMethod, SubtotalCents: r.SubtotalCents, TaxCents: r.TaxCents,
+			TotalCents: r.TotalCents, FeeCents: r.FeeCents, Status: "COMMITTED",
+		}
+	}
+	return id, no, nil
 }
 
 func (f *fakeStore) InsertReturnLines(_ context.Context, _ pgx.Tx, _ string, lines []returnLineRow) error {

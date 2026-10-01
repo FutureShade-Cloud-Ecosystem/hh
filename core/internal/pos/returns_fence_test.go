@@ -11,6 +11,7 @@ package pos
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -164,6 +165,50 @@ func TestReturn_ReplayOfAForeignSale_RefusesLikeTheFirstAttempt(t *testing.T) {
 	var ce clientError
 	if !errors.As(err, &ce) || ce.status != 403 {
 		t.Fatalf("the foreign replay must hit the wall, got %v (answer %+v)", err, replay)
+	}
+	if replay.ReturnID != "" || replay.ReturnNo != "" || replay.TotalCents != 0 {
+		t.Fatalf("a walled replay must carry none of the committed return: %+v", replay)
+	}
+}
+
+// The reviewer's case C (the lead's P2-2R ruling): a foreign clerk holding
+// a committed return's key and naming a sale of their OWN that they DO
+// reach. The wall judges the REPLAYED return's sale: the key buys nothing,
+// and the refusal is the wall's words, never another branch's return.
+func TestReturn_ReplayOfAForeignSale_KeyWithAnOwnedSaleInTheBody_Refuses(t *testing.T) {
+	h := newHarness()
+	seedReturnable(h)
+	// The foreign clerk's own Kingston sale, reachable to them.
+	h.store.retCtx["order-kgt"] = returnOrderCtx{
+		OrderID: "order-kgt", OrderNo: "#SO-KGT", BranchID: "branch-kgt", CustomerID: "cust-abc",
+		InvoiceID: "inv-kgt", InvoiceStatus: "PAID", SaleTender: TenderCash,
+	}
+	h.store.retLines["line-kgt"] = returnableLine{
+		OrderLineID: "line-kgt", ProductID: "prod-blu", QtySold: 4,
+		UnitPriceCents: 1000, LineTotalCents: 4000, TaxCents: 520,
+	}
+	h.caller = identityBranchScoped("u-trt", "INSIDE_SALES", "branch-trt")
+	first, err := h.svc.Return(context.Background(), returnInput())
+	if err != nil {
+		t.Fatalf("first return: %v", err)
+	}
+	if first.OrderID != "order-1" {
+		t.Fatalf("the first return is the Trenton sale's: %+v", first)
+	}
+
+	// The Kingston clerk, the TRENTON key, their OWN Kingston sale in the
+	// body.
+	h.caller = identityBranchScoped("u-kgt", "INSIDE_SALES", "branch-kgt")
+	in := returnInput()
+	in.OrderID = "order-kgt"
+	in.TillSessionID = "till-kgt"
+	replay, err := h.svc.Return(context.Background(), in)
+	var ce clientError
+	if !errors.As(err, &ce) || ce.status != 403 {
+		t.Fatalf("the wall must judge the replayed return's sale, got %v (answer %+v)", err, replay)
+	}
+	if !strings.Contains(err.Error(), "not reachable") {
+		t.Fatalf("the refusal must be the wall's words, got %v", err)
 	}
 	if replay.ReturnID != "" || replay.ReturnNo != "" || replay.TotalCents != 0 {
 		t.Fatalf("a walled replay must carry none of the committed return: %+v", replay)

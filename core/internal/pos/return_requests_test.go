@@ -450,7 +450,14 @@ func TestReturnRequest_Approve_ForeignReturnUnderKey_RefusesToStamp(t *testing.T
 		t.Fatalf("create: %v", err)
 	}
 	// A foreign return squats on the request's reserved key (simulating a pre-fix hijack or a repo-level
-	// insert): different order, different rail.
+	// insert): different order, different rail. The squatting return's sale
+	// exists and is reachable, so the replay passes the wall and the
+	// approval sees the collision (the lead's P2-2R ruling judges the
+	// replay by its own sale).
+	h.store.retCtx["order-OTHER"] = returnOrderCtx{
+		OrderID: "order-OTHER", OrderNo: "#SO-OTHER", BranchID: "branch-trt", CustomerID: "cust-abc",
+		InvoiceID: "inv-OTHER", InvoiceStatus: "PAID", SaleTender: TenderCash,
+	}
 	h.store.cachedReturns["rreq:"+rr.ID] = Return{
 		ReturnID: "ret-foreign", ReturnNo: "#RET-666", OrderID: "order-OTHER",
 		RefundMethod: RefundCash, TotalCents: 99999, Status: "COMMITTED",

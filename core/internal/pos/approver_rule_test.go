@@ -335,12 +335,11 @@ func TestApproverRule_ResolverUnwired_IsOperational(t *testing.T) {
 	}
 }
 
-// A presented credential is judged wherever it rides (the resolution runs
-// before the transaction, the lead's P3-6 ruling): an under-amount return
-// with a QUALIFYING credential commits ordinarily and names no decision,
-// while an under-amount return with a credential that cannot be judged
-// refuses on its own family.
-func TestApproverRule_UnderAmount_QualifyingCredentialCommitsOrdinarily(t *testing.T) {
+// Within the amount the header is INERT (the lead's P2-B ruling, reversing
+// the previous round): a return that needs nobody's approval commits as
+// its caller's own decision, whoever's credential arrived, and the
+// credential is never even consulted.
+func TestApproverRule_UnderAmount_HeaderIsInert(t *testing.T) {
 	h, src := harnessWithRule(t)
 	seedSaleWorth(h, 20000, 0)
 	src.resolved = qualifyingApprover()
@@ -353,27 +352,29 @@ func TestApproverRule_UnderAmount_QualifyingCredentialCommitsOrdinarily(t *testi
 	if err != nil {
 		t.Fatalf("an under-amount return commits: %v", err)
 	}
-	if out.TotalCents != 20000 || src.calls != 1 {
-		t.Fatalf("the presented credential is judged once: calls=%d", src.calls)
+	if out.TotalCents != 20000 || src.calls != 0 {
+		t.Fatalf("the inert header is never consulted: calls=%d", src.calls)
 	}
 	if len(h.rec.rows) != 1 || h.rec.rows[0].Extra["approver_id"] != nil {
 		t.Fatalf("an under-amount commit names no decision: %+v", h.rec.rows)
 	}
 }
 
-func TestApproverRule_UnderAmount_UnjudgeableCredentialRefuses(t *testing.T) {
+func TestApproverRule_UnderAmount_GarbageCredentialIsInert(t *testing.T) {
 	h, src := harnessWithRule(t)
 	seedSaleWorth(h, 20000, 0)
 	src.err = authz.ErrSecondCredentialRefused
 	h.caller = salesCaller()
 
-	_, err := h.svc.Return(clerkRequestCtx(), aboveAmountReturn())
-	var ce clientError
-	if !errors.As(err, &ce) || ce.status != 401 {
-		t.Fatalf("a presented credential that did not verify refuses even under the amount: %v", err)
+	out, err := h.svc.Return(clerkRequestCtx(), aboveAmountReturn())
+	if err != nil {
+		t.Fatalf("a return that needs nobody's approval commits whoever's credential arrived: %v", err)
 	}
-	if len(h.store.returnRows) != 0 {
-		t.Fatal("a refused request must persist nothing")
+	if out.TotalCents != 20000 || src.calls != 0 {
+		t.Fatalf("the inert header is never consulted: calls=%d", src.calls)
+	}
+	if len(h.store.returnRows) != 1 {
+		t.Fatal("the return must commit")
 	}
 }
 
@@ -403,10 +404,12 @@ func TestApproverRule_UnjudgeableCredential_IsInTheTrail(t *testing.T) {
 	}
 }
 
-// The isolating leg for the not-the-clerk check (the lead's P3-2 ruling):
-// a LISTED manager attaches their own credential to their own return. The
-// amount rule would never fire for them, and the return refuses anyway:
-// the one answer the not-the-clerk check exists for.
+// The isolating leg for the not-the-clerk check above the amount (the
+// lead's P3-2 and P2-B rulings): a LISTED manager attaches their own
+// credential to their own above-amount return. The amount rule would never
+// fire for them, and the return refuses anyway, with the contract's body
+// exactly: the configured threshold and the configured approvers, never
+// null and never zero.
 func TestApproverRule_ListedCallersOwnCredential_RefusesEvenThoughTheRuleIsQuiet(t *testing.T) {
 	h, src := harnessWithRule(t)
 	seedSaleWorth(h, 30000, 0)
@@ -426,6 +429,12 @@ func TestApproverRule_ListedCallersOwnCredential_RefusesEvenThoughTheRuleIsQuiet
 	var refusal ErrRefundApprovalRequired
 	if !errors.As(err, &refusal) {
 		t.Fatalf("a listed caller's own credential must refuse their own refund: %v", err)
+	}
+	if refusal.AmountCents != 25000 {
+		t.Fatalf("the refusal must carry the configured threshold, got %d", refusal.AmountCents)
+	}
+	if len(refusal.Approvers) != 2 || refusal.Approvers[0] != "sales_manager" || refusal.Approvers[1] != "branch_manager" {
+		t.Fatalf("the refusal must carry the configured approvers: %v", refusal.Approvers)
 	}
 	if len(h.store.returnRows) != 0 || h.tender.refundCalled {
 		t.Fatal("a refused return must persist nothing and touch no rail")

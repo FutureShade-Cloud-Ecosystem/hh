@@ -122,10 +122,9 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 	if err := requireBranchReach(caller, oc.BranchID); err != nil {
 		return Return{}, err
 	}
-	if cached, found, err := s.store.FindReturnByKey(ctx, in.IdempotencyKey); err != nil {
+	if cached, found, err := s.replayIfAllowed(ctx, in.IdempotencyKey, caller); err != nil {
 		return Return{}, err
 	} else if found {
-		cached.Replayed = true
 		return cached, nil
 	}
 	if in.RefundMethod == RefundCash && in.TillSessionID == "" {
@@ -153,20 +152,32 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 	// the amount commits ordinarily, a credential that cannot be judged
 	// refuses on its own family with its audit row.
 	var decision approverDecision
+	var judgeErr error
+	credentialJudged := false
 	// approvedHere records that the rule FIRED and the standing decision
-	// was spent: an under-amount return with a qualifying credential in the
-	// header commits ordinarily and names no decision.
+	// was spent: a return that needs nobody's approval commits as its
+	// caller's own decision, whoever's credential arrived (the lead's
+	// P2-B ruling: within the amount the header is inert, never consulted).
 	approvedHere := false
 	if !in.internalRail {
 		if s.roles == nil {
 			return Return{}, errRoleConfigUnwired()
 		}
-		resolved, pending, rerr := s.resolveRefundApprover(ctx, in.ApproverCredential, caller, oc)
-		if rerr != nil {
-			return Return{}, rerr
+		if in.ApproverCredential != "" && s.refundMayNeedApproval(ctx, oc, in) {
+			resolved, pending, rerr := s.resolveRefundApprover(ctx, in.ApproverCredential, caller, oc)
+			decision = resolved
+			decision.pending = pending
+			judgeErr = rerr
+			credentialJudged = true
 		}
-		decision = resolved
-		decision.pending = pending
+	}
+	// The decision record's names, read before the transaction opens (the
+	// lead's P3-D ruling: no trail read under the sale's row locks).
+	approverStaff := ""
+	refusalRowID := ""
+	if decision.pending {
+		approverStaff = s.approverStaffID(ctx, decision.approver.PlatformUserID)
+		refusalRowID = s.latestRefusalRowID(ctx, oc.OrderID)
 	}
 
 	pickupStatus := PickupNone
@@ -259,12 +270,21 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		// that leaves the standing refusal in place.
 		if !in.internalRail {
 			refusal, refused := s.refundApprovalRefusal(total, caller)
-			if decision.ownCredential {
-				// The credential named the caller: the refund refuses with
-				// the computed total, whatever the caller's role (the
-				// lead's P3-2 ruling).
-				refused = true
-				refusal.RefundCents = total
+			// Above the amount, a presented credential must qualify,
+			// whoever carried it (the lead's P2-B ruling): a failed
+			// judgment refuses on its own family, a credential that does
+			// not qualify refuses with the contract's body, the configured
+			// amount and the configured approvers, never null and never
+			// zero. Within the amount nothing here stirs: the header is
+			// inert.
+			if credentialJudged && total > s.roles.RefundAmountWithoutApprovalCents() {
+				if judgeErr != nil {
+					return judgeErr
+				}
+				if !decision.pending {
+					refusal = s.standingRefusalFor(total)
+					refused = true
+				}
 			}
 			if refused {
 				if !decision.pending {
@@ -364,7 +384,7 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 			"total_cents": total, "fee_cents": feeCents, "branch_id": oc.BranchID,
 		}
 		if approvedHere {
-			committed["decided_by"] = s.approverStaffID(ctx, decision.approver.PlatformUserID)
+			committed["decided_by"] = approverStaff
 			committed["decided_by_subject"] = decision.approver.PlatformUserID
 			committed["decided_by_role"] = decision.approver.RoleID
 			committed["rang_by"] = actor
@@ -372,8 +392,8 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 				"refusal":      refundApprovalRequiredError,
 				"refund_cents": total,
 			}
-			if refusalID := s.latestRefusalRowID(ctx, oc.OrderID); refusalID != "" {
-				committed["approval"].(map[string]any)["refusal_id"] = refusalID
+			if refusalRowID != "" {
+				committed["approval"].(map[string]any)["refusal_id"] = refusalRowID
 			}
 		}
 		if err := s.store.EmitEvent(ctx, tx, "pos.return.committed", committed); err != nil {
@@ -401,10 +421,10 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 			})
 			return Return{}, refusal
 		}
-		// A concurrent duplicate hit ux_pos_returns_idem and rolled back, surface the winner (replay).
+		// A concurrent duplicate hit ux_pos_returns_idem and rolled back, surface the winner (replay),
+		// judged against the winner's own sale by the same wall.
 		if isUniqueViolationErr(err) {
-			if cached, found, ferr := s.store.FindReturnByKey(ctx, in.IdempotencyKey); ferr == nil && found {
-				cached.Replayed = true
+			if cached, found, ferr := s.replayIfAllowed(ctx, in.IdempotencyKey, caller); ferr == nil && found {
 				return cached, nil
 			}
 		}
@@ -426,8 +446,8 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		// keys, so these are the facts the row keeps; amount_cents is the
 		// audit vocabulary's own name for an integer money fact, here the
 		// refused refund's total.
-		if staffID := s.approverStaffID(ctx, decision.approver.PlatformUserID); staffID != "" {
-			completed.Extra["approver_id"] = staffID
+		if approverStaff != "" {
+			completed.Extra["approver_id"] = approverStaff
 		}
 		completed.Extra["subject_ref"] = decision.approver.PlatformUserID
 		completed.Extra["amount_cents"] = out.TotalCents
@@ -435,6 +455,67 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 	}
 	s.record(ctx, completed)
 	return out, nil
+}
+
+// replayIfAllowed answers an idempotent replay only to a caller the wall
+// admits to the REPLAYED return's own sale (the lead's P2-2R ruling): the
+// key is not a bearer of the answer, so the branch reach is judged against
+// the cached return's sale, and a foreign clerk refuses identically to a
+// first attempt whatever sale their own request body names.
+func (s *Service) replayIfAllowed(ctx context.Context, key string, caller identity.StaffContext) (Return, bool, error) {
+	cached, found, err := s.store.FindReturnByKey(ctx, key)
+	if err != nil || !found {
+		return Return{}, false, err
+	}
+	oc, found, err := s.store.ReturnOrderContext(ctx, cached.OrderID, "")
+	if err != nil {
+		return Return{}, false, err
+	}
+	if !found {
+		return Return{}, false, errReturnNotFound
+	}
+	if err := requireBranchReach(caller, oc.BranchID); err != nil {
+		return Return{}, false, err
+	}
+	cached.Replayed = true
+	return cached, true, nil
+}
+
+// standingRefusalFor builds the contract's refusal for one computed
+// return: the configured threshold and the configured approver roles,
+// never null and never zero, whatever the refund's own total (the lead's
+// P2-B ruling).
+func (s *Service) standingRefusalFor(totalCents int64) ErrRefundApprovalRequired {
+	return ErrRefundApprovalRequired{
+		AmountCents: s.roles.RefundAmountWithoutApprovalCents(),
+		Approvers:   s.roles.RefundApprovers(),
+		RefundCents: totalCents,
+	}
+}
+
+// refundMayNeedApproval answers, from the sale's lines without locks,
+// whether the requested return COULD land above the configured amount: the
+// sum over the requested lines of their original totals and tax, which
+// over-approximates every remaining refund. A false answer makes the
+// credential header inert (nothing needs authorization, nothing is
+// consulted); a true one is only a prospect, the transaction's own total
+// decides. An unreadable read judges the credential: fail closed.
+func (s *Service) refundMayNeedApproval(ctx context.Context, oc returnOrderCtx, in ReturnInput) bool {
+	lines, err := s.store.ListReturnableLines(ctx, oc.OrderID)
+	if err != nil {
+		return true
+	}
+	requested := make(map[string]bool, len(in.Lines))
+	for _, ln := range in.Lines {
+		requested[ln.OrderLineID] = true
+	}
+	var prospective int64
+	for _, v := range lines {
+		if requested[v.OrderLineID] {
+			prospective += v.LineTotalCents + v.TaxCents
+		}
+	}
+	return prospective > s.roles.RefundAmountWithoutApprovalCents()
 }
 
 // refundApprovalRefusal answers the configured approval rule (X7) for one

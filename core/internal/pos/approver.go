@@ -150,6 +150,13 @@ func (s *Service) resolveRefundApprover(ctx context.Context, credential string, 
 	if !resolved.CanAccessBranch(oc.BranchID) {
 		return approverDecision{}, false, nil
 	}
+	// The decision must name its approver in the stable staff id space (the
+	// lead's P3-E ruling): a credential whose subject has no linked staff
+	// row does not qualify, the committed row would otherwise carry only
+	// the redactable directory subject.
+	if s.approverStaffID(ctx, resolved.PlatformUserID) == "" {
+		return approverDecision{}, false, nil
+	}
 	return approverDecision{approver: resolved, pending: true}, true, nil
 }
 

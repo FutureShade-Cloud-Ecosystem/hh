@@ -536,7 +536,10 @@ func TestReturn_Partial_SameUOM_Unchanged(t *testing.T) {
 func TestReturn_IdempotentReplay(t *testing.T) {
 	h := newHarness()
 	seedReturnable(h)
-	h.store.cachedReturns["ret-key-1"] = Return{ReturnID: "ret-orig", ReturnNo: "#RET-9", Status: "COMMITTED"}
+	// The replay is judged against the cached return's own sale (the
+	// lead's P2-2R ruling), so the fixture carries it: the seeded Trenton
+	// sale the harness caller reaches.
+	h.store.cachedReturns["ret-key-1"] = Return{ReturnID: "ret-orig", ReturnNo: "#RET-9", OrderID: "order-1", Status: "COMMITTED"}
 	out, err := h.svc.Return(context.Background(), returnInput())
 	if err != nil {
 		t.Fatalf("replay: %v", err)
