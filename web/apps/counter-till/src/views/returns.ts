@@ -7,7 +7,7 @@
 import { css, html, nothing, type TemplateResult } from "lit";
 import { formatMoney } from "../money.js";
 import { approverLabels } from "../returns/approval.js";
-import type { RefundMethod, RefundReceipt, ReasonCode, ReturnsFlow } from "../returns/flow.js";
+import type { RefundMethod, RefundReceipt, ReturnsFlow } from "../returns/flow.js";
 import type { PosRefundApproval } from "@hardscapehouse/api-client";
 
 export const returnsStyles = css`
@@ -330,9 +330,8 @@ function renderLine(
       <span class="line-figures">each ${formatMoney(line.unitPriceCents)}, line ${formatMoney(line.lineTotalCents)}</span>
       <span class="line-returnable">sold ${line.qtySold}, returned ${line.qtyReturned}</span>
       <span class="line-qty">
-        <label for="ct-qty-${line.orderLineId}">Return</label>
+        <span class="line-qty-label">Return</span>
         <input
-          id="ct-qty-${line.orderLineId}"
           type="number"
           min="0"
           step="1"
@@ -403,7 +402,12 @@ function renderDraft(flow: ReturnsFlow): TemplateResult {
     <div class="draft-row">
       <label for="ct-returns-reason">Reason</label>
       <select id="ct-returns-reason" data-field="reason-code" ?disabled=${flow.submitting}>
-        ${REASON_OPTIONS.map((code) => html`<option value=${code}>${reasonWords(code)}</option>`)}
+        <!-- The five codes the contract spells, static because the union is closed; REASON_OPTIONS in returns/flow.ts holds the same five and refuses any other value the select could send. -->
+        <option value="OTHER">Other</option>
+        <option value="DAMAGED">Damaged</option>
+        <option value="DEFECT">Defect</option>
+        <option value="WRONG_ITEM">Wrong item</option>
+        <option value="NO_LONGER_NEEDED">No longer needed</option>
       </select>
       <label for="ct-returns-note">Note</label>
       <input id="ct-returns-note" type="text" data-field="note" ?disabled=${flow.submitting} />
@@ -423,16 +427,6 @@ function renderDraft(flow: ReturnsFlow): TemplateResult {
 // Other leads the list because it is the desk's default: a fresh select
 // shows its first option, and the flow's default reason must be the one the
 // screen already shows, never a silent mismatch between the two.
-const REASON_OPTIONS: readonly ReasonCode[] = ["OTHER", "DAMAGED", "DEFECT", "WRONG_ITEM", "NO_LONGER_NEEDED"];
-
-export function reasonWords(code: ReasonCode): string {
-  if (code === "DAMAGED") return "Damaged";
-  if (code === "DEFECT") return "Defect";
-  if (code === "WRONG_ITEM") return "Wrong item";
-  if (code === "NO_LONGER_NEEDED") return "No longer needed";
-  return "Other";
-}
-
 function drawerWords(drawer: ReturnsFlow["drawer"]): string {
   if (drawer.kind === "closed") return "no drawer is open at the sale's branch.";
   return "the drawer could not be asked just now.";
