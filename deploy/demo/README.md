@@ -14,6 +14,7 @@ baked):
       -e PAYMENT_VAULT_KEY='<64 hex chars>' \
       -e HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1 \
       -e HH_ACCEPTANCE_SIGN_KEY='<64 hex chars>' \
+      -e DEMO_GATE_BCRYPT_HASH='$2a$...' \
       -p 8080:8080 \
       hh-demo-till
 
@@ -41,9 +42,28 @@ refused before anything runs, and the refusal names the recovery:
 recreate the database resource; the demo world builds from nothing on the
 fresh database.
 
-## The forwarded address discipline
+## The phrase gate (G6)
 
-The proxy legs carry the forwarded address discipline (W2's review,
+The shared phrase lives in the vault and nowhere else. Only its hash is
+set on the copy, as the runtime value `DEMO_GATE_BCRYPT_HASH`, made by a
+command that takes the phrase from the vault and prints only the hash
+(Caddy wants bcrypt; `caddy hash-password` makes one). Without that value
+the entrypoint refuses to start, before anything runs, and a value that
+does not look like a bcrypt hash is refused with a message that names the
+mistake (the phrase pasted where the hash belongs) without repeating the
+value.
+
+The hash flows to Caddy alone: the entrypoint substitutes it into the
+gate's configuration and pipes the configuration to Caddy on standard
+input, so no generated configuration and no hash ever sits on a filesystem
+inside the container; the variable is unset before the core starts, so no
+core process carries it; and no log line prints it. The gate asks for the
+phrase on pages and on `/api/v1/demo/*` only: every other `/api/v1/*`
+route is the core's own law (staff routes answer 401 without a bearer, the
+public legs answer as on any box), which is why a staff call with a valid
+demo bearer and no phrase still answers.
+
+The same proxy legs carry the forwarded address discipline (W2's review,
 routed here): Caddy replaces `X-Forwarded-For` with the address it saw
 itself on every proxied call, so a client-written value never survives the
 proxy and cannot buy the mint's per-address limit a separate bucket. Behind
@@ -56,6 +76,7 @@ forged chain is never the answer.
 | Variable | What it is |
 |---|---|
 | `DATABASE_URL` | the one database; the entrypoint derives `CORE_DATABASE_URL` from it |
+| `DEMO_GATE_BCRYPT_HASH` | the shared phrase's bcrypt hash, from the vault, runtime only |
 | `PAYMENT_VAULT_KEY` | the vault key the invented payment credentials are sealed under; an operator value, so restarts unseal |
 | `HH_ACCEPTANCE_SIGN_KEY_ID`, `HH_ACCEPTANCE_SIGN_KEY` | the customer quote acceptance signing pair |
 | `PORT` | the public port (the default is 8080) |

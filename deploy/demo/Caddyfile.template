@@ -6,6 +6,14 @@
 # Placeholders:
 #   __GATE_PORT__  the public port Caddy listens on (the platform's PORT)
 #   __UPSTREAM__   the core's loopback address and port
+#   __GATE_HASH__  the shared phrase's bcrypt hash, from the runtime value
+#                  the operator sets; substituted by the entrypoint at
+#                  boot, never baked into the image
+#
+# The gate (G6): basic authentication on the pages and on the demo mint
+# routes, and on nothing else. Every other api route is the core's own
+# law, which is why a staff call with a valid demo bearer and no phrase
+# still answers, and /healthz answers unauthenticated for the platform.
 #
 # The handle blocks are ordered most specific first: the demo mint routes,
 # then every other api route, then the health leg, then everything else,
@@ -30,6 +38,9 @@
 :__GATE_PORT__
 
 handle /api/v1/demo/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
 	reverse_proxy __UPSTREAM__ {
 		header_up X-Forwarded-For "{remote_host}"
 	}
@@ -48,6 +59,9 @@ handle /healthz {
 }
 
 handle {
+	basic_auth {
+		demo __GATE_HASH__
+	}
 	root * /srv/app
 	try_files {path} /index.html
 	file_server

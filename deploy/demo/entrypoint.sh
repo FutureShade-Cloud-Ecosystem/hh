@@ -1,7 +1,9 @@
 #!/bin/sh
 # The demo image's entrypoint (plan r7 section 4, item W5): one place where
-# the boot order lives. The order is the plan's G0 made executable:
+# the boot order lives. The order is the plan's G0 made executable, with
+# the phrase gate's value checked before anything else:
 #
+#   0. refuse to start without the phrase's hash (G6, the gate's value)
 #   1. wait, bounded, for the database to accept connections
 #   2. classify the database's shape (empty, building, built, foreign)
 #   3. core demo-check (the G0 guard) before anything writes
@@ -36,6 +38,30 @@ log() { echo "entrypoint: $*"; }
 fail() { echo "entrypoint: $*" >&2; exit 1; }
 
 # --------------------------------------------------------------------------
+# The phrase gate's value (G6, row 484 of the decision record): the shared
+# phrase lives in the vault and only its hash reaches the box, as the
+# runtime value DEMO_GATE_BCRYPT_HASH. The entrypoint refuses to start
+# without it, and refuses a value that does not look like a bcrypt hash:
+# Caddy's basic authentication wants the hash, and the likeliest mistake
+# is the phrase pasted where the hash belongs. The refusal names the
+# mistake and repeats no value. The variable is unset here, before any
+# child process starts, so the core and Caddy carry no copy of it; the
+# value reaches Caddy's configuration generation alone, through the shell
+# variable captured below, which is never exported.
+# --------------------------------------------------------------------------
+HASH_VALUE="$(printenv DEMO_GATE_BCRYPT_HASH || true)"
+unset DEMO_GATE_BCRYPT_HASH
+if [ -z "$HASH_VALUE" ]; then
+	fail "DEMO_GATE_BCRYPT_HASH is not set: the phrase gate asks for the shared phrase on every page and on the mint, and the image refuses to start without the phrase's hash"
+fi
+case "$HASH_VALUE" in
+	'$2a$'*|'$2b$'*|'$2y$'*) ;;
+	*)
+		fail "DEMO_GATE_BCRYPT_HASH does not look like a bcrypt hash: the gate wants the hash of the phrase and not the phrase itself; make the hash from the phrase kept in the vault, and set only the hash"
+		;;
+esac
+
+# --------------------------------------------------------------------------
 # The environment the image requires. The image is the demo image, so the
 # box says demo twice here, by name, explicitly (the G2 values): nothing
 # the operator sets can turn this image into anything else. The values the
@@ -60,8 +86,8 @@ export CORE_STAFF_AUDIENCE="${CORE_STAFF_AUDIENCE:-hh-staff}"
 export CORE_TENANT_AUDIENCE="${CORE_TENANT_AUDIENCE:-hh-tenant}"
 
 # The public port is the platform's PORT. The core listens on a loopback
-# port only: it is never reachable except through Caddy, which fronts
-# every page and every mint request.
+# port only: it is never reachable except through Caddy, which is the gate
+# every page and every mint request passes.
 GATE_PORT="${PORT:-8080}"
 CORE_INTERNAL_PORT="${CORE_INTERNAL_PORT:-9090}"
 export CORE_LISTEN_ADDR="127.0.0.1:${CORE_INTERNAL_PORT}"
@@ -181,18 +207,20 @@ until wget -q -O /dev/null "http://127.0.0.1:${CORE_INTERNAL_PORT}/healthz" 2>/d
 	sleep 1
 done
 
-# Caddy autosaves the adapted configuration for its resume feature, so
+# Caddy autosaves the adapted configuration for its resume feature. With
+# the phrase gate in it, the autosave would hold the phrase's hash, so
 # Caddy's configuration and data homes are pointed at the container's
-# shared-memory tmpfs: the generated configuration never reaches the
-# image's layers, any volume, or anything that outlives the container, and
-# the configuration is piped in on standard input, never written by this
-# script.
+# shared-memory tmpfs: no hash reaches the image's layers, any volume, or
+# anything that outlives the container, and the gate's configuration is
+# piped in on standard input, never written by this script.
 export XDG_CONFIG_HOME=/dev/shm/caddy-config
 export XDG_DATA_HOME=/dev/shm/caddy-data
 
 GATE_CONFIG="$(sed -e "s|__GATE_PORT__|${GATE_PORT}|g" \
                     -e "s|__UPSTREAM__|${UPSTREAM}|g" \
+                    -e "s|__GATE_HASH__|${HASH_VALUE}|g" \
                     /srv/templates/Caddyfile.template)"
+unset HASH_VALUE
 
 printf '%s\n' "$GATE_CONFIG" | caddy run --config - --adapter caddyfile &
 CADDY_PID=$!
@@ -206,7 +234,7 @@ while :; do
 	fi
 	if ! kill -0 "$CADDY_PID" 2>/dev/null; then
 		kill "$CORE_PID" 2>/dev/null || true
-		fail "the proxy stopped: the container exits so the platform retries the boot"
+		fail "the gate proxy stopped: the container exits so the platform retries the boot"
 	fi
 	sleep 1
 done
