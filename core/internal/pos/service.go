@@ -19,8 +19,11 @@ import (
 
 // LineResolver is satisfied by *pricing.Service, the server-side price authority (US-A19-04).
 // The till prices every line through the COUNTER resolve (D48 row 481, D49): the price the
-// customer's rules and tiers give, accepted as it resolves. The gated resolve is the quote
-// flow's door and has no method on this seam, the till cannot ask the floor even by mistake.
+// customer's rules and tiers give, accepted as it resolves. The gated resolve has no method on
+// this seam, so the sale and the pricing order cannot ask the floor through it. The price
+// display is the one door back: counterQuoter type-asserts the same service to CounterQuoter,
+// whose preview runs the gated resolve in dry-run, read-only, it can write no BYPASS row and
+// exposes no block.
 type LineResolver interface {
 	DeriveCounterLinePrice(ctx context.Context, in pricing.ResolveInput) (pricing.LinePrice, error)
 }

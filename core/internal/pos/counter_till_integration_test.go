@@ -5,13 +5,18 @@
 // applied (the compfixture discipline, the same gate-variable pattern). Branch A (FXNA) stands
 // as Trenton, branch B (FXNB) as Kingston, and the fixture's contractor tenant stands as C01;
 // the planted Holland paver stand-in carries a contractor pavers rule of 1800 bps off a 48700
-// list and a branch cost that puts the ruled price below the category's 2000 bps floor.
+// list, and its category policy carries a 2000 bps floor with enforcement DISABLED, so a gated
+// resolve of the line would file a pricing_audit_log BYPASS row while the till's resolve must
+// write none. The branch cost stands beside the ruled price as the margin reading; the gate
+// reads only a caller supplied cost and the till sends none, so a floor block alone could never
+// distinguish the two resolves (the HH-219 history), and the BYPASS row is what bites here.
 //
 // What is proven here, at Trenton, as Sales: C01's Holland paver line rings at its rule price
-// with no block and the sale commits, the sale's lines equal the engine's own price, a pricing
-// order for the line is created at the same price, and a Kingston login can neither list, resume
-// nor discard a Trenton ticket while anyone at Trenton picks it up, no owner check, who resumed
-// recorded. Run with the variable set:
+// with no block and the sale commits, the ring writes no BYPASS row (held at the database), the
+// sale's lines equal the engine's own price, a pricing order for the line is created at the same
+// price, and a Kingston login can neither park onto Trenton's list, nor list its tickets, nor
+// resume nor discard one (by id the wall answers what a missing ticket answers), while anyone at
+// Trenton picks a ticket up, no owner check, who resumed recorded. Run with the variable set:
 //
 //	HH_CORE_TEST_DATABASE_URL=... go test -tags integration -count=1 ./internal/pos/ -run TestCounterTill
 //
@@ -47,8 +52,10 @@ const (
 	fxTillParkNotes   = "FX counter till fence ticket"
 )
 
-// The ruled numbers: 48700 list, less the 1800 bps contractor pavers rule, at 100 SF; the branch
-// cost puts that price at 1236 bps, below the category's 2000 bps floor, and the till rings it.
+// The ruled numbers: 48700 list, less the 1800 bps contractor pavers rule, at 100 SF. The
+// policy's floor sits at 2000 bps with enforcement disabled, and the branch cost puts the ruled
+// price at 1236 bps, below that floor: the ruled line the till rings, on a category whose gated
+// resolve would file a BYPASS row.
 const (
 	fxHollandListCents int64 = 48700
 	fxHollandRuleCents int64 = 39934
@@ -122,13 +129,16 @@ func plantCounterTillRows(t *testing.T, pool *pgxpool.Pool) {
 		`INSERT INTO product_uoms (product_id, uom_code, qty_in_base, is_base) VALUES
 			('` + fxTillProductID + `', 'SF', 1, TRUE)
 			ON CONFLICT DO NOTHING`,
-		// The retail anchor, the category floor, and the branch cost that puts the ruled price
-		// below that floor (the ruled line the till rings anyway).
+		// The retail anchor and the branch cost (the margin reading beside the ruled price).
 		`INSERT INTO pricing_list_prices (product_id, list_price_cents, price_uom) VALUES
 			('` + fxTillProductID + `', 48700, 'SF')
 			ON CONFLICT DO NOTHING`,
-		`INSERT INTO pricing_category_policy (category_id, margin_target_bps, margin_floor_bps) VALUES
-			('` + fxTillCategoryID + `', 3000, ` + itoa(int(fxFloorBps)) + `)
+		// The category floor with enforcement DISABLED: the bite of the whole bench. A gated
+		// resolve of this line (margin 1236 bps, below the 2000 bps floor) would file a BYPASS
+		// audit row; the till's counter resolve must write none, and the ring asserts that at
+		// the database below.
+		`INSERT INTO pricing_category_policy (category_id, margin_target_bps, margin_floor_bps, margin_enforcement_disabled) VALUES
+			('` + fxTillCategoryID + `', 3000, ` + itoa(int(fxFloorBps)) + `, TRUE)
 			ON CONFLICT DO NOTHING`,
 		`INSERT INTO product_branch_costs (product_id, branch_id, avg_unit_cost_cents) VALUES
 			('` + fxTillProductID + `', '` + testkit.BranchNorthAID + `', ` + itoa(int(fxBranchCostCents)) + `)
@@ -221,10 +231,19 @@ func counterTillPricing(pool *pgxpool.Pool) *pricing.Service {
 }
 
 // As Sales at Trenton: C01's Holland paver line rings at its rule price below the category
-// floor, the sale commits, and the committed line equals the engine's own price for the line.
+// floor, the sale commits, the ring files no BYPASS audit row though the category's enforcement
+// is disabled (the gated resolve of this line would file one, so this is what distinguishes the
+// counter resolve from the gated one at the database), and the committed line equals the
+// engine's own price for the line.
 func TestCounterTill_RingsRulePriceBelowFloor(t *testing.T) {
 	pool := counterTillFixture(t)
 	svc := realPosSvc(t, pool, stubCharger{})
+	var bypassBefore int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM pricing_audit_log WHERE action = 'BYPASS' AND entity_type = 'margin_enforcement'
+		 AND entity_id IN ($1, $2)`, fxTillCategoryID, fxTillProductID).Scan(&bypassBefore); err != nil {
+		t.Fatalf("count the BYPASS rows before the ring: %v", err)
+	}
 	out, err := svc.Sale(tillSalesCtx(), SaleInput{
 		IdempotencyKey: fxTillSaleKey, BranchID: testkit.BranchNorthAID,
 		CustomerID: testkit.TenantAlphaID, Tender: TenderCash, SaleType: SaleCollectNow,
@@ -264,6 +283,18 @@ func TestCounterTill_RingsRulePriceBelowFloor(t *testing.T) {
 	if lp.Breakdown.Blocked {
 		t.Fatalf("the engine's counter resolve does not block: %+v", lp.Breakdown)
 	}
+	// The bite at the database: the ring through the real surface wrote no BYPASS row for this
+	// category or product, though the policy's enforcement is disabled and a gated resolve of
+	// the line would have filed one.
+	var bypassAfter int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM pricing_audit_log WHERE action = 'BYPASS' AND entity_type = 'margin_enforcement'
+		 AND entity_id IN ($1, $2)`, fxTillCategoryID, fxTillProductID).Scan(&bypassAfter); err != nil {
+		t.Fatalf("count the BYPASS rows after the ring: %v", err)
+	}
+	if bypassAfter != bypassBefore {
+		t.Fatalf("the till's ring must write no BYPASS row: before %d, after %d", bypassBefore, bypassAfter)
+	}
 }
 
 // A pricing order for the same line is created, at the rule price against the 48700 list.
@@ -289,11 +320,20 @@ func TestCounterTill_PricingOrder_CreatedAtRulePrice(t *testing.T) {
 	}
 }
 
-// The parked fence at Trenton: a Kingston login can neither list, resume nor discard a Trenton
-// ticket; anyone at Trenton picks it up, no owner check, and who resumed stays recorded.
+// The parked fence at Trenton: a Kingston login can neither park onto Trenton's list, nor list
+// its tickets, nor resume nor discard one (by id the wall answers what a missing ticket answers);
+// anyone at Trenton parks and picks up any ticket, no owner check, and who resumed stays recorded.
 func TestCounterTill_ParkedFence_KingstonOutOfTrenton(t *testing.T) {
 	pool := counterTillFixture(t)
 	svc := realPosSvc(t, pool, stubCharger{})
+	// Parking is a write across the wall too: Kingston cannot plant a ticket on Trenton's list.
+	if _, err := svc.Park(tillKingstonCtx(), ParkInput{
+		BranchID: testkit.BranchNorthAID, Notes: "must never land",
+		Lines: []ParkedLineInput{{ProductID: fxTillProductID, QtyEntered: 1, UOMEntered: "SF"}},
+	}); !isForbidden(err) {
+		t.Fatalf("a Kingston login cannot park onto Trenton's list, got %v", err)
+	}
+	// A Trenton login parks at its own branch: the ticket the fence protects below.
 	t1, err := svc.Park(tillSalesCtx(), ParkInput{
 		BranchID: testkit.BranchNorthAID, CustomerID: testkit.TenantAlphaID, Notes: fxTillParkNotes,
 		Lines: []ParkedLineInput{{ProductID: fxTillProductID, QtyEntered: 12, UOMEntered: "SF"}},
@@ -301,20 +341,26 @@ func TestCounterTill_ParkedFence_KingstonOutOfTrenton(t *testing.T) {
 	if err != nil {
 		t.Fatalf("park: %v", err)
 	}
-	// Kingston, on the wall's far side: all three verbs refused before any read or write.
+	// Kingston, on the wall's far side: the list refused, the by-id verbs answered what a
+	// missing ticket answers, all before any read a ticket could leak or a write could move.
 	if _, err := svc.ListParked(tillKingstonCtx(), testkit.BranchNorthAID); !isForbidden(err) {
 		t.Fatalf("a Kingston login cannot list Trenton's tickets, got %v", err)
 	}
-	if _, err := svc.ResumeParked(tillKingstonCtx(), t1.ID); !isForbidden(err) {
-		t.Fatalf("a Kingston login cannot resume a Trenton ticket, got %v", err)
+	if _, err := svc.ResumeParked(tillKingstonCtx(), t1.ID); !isNotFound(err) {
+		t.Fatalf("a ticket behind the wall answers what a missing ticket answers, got %v", err)
 	}
-	if err := svc.DiscardParked(tillKingstonCtx(), t1.ID); !isForbidden(err) {
-		t.Fatalf("a Kingston login cannot discard a Trenton ticket, got %v", err)
+	if err := svc.DiscardParked(tillKingstonCtx(), t1.ID); !isNotFound(err) {
+		t.Fatalf("a ticket behind the wall answers what a missing ticket answers, got %v", err)
 	}
 	var status string
 	if err := pool.QueryRow(context.Background(),
 		`SELECT status FROM pos_parked_tickets WHERE id=$1`, t1.ID).Scan(&status); err != nil || status != "PARKED" {
 		t.Fatalf("the fenced ticket is intact: %s %v", status, err)
+	}
+	var planted int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM pos_parked_tickets WHERE notes = 'must never land'`).Scan(&planted); err != nil || planted != 0 {
+		t.Fatalf("the foreign park must never land on Trenton's list: %d %v", planted, err)
 	}
 	// Anyone at Trenton picks it up: the sales manager, not who parked it, resumes it.
 	list, err := svc.ListParked(tillManagerCtx(), testkit.BranchNorthAID)

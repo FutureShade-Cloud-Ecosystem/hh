@@ -659,9 +659,11 @@ func TestParked_LinesCarryNoPrice_RepricedOnResume(t *testing.T) {
 	}
 }
 
-// The parked fence (D49 row 500): a branch is a hard wall on list, resume and discard; a login
-// from another branch can neither see nor touch a foreign branch's ticket.
-func TestParked_ForeignBranch_CannotListResumeOrDiscard(t *testing.T) {
+// The parked fence (D49 row 500, D48 row 342): a branch is a hard wall on every parked verb, the
+// writes included; a login from another branch can neither list, park onto, resume nor discard a
+// foreign branch's tickets, and by id the wall answers what a missing ticket answers, so a
+// foreign caller holding a ticket id learns nothing from it.
+func TestParked_ForeignBranch_CannotParkListResumeOrDiscard(t *testing.T) {
 	h := newHarness()
 	t1, err := h.svc.Park(context.Background(), ParkInput{
 		BranchID: "branch-trt",
@@ -677,19 +679,39 @@ func TestParked_ForeignBranch_CannotListResumeOrDiscard(t *testing.T) {
 	if _, err := h.svc.ListParked(context.Background(), "branch-trt"); !isForbidden(err) {
 		t.Fatalf("a Kingston login cannot list Trenton's tickets, got %v", err)
 	}
-	if _, err := h.svc.ResumeParked(context.Background(), t1.ID); !isForbidden(err) {
-		t.Fatalf("a Kingston login cannot resume a Trenton ticket, got %v", err)
+	// Parking onto Trenton's list is a write across the wall: refused, and nothing planted.
+	if _, err := h.svc.Park(ctxWithActor("u-kingston"), ParkInput{
+		BranchID: "branch-trt", Notes: "should never land",
+		Lines: []ParkedLineInput{{ProductID: "prod-blu", QtyEntered: 1, UOMEntered: "SF"}},
+	}); !isForbidden(err) {
+		t.Fatalf("a Kingston login cannot park onto Trenton's list, got %v", err)
 	}
-	if err := h.svc.DiscardParked(context.Background(), t1.ID); !isForbidden(err) {
-		t.Fatalf("a Kingston login cannot discard a Trenton ticket, got %v", err)
+	if _, err := h.svc.ResumeParked(context.Background(), t1.ID); !isNotFound(err) {
+		t.Fatalf("a ticket behind the wall answers what a missing ticket answers, got %v", err)
 	}
-	// And the refused touches moved nothing: the ticket is still PARKED where it was.
+	if err := h.svc.DiscardParked(context.Background(), t1.ID); !isNotFound(err) {
+		t.Fatalf("a ticket behind the wall answers what a missing ticket answers, got %v", err)
+	}
+	// And the refused touches moved nothing and planted nothing: Trenton still holds exactly the
+	// one ticket it parked, PARKED, and a Trenton login parks at its own branch unhindered.
 	h.caller = identity.StaffContext{UserID: "u-trenton-2", RoleCode: "INSIDE_SALES",
 		Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
 		Branches: map[string]bool{"branch-trt": true}}
+	t2, err := h.svc.Park(ctxWithActor("u-trenton-2"), ParkInput{
+		BranchID: "branch-trt",
+		Lines:    []ParkedLineInput{{ProductID: "prod-blu", QtyEntered: 12, UOMEntered: "SF"}},
+	})
+	if err != nil || t2.Status != "PARKED" {
+		t.Fatalf("a Trenton login parks at its own branch: %v %+v", err, t2)
+	}
 	list, err := h.svc.ListParked(context.Background(), "branch-trt")
-	if err != nil || len(list) != 1 || list[0].Status != "PARKED" {
-		t.Fatalf("the fenced ticket is intact at its branch: %v %+v", err, list)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("exactly the branch's own two tickets, no planted row: %v %+v", err, list)
+	}
+	for _, tk := range list {
+		if tk.Notes == "should never land" {
+			t.Fatalf("the foreign park must never land on Trenton's list: %+v", list)
+		}
 	}
 }
 
@@ -721,10 +743,18 @@ func TestParked_SameBranch_SecondClerkResumes_NoOwnerCheck(t *testing.T) {
 	}
 }
 
-// isForbidden answers whether err is the 403 the branch wall answers with.
+// isForbidden answers whether err is the 403 the branch wall answers with (the verbs where the
+// caller names the branch itself).
 func isForbidden(err error) bool {
 	var ce clientError
 	return errors.As(err, &ce) && ce.status == http.StatusForbidden
+}
+
+// isNotFound answers whether err is the 404 the by-id fence answers with, a missing ticket and
+// one behind the wall alike.
+func isNotFound(err error) bool {
+	var ce clientError
+	return errors.As(err, &ce) && ce.status == http.StatusNotFound
 }
 
 // -- pricing orders ----------------------------------------------------------
