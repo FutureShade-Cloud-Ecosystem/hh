@@ -27,12 +27,14 @@ package main
 // serve half: the listener opens and /healthz answers, the serve role
 // stops on its shutdown signal and reports no error.
 //
-// The pin: a source-order test holds the demoRefuseLiveCardRail call in
-// demoServe at its marked spot, after the graph is built and before the
-// listener opens. Deleting the call fails this test in every demo-tagged
-// run, gated or not, which is the bite: the serve-level live leg cannot
-// tell G7's refusal from G4's, and the wiring-level legs call the check
-// directly, so the pin is what holds the call in place.
+// The pin: a source-order test holds demoServe to ACTING ON the guard at
+// its marked spot: the call sits after the graph build and before the
+// listener, and its error is checked and returned. Deleting the call,
+// replacing it with a blank assignment, dropping the return, or moving the
+// acting behind the listener fails this test in every demo-tagged run,
+// gated or not, which is the bite: the serve-level live leg cannot tell
+// G7's refusal from the environment layer's, so the pin is what holds the
+// serving path to the refusal's consequence.
 
 import (
 	"bytes"
@@ -134,24 +136,19 @@ func TestDemoG7_ANilCardRailRefusesToo(t *testing.T) {
 
 // TestDemoServeRefusesALiveCardRailBeforeTheListener, the serve role's
 // refusal half through the REAL demoServe: a box that says demo twice and
-// carries a live card processor never opens a listener. In process the
-// environment layer's refusal names the variable; the source-order pin
-// beside this test holds G7's own call at the marked spot between the
-// graph and the listener.
+// carries a live card processor is refused, with the refusal naming the
+// card processor variable. That returned refusal is the leg's whole
+// evidence: demoServe returns before it builds the server and opens the
+// listener, so a refusal precedes serving by construction, and the
+// simulator leg beside this one proves the serve half actually serves.
 func TestDemoServeRefusesALiveCardRailBeforeTheListener(t *testing.T) {
-	port := freeServePort(t)
 	t.Setenv("HOS_CARD_PROCESSOR", "run")
-	getenv := func(string) string { return "" }
-	lookup := demoSaysDemoTwice()
-	err := demoServe(getenv, lookup)
+	err := demoServe(func(string) string { return "" }, demoSaysDemoTwice())
 	if err == nil {
-		t.Fatal("demoServe accepted a live card processor: the demo build would open a listener")
+		t.Fatal("demoServe accepted a live card processor: the demo build would serve on a live rail")
 	}
 	if !strings.Contains(err.Error(), "HOS_CARD_PROCESSOR") {
 		t.Fatalf("the refusal %q does not name the card processor variable", err)
-	}
-	if listenerAnswers(port) {
-		t.Fatal("a listener was open after the refusal: the serve role reached the listener on a live card rail")
 	}
 }
 
@@ -205,10 +202,14 @@ func TestDemoServeServesOnTheSimulatorCardRail(t *testing.T) {
 	}
 }
 
-// TestDemoServeRunsTheCardRailGuardAtTheMarkedSpot is the pin: the G7 call
-// sits in demoServe, exactly once, after the graph is built and before the
-// listener opens. Deleting the call, or moving it behind the listener,
-// fails here in every demo-tagged run.
+// TestDemoServeRunsTheCardRailGuardAtTheMarkedSpot is the pin: demoServe
+// ACTS ON the guard's answer at the marked spot: the call sits between the
+// graph build and the listener, and its error is checked and returned, not
+// computed and dropped. Deleting the call, replacing it with a blank
+// assignment, moving it behind the listener, or dropping the return all
+// fail here in every demo-tagged run. What the guard's answer is worth is
+// the wiring-level legs' business above; this pin holds the serving path
+// to acting on it.
 func TestDemoServeRunsTheCardRailGuardAtTheMarkedSpot(t *testing.T) {
 	src, err := os.ReadFile("demo_on.go")
 	if err != nil {
@@ -216,21 +217,21 @@ func TestDemoServeRunsTheCardRailGuardAtTheMarkedSpot(t *testing.T) {
 	}
 	serveStart := bytes.Index(src, []byte("func demoServe("))
 	routesCall := bytes.Index(src, []byte("graph, err := demoRegisterRoutes("))
-	guardCall := []byte("demoRefuseLiveCardRail(graph.tops.cardRail)")
-	guardPos := bytes.Index(src, guardCall)
+	guardBlob := []byte("if err := demoRefuseLiveCardRail(graph.tops.cardRail); err != nil {\n\t\treturn err\n\t}")
+	guardPos := bytes.Index(src, guardBlob)
 	listenPos := bytes.Index(src, []byte("srv.ListenAndServe()"))
 
 	if serveStart < 0 || routesCall < 0 || listenPos < 0 {
 		t.Fatal("demo_on.go no longer shows the serve shape this pin guards: demoServe, the graph build or the listener moved")
 	}
 	if guardPos < 0 {
-		t.Fatal("demoServe no longer runs the card rail guard: deleting it left the demo build free to serve on a live rail")
+		t.Fatal("demoServe no longer acts on the card rail guard (the call is gone, not returned on, or reformatted away): the demo build is free to serve on a live rail")
 	}
-	if n := bytes.Count(src, guardCall); n != 1 {
-		t.Fatalf("the card rail guard call appears %d times, want the one marked-spot call", n)
+	if n := bytes.Count(src, guardBlob); n != 1 {
+		t.Fatalf("the acted-on card rail guard appears %d times, want the one marked-spot call", n)
 	}
 	if !(serveStart < routesCall && routesCall < guardPos && guardPos < listenPos) {
-		t.Fatal("the card rail guard call is not between the graph build and the listener: plan 4A places the refusal after wiring, before serving")
+		t.Fatal("the card rail guard is not acted on between the graph build and the listener: plan 4A places the refusal after wiring, before serving")
 	}
 }
 
@@ -262,17 +263,6 @@ func hexKey(t *testing.T) string {
 		t.Fatalf("generate key: %v", err)
 	}
 	return hex.EncodeToString(raw)
-}
-
-// listenerAnswers reports whether anything accepts connections on the
-// port already.
-func listenerAnswers(port int) bool {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
-	if err != nil {
-		return false
-	}
-	_ = conn.Close()
-	return true
 }
 
 // waitUntilServes polls /healthz until it answers 200 or the deadline
