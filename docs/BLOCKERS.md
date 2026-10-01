@@ -223,3 +223,35 @@ bearer never did either), and the generator emits a note on the one operation
 that declares the header, so the regenerated client visibly carries it. The
 lead may want this hunk re-homed when the pull request is read; the rest of
 the commit is contract sources and generated outputs only.
+
+## L2 RT-B: the review fixes and the three facts the next reader needs (recorded, done in this lane)
+
+- **The till's rules are wired in the composition root on this branch (the
+  lead's accepted deviation into cmd/core, P1-1).** `core/cmd/core/wire_roles.go`
+  loads the dealer's role configuration at boot (the load whose refusal stops
+  the core) and `wireTillRules` wires the configuration, the approver
+  credential source and the users id linker into the pos service at the serve
+  composition and (the configuration alone; the compose builds no serving
+  surface) the demo compose. A source-pinning test
+  (`TestTillRules_WiringIsPinned`) refuses to let either site drift, and a
+  composition-level test over the fixture database
+  (`TestTillRules_WiredCompositionRefusesAndShows`) proves the built service
+  refuses the 300.00 return and shows the clerk the glance. RG's fuller
+  wiring of the same configuration into the gate supersedes the load here;
+  the two must share one load then.
+- **A 401 on `POST /api/v1/pos/returns` during an approval flow means the
+  APPROVER credential failed, not the clerk's session (what W8's dialog must
+  know, P3-5).** The clerk's bearer stays valid; the dialog should re-ask for
+  the manager's credential, not re-login. A 409 with
+  `error: refund_approval_required` after a credential was attached means the
+  credential did not qualify (same person, off-list role, grant short of the
+  sale's branch, issued outside the configured window), and the dialog stays
+  up. A 503 means the machinery could not run; the route now declares it.
+- **"The Branch Manager of the sale's branch" is enforced as "holds a listed
+  role anywhere in the org and a branch grant for the sale's branch"**
+  (the review's noted item, for the lead to rule on). The staff resolver
+  returns the highest grant across the org and reads branches from
+  `user_branch_grants`, so a Sales manager of Kingston holding a Trenton
+  grant for another reason approves a Trenton refund. This is the resolver's
+  standing rule for every caller; tightening it for refunds alone would be a
+  new rule and stops at the lead.

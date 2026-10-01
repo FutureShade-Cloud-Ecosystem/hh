@@ -69,28 +69,31 @@ import (
 
 // The demo world's two branches, seeded by migration 0003 in every
 // migrated database, and the people's fixed identifiers. The subjects are
-// the platform user ids the staff authority resolver reads grants by,
-// digit-free on purpose so the audit chokepoint's seven-digit redaction
-// never touches them.
+// the platform user ids the staff authority resolver reads grants by; the
+// manager's is numeric-shaped on purpose (see below).
 const (
 	trentonBranchID  = "5d1b3f6e-0000-4000-9000-000000000001"
 	kingstonBranchID = "5d1b3f6e-0000-4000-9000-000000000002"
 	demoOrgSlug      = "hh-demo"
 
-	trentonClerkSub  = "till-l2c-clerk"
-	trentonMgrSub    = "till-l2c-manager"
+	trentonClerkSub = "till-l2c-clerk"
+	// The manager's platform subject carries a seven-digit run on purpose:
+	// it is the shape the audit chokepoint redacts, so the decision row
+	// naming the approver proves it names the STABLE staff users id instead
+	// (the lead's P2-4 ruling).
+	trentonMgrSub    = "till-l2c-mgr-7731409"
 	kingstonClerkSub = "till-l2c-kclerk"
 	kingstonMgrSub   = "till-l2c-km"
 	elsewhereSub     = "till-l2c-elsewhere"
 
-	clerkUserID  = "5d1b0000-0000-4000-9000-0000000000c1"
+	clerkUserID   = "5d1b0000-0000-4000-9000-0000000000c1"
 	managerUserID = "5d1b0000-0000-4000-9000-0000000000c2"
-	kClerkUserID = "5d1b0000-0000-4000-9000-0000000000c3"
+	kClerkUserID  = "5d1b0000-0000-4000-9000-0000000000c3"
 
-	l2cProductID     = "5d1b0000-0000-4000-9000-0000000000d1"
-	l2cProductSKU    = "DBS-TILL-L2C-PAVER"
-	l2cUnitPrice     = int64(1000) // 10.00 per SF, the exact-cents anchor
-	l2cTrentonDrawer = "l2c-trenton-drawer"
+	l2cProductID      = "5d1b0000-0000-4000-9000-0000000000d1"
+	l2cProductSKU     = "DBS-TILL-L2C-PAVER"
+	l2cUnitPrice      = int64(1000) // 10.00 per SF, the exact-cents anchor
+	l2cTrentonDrawer  = "l2c-trenton-drawer"
 	l2cKingstonDrawer = "l2c-kingston-drawer"
 
 	// The sales' idempotency keys are built per run (the DIB-384 pattern:
@@ -297,7 +300,7 @@ func newTrentonStack(t *testing.T) *trentonStack {
 		WithCategoryResolver(cat).
 		WithUOMConverter(cat).
 		WithMarginGate(pricing.NewIdentityMarginGate())
-	tillSvc := till.NewService(till.NewRepository(pool))
+	tillSvc := till.NewService(till.NewRepository(pool)).WithCardCharger(stubCharger{})
 	auditSvc := audit.NewService(audit.NewRepository(pool), slog.Default())
 	svc := NewService(NewRepository(pool)).
 		WithLineResolver(priceSvc).
@@ -307,6 +310,7 @@ func newTrentonStack(t *testing.T) *trentonStack {
 		WithAudit(auditSvc).
 		WithRoleConfig(cfg).
 		WithApproverSource(g).
+		WithUserLinker(linkerFor(pool)).
 		WithClock(harness.Clock.Now)
 
 	handler := NewHandler(svc, slog.Default()).WithUserLinker(linkerFor(pool))
@@ -374,11 +378,15 @@ type trentonSaleView struct {
 }
 
 // ringSale rings (or replays) one of the world's sales through the real
-// composition: one line per qty in qtys, all of the one product. The
-// Trenton clerk rings the Trenton sales, the Kingston clerk the Kingston
-// sale.
-func (s *trentonStack) ringSale(idempotencyKey, branch, drawer, who string, qtys ...float64) trentonSaleView {
+// composition: one line per qty in qtys, all of the one product. who rings
+// it: trenton (the clerk), kingston (the Kingston clerk) or manager (the
+// Sales manager, for the not-the-clerk leg). tender defaults to cash; card
+// rides the stub charger and carries the processor reference.
+func (s *trentonStack) ringSale(idempotencyKey, branch, drawer, who string, qtys []float64, tender string) trentonSaleView {
 	s.t.Helper()
+	if tender == "" {
+		tender = TenderCash
+	}
 	lines := make([]map[string]any, 0, len(qtys))
 	for _, qty := range qtys {
 		lines = append(lines, map[string]any{"product_id": l2cProductID, "qty_entered": qty, "uom_entered": "SF"})
@@ -388,12 +396,18 @@ func (s *trentonStack) ringSale(idempotencyKey, branch, drawer, who string, qtys
 		"branch_id":       branch,
 		"till_session_id": drawer,
 		"sale_type":       SaleCollectNow,
-		"tender":          TenderCash,
+		"tender":          tender,
 		"lines":           lines,
 	}
+	if tender == TenderCard {
+		body["payment_token"] = "tok_till_l2c_demo"
+	}
 	who2 := trentonClerkSub
-	if who == "kingston" {
+	switch who {
+	case "kingston":
 		who2 = kingstonClerkSub
+	case "manager":
+		who2 = trentonMgrSub
 	}
 	rec := s.do(http.MethodPost, "/api/v1/pos/sales", s.bearer(who2), "", body)
 	if rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
@@ -433,25 +447,45 @@ func (s *trentonStack) returnBody(key string, sale trentonSaleView, lineNo int, 
 	return body
 }
 
-func (s *trentonStack) auditRows(action string) []map[string]any {
+// auditRows reads one action's rows filed under ONE sale, newest first
+// (the lead's P3-7 ruling: a shared database holds many rows of one
+// action, and the row under test is the one this sale owns).
+func (s *trentonStack) auditRows(action, entityID string) []map[string]any {
 	s.t.Helper()
 	rows, err := s.pool.Query(context.Background(),
-		`SELECT COALESCE(actor_id::text,''), changes FROM audit_log WHERE action = $1 ORDER BY seq DESC LIMIT 20`, action)
+		`SELECT COALESCE(entity_id::text,''), COALESCE(actor_id::text,''), changes
+		   FROM audit_log WHERE action = $1 AND entity_id = $2::uuid
+		  ORDER BY seq DESC LIMIT 20`, action, entityID)
 	if err != nil {
 		s.t.Fatalf("audit read: %v", err)
 	}
 	defer rows.Close()
 	var out []map[string]any
 	for rows.Next() {
-		var actor string
+		var entity, actor string
 		var changes map[string]any
-		if err := rows.Scan(&actor, &changes); err != nil {
+		if err := rows.Scan(&entity, &actor, &changes); err != nil {
 			s.t.Fatalf("audit scan: %v", err)
 		}
+		changes["entity_id"] = entity
 		changes["actor_id"] = actor
 		out = append(out, changes)
 	}
 	return out
+}
+
+// committedEvent reads the newest pos.return.committed payload for one
+// sale.
+func (s *trentonStack) committedEvent(orderID string) map[string]any {
+	s.t.Helper()
+	var payload map[string]any
+	err := s.pool.QueryRow(context.Background(),
+		`SELECT payload FROM events_outbox WHERE topic = 'pos.return.committed' AND payload->>'order_id' = $1
+		  ORDER BY occurred_at DESC LIMIT 1`, orderID).Scan(&payload)
+	if err != nil {
+		s.t.Fatalf("event read: %v", err)
+	}
+	return payload
 }
 
 // The whole story, in order, on one world.
@@ -460,12 +494,15 @@ func TestIntegration_Trenton_RefundRuleEndToEnd(t *testing.T) {
 
 	// The committed sales at the exact 10.00 anchor: 500.00 of goods on the
 	// Trenton sale (a 200.00 line and a 300.00 line), 100.00 on the
-	// Kingston sale, 150.00 on the small sale, 300.00 on the manager's own.
-	// Tax rides the composition's flat rate on top of every total.
-	saleTrenton := s.ringSale(s.keys.trenton, trentonBranchID, s.trentonTill, "trenton", 20, 30)
-	saleKingston := s.ringSale(s.keys.kingston, kingstonBranchID, s.kingstonTill, "kingston", 10)
-	saleSmall := s.ringSale(s.keys.small, trentonBranchID, s.trentonTill, "trenton", 15)
-	saleForManager := s.ringSale(s.keys.manager, trentonBranchID, s.trentonTill, "trenton", 30)
+	// Kingston sale (CARD tendered, so the card return leg truly tests the
+	// wall against the processor, the lead's P2-3 ruling), 150.00 on the
+	// small sale, and 300.00 rung by the MANAGER for the not-the-clerk leg
+	// (the lead's P3-2 ruling). Tax rides the composition's flat rate on
+	// top of every total.
+	saleTrenton := s.ringSale(s.keys.trenton, trentonBranchID, s.trentonTill, "trenton", []float64{20, 30}, TenderCash)
+	saleKingston := s.ringSale(s.keys.kingston, kingstonBranchID, s.kingstonTill, "kingston", []float64{10}, TenderCard)
+	saleSmall := s.ringSale(s.keys.small, trentonBranchID, s.trentonTill, "trenton", []float64{15}, TenderCash)
+	saleForManager := s.ringSale(s.keys.manager, trentonBranchID, s.trentonTill, "manager", []float64{30}, TenderCash)
 
 	// The lookup's positive leg first: the Trenton clerk reads the Trenton
 	// sale's returnable lines.
@@ -509,16 +546,31 @@ func TestIntegration_Trenton_RefundRuleEndToEnd(t *testing.T) {
 		approvers[0] != "sales_manager" || approvers[1] != "branch_manager" {
 		t.Fatalf("the refusal must name both approver roles: %v", approval)
 	}
-	refusals := s.auditRows(auditActionRefundApprovalRefused)
+	refusals := s.auditRows(auditActionRefundApprovalRefused, saleTrenton.OrderID)
 	if len(refusals) == 0 {
 		t.Fatal("the refusal must write its audit row")
 	}
 	latest := refusals[0]
+	if latest["entity_id"] != saleTrenton.OrderID {
+		t.Fatalf("the refusal row must be filed under the sale: %v", latest)
+	}
 	if latest["actor_id"] != clerkUserID {
 		t.Fatalf("the refusal row must name the clerk: %v", latest)
 	}
 	if latest["amount_cents"] != float64(33900) { // 300.00 + the flat 13 percent
 		t.Fatalf("the refusal row must keep the refused amount: %v", latest)
+	}
+
+	// The replay sits behind the wall (the lead's P2-2 ruling): the
+	// KINGSTON clerk holding the Trenton return's committed key refuses
+	// exactly like the first attempt, carrying none of the return.
+	inReplay := s.returnBody(in200["idempotency_key"].(string), saleTrenton, 0, RefundCash, 20)
+	rec = s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(kingstonClerkSub), "", inReplay)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("a foreign replay must hit the wall, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if replayed := s.decodeBody(rec); replayed["return_id"] != nil || replayed["total_cents"] != nil {
+		t.Fatalf("a walled replay must carry none of the committed return: %v", replayed)
 	}
 
 	// 3. The stays-refused legs: every credential short of qualifying
@@ -553,6 +605,11 @@ func TestIntegration_Trenton_RefundRuleEndToEnd(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("another org's credential must refuse on the foreign family, got %d: %s", rec.Code, rec.Body.String())
 	}
+	// A credential that cannot be judged is in the trail (the lead's P3-5
+	// ruling): the expired attempt above wrote its row under the sale.
+	if creds := s.auditRows(auditActionRefundCredentialRefused, saleTrenton.OrderID); len(creds) == 0 {
+		t.Fatal("a refused credential must write its audit row")
+	}
 
 	// 4. The same 300.00 return with the Sales manager's credential in the
 	// approver header commits as the manager's decision: the audit row
@@ -562,16 +619,29 @@ func TestIntegration_Trenton_RefundRuleEndToEnd(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("the manager's credential must commit the return, got %d: %s", rec.Code, rec.Body.String())
 	}
-	committed := s.auditRows("RETURN_COMPLETED")
+	// The completion row is filed under the return itself; the sale is on
+	// the refusal row and in the event.
+	committedReturn := s.decodeBody(rec)["return_id"].(string)
+	committed := s.auditRows("RETURN_COMPLETED", committedReturn)
 	var decisionRow map[string]any
 	for _, row := range committed {
-		if row["approver_id"] == trentonMgrSub {
+		if row["approver_id"] == managerUserID {
 			decisionRow = row
 			break
 		}
 	}
 	if decisionRow == nil {
 		t.Fatalf("no completion row names the manager as approver: %v", committed)
+	}
+	// The approver is named by the STABLE staff users id (the lead's P2-4
+	// ruling): the platform subject carries a seven-digit run, the shape
+	// the chokepoint redacts, and it must not be the name that decides the
+	// row.
+	if decisionRow["approver_id"] == trentonMgrSub || decisionRow["approver_id"] == "[redacted]" {
+		t.Fatalf("the approver must be the staff users id, not the redactable subject: %v", decisionRow)
+	}
+	if decisionRow["subject_ref"] == nil {
+		t.Fatalf("the row keeps the platform subject as the directory reference: %v", decisionRow)
 	}
 	if decisionRow["actor_id"] != clerkUserID {
 		t.Fatalf("the decision row must keep Sales as the clerk who rang it: %v", decisionRow)
@@ -580,8 +650,37 @@ func TestIntegration_Trenton_RefundRuleEndToEnd(t *testing.T) {
 		t.Fatalf("the decision row must cite the refusal: %v", decisionRow)
 	}
 
-	// 5. As Sales manager the 300.00 return commits with no second
-	// credential, on the fourth sale's line.
+	// The committed record names the decision in one identifier space and
+	// cites the refusal's own audit row id (the lead's P3-3 ruling).
+	event := s.committedEvent(saleTrenton.OrderID)
+	if event["decided_by"] != managerUserID || event["rang_by"] != clerkUserID {
+		t.Fatalf("the record must name both people by staff id: %v", event)
+	}
+	if event["decided_by_subject"] != trentonMgrSub {
+		t.Fatalf("the record keeps the platform subject as the directory reference: %v", event)
+	}
+	committedApproval, isMap := event["approval"].(map[string]any)
+	if !isMap || committedApproval["refusal"] != "refund_approval_required" {
+		t.Fatalf("the record must cite the refusal: %v", event["approval"])
+	}
+	if committedApproval["refund_cents"] != float64(33900) {
+		t.Fatalf("the event carries the refund total under its own name: %v", committedApproval)
+	}
+	if committedApproval["refusal_id"] == nil || committedApproval["refusal_id"] == "" {
+		t.Fatalf("the decision must cite the refusal's audit row id: %v", committedApproval)
+	}
+
+	// 5a. The isolating leg for the not-the-clerk check (the lead's P3-2
+	// ruling): the MANAGER rings a sale and attaches their OWN credential.
+	// The role is on the approvers list and the grants reach the branch, so
+	// only the not-the-clerk check can refuse, and it does.
+	inOwn := s.returnBody(key(), saleForManager, 0, RefundCash, 30)
+	rec = s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonMgrSub), s.bearer(trentonMgrSub), inOwn)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("a listed role's own credential cannot approve its own refund, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// 5b. As Sales manager the 300.00 return commits with no second
+	// credential.
 	inMgr := s.returnBody(key(), saleForManager, 0, RefundCash, 30)
 	rec = s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonMgrSub), "", inMgr)
 	if rec.Code != http.StatusCreated {
