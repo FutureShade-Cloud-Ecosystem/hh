@@ -119,6 +119,10 @@ func (s *Service) UpdatePolicy(ctx context.Context, p PosPolicy) (PosPolicy, err
 }
 
 // Park saves a ticket for later (no order, no stock effect, no AR, prices re-derive on resume).
+//
+// THE PARKED FENCE (D49 row 500, D48 row 342): a branch is a hard wall on writes too, so the
+// caller must reach the branch it parks ONTO before the write; a login from another branch
+// cannot plant a ticket on a foreign branch's parked list.
 func (s *Service) Park(ctx context.Context, in ParkInput) (ParkedTicket, error) {
 	if in.BranchID == "" {
 		return ParkedTicket{}, clientErr(http.StatusBadRequest, "pos: branch_id is required")
@@ -131,6 +135,13 @@ func (s *Service) Park(ctx context.Context, in ParkInput) (ParkedTicket, error) 
 			return ParkedTicket{}, clientErr(http.StatusUnprocessableEntity, "pos: every parked line needs a product_id and a positive qty_entered")
 		}
 	}
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return ParkedTicket{}, err
+	}
+	if !caller.CanAccessBranch(in.BranchID) {
+		return ParkedTicket{}, clientErr(http.StatusForbidden, "pos: caller cannot access branch %s", in.BranchID)
+	}
 	saleType := in.SaleType
 	if saleType == "" {
 		saleType = SaleCollectNow
@@ -142,26 +153,70 @@ func (s *Service) Park(ctx context.Context, in ParkInput) (ParkedTicket, error) 
 }
 
 // ListParked returns the PARKED tickets for a branch (newest first).
+//
+// THE PARKED FENCE (D49 row 500): a branch is a hard wall, so a caller is held to its own
+// branches on every parked read, the same 403 the sale's branch check answers.
 func (s *Service) ListParked(ctx context.Context, branchID string) ([]ParkedTicket, error) {
 	if branchID == "" {
 		return nil, clientErr(http.StatusBadRequest, "pos: branch_id is required")
+	}
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !caller.CanAccessBranch(branchID) {
+		return nil, clientErr(http.StatusForbidden, "pos: caller cannot access branch %s", branchID)
 	}
 	return s.store.ListParkedTickets(ctx, branchID)
 }
 
 // ResumeParked marks a PARKED ticket RESUMED and returns its payload, the client re-adds the lines
 // through the normal pricing path so nothing rings at a stale price. Resuming twice is a 409.
+//
+// THE PARKED FENCE (D49 row 500): anyone at the counter picks up any parked sale at THEIR branch,
+// no owner check, who parked and who resumed stays recorded (0043's columns). The wall is the
+// branch alone, and a ticket behind it is refused before any write.
 func (s *Service) ResumeParked(ctx context.Context, id string) (ParkedTicket, error) {
 	if id == "" {
 		return ParkedTicket{}, errBadRequest
+	}
+	if err := s.parkedBranchAccess(ctx, id); err != nil {
+		return ParkedTicket{}, err
 	}
 	return s.store.MarkParkedResumed(ctx, id, actorFrom(ctx))
 }
 
 // DiscardParked marks a PARKED ticket DISCARDED. Discarding a non-PARKED ticket is a 409.
+// The same parked fence holds: the caller's branches, checked before any write.
 func (s *Service) DiscardParked(ctx context.Context, id string) error {
 	if id == "" {
 		return errBadRequest
 	}
+	if err := s.parkedBranchAccess(ctx, id); err != nil {
+		return err
+	}
 	return s.store.MarkParkedDiscarded(ctx, id)
+}
+
+// parkedBranchAccess is the by-id half of the parked fence, read before any write. Behind the
+// wall answers what a missing ticket answers: the same 404 either way, so a caller holding a
+// foreign ticket's id learns nothing from it, not that it exists and not where it sits. (The
+// list's 403 names no ticket: the caller names the branch itself there, so there is nothing to
+// learn.)
+func (s *Service) parkedBranchAccess(ctx context.Context, id string) error {
+	t, found, err := s.store.GetParkedTicket(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errParkedNotFound
+	}
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return err
+	}
+	if !caller.CanAccessBranch(t.BranchID) {
+		return errParkedNotFound
+	}
+	return nil
 }

@@ -219,9 +219,12 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithAuditTrail(auditSvc)
 
 	// A-19 POS: the counter, composing pricing + till + the hold-aware
-	// credit gate + the (initially simulated) signature provider.
+	// credit gate + the (initially simulated) signature provider. The
+	// till's role-configuration rules ride the same wiring (RT-B): the
+	// dealer's configuration loaded at boot, the approver credential
+	// through the same guards the routes register behind.
 	posRepo := pos.NewRepository(pool)
-	posSvc := pos.NewService(posRepo).
+	posSvc := wireTillRules(pos.NewService(posRepo).
 		WithLineResolver(pricingSvc).
 		WithTenderTaker(tillSvc).
 		WithCreditGate(till.NewHoldAwareCreditGate(ops.tillRepo)).
@@ -229,7 +232,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
 		WithActorNames(staffNameAdapter{repo: orderRepo}).
-		WithClock(time.Now)
+		WithClock(time.Now), loadRoleConfig(), g, link)
 	posHandler := pos.NewHandler(posSvc, log).WithUserLinker(link)
 	posHandler.RegisterRoutes(r, g)
 
