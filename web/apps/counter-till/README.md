@@ -27,9 +27,13 @@ serves, because there the route answers nothing too.
 `npm test` runs the Playwright suite (playwright.config.ts). It starts the
 stub and the dev server itself and drives the system Chrome through the
 `chrome` channel: the same browser the design system's browser leg expects on
-the runner, so no browser download rides the npm install. The spec files are
-named `*.pw.ts` so the repository root's bun drift gate (which discovers
-`*.test.*` suites) does not pick them up.
+the runner, so no browser download rides the npm install. The suite's ports
+are hashed from this app's own path, so a sibling worktree's servers can
+never stand in for its own, and `reuseExistingServer` is false, so the suite
+only ever tests the servers it started; a hand run can still pin ports with
+`CT_APP_PORT` and `CT_STUB_PORT`. The spec
+files are named `*.pw.ts` so the repository root's bun drift gate (which
+discovers `*.test.*` suites) does not pick them up.
 
 The stub is a development and test double only: the real routes are the core's
 (`POST /api/v1/demo/session`, `GET /api/v1/demo/flows` in
