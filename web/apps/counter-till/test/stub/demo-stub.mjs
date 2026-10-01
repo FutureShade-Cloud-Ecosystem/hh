@@ -12,6 +12,10 @@
 //   POST /api/v1/till/sessions            -> TillOpenResult
 //   GET  /api/v1/till/sessions/{id}       -> TillSessionDetail
 //   GET  /api/v1/products/counter-search  -> ProductCounterSearchResults
+//   GET  /api/v1/customers/search         -> CustomerSearchResult[]
+//   GET  /api/v1/pos/account-standing     -> PosAccountStanding
+//   POST /api/v1/pos/counter-prices       -> PosCounterPrices
+//   POST /api/v1/pos/margin-glance        -> PosMarginGlance
 // The demo routes are public in the contract (security: []), so they check no
 // credential; the phrase gate in front of the real demo box is Caddy's (W5's
 // image), not the routes'. The staff routes are not public: this stub reads
@@ -294,6 +298,18 @@ function taxCents(subtotal) {
   return Math.round((subtotal * HST_RATE_BPS) / 10000);
 }
 
+// A line's committed total: the rule price at the rung quantity, rounded to
+// the whole cent exactly as the engine's fixed-precision decimal does. The
+// ring, the price read and the glance all answer through this one function,
+// so a screen figure and a committed figure cannot drift.
+function lineTotalCents(unitCents, qtyEntered) {
+  return Math.round(unitCents * qtyEntered);
+}
+
+function marginBpsOf(revenue, cost) {
+  return Math.round(((revenue - cost) / revenue) * 10000);
+}
+
 // ---------------------------------------------------------------------------
 // The mint, the auth read, and the response helpers.
 // ---------------------------------------------------------------------------
@@ -525,6 +541,143 @@ const server = createServer((request, response) => {
         p.aliases.some((alias) => alias.includes(q)),
     ).map(counterHit);
     respondJson(response, 200, { items });
+    return;
+  }
+
+  // The account picker's read: the walk-in is excluded server-side (the
+  // contract's own words), so the till never picks what it cannot bill.
+  if (request.method === "GET" && path === "/api/v1/customers/search") {
+    const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+    if (q === "") {
+      respondJson(response, 200, []);
+      return;
+    }
+    const rows = CUSTOMERS.filter(
+      (c) => c.name.toLowerCase().includes(q) || c.account_no.toLowerCase().startsWith(q),
+    ).map(customerSearchRow);
+    respondJson(response, 200, rows);
+    return;
+  }
+
+  // The standing read: what the account owes, its oldest bucket, and whether
+  // a credit hold sits on it. The demo world carries one past-due bucket
+  // (Fenwick's) so the three postures a counter meets are all visible: a
+  // current account, one past due, and one on hold. The house walk-in has no
+  // account and no balance, and the empty answer is the walk-in's answer.
+  if (request.method === "GET" && path === "/api/v1/pos/account-standing") {
+    const customerId = url.searchParams.get("customer_id") ?? "";
+    if (customerId === "") {
+      respondJson(response, 200, {});
+      return;
+    }
+    const customer = CUSTOMERS.find((c) => c.id === customerId) ?? null;
+    if (customer === null) {
+      respondJson(response, 404, { error: "no such customer account" });
+      return;
+    }
+    const pastDue = customer.account_no === "C02" ? 41500 : 0;
+    respondJson(response, 200, {
+      past_due_cents: pastDue,
+      oldest_bucket: pastDue > 0 ? "30" : undefined,
+      on_hold: customer.on_hold,
+    });
+    return;
+  }
+
+  // The counter price picture: the same table the ring answers from, with the
+  // customer type resolved server-side so the screen says whose prices these
+  // are without trusting the browser's claim.
+  if (request.method === "POST" && path === "/api/v1/pos/counter-prices") {
+    readBody(request, (parsed) => {
+      const branchId = typeof parsed.branch_id === "string" ? parsed.branch_id : "";
+      if (branchId !== callerBranch) {
+        respondJson(response, 403, { error: "that branch is not one your grant reaches" });
+        return;
+      }
+      const customerId = typeof parsed.customer_id === "string" ? parsed.customer_id : "";
+      const customer = customerFor(customerId);
+      if (customer === null) {
+        respondJson(response, 404, { error: "no such customer account" });
+        return;
+      }
+      const items = Array.isArray(parsed.items) ? parsed.items : [];
+      const prices = items.map((item) => {
+        const productId = typeof item?.product_id === "string" ? item.product_id : "";
+        const resolved = resolveLine(customer.id, productId, branchId);
+        if (resolved === null) {
+          return { product_id: productId, price_uom: "", retail_cents: 0, customer_cents: 0, unpriceable: true };
+        }
+        return {
+          product_id: resolved.product.product_id,
+          price_uom: resolved.price_uom,
+          retail_cents: resolved.retail_cents,
+          customer_cents: resolved.customer_cents,
+          ...(resolved.saving_cents > 0 ? { saving_cents: resolved.saving_cents } : {}),
+          ...(resolved.basis !== undefined ? { basis: resolved.basis } : {}),
+        };
+      });
+      respondJson(response, 200, { customer_type: customer.customer_type, prices });
+    });
+    return;
+  }
+
+  // The margin glance: cost against the SAME engine revenue, per line. A line
+  // with no cost at this branch stays byte-absent in its position (the empty
+  // object), which is exactly the placeholder case the till renders; the edge
+  // restraint carries no Trenton cost on purpose, so the demo shows a real
+  // unknown beside real margins. Both demo logins are answered: the
+  // configuration's cost and margin list puts the sales roles inside the
+  // glance, and the till renders whatever arrives either way.
+  if (request.method === "POST" && path === "/api/v1/pos/margin-glance") {
+    readBody(request, (parsed) => {
+      const branchId = typeof parsed.branch_id === "string" ? parsed.branch_id : "";
+      if (branchId !== callerBranch) {
+        respondJson(response, 403, { error: "that branch is not one your grant reaches" });
+        return;
+      }
+      const customerId = typeof parsed.customer_id === "string" ? parsed.customer_id : "";
+      const customer = customerFor(customerId);
+      if (customer === null) {
+        respondJson(response, 404, { error: "no such customer account" });
+        return;
+      }
+      const lines = Array.isArray(parsed.lines) ? parsed.lines : [];
+      const outLines = [];
+      let revSum = 0;
+      let costSum = 0;
+      let known = 0;
+      let partial = false;
+      for (const line of lines) {
+        const productId = typeof line?.product_id === "string" ? line.product_id : "";
+        const qty = typeof line?.qty_entered === "number" ? line.qty_entered : 0;
+        const resolved = resolveLine(customer.id, productId, branchId);
+        const product = PRODUCTS.find((p) => p.product_id === productId) ?? null;
+        const costPerUnit = product === null ? undefined : product.branch_cost_cents[branchId];
+        if (resolved === null || product === null || costPerUnit === undefined || qty <= 0) {
+          partial = true;
+          outLines.push({});
+          continue;
+        }
+        const revenue = lineTotalCents(resolved.customer_cents, qty);
+        const cost = lineTotalCents(costPerUnit, qty);
+        if (revenue <= 0) {
+          partial = true;
+          outLines.push({});
+          continue;
+        }
+        outLines.push({ margin_bps: marginBpsOf(revenue, cost), est_profit_cents: revenue - cost });
+        revSum += revenue;
+        costSum += cost;
+        known += 1;
+      }
+      respondJson(response, 200, {
+        lines: outLines,
+        ...(known > 0
+          ? { margin_bps: marginBpsOf(revSum, costSum), est_profit_cents: revSum - costSum }
+          : {}),
+        ...(partial ? { partial: true } : {}),
+      });
+    });
     return;
   }
 
