@@ -426,6 +426,18 @@ export class ReturnsFlow {
   }
 
   /**
+   * The desk blanked entirely, sale number included: sign-out's reset. The
+   * till is the next person's, and nothing of the last person's return (the
+   * draft, the refusal, the receipt, the number they were working from)
+   * belongs on the next person's screen.
+   */
+  reset(): void {
+    this.orderNo = "";
+    this.finding = false;
+    this.startAnotherReturn();
+  }
+
+  /**
    * The one return input the desk sends, and re-sends unchanged when a
    * manager approves it: the idempotency key is minted once per drafted
    * return, so the approval's send is the same send the server may treat as

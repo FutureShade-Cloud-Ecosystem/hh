@@ -246,7 +246,9 @@ export class CounterTillApp extends HHElement {
    * Sign out: the controller ends the mint (the adapter drops it) and wipes
    * custody either way; the entry view with the cards comes back, because the
    * flows answer is still held. A reload signs out too: the mint lives only
-   * in this tab's memory.
+   * in this tab's memory. The returns desk is blanked with the session: the
+   * till is the next person's, and no draft, refusal or receipt of the last
+   * one stays on it.
    */
   async #signOut(): Promise<void> {
     if (this.#busy) return;
@@ -256,6 +258,7 @@ export class CounterTillApp extends HHElement {
     this.#busy = false;
     this.#till = null;
     this.#message = null;
+    this.#returns.reset();
     this.requestUpdate();
   }
 

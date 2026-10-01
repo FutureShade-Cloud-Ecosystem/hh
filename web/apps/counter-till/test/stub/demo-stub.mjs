@@ -188,7 +188,9 @@ let RETURN_SEQ = 0;
 
 // The approver credential, read the way the caller's is: a bearer this stub
 // minted, carried in its own header. `present` says whether the header rode
-// the request at all; `account` is the verified approver or null.
+// the request at all; `account` is the verified approver or null. Verified
+// means unexpired too: the real rule takes a credential issued within the
+// short window the configuration sets, and an expired mint is not one.
 function approverFromRequest(request) {
   const header = request.headers["x-approver-authorization"] ?? "";
   if (header === "") return { present: false, account: null };
@@ -198,8 +200,13 @@ function approverFromRequest(request) {
   if (parts.length !== 3) return { present: true, account: null };
   try {
     const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
-    const sub = payload === null || typeof payload !== "object" ? undefined : payload.sub;
+    if (payload === null || typeof payload !== "object") return { present: true, account: null };
+    const sub = payload.sub;
+    const exp = payload.exp;
     if (typeof sub !== "string") return { present: true, account: null };
+    if (typeof exp !== "number" || !Number.isFinite(exp) || exp * 1000 <= Date.now()) {
+      return { present: true, account: null };
+    }
     for (const flow of Object.keys(USERS)) {
       if (USERS[flow].user_id === sub) return { present: true, account: USERS[flow] };
     }
