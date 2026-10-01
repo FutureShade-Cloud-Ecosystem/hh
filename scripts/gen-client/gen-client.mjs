@@ -124,8 +124,9 @@
 // returns Promise<Result<success type>>: the success schema is the lowest
 // declared 2xx response; a response whose content is not JSON resolves the raw
 // text (plain string formats) or the bytes (format: binary). The contract's
-// shared org header (X-Org) is deliberately not an operation parameter: it
-// arrives through the transport's caller-set header provider
+// caller-set headers (the shared org header X-Org, and the return route's
+// approver credential X-Approver-Authorization) are deliberately not operation
+// parameters: they arrive through the transport's caller-set header provider
 // (see web/packages/api-client/README.md).
 //
 // Request bodies: when application/json is among the declared content types it
@@ -597,7 +598,9 @@ for (const path of Object.keys(doc.paths).sort()) {
     // arguments (the bearer is not one either): the shared org header, and
     // the return route's approver credential, which the till holds in memory
     // for that one call and drops. Any other header parameter is an unmapped
-    // shape and fails here.
+    // shape and fails here. The allowlist is global: a listed header is
+    // accepted beside any operation that declares it, not bound to the
+    // return route; a per-operation bound would be a later tightening.
     const KNOWN_HEADER_PARAMS = new Set(["X-Org", "X-Approver-Authorization"]);
     if (headerParams.some((p) => !KNOWN_HEADER_PARAMS.has(p.name))) {
       problems.push(`${where}: header parameter other than X-Org and X-Approver-Authorization`);
