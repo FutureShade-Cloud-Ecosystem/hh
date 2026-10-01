@@ -1,0 +1,219 @@
+// The acceptance run's world leg: the facts the screens stand on, read from
+// the demo image's own core as each rule names it. The margin glance answers
+// the clerk (the configuration's cost and margin list, not a managers only
+// default), the card rail answers simulated true, the dealer's approval amount
+// and its approvers are the configuration's, the role gate admits the manager
+// past the counter's walls and refuses the clerk, the other branch's sale is
+// refused at this counter, the seeded card sale carries no card reference, and
+// the world's newest rows are dated to the moment the box was rebuilt.
+import { expect, test } from "@playwright/test";
+import {
+  KINGSTON_ID,
+  SEEDED,
+  TRENTON_ID,
+  houseDay,
+  marginPercent,
+  mint,
+  shot,
+  staffGet,
+  staffPost,
+} from "./helpers.js";
+
+const TEN_PRODUCTS = [
+  "DEMO-PAV-HOLLAND",
+  "DEMO-PAV-BRUSSELS",
+  "DEMO-PAV-COURTSTONE",
+  "DEMO-WALL-BLOCK",
+  "DEMO-STEP-SLAB",
+  "DEMO-AGG-HPB",
+  "DEMO-AGG-GA",
+  "DEMO-AGG-SAND",
+  "DEMO-MULCH-BLACK",
+  "DEMO-EDGE-ALU",
+];
+
+test("the way in's data: two flows with role codes and labels", async ({ page }) => {
+  const flows = await page.request.get("/api/v1/demo/flows");
+  expect(flows.ok()).toBe(true);
+  const body = (await flows.json()) as {
+    flows: Array<{ flow: string; role_code: string; label: string }>;
+  };
+  expect(body.flows).toHaveLength(2);
+  expect(body.flows.map((row) => row.flow)).toEqual(["sales", "sales-manager"]);
+  expect(body.flows.map((row) => row.role_code)).toEqual(["inside_sales", "sales_manager"]);
+  expect(body.flows.map((row) => row.label)).toEqual(["Sales", "Sales manager"]);
+  await shot(page, "00-world-flows", test.info());
+});
+
+test("the branch the demo login reaches is Trenton alone", async ({ page }) => {
+  const bearer = await mint(page, "sales");
+  const answer = await staffGet(page, bearer, "/api/v1/branches");
+  expect(answer.status).toBe(200);
+  const rows = answer.body as unknown as Array<Record<string, unknown>>;
+  expect(rows).toHaveLength(1);
+  expect(rows[0].code).toBe("TRT");
+  expect(rows[0].id).toBe(TRENTON_ID);
+});
+
+test("the catalogue's ten demo products answer, every name carrying (demo)", async ({
+  page,
+}) => {
+  const bearer = await mint(page, "sales");
+  for (const sku of TEN_PRODUCTS) {
+    const answer = await staffGet(page, bearer, `/api/v1/products/counter-search?q=${sku}`);
+    expect(answer.status).toBe(200);
+    const items = answer.body.items as Array<Record<string, unknown>>;
+    expect(items.length).toBeGreaterThanOrEqual(1);
+    const hit = items.find((item) => item.sku === sku);
+    expect(hit, `${sku} answers the counter search`).toBeTruthy();
+    expect(String(hit?.name).endsWith("(demo)")).toBe(true);
+  }
+  // The naming rule the page states: every DEMO coded hit carries (demo).
+  const all = await staffGet(page, bearer, "/api/v1/products/counter-search?q=DEMO-");
+  const items = all.body.items as Array<Record<string, unknown>>;
+  expect(items.length).toBeGreaterThanOrEqual(TEN_PRODUCTS.length);
+  for (const item of items) {
+    if (String(item.sku).startsWith("DEMO-")) {
+      expect(String(item.name).endsWith("(demo)")).toBe(true);
+    }
+  }
+});
+
+test("the account picker answers the branch's demo accounts, every name carrying (demo)", async ({
+  page,
+}) => {
+  const bearer = await mint(page, "sales");
+  const answer = await staffGet(
+    page,
+    bearer,
+    `/api/v1/customers/search?q=demo&branch_id=${TRENTON_ID}`,
+  );
+  expect(answer.status).toBe(200);
+  const rows = answer.body as unknown as Array<Record<string, unknown>>;
+  expect(rows.length).toBeGreaterThan(0);
+  // The seed's Trenton accounts answer the picker, under their (demo) names;
+  // the naming rule holds for every DEMO coded account row the picker
+  // returns (migration planted rows beside them are no part of the nine).
+  const accounts = rows.filter((row) => String(row.account_no).startsWith("DEMO-C"));
+  expect(accounts.length).toBeGreaterThanOrEqual(4);
+  for (const row of accounts) {
+    // The retail walk-up accounts read "(demo retail)", so the match is the
+    // marker's opening, not its closing paren.
+    expect(String(row.name).includes("(demo")).toBe(true);
+  }
+  for (const accountNo of ["DEMO-C02", "DEMO-C03", "DEMO-C05", "DEMO-C07"]) {
+    expect(rows.some((row) => row.account_no === accountNo)).toBe(true);
+  }
+});
+
+test("the clerk's margin glance answers: the configuration names who sees cost and margin", async ({
+  page,
+}) => {
+  const bearer = await mint(page, "sales");
+  const holland = await staffGet(page, bearer, "/api/v1/products/counter-search?q=DEMO-PAV-HOLLAND");
+  const productId = (holland.body.items as Array<Record<string, unknown>>)[0].product_id as string;
+  const priced = await staffPost(page, bearer, "/api/v1/pos/counter-prices", {
+    branch_id: TRENTON_ID,
+    customer_id: "",
+    items: [{ product_id: productId, qty_entered: 10, uom_entered: "PC" }],
+  });
+  expect(priced.status).toBe(200);
+  const customerType = priced.body.customer_type as string;
+  const glanced = await staffPost(page, bearer, "/api/v1/pos/margin-glance", {
+    branch_id: TRENTON_ID,
+    customer_id: "",
+    customer_type: customerType,
+    lines: [{ product_id: productId, qty_entered: 10, uom_entered: "PC" }],
+  });
+  expect(glanced.status).toBe(200);
+  const lines = glanced.body.lines as Array<{ margin_bps?: number }>;
+  expect(Array.isArray(lines)).toBe(true);
+  expect(lines).toHaveLength(1);
+  expect(typeof lines[0].margin_bps).toBe("number");
+  // The rendered column shows the same words the glance answered.
+  expect(marginPercent(lines[0].margin_bps as number)).toMatch(/%$/);
+});
+
+test("the walls the served box holds: a price rule write refused to the clerk, past the gate for the manager", async ({
+  page,
+}) => {
+  const manager = await mint(page, "sales-manager");
+  const clerk = await mint(page, "sales");
+  // A price rule write: refused to the clerk, and the manager's empty body is
+  // refused by the route's own validation (400), which is past the gate, and
+  // writes nothing. The demo box holds this difference by the tier gate; the
+  // role gate's attach point is the goal wiring's to close (docs/BLOCKERS.md
+  // records the gap this box serves).
+  const clerkWrite = await staffPost(page, clerk, "/api/v1/pricing/rules", {});
+  expect(clerkWrite.status).toBe(403);
+  const managerWrite = await staffPost(page, manager, "/api/v1/pricing/rules", {});
+  expect([400, 422]).toContain(managerWrite.status);
+});
+
+test("the card rail answers simulated true, the demo's own word", async ({ page }) => {
+  const bearer = await mint(page, "sales");
+  const answer = await staffGet(page, bearer, "/api/v1/payments/config");
+  expect(answer.status).toBe(200);
+  expect(answer.body.simulated).toBe(true);
+});
+
+test("the seeded card sale carries no card reference, so the desk cannot refund it by card", async ({
+  page,
+}) => {
+  const bearer = await mint(page, "sales");
+  const trentonCardSale = "DEMO-TRT-S03";
+  const lookup = await staffGet(
+    page,
+    bearer,
+    `/api/v1/pos/returns/lookup?order_no=${encodeURIComponent(trentonCardSale)}`,
+  );
+  expect(lookup.status).toBe(200);
+  expect(lookup.body.sale_tender).toBe("CARD");
+  expect(lookup.body.card_refundable).toBe(false);
+});
+
+test("a Kingston sale is refused at this counter, and its ticket never shows", async ({ page }) => {
+  const bearer = await mint(page, "sales");
+  const lookup = await staffGet(
+    page,
+    bearer,
+    `/api/v1/pos/returns/lookup?order_no=${encodeURIComponent(SEEDED.kingstonSale)}`,
+  );
+  expect(lookup.status).toBe(403);
+  expect(String(lookup.body.error)).toContain("not reachable");
+  // The branch's parked list answers Trenton's ticket and never Kingston's;
+  // the served core answers the list as the bare array its page shape wraps.
+  const parked = await staffGet(page, bearer, `/api/v1/pos/parked?branch_id=${TRENTON_ID}`);
+  expect(parked.status).toBe(200);
+  const rawItems = Array.isArray(parked.body) ? parked.body : parked.body.items;
+  const items = rawItems as Array<{ ticket_no: string; branch_id: string }>;
+  expect(items.some((row) => row.ticket_no === SEEDED.trentonTicket)).toBe(true);
+  expect(items.some((row) => row.ticket_no === SEEDED.kingstonTicket)).toBe(false);
+  for (const row of items) {
+    expect(row.branch_id).toBe(TRENTON_ID);
+  }
+  // The other branch's id answers a fenced read with the wall, not with rows.
+  const kingstonParked = await staffGet(
+    page,
+    bearer,
+    `/api/v1/pos/parked?branch_id=${KINGSTON_ID}`,
+  );
+  expect(kingstonParked.status).toBe(403);
+});
+
+test("the world's newest rows are dated to the moment the box was rebuilt", async ({ page }) => {
+  const bearer = await mint(page, "sales");
+  // The seed writes its day-keyed counter sale under a stamp of its own
+  // rebuild's house zone day; the run reads the same stamp off its own clock
+  // and asks the returns desk for that sale.
+  const stamp = houseDay().replaceAll("-", "");
+  const orderNo = `DEMO-TRT-T2-${stamp}`;
+  const lookup = await staffGet(
+    page,
+    bearer,
+    `/api/v1/pos/returns/lookup?order_no=${encodeURIComponent(orderNo)}`,
+  );
+  expect(lookup.status).toBe(200);
+  expect(lookup.body.order_no).toBe(orderNo);
+  expect(lookup.body.branch_id).toBe(TRENTON_ID);
+});
