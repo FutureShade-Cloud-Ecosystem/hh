@@ -1,6 +1,9 @@
 package roleconfig
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Level returns the role's level on the surface. An unknown name is an
 // error, never a silent none: a guard must not read its own typo as an
@@ -175,4 +178,12 @@ func (c *Config) DispatchPolicySetters() []string {
 // commits dates (row 457: off, Read on the till, quotes and dispatch).
 func (c *Config) GeneralManagerSelling() bool {
 	return c.settings.GeneralManagerSelling
+}
+
+// RefundApprovalWindow returns how old the approver's credential may be
+// when the return carrying it commits (X7, row 482, plan 3.2: the window
+// the configuration sets), typed as a duration from the configured
+// seconds.
+func (c *Config) RefundApprovalWindow() time.Duration {
+	return time.Duration(c.settings.RefundApprovalWindowSeconds) * time.Second
 }

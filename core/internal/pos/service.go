@@ -194,16 +194,23 @@ type Service struct {
 	trail PolicyTrailReader
 	// roles is the dealer's role configuration the till's rules read (D49):
 	// the glance's cost and margin list (X3), the refund amount and its
-	// approvers (X7). The startup path loads it through roleconfig.Default
-	// (or Load) and stops on the error. Nil keeps a directly-built service
-	// (the unit harness, a composition predating the wiring) on the
-	// pre-configuration behavior the older tests pin.
+	// approvers (X7), the approval window. The startup path loads it
+	// (roleconfig.Default or Load) and stops on the error, and the gated
+	// paths refuse when it is absent (the nil gate fails closed, the lead's
+	// ruling): a service without a configuration refuses the glance and the
+	// gated returns, it never answers them permissively.
 	roles *roleconfig.Config
 	// approver resolves the manager's credential carried beside the clerk's
 	// bearer on a return above the amount (row 482). Nil until wired; the
 	// approval path refuses operationally when a credential arrives while
 	// the resolver is absent, never commits on one.
 	approver ApproverSource
+	// userLink resolves the ERP users.id a platform user id links to, the
+	// B4 linkage the composition root supplies. The committed decision uses
+	// it to name the approver in one identifier space with the clerk
+	// (staff users ids) on the record and the audit row (the lead's
+	// P2-4/P3-3 rulings); nil leaves the platform subject as the only name.
+	userLink identity.UserIDLinker
 	// actorNames turns an audit actor id into the person's name for that same history. Nil degrades
 	// every row to its role word, which is what the history said before names existed.
 	actorNames ActorNameResolver
@@ -280,10 +287,23 @@ func (s *Service) WithAudit(r audit.Recorder) *Service { s.audit = r; return s }
 
 // WithRoleConfig injects the dealer's role configuration the till's rules
 // read (D49): the glance's cost and margin list (X3), the refund amount
-// without approval and the approvers above it (X7). The configuration a
-// caller hands over must be a loaded one (roleconfig.Default, Load or
-// Validate): a refused configuration yields no Config to guard with.
+// without approval, the approvers above it and the approval window (X7).
+// The configuration a caller hands over must be a loaded one
+// (roleconfig.Default, Load or Validate): a refused configuration yields
+// no Config to guard with.
 func (s *Service) WithRoleConfig(c *roleconfig.Config) *Service { s.roles = c; return s }
+
+// WithUserLinker injects the ERP users.id linker the committed decision
+// uses to name the approver in the same identifier space as the clerk.
+func (s *Service) WithUserLinker(l identity.UserIDLinker) *Service { s.userLink = l; return s }
+
+// errRoleConfigUnwired is the operational refusal of a gated read or rule
+// on a service built with no role configuration: the nil gate fails
+// closed (the lead's P1-1 ruling), so a miswire refuses loudly instead of
+// answering permissively.
+func errRoleConfigUnwired() error {
+	return clientErr(http.StatusServiceUnavailable, "pos: the dealer's role configuration is not wired")
+}
 
 // WithClock injects a deterministic clock (tests).
 func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }

@@ -3,6 +3,7 @@ package roleconfig
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func mustDefault(t *testing.T) *Config {
@@ -440,5 +441,15 @@ func TestQueriesReturnCopies(t *testing.T) {
 	cells[0].Level = LevelAdmin
 	if again, _ := cfg.Level("inside_sales", "counter-till"); again != LevelWork {
 		t.Errorf("mutating a returned cell list changed a level: inside_sales on counter-till is now %s", again)
+	}
+}
+
+// The tenth setting's decided default: the window the configuration sets
+// for an approver's credential (the lead's ruling; the plan's section 3.2
+// and the contract's approver header both name the configuration).
+func TestDefaultRefundApprovalWindow(t *testing.T) {
+	cfg := mustDefault(t)
+	if got := cfg.RefundApprovalWindow(); got != 300*time.Second {
+		t.Errorf("the refund approval window is %v, decided 300 seconds", got)
 	}
 }

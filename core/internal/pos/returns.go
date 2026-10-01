@@ -97,12 +97,6 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 	if in.FeeBps > 0 && in.RefundMethod != RefundAccountCredit {
 		return Return{}, errFeeNeedsCredit
 	}
-	if cached, found, err := s.store.FindReturnByKey(ctx, in.IdempotencyKey); err != nil {
-		return Return{}, err
-	} else if found {
-		cached.Replayed = true
-		return cached, nil
-	}
 
 	// The original sale: must be a committed POS sale; the return runs at ITS branch.
 	oc, found, err := s.store.ReturnOrderContext(ctx, in.OrderID, in.OrderNo)
@@ -112,17 +106,27 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 	if !found {
 		return Return{}, errReturnNotFound
 	}
-	// The branch wall runs BEFORE any rail and before any write (X2, fixing
-	// HH-218): no processor reversal, no drawer payout and no account credit
-	// may move for a sale the caller's resolved authority does not reach.
-	// The return runs at the sale's branch; the caller brings their own
-	// grants, resolved per request by the guards, never claimed.
+	// The branch wall runs BEFORE any rail, before any write and before the
+	// idempotent replay (X2, fixing HH-218; the lead's P2-2 ruling): no
+	// processor reversal, no drawer payout and no account credit may move
+	// for a sale the caller's resolved authority does not reach, and the
+	// replay of a foreign sale refuses exactly like the first attempt, so
+	// another branch's return number, sale, invoice, payment id and money
+	// are not a thing a key alone buys. The return runs at the sale's
+	// branch; the caller brings their own grants, resolved per request by
+	// the guards, never claimed.
 	caller, err := s.caller(ctx)
 	if err != nil {
 		return Return{}, err
 	}
 	if err := requireBranchReach(caller, oc.BranchID); err != nil {
 		return Return{}, err
+	}
+	if cached, found, err := s.store.FindReturnByKey(ctx, in.IdempotencyKey); err != nil {
+		return Return{}, err
+	} else if found {
+		cached.Replayed = true
+		return cached, nil
 	}
 	if in.RefundMethod == RefundCash && in.TillSessionID == "" {
 		return Return{}, ErrNoOpenTill{}
@@ -134,6 +138,35 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		if s.cardRefund == nil {
 			return Return{}, errNoCardRefunder
 		}
+	}
+
+	// The gated paths fail closed (the lead's P1-1 ruling): a counter
+	// return on a service built with no role configuration refuses, it
+	// never skips the refund rule. The A-06 portal rail keeps its
+	// exemption: the queue's own decision already approved that request.
+	//
+	// The approver credential resolves BEFORE the transaction opens (the
+	// lead's P3-6 ruling): no verifier call, membership read or authority
+	// read ever runs while the sale's lines are held for update; only the
+	// comparison against the computed total stays inside. A presented
+	// credential is judged wherever it rides: a return that ends up under
+	// the amount commits ordinarily, a credential that cannot be judged
+	// refuses on its own family with its audit row.
+	var decision approverDecision
+	// approvedHere records that the rule FIRED and the standing decision
+	// was spent: an under-amount return with a qualifying credential in the
+	// header commits ordinarily and names no decision.
+	approvedHere := false
+	if !in.internalRail {
+		if s.roles == nil {
+			return Return{}, errRoleConfigUnwired()
+		}
+		resolved, pending, rerr := s.resolveRefundApprover(ctx, in.ApproverCredential, caller, oc)
+		if rerr != nil {
+			return Return{}, rerr
+		}
+		decision = resolved
+		decision.pending = pending
 	}
 
 	pickupStatus := PickupNone
@@ -148,11 +181,6 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 
 	actor := identity.StaffUserIDFromContext(ctx)
 	var out Return
-	// decision carries a qualifying approver credential out of the
-	// transaction, so the committed record and the audit row can name the
-	// decision; zero when the return is nobody's approval (the ordinary
-	// rail, or a return from a listed role).
-	var decision approverDecision
 
 	err = s.store.RunInTx(ctx, func(tx pgx.Tx) error {
 		// 1. Lock + guard every requested line, derive its refund money/tax.
@@ -226,20 +254,23 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		//
 		// The manager's credential at the clerk's till (row 482): the same
 		// return carried again with the approver's credential in its header
-		// commits as the manager's decision when the credential qualifies
-		// (approver.go); anything short of that leaves the standing refusal
-		// in place.
-		if !in.internalRail && s.roles != nil {
+		// commits as the manager's decision when the credential qualified
+		// in the pre-transaction resolution (approver.go); anything short of
+		// that leaves the standing refusal in place.
+		if !in.internalRail {
 			refusal, refused := s.refundApprovalRefusal(total, caller)
+			if decision.ownCredential {
+				// The credential named the caller: the refund refuses with
+				// the computed total, whatever the caller's role (the
+				// lead's P3-2 ruling).
+				refused = true
+				refusal.RefundCents = total
+			}
 			if refused {
-				resolved, approvedByCredential, aerr := s.resolveRefundApprover(ctx, in.ApproverCredential, caller, oc)
-				if aerr != nil {
-					return aerr
-				}
-				if !approvedByCredential {
+				if !decision.pending {
 					return refusal
 				}
-				decision = resolved
+				approvedHere = true
 			}
 		}
 
@@ -322,20 +353,27 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		}
 
 		// 5. The money-side GL event (DR revenue + DR HST / CR the refund rail). A committed
-		//    manager decision names the decision in the record: the approver who decided, the
-		//    clerk who rang it, the refusal the decision answers (row 482, D49).
+		//    manager decision names the decision in the record: the approver who decided and the
+		//    clerk who rang it in one identifier space (the linked staff users ids, the lead's
+		//    P3-3 ruling), the platform subject beside them as the directory reference, and the
+		//    refusal the decision answers, cited by its own audit row id where the trail can
+		//    name one (row 482, D49).
 		committed := map[string]any{
 			"return_id": returnID, "order_id": oc.OrderID, "invoice_id": oc.InvoiceID,
 			"refund_method": in.RefundMethod, "subtotal_cents": subtotal, "tax_cents": taxTotal,
 			"total_cents": total, "fee_cents": feeCents, "branch_id": oc.BranchID,
 		}
-		if decision.approver.PlatformUserID != "" {
-			committed["decided_by"] = decision.approver.PlatformUserID
+		if approvedHere {
+			committed["decided_by"] = s.approverStaffID(ctx, decision.approver.PlatformUserID)
+			committed["decided_by_subject"] = decision.approver.PlatformUserID
 			committed["decided_by_role"] = decision.approver.RoleID
 			committed["rang_by"] = actor
 			committed["approval"] = map[string]any{
 				"refusal":      refundApprovalRequiredError,
-				"amount_cents": total,
+				"refund_cents": total,
+			}
+			if refusalID := s.latestRefusalRowID(ctx, oc.OrderID); refusalID != "" {
+				committed["approval"].(map[string]any)["refusal_id"] = refusalID
 			}
 		}
 		if err := s.store.EmitEvent(ctx, tx, "pos.return.committed", committed); err != nil {
@@ -378,11 +416,20 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		ActorID: actor, BranchID: oc.BranchID, Purpose: "POS_RETURN", Reason: in.RefundMethod,
 		Extra: map[string]any{"return_no": out.ReturnNo, "total_cents": out.TotalCents},
 	}
-	if decision.approver.PlatformUserID != "" {
-		// The manager's decision, beside the clerk who rang it, citing the
-		// refusal it answers (row 482). approver_id and amount_cents are
-		// allowlisted audit keys, so these are the facts the row keeps.
-		completed.Extra["approver_id"] = decision.approver.PlatformUserID
+	if approvedHere {
+		// The manager's decision, beside the clerk who rang it (row 482).
+		// Both people are named in one identifier space, the linked staff
+		// users id (the lead's P2-4 ruling: the platform subject is a
+		// directory string the audit chokepoint may redact), and the
+		// platform subject rides subject_ref as the directory reference.
+		// approver_id, amount_cents and subject_ref are allowlisted audit
+		// keys, so these are the facts the row keeps; amount_cents is the
+		// audit vocabulary's own name for an integer money fact, here the
+		// refused refund's total.
+		if staffID := s.approverStaffID(ctx, decision.approver.PlatformUserID); staffID != "" {
+			completed.Extra["approver_id"] = staffID
+		}
+		completed.Extra["subject_ref"] = decision.approver.PlatformUserID
 		completed.Extra["amount_cents"] = out.TotalCents
 		completed.Reason = refundApprovalRequiredError
 	}
@@ -391,12 +438,12 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 }
 
 // refundApprovalRefusal answers the configured approval rule (X7) for one
-// computed return total: nil when no configuration is wired (the
-// pre-configuration behavior the older tests pin), when the total sits at
-// or under the amount, or when the caller's role holds the approval. The
-// configured amount is integer cents and the comparison is integer against
-// integer; a role outside the configuration's vocabulary is on no approvers
-// list, fail closed.
+// computed return total: ok false when the total sits at or under the
+// amount, or when the caller's role holds the approval. The caller has
+// already refused a service built with no configuration (the nil gate
+// fails closed); the configured amount is integer cents and the comparison
+// is integer against integer; a role outside the configuration's
+// vocabulary is on no approvers list, fail closed.
 func (s *Service) refundApprovalRefusal(totalCents int64, caller identity.StaffContext) (ErrRefundApprovalRequired, bool) {
 	amount := s.roles.RefundAmountWithoutApprovalCents()
 	if totalCents <= amount {

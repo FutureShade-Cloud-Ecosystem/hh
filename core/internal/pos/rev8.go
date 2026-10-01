@@ -1,15 +1,17 @@
 package pos
 
 // rev8.go, DIB-488 rev 8: the role-gated margin glance (item 10), the DIB-502 suggested add-ons
-// read (item 8), and the 0170 policy validation arms (margin visibility + the curated chip set).
+// read (item 8), and the 0170 policy validation arms (the curated chip set; margin visibility
+// remains a stored dealer switch the glance no longer consults, the configuration's list decides).
 //
 // THE MARGIN GATING RULING (the commander's critical rev-8 constraint): margin % and est. profit
 // are computed SERVER-SIDE from the pricing engine's own numbers, revenue through the SAME
 // pricing.DeriveLinePrice authority the ring prices with, cost from the engine's cost source (the
 // per-branch WAC row, product_branch_costs.avg_unit_cost_cents), and they are gated at the
-// MARSHAL layer: the response struct is all-omitempty, and a caller the dealer's margin_visibility
-// does not allow receives the zero value, i.e. a `{}` payload with the fields BYTE-ABSENT. This
-// mirrors the portal's marshal-and-assert-absent idiom; dib488_rev8_test.go asserts byte-absence.
+// MARSHAL layer: the response struct is all-omitempty, and a caller the dealer's role
+// configuration's cost and margin list does not allow receives the zero value, i.e. a `{}` payload
+// with the fields BYTE-ABSENT. This mirrors the portal's marshal-and-assert-absent idiom;
+// dib488_rev8_test.go asserts byte-absence.
 
 import (
 	"context"
@@ -74,15 +76,17 @@ func validateQuickChipSet(set []string) ([]string, error) {
 // two gates. First the branch wall (X2): a branch the caller's resolved
 // authority does not reach is REFUSED, never blanked, the refusal carried
 // as the error so the handler writes the wall's 403. Then cost visibility
-// (X3): when the dealer's role configuration is wired, the configuration's
-// cost and margin list decides and the 0170 margin_visibility switch does
-// not (row 343: the glance reads the configuration, not its managers only
-// default). The switch answers only for a service built with no
-// configuration wired (the unit harness and any composition predating the
-// wiring), the behavior the rev-8 gate tests pin. Fail closed: an
-// unreadable policy, an unmapped role or an anonymous caller receives
-// nothing.
+// (X3): the dealer's configuration's cost and margin list decides (row
+// 343: the glance reads the configuration, not its managers only default).
+// The nil gate fails closed (the lead's P1-1 ruling): a service built with
+// no configuration refuses the read, it never falls back to the 0170
+// margin_visibility switch, whose managers only default was exactly the
+// permissive answer the configuration replaced. Fail closed likewise: an
+// unreadable policy or an unmapped role receives nothing.
 func (s *Service) marginAllowed(ctx context.Context, branchID string) (bool, error) {
+	if s.roles == nil {
+		return false, errRoleConfigUnwired()
+	}
 	caller, err := s.caller(ctx)
 	if err != nil {
 		// An unresolved caller is the pinned empty answer (the route's guard
@@ -92,29 +96,15 @@ func (s *Service) marginAllowed(ctx context.Context, branchID string) (bool, err
 	if err := requireBranchReach(caller, branchID); err != nil {
 		return false, err
 	}
-	if s.roles != nil {
-		role, ok := canonicalRole(caller)
-		if !ok {
-			return false, nil
-		}
-		allowed, err := s.roles.SeesCostAndMargin(role)
-		if err != nil {
-			return false, nil
-		}
-		return allowed, nil
+	role, ok := canonicalRole(caller)
+	if !ok {
+		return false, nil
 	}
-	p, err := s.store.ReadPosPolicy(ctx, branchID)
+	allowed, err := s.roles.SeesCostAndMargin(role)
 	if err != nil {
 		return false, nil
 	}
-	switch p.MarginVisibility {
-	case MarginVisibilityAllStaff:
-		return true, nil
-	case MarginVisibilityHidden:
-		return false, nil
-	default: // MANAGER_UP, the column default ("" from a pre-0170 fake resolves here too)
-		return caller.IsManager(), nil
-	}
+	return allowed, nil
 }
 
 // marginBpsOf computes gross margin in bps from integer cents (identity.MarginBps's arithmetic,

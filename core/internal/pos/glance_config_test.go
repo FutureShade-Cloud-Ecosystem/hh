@@ -135,6 +135,34 @@ func TestMarginGlance_Configured_UnknownRoleReceivesNothing(t *testing.T) {
 	}
 }
 
+// The nil gate fails closed (the lead's P1-1 ruling): a service built with
+// no configuration refuses the gated reads instead of answering them
+// permissively, the glance among them.
+func TestMarginGlance_NilConfig_Refuses(t *testing.T) {
+	h := newHarness()
+	h.svc = h.svc.WithRoleConfig(nil)
+	_, err := h.svc.MarginGlance(context.Background(), marginInputAtBranch())
+	var ce clientError
+	if !errors.As(err, &ce) || ce.status != 503 {
+		t.Fatalf("the unwired glance must refuse operationally, got %v", err)
+	}
+}
+
+// The same nil gate on the return path: even an under-amount return
+// refuses on an unwired service, the refund rule's question is
+// unanswerable without the configuration.
+func TestReturn_NilConfig_Refuses(t *testing.T) {
+	h := newHarness()
+	seedSaleWorth(h, 20000, 0)
+	h.svc = h.svc.WithRoleConfig(nil)
+	h.caller = salesCaller()
+	_, err := h.svc.Return(context.Background(), wholeReturnInput())
+	var ce clientError
+	if !errors.As(err, &ce) || ce.status != 503 {
+		t.Fatalf("the unwired return path must refuse operationally, got %v", err)
+	}
+}
+
 // The branch wall: a branch the caller's grants do not reach is refused on
 // the glance, not blanked.
 func TestMarginGlance_UnreachableBranch_RefusedNotBlanked(t *testing.T) {
@@ -177,4 +205,11 @@ func TestStanding_ReachableBranch_PolicyStillDecidesTheBytes(t *testing.T) {
 	if out.PastDueCents != 0 || out.OldestBucket != "" {
 		t.Fatalf("a hidden balance must stay byte-absent, got %+v", out)
 	}
+}
+
+// emptyCostVisibilityConfig is a dealer's configuration whose cost and
+// margin list names nobody: the column is hidden from everyone.
+func emptyCostVisibilityConfig(t *testing.T) *roleconfig.Config {
+	t.Helper()
+	return modifiedDefault(t, roleconfig.SettingCostVisibility, []string{})
 }

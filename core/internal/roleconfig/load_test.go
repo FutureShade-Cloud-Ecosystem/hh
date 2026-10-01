@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -447,4 +448,60 @@ func TestRefusedConfigurationStopsTheCore(t *testing.T) {
 	if cfg := start(DefaultData()); cfg == nil {
 		t.Fatal("the core refused the decided default, which carries HR on no approver list")
 	}
+}
+
+// The refund approval window (the tenth setting, the lead's ruling after
+// the reader landed): the loader refuses a value outside its bounds,
+// a null, and a fraction, and the default sits inside the bounds.
+
+func TestRefuseWindowSecondsOutsideTheBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"zero", `0`, "outside the 1 to 3600"},
+		{"negative", `-5`, "outside the 1 to 3600"},
+		{"above the ceiling", `3601`, "outside the 1 to 3600"},
+		{"null", `null`, "is not an integer count of seconds"},
+		{"fraction", `2.5`, "is not an integer count of seconds"},
+		{"string", `"300"`, "is not an integer count of seconds"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := mutatedDefault(t, `"refund_approval_window_seconds": 300`,
+				`"refund_approval_window_seconds": `+tc.raw, 1)
+			_, err := Load(data)
+			if err == nil {
+				t.Fatalf("the loader accepted a window of %s", tc.raw)
+			}
+			var verr *ValidationError
+			if !errors.As(err, &verr) {
+				t.Fatalf("the refusal is a *ValidationError, got %T: %v", err, err)
+			}
+			if !errors.Is(err, err) || !containsIssue(verr, tc.want) {
+				t.Fatalf("the refusal must name %q, got: %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestRefuseMissingWindowSeconds(t *testing.T) {
+	data := mutatedDefault(t, `,
+  "refund_approval_window_seconds": 300`, ``, 1)
+	_, err := Load(data)
+	if err == nil {
+		t.Fatal("the loader accepted a document with no window setting")
+	}
+	if !strings.Contains(err.Error(), "no refund_approval_window_seconds setting") {
+		t.Fatalf("the refusal must name the missing setting, got: %v", err)
+	}
+}
+
+func containsIssue(verr *ValidationError, wantIn string) bool {
+	for _, issue := range verr.Issues {
+		if strings.Contains(issue, wantIn) {
+			return true
+		}
+	}
+	return false
 }

@@ -142,3 +142,30 @@ func TestReturn_HomeBranch_Unfenced(t *testing.T) {
 		t.Fatalf("home-branch return money wrong: %+v", out)
 	}
 }
+
+// The replay sits BEHIND the wall (the lead's P2-2 ruling): a foreign
+// clerk holding a committed return's idempotency key refuses exactly like
+// the first attempt did, and never reads the return's number, sale,
+// invoice, payment id or money.
+func TestReturn_ReplayOfAForeignSale_RefusesLikeTheFirstAttempt(t *testing.T) {
+	h := newHarness()
+	seedReturnable(h)
+	h.caller = identityBranchScoped("u-trt", "INSIDE_SALES", "branch-trt")
+	first, err := h.svc.Return(context.Background(), returnInput())
+	if err != nil {
+		t.Fatalf("first return: %v", err)
+	}
+	if first.ReturnID == "" {
+		t.Fatalf("the first return committed: %+v", first)
+	}
+
+	h.caller = identityBranchScoped("u-kgt", "INSIDE_SALES", "branch-kgt")
+	replay, err := h.svc.Return(context.Background(), returnInput())
+	var ce clientError
+	if !errors.As(err, &ce) || ce.status != 403 {
+		t.Fatalf("the foreign replay must hit the wall, got %v (answer %+v)", err, replay)
+	}
+	if replay.ReturnID != "" || replay.ReturnNo != "" || replay.TotalCents != 0 {
+		t.Fatalf("a walled replay must carry none of the committed return: %+v", replay)
+	}
+}
