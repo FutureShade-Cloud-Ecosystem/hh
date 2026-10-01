@@ -29,6 +29,7 @@ import {
   type QuoteRef,
   type SaleRing,
   type StandingRef,
+  type TicketItem,
 } from "./till-client.js";
 import { formatMargin, formatMoney, parseAmountToCents } from "./money.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
@@ -40,6 +41,7 @@ import {
   type ReceiptView,
   type TenderChoice,
 } from "./views/checkout.js";
+import { parkedStyles, renderParked, type ParkedPanel, type ParkedRow } from "./views/parked.js";
 import {
   tillStyles,
   renderTill,
@@ -85,6 +87,7 @@ export class CounterTillApp extends HHElement {
     entryStyles,
     tillStyles,
     checkoutStyles,
+    parkedStyles,
     css`
       :host {
         display: block;
@@ -152,6 +155,15 @@ export class CounterTillApp extends HHElement {
   #receiptBalance: string | null = null;
   #commitMessage: string | null = null;
   #commitBusy = false;
+  #parkedState: "loading" | "ready" | "refused" = "loading";
+  #parkedRows: ParkedRow[] = [];
+  #parkedMessage: string | null = null;
+  #parkedBusy = false;
+  #parkMessage: string | null = null;
+  /** The accounts this till has met, by id: the parked list labels tickets with these. */
+  #knownCustomers: Map<string, CustomerRef> = new Map();
+  /** The products this till has met, by id: a resumed ticket shows the name it searched. */
+  #knownProducts: Map<string, ProductRef> = new Map();
 
   constructor() {
     super();
@@ -237,6 +249,13 @@ export class CounterTillApp extends HHElement {
       this.#receiptBalance = null;
       this.#commitMessage = null;
       this.requestUpdate();
+    }
+    if (control.getAttribute("data-action") === "park-ticket") {
+      void this.#parkTicket();
+    }
+    if (control.getAttribute("data-action") === "resume-ticket") {
+      const ticketId = control.getAttribute("data-ticket-id");
+      if (typeof ticketId === "string" && ticketId !== "") void this.#resumeTicket(ticketId);
     }
   };
 
@@ -327,6 +346,13 @@ export class CounterTillApp extends HHElement {
     this.#receiptBalance = null;
     this.#commitMessage = null;
     this.#commitBusy = false;
+    this.#parkedState = "loading";
+    this.#parkedRows = [];
+    this.#parkedMessage = null;
+    this.#parkedBusy = false;
+    this.#parkMessage = null;
+    this.#knownCustomers = new Map();
+    this.#knownProducts = new Map();
     this.requestUpdate();
   }
 
@@ -352,6 +378,7 @@ export class CounterTillApp extends HHElement {
     const status = await this.#tillClient.paymentStatus();
     this.#simulated = status.ok ? status.value : null;
     this.requestUpdate();
+    await this.#refreshParked();
   }
 
   async #ensureDrawer(): Promise<void> {
@@ -392,9 +419,12 @@ export class CounterTillApp extends HHElement {
     this.#search = { state: "loading", hits: [], message: null };
     this.requestUpdate();
     const result = await this.#tillClient.searchProducts(trimmed);
-    this.#search = result.ok
-      ? { state: "ready", hits: result.value, message: null }
-      : { state: "refused", hits: [], message: result.error };
+    if (result.ok) {
+      for (const hit of result.value) this.#knownProducts.set(hit.productId, hit);
+      this.#search = { state: "ready", hits: result.value, message: null };
+    } else {
+      this.#search = { state: "refused", hits: [], message: result.error };
+    }
     this.requestUpdate();
   }
 
@@ -408,9 +438,12 @@ export class CounterTillApp extends HHElement {
     this.#customerSearch = { state: "loading", hits: [], message: null };
     this.requestUpdate();
     const result = await this.#tillClient.searchCustomers(trimmed);
-    this.#customerSearch = result.ok
-      ? { state: "ready", hits: result.value, message: null }
-      : { state: "refused", hits: [], message: result.error };
+    if (result.ok) {
+      for (const row of result.value) this.#knownCustomers.set(row.id, row);
+      this.#customerSearch = { state: "ready", hits: result.value, message: null };
+    } else {
+      this.#customerSearch = { state: "refused", hits: [], message: result.error };
+    }
     this.requestUpdate();
   }
 
@@ -423,12 +456,17 @@ export class CounterTillApp extends HHElement {
   async #pickCustomer(customerId: string): Promise<void> {
     const hit = this.#customerSearch.hits.find((candidate) => candidate.id === customerId);
     if (hit === undefined) return;
-    this.#customer = { kind: "account", customer: hit };
+    await this.#adoptCustomer(hit);
+  }
+
+  async #adoptCustomer(ref: CustomerRef): Promise<void> {
+    this.#knownCustomers.set(ref.id, ref);
+    this.#customer = { kind: "account", customer: ref };
     this.#standing = null;
     this.#standingMessage = null;
     this.requestUpdate();
     if (this.#branch !== null) {
-      const standing = await this.#tillClient.accountStanding(this.#branch.id, customerId);
+      const standing = await this.#tillClient.accountStanding(this.#branch.id, ref.id);
       if (standing.ok) {
         this.#standing = standing.value;
       } else {
@@ -450,6 +488,7 @@ export class CounterTillApp extends HHElement {
   #addLine(productId: string): void {
     const hit = this.#search.hits.find((candidate) => candidate.productId === productId);
     if (hit === undefined) return;
+    this.#knownProducts.set(hit.productId, hit);
     this.#lines = [
       ...this.#lines,
       { key: crypto.randomUUID(), product: hit, qty: 1, uom: hit.soldBy, quote: null, marginBps: null },
@@ -669,6 +708,127 @@ export class CounterTillApp extends HHElement {
     return `The sale did not ring: ${error}`;
   }
 
+  /**
+   * Park the ticket and list this branch's parked tickets. The ticket parks
+   * as quantities and units: no price leaves this app on it, so nothing
+   * stale can come back.
+   */
+  async #parkTicket(): Promise<void> {
+    if (this.#branch === null) return;
+    if (this.#lines.length === 0) {
+      this.#parkMessage = "Nothing to park: the ticket has no lines.";
+      this.requestUpdate();
+      return;
+    }
+    const customerId = this.#customer.kind === "account" ? this.#customer.customer.id : "";
+    this.#parkedBusy = true;
+    this.#parkMessage = null;
+    this.requestUpdate();
+    const parked = await this.#tillClient.parkTicket(
+      this.#branch.id,
+      customerId,
+      this.#lines.map((line) => ({ productId: line.product.productId, qty: line.qty, uom: line.uom })),
+    );
+    if (!parked.ok) {
+      this.#parkedBusy = false;
+      this.#parkMessage = `The ticket did not park: ${parked.error}`;
+      this.requestUpdate();
+      return;
+    }
+    this.#lines = [];
+    this.#pricing = "idle";
+    this.#pricingMessage = null;
+    this.#pricedForType = null;
+    this.#parkedBusy = false;
+    this.requestUpdate();
+    await this.#refreshParked();
+  }
+
+  /**
+   * Put a parked ticket back on the counter. Its lines arrive without
+   * prices, so the till prices them exactly as it prices any ticket: through
+   * the engine, in the next breath.
+   */
+  async #resumeTicket(ticketId: string): Promise<void> {
+    if (this.#branch === null) return;
+    this.#parkedBusy = true;
+    this.#parkMessage = null;
+    this.requestUpdate();
+    const resumed = await this.#tillClient.resumeTicket(ticketId);
+    if (!resumed.ok) {
+      this.#parkedBusy = false;
+      this.#parkMessage = `The ticket did not resume: ${resumed.error}`;
+      this.requestUpdate();
+      return;
+    }
+    const ticket = resumed.value;
+    this.#lines = ticket.lines.map((item: TicketItem) => {
+      const known = this.#knownProducts.get(item.productId);
+      return {
+        key: crypto.randomUUID(),
+        product: known ?? { productId: item.productId, sku: item.productId, name: item.productId, soldBy: item.uom },
+        qty: item.qty,
+        uom: item.uom,
+        quote: null,
+        marginBps: null,
+      };
+    });
+    this.#parkedBusy = false;
+    this.requestUpdate();
+    if (ticket.customerId === "") {
+      this.#customer = WALK_IN_CUSTOMER;
+      this.#standing = null;
+      this.#standingMessage = null;
+      await this.#priceTicket();
+      return;
+    }
+    const known = this.#knownCustomers.get(ticket.customerId);
+    if (known !== undefined) {
+      await this.#adoptCustomer(known);
+      return;
+    }
+    // The ticket names an account this till has not met: it prices for the
+    // walk-in rather than guessing the account's rule, and says so.
+    this.#customer = WALK_IN_CUSTOMER;
+    await this.#priceTicket();
+    this.#pricingMessage = "The ticket's account is not known to this till: these lines priced for the walk-in.";
+    this.requestUpdate();
+  }
+
+  async #refreshParked(): Promise<void> {
+    this.#parkedState = "loading";
+    this.requestUpdate();
+    const result = await this.#tillClient.listParked();
+    if (!result.ok) {
+      this.#parkedState = "refused";
+      this.#parkedMessage = result.error;
+    } else {
+      this.#parkedState = "ready";
+      this.#parkedMessage = null;
+      this.#parkedRows = result.value.map((ticket) => {
+        const known = ticket.customerId === "" ? undefined : this.#knownCustomers.get(ticket.customerId);
+        return {
+          id: ticket.id,
+          ticketNo: ticket.ticketNo,
+          customerLabel: known === undefined ? null : `${known.name} (${known.accountNo})`,
+          lineCount: ticket.lines.length,
+        };
+      });
+    }
+    this.requestUpdate();
+  }
+
+  #parkedPanel(): ParkedPanel {
+    return {
+      state: this.#parkedState,
+      branchName: this.#branch?.name ?? null,
+      rows: this.#parkedRows,
+      message: this.#parkedMessage,
+      busy: this.#parkedBusy,
+      parkMessage: this.#parkMessage,
+    };
+  }
+
   #receiptView(): ReceiptView | null {
     const sale = this.#committed;
     if (sale === null) return null;
@@ -745,6 +905,7 @@ export class CounterTillApp extends HHElement {
               <div class="panels till-lower">
                 ${renderTender(this.#tenderPanel())}
                 ${receipt === null ? nothing : renderReceipt(receipt)}
+                ${renderParked(this.#parkedPanel())}
               </div>
             `}
       </main>

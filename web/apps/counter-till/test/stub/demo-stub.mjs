@@ -19,6 +19,9 @@
 //   GET  /api/v1/payments/config          -> PaymentConfigStatus
 //   POST /api/v1/pos/sales                -> PosSale
 //   GET  /api/v1/pos/sales/{id}           -> PosSaleView
+//   POST /api/v1/pos/parked               -> PosParkedTicket
+//   GET  /api/v1/pos/parked               -> PosParkedTicketPage
+//   POST /api/v1/pos/parked/{id}/resume   -> PosParkedTicket
 // The demo routes are public in the contract (security: []), so they check no
 // credential; the phrase gate in front of the real demo box is Caddy's (W5's
 // image), not the routes'. The staff routes are not public: this stub reads
@@ -882,6 +885,82 @@ const server = createServer((request, response) => {
       lines: sale.lines,
       tenders: sale.tenders,
     });
+    return;
+  }
+
+  // Park the ticket: quantities and units only, no prices. The contract says
+  // why: prices re-derive from the engine on resume, so a parked ticket never
+  // rings at a stale price.
+  if (request.method === "POST" && path === "/api/v1/pos/parked") {
+    readBody(request, (parsed) => {
+      const branchId = typeof parsed.branch_id === "string" ? parsed.branch_id : "";
+      if (branchId !== callerBranch) {
+        respondJson(response, 403, { error: "that branch is not one your grant reaches" });
+        return;
+      }
+      const rawLines = Array.isArray(parsed.lines) ? parsed.lines : [];
+      const lines = [];
+      for (const line of rawLines) {
+        const productId = typeof line?.product_id === "string" ? line.product_id : "";
+        const qty = typeof line?.qty_entered === "number" ? line.qty_entered : 0;
+        const uom = typeof line?.uom_entered === "string" ? line.uom_entered : "";
+        if (productId === "" || qty <= 0 || uom === "") {
+          respondJson(response, 400, { error: "a ticket parks a quantity and a unit for each line" });
+          return;
+        }
+        lines.push({ product_id: productId, qty_entered: qty, uom_entered: uom });
+      }
+      if (lines.length === 0) {
+        respondJson(response, 400, { error: "a ticket parks at least one line" });
+        return;
+      }
+      const customerId = typeof parsed.customer_id === "string" ? parsed.customer_id : "";
+      if (customerId !== "" && customerFor(customerId) === null) {
+        respondJson(response, 404, { error: "no such customer account" });
+        return;
+      }
+      const id = uuidFromCounter(9000 + parked.size + 1);
+      const ticket = {
+        id,
+        ticket_no: nextDocNo("PARK"),
+        branch_id: branchId,
+        customer_id: customerId,
+        sale_type: typeof parsed.sale_type === "string" ? parsed.sale_type : "COLLECT_NOW",
+        notes: typeof parsed.notes === "string" ? parsed.notes : "",
+        status: "PARKED",
+        lines,
+        created_at: "2026-01-01T00:00:00Z",
+      };
+      parked.set(id, ticket);
+      respondJson(response, 201, ticket);
+    });
+    return;
+  }
+
+  // The parked list: fenced to the caller's own branch before any filter the
+  // query asks for, so Kingston's tickets never reach the Trenton counter,
+  // whichever branch the query names.
+  if (request.method === "GET" && path === "/api/v1/pos/parked") {
+    const items = [...parked.values()].filter(
+      (ticket) => ticket.branch_id === callerBranch && ticket.status === "PARKED",
+    );
+    respondJson(response, 200, { items, limit: items.length });
+    return;
+  }
+
+  const resumeMatch = path.match(/^\/api\/v1\/pos\/parked\/([^/]+)\/resume$/);
+  if (request.method === "POST" && resumeMatch !== null) {
+    const ticket = parked.get(resumeMatch[1]) ?? null;
+    if (ticket === null) {
+      respondJson(response, 404, { error: "no such parked ticket" });
+      return;
+    }
+    if (ticket.branch_id !== callerBranch) {
+      respondJson(response, 403, { error: "that parked ticket is not one your grant reaches" });
+      return;
+    }
+    ticket.status = "RESUMED";
+    respondJson(response, 200, ticket);
     return;
   }
 

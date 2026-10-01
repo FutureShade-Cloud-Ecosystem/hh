@@ -102,6 +102,14 @@ export interface CommittedSale {
   tenders: Array<{ method: string; amountCents: number }>;
 }
 
+/** A parked ticket as the till holds it: quantities and units, no prices. */
+export interface ParkedTicket {
+  id: string;
+  ticketNo: string;
+  customerId: string;
+  lines: TicketItem[];
+}
+
 export interface QuoteRef {
   productId: string;
   priceUom: string;
@@ -154,6 +162,34 @@ export function parseQuantity(text: string): number | null {
   if (!/^[0-9]+(\.[0-9]+)?$/.test(trimmed)) return null;
   const value = Number(trimmed);
   return value > 0 ? value : null;
+}
+
+/** Field-by-field validation for a parked ticket, never a cast. */
+function validateParkedTicket(value: unknown, what: string): ParkedTicket | null {
+  const record = value as unknown;
+  if (!isRecord(record)) return null;
+  const id = stringAt(record, "id");
+  const ticketNo = stringAt(record, "ticket_no");
+  const customerId = record["customer_id"];
+  const rawLines = record["lines"];
+  if (id === null || ticketNo === null || !Array.isArray(rawLines)) return null;
+  const lines: TicketItem[] = [];
+  for (const line of rawLines) {
+    const row = line as unknown;
+    if (!isRecord(row)) continue;
+    const productId = stringAt(row, "product_id");
+    const uom = stringAt(row, "uom_entered");
+    const qty = row["qty_entered"];
+    if (productId === null || uom === null || typeof qty !== "number" || !(qty > 0)) continue;
+    lines.push({ productId, qty, uom });
+  }
+  if (lines.length === 0) return null;
+  return {
+    id,
+    ticketNo,
+    customerId: typeof customerId === "string" ? customerId : "",
+    lines,
+  };
 }
 
 export class TillClient {
@@ -477,5 +513,51 @@ export class TillClient {
       changeDueCents: typeof changeDueRaw === "number" && Number.isInteger(changeDueRaw) ? changeDueRaw : null,
       tenders,
     });
+  }
+
+  /**
+   * Park the current ticket: quantities and units only, no prices, per the
+   * contract's own rule that prices re-derive from the engine on resume.
+   */
+  async parkTicket(
+    branchId: string,
+    customerId: string,
+    items: TicketItem[],
+  ): Promise<Result<ParkedTicket>> {
+    const result = await staffPos.posParkTicket(this.#client, {
+      branch_id: branchId,
+      customer_id: customerId,
+      sale_type: "COLLECT_NOW",
+      notes: "",
+      lines: items.map((item) => ({ product_id: item.productId, qty_entered: item.qty, uom_entered: item.uom })),
+    });
+    if (!result.ok) return result;
+    const validated = validateParkedTicket(result.value, "the parked ticket");
+    return validated === null ? err("the parked ticket is not readable") : ok(validated);
+  }
+
+  /** This branch's parked tickets: the fence is the server's, this read just renders it. */
+  async listParked(): Promise<Result<ParkedTicket[]>> {
+    const result = await staffPos.posListParked(this.#client);
+    if (!result.ok) return result;
+    const record = result.value as unknown;
+    if (!isRecord(record) || !Array.isArray(record["items"])) {
+      return err("the parked list did not answer a page");
+    }
+    const tickets: ParkedTicket[] = [];
+    for (const item of record["items"]) {
+      const validated = validateParkedTicket(item, "a parked ticket row");
+      if (validated === null) continue;
+      tickets.push(validated);
+    }
+    return ok(tickets);
+  }
+
+  /** Put a parked ticket back on the counter. Its lines carry no prices: the till re-prices at once. */
+  async resumeTicket(id: string): Promise<Result<ParkedTicket>> {
+    const result = await staffPos.posResumeParked(this.#client, id);
+    if (!result.ok) return result;
+    const validated = validateParkedTicket(result.value, "the resumed ticket");
+    return validated === null ? err("the resumed ticket is not readable") : ok(validated);
   }
 }
