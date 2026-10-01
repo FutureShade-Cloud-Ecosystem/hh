@@ -343,6 +343,14 @@ func validateLists(lists Lists) (Lists, []string) {
 
 	floorClearers, fIssues := checkApproverList(lists.FloorClearersOwnBranch, "floor_clearers_own_branch")
 	issues = append(issues, fIssues...)
+	// The list must be in the file: on a nil slice the key is absent or
+	// null, and both refuse. An explicit empty list is the dealer's
+	// choice, the same ruling the informational settings carry; a dropped
+	// or null list would silently stop every date commit.
+	if lists.DeliveryDateCommitters == nil {
+		issues = append(issues, fmt.Sprintf("no %s list: a dropped or null list refuses, an explicit empty list is the dealer's choice",
+			"delivery_date_committers"))
+	}
 	dateCommitters, dIssues := checkRoleList(lists.DeliveryDateCommitters, "delivery_date_committers")
 	issues = append(issues, dIssues...)
 
@@ -481,10 +489,13 @@ func decodeCents(raw json.RawMessage, name string, issues *[]string) int64 {
 }
 
 // decodeRoleList decodes a JSON array of role names through checkRoleList.
-// An empty array is the dealer's choice on the informational lists.
+// An empty array is the dealer's choice on the informational lists; a null
+// is not a choice, it is a dropped list, and it refuses.
 func decodeRoleList(raw json.RawMessage, name string, issues *[]string) []string {
 	var roles []string
-	if err := json.Unmarshal(raw, &roles); err != nil {
+	// JSON null leaves the slice nil and raises no error, so it is refused
+	// by name.
+	if err := json.Unmarshal(raw, &roles); err != nil || isJSONNull(raw) {
 		*issues = append(*issues, fmt.Sprintf("%s is not a list of role names", name))
 		return nil
 	}

@@ -178,14 +178,14 @@ func TestRefuseNegativeRefundAmount(t *testing.T) {
 }
 
 // Only the approver lists must name at least one role; an informational
-// list the dealer empties is the dealer's choice, and the folded
-// predicates answer false.
+// list the dealer empties with an explicit [] is the dealer's choice, and
+// the folded predicates answer false.
 func TestEmptyInformationalListsLoad(t *testing.T) {
 	doc := docFromDefault(t)
 	for _, name := range []string{SettingCostVisibility, SettingPricingEditors, SettingShortageResolvers, SettingDispatchPolicySetters} {
 		doc.Settings[name] = json.RawMessage(`[]`)
 	}
-	doc.Lists.DeliveryDateCommitters = nil
+	doc.Lists.DeliveryDateCommitters = []string{}
 	cfg, err := loadDoc(t, doc)
 	if err != nil {
 		t.Fatalf("the loader refused emptied informational lists: %v", err)
@@ -198,6 +198,49 @@ func TestEmptyInformationalListsLoad(t *testing.T) {
 	}
 	if ok, _ := cfg.ClearsOwnBranchFloor("sales_manager"); !ok {
 		t.Error("an emptied delivery date list touched the floor clearers")
+	}
+}
+
+// A null informational list is not an emptied one: the decoder leaves the
+// slice nil and raises no error, so null refuses by name. An explicit []
+// stays the dealer's choice.
+func TestRefuseNullInformationalLists(t *testing.T) {
+	for _, name := range []string{SettingCostVisibility, SettingPricingEditors, SettingShortageResolvers, SettingDispatchPolicySetters} {
+		doc := docFromDefault(t)
+		doc.Settings[name] = json.RawMessage(`null`)
+		refused(t, doc, name+" is not a list of role names")
+	}
+}
+
+// The delivery date committers must be in the file: a dropped key and a
+// null value both refuse, an explicit empty list is the dealer's choice.
+// The probes run on the seed's own bytes, the shapes a dealer's file
+// carries.
+func TestRefuseDroppedOrNullDeliveryDateCommitters(t *testing.T) {
+	theList := "    \"delivery_date_committers\": [\n      \"yard_manager\",\n      \"logistics_manager\",\n      \"branch_manager\"\n    ]"
+
+	data := mutatedDefault(t, theList, "    \"delivery_date_committers\": null", 1)
+	_, err := Load(data)
+	if err == nil {
+		t.Fatal("Load accepted a null delivery_date_committers list")
+	}
+	if !contains(err.Error(), "delivery_date_committers") {
+		t.Errorf("the null list refusal does not name the list: %v", err)
+	}
+
+	data = mutatedDefault(t, "],\n"+theList, "]", 1)
+	_, err = Load(data)
+	if err == nil {
+		t.Fatal("Load accepted a dropped delivery_date_committers list")
+	}
+	if !contains(err.Error(), "delivery_date_committers") {
+		t.Errorf("the dropped list refusal does not name the list: %v", err)
+	}
+
+	doc := docFromDefault(t)
+	doc.Lists.DeliveryDateCommitters = []string{}
+	if _, err := loadDoc(t, doc); err != nil {
+		t.Fatalf("the loader refused an explicit empty delivery date list: %v", err)
 	}
 }
 
