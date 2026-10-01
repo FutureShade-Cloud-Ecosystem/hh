@@ -177,9 +177,104 @@ const DRAWER = {
 const RETURNS_BY_KEY = new Map();
 const RETURNED_QTY = new Map();
 
+let RETURN_SEQ = 0;
+
+// What the return's own rails refuse before any money moves, in the
+// contract's envelope. The approval refusal above the amount is the real
+// server's (RT-B's) and this stub grows it beside the desk's screen for it.
+function returnsRefusal(caller, body) {
+  if (body === null || typeof body !== "object") {
+    return { status: 400, body: { error: "the return's body is not readable" } };
+  }
+  const key = body.idempotency_key;
+  if (typeof key !== "string" || key === "") {
+    return { status: 400, body: { error: "the return carries no idempotency key" } };
+  }
+  const sale = saleFromInput(body);
+  if (sale === undefined) {
+    return { status: 404, body: { error: "no sale with that number answers at this counter" } };
+  }
+  if (!Array.isArray(body.lines) || body.lines.length === 0) {
+    return { status: 400, body: { error: "the return carries no lines" } };
+  }
+  if (!["CASH", "CARD", "ACCOUNT_CREDIT"].includes(body.refund_method)) {
+    return { status: 400, body: { error: "the refund method is not one of the rails" } };
+  }
+  for (const line of body.lines) {
+    const saleLine = sale.lines.find((row) => row.order_line_id === line.order_line_id);
+    if (saleLine === undefined) {
+      return { status: 400, body: { error: "the return names a line the sale does not carry" } };
+    }
+    const returnable = saleLine.qty_sold - (RETURNED_QTY.get(saleLine.order_line_id) ?? 0);
+    if (!Number.isInteger(line.qty_base) || line.qty_base <= 0 || line.qty_base > returnable) {
+      return { status: 409, body: { error: "the return asks for more than the line still has to return" } };
+    }
+  }
+  if (body.refund_method === "CARD" && !sale.card_refundable) {
+    return { status: 409, body: { error: "the sale was not paid by card, so there is no capture to reverse" } };
+  }
+  if (body.refund_method === "CASH" && body.till_session_id !== DRAWER.session_id) {
+    return { status: 409, body: { error: "the drawer named is not the open one" } };
+  }
+  return null;
+}
+
+function saleFromInput(body) {
+  if (typeof body.order_no === "string" && SALES[body.order_no] !== undefined) return SALES[body.order_no];
+  if (typeof body.order_id === "string") {
+    return Object.values(SALES).find((row) => row.order_id === body.order_id);
+  }
+  return undefined;
+}
+
+// The commit, as the core's would be: the refund's total is the returned
+// lines' own totals (this world carries no tax), the cash rail moves the
+// drawer's cash out counter, and the idempotency key makes a replay answer
+// the stored return without a second movement.
+function commitReturn(caller, body) {
+  const key = body.idempotency_key;
+  const replay = RETURNS_BY_KEY.get(key);
+  if (replay !== undefined) return { ...replay, replayed: true };
+  const sale = saleFromInput(body);
+  RETURN_SEQ += 1;
+  let subtotalCents = 0;
+  for (const line of body.lines) {
+    const saleLine = sale.lines.find((row) => row.order_line_id === line.order_line_id);
+    subtotalCents += saleLine.unit_price_cents * line.qty_base;
+    RETURNED_QTY.set(saleLine.order_line_id, (RETURNED_QTY.get(saleLine.order_line_id) ?? 0) + line.qty_base);
+  }
+  const answer = {
+    return_id: `demo-return-${RETURN_SEQ}`,
+    return_no: `CT-R-${100 + RETURN_SEQ}`,
+    order_id: sale.order_id,
+    invoice_id: sale.invoice_id,
+    refund_method: body.refund_method,
+    subtotal_cents: subtotalCents,
+    tax_cents: 0,
+    total_cents: subtotalCents,
+    pickup_status: "NONE",
+    status: "COMMITTED",
+    replayed: false,
+  };
+  RETURNS_BY_KEY.set(key, answer);
+  if (body.refund_method === "CASH") DRAWER.cash_out_cents += answer.total_cents;
+  return answer;
+}
+
 function respondJson(response, status, payload) {
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(payload));
+}
+
+function readBody(request) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    request.on("data", (chunk) => {
+      body += chunk;
+    });
+    request.on("end", () => resolve(body));
+    request.on("error", reject);
+  });
 }
 
 // The staff caller, read back out of a bearer this stub itself minted: the
@@ -204,7 +299,7 @@ function callerFromRequest(request) {
   }
 }
 
-const server = createServer((request, response) => {
+const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
   if (request.method === "GET" && url.pathname === "/healthz") {
     respondJson(response, 200, { ok: true });
@@ -254,23 +349,100 @@ const server = createServer((request, response) => {
       respondJson(response, 404, { error: "no sale with that number answers at this counter" });
       return;
     }
-    respondJson(response, 200, {
-      order_id: sale.order_id,
-      order_no: sale.order_no,
-      branch_id: sale.branch_id,
-      customer_id: sale.customer_id,
-      invoice_id: sale.invoice_id,
-      sale_tender: sale.sale_tender,
-      card_refundable: sale.card_refundable,
-      lines: sale.lines.map((line) => ({
-        ...line,
-        qty_returned: RETURNED_QTY.get(line.order_line_id) ?? 0,
-      })),
-    });
-    return;
-  }
-  respondJson(response, 404, { error: "not found" });
-});
+      respondJson(response, 200, {
+        order_id: sale.order_id,
+        order_no: sale.order_no,
+        branch_id: sale.branch_id,
+        customer_id: sale.customer_id,
+        invoice_id: sale.invoice_id,
+        sale_tender: sale.sale_tender,
+        card_refundable: sale.card_refundable,
+        lines: sale.lines.map((line) => ({
+          ...line,
+          qty_returned: RETURNED_QTY.get(line.order_line_id) ?? 0,
+        })),
+      });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/till/sessions/open") {
+      const caller = callerFromRequest(request);
+      if (caller === null) {
+        respondJson(response, 401, { error: "no usable staff credential" });
+        return;
+      }
+      const branchId = url.searchParams.get("branch_id");
+      const open = branchId === DRAWER.branch_id;
+      respondJson(response, 200, open ? { open: true, id: DRAWER.session_id } : { open: false });
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname.startsWith("/api/v1/till/sessions/") &&
+      url.pathname.endsWith("/zreport")
+    ) {
+      const caller = callerFromRequest(request);
+      if (caller === null) {
+        respondJson(response, 401, { error: "no usable staff credential" });
+        return;
+      }
+      const sessionId = url.pathname.split("/")[5];
+      if (sessionId !== DRAWER.session_id) {
+        respondJson(response, 404, { error: "no such till session" });
+        return;
+      }
+      respondJson(response, 200, {
+        session_id: DRAWER.session_id,
+        per_tender: [{ method: "CASH", total_cents: DRAWER.cash_in_cents - DRAWER.cash_out_cents }],
+        cash: {
+          opening_float_cents: DRAWER.opening_float_cents,
+          expected_cents: DRAWER.opening_float_cents + DRAWER.cash_in_cents - DRAWER.cash_out_cents,
+          counted_cents: 0,
+          over_short_cents: 0,
+        },
+        closing_float_cents: 0,
+      });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/payments/config") {
+      const caller = callerFromRequest(request);
+      if (caller === null) {
+        respondJson(response, 401, { error: "no usable staff credential" });
+        return;
+      }
+      // The demo's card rail is the simulator, always (guard G7): the status
+      // route says so, and the desk's card method repeats it in words.
+      respondJson(response, 200, {
+        configured: true,
+        merchant_id: "hh-demo-merchant",
+        processor: "stub",
+        currency: "USD",
+        simulated: true,
+      });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/v1/pos/returns") {
+      const caller = callerFromRequest(request);
+      if (caller === null) {
+        respondJson(response, 401, { error: "no usable staff credential" });
+        return;
+      }
+      let body;
+      try {
+        body = JSON.parse(await readBody(request));
+      } catch {
+        respondJson(response, 400, { error: "the request body is not JSON" });
+        return;
+      }
+      const refusal = returnsRefusal(caller, body);
+      if (refusal !== null) {
+        respondJson(response, refusal.status, refusal.body);
+        return;
+      }
+      respondJson(response, 201, commitReturn(caller, body));
+      return;
+    }
+    respondJson(response, 404, { error: "not found" });
+  });
 
 server.keepAliveTimeout = 120 * 1000;
 server.headersTimeout = 125 * 1000;

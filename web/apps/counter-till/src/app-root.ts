@@ -93,6 +93,7 @@ export class CounterTillApp extends HHElement {
     this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
     this.#returns = new ReturnsFlow({
       client,
+      clerkName: () => this.#sessions.current?.user.name ?? null,
       onChange: () => this.requestUpdate(),
     });
   }
@@ -130,11 +131,23 @@ export class CounterTillApp extends HHElement {
     if (control.getAttribute("data-action") === "returns-find") {
       void this.#returns.findSale();
     }
+    if (control.getAttribute("data-action") === "returns-method") {
+      const method = control.getAttribute("data-method");
+      if (method !== null) this.#returns.chooseMethod(method);
+    }
+    if (control.getAttribute("data-action") === "returns-submit") {
+      void this.#returns.submit();
+    }
+    if (control.getAttribute("data-action") === "returns-another") {
+      this.#returns.startAnotherReturn();
+    }
   };
 
   // The returns desk's fields ride the same host delegation as the buttons:
   // one input listener on the host, the control read off composedPath() by
-  // its data-field name, so a re-render strands no listener.
+  // its data-field name, so a re-render strands no listener. The inputs are
+  // uncontrolled: the DOM holds what was typed, the flow hears every edit
+  // here, and a draft's fresh mount shows the flow's own defaults.
   readonly #onHostInput = (event: Event): void => {
     const control = event
       .composedPath()
@@ -142,6 +155,14 @@ export class CounterTillApp extends HHElement {
     if (!(control instanceof HTMLInputElement) && !(control instanceof HTMLTextAreaElement)) return;
     const field = control.getAttribute("data-field");
     if (field === "order-no") this.#returns.setOrderNo(control.value);
+    if (field === "qty" && control instanceof HTMLInputElement) {
+      this.#returns.setQty(control.getAttribute("data-line") ?? "", control.value);
+    }
+    if (field === "note") this.#returns.setNote(control.value);
+    if (field === "restock" && control instanceof HTMLInputElement) {
+      this.#returns.setRestock(control.checked);
+    }
+    if (field === "reason-code") this.#returns.setReasonCode(control.value);
   };
 
   async #loadFlows(): Promise<void> {

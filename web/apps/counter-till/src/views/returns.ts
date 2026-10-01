@@ -6,7 +6,7 @@
 // listener that a re-render would strand).
 import { css, html, nothing, type TemplateResult } from "lit";
 import { formatMoney } from "../money.js";
-import type { ReturnsFlow } from "../returns/flow.js";
+import type { RefundMethod, RefundReceipt, ReasonCode, ReturnsFlow } from "../returns/flow.js";
 
 export const returnsStyles = css`
   .returns {
@@ -74,6 +74,96 @@ export const returnsStyles = css`
   .notice {
     color: var(--hh-text-dim);
   }
+  .line-qty {
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    white-space: nowrap;
+  }
+  .line-qty label {
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+  }
+  .line-qty input {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    color: var(--hh-text);
+    background: var(--hh-card);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-control);
+    padding: var(--hh-s-8) var(--hh-s-12);
+    width: 5em;
+    min-height: 44px;
+  }
+  .line-qty input:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .methods {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--hh-s-12);
+    margin: var(--hh-s-16) 0 var(--hh-s-8);
+  }
+  .methods button[aria-pressed="true"] {
+    border-color: var(--hh-accent);
+    font-weight: 600;
+  }
+  .draft-row {
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+    flex-wrap: wrap;
+    margin: 0 0 var(--hh-s-12);
+  }
+  .draft-row label {
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+  }
+  .draft-row select,
+  .draft-row input[type="text"] {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    color: var(--hh-text);
+    background: var(--hh-card);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-control);
+    padding: var(--hh-s-8) var(--hh-s-12);
+    min-height: 44px;
+  }
+  .draft-row select:focus-visible,
+  .draft-row input:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .restock {
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    font-size: var(--hh-s-16);
+    color: var(--hh-text);
+  }
+  .submit-row {
+    margin: var(--hh-s-16) 0 0;
+  }
+  .receipt {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    padding: var(--hh-s-16);
+    margin: var(--hh-s-16) 0 0;
+    max-width: 480px;
+  }
+  .receipt h3 {
+    font-size: var(--hh-s-16);
+    margin: 0 0 var(--hh-s-8);
+  }
+  .receipt p {
+    margin: 0 0 var(--hh-s-8);
+  }
+  .receipt .figures {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
 `;
 
 export function renderReturns(flow: ReturnsFlow): TemplateResult {
@@ -84,13 +174,7 @@ export function renderReturns(flow: ReturnsFlow): TemplateResult {
       <div class="find-row">
         <div>
           <label for="ct-returns-order-no">Sale number</label>
-          <input
-            id="ct-returns-order-no"
-            type="text"
-            data-field="order-no"
-            .value=${flow.orderNo}
-            ?disabled=${flow.busy}
-          />
+          <input id="ct-returns-order-no" type="text" data-field="order-no" ?disabled=${flow.busy} />
         </div>
         <button type="button" class="btn-secondary" data-action="returns-find" ?disabled=${!flow.canFind}>
           Find sale
@@ -98,6 +182,7 @@ export function renderReturns(flow: ReturnsFlow): TemplateResult {
       </div>
       ${flow.notice === null ? nothing : html`<p class="notice" role="status" data-testid="returns-notice">${flow.notice}</p>`}
       ${flow.lookup === null ? nothing : renderSale(flow)}
+      ${flow.receipt === null ? nothing : renderReceipt(flow.receipt)}
     </section>
   `;
 }
@@ -105,22 +190,30 @@ export function renderReturns(flow: ReturnsFlow): TemplateResult {
 function renderSale(flow: ReturnsFlow): TemplateResult {
   const lookup = flow.lookup;
   if (lookup === null) return html``;
+  if (flow.receipt !== null) {
+    // The receipt tells this return's story now; the sale's lines wait until
+    // the desk starts another one.
+    return html``;
+  }
+  const nothingReturnable = lookup.lines.every((line) => line.qtySold <= line.qtyReturned);
   return html`
     <h3 class="sale-heading" data-testid="returns-sale">Sale ${lookup.orderNo}</h3>
     <p class="sale-meta">Paid by ${tenderWords(lookup.saleTender)}.</p>
-    <ul class="rows" aria-label="Sale lines">
-      ${lookup.lines.map((line) => renderLine(line))}
-    </ul>
+    ${nothingReturnable
+      ? html`<p class="notice" role="status">Nothing on this sale is still returnable: every line has gone back already.</p>`
+      : html`
+          <ul class="rows" aria-label="Sale lines">
+            ${lookup.lines.map((line) => renderLine(flow, line))}
+          </ul>
+          ${renderDraft(flow)}
+        `}
   `;
 }
 
-function renderLine(line: {
-  description: string;
-  qtySold: number;
-  qtyReturned: number;
-  unitPriceCents: number;
-  lineTotalCents: number;
-}): TemplateResult {
+function renderLine(
+  flow: ReturnsFlow,
+  line: { orderLineId: string; description: string; qtySold: number; qtyReturned: number; unitPriceCents: number; lineTotalCents: number },
+): TemplateResult {
   // What is still returnable is the line's two returned-and-sold counts read
   // side by side; the commit re-guards the quantity on the server, so this
   // read-off is for the clerk's eye, never an authority.
@@ -129,7 +222,132 @@ function renderLine(line: {
       <span class="line-desc">${line.description}</span>
       <span class="line-figures">each ${formatMoney(line.unitPriceCents)}, line ${formatMoney(line.lineTotalCents)}</span>
       <span class="line-returnable">sold ${line.qtySold}, returned ${line.qtyReturned}</span>
+      <span class="line-qty">
+        <label for="ct-qty-${line.orderLineId}">Return</label>
+        <input
+          id="ct-qty-${line.orderLineId}"
+          type="number"
+          min="0"
+          step="1"
+          inputmode="numeric"
+          data-field="qty"
+          data-line=${line.orderLineId}
+          aria-label="Quantity to return: ${line.description}"
+          ?disabled=${flow.submitting}
+        />
+      </span>
     </li>
+  `;
+}
+
+const METHOD_LABELS: Record<RefundMethod, string> = {
+  CASH: "Cash",
+  CARD: "Card",
+  ACCOUNT_CREDIT: "Account credit",
+};
+
+function submitLabel(method: RefundMethod): string {
+  if (method === "CASH") return "Refund cash";
+  if (method === "CARD") return "Refund card";
+  return "Refund to account";
+}
+
+export function methodWords(method: RefundMethod): string {
+  if (method === "CASH") return "cash, from the drawer";
+  if (method === "CARD") return "card";
+  return "account credit";
+}
+
+function renderDraft(flow: ReturnsFlow): TemplateResult {
+  const lookup = flow.lookup;
+  if (lookup === null) return html``;
+  const chosenNote =
+    flow.method === null
+      ? nothing
+      : html`<p class="notice" role="status">
+          ${methodWords(flow.method)}: ${flow.method === "CARD" && flow.cardSimulated === true
+            ? "Simulated refund: nothing reached a card."
+            : methodNote(flow)}
+        </p>`;
+  return html`
+    <div class="methods" role="group" aria-label="Refund method">
+      ${(["CASH", "CARD", "ACCOUNT_CREDIT"] as const).map((method) => html`
+        <button
+          type="button"
+          class="btn-secondary"
+          data-action="returns-method"
+          data-method=${method}
+          aria-pressed=${flow.method === method ? "true" : "false"}
+          ?disabled=${!flow.methodAvailable(method) || flow.submitting}
+        >
+          ${METHOD_LABELS[method]}
+        </button>
+      `)}
+    </div>
+    ${flow.methodAvailable("CASH")
+      ? nothing
+      : html`<p class="notice">Cash waits on the drawer: ${drawerWords(flow.drawer)}</p>`}
+    ${flow.methodAvailable("CARD")
+      ? nothing
+      : html`<p class="notice">No card refund: this sale was not paid by card, so there is no capture to reverse.</p>`}
+    ${chosenNote}
+    <div class="draft-row">
+      <label for="ct-returns-reason">Reason</label>
+      <select id="ct-returns-reason" data-field="reason-code" ?disabled=${flow.submitting}>
+        ${REASON_OPTIONS.map((code) => html`<option value=${code}>${reasonWords(code)}</option>`)}
+      </select>
+      <label for="ct-returns-note">Note</label>
+      <input id="ct-returns-note" type="text" data-field="note" ?disabled=${flow.submitting} />
+      <label class="restock">
+        <input type="checkbox" data-field="restock" checked ?disabled=${flow.submitting} />
+        Restock the goods
+      </label>
+    </div>
+    <div class="submit-row">
+      <button type="button" class="btn-primary" data-action="returns-submit" ?disabled=${!flow.canSubmit}>
+        ${flow.method === null ? "Record refund" : submitLabel(flow.method)}
+      </button>
+    </div>
+  `;
+}
+
+// Other leads the list because it is the desk's default: a fresh select
+// shows its first option, and the flow's default reason must be the one the
+// screen already shows, never a silent mismatch between the two.
+const REASON_OPTIONS: readonly ReasonCode[] = ["OTHER", "DAMAGED", "DEFECT", "WRONG_ITEM", "NO_LONGER_NEEDED"];
+
+export function reasonWords(code: ReasonCode): string {
+  if (code === "DAMAGED") return "Damaged";
+  if (code === "DEFECT") return "Defect";
+  if (code === "WRONG_ITEM") return "Wrong item";
+  if (code === "NO_LONGER_NEEDED") return "No longer needed";
+  return "Other";
+}
+
+function drawerWords(drawer: ReturnsFlow["drawer"]): string {
+  if (drawer.kind === "closed") return "no drawer is open at the sale's branch.";
+  return "the drawer could not be asked just now.";
+}
+
+function methodNote(flow: ReturnsFlow): string {
+  if (flow.method === "CASH") return "paid out of the open drawer.";
+  if (flow.method === "CARD") return "the original card capture is reversed.";
+  return "the customer's account is credited.";
+}
+
+function renderReceipt(receipt: RefundReceipt): TemplateResult {
+  return html`
+    <section class="receipt" data-testid="refund-receipt" role="status">
+      <h3>Refund recorded</h3>
+      <p>${receipt.returnNo}${receipt.replayed ? " (the same return, answered again)" : ""}</p>
+      <p class="figures">Total refunded ${formatMoney(receipt.totalCents)} by ${methodWords(receipt.method)}</p>
+      ${receipt.method === "CARD" && receipt.cardSimulated === true
+        ? html`<p data-testid="simulated-notice">Simulated refund: nothing reached a card.</p>`
+        : nothing}
+      ${receipt.approverName === null ? nothing : html`<p>Approved by ${receipt.approverName}.</p>`}
+      ${receipt.clerkName === null ? nothing : html`<p>Rung by ${receipt.clerkName}.</p>`}
+      <button type="button" class="btn-secondary" data-action="returns-another">Start another return</button>
+    </section>
   `;
 }
 
