@@ -7,7 +7,14 @@
 // default), because the one thing a till must never show is a figure nobody
 // computed.
 import { err, ok, type ApiClient, type Result } from "@hardscapehouse/api-client";
-import { staffBranches, staffCustomer, staffPos, staffProduct, staffTill } from "@hardscapehouse/api-client";
+import {
+  staffBranches,
+  staffCustomer,
+  staffPayment,
+  staffPos,
+  staffProduct,
+  staffTill,
+} from "@hardscapehouse/api-client";
 
 /** The station the counter's shared drawer sits on in this release. */
 export const DRAWER_STATION = "MAIN";
@@ -56,11 +63,43 @@ export interface StandingRef {
   onHold: boolean | null;
 }
 
-/** One ticket line as the resolve and the glance take it. */
+/** One line on the ticket as the resolve and the glance take it. */
 export interface TicketItem {
   productId: string;
   qty: number;
   uom: string;
+}
+
+/**
+ * The card tender's token: the fixed demo token the simulator requires to be
+ * non-empty. This app has no card number field and loads no card tokenization
+ * script: the token is a constant, and the second source scan holds that.
+ */
+export const DEMO_CARD_TOKEN = "demo-card-token";
+
+/** What the till sends to ring one sale: no price anywhere in it. */
+export interface SaleRing {
+  idempotencyKey: string;
+  branchId: string;
+  tillSessionId: string;
+  customerId: string;
+  tender: "CASH" | "CARD" | "ACCOUNT";
+  cashTenderedCents: number | null;
+  requestedDate: string;
+  items: TicketItem[];
+}
+
+export interface CommittedSale {
+  orderId: string;
+  orderNo: string;
+  invoiceNo: string;
+  subtotalCents: number;
+  taxCents: number;
+  totalCents: number;
+  tender: string;
+  cashTenderedCents: number | null;
+  changeDueCents: number | null;
+  tenders: Array<{ method: string; amountCents: number }>;
 }
 
 export interface QuoteRef {
@@ -350,5 +389,93 @@ export class TillClient {
     });
     const partialRaw = record["partial"];
     return ok({ marginBps, partial: partialRaw === true });
+  }
+
+  /**
+   * The card rail's own report of what it is. True is the demo's simulator
+   * and turns the simulated notices on; false means the rail reports itself
+   * live; a refusal means unknown, and the notices stay off either way
+   * because a notice must render exactly when the value is true.
+   */
+  async paymentStatus(): Promise<Result<boolean | null>> {
+    const result = await staffPayment.paymentGetConfig(this.#client);
+    if (!result.ok) return result;
+    const record = result.value as unknown;
+    if (!isRecord(record)) return err("the payment status did not answer an object");
+    return ok(booleanAt(record, "simulated"));
+  }
+
+  /**
+   * Ring the sale: one atomic call, the core composing order, invoice and
+   * tender. The body carries no price: the lines are quantities and units,
+   * and the engine prices them server-side. A refusal comes back as data,
+   * with the server's status and word, so the till can speak the refusal in
+   * words (a credit hold above all) without this module pretending to know
+   * the gate's mind.
+   */
+  async commitSale(ring: SaleRing): Promise<Result<CommittedSale>> {
+    const result = await staffPos.posCreateSale(this.#client, {
+      idempotency_key: ring.idempotencyKey,
+      branch_id: ring.branchId,
+      till_session_id: ring.tillSessionId,
+      customer_id: ring.customerId,
+      sale_type: "COLLECT_NOW",
+      cash_sale: ring.tender === "CASH",
+      tender: ring.tender,
+      payment_token: ring.tender === "CARD" ? DEMO_CARD_TOKEN : "",
+      signature_ref: "",
+      requested_date: ring.requestedDate,
+      notes: "",
+      offline: false,
+      lines: ring.items.map((item) => ({ product_id: item.productId, qty_entered: item.qty, uom_entered: item.uom })),
+      cash_tendered_cents: ring.cashTenderedCents === null ? 0 : ring.cashTenderedCents,
+    });
+    if (!result.ok) return result;
+    const sale = result.value as unknown;
+    if (!isRecord(sale)) return err("the committed sale did not answer an object");
+    const orderId = stringAt(sale, "order_id");
+    const orderNo = stringAt(sale, "order_no");
+    const invoiceNo = stringAt(sale, "invoice_no");
+    const subtotalCents = integerAt(sale, "subtotal_cents");
+    const taxCents = integerAt(sale, "tax_cents");
+    const totalCents = integerAt(sale, "total_cents");
+    const tender = stringAt(sale, "tender");
+    if (
+      orderId === null ||
+      orderNo === null ||
+      invoiceNo === null ||
+      subtotalCents === null ||
+      taxCents === null ||
+      totalCents === null ||
+      tender === null
+    ) {
+      return err("the committed sale is missing its numbers");
+    }
+    const cashTenderedRaw = sale["cash_tendered_cents"];
+    const changeDueRaw = sale["change_due_cents"];
+    const legsRaw = sale["tenders"];
+    const tenders: Array<{ method: string; amountCents: number }> = [];
+    if (Array.isArray(legsRaw)) {
+      for (const leg of legsRaw) {
+        const row = leg as unknown;
+        if (!isRecord(row)) continue;
+        const method = stringAt(row, "method");
+        const amountCents = integerAt(row, "amount_cents");
+        if (method === null || amountCents === null) continue;
+        tenders.push({ method, amountCents });
+      }
+    }
+    return ok({
+      orderId,
+      orderNo,
+      invoiceNo,
+      subtotalCents,
+      taxCents,
+      totalCents,
+      tender,
+      cashTenderedCents: typeof cashTenderedRaw === "number" && Number.isInteger(cashTenderedRaw) ? cashTenderedRaw : null,
+      changeDueCents: typeof changeDueRaw === "number" && Number.isInteger(changeDueRaw) ? changeDueRaw : null,
+      tenders,
+    });
   }
 }

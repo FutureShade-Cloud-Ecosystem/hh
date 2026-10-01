@@ -16,6 +16,9 @@
 //   GET  /api/v1/pos/account-standing     -> PosAccountStanding
 //   POST /api/v1/pos/counter-prices       -> PosCounterPrices
 //   POST /api/v1/pos/margin-glance        -> PosMarginGlance
+//   GET  /api/v1/payments/config          -> PaymentConfigStatus
+//   POST /api/v1/pos/sales                -> PosSale
+//   GET  /api/v1/pos/sales/{id}           -> PosSaleView
 // The demo routes are public in the contract (security: []), so they check no
 // credential; the phrase gate in front of the real demo box is Caddy's (W5's
 // image), not the routes'. The staff routes are not public: this stub reads
@@ -308,6 +311,26 @@ function lineTotalCents(unitCents, qtyEntered) {
 
 function marginBpsOf(revenue, cost) {
   return Math.round(((revenue - cost) / revenue) * 10000);
+}
+
+// The card rail: the demo's card tender charges the simulator, so the status
+// route answers simulated: true and every capture reference begins like the
+// simulator's. When the real core lands on the integration branch before the
+// card rail fix, its route answers simulated: false; the till's notice
+// renders exactly when the value is true, so the same app serves both worlds
+// unchanged and only the words move.
+const PAYMENT_CONFIG = {
+  configured: true,
+  merchant_id: "demo-merchant",
+  processor: "simulator",
+  currency: "CAD",
+  simulated: true,
+};
+
+// The credit gate, in the shape the core's handler answers: a refusal the
+// client reads by its error word and status, with the policy named beside it.
+function creditBlocked(policy) {
+  return { status: 409, body: { error: "credit_blocked", policy, queue: "staff_approvals" } };
 }
 
 // ---------------------------------------------------------------------------
@@ -681,8 +704,214 @@ const server = createServer((request, response) => {
     return;
   }
 
+  // The card rail's status read: the simulated flag the till's notices ride.
+  if (request.method === "GET" && path === "/api/v1/payments/config") {
+    respondJson(response, 200, PAYMENT_CONFIG);
+    return;
+  }
+
+  // The ring: order, invoice and tender composed as one. The body carries no
+  // price: every line is priced here through the same table the price read
+  // answers from. The credit gate runs before any money moves, exactly where
+  // the core's own gate sits.
+  if (request.method === "POST" && path === "/api/v1/pos/sales") {
+    readBody(request, (parsed) => {
+      const branchId = typeof parsed.branch_id === "string" ? parsed.branch_id : "";
+      if (branchId !== callerBranch) {
+        respondJson(response, 403, { error: "that branch is not one your grant reaches" });
+        return;
+      }
+      const session = drawers.get(branchId);
+      if (session === null || parsed.till_session_id !== session.id) {
+        respondJson(response, 409, { error: "the sale's drawer is not this branch's open till session" });
+        return;
+      }
+      const lines = Array.isArray(parsed.lines) ? parsed.lines : [];
+      if (lines.length === 0) {
+        respondJson(response, 400, { error: "a sale rings at least one line" });
+        return;
+      }
+      const customerId = typeof parsed.customer_id === "string" ? parsed.customer_id : "";
+      const customer = customerFor(customerId);
+      if (customer === null) {
+        respondJson(response, 404, { error: "no such customer account" });
+        return;
+      }
+      const tender = parsed.tender;
+      if (tender === "ACCOUNT" && customer.id === "") {
+        respondJson(response, 400, { error: "the walk-in has no account to bill" });
+        return;
+      }
+      const idempotencyKey = typeof parsed.idempotency_key === "string" ? parsed.idempotency_key : "";
+      const cachedOrderId = idempotencyKey === "" ? null : (salesByKey.get(idempotencyKey) ?? null);
+      if (cachedOrderId !== null) {
+        const cached = sales.get(cachedOrderId);
+        if (cached !== undefined) {
+          respondJson(response, 200, saleResponseBody(cached, true));
+          return;
+        }
+      }
+      let subtotal = 0;
+      const outLines = [];
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index] ?? {};
+        const productId = typeof line.product_id === "string" ? line.product_id : "";
+        const qty = typeof line.qty_entered === "number" ? line.qty_entered : 0;
+        const resolved = resolveLine(customer.id, productId, branchId);
+        if (resolved === null || qty <= 0) {
+          respondJson(response, 400, { error: `line ${index + 1} could not be priced by the engine` });
+          return;
+        }
+        const total = lineTotalCents(resolved.customer_cents, qty);
+        subtotal += total;
+        outLines.push({
+          line_no: index + 1,
+          product_id: resolved.product.product_id,
+          description: resolved.product.name,
+          qty_entered: qty,
+          uom_entered: typeof line.uom_entered === "string" ? line.uom_entered : resolved.price_uom,
+          unit_price_cents: resolved.customer_cents,
+          price_uom: resolved.price_uom,
+          line_total_cents: total,
+        });
+      }
+      const tax = taxCents(subtotal);
+      const total = subtotal + tax;
+      const tenders = [];
+      let cashTendered;
+      let changeDue;
+      let paymentId;
+      let gatewayRef;
+      if (tender === "CASH") {
+        cashTendered = parsed.cash_tendered_cents;
+        if (!Number.isInteger(cashTendered) || cashTendered < total) {
+          respondJson(response, 400, { error: "the cash tendered does not cover the sale's total" });
+          return;
+        }
+        changeDue = cashTendered - total;
+        paymentId = nextDocNo("pay");
+        tenders.push({ seq: 1, method: "CASH", amount_cents: total, payment_id: paymentId });
+      } else if (tender === "CARD") {
+        const token = parsed.payment_token;
+        if (typeof token !== "string" || token === "") {
+          respondJson(response, 400, { error: "a card tender carries the terminal's token, never a card number" });
+          return;
+        }
+        paymentId = nextDocNo("pay");
+        gatewayRef = `rp_sim_${docCounter + 1}`;
+        tenders.push({
+          seq: 1,
+          method: "CARD",
+          amount_cents: total,
+          payment_id: paymentId,
+          gateway_ref: gatewayRef,
+        });
+      } else if (tender === "ACCOUNT") {
+        // The credit gate, before any money moves: a hold is a hard stop, and
+        // so is a total that would carry the account past its limit.
+        if (customer.on_hold === true) {
+          const blocked = creditBlocked("COD_CONSTRAINT");
+          respondJson(response, blocked.status, blocked.body);
+          return;
+        }
+        if (customer.open_balance_cents + total > customer.credit_limit_cents) {
+          const blocked = creditBlocked("CREDIT_LIMIT_EXCEEDED");
+          respondJson(response, blocked.status, blocked.body);
+          return;
+        }
+        customer.open_balance_cents += total;
+      } else if (tender !== "CHEQUE") {
+        respondJson(response, 400, { error: "unknown tender" });
+        return;
+      }
+      const orderId = uuidFromCounter(4000 + sales.size + 1);
+      const sale = {
+        order_id: orderId,
+        order_no: nextDocNo("ORD"),
+        invoice_id: uuidFromCounter(5000 + sales.size + 1),
+        invoice_no: nextDocNo("INV"),
+        tender,
+        sale_type: typeof parsed.sale_type === "string" ? parsed.sale_type : "COLLECT_NOW",
+        branch_id: branchId,
+        customer_id: customer.id,
+        subtotal_cents: subtotal,
+        tax_cents: tax,
+        total_cents: total,
+        tax_reason_code: "STD_ON_HST_13",
+        status: "COMMITTED",
+        cash_tendered_cents: cashTendered,
+        change_due_cents: changeDue,
+        payment_id: paymentId,
+        gateway_ref: gatewayRef,
+        tenders,
+        lines: outLines,
+      };
+      sales.set(orderId, sale);
+      if (idempotencyKey !== "") salesByKey.set(idempotencyKey, orderId);
+      respondJson(response, 201, saleResponseBody(sale, false));
+    });
+    return;
+  }
+
+  const saleMatch = path.match(/^\/api\/v1\/pos\/sales\/([^/]+)$/);
+  if (request.method === "GET" && saleMatch !== null) {
+    const sale = sales.get(saleMatch[1]) ?? null;
+    if (sale === null) {
+      respondJson(response, 404, { error: "no such sale" });
+      return;
+    }
+    if (sale.branch_id !== callerBranch) {
+      respondJson(response, 403, { error: "that sale is not one your grant reaches" });
+      return;
+    }
+    respondJson(response, 200, {
+      order_id: sale.order_id,
+      order_no: sale.order_no,
+      customer_id: sale.customer_id,
+      branch_id: sale.branch_id,
+      sale_type: sale.sale_type,
+      tender: sale.tender,
+      status: sale.status,
+      subtotal_cents: sale.subtotal_cents,
+      tax_cents: sale.tax_cents,
+      total_cents: sale.total_cents,
+      tax_reason_code: sale.tax_reason_code,
+      invoice_id: sale.invoice_id,
+      invoice_no: sale.invoice_no,
+      payment_id: sale.payment_id,
+      lines: sale.lines,
+      tenders: sale.tenders,
+    });
+    return;
+  }
+
   respondJson(response, 404, { error: "not found" });
 });
+
+// The ring's response body, in the contract's PosSale shape: the committed
+// totals and tenders, the change due on a cash ring, and no line rows (the
+// operator-reopen read carries those).
+function saleResponseBody(sale, replayed) {
+  return {
+    order_id: sale.order_id,
+    order_no: sale.order_no,
+    invoice_id: sale.invoice_id,
+    invoice_no: sale.invoice_no,
+    payment_id: sale.payment_id,
+    gateway_ref: sale.gateway_ref,
+    tender: sale.tender,
+    sale_type: sale.sale_type,
+    subtotal_cents: sale.subtotal_cents,
+    tax_cents: sale.tax_cents,
+    total_cents: sale.total_cents,
+    tax_reason_code: sale.tax_reason_code,
+    status: sale.status,
+    replayed,
+    cash_tendered_cents: sale.cash_tendered_cents,
+    change_due_cents: sale.change_due_cents,
+    tenders: sale.tenders,
+  };
+}
 
 server.keepAliveTimeout = 120 * 1000;
 server.headersTimeout = 125 * 1000;

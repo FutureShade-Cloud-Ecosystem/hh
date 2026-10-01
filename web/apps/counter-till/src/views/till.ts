@@ -103,6 +103,9 @@ export const tillStyles = css`
     gap: var(--hh-s-16);
     max-width: 980px;
   }
+  .till-lower {
+    margin-top: var(--hh-s-16);
+  }
   .panel {
     border: 1px solid var(--hh-line);
     border-radius: var(--hh-radius-control);

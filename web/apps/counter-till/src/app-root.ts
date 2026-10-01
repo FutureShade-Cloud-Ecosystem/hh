@@ -20,16 +20,26 @@ import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehous
 import { DemoAccount } from "./demo-account.js";
 import {
   TillClient,
+  DEMO_CARD_TOKEN,
   parseQuantity,
   type BranchRef,
+  type CommittedSale,
   type CustomerRef,
   type ProductRef,
   type QuoteRef,
+  type SaleRing,
   type StandingRef,
 } from "./till-client.js";
-import { formatMargin, formatMoney } from "./money.js";
+import { formatMargin, formatMoney, parseAmountToCents } from "./money.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
 import { entryStyles, renderEntry, type FlowsState } from "./views/entry.js";
+import {
+  checkoutStyles,
+  renderReceipt,
+  renderTender,
+  type ReceiptView,
+  type TenderChoice,
+} from "./views/checkout.js";
 import {
   tillStyles,
   renderTill,
@@ -74,6 +84,7 @@ export class CounterTillApp extends HHElement {
     demoBannerStyles,
     entryStyles,
     tillStyles,
+    checkoutStyles,
     css`
       :host {
         display: block;
@@ -134,6 +145,13 @@ export class CounterTillApp extends HHElement {
   #pricing: "idle" | "pricing" | "priced" | "refused" = "idle";
   #pricingMessage: string | null = null;
   #pricedForType: string | null = null;
+  #drawerId: string | null = null;
+  #simulated: boolean | null = null;
+  #tender: TenderChoice = "CASH";
+  #committed: CommittedSale | null = null;
+  #receiptBalance: string | null = null;
+  #commitMessage: string | null = null;
+  #commitBusy = false;
 
   constructor() {
     super();
@@ -203,6 +221,22 @@ export class CounterTillApp extends HHElement {
     }
     if (control.getAttribute("data-action") === "use-walkin") {
       this.#useWalkIn();
+    }
+    if (control.getAttribute("data-action") === "set-tender") {
+      const tender = control.getAttribute("data-tender");
+      if (tender === "CASH" || tender === "CARD" || tender === "ACCOUNT") {
+        this.#tender = tender;
+        this.requestUpdate();
+      }
+    }
+    if (control.getAttribute("data-action") === "commit-sale") {
+      void this.#commitSale();
+    }
+    if (control.getAttribute("data-action") === "clear-receipt") {
+      this.#committed = null;
+      this.#receiptBalance = null;
+      this.#commitMessage = null;
+      this.requestUpdate();
     }
   };
 
@@ -286,6 +320,13 @@ export class CounterTillApp extends HHElement {
     this.#pricing = "idle";
     this.#pricingMessage = null;
     this.#pricedForType = null;
+    this.#drawerId = null;
+    this.#simulated = null;
+    this.#tender = "CASH";
+    this.#committed = null;
+    this.#receiptBalance = null;
+    this.#commitMessage = null;
+    this.#commitBusy = false;
     this.requestUpdate();
   }
 
@@ -305,6 +346,12 @@ export class CounterTillApp extends HHElement {
     }
     this.#branch = branch.value;
     await this.#ensureDrawer();
+    // The card rail's own report: the simulated notices ride exactly this
+    // value, true only, so an unanswered status means no notice, never a
+    // guessed one.
+    const status = await this.#tillClient.paymentStatus();
+    this.#simulated = status.ok ? status.value : null;
+    this.requestUpdate();
   }
 
   async #ensureDrawer(): Promise<void> {
@@ -313,6 +360,7 @@ export class CounterTillApp extends HHElement {
     this.requestUpdate();
     const result = await this.#tillClient.ensureDrawer(this.#branch.id);
     if (!result.ok) {
+      this.#drawerId = null;
       this.#drawer = {
         ...FRESH_DRAWER_PANEL,
         state: "refused",
@@ -320,6 +368,7 @@ export class CounterTillApp extends HHElement {
         message: result.error,
       };
     } else {
+      this.#drawerId = result.value.drawer.id;
       this.#drawer = {
         state: "open",
         how: result.value.how,
@@ -533,6 +582,132 @@ export class CounterTillApp extends HHElement {
     };
   }
 
+  /**
+   * Ring the sale. The till checks only what it must before the call (a
+   * drawer, priced lines, a typed cash amount): every business rule, the
+   * change due included, is the server's. A refusal lands in words, the
+   * credit gate's above all, and nothing is cleared: the ticket stands until
+   * a sale actually commits.
+   */
+  async #commitSale(): Promise<void> {
+    if (this.#branch === null || this.#drawerId === null) return;
+    if (this.#lines.length === 0) return;
+    const unpriced = this.#lines.some((line) => line.quote === null || line.quote.unitCents === null);
+    if (unpriced) {
+      this.#commitMessage = "A line on the ticket has no price yet: re-price the ticket first.";
+      this.requestUpdate();
+      return;
+    }
+    const customerId = this.#customer.kind === "account" ? this.#customer.customer.id : "";
+    if (this.#tender === "ACCOUNT" && customerId === "") {
+      this.#commitMessage = "The walk-in has no account to bill: pick an account, or take cash or card.";
+      this.requestUpdate();
+      return;
+    }
+    let cashCents: number | null = null;
+    if (this.#tender === "CASH") {
+      const input = this.renderRoot.querySelector<HTMLInputElement>('input[data-input="cash-tendered"]');
+      cashCents = parseAmountToCents(input?.value ?? "");
+      if (cashCents === null) {
+        this.#commitMessage = "Type the cash tendered as an amount in dollars, like 50 or 40.55.";
+        this.requestUpdate();
+        return;
+      }
+    }
+    const ring: SaleRing = {
+      idempotencyKey: crypto.randomUUID(),
+      branchId: this.#branch.id,
+      tillSessionId: this.#drawerId,
+      customerId,
+      tender: this.#tender,
+      cashTenderedCents: this.#tender === "CASH" ? cashCents : null,
+      requestedDate: new Date().toISOString().slice(0, 10),
+      items: this.#lines.map((line) => ({ productId: line.product.productId, qty: line.qty, uom: line.uom })),
+    };
+    this.#commitBusy = true;
+    this.#commitMessage = null;
+    this.requestUpdate();
+    const result = await this.#tillClient.commitSale(ring);
+    if (!result.ok) {
+      this.#commitBusy = false;
+      this.#commitMessage = this.#saleRefusalWords(result.error, result.status);
+      this.requestUpdate();
+      return;
+    }
+    this.#committed = result.value;
+    this.#receiptBalance = null;
+    this.#lines = [];
+    this.#pricing = "idle";
+    this.#pricingMessage = null;
+    this.#pricedForType = null;
+    this.#commitBusy = false;
+    this.requestUpdate();
+    // An account sale bills the account: the receipt's balance is a fresh
+    // read, not the sale total added to a remembered one, so the till never
+    // does that arithmetic. Until the read answers, the balance row says so.
+    if (this.#tender === "ACCOUNT" && this.#customer.kind === "account") {
+      const accountNo = this.#customer.customer.accountNo;
+      const refreshed = await this.#tillClient.searchCustomers(accountNo);
+      const row = refreshed.ok ? refreshed.value.find((candidate) => candidate.id === customerId) : undefined;
+      this.#receiptBalance = row !== undefined ? formatMoney(row.openBalanceCents) : null;
+      this.requestUpdate();
+    }
+  }
+
+  /**
+   * The server's refusal, in words a person at a counter can act on. The
+   * credit gate's word is the one this screen translates; everything else is
+   * the server's own message, shown as it arrived.
+   */
+  #saleRefusalWords(error: string, status: number | undefined): string {
+    if (status === 409 && error === "credit_blocked") {
+      return (
+        "This account cannot carry this sale on account: the credit gate refused it (over the limit, or on a hold). " +
+        "Cash or card still works, and accounts receivable can release or override a hold."
+      );
+    }
+    return `The sale did not ring: ${error}`;
+  }
+
+  #receiptView(): ReceiptView | null {
+    const sale = this.#committed;
+    if (sale === null) return null;
+    return {
+      orderId: sale.orderId,
+      orderNo: sale.orderNo,
+      invoiceNo: sale.invoiceNo,
+      subtotal: formatMoney(sale.subtotalCents),
+      tax: formatMoney(sale.taxCents),
+      total: formatMoney(sale.totalCents),
+      tenders: sale.tenders.map((leg) => ({ method: leg.method, amount: formatMoney(leg.amountCents) })),
+      tendered: sale.cashTenderedCents === null ? null : formatMoney(sale.cashTenderedCents),
+      changeDue: sale.changeDueCents === null ? null : formatMoney(sale.changeDueCents),
+      // The notice belongs to the card rail: it rides the status route's
+      // value, and only on a card sale's receipt.
+      simulated: sale.tender === "CARD" ? this.#simulated : null,
+      account:
+        sale.tender === "ACCOUNT" && this.#customer.kind === "account"
+          ? {
+              name: this.#customer.customer.name,
+              accountNo: this.#customer.customer.accountNo,
+              balance: this.#receiptBalance,
+            }
+          : null,
+    };
+  }
+
+  #tenderPanel() {
+    return {
+      tender: this.#tender,
+      simulated: this.#simulated,
+      lineCount: this.#lines.length,
+      priced: this.#lines.length > 0 && this.#lines.every((line) => line.quote !== null && line.quote.unitCents !== null),
+      canBillAccount: this.#customer.kind === "account",
+      busy: this.#commitBusy,
+      message: this.#commitMessage,
+    };
+  }
+
   #tillView(): TillView {
     return {
       drawer: this.#drawer,
@@ -544,6 +719,7 @@ export class CounterTillApp extends HHElement {
 
   render(): TemplateResult {
     const demoPresent = this.#till !== null || this.#flowsState.kind === "ready";
+    const receipt = this.#receiptView();
     return html`
       <header>
         ${demoPresent ? demoBanner() : nothing}
@@ -564,7 +740,13 @@ export class CounterTillApp extends HHElement {
       <main>
         ${this.#till === null
           ? renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })
-          : renderTill(this.#tillView())}
+          : html`
+              ${renderTill(this.#tillView())}
+              <div class="panels till-lower">
+                ${renderTender(this.#tenderPanel())}
+                ${receipt === null ? nothing : renderReceipt(receipt)}
+              </div>
+            `}
       </main>
     `;
   }
