@@ -15,8 +15,14 @@ func (c *Config) Level(role, surface string) (Level, error) {
 	return c.cells[cellKey{role: role, surface: surface}], nil
 }
 
-// Holds reports whether the role's level on the surface reaches want.
+// Holds reports whether the role's level on the surface reaches want. A
+// want outside the five levels is an error, never a silent admit: the
+// route's level is read as a string from its annotation, and a mistyped
+// one must not open every role through.
 func (c *Config) Holds(role, surface string, want Level) (bool, error) {
+	if _, ok := levelRank[want]; !ok {
+		return false, fmt.Errorf("roleconfig: unknown level %q", string(want))
+	}
 	level, err := c.Level(role, surface)
 	if err != nil {
 		return false, err
@@ -41,17 +47,53 @@ func (c *Config) ExceptionApprovers(kind ExceptionKind) ([]string, error) {
 }
 
 // FloorClearersOwnBranch returns who clears the floor on its own quote
-// price inside its own branch, while ManagerOwnBranchFloorClearing holds
-// (X5, the quote flow only).
+// price inside its own branch (X5, the quote flow only). The list is the
+// data; ClearsOwnBranchFloor folds the manager_own_branch_floor_clearing
+// setting in and is the rule the guards call.
 func (c *Config) FloorClearersOwnBranch() []string {
 	return append([]string(nil), c.lists.FloorClearersOwnBranch...)
 }
 
+// ClearsOwnBranchFloor reports whether the role clears the floor on its
+// own quote price inside its own branch, the setting folded in (X5, the
+// quote flow only): off, every such price goes to leadership, whatever the
+// list holds. The rule the guards call, in one place.
+func (c *Config) ClearsOwnBranchFloor(role string) (bool, error) {
+	if !IsRole(role) {
+		return false, fmt.Errorf("roleconfig: unknown role %q", role)
+	}
+	if !c.settings.ManagerOwnBranchFloorClearing {
+		return false, nil
+	}
+	for _, r := range c.lists.FloorClearersOwnBranch {
+		if r == role {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // DeliveryDateCommitters returns who commits a delivery date (X11: the
-// Yard Team commits none). GeneralManagerSelling adds the General Manager
-// to this list when it is on; the list here is the configured one.
+// Yard Team commits none). The list is the data; CommitsDeliveryDate folds
+// the general_manager_selling setting in and is the rule the guards call.
 func (c *Config) DeliveryDateCommitters() []string {
 	return append([]string(nil), c.lists.DeliveryDateCommitters...)
+}
+
+// CommitsDeliveryDate reports whether the role commits a delivery date,
+// general_manager_selling folded in: the General Manager commits one
+// exactly when the setting is on (row 457), the Yard Team never (X11). The
+// rule the guards call, in one place.
+func (c *Config) CommitsDeliveryDate(role string) (bool, error) {
+	if !IsRole(role) {
+		return false, fmt.Errorf("roleconfig: unknown role %q", role)
+	}
+	for _, r := range c.lists.DeliveryDateCommitters {
+		if r == role {
+			return true, nil
+		}
+	}
+	return role == RoleGeneralManager && c.settings.GeneralManagerSelling, nil
 }
 
 // CostVisibility returns who sees cost and margin (X3).
