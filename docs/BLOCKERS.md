@@ -223,3 +223,40 @@ bearer never did either), and the generator emits a note on the one operation
 that declares the header, so the regenerated client visibly carries it. The
 lead may want this hunk re-homed when the pull request is read; the rest of
 the commit is contract sources and generated outputs only.
+
+## L1 RG (role gate): the review's rulings and recorded gaps
+
+- **The platform roles' treatment, by ruling.** The staff_role table
+  grants three tier 1 roles the matrix holds no cells for (super_admin,
+  dealer_admin, fb_operator, 0215). ROLE-ACCESS-r3 leaves them outside the
+  matrix and the lead's catalog ruling 10 keeps their seats. Ruled in the
+  PR 44 review (P1-2): a caller whose resolved roles include one of the
+  three passes the role gate's level check on every staff route, the tier
+  guard still applies its own x-role checks to them, and a route that
+  names a configuration list is not covered by the pass. Implemented as
+  the named list in core/internal/platform/authz/rolegate.go; kept on the
+  record so the ruling travels with the code.
+- **Three writes annotated at read by convention, named for the record**
+  (the PR 44 review's P2-4): PUT /api/v1/purchasing/policy, PUT
+  /api/v1/inventory/transit-days, PATCH /api/v1/quote-assist/scope-rules/
+  {code}. On these surfaces no leadership role the requireAdmin tier
+  admits holds a cell above read, so a higher level would leave the route
+  to nobody; the tier gate alone holds each wall. Each block now carries
+  its reason in place. A dealer re-shaping the matrix moves these levels
+  with it.
+- **The registered half of the completeness walk has no CI coverage**
+  (the PR 44 review's P2-5). The plain census test
+  (core/cmd/core/census_test.go) runs without the database and catches a
+  document or census annotation fault; a route registered in Go and
+  annotated nowhere is caught only by the registrar's boot panic and by
+  the database-gated composition walk, neither of which the repository's
+  CI executes. W5's acceptance run sets the gate variables and is the
+  natural home; until then the attach-time panic is the only stop.
+- **The all-ten convention, for the comprehensive review's eye** (the PR
+  44 review's P3-5): nineteen routes name every surface, so every role
+  whose house-messages cell is at least read passes them, and every
+  configuration that keeps house-messages at work (the default does, for
+  all thirteen roles) leaves them open to all staff. Sound for a caller's
+  own things; POST /api/v1/attachments and POST
+  /api/v1/attachments/{id}/links are writes against any owner and deserve
+  a look at the comprehensive review.
