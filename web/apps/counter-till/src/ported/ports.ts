@@ -243,8 +243,51 @@ export function parseAmountCents(raw: string): number {
   return unwired('parseAmountCents');
 }
 
+/** One split leg the cashier is composing: the method and what they typed, parsed to cents. */
+export interface SplitLeg {
+  method: 'CASH' | 'CARD' | 'CHEQUE' | 'ACCOUNT';
+  amountCents: number;
+}
+
+/** The live state of a split as the cashier reads it. */
+export interface SplitReadiness {
+  /** The sum of the legs, in cents. */
+  tenderedCents: number;
+  /** The total less the tendered amount: positive is still owed, negative is over-tendered. */
+  remainingCents: number;
+  /** True only when the legs settle the sale exactly and the shape is legal. */
+  ready: boolean;
+  /** Why it is not ready, in words a cashier can act on; empty when ready. */
+  problem: string;
+}
+
+/**
+ * The split panel's live verdict: the host sums the typed legs, compares them
+ * with the ticket total and words the gap, so the panel enables Ring only on
+ * the core's own arithmetic.
+ */
+export function evaluateSplit(
+  legs: readonly SplitLeg[],
+  totalCents: number,
+  hasCustomer: boolean,
+): SplitReadiness {
+  return unwired('evaluateSplit');
+}
+
+/**
+ * What is left for the leg being filled: the total less the other legs, and
+ * never an over-tender (0 once the sale is covered).
+ */
+export function autoFillRemainder(
+  legs: readonly SplitLeg[],
+  totalCents: number,
+  indexBeingFilled: number,
+): number {
+  return unwired('autoFillRemainder');
+}
+
 /** The cart's subtotal, over the line totals the core already priced. */
-export function cartSubtotalCents(lines: readonly { line_total_cents: number }[]): number {
+export function cartSubtotalCents(lines: readonly { lineTotalCents: number }[]): number {
   return unwired('cartSubtotalCents');
 }
 
@@ -298,7 +341,10 @@ export function refundEstimateCents(
   return unwired('refundEstimateCents');
 }
 
-/** The account's available headroom: the core computes credit, never the till. */
+/**
+ * The account's available headroom for the strip and the picker to display,
+ * already clamped by the host's rule: the core computes credit, never the till.
+ */
 export function availableCreditCents(customer: {
   credit_limit_cents: number;
   open_balance_cents: number;

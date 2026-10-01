@@ -51,6 +51,7 @@ token sheet rebased onto the HH design system (see Styles below).
 | tax-api.ts | 224 | `api`, `BRANCHES`, `branchName` are ports |
 | tender-logic.ts | 87 | |
 | order-logic.ts | 153 | the status words the lookup renders; self-contained |
+| pricing-words-logic.ts | 176 | the price source words the breakdown chip renders; self-contained |
 
 ## Ported: the private helpers
 
@@ -134,6 +135,10 @@ reappears as a `ports.ts` seam with the reference's signature:
   `total_cents - deposit` twice. Seam: `balanceAfterDepositCents`.
 - `_pos-split.ts` `parseAmountCents`: `Number` times 100 on a cleaned string.
   Seam: `parseAmountCents`.
+- `_pos-split.ts` `evaluateSplit` and `autoFillRemainder`: summed and
+  subtracted the typed legs against the total, deciding readiness and the
+  remainder live. Seams: `evaluateSplit` (with the `SplitReadiness` shape) and
+  `autoFillRemainder`.
 - `pos-terminal.ts` `subtotal`: summed the cart's line totals. Seam:
   `cartSubtotalCents`.
 - `pos-terminal.ts` `tax`: computed `subtotal * rateBps / 10000` in the
