@@ -223,3 +223,25 @@ bearer never did either), and the generator emits a note on the one operation
 that declares the header, so the regenerated client visibly carries it. The
 lead may want this hunk re-homed when the pull request is read; the rest of
 the commit is contract sources and generated outputs only.
+## The Counter Till cycle, lane L1 (RC slice): statements the reconciled catalog lists contradict (open)
+
+The RC slice brought the ten internal surfaces' role lists in
+`docs/analysis/role-catalog.yaml` to the decided matrix (D48): each list
+holds the thirteen staff roles exactly as the matrix admits them, and the
+platform roles stand where the record names them, outside the matrix and
+unjudged by it (`ROLE-ACCESS-r3`: the platform administrator, the dealer
+administrator and the FutureBuild operator stay outside the matrix). Two
+things are recorded here rather than edited, because the slice's Touches
+stop at the lists:
+
+- The role records' `micro_apps` lines no longer match the reconciled
+  lists: `outside_sales`'s record names counter-till, which the list no
+  longer holds, and eleven records omit read or work surfaces the matrix
+  admits their role on (for example `general_manager`'s line names neither
+  counter-till, quote-desk, dispatch-board nor buying-and-stock), so the
+  role records and the surface lists no longer tell one story.
+- The matrix judges the thirteen staff roles only: `super_admin` and
+  `dealer_admin` keep their seats on manager-home, house-messages and
+  dealer-admin as the record names them, at levels the matrix says nothing
+  about, so any change to those seats is a ruling of its own and no part
+  of this reconciliation.
