@@ -511,10 +511,16 @@ paths:
         One of order_id or order_no identifies the original sale. refund_method
         CASH pays out of the open drawer named by till_session_id, CARD reverses
         the original capture, ACCOUNT_CREDIT credits the customer's account.
-        fee_bps is honored only on the ACCOUNT_CREDIT rail.
+        fee_bps is honored only on the ACCOUNT_CREDIT rail. A return above the
+        dealer's approval amount is refused to a caller whose role does not
+        hold the approval, the amount and the approver roles named in the
+        refusal body; sent again with an approver's credential in
+        X-Approver-Authorization, it commits as the approver's decision, with
+        the clerk named beside them.
       x-role: requireStaff
       parameters:
         - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/XApproverAuthorization"
       requestBody:
         required: true
         content:
@@ -532,6 +538,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/PosRefundApprovalRequired" }
   /api/v1/pos/returns/lookup:
     get:
       operationId: posLookupReturn
@@ -1260,17 +1267,64 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
 
 components:
+  parameters:
+    XApproverAuthorization:
+      name: X-Approver-Authorization
+      in: header
+      required: false
+      description: >-
+        The approver's own credential beside the clerk's bearer, carried once
+        when a return above the dealer's approval amount commits with the
+        manager at the counter. The value carries the same Bearer scheme
+        prefix as Authorization: the string "Bearer " followed by the token,
+        so the server reads it through the same bearer parsing as any
+        caller's credential. Verified by the same verifier as any caller;
+        its membership and role resolved as the gate resolves any caller;
+        accepted only when issued within the short window the configuration
+        sets. Never logged.
+      schema: { type: string }
+
+  responses:
+    PosRefundApprovalRequired:
+      description: >-
+        The return is refused, and the body is the Error envelope. The route
+        answers 409 for more than one refusal: the refund rail's own refusals
+        (a closed drawer, a refused tender write) carry the plain envelope
+        alone, while the approval refusal names itself in the error string
+        "refund_approval_required": the refund is above the dealer's approval
+        amount and the caller's role is not on the approvers list, and only
+        that refusal carries the requirement under the approval key, so the
+        till's screen can show the amount and the roles that may approve. A
+        client discriminates on the error string, never on the key's absence.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Error"
+              - type: object
+                properties:
+                  approval:
+                    description: >-
+                      Present exactly when the error string is
+                      "refund_approval_required", the approval refusal; the
+                      route's other 409 refusals answer the plain envelope
+                      without the key.
+                    $ref: "#/components/schemas/PosRefundApproval"
+
   schemas:
     # ── POS: sale ring ───────────────────────────────────────────────────────
     PosLineInput:
       type: object
-      description: One cart line. The price is not in the body; it is resolved server-side.
-      required: [product_id, qty_entered, uom_entered, cost_cents]
+      description: >-
+        One cart line. The price is not in the body; it is resolved
+        server-side. The cost is not in the body either: the core reads it
+        from its own cost source, so a margin answer is never priced by the
+        caller.
+      required: [product_id, qty_entered, uom_entered]
       properties:
         product_id: { type: string, format: uuid }
         qty_entered: { type: number }
         uom_entered: { type: string }
-        cost_cents: { type: integer, format: int64 }
     PosTenderLegInput:
       type: object
       description: >-
@@ -1864,6 +1918,26 @@ components:
         pickup_status: { type: string, enum: [NONE, REQUESTED, SCHEDULED, DONE] }
         status: { type: string, enum: [COMMITTED] }
         replayed: { type: boolean }
+    PosRefundApproval:
+      type: object
+      description: >-
+        The approval a refused return names: the amount over which the refund
+        needs a manager, and the role keys that hold the approval, as the
+        dealer's configuration sets them.
+      required: [amount_cents, approvers]
+      properties:
+        amount_cents:
+          type: integer
+          format: int64
+          description: The approval amount, in integer cents; a refund at or under it needs no approver
+        approvers:
+          type: array
+          description: >-
+            The role keys that may approve (sales_manager, branch_manager),
+            matching the configuration's keys; the till's screens map them to
+            display labels.
+          minItems: 1
+          items: { type: string }
     PosReturnableLine:
       type: object
       description: One original line with prior-return sums netted for display
