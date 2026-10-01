@@ -202,39 +202,42 @@ func TestDemoDatabaseGuardAcceptsTheDemoWorld(t *testing.T) {
 	}
 }
 
-// G3: every refusal, each by the case that names it.
+// G3: every refusal, each by the case that names it. The refusals pin
+// their reason, so a refusal that passes for the wrong reason (a query
+// erroring where a check should refuse) fails here too.
 func TestDemoDatabaseGuardRefusals(t *testing.T) {
 	cases := []struct {
 		name  string
+		want  string
 		plant func(t *testing.T, pool *pgxpool.Pool)
 	}{
-		{"a second org", func(t *testing.T, pool *pgxpool.Pool) {
+		{"a second org", "org rows", func(t *testing.T, pool *pgxpool.Pool) {
 			if _, err := pool.Exec(context.Background(), `INSERT INTO org (slug) VALUES ('other-dealer')`); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"the one org is not the demo org", func(t *testing.T, pool *pgxpool.Pool) {
+		{"the one org is not the demo org", "hh-demo", func(t *testing.T, pool *pgxpool.Pool) {
 			if _, err := pool.Exec(context.Background(), `UPDATE org SET slug = 'other-dealer'`); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"no demo_box table", func(t *testing.T, pool *pgxpool.Pool) {
+		{"no demo_box table", "only the demo populate writes it", func(t *testing.T, pool *pgxpool.Pool) {
 			if _, err := pool.Exec(context.Background(), `DROP TABLE demo_box`); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"demo_box emptied", func(t *testing.T, pool *pgxpool.Pool) {
+		{"demo_box emptied", "want the populate's one row", func(t *testing.T, pool *pgxpool.Pool) {
 			if _, err := pool.Exec(context.Background(), `DELETE FROM demo_box`); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"an ACTIVE user outside the reserved domains", func(t *testing.T, pool *pgxpool.Pool) {
+		{"an ACTIVE user outside the reserved domains", "reserved demo domains", func(t *testing.T, pool *pgxpool.Pool) {
 			insertUser(t, pool, "clerk@dibbits.ca", "ACTIVE")
 		}},
-		{"a lookalike host outside the reserved domains", func(t *testing.T, pool *pgxpool.Pool) {
+		{"a lookalike host outside the reserved domains", "reserved demo domains", func(t *testing.T, pool *pgxpool.Pool) {
 			insertUser(t, pool, "clerk@hh-demo.invalid.evil.com", "ACTIVE")
 		}},
-		{"an active payment configuration that is not the demo's", func(t *testing.T, pool *pgxpool.Pool) {
+		{"an active payment configuration that is not the demo's", "payment configuration", func(t *testing.T, pool *pgxpool.Pool) {
 			insertPayment(t, pool, "active", "REAL-MERCHANT")
 		}},
 	}
@@ -242,8 +245,12 @@ func TestDemoDatabaseGuardRefusals(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			pool := openPool(t, caseDatabase(t, "refuse"))
 			c.plant(t, pool)
-			if err := CheckDemoDatabase(context.Background(), pool); err == nil {
+			err := CheckDemoDatabase(context.Background(), pool)
+			if err == nil {
 				t.Fatalf("%s: the guard accepted", c.name)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("%s: refusal %q does not pin its reason (%s), so it may be refusing for the wrong reason", c.name, err, c.want)
 			}
 		})
 	}
