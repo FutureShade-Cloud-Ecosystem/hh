@@ -186,6 +186,11 @@ type appGraph struct {
 	ops     *operationsSpine
 	tops    *topsSpine
 	smsBelt *smsBelt
+	// demoMint is the demo build's session mint over the in-memory demo
+	// issuer, set only by demo_on.go's wiring; the default build's graph
+	// carries nil and mints nothing (test support and the demo session
+	// lane read it, never the default request path).
+	demoMint func(string) (string, error)
 }
 
 // registerRoutes is the one place every production registration lands: the
