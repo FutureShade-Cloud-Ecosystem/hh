@@ -21,6 +21,10 @@ import { DemoAccount } from "./demo-account.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
 import { entryStyles, renderEntry, type FlowsState } from "./views/entry.js";
 import { tillStyles, renderTill } from "./views/till.js";
+import { ReturnsFlow } from "./returns/flow.js";
+import { OneTimeCredential } from "./returns/approval.js";
+import { RefundApprovalCapture } from "./returns/capture.js";
+import { returnsStyles, renderReturns } from "./views/returns.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -30,6 +34,7 @@ export class CounterTillApp extends HHElement {
     demoBannerStyles,
     entryStyles,
     tillStyles,
+    returnsStyles,
     css`
       :host {
         display: block;
@@ -70,23 +75,67 @@ export class CounterTillApp extends HHElement {
   readonly #sessions = new SessionStore();
   readonly #account: DemoAccount;
   readonly #controller: AuthController;
+  readonly #approverCredential: OneTimeCredential;
   #flowsState: FlowsState = { kind: "loading" };
   #busy = false;
   #message: string | null = null;
   #till: { label: string } | null = null;
+  /** The user the till's own mint was for: custody is checked against it. */
+  #clerkUserId: string | null = null;
+  /** The role code the clerk's mint stated, for the receipt's display words. */
+  #clerkRoleCode: string | null = null;
+  readonly #returns: ReturnsFlow;
 
   constructor() {
     super();
-    const client = new ApiClient({
-      baseUrl: "",
-      headers: authHeaderProvider({
-        callerClass: "staff",
-        sessions: this.#sessions,
-        activeOrg: () => DEMO_ORG,
-      }),
+    // The till's transport, wrapped so the refund approval refusal's body
+    // (the amount and the approver roles beside the envelope) reaches the
+    // returns flow: the generated client carries the error string alone.
+    const capture = new RefundApprovalCapture();
+    const staffHeaders = authHeaderProvider({
+      callerClass: "staff",
+      sessions: this.#sessions,
+      activeOrg: () => DEMO_ORG,
     });
+    const client = new ApiClient({ baseUrl: "", fetch: capture.fetch, headers: staffHeaders });
     this.#account = new DemoAccount({ client });
     this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
+    // The approver's client exists for the one return call that may carry the
+    // approver's credential (D49): its provider takes the token out of the
+    // one time slot during that send, and taking is dropping, so the token
+    // rests nowhere before and survives nothing after. The clerk's client is
+    // a different instance and never carries the credential, so no other call
+    // this app makes can leak it. Nothing here touches storage or logs.
+    const approverCredential = new OneTimeCredential();
+    this.#approverCredential = approverCredential;
+    const approverClient = new ApiClient({
+      baseUrl: "",
+      headers: async () => {
+        const headers = await staffHeaders();
+        const token = approverCredential.take();
+        if (token !== null) {
+          headers["X-Approver-Authorization"] = `Bearer ${token}`;
+        }
+        return headers;
+      },
+    });
+    this.#returns = new ReturnsFlow({
+      client,
+      approverClient,
+      account: this.#account,
+      credential: approverCredential,
+      clerk: () => {
+        const session = this.#sessions.current;
+        if (session === null) return null;
+        return {
+          name: session.user.name,
+          roleCode: this.#clerkRoleCode,
+          roleLabel: this.#till?.label ?? null,
+        };
+      },
+      capture,
+      onChange: () => this.requestUpdate(),
+    });
   }
 
   connectedCallback(): void {
@@ -97,11 +146,13 @@ export class CounterTillApp extends HHElement {
     // retargets the target to this element (the design system's README holds
     // both halves).
     this.addEventListener("click", this.#onHostClick);
+    this.addEventListener("input", this.#onHostInput);
     void this.#loadFlows();
   }
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.removeEventListener("input", this.#onHostInput);
     super.disconnectedCallback();
   }
 
@@ -117,6 +168,59 @@ export class CounterTillApp extends HHElement {
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
     }
+    if (control.getAttribute("data-action") === "returns-find") {
+      void this.#returns.findSale();
+    }
+    if (control.getAttribute("data-action") === "returns-method") {
+      const method = control.getAttribute("data-method");
+      if (method !== null) this.#returns.chooseMethod(method);
+    }
+    if (control.getAttribute("data-action") === "returns-submit") {
+      void this.#returns.submit();
+    }
+    if (control.getAttribute("data-action") === "returns-another") {
+      this.#returns.startAnotherReturn();
+    }
+    if (control.getAttribute("data-action") === "returns-approve") {
+      void this.#returns.openApprovalDialog();
+    }
+    if (control.getAttribute("data-action") === "returns-approve-cancel") {
+      this.#returns.closeApprovalDialog();
+    }
+    if (control.getAttribute("data-action") === "returns-approver-flow") {
+      const approverFlow = control.getAttribute("data-flow");
+      if (approverFlow !== null && approverFlow !== "") {
+        void this.#returns.approveWithFlow(approverFlow);
+      }
+    }
+  };
+
+  // The returns desk's fields ride the same host delegation as the buttons:
+  // one input listener on the host, the control read off composedPath() by
+  // its data-field name, so a re-render strands no listener. The inputs are
+  // uncontrolled: the DOM holds what was typed, the flow hears every edit
+  // here, and a draft's fresh mount shows the flow's own defaults.
+  readonly #onHostInput = (event: Event): void => {
+    const control = event
+      .composedPath()
+      .find((node): node is Element => node instanceof Element && node.hasAttribute("data-field"));
+    if (!(control instanceof HTMLInputElement) && !(control instanceof HTMLTextAreaElement)) return;
+    const field = control.getAttribute("data-field");
+    if (field === "order-no") this.#returns.setOrderNo(control.value);
+    if (field === "qty" && control instanceof HTMLInputElement) {
+      const line = control.getAttribute("data-line") ?? "";
+      this.#returns.setQty(line, control.value);
+      // The flow keeps whole units; the field is brought to the same answer,
+      // so a typed 1.5 never sits on the screen while a 1 rides the draft.
+      const stored = this.#returns.qtyOf(line);
+      const canonical = stored === 0 ? "" : String(stored);
+      if (control.value !== canonical) control.value = canonical;
+    }
+    if (field === "note") this.#returns.setNote(control.value);
+    if (field === "restock" && control instanceof HTMLInputElement) {
+      this.#returns.setRestock(control.checked);
+    }
+    if (field === "reason-code") this.#returns.setReasonCode(control.value);
   };
 
   async #loadFlows(): Promise<void> {
@@ -146,8 +250,26 @@ export class CounterTillApp extends HHElement {
       this.requestUpdate();
       return;
     }
+    this.#clerkUserId = minted.value.user.userId;
+    this.#clerkRoleCode = minted.value.roleCode;
     this.#till = { label: this.#labelFor(flow) };
     this.requestUpdate();
+  }
+
+  /**
+   * The role label in the chrome, read from custody rather than cached: while
+   * the live session is the one this till minted for, the entry card's label
+   * stands; if custody were ever replaced quietly (the review round's M3b),
+   * the chrome names who the session actually carries, so the till can never
+   * show one person's role over another person's session.
+   */
+  #signedInRoleLabel(): string {
+    const session = this.#sessions.current;
+    if (session === null) return "";
+    if (this.#clerkUserId !== null && session.user.userId !== this.#clerkUserId) {
+      return session.user.name;
+    }
+    return this.#till?.label ?? session.user.name;
   }
 
   #labelFor(flow: string): string {
@@ -162,7 +284,9 @@ export class CounterTillApp extends HHElement {
    * Sign out: the controller ends the mint (the adapter drops it) and wipes
    * custody either way; the entry view with the cards comes back, because the
    * flows answer is still held. A reload signs out too: the mint lives only
-   * in this tab's memory.
+   * in this tab's memory. The returns desk is blanked with the session: the
+   * till is the next person's, and no draft, refusal or receipt of the last
+   * one stays on it.
    */
   async #signOut(): Promise<void> {
     if (this.#busy) return;
@@ -172,6 +296,9 @@ export class CounterTillApp extends HHElement {
     this.#busy = false;
     this.#till = null;
     this.#message = null;
+    this.#clerkUserId = null;
+    this.#clerkRoleCode = null;
+    this.#returns.reset();
     this.requestUpdate();
   }
 
@@ -191,7 +318,7 @@ export class CounterTillApp extends HHElement {
             ? nothing
             : html`
                 <p class="signed-in">
-                  <span class="role-name" data-testid="signed-in-role">${this.#till.label}</span>
+                  <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
                   <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
                     Sign out
                   </button>
@@ -202,7 +329,7 @@ export class CounterTillApp extends HHElement {
       <main>
         ${this.#till === null
           ? renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })
-          : renderTill()}
+          : html`${renderTill()}${renderReturns(this.#returns)}`}
       </main>
     `;
   }

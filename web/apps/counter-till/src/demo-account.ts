@@ -26,6 +26,24 @@ export interface MintedSession {
   token: string;
   tokenExpiresAtMs: number;
   user: AccountUser;
+  /**
+   * The role code the mint's user block states (IdentityUser requires it):
+   * the server's own word about the account, carried for the receipt's
+   * display wording. Nothing gates a request on it.
+   */
+  roleCode: string;
+}
+
+/**
+ * A minted approver credential: the token for the one return call that may
+ * carry it, plus the approver's display name for the receipt. This is not a
+ * session: the adapter stores nothing of it, custody never sees it, and the
+ * caller drops the token after the one call.
+ */
+export interface ApproverCredential {
+  token: string;
+  approverName: string;
+  expiresAtMs: number;
 }
 
 /** The demo routes' listing and minting, plus the seam the auth package injects. */
@@ -58,6 +76,23 @@ export class DemoAccount implements AccountSurface {
     }
     this.#mint = minted;
     return ok({ ...minted });
+  }
+
+  /**
+   * The approver's credential for a return above the amount (D49): the same
+   * demo mint, asked for the approver flow's card in the Manager approval
+   * dialog. This mint is NOT adopted: the clerk's session is never replaced,
+   * and this adapter stores nothing of the answer. The token rides back to
+   * the caller, which holds it in memory for the one call and drops it.
+   */
+  async mintApproverCredential(flow: string): Promise<Result<ApproverCredential>> {
+    const result = await staffDemo.demoCreateSession(this.#client, { flow });
+    if (!result.ok) return result;
+    const minted = validateMint(result.value, Date.now());
+    if (minted === null) {
+      return err("the approver mint's answer is not a usable session: no token, no usable user block, or no readable expiry in the token");
+    }
+    return ok({ token: minted.token, approverName: minted.user.name, expiresAtMs: minted.tokenExpiresAtMs });
   }
 
   // The seam's remaining operations, answered from the held mint. The two
@@ -93,16 +128,18 @@ export class DemoAccount implements AccountSurface {
 }
 
 /** Field-by-field, never a cast: the staff login user block this app needs. */
-function userFromMint(raw: unknown): AccountUser | null {
+function userFromMint(raw: unknown): { user: AccountUser; roleCode: string } | null {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
   const userId = record["user_id"];
   const email = record["email"];
   const name = record["display_name"];
+  const roleCode = record["role_code"];
   if (typeof userId !== "string" || userId === "") return null;
   if (typeof email !== "string") return null;
   if (typeof name !== "string") return null;
-  return { userId, email, name };
+  if (typeof roleCode !== "string" || roleCode === "") return null;
+  return { user: { userId, email, name }, roleCode };
 }
 
 /**
@@ -138,9 +175,9 @@ function decodeBase64Url(segment: string): string {
 function validateMint(response: DemoSessionResponse, now: number): MintedSession | null {
   const token = response.token;
   if (typeof token !== "string" || token === "") return null;
-  const user = userFromMint(response.user);
-  if (user === null) return null;
+  const mintedUser = userFromMint(response.user);
+  if (mintedUser === null) return null;
   const tokenExpiresAtMs = expiryFromToken(token, now);
   if (tokenExpiresAtMs === null) return null;
-  return { token, tokenExpiresAtMs, user };
+  return { token, tokenExpiresAtMs, user: mintedUser.user, roleCode: mintedUser.roleCode };
 }
