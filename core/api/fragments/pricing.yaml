@@ -559,9 +559,10 @@ paths:
       tags: [staff-pricing]
       summary: Create a quantity-break schedule
       description: >-
-        Scope is exactly one of product_id or category_id. A break is an
-        adjustment stacked on the tier-resolved base, never a competing base
-        price.
+        Scope is exactly one of product_id or category_id. Under the replace
+        rule a matched break prices as one single figure off the retail anchor
+        and replaces the resolved price only when strictly cheaper; it never
+        stacks on the tier-resolved base, and a surcharge tier can never win.
       x-role: requireManager
       x-access:
         surfaces: [dealer-admin]

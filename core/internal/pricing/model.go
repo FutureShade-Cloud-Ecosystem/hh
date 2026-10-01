@@ -121,7 +121,8 @@ type Rule struct {
 }
 
 // QuantityBreak is a flattened quantity_break_headers × quantity_break_items row used by the
-// resolver. It is applied as an ADJUSTMENT on the resolved base (never a competing base price).
+// resolver. Under D1 the break competes as ONE single price computed off the retail anchor and
+// replaces the resolved price when strictly cheaper; it never stacks on it.
 type QuantityBreak struct {
 	HeaderID       string   `json:"header_id"`
 	ItemID         string   `json:"item_id"`
