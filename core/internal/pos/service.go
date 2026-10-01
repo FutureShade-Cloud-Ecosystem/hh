@@ -149,6 +149,9 @@ type posStore interface {
 	// parked tickets
 	InsertParkedTicket(ctx context.Context, t ParkedTicket, actor string) (ParkedTicket, error)
 	ListParkedTickets(ctx context.Context, branchID string) ([]ParkedTicket, error)
+	// GetParkedTicket reads one ticket whatever its status, the parked fence's pre-read
+	// (policy.go holds the branch wall on resume and discard before any write).
+	GetParkedTicket(ctx context.Context, id string) (ParkedTicket, bool, error)
 	MarkParkedResumed(ctx context.Context, id, actor string) (ParkedTicket, error)
 	MarkParkedDiscarded(ctx context.Context, id string) error
 	// A-06 portal return requests (0045 tables; the request is INTENT ONLY, no money/stock writes).

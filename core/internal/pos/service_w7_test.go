@@ -8,6 +8,7 @@ package pos
 import (
 	"context"
 	"errors"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -656,6 +657,74 @@ func TestParked_LinesCarryNoPrice_RepricedOnResume(t *testing.T) {
 			t.Fatalf("ParkedLineInput must not carry a price: %s", rt.Field(i).Name)
 		}
 	}
+}
+
+// The parked fence (D49 row 500): a branch is a hard wall on list, resume and discard; a login
+// from another branch can neither see nor touch a foreign branch's ticket.
+func TestParked_ForeignBranch_CannotListResumeOrDiscard(t *testing.T) {
+	h := newHarness()
+	t1, err := h.svc.Park(context.Background(), ParkInput{
+		BranchID: "branch-trt",
+		Lines:    []ParkedLineInput{{ProductID: "prod-blu", QtyEntered: 12, UOMEntered: "SF"}},
+	})
+	if err != nil {
+		t.Fatalf("park: %v", err)
+	}
+	// A Kingston clerk, granted at the other branch only.
+	h.caller = identity.StaffContext{UserID: "u-kingston", RoleCode: "INSIDE_SALES",
+		Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
+		Branches: map[string]bool{"branch-kin": true}}
+	if _, err := h.svc.ListParked(context.Background(), "branch-trt"); !isForbidden(err) {
+		t.Fatalf("a Kingston login cannot list Trenton's tickets, got %v", err)
+	}
+	if _, err := h.svc.ResumeParked(context.Background(), t1.ID); !isForbidden(err) {
+		t.Fatalf("a Kingston login cannot resume a Trenton ticket, got %v", err)
+	}
+	if err := h.svc.DiscardParked(context.Background(), t1.ID); !isForbidden(err) {
+		t.Fatalf("a Kingston login cannot discard a Trenton ticket, got %v", err)
+	}
+	// And the refused touches moved nothing: the ticket is still PARKED where it was.
+	h.caller = identity.StaffContext{UserID: "u-trenton-2", RoleCode: "INSIDE_SALES",
+		Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
+		Branches: map[string]bool{"branch-trt": true}}
+	list, err := h.svc.ListParked(context.Background(), "branch-trt")
+	if err != nil || len(list) != 1 || list[0].Status != "PARKED" {
+		t.Fatalf("the fenced ticket is intact at its branch: %v %+v", err, list)
+	}
+}
+
+// The ruled pick-up: anyone at the counter picks up any parked sale at THEIR branch, no owner
+// check; a second clerk at the same branch resumes a ticket the first parked, and who resumed
+// stays recorded.
+func TestParked_SameBranch_SecondClerkResumes_NoOwnerCheck(t *testing.T) {
+	h := newHarness()
+	h.caller = identity.StaffContext{UserID: "u-trenton-1", RoleCode: "INSIDE_SALES",
+		Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
+		Branches: map[string]bool{"branch-trt": true}}
+	t1, err := h.svc.Park(ctxWithActor("u-trenton-1"), ParkInput{
+		BranchID: "branch-trt",
+		Lines:    []ParkedLineInput{{ProductID: "prod-blu", QtyEntered: 12, UOMEntered: "SF"}},
+	})
+	if err != nil {
+		t.Fatalf("park: %v", err)
+	}
+	// A different person at the same branch, the sales manager walking up to the same till.
+	h.caller = identity.StaffContext{UserID: "u-trenton-2", RoleCode: "SALES_MANAGER",
+		Tier: identity.TierManager, Scope: identity.ScopeBranch,
+		Branches: map[string]bool{"branch-trt": true}}
+	res, err := h.svc.ResumeParked(ctxWithActor("u-trenton-2"), t1.ID)
+	if err != nil || res.Status != "RESUMED" {
+		t.Fatalf("anyone at the branch picks up any parked sale: %v %+v", err, res)
+	}
+	if h.store.lastResumeActor != "u-trenton-2" {
+		t.Fatalf("who resumed stays recorded, got %q", h.store.lastResumeActor)
+	}
+}
+
+// isForbidden answers whether err is the 403 the branch wall answers with.
+func isForbidden(err error) bool {
+	var ce clientError
+	return errors.As(err, &ce) && ce.status == http.StatusForbidden
 }
 
 // -- pricing orders ----------------------------------------------------------

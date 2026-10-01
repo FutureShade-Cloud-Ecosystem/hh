@@ -43,22 +43,23 @@ type fakeStore struct {
 	signatures  []signatureRow
 
 	// -- W7 counter-v2 state --
-	policies       map[string]PosPolicy        // branch_id ("" = org default) → row
-	userWS         map[string]userWorkspaceRow // DIB-488 rev2: user_id → workspace ergonomics row
-	userWSWrites   int                         // upsert count, the replay tests assert "no second write"
-	cachedReturns  map[string]Return           // idempotency key → committed return
-	retCtx         map[string]returnOrderCtx   // order_id → the original-sale context
-	retLines       map[string]returnableLine   // order_line_id → the sold line (prior sums derive from returnLineRows)
-	returnRows     []returnRow
-	returnLineRows []returnLineRow
-	refundPayments map[string]string // return id → refund payment id
-	creditApplies  []creditApply
-	invoiceBalance map[string]int64 // invoice id → open balance (drives ApplyCreditToInvoice)
-	parked         map[string]ParkedTicket
-	pricingDocs    map[string]PricingOrder
-	products       map[string][2]string     // product id → {sku, name}
-	stockMeta      map[string]fakeStockMeta // DIB-488: canned glance unit meta per product
-	staff          map[string]string        // DIB-488 rev 6: user id → display name (ACTIVE staff)
+	policies        map[string]PosPolicy        // branch_id ("" = org default) → row
+	userWS          map[string]userWorkspaceRow // DIB-488 rev2: user_id → workspace ergonomics row
+	userWSWrites    int                         // upsert count, the replay tests assert "no second write"
+	cachedReturns   map[string]Return           // idempotency key → committed return
+	retCtx          map[string]returnOrderCtx   // order_id → the original-sale context
+	retLines        map[string]returnableLine   // order_line_id → the sold line (prior sums derive from returnLineRows)
+	returnRows      []returnRow
+	returnLineRows  []returnLineRow
+	refundPayments  map[string]string // return id → refund payment id
+	creditApplies   []creditApply
+	invoiceBalance  map[string]int64 // invoice id → open balance (drives ApplyCreditToInvoice)
+	parked          map[string]ParkedTicket
+	lastResumeActor string // the actor the last resume stamped (the parked fence's who-resumed)
+	pricingDocs     map[string]PricingOrder
+	products        map[string][2]string     // product id → {sku, name}
+	stockMeta       map[string]fakeStockMeta // DIB-488: canned glance unit meta per product
+	staff           map[string]string        // DIB-488 rev 6: user id → display name (ACTIVE staff)
 	// -- DIB-488 rev 8 canned state (interface compliance, the rev-1/2/5/6 fake-extension class) --
 	weights       map[string]float64  // product id → kg per base unit (absent = none on file)
 	branchCosts   map[string]int64    // product id → WAC cents at the (single) test branch
@@ -434,7 +435,12 @@ func (f *fakeStore) ListParkedTickets(_ context.Context, branchID string) ([]Par
 	return out, nil
 }
 
-func (f *fakeStore) MarkParkedResumed(_ context.Context, id, _ string) (ParkedTicket, error) {
+func (f *fakeStore) GetParkedTicket(_ context.Context, id string) (ParkedTicket, bool, error) {
+	t, ok := f.parked[id]
+	return t, ok, nil
+}
+
+func (f *fakeStore) MarkParkedResumed(_ context.Context, id, actor string) (ParkedTicket, error) {
 	t, ok := f.parked[id]
 	if !ok {
 		return ParkedTicket{}, errParkedNotFound
@@ -444,6 +450,7 @@ func (f *fakeStore) MarkParkedResumed(_ context.Context, id, _ string) (ParkedTi
 	}
 	t.Status = "RESUMED"
 	f.parked[id] = t
+	f.lastResumeActor = actor
 	return t, nil
 }
 
