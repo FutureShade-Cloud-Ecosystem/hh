@@ -161,6 +161,26 @@ const SALES = {
       },
     ],
   },
+  "CT-1004": {
+    order_id: uuid(1004),
+    order_no: "CT-1004",
+    branch_id: BRANCH_ID,
+    customer_id: uuid(100001),
+    invoice_id: uuid(2004),
+    sale_tender: "CASH",
+    card_refundable: false,
+    lines: [
+      {
+        order_line_id: uuid(11041),
+        product_id: uuid(50002),
+        description: "Wall block, charcoal, each",
+        qty_sold: 6,
+        unit_price_cents: 6000,
+        line_total_cents: 36000,
+        tax_cents: 0,
+      },
+    ],
+  },
   "CT-2001": {
     order_id: uuid(2001),
     order_no: "CT-2001",

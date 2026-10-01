@@ -122,6 +122,10 @@ test("a return above 250.00 is refused with the amount and the approvers named, 
   // the header is this story's approval send alone, and no other request the
   // app made, the staff lookups included, ever carried it.
   await findSale(page, "CT-1002");
+  // The chrome is read from custody again after the next find: an adoption
+  // that landed late, after the receipt's own assertion, would still show
+  // here (the re-read's P2-3, the trailing adoption shape).
+  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
   const state = await stubState(page);
   const posts = state.sightings.filter((sighting) => sighting.path === "/api/v1/pos/returns");
   expect(posts.length).toBeGreaterThanOrEqual(2);
@@ -132,6 +136,48 @@ test("a return above 250.00 is refused with the amount and the approvers named, 
       expect(sighting.approverHeader).toBe(false);
     }
   }
+});
+
+test("a sign out under an in flight approval leaves the desk blank for the next person", async ({ page }) => {
+  // The re-read's P3, the receipt half: the send's answer landing after the
+  // sign out writes nothing, the receipt included. The harness holds the
+  // approval send's response until the till has changed hands.
+  let releaseApproval: (() => void) | undefined;
+  const held = new Promise<void>((resolve) => {
+    releaseApproval = resolve;
+  });
+  await page.route("**/api/v1/pos/returns", async (route) => {
+    const response = await route.fetch();
+    if (await route.request().headerValue("x-approver-authorization")) {
+      await held;
+    }
+    await route.fulfill({ response });
+  });
+
+  await signIn(page, "Sales");
+  await findSale(page, "CT-1004");
+  await page.getByLabel(WALLBLOCK_LINE).fill("6");
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await page.getByRole("button", { name: "Refund cash" }).click();
+  const refusal = page.getByTestId("refund-refusal");
+  await expect(refusal).toBeVisible();
+  await refusal.getByRole("button", { name: "Manager approval" }).click();
+  await page
+    .getByRole("dialog", { name: "Manager approval" })
+    .getByRole("button", { name: "Sales manager" })
+    .click();
+
+  // The send is in the harness's hand: the till changes sides under it.
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+  releaseApproval?.();
+
+  // Whoever signs in next finds a blank desk: no receipt from the send that
+  // landed after they took the till.
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
+  await expect(page.getByTestId("refund-receipt")).toHaveCount(0);
+  await expect(page.getByTestId("returns-sale")).toHaveCount(0);
 });
 
 test("as Sales manager the same return completes with no refusal and no dialog, and the receipt names the manager as the one who approved it", async ({ page }) => {

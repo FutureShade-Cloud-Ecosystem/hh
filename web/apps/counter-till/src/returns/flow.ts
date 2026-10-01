@@ -432,9 +432,11 @@ export class ReturnsFlow {
     this.approverFlows = null;
     if (this.lookup === null) {
       // The desk was blanked under this approval (a sign out): write nothing
-      // on it, not even this attempt's refusal or error, for whoever signs in
-      // next. The slot is already empty; the send's result is dropped whole.
+      // on it, not even this attempt's refusal or error, and not the receipt
+      // the caller built from the send's answer, for whoever signs in next.
+      // The slot is already empty; the send's result is dropped whole.
       this.refusal = null;
+      this.receipt = null;
       this.#pendingKey = null;
       this.#pendingInput = null;
       this.#onChange();
