@@ -478,16 +478,13 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	return true
 }
 
-// writeErr maps the POS error taxonomy to HTTP.
+// writeErr maps the POS error taxonomy to HTTP. The till has no price_blocked answer (D48 row
+// 481, D49): the counter resolve never blocks a line, so there is nothing to map.
 func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var ce clientError
-	var pb ErrPriceBlocked
 	var cb ErrCreditBlocked
 	var nt ErrNoOpenTill
 	switch {
-	case errors.As(err, &pb):
-		// 409 + the 0016-queue hint (subject_ref = the draft order).
-		httpx.ErrorWith(w, http.StatusConflict, "price_blocked", map[string]any{"policy": pb.Policy, "line": pb.LineNo, "queue": "staff_approvals"})
 	case errors.As(err, &cb):
 		httpx.ErrorWith(w, http.StatusConflict, "credit_blocked", map[string]any{"policy": cb.Policy, "queue": "staff_approvals"})
 	case errors.As(err, &nt):
