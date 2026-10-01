@@ -310,6 +310,23 @@ rule so the positions gate accepts them without any gate change. If the lead
 or a reviewer rules the lock edit out of bounds for this lane, it reverts as
 one line and the decision it forces is whether the app may consume the design
 system at all.
+## L2 (till contract): the client generator needed the approver header in its allowlist (recorded, done in this lane)
+
+The till's contract commit declares `X-Approver-Authorization` as a header
+parameter on `POST /api/v1/pos/returns`, and `scripts/gen-client/gen-client.mjs`
+refused every header parameter but the shared `X-Org`, so the regeneration the
+contract change requires failed outright. The lane's declared Touches name the
+contract sources and the generated outputs, not the generator, but the web
+api-client's own idempotence gate runs this generator against the committed
+tree, so without the change the committed gen tree could never be regenerated
+again and the package's suite would stay red for every lane above this one in
+the stack. The lane made the smallest change that unblocks the whole stack:
+the allowlist gains the one named header (it rides the transport's caller-set
+headers exactly like X-Org; the generated signature carries no credential, the
+bearer never did either), and the generator emits a note on the one operation
+that declares the header, so the regenerated client visibly carries it. The
+lead may want this hunk re-homed when the pull request is read; the rest of
+the commit is contract sources and generated outputs only.
 
 ### Review round (pull request 37): the accepted shape of the lock edit, and three findings recorded, not fixed
 
@@ -427,3 +444,25 @@ the commit is contract sources and generated outputs only.
   itself compiles (America/Toronto), through Intl, and the stub refuses a
   ring whose date is not the house zone's day. When the core serves a
   configured zone, the constant should be replaced by the served value.
+## L5 W8 (the returns desk's review round): the P3s not closed in code
+
+- **P3-1 (residue: the dialog is not a modal surface).** The Manager approval
+  dialog is a styled section carrying the dialog role; while it is open the
+  desk's fields and the find row are disabled (this round), so nothing drafts
+  or refinds under it and the dead-cards state the review reproduced is gone.
+  What remains is focus and reading order: nothing behind it is inert, and a
+  keyboard user can still reach the chrome. A truly modal surface (the inert
+  attribute, or a native dialog element) is a pattern decision that belongs
+  to the design system's kits, which this lane consumes read only.
+- **P3-8 (carried, unchanged by this round).** The Z report assertion proves
+  the app sends a cash return naming the open drawer and that the stub's
+  counter moves; the real drawer's expected cash is W9's run on the image.
+  Screen 10 (a Kingston sale refused before any money moves, by every refund
+  method) has no test here beyond the unknown number's refusal in words.
+- **The receipt's approver line is display wording, per the ruling on P2-8.**
+  On the approver's own path the receipt names the caller from the session
+  (display name and role) and the dialog path names the approver the dialog
+  minted; the contract's PosReturn carries no approver, so neither line is a
+  server-stated fact. The server's audit row holds the record. If a later
+  ruling wants the receipt to quote the core, the field is the contract's to
+  add, not this app's to invent.
