@@ -206,6 +206,45 @@ module stays the fail-closed stub it is today; the FIRST lane that
 touches it removes the push half and that sentence. Until then this
 entry marks the obligation.
 
+## L2 (till contract): the client generator needed the approver header in its allowlist (recorded, done in this lane)
+
+The till's contract commit declares `X-Approver-Authorization` as a header
+parameter on `POST /api/v1/pos/returns`, and `scripts/gen-client/gen-client.mjs`
+refused every header parameter but the shared `X-Org`, so the regeneration the
+contract change requires failed outright. The lane's declared Touches name the
+contract sources and the generated outputs, not the generator, but the web
+api-client's own idempotence gate runs this generator against the committed
+tree, so without the change the committed gen tree could never be regenerated
+again and the package's suite would stay red for every lane above this one in
+the stack. The lane made the smallest change that unblocks the whole stack:
+the allowlist gains the one named header (it rides the transport's caller-set
+headers exactly like X-Org; the generated signature carries no credential, the
+bearer never did either), and the generator emits a note on the one operation
+that declares the header, so the regenerated client visibly carries it. The
+lead may want this hunk re-homed when the pull request is read; the rest of
+the commit is contract sources and generated outputs only.
+## The Counter Till cycle, lane L1 (RC slice): statements the reconciled catalog lists contradict (open)
+
+The RC slice brought the ten internal surfaces' role lists in
+`docs/analysis/role-catalog.yaml` to the decided matrix (D48): each list
+holds the thirteen staff roles exactly as the matrix admits them, and the
+platform roles stand where the record names them, outside the matrix and
+unjudged by it (`ROLE-ACCESS-r3`: the platform administrator, the dealer
+administrator and the FutureBuild operator stay outside the matrix). Two
+things are recorded here rather than edited, because the slice's Touches
+stop at the lists:
+
+- The role records' `micro_apps` lines no longer match the reconciled
+  lists: `outside_sales`'s record names counter-till, which the list no
+  longer holds, and eleven records omit read or work surfaces the matrix
+  admits their role on (for example `general_manager`'s line names neither
+  counter-till, quote-desk, dispatch-board nor buying-and-stock), so the
+  role records and the surface lists no longer tell one story.
+- The matrix judges the thirteen staff roles only: `super_admin` and
+  `dealer_admin` keep their seats on manager-home, house-messages and
+  dealer-admin as the record names them, at levels the matrix says nothing
+  about, so any change to those seats is a ruling of its own and no part
+  of this reconciliation.
 ## Counter Till cycle, lane L0 (W0): the `demoseed -plan` dated range does not describe the world it writes (open)
 
 Item W0's exit test asserts that the demo world's first and last dates in the
@@ -257,6 +296,70 @@ gap, the lead closes it inside the goal or puts it to Colton.
   furthest scheduled delivery), so the goal report carries the finding
   exactly. Fixing the report's wording is outside this cycle's path and
   goes to the goal report with the recorded values.
+## L5 (W6): the design system's gates demanded one edit inside web/packages (made, flagged)
+
+The Counter Till app consumes `@hardscapehouse/design-system` (tokens, the
+base element, the primitives), which makes it the first workspace package the
+design system's gates treat as a dependent: those gates scan every workspace
+package that depends on the design system, by manifest or by import, and one
+of them is written to fail on a new dependent until its lock names the
+package deliberately (`test/no-raw-markup.test.mjs`, the lock's own message:
+"a package now depends on @hardscapehouse/design-system; its sources are
+scanned below, and this lock must name it deliberately").
+
+Naming it is a one-list edit inside `web/packages/design-system/test/`, which
+is outside this lane's declared Touches (web/packages are off limits except
+consuming them). Recorded and done rather than left red: the edit names the
+app in the lock and nothing else, the gates' own audits over the app's
+sources pass on the app's own merits (templates in allowed positions, no raw
+markup), and the app's templates were rewritten to the kits' host delegation
+rule so the positions gate accepts them without any gate change. If the lead
+or a reviewer rules the lock edit out of bounds for this lane, it reverts as
+one line and the decision it forces is whether the app may consume the design
+system at all.
+## L2 (till contract): the client generator needed the approver header in its allowlist (recorded, done in this lane)
+
+The till's contract commit declares `X-Approver-Authorization` as a header
+parameter on `POST /api/v1/pos/returns`, and `scripts/gen-client/gen-client.mjs`
+refused every header parameter but the shared `X-Org`, so the regeneration the
+contract change requires failed outright. The lane's declared Touches name the
+contract sources and the generated outputs, not the generator, but the web
+api-client's own idempotence gate runs this generator against the committed
+tree, so without the change the committed gen tree could never be regenerated
+again and the package's suite would stay red for every lane above this one in
+the stack. The lane made the smallest change that unblocks the whole stack:
+the allowlist gains the one named header (it rides the transport's caller-set
+headers exactly like X-Org; the generated signature carries no credential, the
+bearer never did either), and the generator emits a note on the one operation
+that declares the header, so the regenerated client visibly carries it. The
+lead may want this hunk re-homed when the pull request is read; the rest of
+the commit is contract sources and generated outputs only.
+
+### Review round (pull request 37): the accepted shape of the lock edit, and three findings recorded, not fixed
+
+- **P3-1, the lock edit's shape.** The dependents lock edit carries one
+  comment sentence beside the list entry ("The Counter Till app is the
+  workspace's first dependent"); the functional change is the one list line,
+  `[]` to `['@hardscapehouse/counter-till']`. The lead has accepted this
+  shape; recorded so the acceptance and the diff match.
+- **P3-4 (recorded, unreachable).** The entry page's Coming list is a fixed
+  list beside the dynamic card list, with no reconciliation between them: a
+  flows row whose label equals one of the eleven would show as a live card
+  and as Coming at once. The demo's flow table is closed at two rows in this
+  release, so no path reaches it.
+- **P3-5 (recorded, unreachable).** The demo adapter keeps the mint in
+  memory even when custody refuses the adoption, so the seam's getSession
+  and createJWT would answer from a refused mint. Custody refuses only an
+  unusable or expired mint, which the adapter's own validation screens
+  first, and no path reaches those two operations before a successful
+  adoption.
+- **P3-7 (carried, not a defect of the app slice).** The exit test's own
+  words run on the W5 image and against a default-build core, neither of
+  which exists yet; the header provider sends X-Org on the two public demo
+  calls as well as on staff calls, and whether the real routes and the
+  phrase gate accept that waits for W2's mint; and the app holds a till past
+  the token's expiry with nothing to re-check it against until W7's first
+  core call. W5, W9, W2 and W7 hold the closures, per the plan.
 ## The Counter Till cycle, lane L3 (W1): the entrypoint seam sits in main.go (recorded, work continuing)
 
 The lane's declared Touches name core/internal/demo/, demo_on.go,
@@ -281,6 +384,29 @@ core/internal/demo/, and the compiled-binary review command counts demo
 symbols and expects none. The lead merges: any other lane that needs a
 demo-only subcommand adds its case to demoDispatch in demo_on.go, not to
 main.go.
+
+## The Counter Till cycle, lane L3 (W1), review follow-ups: named gaps and their holders
+
+- **No CI leg builds or tests the demo tag (review P2-4).** The ci job runs
+  untagged only, so every demo-tagged guard and the compilation of
+  demo_on.go sit outside the check, and another lane changing a wire
+  function's signature would break the demo build with CI green. The lead
+  assigns the leg to W5, whose plan row adds the CI job with a Postgres
+  service; the interim holder is the in-team review, which runs both tag
+  suites. Until W5 lands it, a merge that touches a wire function should
+  be built with -tags demo by hand.
+- **One demo-tagged test file sits outside the plan's two places (review
+  P3-1).** core/cmd/core/demo_on_test.go carries //go:build demo because
+  only a tagged test can call demoServe. The lead accepts it: test files
+  enter no binary. The plan's sentence counts source files, and the
+  amendment is the record's to make.
+- **A boot dying between migrate and demo-populate cannot be retried
+  (review P3-6).** demo-check refuses a migrated database that is not yet
+  a demo world, which is G0 as the plan writes it, so an entrypoint that
+  stops between the two steps leaves a box demo-check refuses from then
+  on and the database has to be dropped. No change to G0; the W5
+  entrypoint answers it (each step idempotent, the pair run to completion
+  before serve).
 ## The Counter Till demo: one frozen channel name still carries a surname token (open)
 
 W3's demo populate replaces every planted users row's display name on the
@@ -325,77 +451,7 @@ in-team reviews cover the interim. And the serve leg of the payment
 configuration check, `GET /api/v1/payments/config` behind the demo boot
 guards, is covered by W5's image exit test, the lead having confirmed the
 assignment; W3's exit test reads the payment store in process.
-## The Counter Till cycle, lane L1 (RC slice): statements the reconciled catalog lists contradict (open)
 
-The RC slice brought the ten internal surfaces' role lists in
-`docs/analysis/role-catalog.yaml` to the decided matrix (D48): each list
-holds the thirteen staff roles exactly as the matrix admits them, and the
-platform roles stand where the record names them, outside the matrix and
-unjudged by it (`ROLE-ACCESS-r3`: the platform administrator, the dealer
-administrator and the FutureBuild operator stay outside the matrix). Two
-things are recorded here rather than edited, because the slice's Touches
-stop at the lists:
-
-- The role records' `micro_apps` lines no longer match the reconciled
-  lists: `outside_sales`'s record names counter-till, which the list no
-  longer holds, and eleven records omit read or work surfaces the matrix
-  admits their role on (for example `general_manager`'s line names neither
-  counter-till, quote-desk, dispatch-board nor buying-and-stock), so the
-  role records and the surface lists no longer tell one story.
-- The matrix judges the thirteen staff roles only: `super_admin` and
-  `dealer_admin` keep their seats on manager-home, house-messages and
-  dealer-admin as the record names them, at levels the matrix says nothing
-  about, so any change to those seats is a ruling of its own and no part
-  of this reconciliation.
-## L2 (till contract): the client generator needed the approver header in its allowlist (recorded, done in this lane)
-
-The till's contract commit declares `X-Approver-Authorization` as a header
-parameter on `POST /api/v1/pos/returns`, and `scripts/gen-client/gen-client.mjs`
-refused every header parameter but the shared `X-Org`, so the regeneration the
-contract change requires failed outright. The lane's declared Touches name the
-contract sources and the generated outputs, not the generator, but the web
-api-client's own idempotence gate runs this generator against the committed
-tree, so without the change the committed gen tree could never be regenerated
-again and the package's suite would stay red for every lane above this one in
-the stack. The lane made the smallest change that unblocks the whole stack:
-the allowlist gains the one named header (it rides the transport's caller-set
-headers exactly like X-Org; the generated signature carries no credential, the
-bearer never did either), and the generator emits a note on the one operation
-that declares the header, so the regenerated client visibly carries it. The
-lead may want this hunk re-homed when the pull request is read; the rest of
-the commit is contract sources and generated outputs only.
-
-## L2 RT-B: the review fixes and the three facts the next reader needs (recorded, done in this lane)
-
-- **The till's rules are wired in the composition root on this branch (the
-  lead's accepted deviation into cmd/core, P1-1).** `core/cmd/core/wire_roles.go`
-  loads the dealer's role configuration at boot (the load whose refusal stops
-  the core) and `wireTillRules` wires the configuration, the approver
-  credential source and the users id linker into the pos service at the serve
-  composition and (the configuration alone; the compose builds no serving
-  surface) the demo compose. A source-pinning test
-  (`TestTillRules_WiringIsPinned`) refuses to let either site drift, and a
-  composition-level test over the fixture database
-  (`TestTillRules_WiredCompositionRefusesAndShows`) proves the built service
-  refuses the 300.00 return and shows the clerk the glance. RG's fuller
-  wiring of the same configuration into the gate supersedes the load here;
-  the two must share one load then.
-- **A 401 on `POST /api/v1/pos/returns` during an approval flow means the
-  APPROVER credential failed, not the clerk's session (what W8's dialog must
-  know, P3-5).** The clerk's bearer stays valid; the dialog should re-ask for
-  the manager's credential, not re-login. A 409 with
-  `error: refund_approval_required` after a credential was attached means the
-  credential did not qualify (same person, off-list role, grant short of the
-  sale's branch, issued outside the configured window), and the dialog stays
-  up. A 503 means the machinery could not run; the route now declares it.
-- **"The Branch Manager of the sale's branch" is enforced as "holds a listed
-  role anywhere in the org and a branch grant for the sale's branch"**
-  (the review's noted item, for the lead to rule on). The staff resolver
-  returns the highest grant across the org and reads branches from
-  `user_branch_grants`, so a Sales manager of Kingston holding a Trenton
-  grant for another reason approves a Trenton refund. This is the resolver's
-  standing rule for every caller; tightening it for refunds alone would be a
-  new rule and stops at the lead.
 ## W4 (quantity break, HH-184): the surcharge break vocabulary is inert configuration (open, for the dealers' record)
 
 Under D1's replace rule a quantity break wins only when strictly cheaper, and
@@ -408,6 +464,17 @@ one that the tier can never fire. The tier's own data, its validation and its
 row survive untouched (the schema is frozen); what is owed is a dealer-facing
 note on the editor, or a seed and editor cleanup once Colton rules which, so
 nobody tunes a surcharge expecting the counter to charge it.
+## The Counter Till cycle, lane L4 (PX): the exit test's CI leg stays with W5 (recorded)
+
+The `ci` check runs the untagged suite with no gate variable and no
+demo-tag step, so the card rail's wiring legs skip politely (they need
+`HH_CORE_TEST_DATABASE_URL`) and the G7 legs, wiring level and serve level,
+never run in CI. A green `ci` on the card rail's pull request therefore
+says nothing about the exit test; the acceptance run is the gated local
+run, executed by the lane and re-executed by the reviewer. W5 adds the CI
+job that closes this gap; recorded here so the gap is visible until that
+lands.
+
 ## L1 RG (role gate): the review's rulings and recorded gaps
 
 - **The platform roles' treatment, by ruling.** The staff_role table
@@ -466,9 +533,15 @@ nobody tunes a surcharge expecting the counter to charge it.
   own things; POST /api/v1/attachments and POST
   /api/v1/attachments/{id}/links are writes against any owner and deserve
   a look at the comprehensive review.
-## The Counter Till cycle, lane L3 (W1): the entrypoint seam sits in main.go (recorded, work continuing)
-
 ## The Counter Till cycle, lane L3 (W2): a refused commit message amend (recorded, work continuing)
+
+W2's third commit's subject carried the words "half a minute" where the
+house rules want no duration in committed prose. The amend to reword it
+was refused by the repository hook (history rewrite refused in full, per
+the lane's rules), and a refusal is final. The commit's content is
+correct and the wording lives only in that one local commit message; the
+lead may reword it when landing the pull request, or let it stand. Nothing
+in the code, tests or this file carries the wording.
 
 W2's third commit's subject carried the words "half a minute" where the
 house rules want no duration in committed prose. The amend to reword it
@@ -509,7 +582,6 @@ rule so the positions gate accepts them without any gate change. If the lead
 or a reviewer rules the lock edit out of bounds for this lane, it reverts as
 one line and the decision it forces is whether the app may consume the design
 system at all.
-
 ## L2 (till contract): the client generator needed the approver header in its allowlist (recorded, done in this lane)
 
 The till's contract commit declares `X-Approver-Authorization` as a header
@@ -582,6 +654,7 @@ the two clauses that hold under both keyings: the allowance is bounded,
 and rotating forged `X-Forwarded-For` values buy no bucket. When the core
 reads the chain, that same leg proves the two-bucket behavior the
 reviewer asked for, with no script change.
+
 ## L2 (till contract): the client generator needed the approver header in its allowlist (recorded, done in this lane)
 
 The till's contract commit declares `X-Approver-Authorization` as a header
@@ -791,6 +864,131 @@ after the trail row, the spent allowance stated, the batched eviction,
 the exit test's rename and generic run note, the clock literals) are
 fixed in place with their tests. All seven P3s were cheap and none is
 left open.
+
+## L5 W8 (the returns desk's review round): the P3s not closed in code
+
+- **P3-1 (residue: the dialog is not a modal surface).** The Manager approval
+  dialog is a styled section carrying the dialog role; while it is open the
+  desk's fields and the find row are disabled (this round), so nothing drafts
+  or refinds under it and the dead-cards state the review reproduced is gone.
+  What remains is focus and reading order: nothing behind it is inert, and a
+  keyboard user can still reach the chrome. A truly modal surface (the inert
+  attribute, or a native dialog element) is a pattern decision that belongs
+  to the design system's kits, which this lane consumes read only.
+- **P3-8 (carried, unchanged by this round).** The Z report assertion proves
+  the app sends a cash return naming the open drawer and that the stub's
+  counter moves; the real drawer's expected cash is W9's run on the image.
+  Screen 10 (a Kingston sale refused before any money moves, by every refund
+  method) has no test here beyond the unknown number's refusal in words.
+- **The receipt's approver line is display wording, per the ruling on P2-8.**
+  On the approver's own path the receipt names the caller from the session
+  (display name and role) and the dialog path names the approver the dialog
+  minted; the contract's PosReturn carries no approver, so neither line is a
+  server-stated fact. The server's audit row holds the record. If a later
+  ruling wants the receipt to quote the core, the field is the contract's to
+  add, not this app's to invent.
+## L5 (the sale at the counter): two findings recorded, both handled in this lane
+
+- **The two harnesses of the two app lanes shared one port pair.** W6's
+  Playwright and Vite defaults (4820 and 4821) are inherited by every lane
+  that copies them, and Playwright's `reuseExistingServer` then silently
+  drives whichever app is already up: this lane's first exit-test run drove
+  the other app lane's dev server and failed against its screens. This lane
+  moved its own defaults to 4826 and 4827 (both files, and the app README),
+  which leaves the old pair free; any later app lane should pick its own pair
+  the same way, or the two suites will interleave again.
+- **A form's submit event never crosses a shadow root.** The searches were
+  first written as forms with the listener on the host, the same delegation
+  the design system's README prescribes for click; the form submitted natively
+  and the app signed itself out, because submit is not composed: the event
+  stops at the shadow root and a host listener never fires, where click does.
+  Measured in Chrome, then fixed by making every search a plain button with
+  `data-action`. The design system's README's delegation section may want a
+  sentence on this for the next dependent; that file is outside this lane's
+  Touches, so it is recorded here instead.
+## L5 (the review round): four findings recorded rather than closed, with their rulings
+
+- **The ticket shows no total before the ring (review P2-7).** The counter
+  price picture answers unit quotes alone, and the app rightly computes
+  nothing, so the subtotal, tax and total first appear on the receipt. The
+  lead's ruling: either a contract read (a ticket-total read off the same
+  picture) or the testers' page says it. The contract read is outside this
+  lane's Touches, so it is recorded for whoever holds the contract next; W9's
+  testers' page should carry the sentence either way.
+- **The screen's margin figure vs the plan's wording (review P3-6, second
+  half).** C01's Holland pavers carry a margin of 1585 basis points, which is
+  15.85 percent exactly; the column renders one decimal, half away from zero:
+  "15.9%". The plan's screen 4 says "about 15.8". W9's testers' page should
+  quote the screen's figure, or the core's real answer should be checked when
+  the demo world is populated for real.
+- **The counter's state machine lives in the Lit element (review P3-9).** The
+  money helper and the boundary conversions are plain modules held by unit
+  tests; the ticket's lines, quantities and pricing sequence are still fields
+  on the app root. A later item should extract that state machine into a
+  plain module with the same test, before a second screen shares it.
+- **Nothing serves the organization's zone yet (review P2-3).** The ring's
+  requested date is contract-required and no org or tenant read carries a
+  time zone, so the app computes the day in the house zone constant the core
+  itself compiles (America/Toronto), through Intl, and the stub refuses a
+  ring whose date is not the house zone's day. When the core serves a
+  configured zone, the constant should be replaced by the served value.
+
+## L2 RT-B: the review fixes and the three facts the next reader needs (recorded, done in this lane)
+
+- **The till's rules are wired in the composition root on this branch (the
+  lead's accepted deviation into cmd/core, P1-1).** `core/cmd/core/wire_roles.go`
+  loads the dealer's role configuration at boot (the load whose refusal stops
+  the core) and `wireTillRules` wires the configuration, the approver
+  credential source and the users id linker into the pos service at the serve
+  composition and (the configuration alone; the compose builds no serving
+  surface) the demo compose. A source-pinning test
+  (`TestTillRules_WiringIsPinned`) refuses to let either site drift, and a
+  composition-level test over the fixture database
+  (`TestTillRules_WiredCompositionRefusesAndShows`) proves the built service
+  refuses the 300.00 return and shows the clerk the glance. RG's fuller
+  wiring of the same configuration into the gate supersedes the load here;
+  the two must share one load then.
+- **A 401 on `POST /api/v1/pos/returns` during an approval flow means the
+  APPROVER credential failed, not the clerk's session (what W8's dialog must
+  know, P3-5).** The clerk's bearer stays valid; the dialog should re-ask for
+  the manager's credential, not re-login. A 409 with
+  `error: refund_approval_required` after a credential was attached means the
+  credential did not qualify (same person, off-list role, grant short of the
+  sale's branch, issued outside the configured window), and the dialog stays
+  up. A 503 means the machinery could not run; the route now declares it.
+- **"The Branch Manager of the sale's branch" is enforced as "holds a listed
+  role anywhere in the org and a branch grant for the sale's branch"**
+  (the review's noted item, for the lead to rule on). The staff resolver
+  returns the highest grant across the org and reads branches from
+  `user_branch_grants`, so a Sales manager of Kingston holding a Trenton
+  grant for another reason approves a Trenton refund. This is the resolver's
+  standing rule for every caller; tightening it for refunds alone would be a
+  new rule and stops at the lead.
+## The Counter Till cycle, lane L3 (W1): the entrypoint seam sits in main.go (recorded, work continuing)
+
+The lane's declared Touches name core/internal/demo/, demo_on.go,
+demo_off.go and the NewStaticKeySource comment, but the item's guards
+(G0's demo-check subcommand, G2's serve refusal, G3's check before the
+listener, the demo graph's substituted verifier and membership source)
+are unreachable from a build-tagged file alone: main() dispatches roles
+through a switch with no seam, and registerRoutes constructs the platform
+membership client unconditionally, so a demo box cannot boot the default
+serve path at all. The lane therefore added the smallest seam main.go
+admits: one guarded call to demoDispatch before the standard role switch,
+with the no-op stub in demo_off.go. main.go is the only production file
+outside the lane's Touches; beside it the lane added
+core/cmd/core/demoenv_inventory.go (untagged, so its deny and allow lists
+compile into the default binary as data and no /internal/demo symbol)
+and three test files there (demo_build_guard_test.go,
+demoenv_inventory_test.go, demo_on_test.go, the last carrying the demo
+tag by the lead's ruling on review finding P3-1). The default build's behavior is
+unchanged (the stub returns false before the switch), the G1 tests in
+core/cmd/core hold the default dependency closure free of
+core/internal/demo/, and the compiled-binary review command counts demo
+symbols and expects none. The lead merges: any other lane that needs a
+demo-only subcommand adds its case to demoDispatch in demo_on.go, not to
+main.go.
+
 ## The Counter Till cycle, lane L3 (W1), review follow-ups: named gaps and their holders
 
 - **No CI leg builds or tests the demo tag (review P2-4).** The ci job runs
@@ -835,3 +1033,29 @@ wiring) so the demo-tagged probe can hold a real session token; the
 probe itself (rolegate_demo_test.go) hand-plants the populate's world in
 miniature on a case database of its own, including the two flow logins'
 users rows and grants the populate plants.
+
+### Review round (pull request 37): the accepted shape of the lock edit, and three findings recorded, not fixed
+
+- **P3-1, the lock edit's shape.** The dependents lock edit carries one
+  comment sentence beside the list entry ("The Counter Till app is the
+  workspace's first dependent"); the functional change is the one list line,
+  `[]` to `['@hardscapehouse/counter-till']`. The lead has accepted this
+  shape; recorded so the acceptance and the diff match.
+- **P3-4 (recorded, unreachable).** The entry page's Coming list is a fixed
+  list beside the dynamic card list, with no reconciliation between them: a
+  flows row whose label equals one of the eleven would show as a live card
+  and as Coming at once. The demo's flow table is closed at two rows in this
+  release, so no path reaches it.
+- **P3-5 (recorded, unreachable).** The demo adapter keeps the mint in
+  memory even when custody refuses the adoption, so the seam's getSession
+  and createJWT would answer from a refused mint. Custody refuses only an
+  unusable or expired mint, which the adapter's own validation screens
+  first, and no path reaches those two operations before a successful
+  adoption.
+- **P3-7 (carried, not a defect of the app slice).** The exit test's own
+  words run on the W5 image and against a default-build core, neither of
+  which exists yet; the header provider sends X-Org on the two public demo
+  calls as well as on staff calls, and whether the real routes and the
+  phrase gate accept that waits for W2's mint; and the app holds a till past
+  the token's expiry with nothing to re-check it against until W7's first
+  core call. W5, W9, W2 and W7 hold the closures, per the plan.
