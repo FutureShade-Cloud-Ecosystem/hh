@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Counter Till: the testers' brief</title>
+<style>
+  :root { color-scheme: light; }
+  body {
+    margin: 0;
+    padding: 2.5rem 1.25rem 4rem;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 1.05rem;
+    line-height: 1.6;
+    color: #1d2733;
+    background: #f6f7f5;
+  }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 0.25rem; }
+  h2 { font-size: 1.15rem; margin: 2.25rem 0 0.5rem; padding-top: 0.75rem; border-top: 1px solid #d8ddd4; }
+  p, li { margin: 0.5rem 0; }
+  ul { padding-left: 1.4rem; }
+  .lede { color: #55604f; margin-top: 0; }
+  .banner {
+    border: 1px solid #b8552f;
+    border-radius: 8px;
+    background: #fdf1ec;
+    color: #7a3418;
+    padding: 0.6rem 0.9rem;
+    margin: 0 0 1.5rem;
+  }
+  .note { color: #55604f; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.92em;
+    background: #ebeee8;
+    border-radius: 4px;
+    padding: 0.1em 0.35em;
+  }
+  .card { background: #ffffff; border: 1px solid #d8ddd4; border-radius: 8px; padding: 1rem 1.25rem; margin: 0.75rem 0; }
+</style>
+</head>
+<body>
+<main>
+
+<div class="banner">Demo box: everything on it is invented, and no card was ever charged.</div>
+
+<h1>Counter Till: the testers' brief</h1>
+<p class="lede">One page about what this box is, what it does, and what it does not do yet. Everything here is plain speech: if the box and this page disagree, the box is wrong and that is a bug worth reporting.</p>
+
+<h2>What this is</h2>
+<p>This is the new HH: a new foundation, built one module at a time, where your feedback now shapes what gets built. The first module is the Counter Till: the counter checkout, the desk where a customer's order is rung, tendered and receipted.</p>
+<p>You already hold the older app and its role demo with the walkthroughs. That older demo stays open, and it remains the fuller picture of what exists: this box is one module of the new foundation, not a replacement for it. The Counter Till has a direct counterpart in the older demo's counter checkout flow, so you can compare the two side by side.</p>
+
+<h2>How to sign in</h2>
+<p data-claim="sign-in-roles">Signing in is a tap: tap <strong>Sales</strong> or <strong>Sales manager</strong> and the till opens under that role's name.</p>
+<p data-claim="coming-eleven">Two roles work in this release. The other eleven are listed as <em>Coming</em> and cannot be tapped: Outside Sales, Yard Team, Yard Manager, Logistics Manager, Driver, Branch Manager, Procurement Manager, Payables and Receivables, Financial Controller, General Manager, and HR.</p>
+<p class="note">What the two working roles do differently is the big refund (below), and the manager's wider reach, which has no screen of its own in this release.</p>
+
+<h2>The demo world</h2>
+<p>The box carries one invented dealer with two branches, Trenton and Kingston, and the counter works Trenton. Every product and account on it is invented for the demo.</p>
+<p data-claim="world-invented">There are ten demo products and nine demo customers, and every one of their names carries <strong>(demo)</strong>. Every product code begins with <code>DEMO-</code>.</p>
+<ul>
+  <li>Holland Paver, Charcoal (demo), <code>DEMO-PAV-HOLLAND</code></li>
+  <li>Brussels Dimensional, Sandstone (demo), <code>DEMO-PAV-BRUSSELS</code></li>
+  <li>Courtstone, Basalt (demo), <code>DEMO-PAV-COURTSTONE</code></li>
+  <li>Retaining Wall Block 8x18 (demo), <code>DEMO-WALL-BLOCK</code></li>
+  <li>Step Slab 24x48, Natural (demo), <code>DEMO-STEP-SLAB</code></li>
+  <li>HPB Bedding Stone (demo), <code>DEMO-AGG-HPB</code></li>
+  <li>Granular A (demo), <code>DEMO-AGG-GA</code></li>
+  <li>Concrete Sand (demo), <code>DEMO-AGG-SAND</code></li>
+  <li>Black Cedar Mulch (demo), <code>DEMO-MULCH-BLACK</code></li>
+  <li>Aluminum Edging 8ft (demo), <code>DEMO-EDGE-ALU</code></li>
+</ul>
+<p>The nine accounts, all invented: Northline Hardscapes Ltd (C01), Bay Ridge Landscaping (C02), Quinte Paving and Design (C03), Harbourview Builders (C04), Cedar Hollow Homes (C05), County of Hastings (C08), Stonebrook Contracting (C09, on a credit hold), and two retail walk-up accounts (C06 and C07). The counter's account picker shows the accounts that belong to the branch the till works, so at Trenton you will see the Trenton ones.</p>
+<p data-claim="world-dated">Before each round of testing the box is wiped back to its starting world, and the world's history is written again at that moment: the box is dated to the moment it was rebuilt, so what you see always reads as current.</p>
+
+<h2>Two kinds of sale</h2>
+<p data-claim="engine-prices">The till rings a <strong>counter sale</strong>: every line is priced by the pricing engine at that customer's own price, and there is no price field to type into. What a customer pays comes from the dealer's pricing rules and tiers, never from the person at the counter.</p>
+<p data-claim="margin-both">Beside each price sits a margin column, and it answers for both logins: who sees cost and margin is the dealer's own configuration.</p>
+<p data-claim="no-floor">The till asks no floor. A contractor's price can sit below the dealer's floor margin, and at the counter that line rings anyway, with the low margin shown in the column. That is on purpose: the floor belongs to the quote flow, and it arrives with Quote Desk, the module after this one.</p>
+
+<h2>Tenders and receipts</h2>
+<p data-claim="cash-change">Cash asks how much was tendered and shows the change due on the receipt.</p>
+<p data-claim="simulated">Cards are simulated. A card sale says <em>Simulated card: no card was charged</em>, and a card refund says that nothing reached a card. No card number is ever typed anywhere: there is no field for one.</p>
+<p data-claim="account-balance">An account sale bills the customer's account: the receipt names the invoice and shows the account's fresh balance.</p>
+
+<h2>Refunds, and the manager walking over</h2>
+<p data-claim="return-within">The returns desk finds a sale by its number. A refund within the dealer's approval amount, 250.00, commits for the clerk, and a cash refund comes out of the drawer: the drawer's expected cash drops by it.</p>
+<p data-claim="refund-refused">A refund above 250.00 is refused to the clerk, and the refusal names the amount and the roles that may approve it: the Sales manager or the Branch manager.</p>
+<p data-claim="manager-card">That is when the manager walks over. At the clerk's till, the manager taps their own card, the same refund goes through once, and the receipt records it as the manager's decision with the clerk named beside. The till stays the clerk's: signing in as the manager was one tap on one dialog, not a change of seats.</p>
+<p data-claim="manager-own">Signed in as the Sales manager, the same refund completes at once with no second approval.</p>
+
+<h2>The walls</h2>
+<p data-claim="other-branch">Each role reaches only its own screens, and one branch never sees another's. A sale that belongs to Kingston is refused at this counter before any money moves, for every refund method, even though the sale number is real.</p>
+<p data-claim="credit-refused">The credit gate refuses an account sale in words, to both logins: an account over its limit, or on a hold, cannot carry a sale on account. Cash and card still work. Credit exceptions belong to leadership, and no leadership login exists in this release, so nobody on this box can release a hold.</p>
+<p data-claim="parked-branch">A ticket can be parked and picked up again by anyone at the same counter, whatever role they signed in as. The parked list is this branch's own: a ticket parked at Kingston never shows at Trenton.</p>
+
+<h2>The drawer</h2>
+<p data-claim="drawer-shared">One shared drawer serves each branch's counter, and every tester rings into the same drawer, so its count will not balance. That is expected: closing and counting the drawer is not in this release.</p>
+
+<h2>Known issues you will meet</h2>
+<ul>
+  <li data-claim="known-seeded-card">The card sales that come with the starting world carry no card reference, so a card refund of one is refused. Refund such a sale in cash or to the account, or return a card sale you rang yourself in this round.</li>
+  <li data-claim="restart">A restart of the box signs everyone out. Sign in again from the role cards.</li>
+  <li data-claim="signout-reload">Signing out, or just reloading the page, ends the session: the till keeps no session between visits.</li>
+  <li>With browser developer tools, some reads beyond the till (the reports and the audit trail) are reachable, and those reads are not fenced to a branch yet, so a technical tester can read across branches with them. This is known, and it is named here rather than hidden: the fence work for those reads is a later item, and no Branch Manager login exists on this box.</li>
+</ul>
+
+<h2>Where feedback goes</h2>
+<p>One channel: send everything to Colton, and he files every note with the principal in one place. What helps most: what you tapped, what you expected, and what you saw instead. The older demo's feedback path stays open too, but what you say about this box is what decides what gets built next.</p>
+
+</main>
+</body>
+</html>
