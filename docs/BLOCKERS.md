@@ -205,3 +205,21 @@ backup into a Dibbits staging org (HH-BISTRACK-CUTOVER-RULING-r1). The
 module stays the fail-closed stub it is today; the FIRST lane that
 touches it removes the push half and that sentence. Until then this
 entry marks the obligation.
+
+## The Counter Till demo: one frozen channel name still carries a surname token (open)
+
+W3's demo populate replaces every planted users row's display name on the
+demo database (the two real-domain rows deactivated and renamed with it, the
+placeholder names replaced with invented ones), which is the recorded scope.
+One display surface the migrations plant is outside that scope and outside
+the lane's Touches: migration 0060 names the DM channel it plants with a
+text label that carries the same surname token the plan's data section
+(PLAN-HH-ROLE-DEMO-r7, "Data") already raises for 0060's users row. The
+schema is frozen, so no migration can fix it, and msg_channels is the
+messaging module's table, so the populate writing it would be a cross-module
+write nothing recorded asks for. A tester can meet the token today only
+through the messaging API (the Counter Till's screens never render channel
+names). Decision wanted: either the demo populate takes on one guarded
+rename of that channel's label on the demo database only, or the record
+matter joins 0060's and 0200's under the same ruling. Recorded and
+continued; nothing in W3's exit tests waits on it.

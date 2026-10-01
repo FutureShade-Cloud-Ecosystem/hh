@@ -1,0 +1,507 @@
+//go:build demo
+
+// Package demo holds the demo build's own code, every file under the demo
+// tag so the production build compiles none of it (the plan's G1). This
+// file is the demo populate (W3): the one-shot `core demo-populate` that
+// turns a freshly migrated and seeded database into the demo box's world.
+//
+// The populate runs fourth in the entrypoint's order, after `migrate`,
+// `demo-check` and `demoseed -apply`, and before `serve`. It is the only
+// writer of the demo_box row the demo boot guard reads, and it refuses
+// before any write unless the database is already a demo database in
+// shape: one org (hh-demo, which this populate itself provisions), no user
+// outside the migrations' planted set and the two role accounts this file
+// defines, and no payment configuration but this file's own.
+//
+// IDEMPOTENCE, the demoseed_apply discipline: every insert carries an
+// explicit deterministic id and ends in ON CONFLICT DO NOTHING, every
+// update guards on the value it would change, and the whole run is one
+// transaction. A second run recognises its own first run's rows, writes
+// nothing, and reports so.
+package demo
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
+	"github.com/jackc/pgx/v5"
+)
+
+// The reserved demo domain, invented (the .invalid top-level domain never
+// resolves). The demo's own accounts live here and nowhere else, and the
+// boot guard admits no ACTIVE user outside it and the reserved .example
+// and .invalid forms.
+const demoDomain = "hh-demo.invalid"
+
+// demoBoxMarker marks the demo_box row: the marker a guard reads to tell
+// "a database this populate filled" from "a database that happens to hold
+// a table of the same name". A later wave that changes the world's shape
+// writes v2 beside it, never a mutation of this one.
+const demoBoxMarker = "hh-demo-populate-v1"
+
+// The demo org. One org only: the boot guard refuses a database that
+// carries any other.
+const (
+	demoOrgSlug = "hh-demo"
+	demoOrgName = "Hardscape House (demo)"
+)
+
+// The two role accounts the demo sign-in mints for (the Counter Till's
+// pair, D49). The ids and the platform ids are pinned literals in code:
+// they are part of the contract the demo module's flow table codes
+// against, so a tester's "Sales" tap resolves this row, at this org, with
+// this grant, and nothing else on the box.
+const (
+	salesUserID      = "de110000-0000-4000-9000-000000000001"
+	salesPlatformID  = "de110000-0000-4000-9000-000000000001"
+	salesEmail       = "sales@hh-demo.invalid"
+	salesDisplayName = "Sales (demo)"
+
+	managerUserID      = "de110000-0000-4000-9000-000000000002"
+	managerPlatformID  = "de110000-0000-4000-9000-000000000002"
+	managerEmail       = "sales.manager@hh-demo.invalid"
+	managerDisplayName = "Sales manager (demo)"
+
+	// The roles behind the two accounts, resolved by code against the
+	// roles catalog 0015 plants. staff_role_grant rows derive from these
+	// through identity.Populate, branch-scoped to the one branch below.
+	salesRoleCode   = "INSIDE_SALES"
+	managerRoleCode = "SALES_MANAGER"
+
+	// Trenton, the till's branch (migration 0003's root branch; 0060
+	// cites the same id). Every grant the demo world carries points here.
+	trentonBranchID = "5d1b3f6e-0000-4000-9000-000000000001"
+)
+
+// The invented card rail values. The merchant id names no real merchant
+// account, the credential is not a key to anything (the wired rail is the
+// simulator, which reads no credential), and no host is set, so nothing
+// here could reach a real processor if it tried (plan section 6).
+const (
+	demoMerchantID     = "DEMO-MERCHANT-0001"
+	demoCardCredential = "demo-not-a-key-0001"
+	demoProcessor      = "run_payments"
+	demoCurrency       = "CAD"
+)
+
+// demoPaymentConfigID is the populate's payment configuration row's fixed
+// id, so a re-run recognises its own row and so any OTHER row, present or
+// appearing later, is a refusal.
+const demoPaymentConfigID = "de110000-0000-4000-9000-0000000000ca"
+
+// plantedUserIDs is the FIXED list of user ids the migrations plant on a
+// fresh `migrate`, read off the migrations and pinned here in code, never
+// queried (the refusal's set is a constant, so a real database's rows can
+// never talk their way into it):
+//
+//	0043  the platform owner, colton@futurebuild.ai (a real domain)
+//	0060  the demo teammate, dana.demo@futurebuild.ai (a real domain)
+//	0061  four homework accounts, scrubbed-0004/0005/0006/0007@example.invalid
+//	      (0066 later moves 0006's email to scrubbed-0008@example.invalid;
+//	      the id does not move)
+//	0200  three tour personas, dispatch/yard/driver.demo@dibbits.example
+var plantedUserIDs = []string{
+	"d7000000-0000-4000-9000-000000000010",
+	"d7000000-0000-4000-9000-0000000000da",
+	"40000061-0000-4000-9000-000000000001",
+	"40000061-0000-4000-9000-000000000002",
+	"40000061-0000-4000-9000-000000000003",
+	"40000061-0000-4000-9000-000000000004",
+	"d0200000-0000-4000-9000-000000000001",
+	"d0200000-0000-4000-9000-000000000002",
+	"d0200000-0000-4000-9000-000000000003",
+}
+
+// plantedUserEmails admits the one planted row the migrations mint WITHOUT
+// a fixed id: 0077's UAT account lets the database generate its id
+// (users.id DEFAULT gen_random_uuid), so the email 0077 plants is the only
+// stable handle it has, pinned here in code beside the ids.
+var plantedUserEmails = []string{
+	"scrubbed-0009@example.invalid",
+}
+
+// deactivatedUserIDs is the pair of planted rows whose emails sit on a
+// real domain. The demo carries no real person's account (D49), so these
+// two are made DEACTIVATED on the demo database only; the ACTIVE-domain
+// check then passes and no session can resolve them.
+var deactivatedUserIDs = map[string]bool{
+	"d7000000-0000-4000-9000-000000000010": true,
+	"d7000000-0000-4000-9000-0000000000da": true,
+}
+
+// plantedDisplayNames replaces every planted row's display name with an
+// invented name on the demo database only. The migrations' placeholders
+// are scrubbed forms, but two of them still carry a surname token beside
+// the placeholder (0060's and 0200's, a record matter raised in the plan's
+// section 6), and no token of any person's name belongs on a demo box.
+// None of these names is a person: they are role labels.
+var plantedDisplayNames = []struct{ id, name string }{
+	{"d7000000-0000-4000-9000-000000000010", "Platform admin (demo)"},
+	{"d7000000-0000-4000-9000-0000000000da", "Demo teammate (demo)"},
+	{"40000061-0000-4000-9000-000000000001", "Homework account one (demo)"},
+	{"40000061-0000-4000-9000-000000000002", "Homework account two (demo)"},
+	{"40000061-0000-4000-9000-000000000003", "Homework account three (demo)"},
+	{"40000061-0000-4000-9000-000000000004", "Homework account four (demo)"},
+	{"d0200000-0000-4000-9000-000000000001", "Dispatch persona (demo)"},
+	{"d0200000-0000-4000-9000-000000000002", "Yard persona (demo)"},
+	{"d0200000-0000-4000-9000-000000000003", "Driver persona (demo)"},
+}
+
+// plantedDisplayNamesByEmail renames the one planted row known by email
+// rather than id (0077's, whose id the database minted).
+var plantedDisplayNamesByEmail = []struct{ email, name string }{
+	{"scrubbed-0009@example.invalid", "Counter UAT account (demo)"},
+}
+
+// Options is RunPopulate's input. Getenv is the environment reader (the
+// populate reads DATABASE_URL, CORE_DATABASE_URL and PAYMENT_VAULT_KEY and
+// nothing else); Out receives the run report; Now pins the clock, nil
+// meaning the wall clock read exactly once at the start (the demoseed
+// discipline: nothing downstream of that one read calls time again).
+type Options struct {
+	Getenv func(string) string
+	Out    io.Writer
+	Now    *time.Time
+}
+
+// Report is what one run did, counts only. A second run against a database
+// it already filled reports zero created everywhere, which is the
+// idempotence promise in the command's own words.
+type Report struct {
+	Clock                time.Time
+	UsersCreated         int
+	UserRolesCreated     int
+	BranchGrantsCreated  int
+	DisplayNamesRenamed  int
+	UsersDeactivated     int
+	OrgInserted          bool
+	StaffGrantsInserted  int64
+	PaymentConfigCreated int
+	DemoBoxCreated       bool
+}
+
+// staticDirectory is the populate's PlatformDirectory: it answers exactly
+// the two demo role accounts and nothing else. identity.Populate's linkage
+// pass counts every other row as unmatched and leaves it unlinked, never
+// guessed, so the migration-planted rows keep no platform identity on the
+// demo box and derive no staff grants.
+type staticDirectory map[string]string
+
+func (d staticDirectory) PlatformUserByEmail(_ context.Context, email string) (string, bool, error) {
+	id, ok := d[strings.ToLower(email)]
+	return id, ok, nil
+}
+
+// RunPopulate is the demo populate's entry: the refusals first, then the
+// writes, all in one transaction that commits or leaves the database as it
+// found it.
+func RunPopulate(ctx context.Context, opt Options) (Report, error) {
+	var report Report
+	if opt.Getenv == nil {
+		return report, errors.New("demo-populate: no environment reader")
+	}
+	if opt.Out == nil {
+		opt.Out = io.Discard
+	}
+
+	// REFUSAL 1, the two database variables. serve reads CORE_DATABASE_URL
+	// and every one-shot reads DATABASE_URL (the gap the entrypoint closes
+	// by setting both from one value); a populate that ran against a
+	// different database than the server would fill the wrong box, so the
+	// mismatch is refused here rather than survived.
+	databaseURL := strings.TrimSpace(opt.Getenv("DATABASE_URL"))
+	coreDatabaseURL := strings.TrimSpace(opt.Getenv("CORE_DATABASE_URL"))
+	if databaseURL == "" || coreDatabaseURL == "" {
+		return report, errors.New("demo-populate: refusing: DATABASE_URL and CORE_DATABASE_URL must both be set and equal")
+	}
+	if databaseURL != coreDatabaseURL {
+		return report, errors.New("demo-populate: refusing: DATABASE_URL and CORE_DATABASE_URL name different databases")
+	}
+
+	// REFUSAL 2, the box's own vault key. The payment configuration is
+	// sealed under PAYMENT_VAULT_KEY and the serve role opens it again on
+	// the first card charge, so an absent or malformed key would write a
+	// configuration the box itself can never read. demoseed's own sealing
+	// tolerates an empty key (its POD attestations are never opened, and
+	// payment.NewVault builds an ephemeral one); this row is opened in
+	// anger, so an empty key is refused here rather than sealed against.
+	vaultKey := opt.Getenv("PAYMENT_VAULT_KEY")
+	if strings.TrimSpace(vaultKey) == "" {
+		return report, errors.New("demo-populate: refusing: PAYMENT_VAULT_KEY is not set, the demo card rail is sealed under the box's own vault key")
+	}
+	vault, err := payment.NewVault(vaultKey)
+	if err != nil {
+		return report, fmt.Errorf("demo-populate: refusing: PAYMENT_VAULT_KEY: %w", err)
+	}
+
+	// THE ONE CLOCK. Read exactly once, threaded through every write as a
+	// value; the demo_box row records it, and the seed's world (applied
+	// moments before, from its own single read) is dated within the same
+	// run.
+	now := time.Now().UTC()
+	if opt.Now != nil {
+		now = opt.Now.UTC()
+	}
+	report.Clock = now
+
+	pool, err := db.Connect(ctx, databaseURL)
+	if err != nil {
+		return report, fmt.Errorf("demo-populate: cannot connect: %w", err)
+	}
+	defer pool.Close()
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return report, fmt.Errorf("demo-populate: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// REFUSALS 3 to 5, the populate's own shape check, before any write.
+	if err := refuseForeignWorld(ctx, tx); err != nil {
+		return report, err
+	}
+
+	// The two role accounts. Inserted first so identity.Populate's stamping
+	// pass reaches them in the same run.
+	usersCreated, err := insertRoleAccounts(ctx, tx)
+	report.UsersCreated = usersCreated
+	if err != nil {
+		return report, err
+	}
+	rolesCreated, grantsCreated, err := insertRoleAccountAccess(ctx, tx)
+	report.UserRolesCreated = rolesCreated
+	report.BranchGrantsCreated = grantsCreated
+	if err != nil {
+		return report, err
+	}
+
+	// The migrations' planted rows: display names replaced, the two
+	// real-domain rows made inactive, on the demo database only.
+	renamed, deactivated, err := scrubPlantedUsers(ctx, tx)
+	report.DisplayNamesRenamed = renamed
+	report.UsersDeactivated = deactivated
+	if err != nil {
+		return report, err
+	}
+
+	// The org, the org scope, the platform links for the two role accounts
+	// and the staff grants that derive from them, all through the identity
+	// program itself, so the demo world is provisioned exactly the way a
+	// real dealer's is.
+	pop, err := identity.Populate(ctx, tx, identity.PopulateConfig{
+		OrgSlug:   demoOrgSlug,
+		OrgName:   demoOrgName,
+		Directory: staticDirectory{salesEmail: salesPlatformID, managerEmail: managerPlatformID},
+	})
+	if err != nil {
+		return report, fmt.Errorf("demo-populate: identity populate: %w", err)
+	}
+	report.OrgInserted = pop.OrgInserted
+	report.StaffGrantsInserted = pop.Grants.Inserted
+
+	// REFUSAL 6 belongs beside the write it guards: exactly one payment
+	// configuration, this populate's own. A row any other run or hand put
+	// there is a refusal, so the box can never grow a second rail.
+	payCreated, err := writePaymentConfig(ctx, tx, vault)
+	report.PaymentConfigCreated = payCreated
+	if err != nil {
+		return report, err
+	}
+
+	// The demo_box row: the one-row table only this populate creates,
+	// outside the migration chain (the schema is frozen), recording the
+	// moment the world was rebuilt.
+	boxCreated, err := writeDemoBox(ctx, tx, now)
+	report.DemoBoxCreated = boxCreated
+	if err != nil {
+		return report, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return report, fmt.Errorf("demo-populate: commit: %w", err)
+	}
+
+	writeReport(opt.Out, report)
+	return report, nil
+}
+
+// insertRoleAccounts writes the two demo role accounts, idempotently. The
+// rows carry no password hash (the core has no password route; the demo
+// sign-in mints its sessions from the flow table, never from a secret) and
+// no platform id yet: the platform id arrives through identity.Populate's
+// linkage pass, answered by the static directory, exactly the way a real
+// dealer's accounts are linked.
+func insertRoleAccounts(ctx context.Context, tx pgx.Tx) (int, error) {
+	created := 0
+	for _, u := range []struct{ id, email, name string }{
+		{salesUserID, salesEmail, salesDisplayName},
+		{managerUserID, managerEmail, managerDisplayName},
+	} {
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO users (id, email, display_name, status)
+			VALUES ($1, $2, $3, 'ACTIVE')
+			ON CONFLICT (id) DO NOTHING`,
+			u.id, u.email, u.name)
+		if err != nil {
+			return 0, fmt.Errorf("demo-populate: role account %s: %w", u.name, err)
+		}
+		created += int(tag.RowsAffected())
+	}
+	return created, nil
+}
+
+// insertRoleAccountAccess writes each account's carried role (by code,
+// against the catalog 0015 plants) and its one branch grant at Trenton. A
+// tombstone left by anything is healed rather than honoured: the upsert
+// fires only when the row sits tombstoned, so a re-run still writes
+// nothing.
+func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int, err error) {
+	for _, a := range []struct{ userID, roleCode string }{
+		{salesUserID, salesRoleCode},
+		{managerUserID, managerRoleCode},
+	} {
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO user_roles (user_id, role_id)
+			SELECT $1, r.id FROM roles r WHERE r.code = $2
+			ON CONFLICT (user_id, role_id) DO UPDATE SET deleted_at = NULL
+			WHERE user_roles.deleted_at IS NOT NULL`,
+			a.userID, a.roleCode)
+		if err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: role %s: %w", a.roleCode, err)
+		}
+		roles += int(tag.RowsAffected())
+	}
+	for _, userID := range []string{salesUserID, managerUserID} {
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO user_branch_grants (user_id, branch_id)
+			SELECT $1, l.id FROM locations l WHERE l.id = $2::uuid
+			ON CONFLICT (user_id, branch_id) DO UPDATE SET deleted_at = NULL
+			WHERE user_branch_grants.deleted_at IS NOT NULL`,
+			userID, trentonBranchID)
+		if err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: branch grant: %w", err)
+		}
+		grants += int(tag.RowsAffected())
+	}
+	return roles, grants, nil
+}
+
+// scrubPlantedUsers replaces the planted rows' display names and
+// deactivates the two real-domain rows, each update guarded on the value
+// it would change so a re-run touches nothing.
+func scrubPlantedUsers(ctx context.Context, tx pgx.Tx) (renamed, deactivated int, err error) {
+	for _, r := range plantedDisplayNames {
+		tag, err := tx.Exec(ctx,
+			`UPDATE users SET display_name = $2, updated_at = now()
+			  WHERE id = $1::uuid AND display_name IS DISTINCT FROM $2`,
+			r.id, r.name)
+		if err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: planted rename: %w", err)
+		}
+		renamed += int(tag.RowsAffected())
+	}
+	for _, r := range plantedDisplayNamesByEmail {
+		tag, err := tx.Exec(ctx,
+			`UPDATE users SET display_name = $2, updated_at = now()
+			  WHERE lower(email::text) = $1 AND display_name IS DISTINCT FROM $2`,
+			r.email, r.name)
+		if err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: planted rename: %w", err)
+		}
+		renamed += int(tag.RowsAffected())
+	}
+	for id := range deactivatedUserIDs {
+		tag, err := tx.Exec(ctx,
+			`UPDATE users SET status = 'DEACTIVATED', updated_at = now()
+			  WHERE id = $1::uuid AND status <> 'DEACTIVATED'`,
+			id)
+		if err != nil {
+			return 0, 0, fmt.Errorf("demo-populate: planted deactivate: %w", err)
+		}
+		deactivated += int(tag.RowsAffected())
+	}
+	return renamed, deactivated, nil
+}
+
+// writePaymentConfig seals the invented credentials under the box's own
+// vault key (the demoseed_seal path: payment.NewVault over
+// PAYMENT_VAULT_KEY, AES-256-GCM) and inserts the one active row. No host,
+// surcharges off, no creator: the populate is not a person.
+func writePaymentConfig(ctx context.Context, tx pgx.Tx, vault *payment.Vault) (int, error) {
+	plain, err := json.Marshal(map[string]string{"api_key": demoCardCredential})
+	if err != nil {
+		return 0, fmt.Errorf("demo-populate: payment credentials: %w", err)
+	}
+	ciphertext, keyVersion, err := vault.Encrypt(plain)
+	if err != nil {
+		return 0, fmt.Errorf("demo-populate: payment sealing: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO payment_config
+			(id, processor, merchant_id, currency, credentials_ciphertext, key_version,
+			 base_url, mdr_bps, surcharge_enabled, status, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, '', 0, FALSE, 'active', NULL)
+		ON CONFLICT (id) DO NOTHING`,
+		demoPaymentConfigID, demoProcessor, demoMerchantID, demoCurrency, ciphertext, keyVersion)
+	if err != nil {
+		return 0, fmt.Errorf("demo-populate: payment config: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// writeDemoBox creates the demo_box table (runtime, outside the frozen
+// migration chain: no migration is ever written for this) and inserts the
+// one row recording the run's moment. The boot guard reads this row; a
+// database without it is not a demo database.
+func writeDemoBox(ctx context.Context, tx pgx.Tx, now time.Time) (bool, error) {
+	if _, err := tx.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS demo_box (
+		  singleton    TEXT PRIMARY KEY,
+		  populated_at TIMESTAMPTZ NOT NULL,
+		  marker       TEXT NOT NULL
+		)`); err != nil {
+		return false, fmt.Errorf("demo-populate: demo_box table: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO demo_box (singleton, populated_at, marker)
+		VALUES ('demo', $1, $2)
+		ON CONFLICT (singleton) DO NOTHING`,
+		now, demoBoxMarker)
+	if err != nil {
+		return false, fmt.Errorf("demo-populate: demo_box row: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// writeReport prints what the run did, in the demoseed run report's
+// spirit: the clock, the counts, and the second-run line stated plainly.
+func writeReport(out io.Writer, r Report) {
+	fmt.Fprintf(out, "demo-populate %s\n", demoBoxMarker)
+	fmt.Fprintf(out, "  clock            %s\n", r.Clock.Format(time.RFC3339))
+	fmt.Fprintf(out, "  org              %s (inserted: %v)\n", demoOrgSlug, r.OrgInserted)
+	fmt.Fprintf(out, "  role accounts    %d created, %d role rows, %d branch grants at %s\n",
+		r.UsersCreated, r.UserRolesCreated, r.BranchGrantsCreated, trentonBranchID)
+	fmt.Fprintf(out, "  planted rows     %d display names replaced, %d deactivated\n",
+		r.DisplayNamesRenamed, r.UsersDeactivated)
+	fmt.Fprintf(out, "  staff grants     %d inserted\n", r.StaffGrantsInserted)
+	fmt.Fprintf(out, "  payment config   %d created (merchant %s, simulator, no host, surcharges off)\n",
+		r.PaymentConfigCreated, demoMerchantID)
+	fmt.Fprintf(out, "  demo_box         row present: %v\n", r.DemoBoxCreated)
+	if r.createdNothing() {
+		fmt.Fprintln(out, "  the demo world was already complete, this run wrote nothing.")
+	}
+}
+
+func (r Report) createdNothing() bool {
+	return r.UsersCreated == 0 && r.UserRolesCreated == 0 && r.BranchGrantsCreated == 0 &&
+		r.DisplayNamesRenamed == 0 && r.UsersDeactivated == 0 && r.PaymentConfigCreated == 0 &&
+		!r.DemoBoxCreated && r.StaffGrantsInserted == 0
+}

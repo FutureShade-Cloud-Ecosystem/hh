@@ -1,0 +1,608 @@
+//go:build demo
+
+// The demo populate's exit tests (W3). Each test builds its OWN database
+// from zero on a throwaway local Postgres (the migrations are applied in
+// process, the seed and the populate run through the real built binary in
+// the demo shape), so nothing is shared between tests and the claim under
+// test is about the whole pipeline: migrate, demoseed -apply, demo-populate,
+// demo-populate again.
+//
+//	Run: hh-till-l3b-pg up (a local Postgres on 127.0.0.1:5591), then
+//	     DATABASE_URL='postgres://hardscape:hardscape@127.0.0.1:5591/postgres?sslmode=disable' \
+//	     go test -tags demo ./internal/demo/ -count=1 -p 1 -v
+//
+// Without DATABASE_URL every test here skips, so the suite stays green
+// wherever no throwaway Postgres exists. The harness refuses a database
+// address that is not local.
+package demo
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// seedClock pins the pipeline's clock, the same discipline as the demoseed
+// integration tests: one fixed instant passed to both `demoseed -apply
+// -now` and `demo-populate -now`, so the world's dates, and every count
+// and day assertion below, are the same on every run.
+var seedClock = time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)
+
+// testVaultKey is 64 hex chars (32 bytes): a well-formed shape for a test
+// key, generated here, guarding nothing.
+const testVaultKey = "ab01ab01ab01ab01ab01ab01ab01ab01ab01ab01ab01ab01ab01ab01ab01ab01"
+
+// testDatabaseURL reads the throwaway Postgres's base URL and refuses any
+// address that is not local.
+func testDatabaseURL(t *testing.T) string {
+	t.Helper()
+	base := os.Getenv("DATABASE_URL")
+	if base == "" {
+		t.Skip("DATABASE_URL is unset, the demo populate's exit tests need a throwaway local Postgres")
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		t.Fatalf("DATABASE_URL does not parse: %v", err)
+	}
+	switch u.Hostname() {
+	case "localhost", "127.0.0.1", "::1", "":
+		return base
+	default:
+		t.Fatalf("DATABASE_URL points at %q, the exit tests run only against a local throwaway Postgres", u.Hostname())
+		return ""
+	}
+}
+
+// freshMigratedDB builds a database from zero and migrates it with the same
+// files `core migrate` applies, in the same order. Nothing is shared.
+func freshMigratedDB(t *testing.T, suffix string) (*pgxpool.Pool, string) {
+	t.Helper()
+	base := testDatabaseURL(t)
+	name := "demo_pop_it_" + suffix
+	adminDSN, testDSN := swapDatabase(base, "postgres"), swapDatabase(base, name)
+
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, adminDSN)
+	if err != nil {
+		t.Fatalf("connecting to the admin database: %v", err)
+	}
+	defer admin.Close()
+	if _, err := admin.Exec(ctx, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)"); err != nil {
+		t.Fatalf("dropping %s: %v", name, err)
+	}
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+		t.Fatalf("creating %s: %v", name, err)
+	}
+
+	pool, err := pgxpool.New(ctx, testDSN)
+	if err != nil {
+		t.Fatalf("connecting to %s: %v", name, err)
+	}
+	t.Cleanup(pool.Close)
+
+	files, err := filepath.Glob(filepath.Join("..", "..", "db", "migrations", "*.sql"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no migrations found (err=%v)", err)
+	}
+	sort.Strings(files)
+	for _, f := range files {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("reading %s: %v", f, err)
+		}
+		if _, err := pool.Exec(ctx, string(body)); err != nil {
+			t.Fatalf("applying %s: %v", filepath.Base(f), err)
+		}
+	}
+	return pool, testDSN
+}
+
+func swapDatabase(dsn, name string) string {
+	slash := strings.LastIndex(dsn, "/")
+	if slash < 0 {
+		return dsn
+	}
+	tail := ""
+	if q := strings.Index(dsn[slash:], "?"); q >= 0 {
+		tail = dsn[slash+q:]
+	}
+	return dsn[:slash+1] + name + tail
+}
+
+// buildDemoCore builds the demo-shaped core binary once and returns its
+// path: the binary that carries both `demoseed` and the demo-populate
+// subcommand, exactly the image's shape.
+func buildDemoCore(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "core-demo")
+	cmd := exec.Command("go", "build", "-tags", "demo", "-o", bin, "./cmd/core")
+	cmd.Dir = "../.."
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("building the demo core: %v\n%s", err, out)
+	}
+	return bin
+}
+
+// subEnv builds the subprocess environment with the database variables and
+// the vault key set from the overrides, never inherited.
+func subEnv(t *testing.T, overrides map[string]string) []string {
+	t.Helper()
+	drop := map[string]bool{"DATABASE_URL": true, "CORE_DATABASE_URL": true, "PAYMENT_VAULT_KEY": true}
+	var env []string
+	for _, kv := range os.Environ() {
+		key := strings.SplitN(kv, "=", 2)[0]
+		if !drop[key] {
+			env = append(env, kv)
+		}
+	}
+	for k, v := range overrides {
+		env = append(env, k+"="+v)
+	}
+	return env
+}
+
+// runStep runs one pipeline step through the built binary and fails on a
+// non-zero exit, printing the step's output.
+func runStep(t *testing.T, bin string, args []string, env []string) string {
+	t.Helper()
+	cmd := exec.Command(bin, args...)
+	cmd.Env = env
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("%s: %v\n%s", strings.Join(args, " "), err, out.String())
+	}
+	return out.String()
+}
+
+// populateEnv is the environment a populate (or seed) step runs under.
+func populateEnv(dsn string) map[string]string {
+	return map[string]string{
+		"DATABASE_URL":      dsn,
+		"CORE_DATABASE_URL": dsn,
+		"PAYMENT_VAULT_KEY": testVaultKey,
+	}
+}
+
+// runPopulateOptions is the in-process Options shape, for the refusal tests.
+func runPopulateOptions(dsn string) Options {
+	getenv := func(k string) string {
+		switch k {
+		case "DATABASE_URL", "CORE_DATABASE_URL":
+			return dsn
+		case "PAYMENT_VAULT_KEY":
+			return testVaultKey
+		default:
+			return ""
+		}
+	}
+	now := seedClock
+	return Options{Getenv: getenv, Out: io.Discard, Now: &now}
+}
+
+// seedAndPopulate runs the whole pipeline through the binary: seed, then
+// populate, then populate again, returning both populate reports' output.
+func seedAndPopulate(t *testing.T, bin, dsn string) (first, second string) {
+	t.Helper()
+	env := subEnv(t, populateEnv(dsn))
+	runStep(t, bin, []string{"demoseed", "-apply", "-now", seedClock.Format(time.RFC3339)}, env)
+	first = runStep(t, bin, []string{"demo-populate", "-now", seedClock.Format(time.RFC3339)}, env)
+	second = runStep(t, bin, []string{"demo-populate", "-now", seedClock.Format(time.RFC3339)}, env)
+	return first, second
+}
+
+// censusUsers counts the rows a populate run could create, so the second
+// run's no-op is proven per table rather than by eyeballing its output.
+func censusUsers(t *testing.T, ctx context.Context, pool *pgxpool.Pool) map[string]int {
+	t.Helper()
+	out := map[string]int{}
+	for _, q := range []struct{ name, sql string }{
+		{"users", `SELECT count(*) FROM users`},
+		{"user_roles", `SELECT count(*) FROM user_roles`},
+		{"user_branch_grants", `SELECT count(*) FROM user_branch_grants`},
+		{"staff_role_grant", `SELECT count(*) FROM staff_role_grant`},
+		{"payment_config", `SELECT count(*) FROM payment_config`},
+		{"org", `SELECT count(*) FROM org`},
+	} {
+		var n int
+		if err := pool.QueryRow(ctx, q.sql).Scan(&n); err != nil {
+			t.Fatalf("census %s: %v", q.name, err)
+		}
+		out[q.name] = n
+	}
+	var box int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM demo_box`).Scan(&box); err != nil {
+		t.Fatalf("census demo_box: %v", err)
+	}
+	out["demo_box"] = box
+	return out
+}
+
+// -- The end-to-end exit test ----------------------------------------------------------------------
+
+func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
+	ctx := context.Background()
+	pool, dsn := freshMigratedDB(t, "e2e")
+	bin := buildDemoCore(t)
+
+	first, second := seedAndPopulate(t, bin, dsn)
+
+	if !strings.Contains(first, demoMerchantID) {
+		t.Errorf("the first run should name the demo merchant, it printed:\n%s", first)
+	}
+	if !strings.Contains(second, "wrote nothing") {
+		t.Errorf("the second run should report it wrote nothing, it printed:\n%s", second)
+	}
+
+	// The second run created nothing, per table, not just per report.
+	before := censusUsers(t, ctx, pool)
+	third := runStep(t, bin, []string{"demo-populate", "-now", seedClock.Format(time.RFC3339)}, subEnv(t, populateEnv(dsn)))
+	after := censusUsers(t, ctx, pool)
+	for table, n := range before {
+		if after[table] != n {
+			t.Errorf("%s: %d rows before the third run, %d after, the run was not a no-op\n%s", table, n, after[table], third)
+		}
+	}
+
+	// One org, and it is the demo org.
+	var orgID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM org WHERE lower(slug::text) = $1`, demoOrgSlug).Scan(&orgID); err != nil {
+		t.Fatalf("the hh-demo org is missing: %v", err)
+	}
+	var orgCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM org`).Scan(&orgCount); err != nil {
+		t.Fatal(err)
+	}
+	if orgCount != 1 {
+		t.Errorf("the database holds %d org rows, want exactly the one demo org", orgCount)
+	}
+
+	// identity.Populate's own verification pass agrees.
+	counts, err := identity.VerifyPopulation(ctx, pool, orgID)
+	if err != nil {
+		t.Fatalf("VerifyPopulation: %v", err)
+	}
+	if counts.OrgRows != 1 {
+		t.Errorf("OrgRows = %d, want 1", counts.OrgRows)
+	}
+	if counts.UsersUnstampedOrg != 0 || counts.UserRolesUnstampedOrg != 0 ||
+		counts.UserBranchGrantsUnstampedOrg != 0 || counts.PortalUsersUnstampedTenant != 0 {
+		t.Errorf("the org scope did not stamp clean: %+v", counts)
+	}
+	if counts.UsersLinked != 2 || counts.UsersUnlinked != 10 {
+		t.Errorf("linked %d / unlinked %d users, want the 2 demo role accounts linked and the 10 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
+	}
+	if counts.StaffGrants != 2 || counts.StaffGrantsBranch != 2 || counts.StaffGrantsGlobal != 0 {
+		t.Errorf("staff grants %d (branch %d, global %d), want the two role accounts' Trenton grants only", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
+	}
+	if counts.StaffGrantShapeViolations != 0 || counts.StaffGrantsUnlinked != 0 {
+		t.Errorf("grant shape or linkage defects: %+v", counts)
+	}
+
+	// No ACTIVE user outside the reserved demo domain and .example and
+	// .invalid: the two real-domain planted rows must have gone inactive.
+	var outside int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM users
+		 WHERE status = 'ACTIVE'
+		   AND lower(email::text) NOT LIKE '%@hh-demo.invalid'
+		   AND lower(email::text) NOT LIKE '%.example'
+		   AND lower(email::text) NOT LIKE '%.invalid'`).Scan(&outside); err != nil {
+		t.Fatal(err)
+	}
+	if outside != 0 {
+		t.Errorf("%d ACTIVE user(s) sit outside the reserved domains", outside)
+	}
+
+	// The two role accounts are exactly as the demo sign-in will resolve them.
+	assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSIDE_SALES")
+	assertRoleAccount(t, ctx, pool, managerUserID, managerEmail, managerDisplayName, "SALES_MANAGER")
+
+	// The real-domain planted rows are inactive and renamed.
+	for id, name := range map[string]string{
+		"d7000000-0000-4000-9000-000000000010": "Platform admin (demo)",
+		"d7000000-0000-4000-9000-0000000000da": "Demo teammate (demo)",
+	} {
+		var status, display string
+		if err := pool.QueryRow(ctx,
+			`SELECT status, display_name FROM users WHERE id = $1::uuid`, id).Scan(&status, &display); err != nil {
+			t.Fatalf("planted row %s missing: %v", id, err)
+		}
+		if status != "DEACTIVATED" {
+			t.Errorf("the real-domain planted row %s carries status %s, want DEACTIVATED", id, status)
+		}
+		if display != name {
+			t.Errorf("the real-domain planted row %s carries display name %q, want %q", id, display, name)
+		}
+	}
+
+	// Every users row renders an invented name: the twelve display names
+	// this populate and the migrations' planted set allow, exactly, and
+	// nothing else. A surname token or an unreplaced placeholder on any row
+	// fails the allowlist, without the test itself naming a token.
+	allowedNames := map[string]bool{
+		salesDisplayName:                true,
+		managerDisplayName:              true,
+		"Platform admin (demo)":         true,
+		"Demo teammate (demo)":          true,
+		"Homework account one (demo)":   true,
+		"Homework account two (demo)":   true,
+		"Homework account three (demo)": true,
+		"Homework account four (demo)":  true,
+		"Counter UAT account (demo)":    true,
+		"Dispatch persona (demo)":       true,
+		"Yard persona (demo)":           true,
+		"Driver persona (demo)":         true,
+	}
+	nameRows, err := pool.Query(ctx, `SELECT display_name FROM users`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nameRows.Close()
+	saw := map[string]int{}
+	for nameRows.Next() {
+		var name string
+		if err := nameRows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		saw[name]++
+		if !allowedNames[name] {
+			t.Errorf("a users row carries display name %q, which is not one of the invented demo names", name)
+		}
+	}
+	if err := nameRows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(saw) != len(allowedNames) || len(saw) != 12 {
+		t.Errorf("the users rows render %d distinct display names, want exactly the 12 invented ones (saw: %v)", len(saw), saw)
+	}
+
+	// The card rail answers configured with the demo's invented merchant id,
+	// through the payment store read the way W3 owns it. (The serve leg of
+	// this check, the route behind the boot guards, is W1's to run.)
+	vault, err := payment.NewVault(testVaultKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configured, merchantID, processor, currency, err := payment.NewStore(pool, vault).Status(ctx)
+	if err != nil {
+		t.Fatalf("payment status: %v", err)
+	}
+	if !configured || merchantID != demoMerchantID || processor != demoProcessor || currency != demoCurrency {
+		t.Errorf("payment config: configured=%v merchant=%q processor=%q currency=%q", configured, merchantID, processor, currency)
+	}
+
+	// The demo_box row records the run's moment, and the newest seeded
+	// counter sale falls on the same run's day: the box looks current the
+	// moment it is rebuilt.
+	var populatedAt time.Time
+	var marker string
+	if err := pool.QueryRow(ctx,
+		`SELECT populated_at, marker FROM demo_box WHERE singleton = 'demo'`).Scan(&populatedAt, &marker); err != nil {
+		t.Fatalf("the demo_box row is missing: %v", err)
+	}
+	if !populatedAt.Equal(seedClock) || marker != demoBoxMarker {
+		t.Errorf("demo_box records %s with marker %q, want the run's clock %s and marker %q",
+			populatedAt.Format(time.RFC3339), marker, seedClock.Format(time.RFC3339), demoBoxMarker)
+	}
+	var newestSale time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT max(ps.created_at) FROM pos_sale ps
+		  JOIN orders o ON o.id = ps.order_id
+		 WHERE o.metadata->>'demo_seed' = 'hos-demoseed-v1'`).Scan(&newestSale); err != nil {
+		t.Fatal(err)
+	}
+	if newestSale.IsZero() {
+		t.Fatal("no seeded counter sale exists, the day assertion would be vacuous")
+	}
+	if !newestSale.UTC().Truncate(24 * time.Hour).Equal(seedClock.Truncate(24 * time.Hour)) {
+		t.Errorf("the newest seeded counter sale falls on %s, want the run's day %s",
+			newestSale.UTC().Format(time.RFC3339), seedClock.Format(time.RFC3339))
+	}
+}
+
+func assertRoleAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID, email, display, roleCode string) {
+	t.Helper()
+	var status string
+	var platformID *string
+	if err := pool.QueryRow(ctx,
+		`SELECT status, platform_user_id::text FROM users WHERE id = $1::uuid`, userID).Scan(&status, &platformID); err != nil {
+		t.Fatalf("role account %s missing: %v", email, err)
+	}
+	if status != "ACTIVE" {
+		t.Errorf("role account %s carries status %s, want ACTIVE", email, status)
+	}
+	if platformID == nil || *platformID != userID {
+		t.Errorf("role account %s carries platform id %v, want %s", email, platformID, userID)
+	}
+	var gotDisplay string
+	if err := pool.QueryRow(ctx,
+		`SELECT display_name FROM users WHERE id = $1::uuid`, userID).Scan(&gotDisplay); err != nil {
+		t.Fatal(err)
+	}
+	if gotDisplay != display {
+		t.Errorf("role account %s carries display name %q, want %q", email, gotDisplay, display)
+	}
+	var gotEmail string
+	if err := pool.QueryRow(ctx,
+		`SELECT email::text FROM users WHERE id = $1::uuid`, userID).Scan(&gotEmail); err != nil {
+		t.Fatal(err)
+	}
+	if gotEmail != email {
+		t.Errorf("role account id %s carries email %q, want %q", userID, gotEmail, email)
+	}
+	// The grant resolves: one live staff_role_grant, the account's own role,
+	// in the demo org, branch-scoped to Trenton.
+	var gotRole string
+	var gotBranch *string
+	err := pool.QueryRow(ctx, `
+		SELECT sr.origin_code::text, g.branch_id::text
+		  FROM staff_role_grant g
+		  JOIN staff_role sr ON sr.id = g.role_id
+		 WHERE g.platform_user_id = $1 AND g.deleted_at IS NULL`,
+		userID).Scan(&gotRole, &gotBranch)
+	if err != nil {
+		t.Fatalf("role account %s resolves no staff grant: %v", email, err)
+	}
+	if gotRole != roleCode || gotBranch == nil || *gotBranch != trentonBranchID {
+		t.Errorf("role account %s resolves role %s at branch %v, want %s at %s", email, gotRole, gotBranch, roleCode, trentonBranchID)
+	}
+}
+
+// -- The refusals ----------------------------------------------------------------------------------
+
+// TestPopulate_RefusesASecondPaymentConfiguration: a second payment
+// configuration present, the populate refuses and writes nothing.
+func TestPopulate_RefusesASecondPaymentConfiguration(t *testing.T) {
+	ctx := context.Background()
+	pool, dsn := freshMigratedDB(t, "payrefuse")
+	bin := buildDemoCore(t)
+	seedAndPopulate(t, bin, dsn)
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO payment_config (id, processor, merchant_id, currency, credentials_ciphertext,
+		                            key_version, base_url, mdr_bps, surcharge_enabled, status)
+		VALUES ('de110000-0000-4000-9000-0000000000cb', 'other_demo_rail', 'OTHER-MERCHANT', 'CAD',
+		        '\x00'::bytea, 1, '', 0, FALSE, 'active')`); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := RunPopulate(ctx, runPopulateOptions(dsn))
+	if err == nil {
+		t.Fatal("the populate ran against a database holding a second payment configuration, it must refuse")
+	}
+	if !strings.Contains(err.Error(), "payment configuration") {
+		t.Errorf("the refusal does not name the payment configuration: %v", err)
+	}
+	var box int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM demo_box`).Scan(&box); err != nil {
+		t.Fatal(err)
+	}
+	if box != 1 {
+		t.Errorf("demo_box holds %d rows after a refused run, a refusal must write nothing", box)
+	}
+}
+
+// TestPopulate_RefusesAForeignUser: one user outside the planted set, the
+// populate refuses. The planted set is the pinned list, so a real
+// database's rows can never be admitted.
+func TestPopulate_RefusesAForeignUser(t *testing.T) {
+	ctx := context.Background()
+	pool, dsn := freshMigratedDB(t, "userrefuse")
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users (id, email, display_name, status)
+		VALUES ('11111111-2222-4333-8444-555555555555', 'owner@realyard.ca', 'A real person', 'ACTIVE')`); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := RunPopulate(ctx, runPopulateOptions(dsn))
+	if err == nil {
+		t.Fatal("the populate ran against a database holding a foreign user, it must refuse")
+	}
+	if !strings.Contains(err.Error(), "user") {
+		t.Errorf("the refusal does not name the user check: %v", err)
+	}
+	var orgs int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM org`).Scan(&orgs); err != nil {
+		t.Fatal(err)
+	}
+	if orgs != 0 {
+		t.Errorf("a refused run provisioned %d org row(s), a refusal must write nothing", orgs)
+	}
+}
+
+// TestPopulate_RefusesAForeignOrg: one org that is not hh-demo, the
+// populate refuses.
+func TestPopulate_RefusesAForeignOrg(t *testing.T) {
+	ctx := context.Background()
+	pool, dsn := freshMigratedDB(t, "orgrefuse")
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO org (slug, name) VALUES ('other-yard', 'Some Other Dealer')`); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := RunPopulate(ctx, runPopulateOptions(dsn))
+	if err == nil {
+		t.Fatal("the populate ran against a database holding another org, it must refuse")
+	}
+	if !strings.Contains(err.Error(), "org") {
+		t.Errorf("the refusal does not name the org check: %v", err)
+	}
+}
+
+// TestPopulate_RefusesEnvironmentMistakes, with no database at all: the
+// two database variables must be set and equal, and the vault key must be
+// a real key shape, before the populate will even connect.
+func TestPopulate_RefusesEnvironmentMistakes(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name    string
+		getenv  func(string) string
+		wantExt string
+	}{
+		{
+			name:    "both variables unset",
+			getenv:  func(string) string { return "" },
+			wantExt: "DATABASE_URL",
+		},
+		{
+			name: "the variables name different databases",
+			getenv: func(k string) string {
+				if k == "DATABASE_URL" {
+					return "postgres://hardscape:hardscape@127.0.0.1:5591/one?sslmode=disable"
+				}
+				if k == "CORE_DATABASE_URL" {
+					return "postgres://hardscape:hardscape@127.0.0.1:5591/two?sslmode=disable"
+				}
+				return testVaultKey
+			},
+			wantExt: "different databases",
+		},
+		{
+			name: "the vault key is missing",
+			getenv: func(k string) string {
+				if k == "PAYMENT_VAULT_KEY" {
+					return ""
+				}
+				return "postgres://hardscape:hardscape@127.0.0.1:5591/one?sslmode=disable"
+			},
+			wantExt: "PAYMENT_VAULT_KEY",
+		},
+		{
+			name: "the vault key is malformed",
+			getenv: func(k string) string {
+				if k == "PAYMENT_VAULT_KEY" {
+					return "not-hex"
+				}
+				return "postgres://hardscape:hardscape@127.0.0.1:5591/one?sslmode=disable"
+			},
+			wantExt: "PAYMENT_VAULT_KEY",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := RunPopulate(ctx, Options{Getenv: tc.getenv, Out: io.Discard})
+			if err == nil {
+				t.Fatal("the populate ran with a broken environment, it must refuse")
+			}
+			if !strings.Contains(err.Error(), tc.wantExt) {
+				t.Errorf("the refusal does not name %q: %v", tc.wantExt, err)
+			}
+		})
+	}
+}
