@@ -10,21 +10,28 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/flows"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 )
 
 // fakeMinter records the subjects it is asked to sign and answers a fixed
-// token, or the error it is told to.
+// token, or the error it is told to. When it shares an event log, it
+// appends there, so a test can hold an order between collaborators.
 type fakeMinter struct {
 	subjects []string
 	token    string
 	err      error
+	events   *[]string
 }
 
 func (f *fakeMinter) Mint(subject string) (string, error) {
 	f.subjects = append(f.subjects, subject)
+	if f.events != nil {
+		*f.events = append(*f.events, "mint")
+	}
 	if f.err != nil {
 		return "", f.err
 	}
@@ -58,6 +65,22 @@ func (f *fakeStaff) ResolveStaff(_ context.Context, platformUserID, orgID string
 	return f.auth, f.ok, f.err
 }
 
+// fakeAudit records every row it is asked to write, and can be told to
+// fail and to share an event log.
+type fakeAudit struct {
+	rows   []audit.SensitiveAccess
+	err    error
+	events *[]string
+}
+
+func (f *fakeAudit) Record(_ context.Context, a audit.SensitiveAccess) error {
+	f.rows = append(f.rows, a)
+	if f.events != nil {
+		*f.events = append(*f.events, "audit")
+	}
+	return f.err
+}
+
 // salesAuthority is the live answer the demo world's database gives for
 // the sales account: inside_sales, front line, branch scope.
 func salesAuthority() identity.StaffAuthority {
@@ -68,18 +91,20 @@ func salesAuthority() identity.StaffAuthority {
 }
 
 // newTestMint builds the module over fakes, with the sales authority as
-// the staff answer and the demo org resolving.
-func newTestMint(t *testing.T, minter *fakeMinter, staff *fakeStaff) (*Mint, *fakeOrgs) {
+// the staff answer, the demo org resolving, and a recording audit
+// recorder.
+func newTestMint(t *testing.T, minter *fakeMinter, staff *fakeStaff) (*Mint, *fakeOrgs, *fakeAudit) {
 	t.Helper()
 	if staff == nil {
 		staff = &fakeStaff{auth: salesAuthority(), ok: true}
 	}
 	orgs := &fakeOrgs{id: "org-demo-1", ok: true}
-	m, err := NewMint(MintDeps{Minter: minter, Orgs: orgs, Staff: staff})
+	auditFake := &fakeAudit{}
+	m, err := NewMint(MintDeps{Minter: minter, Orgs: orgs, Staff: staff, Audit: auditFake})
 	if err != nil {
 		t.Fatalf("NewMint: %v", err)
 	}
-	return m, orgs
+	return m, orgs, auditFake
 }
 
 // postSession drives the session route the way the entry page calls it.
@@ -95,7 +120,7 @@ func postSession(t *testing.T, m *Mint, body string) *httptest.ResponseRecorder 
 // the contract's three fields per row and nothing else: no account name
 // and no address on a pre-auth listing.
 func TestFlowsAnswersTheClosedTable(t *testing.T) {
-	m, _ := newTestMint(t, &fakeMinter{token: "t"}, nil)
+	m, _, _ := newTestMint(t, &fakeMinter{token: "t"}, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/demo/flows", nil)
 	rsp := httptest.NewRecorder()
 	m.Flows(rsp, req)
@@ -131,7 +156,7 @@ func TestFlowsAnswersTheClosedTable(t *testing.T) {
 func TestSessionAnswersTheContractShape(t *testing.T) {
 	minter := &fakeMinter{token: "demo-token-1"}
 	staff := &fakeStaff{auth: salesAuthority(), ok: true}
-	m, orgs := newTestMint(t, minter, staff)
+	m, orgs, _ := newTestMint(t, minter, staff)
 	rsp := postSession(t, m, `{"flow":"sales"}`)
 
 	if rsp.Code != http.StatusOK {
@@ -190,7 +215,7 @@ func TestSessionAnswersTheContractShape(t *testing.T) {
 // approval dialog sends on the one call that needs it.
 func TestSessionMintsTheManagerFlow(t *testing.T) {
 	minter := &fakeMinter{token: "demo-token-2"}
-	m, _ := newTestMint(t, minter, &fakeStaff{
+	m, _, _ := newTestMint(t, minter, &fakeStaff{
 		auth: identity.StaffAuthority{
 			RoleID: "sales_manager", Tier: identity.TierManager, Scope: identity.ScopeBranch,
 		},
@@ -220,7 +245,7 @@ func TestSessionMintsTheManagerFlow(t *testing.T) {
 // of them reaches the issuer.
 func TestSessionRefusesBadRequests(t *testing.T) {
 	minter := &fakeMinter{token: "t"}
-	m, _ := newTestMint(t, minter, nil)
+	m, _, _ := newTestMint(t, minter, nil)
 	cases := []struct {
 		name string
 		body string
@@ -282,7 +307,7 @@ func TestSessionRefusesWhenTheRoleDoesNotAnswer(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			minter := &fakeMinter{token: "t"}
-			m, _ := newTestMint(t, minter, c.staff)
+			m, _, _ := newTestMint(t, minter, c.staff)
 			rsp := postSession(t, m, `{"flow":"sales"}`)
 			if rsp.Code != http.StatusForbidden {
 				t.Fatalf("status %d, want 403 (body: %s)", rsp.Code, rsp.Body.String())
@@ -332,7 +357,7 @@ func TestSessionAnswersOperationalFailureAs500(t *testing.T) {
 			if c.staff == nil {
 				c.staff = &fakeStaff{auth: salesAuthority(), ok: true}
 			}
-			m, err := NewMint(MintDeps{Minter: minter, Orgs: c.orgs, Staff: c.staff})
+			m, err := NewMint(MintDeps{Minter: minter, Orgs: c.orgs, Staff: c.staff, Audit: &fakeAudit{}})
 			if err != nil {
 				t.Fatalf("NewMint: %v", err)
 			}
@@ -355,9 +380,10 @@ func TestNewMintRequiresItsCollaborators(t *testing.T) {
 		name string
 		deps MintDeps
 	}{
-		{"no issuer", MintDeps{Orgs: &fakeOrgs{ok: true}, Staff: &fakeStaff{ok: true}}},
-		{"no org resolver", MintDeps{Minter: &fakeMinter{}, Staff: &fakeStaff{ok: true}}},
-		{"no staff resolver", MintDeps{Minter: &fakeMinter{}, Orgs: &fakeOrgs{ok: true}}},
+		{"no issuer", MintDeps{Orgs: &fakeOrgs{ok: true}, Staff: &fakeStaff{ok: true}, Audit: &fakeAudit{}}},
+		{"no org resolver", MintDeps{Minter: &fakeMinter{}, Staff: &fakeStaff{ok: true}, Audit: &fakeAudit{}}},
+		{"no staff resolver", MintDeps{Minter: &fakeMinter{}, Orgs: &fakeOrgs{ok: true}, Audit: &fakeAudit{}}},
+		{"no audit recorder", MintDeps{Minter: &fakeMinter{}, Orgs: &fakeOrgs{ok: true}, Staff: &fakeStaff{ok: true}}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -365,5 +391,98 @@ func TestNewMintRequiresItsCollaborators(t *testing.T) {
 				t.Fatal("NewMint accepted an unwired collaborator")
 			}
 		})
+	}
+}
+
+// The order the plan states: the audit row is written before the token.
+// Both collaborators share one event log, and the log must read audit
+// then mint; the row itself names the action, the route's entity type and
+// the account the session is minted for.
+func TestSessionWritesTheAuditRowBeforeTheToken(t *testing.T) {
+	events := []string{}
+	minter := &fakeMinter{token: "t", events: &events}
+	auditFake := &fakeAudit{events: &events}
+	m, err := NewMint(MintDeps{
+		Minter: minter,
+		Orgs:   &fakeOrgs{id: "org-demo-1", ok: true},
+		Staff:  &fakeStaff{auth: salesAuthority(), ok: true},
+		Audit:  auditFake,
+	})
+	if err != nil {
+		t.Fatalf("NewMint: %v", err)
+	}
+
+	rsp := postSession(t, m, `{"flow":"sales"}`)
+	if rsp.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200 (body: %s)", rsp.Code, rsp.Body.String())
+	}
+	if len(events) != 2 || events[0] != "audit" || events[1] != "mint" {
+		t.Fatalf("the event log reads %v, want audit then mint", events)
+	}
+	if len(auditFake.rows) != 1 {
+		t.Fatalf("%d audit rows written, want one per mint", len(auditFake.rows))
+	}
+	row := auditFake.rows[0]
+	if row.Action != "DEMO_SESSION_MINTED" || row.EntityType != "demo.session" ||
+		row.EntityID != "de110000-0000-4000-9000-000000000001" ||
+		row.ActorID != "de110000-0000-4000-9000-000000000001" || row.Purpose != "DEMO_SIGN_IN" {
+		t.Errorf("the mint's trail row is %+v, want the demo session mint row naming the sales account", row)
+	}
+}
+
+// A failure to trail is a failure to mint: the audit row is written
+// before the token, so when the write fails there is no token, and the
+// issuer is never reached.
+func TestSessionRefusesWhenTheAuditRowFails(t *testing.T) {
+	minter := &fakeMinter{token: "t"}
+	m, _, _ := newTestMint(t, minter, nil)
+	m.audit = &fakeAudit{err: errors.New("audit write refused")}
+
+	rsp := postSession(t, m, `{"flow":"sales"}`)
+	if rsp.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500 (body: %s)", rsp.Code, rsp.Body.String())
+	}
+	if len(minter.subjects) != 0 {
+		t.Errorf("the minter was called for %v, an untrailed mint must not sign", minter.subjects)
+	}
+}
+
+// A burst from one address is refused: the module's own limit, at the
+// default allowance, answers the first admissions and refuses the rest,
+// and a refused mint signs nothing and trails nothing. A request the
+// closed table refuses never counts against the allowance.
+func TestSessionRefusesABurst(t *testing.T) {
+	minter := &fakeMinter{token: "t"}
+	m, _, auditFake := newTestMint(t, minter, nil)
+	m.limit = NewAddressLimit(2, time.Second, nil)
+
+	for i := 0; i < 2; i++ {
+		rsp := postSession(t, m, `{"flow":"sales"}`)
+		if rsp.Code != http.StatusOK {
+			t.Fatalf("admission %d: status %d, want 200", i+1, rsp.Code)
+		}
+	}
+	refused := postSession(t, m, `{"flow":"sales"}`)
+	if refused.Code != http.StatusTooManyRequests {
+		t.Fatalf("the burst answer is %d, want 429 (body: %s)", refused.Code, refused.Body.String())
+	}
+	var got map[string]string
+	if err := json.Unmarshal(refused.Body.Bytes(), &got); err != nil {
+		t.Fatalf("the refusal is not the error envelope: %v", err)
+	}
+	if !strings.Contains(got["error"], "too many sign-in attempts") {
+		t.Errorf("the refusal does not name the limit: %q", got["error"])
+	}
+	if len(minter.subjects) != 2 || len(auditFake.rows) != 2 {
+		t.Errorf("%d mints and %d trail rows, want the allowance's two and no more: a refused burst signs nothing and trails nothing",
+			len(minter.subjects), len(auditFake.rows))
+	}
+	// An unknown flow is refused by the table before the limit is asked,
+	// so a burst of garbage cannot spend the allowance.
+	if rsp := postSession(t, m, `{"flow":"nope"}`); rsp.Code != http.StatusBadRequest {
+		t.Errorf("an unknown flow answered %d, want the table's 400", rsp.Code)
+	}
+	if len(minter.subjects) != 2 {
+		t.Errorf("the minter saw %d subjects after an unknown flow, want no change", len(minter.subjects))
 	}
 }

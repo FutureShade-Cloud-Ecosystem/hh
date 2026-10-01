@@ -17,6 +17,11 @@
 // the demo org or the mint refuses: the table's word about an account is
 // never enough on its own, the database's live grant decides.
 //
+// The order inside a mint is the plan's own: the per-address limit
+// refuses the burst first, then the audit row is written, and only then
+// is the token minted, so the bypass's trail always exists by the time
+// its credential does, and a burst leaves neither.
+//
 // Everything after the token is the real path: the token is an ordinary
 // staff bearer the unchanged verifier classifies, and the org, the role
 // grants and the dealer's role configuration hold it per request exactly
@@ -31,9 +36,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/flows"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
@@ -56,6 +64,24 @@ type StaffResolver interface {
 	ResolveStaff(ctx context.Context, platformUserID, orgID string) (identity.StaffAuthority, bool, error)
 }
 
+// AuditRecorder is the narrow seam the module needs of the audit module
+// (audit.Service satisfies it): the one way a sibling writes to
+// audit_log, where the ledger already writes. The mint's row is the
+// bypass's trail, and it is written before the token exists.
+type AuditRecorder interface {
+	Record(ctx context.Context, a audit.SensitiveAccess) error
+}
+
+// The mint's audit row vocabulary. audit_log's action is free text; the
+// entity type follows the middleware's derived spelling of the route
+// (demo.session), and the entity and actor are the account the session
+// is minted for.
+const (
+	auditAction     = "DEMO_SESSION_MINTED"
+	auditEntityType = "demo.session"
+	auditPurpose    = "DEMO_SIGN_IN"
+)
+
 // MintDeps is the module's constructor input: every collaborator arrives
 // here, none is reached around the constructor.
 type MintDeps struct {
@@ -66,6 +92,14 @@ type MintDeps struct {
 	Orgs authz.OrgResolver
 	// Staff resolves the flow account's live authority; required.
 	Staff StaffResolver
+	// Audit writes the mint's trail row; required.
+	Audit AuditRecorder
+	// Limit refuses a burst from one address; a nil limit selects the
+	// default allowance and window.
+	Limit *AddressLimit
+	// Now pins the clock for the limit when a test drives one; nil means
+	// the wall clock.
+	Now func() time.Time
 }
 
 // Mint is the demo module: the two routes the entry page calls.
@@ -73,6 +107,8 @@ type Mint struct {
 	minter Minter
 	orgs   authz.OrgResolver
 	staff  StaffResolver
+	audit  AuditRecorder
+	limit  *AddressLimit
 }
 
 // NewMint validates the collaborators and returns the module.
@@ -86,7 +122,14 @@ func NewMint(d MintDeps) (*Mint, error) {
 	if d.Staff == nil {
 		return nil, errors.New("demo: the mint requires a staff authority resolver")
 	}
-	return &Mint{minter: d.Minter, orgs: d.Orgs, staff: d.Staff}, nil
+	if d.Audit == nil {
+		return nil, errors.New("demo: the mint requires an audit recorder")
+	}
+	limit := d.Limit
+	if limit == nil {
+		limit = NewAddressLimit(0, 0, d.Now)
+	}
+	return &Mint{minter: d.Minter, orgs: d.Orgs, staff: d.Staff, audit: d.Audit, limit: limit}, nil
 }
 
 // flowRow is one DemoFlow of the contract: the flow name, the staff role
@@ -151,10 +194,11 @@ type sessionResponse struct {
 const maxSessionBodyBytes = 4096
 
 // Session answers POST /api/v1/demo/session: mint one session for the
-// account one named flow stands for. The mint refuses unless the staff
-// resolver answers the flow's role for the account in the demo org: a
-// flow whose account reaches nothing, or reaches the wrong role, mints
-// nothing.
+// account one named flow stands for. The mint refuses a burst from one
+// address, refuses unless the staff resolver answers the flow's role for
+// the account in the demo org, and writes the audit row before the token:
+// a flow whose account reaches nothing, or reaches the wrong role, mints
+// nothing and trails nothing.
 func (m *Mint) Session(w http.ResponseWriter, r *http.Request) {
 	var in sessionRequest
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSessionBodyBytes))
@@ -169,6 +213,11 @@ func (m *Mint) Session(w http.ResponseWriter, r *http.Request) {
 	account, ok := flows.Get(in.Flow)
 	if !ok {
 		httpx.Error(w, http.StatusBadRequest, "demo: unknown flow: the entry page offers only the flows GET /api/v1/demo/flows lists")
+		return
+	}
+
+	if !m.limit.Allow(clientAddress(r)) {
+		httpx.Error(w, http.StatusTooManyRequests, "demo: too many sign-in attempts from this address, let the window pass and tap the card again")
 		return
 	}
 
@@ -203,6 +252,20 @@ func (m *Mint) Session(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The audit row first: the bypass's trail exists by the time its
+	// credential does, and a failure to trail is a failure to mint.
+	err = m.audit.Record(r.Context(), audit.SensitiveAccess{
+		Action:     auditAction,
+		EntityType: auditEntityType,
+		EntityID:   account.PlatformUserID,
+		ActorID:    account.PlatformUserID,
+		Purpose:    auditPurpose,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "demo: the session's audit row could not be written, no session is minted")
+		return
+	}
+
 	token, err := m.minter.Mint(account.PlatformUserID)
 	if err != nil {
 		httpx.Error(w, http.StatusInternalServerError, "demo: the session could not be minted")
@@ -221,4 +284,16 @@ func (m *Mint) Session(w http.ResponseWriter, r *http.Request) {
 		},
 		Flow: account.Flow,
 	})
+}
+
+// clientAddress is the host the connection arrived from, the limit's one
+// key. The port is dropped; an address the net package cannot split is
+// taken as it stands rather than discarded, so a proxy shape the split
+// does not expect still counts against something.
+func clientAddress(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }

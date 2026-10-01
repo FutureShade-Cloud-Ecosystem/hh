@@ -300,10 +300,11 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	// The demo module's mint routes (W2): the tap-a-role sign-in, the
 	// parity ledger's demo pair, pre-auth by design and registered on the
 	// public leg the tenant config uses. The module builds on this file's
-	// issuer, the org resolver and the staff resolver above and the closed
-	// flow table; the audit recorder and the per-address limit arrive by
-	// constructor beside them.
-	mint, err := demo.NewMint(demo.MintDeps{Minter: iss, Orgs: orgs, Staff: staff})
+	// issuer, the org resolver and the staff resolver above, the audit
+	// recorder the money spine already writes its trail with, and the
+	// closed flow table; the per-address limit arrives by constructor too
+	// and the wiring names none, so the default allowance stands.
+	mint, err := demo.NewMint(demo.MintDeps{Minter: iss, Orgs: orgs, Staff: staff, Audit: money.auditSvc})
 	if err != nil {
 		pool.Close()
 		return nil, err
