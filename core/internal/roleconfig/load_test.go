@@ -1,6 +1,7 @@
 package roleconfig
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -66,6 +67,18 @@ func contains(s, sub string) bool {
 	return false
 }
 
+// mutatedDefault replaces the first n occurrences of old with new in the
+// embedded seed's raw bytes, for the parse probes: the loader must see the
+// bytes a file would carry, not a struct a test built.
+func mutatedDefault(t *testing.T, old, new string, n int) []byte {
+	t.Helper()
+	data := DefaultData()
+	if !bytes.Contains(data, []byte(old)) {
+		t.Fatalf("the seed does not hold %q", old)
+	}
+	return bytes.Replace(data, []byte(old), []byte(new), n)
+}
+
 func TestRefuseUnknownRoleInCell(t *testing.T) {
 	doc := docFromDefault(t)
 	doc.Cells[0].Role = "sales_rep"
@@ -90,17 +103,24 @@ func TestRefuseUnknownLevel(t *testing.T) {
 	refused(t, doc, `unknown level "owner"`)
 }
 
-// The walls (D49, X4, X7): HR holds no money power, so every approver list
-// of money refuses HR, the refund approvers and each exception kind alike.
-func TestRefuseHROnApproverLists(t *testing.T) {
-	doc := docFromDefault(t)
-	doc.Settings[SettingRefundApprovers] = json.RawMessage(`["sales_manager", "hr"]`)
-	refused(t, doc, SettingRefundApprovers+" names hr")
+// The walls' one check, walked over every approver list of money, the four
+// exception kinds, the refund approvers, and the floor clearers (the
+// lead's ruling: passing a below floor quote price without leadership is
+// the floor exception's approval by another door): HR holds no money
+// power (X4, D49), so HR names none of them.
+func TestRefuseHROnEveryMoneyApproverList(t *testing.T) {
 	for _, kind := range ExceptionKinds() {
-		mutated := docFromDefault(t)
-		mutated.Lists.ExceptionApprovers[kind] = []string{"financial_controller", RoleHR}
-		refused(t, mutated, "exception_approvers."+string(kind)+" names hr")
+		doc := docFromDefault(t)
+		doc.Lists.ExceptionApprovers[kind] = []string{"financial_controller", RoleHR}
+		refused(t, doc, "exception_approvers."+string(kind)+" names hr")
 	}
+	doc := docFromDefault(t)
+	doc.Settings[SettingRefundApprovers] = json.RawMessage(`["hr"]`)
+	refused(t, doc, SettingRefundApprovers+" names hr")
+
+	doc = docFromDefault(t)
+	doc.Lists.FloorClearersOwnBranch = []string{"sales_manager", RoleHR}
+	refused(t, doc, "floor_clearers_own_branch names hr")
 }
 
 func TestRefuseMissingCell(t *testing.T) {
@@ -137,22 +157,62 @@ func TestRefuseMistypedSetting(t *testing.T) {
 	refused(t, doc, "is not true or false")
 }
 
+// A JSON null loads as the zero value with no error from the decoder, so
+// it is refused by name: a null setting is no setting (the package's rule:
+// a setting can never silently fall back to a zero value).
+func TestRefuseNullSettings(t *testing.T) {
+	for _, name := range []string{SettingCreditAtTill, SettingManagerOwnBranchFloorClearing, SettingGeneralManagerSelling} {
+		doc := docFromDefault(t)
+		doc.Settings[name] = json.RawMessage(`null`)
+		refused(t, doc, name+" is not true or false")
+	}
+	doc := docFromDefault(t)
+	doc.Settings[SettingRefundAmountWithoutApproval] = json.RawMessage(`null`)
+	refused(t, doc, SettingRefundAmountWithoutApproval+" is not an integer count of cents")
+}
+
 func TestRefuseNegativeRefundAmount(t *testing.T) {
 	doc := docFromDefault(t)
 	doc.Settings[SettingRefundAmountWithoutApproval] = json.RawMessage(`-1`)
 	refused(t, doc, "is negative")
 }
 
-func TestRefuseEmptyRoleList(t *testing.T) {
+// Only the approver lists must name at least one role; an informational
+// list the dealer empties is the dealer's choice, and the folded
+// predicates answer false.
+func TestEmptyInformationalListsLoad(t *testing.T) {
 	doc := docFromDefault(t)
-	doc.Settings[SettingPricingEditors] = json.RawMessage(`[]`)
-	refused(t, doc, SettingPricingEditors+" names no role")
+	for _, name := range []string{SettingCostVisibility, SettingPricingEditors, SettingShortageResolvers, SettingDispatchPolicySetters} {
+		doc.Settings[name] = json.RawMessage(`[]`)
+	}
+	doc.Lists.DeliveryDateCommitters = nil
+	cfg, err := loadDoc(t, doc)
+	if err != nil {
+		t.Fatalf("the loader refused emptied informational lists: %v", err)
+	}
+	if ok, _ := cfg.SeesCostAndMargin("inside_sales"); ok {
+		t.Error("an emptied cost visibility list still answers true")
+	}
+	if ok, _ := cfg.CommitsDeliveryDate("yard_manager"); ok {
+		t.Error("an emptied delivery date list still commits a date")
+	}
+	if ok, _ := cfg.ClearsOwnBranchFloor("sales_manager"); !ok {
+		t.Error("an emptied delivery date list touched the floor clearers")
+	}
 }
 
-func TestRefuseEmptyRoleListInLists(t *testing.T) {
+func TestRefuseEmptyApproverLists(t *testing.T) {
 	doc := docFromDefault(t)
+	doc.Settings[SettingRefundApprovers] = json.RawMessage(`[]`)
+	refused(t, doc, SettingRefundApprovers+" names no role")
+
+	doc = docFromDefault(t)
 	doc.Lists.FloorClearersOwnBranch = nil
 	refused(t, doc, "floor_clearers_own_branch names no role")
+
+	doc = docFromDefault(t)
+	doc.Lists.ExceptionApprovers[ExceptionCreditCOD] = nil
+	refused(t, doc, "exception_approvers.credit_cod names no role")
 }
 
 func TestRefuseMissingExceptionKind(t *testing.T) {
@@ -164,7 +224,18 @@ func TestRefuseMissingExceptionKind(t *testing.T) {
 func TestRefuseUnknownExceptionKind(t *testing.T) {
 	doc := docFromDefault(t)
 	doc.Lists.ExceptionApprovers["grand_opening"] = []string{"general_manager"}
-	refused(t, doc, `unknown exception kind "grand_opening"`)
+	_, err := loadDoc(t, doc)
+	if err == nil {
+		t.Fatal("the loader accepted an unknown exception kind")
+	}
+	if !contains(err.Error(), "grand_opening") {
+		t.Errorf("the refusal does not name the kind: %v", err)
+	}
+	// Through Validate, the document path the raw key checks do not run
+	// on, the kinds' own check refuses it.
+	if _, err := Validate(&doc); err == nil {
+		t.Fatal("Validate accepted an unknown exception kind")
+	}
 }
 
 func TestRefuseUnparsableDocument(t *testing.T) {
@@ -173,6 +244,112 @@ func TestRefuseUnparsableDocument(t *testing.T) {
 	}
 	if _, err := Load([]byte(`{"extra": true}`)); err == nil {
 		t.Fatal("Load accepted a document with a field the format does not name")
+	}
+}
+
+// The parse refuses what the format does not name: bytes after the
+// document's one value, whatever they are.
+func TestRefuseTrailingData(t *testing.T) {
+	for _, probe := range []struct {
+		name string
+		tail string
+	}{
+		{"a second object", " {}"},
+		{"a bare word", " garbage"},
+		{"a bare number", " 7"},
+	} {
+		data := append(append([]byte(nil), DefaultData()...), probe.tail...)
+		if _, err := Load(data); err == nil {
+			t.Errorf("Load accepted trailing data (%s)", probe.name)
+		}
+	}
+}
+
+// The parse refuses an object naming a key twice, wherever it nests: the
+// last one silently winning is how a file says one thing and its loader
+// reads another.
+func TestRefuseDuplicateKeys(t *testing.T) {
+	data := mutatedDefault(t, `"refund_approvers":`,
+		`"refund_approvers": ["hr"], "refund_approvers":`, 1)
+	_, err := Load(data)
+	if err == nil {
+		t.Fatal("Load accepted a duplicate key inside settings")
+	}
+	if !contains(err.Error(), "refund_approvers") {
+		t.Errorf("the duplicate key refusal does not name the key: %v", err)
+	}
+
+	data = mutatedDefault(t, `"settings": {`, `"settings": {}, "settings": {`, 1)
+	_, err = Load(data)
+	if err == nil {
+		t.Fatal("Load accepted a duplicate key at the top level")
+	}
+	if !contains(err.Error(), "trailing data") && !contains(err.Error(), "twice") {
+		t.Errorf("the top-level duplicate refusal names neither a duplicate nor trailing data: %v", err)
+	}
+}
+
+// Every fixed key is its own, byte for byte: the decoder would match
+// "CELLS" to cells and a cell's "Role" to role, so the raw keys are
+// checked before anything decodes.
+func TestRefuseWrongCaseKeys(t *testing.T) {
+	data := mutatedDefault(t, `"cells":`, `"CELLS":`, 1)
+	_, err := Load(data)
+	if err == nil {
+		t.Fatal("Load accepted a top-level key in the wrong case")
+	}
+	if !contains(err.Error(), "CELLS") {
+		t.Errorf("the wrong case refusal does not name the key: %v", err)
+	}
+
+	data = mutatedDefault(t, `"role":`, `"Role":`, 1)
+	if _, err := Load(data); err == nil {
+		t.Fatal("Load accepted a cell key in the wrong case")
+	}
+
+	data = mutatedDefault(t, `"source":`, `"Source":`, 1)
+	if _, err := Load(data); err == nil {
+		t.Fatal("Load accepted a source key in the wrong case")
+	}
+}
+
+// Validate refuses a nil document instead of panicking: a refusal, not a
+// crash.
+func TestValidateRefusesNilDocument(t *testing.T) {
+	cfg, err := Validate(nil)
+	if err == nil || cfg != nil {
+		t.Fatal("Validate accepted a nil document")
+	}
+	var verr *ValidationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("the nil refusal is a %T, wanted a *ValidationError: %v", err, err)
+	}
+}
+
+// The lead's rulings, each a load check with a way back (the way back is
+// deleting the check): the clerk never approves its own refund class, HR
+// edits no price, and HR holds no level on the money surface above none.
+func TestRefuseLeadRuledWalls(t *testing.T) {
+	doc := docFromDefault(t)
+	doc.Settings[SettingRefundApprovers] = json.RawMessage(`["inside_sales", "branch_manager"]`)
+	refused(t, doc, "the clerk never approves its own refund class")
+
+	doc = docFromDefault(t)
+	doc.Settings[SettingPricingEditors] = json.RawMessage(`["hr"]`)
+	refused(t, doc, "price setting is money power")
+
+	doc = docFromDefault(t)
+	for i := range doc.Cells {
+		if doc.Cells[i].Role == RoleHR && doc.Cells[i].Surface == SurfaceMoneyDesk {
+			doc.Cells[i].Level = LevelRead
+		}
+	}
+	refused(t, doc, "HR holds no money power, no money settings")
+
+	// The decided default sits on the safe side of all three: HR at none
+	// on the money surface loads, as the record seeds it.
+	if _, err := Default(); err != nil {
+		t.Fatalf("the decided default does not load: %v", err)
 	}
 }
 
