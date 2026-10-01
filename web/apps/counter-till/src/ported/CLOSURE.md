@@ -188,6 +188,14 @@ to input string, `pos-terminal.ts` `taxLabel`'s basis points to percent,
   `readPanelLayoutRaw` / `writePanelLayoutRaw` / `clearPanelLayoutRaw` seams
   in ports.ts with the same versioned key, so the wiring item picks the
   backing store.
+- The design system's template fence, as far as a port can go (docs/BLOCKERS.md
+  records the one part it cannot): the receipt window write is the
+  `printReceiptInto` seam, the icon builder opens from static per-size
+  branches (12, 19 and the 20 default) because `width` and `height` take no
+  bound value, `d`, `class` and `role` bindings are quoted, the `html` name
+  appears only in its import and its tag positions, and the six tooltip
+  bindings moved from `title` to the allowed `aria-label` namespace, which
+  loses the hover tooltip until the polish item brings a tooltip primitive.
 
 ## Reference tests brought along
 

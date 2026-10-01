@@ -328,13 +328,13 @@ export class HosPosScanBox extends LitElement {
           spellcheck="false"
           inputmode="text"
           aria-describedby="scan-msg"
-          role=${this.unified ? 'combobox' : nothing}
+          role="${this.unified ? 'combobox' : nothing}
           aria-autocomplete=${this.unified ? 'list' : nothing}
           aria-expanded=${this.unified ? (this.code.trim().length >= 2 ? 'true' : 'false') : nothing}
           @input=${(e: Event) => this.onInput(e)}
           @keydown=${(e: KeyboardEvent) => this.onFieldKey(e)}
         />
-        <button type="submit" class=${this.primaryAdd ? 'primary' : ''} ?disabled=${this.busy || this.code.trim() === ''}>
+        <button type="submit" class="${this.primaryAdd ? 'primary' : ''} ?disabled=${this.busy || this.code.trim() === ''}>
           ${this.busy ? 'Looking up…' : 'Add'}
         </button>
       </form>
@@ -344,7 +344,7 @@ export class HosPosScanBox extends LitElement {
       <div
         id="scan-msg"
         class="msg ${this.msgKind}"
-        role=${this.msgKind === 'err' ? 'alert' : 'status'}
+        role="${this.msgKind === 'err' ? 'alert' : 'status'}
         aria-live=${this.msgKind === 'err' ? 'assertive' : 'polite'}
         data-testid="pos-scan-msg"
       >

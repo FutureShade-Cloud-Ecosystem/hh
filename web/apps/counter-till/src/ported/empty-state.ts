@@ -172,7 +172,7 @@ export const emptyStateStyles = [
 export function emptyState(title: string, body: string, hint?: string, tight = false): TemplateResult {
   if (tight) {
     return html`
-      <div class="hos-blank" title=${body}>
+      <div class="hos-blank" aria-label=${body}>
         <h4>${title}</h4>
       </div>
     `;

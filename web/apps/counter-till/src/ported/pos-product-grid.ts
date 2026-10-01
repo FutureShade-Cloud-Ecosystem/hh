@@ -884,7 +884,7 @@ export class HosPosProductGrid extends LitElement {
           class="card hit"
           role="button"
           tabindex="0"
-          title=${tip}
+          aria-label=${tip}
           data-sku=${h.sku}
           @click=${() => this.addHit(h)}
           @keydown=${(e: KeyboardEvent) => {
@@ -935,7 +935,7 @@ export class HosPosProductGrid extends LitElement {
           class="rowitem hit"
           role="button"
           tabindex="0"
-          title=${tip}
+          aria-label=${tip}
           data-sku=${h.sku}
           @click=${() => this.addHit(h)}
           @keydown=${(e: KeyboardEvent) => {
@@ -1036,7 +1036,7 @@ export class HosPosProductGrid extends LitElement {
           class="rowitem"
           role="button"
           tabindex="0"
-          title=${tip}
+          aria-label=${tip}
           @click=${() => this.add(p)}
           @keydown=${(e: KeyboardEvent) => {
             if (e.key === 'Enter' || e.key === ' ') {
@@ -1076,7 +1076,7 @@ export class HosPosProductGrid extends LitElement {
             class="card"
             role="button"
             tabindex="0"
-            title=${tip}
+            aria-label=${tip}
             @click=${() => this.add(p)}
             @keydown=${(e: KeyboardEvent) => {
               if (e.key === 'Enter' || e.key === ' ') {

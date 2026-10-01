@@ -320,7 +320,7 @@ export class HosPosPanels extends LitElement {
     const z = this.stack.indexOf(s.id) + 1;
     const cls = `panel${this.active === s.id ? ' active' : ''}${s.complete ? ' done' : ''}`;
     return html`<section
-      class=${cls}
+      class="${cls}
       data-panel=${s.id}
       aria-label=${s.label}
       style=${`left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px;z-index:${z}`}

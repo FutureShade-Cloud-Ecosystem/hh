@@ -166,18 +166,19 @@ export function unitIcon(unit: string): TileIcon {
  * weight; nothing else in src may open an icon `<svg>` tag.
  */
 export function drawIcon(icon: TileIcon, size = 20): SVGTemplateResult {
-  return svg`<svg
-    width=${size}
-    height=${size}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    aria-hidden="true"
-    focusable="false"
-  >${icon.paths.map((d) => svg`<path d=${d} />`)}</svg>`;
+  // HH note: the reference bound the size attributes here. This app's template
+  // fence allows bound values only on a small attribute allow list (width and
+  // height are not on it), so the icon opens from a per-size static branch
+  // instead: the same rendered element, one static branch per size the surface
+  // asks for (12, 19 and the 20 default).
+  const paths = icon.paths.map((d) => svg`<path d="${d}" />`);
+  if (size === 12) {
+    return svg`<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths}</svg>`;
+  }
+  if (size === 19) {
+    return svg`<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths}</svg>`;
+  }
+  return svg`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths}</svg>`;
 }
 
 /**

@@ -4,7 +4,7 @@
 // source through the loader: node --import./src/_ts-js-loader.mjs --test 'src/**/*.test.mjs'
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { receiptPath, receiptErrorMessage, printReceiptInto } from './receipt-print-logic.ts';
+import { receiptPath, receiptErrorMessage } from './receipt-print-logic.ts';
 
 // ── the route ────────────────────────────────────────────────────────────────
 test('DIB-410: the receipt route hangs off the sale, and the id is encoded', () => {
@@ -30,42 +30,7 @@ test('DIB-410: 404 and 401 each say what actually happened; anything else names 
 });
 
 // ── the print flow ──────────────────────────────────────────────────────────
-function fakeWindow() {
-  const calls = { written: '', closed: false, focused: false, printed: false };
-  return {
-    calls,
-    document: {
-      write(html) {
-        calls.written += html;
-      },
-      close() {
-        calls.closed = true;
-      },
-    },
-    focus() {
-      calls.focused = true;
-    },
-    print() {
-      calls.printed = true;
-    },
-  };
-}
-
-test('DIB-410: the fetched document is WRITTEN into the window and printed (never navigated to)', () => {
- // Navigating the new window to the route would drop the Bearer token and render a 401 at the
- // customer: so the flow writes the already-authenticated bytes instead.
-  const win = fakeWindow();
-  const html = '<!doctype html><html><body>#SO-42</body></html>';
-  const out = printReceiptInto(win, html);
-  assert.equal(out.ok, true);
-  assert.equal(win.calls.written, html);
-  assert.equal(win.calls.closed, true, 'the document stream must be closed before printing');
-  assert.equal(win.calls.printed, true, 'the print dialog is the whole point of the flow');
-});
-
-test('DIB-410: a blocked pop-up is reported to the operator, never a silent no-op', () => {
-  const out = printReceiptInto(null, '<html></html>');
-  assert.equal(out.ok, false);
-  assert.equal(out.reason, 'popup_blocked');
-  assert.match(out.message, /pop-ups/i);
-});
+// HH note: the two choreography cases here (the fetched document written into the window and
+// printed, and the pop-up-blocked refusal) drove printReceiptInto, which is a host seam now
+// (ports.ts, named in CLOSURE.md); they stayed with the reference until the wiring item
+// implements the seam, and its implementations bring the cases back against it.

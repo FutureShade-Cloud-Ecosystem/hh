@@ -377,3 +377,29 @@ export function writePanelLayoutRaw(key: string, value: string): void {
 export function clearPanelLayoutRaw(key: string): void {
   return unwired('clearPanelLayoutRaw');
 }
+
+// ---------------------------------------------------------------------------
+// Printing
+// ---------------------------------------------------------------------------
+//
+// The reference printed a receipt by writing the server-rendered document into
+// a fresh blank window with the browser's document writer, then calling
+// print. This app's fence on raw markup paths reserves that write for the
+// host, and each shell (a browser tab, a Tauri window) prints through its own
+// chrome, so the choreography is the host's.
+
+/** The receipt window the flow opens: injectable, so the reference kept it testable. */
+export type { ReceiptWindow } from './receipt-print-logic.js';
+
+/**
+ * Write a rendered receipt into a freshly opened window and print it. A
+ * blocked pop-up is a real and common counter failure (browsers block
+ * window.open outside a user gesture); it must surface as the operator
+ * message the reference worded, never a silent no-op.
+ */
+export function printReceiptInto(
+  win: import('./receipt-print-logic.js').ReceiptWindow | null,
+  receiptHtml: string,
+): import('./receipt-print-logic.js').PrintOutcome {
+  return unwired('printReceiptInto');
+}

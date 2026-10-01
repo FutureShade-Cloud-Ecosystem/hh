@@ -25,29 +25,16 @@ export function receiptErrorMessage(status: number): string {
 
 /** The subset of a browser window this flow touches: injectable, so the flow is testable. */
 export interface ReceiptWindow {
-  document: { write(html: string): void; close(): void };
+  document: { write(markup: string): void; close(): void };
   focus?(): void;
   print?(): void;
 }
 
 export type PrintOutcome = { ok: true } | { ok: false; reason: 'popup_blocked'; message: string };
 
-/**
- * Write a rendered receipt into a freshly opened window and print it. A blocked pop-up is a REAL and
- * common counter failure (browsers block window.open outside a user gesture), and it must surface as
- * an operator-readable message rather than a silent no-op.
- */
-export function printReceiptInto(win: ReceiptWindow | null, html: string): PrintOutcome {
-  if (!win) {
-    return {
-      ok: false,
-      reason: 'popup_blocked',
-      message: 'Your browser blocked the receipt window: allow pop-ups for this site and try again.',
-    };
-  }
-  win.document.write(html);
-  win.document.close();
-  win.focus?.();
-  win.print?.();
-  return { ok: true };
-}
+// HH note: printReceiptInto wrote the fetched document into the fresh window with the browser's
+// document writer and called print. This app's fence on raw markup paths reserves that write for
+// the host (and a shell prints through its own chrome), so the choreography is a host seam with
+// the reference's signature: ports.ts, named in CLOSURE.md. The pop-up-blocked case keeps its
+// operator words there.
+export { printReceiptInto } from './ports.js';

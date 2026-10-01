@@ -876,7 +876,7 @@ export class HosPosCounterSettings extends LitElement {
           <span
             class="cap ${owned ? 'host' : ''} ${chord ? '' : 'none'}"
             data-testid=${`cs-cap-${action}`}
-            title=${owned ? 'The browser also uses this key. Any extra modifier gives it back.' : ''}
+            aria-label=${owned ? 'The browser also uses this key. Any extra modifier gives it back.' : ''}
             >${chord ? keycap(chord) : ':'}</span
           >
           <span>

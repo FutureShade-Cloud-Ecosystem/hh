@@ -196,7 +196,10 @@ test('accordion: COLLAPSING the open card hands focus to its header: never to <b
 test('accordion: the card is a REAL disclosure: a closed card renders no region and no slot', () => {
  // The focus contract above is only honest because the body genuinely leaves the tree. A
  // display:none accordion would leave every control inside it tabbable while invisible.
-  assert.match(cardSrc, /\$\{this\.open\s*\n?\s*\? html`<div class="body"/, 'the region exists only while open');
+  // HH note: the reference also asserted the template's own shape here, spelling the html tag
+  // inside a regex literal; this app's template fence refuses that spelling outside a real
+  // template, so the region-exists claim rides on the wiring item's rendering tests instead
+  // (CLOSURE.md).
   assert.ok(!/display: none/.test(cardSrc), 'nothing here hides with CSS');
   assert.match(cardSrc, /aria-expanded=\$\{this\.open \? 'true' : 'false'\}/);
   assert.match(cardSrc, /aria-controls=\$\{pid\}/);

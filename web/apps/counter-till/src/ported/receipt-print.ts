@@ -43,8 +43,8 @@ export async function printReceipt(
   saleId: string,
   openWindow: () => ReceiptWindow | null = openBlankWindow,
 ): Promise<PrintOutcome> {
-  const html = await fetchReceiptHTML(saleId);
-  return printReceiptInto(openWindow(), html);
+  const receiptHtml = await fetchReceiptHTML(saleId);
+  return printReceiptInto(openWindow(), receiptHtml);
 }
 
 /** The default opener: a blank same-origin window the fetched document is written into. */

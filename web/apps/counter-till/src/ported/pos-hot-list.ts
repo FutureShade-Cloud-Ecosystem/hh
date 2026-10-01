@@ -363,7 +363,7 @@ export class HosPosHotList extends LitElement {
       return html`<button
         class="tile"
         data-testid="hot-group"
-        title=${t.label}
+        aria-label=${t.label}
         tabindex=${this.roveIdx === i ? '0' : '-1'}
         @click=${() => this.go(drillInto(this.path, t.label))}
       >
@@ -382,7 +382,7 @@ export class HosPosHotList extends LitElement {
     return html`<button
       class="tile"
       data-testid="hot-item"
-      title=${p.sku}
+      aria-label=${p.sku}
       tabindex=${this.roveIdx === i ? '0' : '-1'}
       @click=${() => this.add(p)}
     >

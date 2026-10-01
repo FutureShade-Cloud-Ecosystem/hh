@@ -1059,3 +1059,35 @@ users rows and grants the populate plants.
   phrase gate accept that waits for W2's mint; and the app holds a till past
   the token's expiry with nothing to re-check it against until W7's first
   core call. W5, W9, W2 and W7 hold the closures, per the plan.
+
+### UI parity pass, port work item (branch till/ui-1-port): the template fence against the ported surface's idioms
+
+- **The positions gate over dependents fails on the ported tree, and no
+  in-lane fix exists that is still a port.** The design system's positions
+  gate (`web/packages/design-system/test/positions.test.mjs`, allow lists in
+  `test/_lib/positions.mjs`) scans every dependent package's sources, and the
+  Counter Till app is the dependents lock's one entry. The ported surface
+  (`web/apps/counter-till/src/ported/`) carries the reference's Lit idioms
+  whole: roughly eleven hundred template bindings in the `@event` and
+  `.property` forms (the gate's property and event allow table is deliberately
+  empty), roving `tabindex` bindings, and bound values on attributes outside
+  the gate's allow list (`title`, `value`, `style`, `id`, `placeholder`,
+  `name`, `max`, `label`, `alt`). The compliant idiom exists and the app's own
+  views use it (host delegation: listeners on the element, controls read off
+  `composedPath()`, static template branches); converting the ported surface
+  to it is a rewrite of the surface's whole template layer, which the port
+  brief forbids ("take the existing and improve: port the code, never
+  rebuild"). What the port could do without crossing that line is done and
+  committed: the raw-markup gate and the two-places rule pass (the receipt
+  window write became a host seam, the panel layout store became host seams,
+  `width`/`height` open from static per-size branches, `d`, `class` and `role`
+  bindings are quoted, the `html` name appears only in its two places), and
+  the tooltip bindings moved to the allowed `aria-label` namespace, which
+  loses the hover tooltip until the polish item gives the surface a tooltip
+  primitive. The decision this blocker asks for: whether the wiring and
+  polish items convert the ported templates to the host-delegation idiom, or
+  the design system's allow lists grow to admit the ported surface's forms
+  deliberately. Until then the design system suite's one dependents test
+  ("every html and svg template in any package that depends on this one sits
+  in an allowed position") fails, and the failure is the record, not a
+  surprise: every other suite in the loop is green on this branch.
