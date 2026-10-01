@@ -44,6 +44,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/otelhttp"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
 // demoDispatch runs a demo-only role and reports whether it answered.
@@ -263,8 +264,33 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 		return nil, err
 	}
 
+	// The role configuration and the role gate: the same steps the default
+	// build's registerRoutes makes, in the same place (this mirror's own
+	// rule: when the default wiring gains a step, this mirror gains the
+	// same step in the same place). The demo world loads the same decided
+	// default and a refusal stops the demo boot; every registration below
+	// lands through the wrapping registrar, so a demo bearer is held to
+	// the dealer's configuration exactly as a platform bearer is.
+	roleCfg, err := roleconfig.Default()
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("role configuration: %w", err)
+	}
+	roleGate, err := authz.NewRoleGate(gate, staff, roleCfg)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	wired, err := authz.NewRoleGateRegistrar(r, roleGate)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	r = wired
+
 	// The proof shims, the public tenant config and the three spines: the
-	// default build's construction, unchanged, over the demo gate.
+	// default build's construction, unchanged, over the demo gate and the
+	// role gate.
 	rec := shims.NewRecorder(1024)
 	shims.RegisterRoutes(r, g, rec)
 	r.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(tenantconfig.Default())))
@@ -305,6 +331,6 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 
 	return &appGraph{
 		cfg: cfg, log: log, pool: pool, verify: verifier, link: linkedUserID(pool), g: g,
-		money: money, ops: ops, tops: tops, smsBelt: belt,
+		money: money, ops: ops, tops: tops, smsBelt: belt, demoMint: iss.Mint,
 	}, nil
 }

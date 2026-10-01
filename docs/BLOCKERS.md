@@ -329,3 +329,25 @@ main.go.
   on and the database has to be dropped. No change to G0; the W5
   entrypoint answers it (each step idempotent, the pair run to completion
   before serve).
+
+## L1 RG (role gate), post-review fix routed from W9: the demo build's registration exception
+
+W9's acceptance run found the demo build serving its staff routes by tier
+alone: demo_on.go's demoRegisterRoutes mirrored the default build's
+registerRoutes up to the role gate, so a demo box never held a demo
+bearer to the dealer's configuration. The fix attaches the same wrapping
+registrar and the same roleconfig.Default load in demoRegisterRoutes, in
+the same place main.go's registerRoutes puts them (the mirror's own rule:
+when the default wiring gains a step, the mirror gains the same step in
+the same place). Two recorded notes. First, the Touches exception: W1's
+branch owns demo_on.go, and this lane edited it for this fix by the
+lead's granted exception, recorded here as asked. The fix requires W1's
+demo build on this branch, so the lane merged till/l3-w1 into till/l1-rg
+before the fix (the merge is the lead's own stitch shape; goal carried
+the same union at b67c4f8 and f10f672, and the only conflict was this
+file, resolved keeping both lanes' entries). Second, the test seam: the
+graph carries demoMint (nil in the default build, set only by the demo
+wiring) so the demo-tagged probe can hold a real session token; the
+probe itself (rolegate_demo_test.go) hand-plants the populate's world in
+miniature on a case database of its own, including the two flow logins'
+users rows and grants the populate plants.
