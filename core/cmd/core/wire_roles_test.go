@@ -17,25 +17,17 @@ package main
 // the audit trail holding the refusal row.
 
 import (
+	"bytes"
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
-	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
-	identityctx "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
-	pos "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 )
 
 // TestTillRules_WiringIsPinned reads the two composition sites and refuses
@@ -60,31 +52,19 @@ func containsStr(haystack, needle string) bool {
 	return strings.Contains(haystack, needle)
 }
 
-// portalStill is a PortalRoleSource the staff-only surface never consults.
-type portalStill struct{}
-
-func (portalStill) PortalRole(context.Context, string, string) (string, bool, error) {
-	return "", false, nil
-}
-
-// TestTillRules_WiredCompositionRefusesAndShows drives the REAL wiring
-// functions over the composition fixture database and asserts the built
-// service answers the rows' two questions.
+// TestTillRules_WiredCompositionRefusesAndShows drives the REAL
+// composition path (registerRoutes, the one composition point the binary
+// wires, through the same harness the parity and x-role suites use) over
+// the fixture database, and asserts the built surface answers the rows'
+// two questions: the margin glance for the clerk (X3, the configuration's
+// list decides) and the 300.00 refusal (X7, the configuration's amount,
+// the approver roles named in the contract's body), the audit trail
+// holding the refusal row.
 func TestTillRules_WiredCompositionRefusesAndShows(t *testing.T) {
-	dsn := os.Getenv(coreDBEnvVar)
-	if dsn == "" {
-		t.Skip(coreDBEnvVar + " is not set: the composition suites need the scratch database with the frozen migrations applied")
-	}
+	env := newCompEnv(t)
+	rec, graph := registeredSurface(t, env)
+	pool := graph.pool
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatalf("fixture pool: %v", err)
-	}
-	defer pool.Close()
-	db := testkit.PgxPool(pool)
-	if err := testkit.Build(ctx, db); err != nil {
-		t.Fatalf("fixture build: %v", err)
-	}
 
 	// The fixture product priced at an exact 10.00 per EA at the north
 	// branch, with a cost row so the glance has a margin to show, and one
@@ -116,112 +96,87 @@ func TestTillRules_WiredCompositionRefusesAndShows(t *testing.T) {
 		t.Fatalf("drawer: %v", err)
 	}
 
-	// The guards exactly as the serve role builds them: the kit harness for
-	// the platform doubles, the real staff authority resolver over the
-	// identity tables.
-	harness := testkit.NewHarness(t)
-	harness.Membership.SetMember(testkit.SubInsideSales, testkit.OrgNorthSlug, true)
-	harness.Resolver.Set(testkit.OrgNorthSlug, testkit.OrgNorthID)
-	authority, err := identity.NewStaffAuthorityResolver(pool)
-	if err != nil {
-		t.Fatalf("staff authority resolver: %v", err)
+	do := func(t *testing.T, method, path string, body any) (int, map[string]any) {
+		t.Helper()
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		req := httptest.NewRequest(method, path, bytes.NewReader(raw))
+		req.Header.Set("Authorization", "Bearer "+env.minter.StaffToken(t, testkit.SubInsideSales))
+		req.Header.Set("X-Org", testkit.OrgNorthSlug)
+		rsp := httptest.NewRecorder()
+		rec.inner.ServeHTTP(rsp, req)
+		var out map[string]any
+		_ = json.Unmarshal(rsp.Body.Bytes(), &out)
+		return rsp.Code, out
 	}
-	g, err := guards.NewGuards(harness.Gate, authority, portalStill{}, nil)
-	if err != nil {
-		t.Fatalf("NewGuards: %v", err)
-	}
-
-	// The REAL wiring: the load whose refusal stops the core, and the
-	// till-rules wiring the serve role calls.
-	productSvc := product.NewService(product.NewRepository(pool))
-	pricingSvc := pricing.NewService(pricing.NewRepository(pool)).
-		WithCategoryResolver(productSvc).
-		WithUOMConverter(productSvc).
-		WithMarginGate(pricing.NewIdentityMarginGate())
-	svc := wireTillRules(pos.NewService(pos.NewRepository(pool)).
-		WithLineResolver(pricingSvc).
-		WithTenderTaker(till.NewService(till.NewRepository(pool))).
-		WithCreditGate(pos.NewIdentityCreditGate()).
-		WithAudit(audit.NewService(audit.NewRepository(pool), slog.Default())),
-		loadRoleConfig(), g, linkedUserID(pool))
-
-	// The clerk, exactly as the guard adapter stamps it: the bridged
-	// caller with the linked users id.
-	clerk := identityctx.ContextWithStaff(identityctx.ContextWithStaffUserID(ctx, testkit.UserInsideSalesID), identityctx.StaffContext{
-		UserID: testkit.UserInsideSalesID, RoleCode: "INSIDE_SALES",
-		Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
-		Status: identityctx.StatusActive, Branches: map[string]bool{testkit.BranchNorthAID: true},
-	})
 
 	// X3 at the composition: the glance answers margin for the clerk,
-	// because the configuration's list names the role.
-	glance, err := svc.MarginGlance(clerk, pos.MarginGlanceInput{
-		BranchID: testkit.BranchNorthAID, CustomerType: "RETAIL",
-		Lines: []pos.LineInput{{ProductID: testkit.ProductID, QtyEntered: 10, UOMEntered: "EA"}},
+	// because the configuration's list names the role. The bytes went
+	// through the REAL registerRoutes, the wiring the serve role runs.
+	code, glance := do(t, http.MethodPost, "/api/v1/pos/margin-glance", map[string]any{
+		"branch_id": testkit.BranchNorthAID, "customer_type": "RETAIL",
+		"lines": []map[string]any{{"product_id": testkit.ProductID, "qty_entered": 10, "uom_entered": "EA"}},
 	})
-	if err != nil {
-		t.Fatalf("glance: %v", err)
+	if code != http.StatusOK {
+		t.Fatalf("the wired glance must answer the clerk, got %d: %v", code, glance)
 	}
-	if len(glance.Lines) != 1 || glance.Lines[0].MarginBps == nil {
-		t.Fatalf("the wired glance must carry margin for the configured clerk: %+v", glance)
+	lines, isSlice := glance["lines"].([]any)
+	if !isSlice || len(lines) == 0 {
+		t.Fatalf("the wired glance must carry margin for the configured clerk: %v", glance)
+	}
+	if lines[0].(map[string]any)["margin_bps"] == nil {
+		t.Fatalf("margin_bps must be present for the configured clerk: %v", lines[0])
 	}
 
 	// X7 at the composition: the 300.00 return is refused with the
-	// configured amount, no configuration-free admission.
-	sale, err := svc.Sale(clerk, pos.SaleInput{
-		IdempotencyKey: saleKey,
-		BranchID:       testkit.BranchNorthAID, TillSessionID: drawerID,
-		SaleType: pos.SaleCollectNow, Tender: pos.TenderCash,
-		Lines: []pos.LineInput{{ProductID: testkit.ProductID, QtyEntered: 30, UOMEntered: "EA"}},
+	// contract's body, no configuration-free admission.
+	code, sale := do(t, http.MethodPost, "/api/v1/pos/sales", map[string]any{
+		"idempotency_key": saleKey,
+		"branch_id":       testkit.BranchNorthAID, "till_session_id": drawerID,
+		"sale_type": "COLLECT_NOW", "tender": "CASH",
+		"lines": []map[string]any{{"product_id": testkit.ProductID, "qty_entered": 30, "uom_entered": "EA"}},
 	})
-	if err != nil {
-		t.Fatalf("sale: %v", err)
+	if code != http.StatusCreated && code != http.StatusOK {
+		t.Fatalf("ring the sale: %d %v", code, sale)
+	}
+	orderID, _ := sale["order_id"].(string)
+	if orderID == "" {
+		t.Fatalf("no order id: %v", sale)
 	}
 	var lineID string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM order_lines WHERE order_id = $1::uuid LIMIT 1`, sale.OrderID).Scan(&lineID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM order_lines WHERE order_id = $1::uuid LIMIT 1`, orderID).Scan(&lineID); err != nil {
 		t.Fatalf("line: %v", err)
 	}
-	_, err = svc.Return(clerk, pos.ReturnInput{
-		IdempotencyKey: returnKey,
-		OrderID:        sale.OrderID, RefundMethod: pos.RefundCash, TillSessionID: drawerID,
-		Lines: []pos.ReturnLineInput{{OrderLineID: lineID, QtyBase: 30}},
+	code, refused := do(t, http.MethodPost, "/api/v1/pos/returns", map[string]any{
+		"idempotency_key": returnKey,
+		"order_id":        orderID, "refund_method": "CASH", "till_session_id": drawerID,
+		"lines": []map[string]any{{"order_line_id": lineID, "qty_base": 30}},
 	})
-	var refusal pos.ErrRefundApprovalRequired
-	if !asRefusal(err, &refusal) {
-		t.Fatalf("the wired composition must refuse the 300.00 return, got %v", err)
+	if code != http.StatusConflict {
+		t.Fatalf("the wired composition must refuse the 300.00 return, got %d: %v", code, refused)
 	}
-	if refusal.AmountCents != 25000 {
-		t.Fatalf("the refusal names the configured amount, got %d", refusal.AmountCents)
+	if refused["error"] != "refund_approval_required" {
+		t.Fatalf("the refusal's error string wrong: %v", refused["error"])
+	}
+	approval, isMap := refused["approval"].(map[string]any)
+	if !isMap || approval["amount_cents"] != float64(25000) {
+		t.Fatalf("the refusal must name the configured 250.00: %v", refused)
+	}
+	approvers, isSlice := approval["approvers"].([]any)
+	if !isSlice || len(approvers) != 2 || approvers[0] != "sales_manager" || approvers[1] != "branch_manager" {
+		t.Fatalf("the refusal must name both approver roles in order: %v", approval)
 	}
 
 	// The trail: the refusal's own audit row, filed under the sale.
-	auditSvc := audit.NewService(audit.NewRepository(pool), slog.Default())
-	entries, err := auditSvc.ReopenTransaction(ctx, "pos.return", sale.OrderID)
-	if err != nil {
+	var refusalRows int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM audit_log WHERE action = 'REFUND_APPROVAL_REFUSED' AND entity_id = $1::uuid`,
+		orderID).Scan(&refusalRows); err != nil {
 		t.Fatalf("trail: %v", err)
 	}
-	found := false
-	for _, e := range entries {
-		if e.Action == "REFUND_APPROVAL_REFUSED" {
-			found = true
-		}
+	if refusalRows == 0 {
+		t.Fatal("the wired composition must write the refusal's audit row")
 	}
-	if !found {
-		t.Fatalf("the wired composition must write the refusal's audit row: %v", entries)
-	}
-}
-
-func asRefusal(err error, target *pos.ErrRefundApprovalRequired) bool {
-	if err == nil {
-		return false
-	}
-	if errors.As(err, target) {
-		return true
-	}
-	var typed pos.ErrRefundApprovalRequired
-	if errors.As(err, &typed) {
-		*target = typed
-		return true
-	}
-	return false
 }

@@ -16,11 +16,14 @@ package pos
 // string its request never carried cannot fail, and proved nothing.
 //
 // The capture is attached to EVERY logger on the request path: the
-// handler's injected logger AND the audit writer's (the recorder is the
-// real audit service over a pool-less repository, whose logger is the
-// capture). The guards and the authz gate log nothing at all, so there is
-// no third logger to attach; a logger added to either package will be
-// covered by re-pointing its constructor here.
+// handler's injected logger, the audit writer's (the recorder is the real
+// audit service over a pool-less repository, whose logger is the capture),
+// and the process default logger, re-pointed for the duration of each
+// sweep and restored on cleanup (the lead's P3-B ruling: the default
+// logger is the one logger a plant through slog.Default would reach, and
+// NewHandler's nil fallback uses it). The guards and the authz gate log
+// nothing at all, so there is no fourth logger; a logger added to either
+// package will be covered by re-pointing its constructor here.
 
 import (
 	"bytes"
@@ -138,8 +141,19 @@ func newHeaderSweep(t *testing.T) *headerSweepFixture {
 	// audit service over a pool-less repository; its writer logs there).
 	capture := &capturingHandler{}
 	logger := slog.New(capture)
+	previous := slog.Default()
+	slog.SetDefault(logger)
+	t.Cleanup(func() { slog.SetDefault(previous) })
 	h.svc = h.svc.WithRoleConfig(cfg).
 		WithApproverSource(g).
+		WithUserLinker(func(_ context.Context, sub string) (string, bool) {
+			// The B4 linkage: both fixture people link to staff rows, the
+			// shape the qualification now requires (the lead's P3-E
+			// ruling).
+			ids := map[string]string{"fx-clerk-sub": "staff-clerk-uuid", "fx-approver-sub": "staff-manager-uuid"}
+			id, ok := ids[sub]
+			return id, ok
+		}).
 		WithClock(harness.Clock.Now).
 		WithAudit(audit.NewService(audit.NewRepository(nil), logger))
 

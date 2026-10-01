@@ -52,6 +52,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -103,7 +104,7 @@ const (
 )
 
 // saleKeys names the four sales of one run, the salted keys per process.
-type saleKeys struct{ trenton, kingston, small, manager string }
+type saleKeys struct{ trenton, kingston, small, manager, tiny string }
 
 func newSaleKeys() saleKeys {
 	salt := fmt.Sprintf("%08x", os.Getpid())[:8]
@@ -112,7 +113,7 @@ func newSaleKeys() saleKeys {
 		seq++
 		return fmt.Sprintf("5d1be000-0000-4000-9000-%s%04x", salt, seq)
 	}
-	return saleKeys{trenton: next(), kingston: next(), small: next(), manager: next()}
+	return saleKeys{trenton: next(), kingston: next(), small: next(), manager: next(), tiny: next()}
 }
 
 // countingCards is the card rail the refusals must never reach.
@@ -503,6 +504,7 @@ func TestIntegration_Trenton_RefundRuleEndToEnd(t *testing.T) {
 	saleKingston := s.ringSale(s.keys.kingston, kingstonBranchID, s.kingstonTill, "kingston", []float64{10}, TenderCard)
 	saleSmall := s.ringSale(s.keys.small, trentonBranchID, s.trentonTill, "trenton", []float64{15}, TenderCash)
 	saleForManager := s.ringSale(s.keys.manager, trentonBranchID, s.trentonTill, "manager", []float64{30}, TenderCash)
+	saleTiny := s.ringSale(s.keys.tiny, trentonBranchID, s.trentonTill, "trenton", []float64{5}, TenderCash)
 
 	// The lookup's positive leg first: the Trenton clerk reads the Trenton
 	// sale's returnable lines.
@@ -572,14 +574,34 @@ func TestIntegration_Trenton_RefundRuleEndToEnd(t *testing.T) {
 	if replayed := s.decodeBody(rec); replayed["return_id"] != nil || replayed["total_cents"] != nil {
 		t.Fatalf("a walled replay must carry none of the committed return: %v", replayed)
 	}
+	// Case C (the lead's P2-2R ruling): the same Kingston clerk, the same
+	// Trenton key, and a KINGSTON sale they DO reach named in the body. The
+	// wall judges the replayed return's own sale: refused with the wall's
+	// words, the Trenton return's number, ids and money carrying nowhere.
+	inC := s.returnBody(in200["idempotency_key"].(string), saleKingston, 0, RefundCash, 10)
+	rec = s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(kingstonClerkSub), "", inC)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("case C: a foreign key over an owned sale must hit the wall, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "not reachable") {
+		t.Fatalf("case C: the refusal must be the wall's words: %s", rec.Body.String())
+	}
+	if replayed := s.decodeBody(rec); replayed["return_id"] != nil || replayed["return_no"] != nil || replayed["total_cents"] != nil {
+		t.Fatalf("case C: the Trenton return must carry nowhere: %v", replayed)
+	}
 
 	// 3. The stays-refused legs: every credential short of qualifying
 	// leaves the standing refusal (or refuses on its own family), and
 	// nothing is committed.
-	// The clerk's own credential.
+	// The clerk's own credential: refused with the contract's body exactly
+	// (the lead's P2-B ruling), the configured threshold and both roles,
+	// never null and never zero.
 	rec = s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), s.bearer(trentonClerkSub), s.withKey(in300))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("the clerk's own credential cannot approve, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if own := s.decodeBody(rec); own["approval"].(map[string]any)["amount_cents"] != float64(25000) {
+		t.Fatalf("the refusal must carry the configured amount: %v", own)
 	}
 	// An expired credential refuses on the credential family.
 	expired := "Bearer " + s.harness.Minter.ExpiredToken(t, testkit.StaffClass, trentonMgrSub, "")
@@ -678,6 +700,20 @@ func TestIntegration_Trenton_RefundRuleEndToEnd(t *testing.T) {
 	rec = s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonMgrSub), s.bearer(trentonMgrSub), inOwn)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("a listed role's own credential cannot approve its own refund, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if own := s.decodeBody(rec); own["approval"].(map[string]any)["amount_cents"] != float64(25000) {
+		t.Fatalf("the refusal must carry the configured amount, never zero: %v", own)
+	}
+	// Within the amount the header is inert (the lead's P2-B ruling): the
+	// tiny sale's return commits as the manager's own decision with the
+	// manager's own credential in the header, nobody consulted.
+	inInert := s.returnBody(key(), saleTiny, 0, RefundCash, 5)
+	rec = s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonMgrSub), s.bearer(trentonMgrSub), inInert)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("a within-amount return commits whoever's credential arrived, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if inert := s.decodeBody(rec); inert["total_cents"] != float64(5650) {
+		t.Fatalf("the inert return's money wrong: %v", inert)
 	}
 	// 5b. As Sales manager the 300.00 return commits with no second
 	// credential.
