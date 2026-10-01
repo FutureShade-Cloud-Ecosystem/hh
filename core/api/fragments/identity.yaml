@@ -133,6 +133,9 @@ paths:
         The caller identity comes from the verified token, never the body,
         so a user can only change their own password.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -162,6 +165,9 @@ paths:
         administrator role on assignment surfaces. Scope is GLOBAL (reaches
         every branch) or BRANCH (limited to granted branches).
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -188,6 +194,9 @@ paths:
         IdentityActionBlocked object under the block key of the error
         envelope. A branch_id outside the caller's grants is refused.
       x-role: requireStaff
+      x-access:
+        surfaces: [quote-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -217,6 +226,9 @@ paths:
         grants. User states are INVITED, ACTIVE, SUSPENDED and DEACTIVATED
         (users.status CHECK); only ACTIVE authenticates.
       x-role: requireManager
+      x-access:
+        surfaces: [dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -239,6 +251,9 @@ paths:
         is further restricted in the service to an existing platform
         administrator.
       x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -268,6 +283,9 @@ paths:
         role is further restricted in the service to an existing platform
         administrator.
       x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -302,6 +320,9 @@ paths:
         the response body; there is no email path, the admin hands the link
         to the user out of band. Only the token hash is persisted.
       x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -331,6 +352,9 @@ paths:
         system-only policy filed by the GL park bridge; a caller filing one
         directly is refused.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, manager-home]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -357,6 +381,9 @@ paths:
         A GLOBAL caller sees every branch; a scoped caller sees only their
         granted branches.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, manager-home]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -391,6 +418,9 @@ paths:
         freight subject bridges into the owning module inside the same
         transaction. Deciding an already-decided request returns 409.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -423,6 +453,9 @@ paths:
       tags: [staff-tax]
       summary: List the effective-dated rate table
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -441,6 +474,9 @@ paths:
       tags: [staff-tax]
       summary: Add an effective-dated rate row
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -466,6 +502,9 @@ paths:
       tags: [staff-tax]
       summary: List the status-card exemption profiles
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -489,6 +528,9 @@ paths:
         forced-evidence gate is enforced in the service before any evidence
         record is inserted.
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -517,6 +559,9 @@ paths:
         The review queue: the profile list filtered to status PENDING, so
         items carry every StatusCardProfile field.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -540,6 +585,9 @@ paths:
         The org-default row has an empty branch_id; pass branch_id to read a
         branch override.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: branch_id
@@ -561,6 +609,9 @@ paths:
       tags: [staff-tax]
       summary: Create or update the tax config
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -590,6 +641,9 @@ paths:
         Masked-only serialization: number_mask is the only identifier that
         ever leaves the service. Evidence access is audit-stamped.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -622,6 +676,9 @@ paths:
         persisted or echoed back. The profile's forced-evidence gate (photo,
         number, attestation) is enforced before insert.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -648,6 +705,9 @@ paths:
       summary: Read one masked evidence record
       description: Evidence access is audit-stamped.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -676,6 +736,9 @@ paths:
         pointer to the encrypted image, never inline bytes). The download is
         audit-stamped.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -703,6 +766,9 @@ paths:
         The eligibility gate for a relief rate: blocked with a reason when
         the card is expired or a profile-forced field is missing.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -738,6 +804,9 @@ paths:
         row, it inserts a parallel audit-truth row and skips one that
         already has its recompute. No retroactive GL correction.
       x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -767,6 +836,9 @@ paths:
         payable, federal and provincial account balances for the period;
         variance zero means tied out.
       x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: year

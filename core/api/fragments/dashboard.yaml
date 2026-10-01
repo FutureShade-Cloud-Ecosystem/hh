@@ -5,6 +5,9 @@ paths:
       tags: [staff-dashboard]
       summary: Read the caller's home, the resolved layout with home config, tabs and hotkeys
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -22,6 +25,9 @@ paths:
       tags: [staff-dashboard]
       summary: Read the full tile catalog with wiring state and the caller's profile
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -39,6 +45,9 @@ paths:
       tags: [staff-dashboard]
       summary: Save the caller's own tile layout override (whole document)
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -65,6 +74,9 @@ paths:
         Answers with the layout the reset landed on, not just a count, so the
         client does not re-fetch.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -82,6 +94,9 @@ paths:
       tags: [staff-dashboard]
       summary: Save the caller's own pinned-tab strip (whole document)
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -108,6 +123,9 @@ paths:
         Answers with the strip the reset landed on, not just a count, so the
         client does not re-fetch.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -125,6 +143,9 @@ paths:
       tags: [staff-dashboard]
       summary: List every layout profile with its home config
       x-role: requireAdmin
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -142,6 +163,9 @@ paths:
       tags: [staff-dashboard]
       summary: Read one role default layout and its home config
       x-role: requireAdmin
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/DashboardProfileParam"
@@ -160,6 +184,9 @@ paths:
       tags: [staff-dashboard]
       summary: Edit one role default layout (whole document)
       x-role: requireAdmin
+      x-access:
+        surfaces: [manager-home]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/DashboardProfileParam"
@@ -186,6 +213,9 @@ paths:
       tags: [staff-dashboard]
       summary: Edit one role's landing surface and takeover config
       x-role: requireAdmin
+      x-access:
+        surfaces: [manager-home]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/DashboardProfileParam"
@@ -212,6 +242,9 @@ paths:
       tags: [staff-dashboard]
       summary: Read one role default pinned-tab strip
       x-role: requireAdmin
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/DashboardProfileParam"
@@ -230,6 +263,9 @@ paths:
       tags: [staff-dashboard]
       summary: Edit one role default pinned-tab strip (whole document)
       x-role: requireAdmin
+      x-access:
+        surfaces: [manager-home]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/DashboardProfileParam"
@@ -256,6 +292,9 @@ paths:
       tags: [staff-dashboard]
       summary: Read the caller's resolved widget home
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -277,6 +316,9 @@ paths:
         covers a measure this build does not have, so the refusal cannot
         enumerate what exists.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -313,6 +355,9 @@ paths:
         Answers with the layout the reset landed on, not just a count, so the
         client does not re-fetch.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -338,6 +383,9 @@ paths:
         The measures come from the caller's own gated catalog, so a measure
         they may not see is not in the payload at all.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -358,6 +406,9 @@ paths:
         Entries are narrowed to the caller's own catalog before they leave;
         an entry the caller may not see is absent from the payload.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -382,6 +433,9 @@ paths:
         no longer hold produce no entry. The key parameter may repeat and is
         truncated to the server's bound rather than refused.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: key
@@ -412,6 +466,9 @@ paths:
         never an error. Rows whose destination is a manager-gated surface are
         absent for callers below that tier.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -429,6 +486,9 @@ paths:
       tags: [staff-dashboard]
       summary: Read one role default widget layout
       x-role: requireAdmin
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/DashboardProfileParam"
@@ -451,6 +511,9 @@ paths:
         narrow to a branch, because curation hides things and never grants
         anything.
       x-role: requireAdmin
+      x-access:
+        surfaces: [manager-home]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/DashboardProfileParam"
@@ -487,6 +550,9 @@ paths:
       tags: [staff-dashboard]
       summary: Read one role's gallery as stored, retired entries included
       x-role: requireAdmin
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/DashboardProfileParam"
@@ -505,6 +571,9 @@ paths:
       tags: [staff-dashboard]
       summary: Edit one role's widget gallery (whole document)
       x-role: requireAdmin
+      x-access:
+        surfaces: [manager-home]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/DashboardProfileParam"
@@ -544,6 +613,9 @@ paths:
         Cost-class metrics are byte-absent for callers below the manager tier;
         there is no payload of hidden metrics for a client to filter.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -565,6 +637,9 @@ paths:
         rather than refused. A composed tile naming a metric outside the
         caller's catalog produces no tile.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: tile
@@ -593,6 +668,9 @@ paths:
         Only what this caller may see is returned; there is no payload of
         hidden actions for a client to filter.
       x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -610,6 +688,9 @@ paths:
       tags: [staff-dashboard]
       summary: Read every quick action with its switch and per-profile matrix
       x-role: requireAdmin
+      x-access:
+        surfaces: [manager-home]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -627,6 +708,9 @@ paths:
       tags: [staff-dashboard]
       summary: Edit one quick action's visibility (global switch plus per-profile matrix)
       x-role: requireAdmin
+      x-access:
+        surfaces: [manager-home]
+        level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: action
@@ -663,6 +747,9 @@ paths:
         shape's curation and is refused for a non-admin caller before the
         store is touched.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/SettingsSurfaceParam"
@@ -702,6 +789,9 @@ paths:
         The item set is validated for shape only: item ids belong to the
         frontend registry and are never checked against a server-side list.
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: ["service:isAdmin"]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -737,6 +827,9 @@ paths:
         with a body is a shape intermediate proxies may drop. Admin-gated in
         the service, exactly like the PUT.
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: manage
       x-guards: ["service:isAdmin"]
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -779,6 +872,9 @@ paths:
         Self-service on purpose: hiding a column is not an admin act. The
         stored set is the override.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/SettingsSurfaceParam"
@@ -808,6 +904,9 @@ paths:
       tags: [staff-settings]
       summary: Delete the caller's item override for one surface (reset is a DELETE)
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/SettingsSurfaceParam"
@@ -834,6 +933,9 @@ paths:
         Requires idempotency_key; a verbatim replay of the last accepted key
         returns the stored row without a second write, with replayed set.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/SettingsSurfaceParam"
@@ -863,6 +965,9 @@ paths:
       tags: [staff-settings]
       summary: Delete the caller's workspace row for one surface (reset is a DELETE)
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/SettingsSurfaceParam"
@@ -891,6 +996,9 @@ paths:
         the server's answer to whether this caller may write, so the client
         carries no authority logic.
       x-role: requireStaff
+      x-access:
+        surfaces: [counter-till, quote-desk, yard-pick, drive-run, dispatch-board, buying-and-stock, money-desk, manager-home, house-messages, dealer-admin]
+        level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
       responses:
@@ -915,6 +1023,9 @@ paths:
         dealer tier already claims for a different action on the same surface,
         is refused with 422.
       x-role: requireStaff
+      x-access:
+        surfaces: [dealer-admin]
+        level: admin
       x-guards: ["service:isSuperAdmin"]
       parameters:
         - $ref: "#/components/parameters/XOrg"
