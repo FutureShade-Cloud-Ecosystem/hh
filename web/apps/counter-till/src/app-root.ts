@@ -477,14 +477,24 @@ export class CounterTillApp extends HHElement {
     void this.#priceTicket();
   }
 
-  #addLine(productId: string): void {
+  async #addLine(productId: string): Promise<void> {
     const hit = this.#search.hits.find((candidate) => candidate.productId === productId);
     if (hit === undefined) return;
     this.#knownProducts.set(hit.productId, hit);
+    const key = crypto.randomUUID();
     this.#lines = [
       ...this.#lines,
-      { key: crypto.randomUUID(), product: hit, qty: 1, uom: hit.soldBy, quote: null, marginBps: null },
+      { key, product: hit, qty: 1, uom: hit.soldBy, quote: null, marginBps: null },
     ];
+    this.requestUpdate();
+    await this.updateComplete;
+    // The quantity input starts at one: set once, imperatively, after the
+    // element exists. The gate refuses a bound value attribute in a template,
+    // and the input keeps its own DOM value across re-renders, so this is
+    // also the only write it needs: every later value is the tester's typed
+    // one, read back at re-price.
+    const input = this.renderRoot.querySelector<HTMLInputElement>(`input[data-qty-key="${key}"]`);
+    if (input !== null) input.value = "1";
     void this.#priceTicket();
   }
 
@@ -767,6 +777,14 @@ export class CounterTillApp extends HHElement {
     });
     this.#parkedBusy = false;
     this.requestUpdate();
+    await this.updateComplete;
+    // The resumed quantities land in the inputs the same way an added line's
+    // one does: one imperative write after the elements exist, since the
+    // ticket's quantities are state, not template bindings.
+    for (const line of this.#lines) {
+      const input = this.renderRoot.querySelector<HTMLInputElement>(`input[data-qty-key="${line.key}"]`);
+      if (input !== null) input.value = String(line.qty);
+    }
     if (ticket.customerId === "") {
       this.#customer = WALK_IN_CUSTOMER;
       this.#standing = null;

@@ -447,7 +447,6 @@ function renderTicket(panel: TicketPanel): TemplateResult {
                           inputmode="decimal"
                           autocomplete="off"
                           aria-label="Quantity of ${line.name}"
-                          value="${line.qty}"
                           data-qty-key=${line.key}
                         />
                         <span class="sold-by">${line.uom}</span>
