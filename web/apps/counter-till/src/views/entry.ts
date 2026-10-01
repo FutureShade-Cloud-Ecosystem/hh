@@ -29,7 +29,7 @@ export const COMING_ROLES: readonly string[] = [
 
 export type FlowsState =
   | { kind: "loading" }
-  | { kind: "unavailable" }
+  | { kind: "unavailable"; status: number | null }
   | { kind: "ready"; flows: DemoFlow[] };
 
 export interface EntryView {
@@ -112,8 +112,27 @@ export function renderEntry(view: EntryView): TemplateResult {
     return html`<p class="notice" role="status">Loading the demo roles.</p>`;
   }
   if (view.flows.kind === "unavailable") {
+    // The failures say different things, so the page does not claim more than
+    // it knows: a 404 is the shape of a box without the demo sign-in (a
+    // default-build core answers exactly that); anything else is an error
+    // worth its status, because the demo may be one reload away.
+    if (view.flows.status === 404) {
+      return html`<p class="notice" role="status">
+        This deployment does not serve the demo sign-in, so there are no role cards to tap.
+      </p>`;
+    }
+    if (view.flows.status === null) {
+      return html`<p class="notice" role="status">
+        The demo roles could not be loaded: the call did not go through. Reload to try again.
+      </p>`;
+    }
     return html`<p class="notice" role="status">
-      This deployment does not serve the demo sign-in, so there are no role cards to tap.
+      The demo roles could not be loaded (HTTP ${view.flows.status}). Reload to try again.
+    </p>`;
+  }
+  if (view.flows.flows.length === 0) {
+    return html`<p class="notice" role="status">
+      The demo sign-in answered with no roles: there is nothing to tap.
     </p>`;
   }
   return html`

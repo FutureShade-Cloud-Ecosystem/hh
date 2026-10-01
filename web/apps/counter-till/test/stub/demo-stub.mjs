@@ -41,7 +41,7 @@
 // numbers, every one carrying its unit of measure.
 import { createServer } from "node:http";
 
-const port = Number(process.env.CT_STUB_PORT ?? 4821);
+const port = Number(process.env.CT_STUB_PORT ?? 4827);
 
 // The closed flow table: the two logins this release shows, with the labels
 // the cards carry and the role each minted account holds (the mint's role
@@ -398,12 +398,21 @@ function callerOf(request, url) {
   return { userId, branchId };
 }
 
-function respondJson(response, status, payload) {
-  response.writeHead(status, { "content-type": "application/json" });
+function respondJson(response, status, payload, extraHeaders = {}) {
+  response.writeHead(status, { "content-type": "application/json", ...extraHeaders });
   response.end(JSON.stringify(payload));
 }
 
-function readBody(request, respond) {
+// The test suite asserts the app sends the demo org on its demo calls, so the
+// stub echoes the org it received back as a response header: a wrong or
+// missing X-Org on the app side fails the suite right here, which is where a
+// slip in the client configuration would surface on the real box too (the
+// core's membership source answers for hh-demo and nothing else).
+function sawOrg(request) {
+  return { "x-stub-saw-org": request.headers["x-org"] ?? "" };
+}
+
+function readBody(request, respond, extraHeaders = {}) {
   let body = "";
   request.on("data", (chunk) => {
     body += chunk;
@@ -416,7 +425,7 @@ function readBody(request, respond) {
     try {
       respond(JSON.parse(body));
     } catch {
-      respondJson(response, 400, { error: "the request body is not JSON" });
+      respondJson(response, 400, { error: "the request body is not JSON" }, extraHeaders);
     }
   });
 }
@@ -477,20 +486,22 @@ const server = createServer((request, response) => {
     return;
   }
 
-  // The demo routes stay public, exactly as the contract marks them.
+  // The demo routes stay public, exactly as the contract marks them. Both
+  // answer with the org echo so the suite can hold the client configuration.
   if (request.method === "GET" && path === "/api/v1/demo/flows") {
-    respondJson(response, 200, { flows: FLOWS });
+    respondJson(response, 200, { flows: FLOWS }, sawOrg(request));
     return;
   }
   if (request.method === "POST" && path === "/api/v1/demo/session") {
+    const org = sawOrg(request);
     readBody(request, (parsed) => {
       const flow = parsed === null || typeof parsed !== "object" ? undefined : parsed.flow;
       if (typeof flow !== "string" || !Object.hasOwn(USERS, flow)) {
-        respondJson(response, 400, { error: "unknown flow" });
+        respondJson(response, 400, { error: "unknown flow" }, org);
         return;
       }
-      respondJson(response, 200, { token: mintToken(flow), user: USERS[flow], flow });
-    });
+      respondJson(response, 200, { token: mintToken(flow), user: USERS[flow], flow }, org);
+    }, org);
     return;
   }
 
@@ -1013,6 +1024,11 @@ function saleResponseBody(sale, replayed) {
     tenders: sale.tenders,
   };
 }
+
+server.on("error", (error) => {
+  console.error(`demo stub could not listen on 127.0.0.1:${port}: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+});
 
 server.keepAliveTimeout = 120 * 1000;
 server.headersTimeout = 125 * 1000;

@@ -227,6 +227,7 @@ rule so the positions gate accepts them without any gate change. If the lead
 or a reviewer rules the lock edit out of bounds for this lane, it reverts as
 one line and the decision it forces is whether the app may consume the design
 system at all.
+
 ## L2 (till contract): the client generator needed the approver header in its allowlist (recorded, done in this lane)
 
 The till's contract commit declares `X-Approver-Authorization` as a header
@@ -289,3 +290,29 @@ the commit is contract sources and generated outputs only.
   itself compiles (America/Toronto), through Intl, and the stub refuses a
   ring whose date is not the house zone's day. When the core serves a
   configured zone, the constant should be replaced by the served value.
+
+### Review round (pull request 37): the accepted shape of the lock edit, and three findings recorded, not fixed
+
+- **P3-1, the lock edit's shape.** The dependents lock edit carries one
+  comment sentence beside the list entry ("The Counter Till app is the
+  workspace's first dependent"); the functional change is the one list line,
+  `[]` to `['@hardscapehouse/counter-till']`. The lead has accepted this
+  shape; recorded so the acceptance and the diff match.
+- **P3-4 (recorded, unreachable).** The entry page's Coming list is a fixed
+  list beside the dynamic card list, with no reconciliation between them: a
+  flows row whose label equals one of the eleven would show as a live card
+  and as Coming at once. The demo's flow table is closed at two rows in this
+  release, so no path reaches it.
+- **P3-5 (recorded, unreachable).** The demo adapter keeps the mint in
+  memory even when custody refuses the adoption, so the seam's getSession
+  and createJWT would answer from a refused mint. Custody refuses only an
+  unusable or expired mint, which the adapter's own validation screens
+  first, and no path reaches those two operations before a successful
+  adoption.
+- **P3-7 (carried, not a defect of the app slice).** The exit test's own
+  words run on the W5 image and against a default-build core, neither of
+  which exists yet; the header provider sends X-Org on the two public demo
+  calls as well as on staff calls, and whether the real routes and the
+  phrase gate accept that waits for W2's mint; and the app holds a till past
+  the token's expiry with nothing to re-check it against until W7's first
+  core call. W5, W9, W2 and W7 hold the closures, per the plan.

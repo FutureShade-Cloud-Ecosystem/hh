@@ -4,7 +4,10 @@
 // lands on the till with the Demo banner and the role's name, the eleven
 // other roles show as coming and cannot be tapped, sign out returns to the
 // cards, and against a flows route that answers there are no cards at all.
-import { expect, test } from "@playwright/test";
+// The suite also holds the org header: the stub echoes the X-Org it received
+// back as x-stub-saw-org, so a wrong org in the app's client configuration
+// fails right here.
+import { expect, test, type Page, type Response } from "@playwright/test";
 
 // The decided matrix's labels for the roles whose screens are not in this
 // release, mirroring the app's own list (src/views/entry.ts): a test that
@@ -23,8 +26,17 @@ const COMING_ROLES = [
   "HR",
 ];
 
+function flowsCall(page: Page): Promise<Response> {
+  return page.waitForResponse((response) => response.url().endsWith("/api/v1/demo/flows"));
+}
+
 test("the entry page shows the two demo role cards and the eleven coming roles", async ({ page }) => {
+  const flows = flowsCall(page);
   await page.goto("/");
+  // The demo org rides on the flows call: it is the client configuration's
+  // own constant, sent through the auth package's staff header provider.
+  expect((await flows).headers()["x-stub-saw-org"]).toBe("hh-demo");
+
   const sales = page.getByRole("button", { name: "Sales", exact: true });
   await expect(sales).toBeVisible();
   await expect(sales).toBeEnabled();
@@ -45,7 +57,11 @@ test("the entry page shows the two demo role cards and the eleven coming roles",
 
 test("tapping Sales lands on the till with the Demo banner and Sales", async ({ page }) => {
   await page.goto("/");
+  const mint = page.waitForResponse((response) => response.url().endsWith("/api/v1/demo/session"));
   await page.getByRole("button", { name: "Sales", exact: true }).click();
+  // The mint call carries the demo org too: it is the same configuration.
+  expect((await mint).headers()["x-stub-saw-org"]).toBe("hh-demo");
+
   const banner = page.getByRole("note");
   await expect(banner).toBeVisible();
   await expect(banner).toContainText("Demo");
@@ -79,7 +95,7 @@ test("sign out returns to the cards", async ({ page }) => {
   await expect(page.getByTestId("signed-in-role")).toHaveCount(0);
 });
 
-test("against a flows route that answers 404 no card renders and the page says so", async ({ page }) => {
+test("against a flows route that answers 404 no card renders, the page says so, and no banner shows", async ({ page }) => {
   await page.route("**/api/v1/demo/flows", (route) =>
     route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "not found" }) }),
   );
@@ -89,4 +105,36 @@ test("against a flows route that answers 404 no card renders and the page says s
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("note")).toHaveCount(0);
+});
+
+test("a flows route failing with 500 reads as an error with the status, not as a box without the demo", async ({ page }) => {
+  await page.route("**/api/v1/demo/flows", (route) =>
+    route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) }),
+  );
+  await page.goto("/");
+  await expect(page.getByText("The demo roles could not be loaded (HTTP 500). Reload to try again.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("note")).toHaveCount(0);
+});
+
+test("a flows call that does not go through reads as an error, not as a box without the demo", async ({ page }) => {
+  await page.route("**/api/v1/demo/flows", (route) => route.abort("failed"));
+  await page.goto("/");
+  await expect(
+    page.getByText("The demo roles could not be loaded: the call did not go through. Reload to try again."),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("note")).toHaveCount(0);
+});
+
+test("an empty flow list shows its own message, no cards and no banner", async ({ page }) => {
+  await page.route("**/api/v1/demo/flows", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ flows: [] }) }),
+  );
+  await page.goto("/");
+  await expect(page.getByText("The demo sign-in answered with no roles: there is nothing to tap.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toHaveCount(0);
+  await expect(page.getByText("Tap a role to open the till:")).toHaveCount(0);
+  await expect(page.getByRole("note")).toHaveCount(0);
 });
