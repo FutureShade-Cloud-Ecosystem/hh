@@ -107,7 +107,7 @@ export const entryStyles = css`
   }
 `;
 
-export function renderEntry(view: EntryView, handlers: { choose(flow: string): void }): TemplateResult {
+export function renderEntry(view: EntryView): TemplateResult {
   if (view.flows.kind === "loading") {
     return html`<p class="notice" role="status">Loading the demo roles.</p>`;
   }
@@ -125,9 +125,9 @@ export function renderEntry(view: EntryView, handlers: { choose(flow: string): v
             <button
               type="button"
               class="card"
+              data-action="choose"
               data-flow=${flow.flow ?? nothing}
               ?disabled=${view.busy}
-              @click=${() => handlers.choose(flow.flow ?? "")}
             >
               ${flow.label ?? flow.flow}
             </button>

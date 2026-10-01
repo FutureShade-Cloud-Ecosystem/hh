@@ -91,8 +91,33 @@ export class CounterTillApp extends HHElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    // The kits' wiring rule, carried for this app's own templates: listen on
+    // the HOST and read the control off composedPath(), never @click in a
+    // template and never event.target.closest, because the shadow boundary
+    // retargets the target to this element (the design system's README holds
+    // both halves).
+    this.addEventListener("click", this.#onHostClick);
     void this.#loadFlows();
   }
+
+  disconnectedCallback(): void {
+    this.removeEventListener("click", this.#onHostClick);
+    super.disconnectedCallback();
+  }
+
+  readonly #onHostClick = (event: MouseEvent): void => {
+    const control = event
+      .composedPath()
+      .find((node): node is Element => node instanceof Element && node.hasAttribute("data-action"));
+    if (control === undefined) return;
+    const flow = control.getAttribute("data-flow");
+    if (control.getAttribute("data-action") === "choose" && typeof flow === "string" && flow !== "") {
+      void this.#chooseFlow(flow);
+    }
+    if (control.getAttribute("data-action") === "sign-out") {
+      void this.#signOut();
+    }
+  };
 
   async #loadFlows(): Promise<void> {
     const result = await this.#account.listFlows();
@@ -160,7 +185,7 @@ export class CounterTillApp extends HHElement {
             : html`
                 <p class="signed-in">
                   <span class="role-name" data-testid="signed-in-role">${this.#till.label}</span>
-                  <button type="button" class="btn-secondary" ?disabled=${this.#busy} @click=${() => void this.#signOut()}>
+                  <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
                     Sign out
                   </button>
                 </p>
@@ -169,10 +194,7 @@ export class CounterTillApp extends HHElement {
       </header>
       <main>
         ${this.#till === null
-          ? renderEntry(
-              { flows: this.#flowsState, busy: this.#busy, message: this.#message },
-              { choose: (flow) => void this.#chooseFlow(flow) },
-            )
+          ? renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })
           : renderTill()}
       </main>
     `;

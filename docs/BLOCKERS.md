@@ -205,3 +205,25 @@ backup into a Dibbits staging org (HH-BISTRACK-CUTOVER-RULING-r1). The
 module stays the fail-closed stub it is today; the FIRST lane that
 touches it removes the push half and that sentence. Until then this
 entry marks the obligation.
+
+## L5 (W6): the design system's gates demanded one edit inside web/packages (made, flagged)
+
+The Counter Till app consumes `@hardscapehouse/design-system` (tokens, the
+base element, the primitives), which makes it the first workspace package the
+design system's gates treat as a dependent: those gates scan every workspace
+package that depends on the design system, by manifest or by import, and one
+of them is written to fail on a new dependent until its lock names the
+package deliberately (`test/no-raw-markup.test.mjs`, the lock's own message:
+"a package now depends on @hardscapehouse/design-system; its sources are
+scanned below, and this lock must name it deliberately").
+
+Naming it is a one-list edit inside `web/packages/design-system/test/`, which
+is outside this lane's declared Touches (web/packages are off limits except
+consuming them). Recorded and done rather than left red: the edit names the
+app in the lock and nothing else, the gates' own audits over the app's
+sources pass on the app's own merits (templates in allowed positions, no raw
+markup), and the app's templates were rewritten to the kits' host delegation
+rule so the positions gate accepts them without any gate change. If the lead
+or a reviewer rules the lock edit out of bounds for this lane, it reverts as
+one line and the decision it forces is whether the app may consume the design
+system at all.
