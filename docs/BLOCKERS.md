@@ -466,3 +466,53 @@ the commit is contract sources and generated outputs only.
   server-stated fact. The server's audit row holds the record. If a later
   ruling wants the receipt to quote the core, the field is the contract's to
   add, not this app's to invent.
+
+## L5 W9 (the story end to end): what the run found on the image, recorded and worked around
+
+The acceptance run drove the eleven screens as each role against the local
+image built from the goal's integration branch head (till/goal d028c4d) with
+this lane's app work. Four findings belong to other lanes' files; each one is
+worked around inside this lane's Touches so the run proves every screen's
+substance, and each needs its owner's close.
+
+- **The demo world homes C01 and C09 to Kingston, while the demo logins reach
+  Trenton alone.** The seed writes its customers onto `b.in.Branches[i]`, and
+  on a migrated database that order puts branch 0 at Kingston: C01 (the
+  contractor whose 18 percent paver price the plan's screen 4 names) and C09
+  (the account on hold the plan's screen 5 names) come out homed to Kingston,
+  and the customer picker is fenced to the caller's own branch server-side, so
+  the Trenton counter cannot reach either row. The run proves screen 4 with
+  C02 (a Trenton contractor, 12 percent off pavers) and C03 (Trenton, 10
+  percent off bulk, whose Granular A sits below the 20 percent bulk floor and
+  rings anyway), and screen 5 with C07 (a Trenton retail account whose zero
+  limit the credit gate refuses in words, the same refusal the hold would
+  show). The lead closes this inside the goal by either moving the two
+  accounts' home branch in the seed or granting the demo logins nothing more
+  and renaming the plan's rows; it is W3 and the seed's file, not this lane's.
+- **No seeded sale at Trenton crosses the refund approval amount as a return.**
+  DEMO-TRT-S09 is the seeded sale above 250.00 (251.71 with the seed's tax),
+  but the return rail recomputes a return's amounts from the line, and the
+  seeded line's own tax answer is zero: the whole line refunds at 222.75, under
+  the threshold. The run crosses the amount with a sale it rings itself (sixty
+  wall blocks, 847.50). The seed's tax on counter sales and the return rail's
+  tax answer disagree; which one moves is the seed lane's call, recorded here
+  so the disagreement does not read as the return rail's defect.
+- **The demo build's serve wiring does not attach the role gate.** main.go's
+  `registerRoutes` wraps its registrar in `authz.NewRoleGateRegistrar`;
+  demo_on.go's `demoRegisterRoutes` (the wiring the demo image serves) builds
+  the same graph on the raw registrar, so on the demo box the role gate does
+  not run and any staff route the tier gate admits is served to the clerk
+  (a dispatch read answers 200 to inside_sales, which the role gate's own
+  tests hold shut). The plan's screen 11 manager cell (dispatch reads and
+  price rule writes admitted to the manager and refused to Sales) is provable
+  on this box only on the price rule write, whose refusal is the tier gate's; the
+  run asserts exactly that and no more. The fix is demo_on.go's to build the
+  same gate main.go builds; it is one wiring block, core, not this lane's.
+- **The parked list serves a bare array against the contract's page shape.**
+  `GET /api/v1/pos/parked` answers `PosParkedTicketPage` in the contract (an
+  object with `items`), and the served core answers the bare array instead, so
+  the app's field-by-field read refused the whole list. This lane's app now
+  reads both shapes and refuses anything else; the server (or the contract) is
+  the side to reconcile, and the same pass may want to look at the counter
+  search's optional `sold_by`, which the served core leaves out of every hit
+  (the app falls back to the required `base_uom`).
