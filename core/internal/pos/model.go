@@ -66,12 +66,13 @@ type SaleInput struct {
 	Tenders []TenderLegInput `json:"tenders,omitempty"`
 }
 
-// LineInput is one cart line. The PRICE is NOT in the body, it is resolved server-side.
+// LineInput is one cart line. The PRICE is NOT in the body, it is resolved server-side, and no
+// cost rides the ring either: the till rings the customer's rule and tier price and the cost is
+// the core's own reading (D48 row 481, D49).
 type LineInput struct {
 	ProductID  string  `json:"product_id"`
 	QtyEntered float64 `json:"qty_entered"`
 	UOMEntered string  `json:"uom_entered"`
-	CostCents  int64   `json:"cost_cents"`
 }
 
 // Sale is the committed result (also returned verbatim on an idempotent replay).
@@ -352,7 +353,10 @@ func clientErr(status int, format string, a ...any) error {
 	return clientError{status: status, msg: fmt.Sprintf(format, a...)}
 }
 
-// ErrPriceBlocked aborts a sale whose line price is below the floor (routes to the 0016 queue).
+// ErrPriceBlocked was the till's below-floor refusal (routes to the 0016 queue). The till no
+// longer refuses a line as blocked (D48 row 481, D49): nothing produces it and the handler no
+// longer maps it; the type goes when the last tests asserting the old refusal are brought to
+// the ruling.
 type ErrPriceBlocked struct {
 	Policy string
 	LineNo int
@@ -796,9 +800,9 @@ type returnLineRow struct {
 
 // MarginGlanceInput is the POST /api/v1/pos/margin-glance body: the CURRENT ticket's lines, sent
 // exactly as the ring body sends them (product/qty/uom, never a client price). The server derives
-// each line's revenue through the SAME pricing authority the terminal prices with
-// (pricing.DeriveLinePrice) and marries it to the engine's cost source, the per-branch WAC row
-// (product_branch_costs.avg_unit_cost_cents, per product BASE uom; the same row the pricing
+// each line's revenue through the SAME counter resolve the terminal prices with
+// (pricing.DeriveCounterLinePrice) and marries it to the engine's cost source, the per-branch WAC
+// row (product_branch_costs.avg_unit_cost_cents, per product BASE uom; the same row the pricing
 // low-margin scan and inventory.BranchCostCents read).
 type MarginGlanceInput struct {
 	BranchID     string      `json:"branch_id"`

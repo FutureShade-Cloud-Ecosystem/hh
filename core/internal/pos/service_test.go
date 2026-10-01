@@ -564,7 +564,9 @@ func (f *fakeStore) TopSellingApplications(_ context.Context, limit int) ([]stri
 	return f.topApps, nil
 }
 
-// fakeResolver is the pricing seam.
+// fakeResolver is the pricing seam. blocked/policy play the GATED resolve's verdict on the same
+// line (what the quote flow's floor would say); the till prices through the counter resolve and
+// ignores that verdict (D48 row 481, D49).
 type fakeResolver struct {
 	tr      *[]string
 	price   pricing.LinePrice
@@ -573,7 +575,7 @@ type fakeResolver struct {
 	err     error
 }
 
-func (r *fakeResolver) DeriveLinePrice(_ context.Context, in pricing.ResolveInput) (pricing.LinePrice, error) {
+func (r *fakeResolver) DeriveCounterLinePrice(_ context.Context, _ pricing.ResolveInput) (pricing.LinePrice, error) {
 	if r.tr != nil {
 		*r.tr = append(*r.tr, "price")
 	}
@@ -811,7 +813,7 @@ func baseInput() SaleInput {
 		CustomerID:     "cust-abc",
 		SaleType:       SaleCollectNow,
 		Tender:         TenderCash,
-		Lines:          []LineInput{{ProductID: "prod-blu", QtyEntered: 100, UOMEntered: "SF", CostCents: 20000}},
+		Lines:          []LineInput{{ProductID: "prod-blu", QtyEntered: 100, UOMEntered: "SF"}},
 	}
 }
 

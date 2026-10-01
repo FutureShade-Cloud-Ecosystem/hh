@@ -212,7 +212,7 @@ func TestIntegration_CashSale_EndToEnd(t *testing.T) {
 
 	out, err := svc.Sale(globalCtx(t, pool), SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, TillSessionID: till, Tender: TenderCash, SaleType: SaleCollectNow,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 10, UOMEntered: "SF", CostCents: 1000}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 10, UOMEntered: "SF"}},
 	})
 	if isTillStub(err) {
 		t.Skipf("A-03 TakeTender not yet implemented (composer waits on the sibling): %v", err)
@@ -254,7 +254,7 @@ func TestIntegration_FreshSeed_BanasSKU_CashSale_EndToEnd(t *testing.T) {
 
 	out, err := svc.Sale(ctx, SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, TillSessionID: till, Tender: TenderCash, SaleType: SaleCollectNow,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 2, UOMEntered: uom, CostCents: 0}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 2, UOMEntered: uom}},
 	})
 	if isTillStub(err) {
 		t.Skipf("A-03 TakeTender not yet implemented: %v", err)
@@ -299,7 +299,7 @@ func TestIntegration_CashSale_PricingGap_IsClientErrorNot500(t *testing.T) {
 	_, saleErr := svc.Sale(ctx, SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, TillSessionID: "unused-pricing-fails-first",
 		Tender: TenderCash, SaleType: SaleCollectNow,
-		Lines: []LineInput{{ProductID: prodID, QtyEntered: 3, UOMEntered: "EA", CostCents: 0}},
+		Lines: []LineInput{{ProductID: prodID, QtyEntered: 3, UOMEntered: "EA"}},
 	})
 	if saleErr == nil {
 		t.Fatal("expected the CASH sale to fail on the unpriceable line")
@@ -324,7 +324,7 @@ func TestIntegration_AccountSale_FinalizedNoPayment(t *testing.T) {
 	svc := realPosSvc(t, pool, stubCharger{})
 	out, err := svc.Sale(ctx, SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, CustomerID: custID, Tender: TenderAccount, SaleType: SaleCollectNow,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF", CostCents: 1000}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF"}},
 	})
 	if err != nil {
 		t.Fatalf("account sale: %v", err)
@@ -379,7 +379,7 @@ func TestIntegration_POSSale_AccountTender_CrossBranchForbidden(t *testing.T) {
 	_, err := svc.Sale(scoped, SaleInput{
 		IdempotencyKey: idemKey, BranchID: otherBranch, CustomerID: custID,
 		Tender: TenderAccount, SaleType: SaleCollectNow,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF", CostCents: 1000}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF"}},
 	})
 	if err == nil {
 		t.Fatal("DIB-389: a branch-scoped caller rang an ACCOUNT sale on a branch they cannot access, and it was ACCEPTED")
@@ -410,7 +410,7 @@ func TestIntegration_POSSale_AccountTender_CrossBranchForbidden(t *testing.T) {
 	if _, err := svc.Sale(scoped, SaleInput{
 		IdempotencyKey: key(), BranchID: homeBranch, CustomerID: custID,
 		Tender: TenderAccount, SaleType: SaleCollectNow,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF", CostCents: 1000}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF"}},
 	}); err != nil {
 		t.Fatalf("DIB-389: the in-scope ACCOUNT sale must still succeed, got %v", err)
 	}
@@ -432,7 +432,7 @@ func TestIntegration_POSSale_TillSessionFromAnotherBranch_Refused(t *testing.T) 
 	_, err := svc.Sale(ctx, SaleInput{
 		IdempotencyKey: key(), BranchID: homeBranch, TillSessionID: otherTill,
 		Tender: TenderCash, SaleType: SaleCollectNow,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF", CostCents: 1000}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 5, UOMEntered: "SF"}},
 	})
 	if err == nil {
 		t.Fatal("DIB-389: a sale rang on one branch through another branch's drawer was ACCEPTED")
@@ -450,7 +450,7 @@ func TestIntegration_CardSale_GatewayRefAndCardType(t *testing.T) {
 	svc := realPosSvc(t, pool, stubCharger{})
 	out, err := svc.Sale(globalCtx(t, pool), SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, TillSessionID: till, Tender: TenderCard, CardType: "DEBIT",
-		PaymentToken: "tok_runner", Lines: []LineInput{{ProductID: productID, QtyEntered: 3, UOMEntered: "SF", CostCents: 1000}},
+		PaymentToken: "tok_runner", Lines: []LineInput{{ProductID: productID, QtyEntered: 3, UOMEntered: "SF"}},
 	})
 	if isTillStub(err) || errors.Is(err, errCardDeclined) {
 		t.Skipf("A-03 TakeTender not yet implemented: %v", err)
@@ -477,7 +477,7 @@ func TestIntegration_Idempotency_ReplayUnderRealDB(t *testing.T) {
 	svc := realPosSvc(t, pool, stubCharger{})
 	in := SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, CustomerID: custID, Tender: TenderAccount,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 2, UOMEntered: "SF", CostCents: 1000}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 2, UOMEntered: "SF"}},
 	}
 	// WALK-IN has no credit → ACCOUNT would be COD-blocked; use a real contractor instead.
 	_ = pool.QueryRow(ctx, `SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND credit_limit_cents>1000000 LIMIT 1`).Scan(&in.CustomerID)
@@ -524,7 +524,7 @@ func TestIntegration_ReturnRequest_CrashWindow_RejectRefused_ApproveConverges(t 
 	// A committed ACCOUNT sale to return against.
 	sale, err := svc.Sale(ctx, SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, CustomerID: custID, Tender: TenderAccount,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 4, UOMEntered: "SF", CostCents: 1000}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 4, UOMEntered: "SF"}},
 	})
 	if err != nil {
 		t.Fatalf("seed sale: %v", err)
@@ -603,7 +603,7 @@ func TestIntegration_BelowFloor_NoCommit(t *testing.T) {
 	out, err := svc.Sale(globalCtx(t, pool), SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, CustomerID: walkInID(t, pool), Tender: TenderCash,
 		TillSessionID: openTill(t, pool, branchID),
-		Lines:         []LineInput{{ProductID: productID, QtyEntered: 1, UOMEntered: "SF", CostCents: 9_999_999}},
+		Lines:         []LineInput{{ProductID: productID, QtyEntered: 1, UOMEntered: "SF"}},
 	})
 	var pb ErrPriceBlocked
 	if !errors.As(err, &pb) {
@@ -623,7 +623,7 @@ func TestIntegration_OperatorReopen(t *testing.T) {
 	svc := realPosSvc(t, pool, stubCharger{})
 	out, err := svc.Sale(ctx, SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, CustomerID: custID, Tender: TenderAccount,
-		Lines: []LineInput{{ProductID: productID, QtyEntered: 1, UOMEntered: "SF", CostCents: 1000}},
+		Lines: []LineInput{{ProductID: productID, QtyEntered: 1, UOMEntered: "SF"}},
 	})
 	if err != nil {
 		t.Fatalf("sale: %v", err)
@@ -655,7 +655,7 @@ func TestIntegration_AssessRelief_MaskedAndSnapshot(t *testing.T) {
 	sale, err := svc.Sale(ctx, SaleInput{
 		IdempotencyKey: key(), BranchID: branchID, CustomerID: custID, Tender: TenderCash,
 		TillSessionID: openTill(t, pool, branchID),
-		Lines:         []LineInput{{ProductID: productID, QtyEntered: 4, UOMEntered: "SF", CostCents: 1000}},
+		Lines:         []LineInput{{ProductID: productID, QtyEntered: 4, UOMEntered: "SF"}},
 	})
 	if isTillStub(err) {
 		t.Skipf("A-03 TakeTender not yet implemented: %v", err)
