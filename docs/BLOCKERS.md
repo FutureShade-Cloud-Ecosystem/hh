@@ -205,3 +205,22 @@ backup into a Dibbits staging org (HH-BISTRACK-CUTOVER-RULING-r1). The
 module stays the fail-closed stub it is today; the FIRST lane that
 touches it removes the push half and that sentence. Until then this
 entry marks the obligation.
+
+## The Counter Till cycle, lane L3 (W1): the entrypoint seam sits in main.go (recorded, work continuing)
+
+The lane's declared Touches name core/internal/demo/, demo_on.go,
+demo_off.go and the NewStaticKeySource comment, but the item's guards
+(G0's demo-check subcommand, G2's serve refusal, G3's check before the
+listener, the demo graph's substituted verifier and membership source)
+are unreachable from a build-tagged file alone: main() dispatches roles
+through a switch with no seam, and registerRoutes constructs the platform
+membership client unconditionally, so a demo box cannot boot the default
+serve path at all. The lane therefore added the smallest seam main.go
+admits: one guarded call to demoDispatch before the standard role switch,
+with the no-op stub in demo_off.go. The default build's behavior is
+unchanged (the stub returns false before the switch), the G1 tests in
+core/cmd/core hold the default dependency closure free of
+core/internal/demo/, and the compiled-binary review command counts demo
+symbols and expects none. The lead merges: any other lane that needs a
+demo-only subcommand adds its case to demoDispatch in demo_on.go, not to
+main.go.
