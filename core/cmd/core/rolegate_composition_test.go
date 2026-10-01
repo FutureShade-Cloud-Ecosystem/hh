@@ -244,6 +244,10 @@ func TestRoleGateMatrixAtTheCounter(t *testing.T) {
 	rgAdmitted(t, "inside sales reads stock", code, body)
 	code, body = rgProbe(t, fx, http.MethodGet, "/api/v1/payments/config", sales)
 	rgAdmitted(t, "inside sales reads the card rail's status", code, body)
+	// The read serves the dealer-admin readers too: hr's admin cell reads
+	// what hr's seat could already write.
+	code, body = rgProbe(t, fx, http.MethodGet, "/api/v1/payments/config", rgHeaders(t, fx, xrSubHR))
+	rgAdmitted(t, "hr reads the card rail's status", code, body)
 	code, body = rgProbe(t, fx, http.MethodPost, "/api/v1/staff/approvals", sales)
 	rgAdmitted(t, "inside sales files an approval request", code, body)
 	code, body = rgProbe(t, fx, http.MethodGet, "/api/v1/dispatch/board", sales)

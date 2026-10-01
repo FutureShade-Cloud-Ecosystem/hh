@@ -2204,6 +2204,7 @@ paths:
       x-access:
         surfaces:
           - counter-till
+          - dealer-admin
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"

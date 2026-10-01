@@ -252,6 +252,28 @@ the commit is contract sources and generated outputs only.
   the database-gated composition walk, neither of which the repository's
   CI executes. W5's acceptance run sets the gate variables and is the
   natural home; until then the attach-time panic is the only stop.
+- **The whole-row walk composes across grants; the tier guard reads the
+  winner** (the re-read review's note b, for the comprehensive review to
+  judge on purpose). A person holding hr (tier 1, dealer-admin admin) and
+  sales_manager (tier 2, manager-home work) passes a requireAdmin route
+  annotated manager-home at read, which neither role passes alone: hr
+  fails the tier gate, the sales manager fails the requireAdmin tier.
+  That is one reading of D48's "a person holding two roles gets both",
+  implemented in rolegate.go's whole-row walk over ResolveRoles beside
+  the winner-only ResolveStaff the tier guard reads; the two gates
+  deliberately read different facts about the same grants. ResolveRoles'
+  own suite sits in internal/identity (authority_roles_test.go).
+- **Recorded, not changed** (the re-read review's notes c and d):
+  hr still reads the pricing surface's reads (rules, price files, the
+  rebate ledger, dealer-admin at admin); the PR 44 ruling covered the
+  writes, and cost and margin on the fields are the cost_visibility
+  list's job, so these reads belong to the item that reads that list;
+  the refusal wording in rolegate.go and merge.mjs says level none
+  "refuses every role" where the comment beside it correctly says it
+  would admit every role (a wording slip, three places); and apiV1Path
+  recognises a registration only behind one of five method prefixes, so
+  a methodless, HEAD or OPTIONS registration under /api/v1/ would pass
+  the registrar ungated (none exists today).
 - **The all-ten convention, for the comprehensive review's eye** (the PR
   44 review's P3-5): nineteen routes name every surface, so every role
   whose house-messages cell is at least read passes them, and every
