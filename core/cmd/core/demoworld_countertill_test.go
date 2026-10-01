@@ -425,6 +425,31 @@ func (c *tillClient) call(method, path string, body any) demoResponse {
 	return demoResponse{status: rsp.Code, body: rsp.Body.Bytes()}
 }
 
+// callWithApprover issues one request carrying a second credential in its own
+// header beside the clerk's bearer (the manager's walk over, D49): the same
+// request, the approver's token riding X-Approver-Authorization.
+func (c *tillClient) callWithApprover(method, path string, body any, approverToken string) demoResponse {
+	c.t.Helper()
+	reader := bytes.NewReader(nil)
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			c.t.Fatalf("marshal body for %s %s: %v", method, path, err)
+		}
+		reader = bytes.NewReader(raw)
+	}
+	req := httptest.NewRequest(method, path, reader)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("X-Approver-Authorization", "Bearer "+approverToken)
+	req.Header.Set("X-Org", demoOrgSlug)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	rsp := httptest.NewRecorder()
+	c.mux.ServeHTTP(rsp, req)
+	return demoResponse{status: rsp.Code, body: rsp.Body.Bytes()}
+}
+
 // demoSaleLine and demoSaleBody mirror the ring body's fields this test sends. The cost stays out
 // of the body (a zero cost_cents, exactly what the ring path sends today).
 type demoSaleLine struct {
@@ -996,14 +1021,26 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 			"order_line_id": ln.OrderLineID, "qty_base": ln.QtySold, "reason_code": "DAMAGED",
 		})
 	}
-	cardRetRsp := sales.call("POST", "/api/v1/pos/returns", map[string]any{
+	cardRetBody := map[string]any{
 		"idempotency_key": uuid.NewString(),
 		"order_id":        cardRing.OrderID,
 		"refund_method":   "CARD",
 		"restock":         true,
 		"reason":          "demo world proof, the whole card sale back",
 		"lines":           cardLines,
-	})
+	}
+	// Under the landed refund rule (RT-B) the clerk's own return above the
+	// amount refuses with the approval body naming the configured amount and
+	// approvers, and the manager's credential in its own header completes it
+	// as the manager's decision with the clerk named (D49).
+	refusedRsp := sales.call("POST", "/api/v1/pos/returns", cardRetBody)
+	refusedRsp.ok(t, http.StatusConflict)
+	if !strings.Contains(string(refusedRsp.body), "refund_approval_required") ||
+		!strings.Contains(string(refusedRsp.body), "sales_manager") {
+		t.Fatalf("the above amount card return must refuse with the approval body, got: %s", string(refusedRsp.body))
+	}
+	t.Logf("the above amount card return refuses as Sales with the approval body: %s", string(refusedRsp.body))
+	cardRetRsp := sales.callWithApprover("POST", "/api/v1/pos/returns", cardRetBody, manager.token)
 	cardRetRsp.ok(t, http.StatusCreated)
 	var cardRet returnCommit
 	cardRetRsp.decode(t, &cardRet)
@@ -1011,7 +1048,7 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 		t.Fatalf("the card return totals %d, the story needs it above the refund amount %d",
 			cardRet.TotalCents, refundAmountCents)
 	}
-	t.Logf("RECORDED (RT-B changes it): the whole card return, %d cents, above 250.00, went through as Sales", cardRet.TotalCents)
+	t.Logf("the whole card return, %d cents, above 250.00, refused as Sales and completed by the Sales manager's credential", cardRet.TotalCents)
 	var cardRefundRef string
 	if err := pool.QueryRow(ctx, `SELECT COALESCE(gateway_ref::text,'') FROM payments WHERE id = $1`,
 		cardRet.RefundPaymentID).Scan(&cardRefundRef); err != nil {
