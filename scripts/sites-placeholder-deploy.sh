@@ -150,7 +150,10 @@ JSON
 # that prints credentials (--show-secrets, --verbose, --report, client --debug)
 # is passed.
 phase_deploy() {
-  : "${APPWRITE_SITES_KEY:?the key is not in the environment of this step}"
+  # Tested by its length, never by expansion, so not even a trace (bash -x)
+  # prints the key: the traced lines show only "x" and a number.
+  [ -n "${APPWRITE_SITES_KEY+x}" ] && [ "${#APPWRITE_SITES_KEY}" -gt 0 ] \
+    || fail "the key is not in the environment of this step"
   : "${APPWRITE_ENDPOINT:?}" "${APPWRITE_PROJECT_ID:?}" "${APPWRITE_CLI:?}" "${SITE_ID:?}" "${RUNNER_TEMP:?}"
   local work="$RUNNER_TEMP/sites-proof"
   # Global, not local: the EXIT trap runs after this function has returned.
