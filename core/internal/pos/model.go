@@ -66,12 +66,13 @@ type SaleInput struct {
 	Tenders []TenderLegInput `json:"tenders,omitempty"`
 }
 
-// LineInput is one cart line. The PRICE is NOT in the body, it is resolved server-side.
+// LineInput is one cart line. The PRICE is NOT in the body, it is resolved server-side, and no
+// cost rides the ring either: the till rings the customer's rule and tier price and the cost is
+// the core's own reading (D48 row 481, D49).
 type LineInput struct {
 	ProductID  string  `json:"product_id"`
 	QtyEntered float64 `json:"qty_entered"`
 	UOMEntered string  `json:"uom_entered"`
-	CostCents  int64   `json:"cost_cents"`
 }
 
 // Sale is the committed result (also returned verbatim on an idempotent replay).
@@ -352,16 +353,6 @@ func clientErr(status int, format string, a ...any) error {
 	return clientError{status: status, msg: fmt.Sprintf(format, a...)}
 }
 
-// ErrPriceBlocked aborts a sale whose line price is below the floor (routes to the 0016 queue).
-type ErrPriceBlocked struct {
-	Policy string
-	LineNo int
-}
-
-func (e ErrPriceBlocked) Error() string {
-	return fmt.Sprintf("pos: line %d price blocked (%s)", e.LineNo, e.Policy)
-}
-
 // ErrCreditBlocked aborts an ACCOUNT sale that fails the credit gate.
 type ErrCreditBlocked struct{ Policy string }
 
@@ -591,6 +582,15 @@ type ReturnInput struct {
 	// amount, and books to the fee_revenue line through pos.return.committed.fee_cents. 0 = no fee.
 	FeeBps int `json:"fee_bps,omitempty"`
 
+	// ApproverCredential is the credential carried in the contract's
+	// approver header beside the clerk's bearer on a return above the
+	// amount (row 482): the same Bearer scheme prefix as Authorization, the
+	// manager's own credential entered at the clerk's till. The handler
+	// reads it from the header once and carries it verbatim; it never
+	// arrives in a body (the json tag refuses) and nothing on the request
+	// path logs it.
+	ApproverCredential string `json:"-"`
+
 	// internalRail marks the ONE internal caller (ApproveReturnRequest) allowed to use the reserved
 	// "rreq:" idempotency-key namespace. Unexported, so it can never be set from a JSON body, a public
 	// POST /api/v1/pos/returns with an "rreq:" key is refused (422) before it can hijack a request's
@@ -796,9 +796,9 @@ type returnLineRow struct {
 
 // MarginGlanceInput is the POST /api/v1/pos/margin-glance body: the CURRENT ticket's lines, sent
 // exactly as the ring body sends them (product/qty/uom, never a client price). The server derives
-// each line's revenue through the SAME pricing authority the terminal prices with
-// (pricing.DeriveLinePrice) and marries it to the engine's cost source, the per-branch WAC row
-// (product_branch_costs.avg_unit_cost_cents, per product BASE uom; the same row the pricing
+// each line's revenue through the SAME counter resolve the terminal prices with
+// (pricing.DeriveCounterLinePrice) and marries it to the engine's cost source, the per-branch WAC
+// row (product_branch_costs.avg_unit_cost_cents, per product BASE uom; the same row the pricing
 // low-margin scan and inventory.BranchCostCents read).
 type MarginGlanceInput struct {
 	BranchID     string      `json:"branch_id"`

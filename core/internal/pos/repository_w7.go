@@ -426,6 +426,27 @@ func scanParkedTicket(row pgx.Row) (ParkedTicket, error) {
 	return t, nil
 }
 
+// GetParkedTicket reads one ticket whatever its status, the parked fence's pre-read: the service
+// holds the branch wall before any write, so a foreign branch's ticket is refused on its branch
+// and not on its status.
+func (r *Repository) GetParkedTicket(ctx context.Context, id string) (ParkedTicket, bool, error) {
+	if r.pool == nil {
+		return ParkedTicket{}, false, errNoPool
+	}
+	const q = `
+SELECT id::text, ticket_no, branch_id::text, COALESCE(customer_id::text,''), sale_type, notes, lines, status, created_at::text
+  FROM pos_parked_tickets
+ WHERE id::text = $1`
+	t, err := scanParkedTicket(r.pool.QueryRow(ctx, q, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ParkedTicket{}, false, nil
+	}
+	if err != nil {
+		return ParkedTicket{}, false, err
+	}
+	return t, true, nil
+}
+
 func (r *Repository) MarkParkedResumed(ctx context.Context, id, actor string) (ParkedTicket, error) {
 	if r.pool == nil {
 		return ParkedTicket{}, errNoPool
