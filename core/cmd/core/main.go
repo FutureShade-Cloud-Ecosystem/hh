@@ -53,6 +53,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: core <serve|worker|migrate|seed|demoseed> [flags]")
 		os.Exit(2)
 	}
+	// Demo-only roles (the demo build's serve, the demo one-shots) answer
+	// through the build-tagged pair demo_on.go and demo_off.go. In the
+	// default build the stub answers false and everything below runs
+	// exactly as it always has.
+	if demoDispatch(os.Args[1], os.Args[2:]) {
+		return
+	}
 	switch role := os.Args[1]; role {
 	case "serve":
 		if err := serve(os.Getenv); err != nil {
