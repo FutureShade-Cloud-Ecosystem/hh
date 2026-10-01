@@ -1,0 +1,69 @@
+name: sites-placeholder-deploy
+
+# Deploys the Sites placeholder (the design system harness pages, as
+# committed) to the FB Console site sites-proof and proves it from outside at
+# https://sites-proof.futurebuild.ai/ (Console 2, CON-2.4: steps S3, S4 and S7
+# of the Sites preparation, con-2.4-sites-prep.md r4 in the infra repository).
+# Dispatched by hand only. Until act P4.4 sets the repository secret
+# APPWRITE_SITES_KEY (a key holding sites.write alone) and the repository
+# variable APPWRITE_HH_PROJECT_ID, a run ends green at its gate step and
+# deploys nothing. The logic lives in scripts/sites-placeholder-deploy.sh.
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_site:
+        description: "First run only (step S3): create the site sites-proof before deploying"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sites-placeholder-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      APPWRITE_ENDPOINT: https://api.futurebuild.ai/v1
+      SITE_ID: sites-proof
+      SITE_URL: https://sites-proof.futurebuild.ai/
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Gate on the key
+        id: gate
+        env:
+          # Whether the secret exists, never its value: the key itself is
+          # handed to the deploy step alone.
+          KEY_SET: ${{ secrets.APPWRITE_SITES_KEY != '' }}
+          APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_HH_PROJECT_ID }}
+        run: bash scripts/sites-placeholder-deploy.sh gate
+      - name: Set up Node
+        if: steps.gate.outputs.ready == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Install the Appwrite CLI (pinned, integrity checked)
+        if: steps.gate.outputs.ready == 'true'
+        run: bash scripts/sites-placeholder-deploy.sh install
+      - name: Deploy the placeholder
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          APPWRITE_SITES_KEY: ${{ secrets.APPWRITE_SITES_KEY }}
+          APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_HH_PROJECT_ID }}
+          CREATE_SITE: ${{ inputs.create_site }}
+        run: bash scripts/sites-placeholder-deploy.sh deploy
+      - name: Prove the page from outside
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          POLL_ATTEMPTS: '30'
+          POLL_WAIT_SECONDS: '10'
+        run: bash scripts/sites-placeholder-deploy.sh verify
