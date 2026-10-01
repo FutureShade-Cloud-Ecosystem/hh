@@ -194,13 +194,17 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		panic("payment vault init failed: " + err.Error())
 	}
 	payStore := payment.NewStore(pool, payVault)
-	paySvc := payment.NewService(payStore, payment.RunPaymentsStub{})
-	payment.NewHandler(payStore, log).WithUserLinker(link).RegisterRoutes(r, g)
 	// DIB-416: the POS card rail selection is FATAL, the same fail-closed
-	// posture the payments gateway selector carries.
-	if _, cardErr := payment.SelectCardProcessor(payment.LoadCardRailConfig()); cardErr != nil {
+	// posture the payments gateway selector carries. The processor the
+	// selector chooses is the one the service wires (HH-178): the till's
+	// card charges (the charger seam below) and the pos card refunds (the
+	// refunder seam further down) both ride it.
+	cardProc, cardErr := payment.SelectCardProcessor(payment.LoadCardRailConfig())
+	if cardErr != nil {
 		panic("POS card rail selection refused to boot (DIB-416): " + cardErr.Error())
 	}
+	paySvc := payment.NewService(payStore, cardProc)
+	payment.NewHandler(payStore, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// A-03 till: the CARD branch's charger seam closes here (payment has
 	// landed): the creds-free adapter, credentials never crossing into the
