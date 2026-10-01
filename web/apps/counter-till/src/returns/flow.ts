@@ -15,12 +15,16 @@ import {
   staffPos,
   staffTill,
   type ApiClient,
+  type DemoFlow,
   type PosRefundApproval,
   type PosReturn,
   type PosReturnInput,
   type PosReturnLineInput,
   type PosReturnLookup,
+  type Result,
 } from "@hardscapehouse/api-client";
+import type { DemoAccount } from "../demo-account.js";
+import type { OneTimeCredential } from "./approval.js";
 import type { RefundApprovalCapture } from "./capture.js";
 
 /** How the original sale was paid, as the lookup's tender field spells it. */
@@ -77,6 +81,16 @@ export interface SaleLookup {
 export interface ReturnsFlowOptions {
   /** The clerk's client: the till's own session rides its header provider. */
   client: ApiClient;
+  /**
+   * The approver's client: the same transport rules, and a header provider
+   * that takes the one time credential when the approval's single send runs.
+   * The clerk's client never carries the credential, so no other call can.
+   */
+  approverClient: ApiClient;
+  /** The demo adapter, for the flows list and the approver's mint. */
+  account: DemoAccount;
+  /** The one time credential slot the approval's send consumes. */
+  credential: OneTimeCredential;
   /** The clerk the till is signed in as, read at receipt time. */
   clerkName: () => string | null;
   /** The wrapped fetch's reader for the refusal body's approval. */
@@ -87,6 +101,9 @@ export interface ReturnsFlowOptions {
 
 export class ReturnsFlow {
   readonly #client: ApiClient;
+  readonly #approverClient: ApiClient;
+  readonly #account: DemoAccount;
+  readonly #credential: OneTimeCredential;
   readonly #clerkName: () => string | null;
   readonly #capture: RefundApprovalCapture;
   readonly #onChange: () => void;
@@ -122,9 +139,18 @@ export class ReturnsFlow {
    * what the server said.
    */
   refusal: PosRefundApproval | null = null;
+  /** The Manager approval dialog, when the desk shows it. */
+  dialogOpen = false;
+  /** The approver roles' cards inside the dialog, or null while they load. */
+  approverFlows: DemoFlow[] | null = null;
+  /** True while the dialog's mint and its one send are in flight. */
+  approving = false;
 
   constructor(options: ReturnsFlowOptions) {
     this.#client = options.client;
+    this.#approverClient = options.approverClient;
+    this.#account = options.account;
+    this.#credential = options.credential;
     this.#clerkName = options.clerkName;
     this.#capture = options.capture;
     this.#onChange = options.onChange;
@@ -210,6 +236,7 @@ export class ReturnsFlow {
   #draftChanged(): void {
     this.refusal = null;
     this.#pendingKey = null;
+    this.#pendingInput = null;
     this.#onChange();
   }
 
@@ -250,6 +277,7 @@ export class ReturnsFlow {
     if (!this.canSubmit || this.lookup === null || this.method === null) return;
     const input = this.#buildInput();
     if (input === null) return;
+    this.#pendingInput = input;
     this.submitting = true;
     this.notice = null;
     this.#onChange();
@@ -280,19 +308,111 @@ export class ReturnsFlow {
       this.#onChange();
       return;
     }
+    this.receipt = this.#receiptFrom(committed, null);
+    this.#pendingInput = null;
+    this.#onChange();
+  }
+
+  /** The refusal's "Manager approval" control: the dialog with the approver roles' cards. */
+  async openApprovalDialog(): Promise<void> {
+    if (this.refusal === null || this.dialogOpen) return;
+    this.dialogOpen = true;
+    this.approverFlows = null;
+    this.#onChange();
+    const result = await this.#account.listFlows();
+    if (!result.ok) {
+      this.approverFlows = [];
+      this.#onChange();
+      return;
+    }
+    const wanted = new Set(this.refusal.approvers);
+    this.approverFlows = result.value.filter(
+      (row): row is DemoFlow & { flow: string } =>
+        typeof row.flow === "string" && row.flow !== "" && typeof row.role_code === "string" && wanted.has(row.role_code),
+    );
+    this.#onChange();
+  }
+
+  closeApprovalDialog(): void {
+    this.dialogOpen = false;
+    this.approverFlows = null;
+    this.#onChange();
+  }
+
+  /**
+   * The one send with the approver's credential (D49): the dialog's card
+   * mints the approver credential through the demo adapter, the same return
+   * goes once more with it in X-Approver-Authorization, and the token lives
+   * in the one time slot for exactly that send: the slot is swept in the same
+   * breath whatever the answer turns out to be, and nothing else remains of
+   * it but the approver's name, which is not a credential and rides the
+   * receipt. The clerk's session is never touched.
+   */
+  async approveWithFlow(flowName: string): Promise<void> {
+    if (this.refusal === null || this.approving) return;
+    const input = this.#pendingInput;
+    if (input === null) return;
+    this.approving = true;
+    this.#onChange();
+    const minted = await this.#account.mintApproverCredential(flowName);
+    if (!minted.ok) {
+      this.#endApproval(`The manager's sign-in was refused: ${minted.error}`);
+      return;
+    }
+    const approverName = minted.value.approverName;
+    this.#credential.set(minted.value.token);
+    let result: Result<PosReturn>;
+    try {
+      result = await staffPos.posCreateReturn(this.#approverClient, input);
+    } finally {
+      this.#credential.drop();
+    }
+    this.approving = false;
+    if (!result.ok) {
+      this.#endApproval(`The refund was refused again: ${result.error}`);
+      return;
+    }
+    const committed = validateReturn(result.value);
+    if (committed === null) {
+      this.#endApproval("The refund's answer was not a readable return: the receipt waits rather than guessing.");
+      return;
+    }
+    this.receipt = this.#receiptFrom(committed, approverName);
+    this.#endApproval(null);
+  }
+
+  #endApproval(notice: string | null): void {
+    this.approving = false;
+    this.dialogOpen = false;
+    this.approverFlows = null;
+    if (notice !== null) {
+      this.notice = notice;
+    } else {
+      // A committed approval ends the draft's story: the refusal it earned and
+      // the pending input it rode out on both go.
+      this.refusal = null;
+      this.#pendingKey = null;
+      this.#pendingInput = null;
+    }
+    this.#onChange();
+  }
+
+  #receiptFrom(
+    committed: { returnNo: string; method: RefundMethod; subtotalCents: number; taxCents: number; totalCents: number; replayed: boolean },
+    approverName: string | null,
+  ): RefundReceipt {
     const clerk = this.#clerkName();
-    this.receipt = {
+    return {
       returnNo: committed.returnNo,
       method: committed.method,
       subtotalCents: committed.subtotalCents,
       taxCents: committed.taxCents,
       totalCents: committed.totalCents,
       replayed: committed.replayed,
-      approverName: null,
+      approverName,
       clerkName: clerk !== null && clerk !== "" ? clerk : null,
-      cardSimulated: this.method === "CARD" ? this.cardSimulated : null,
+      cardSimulated: committed.method === "CARD" ? this.cardSimulated : null,
     };
-    this.#onChange();
   }
 
   /** Back to the blank desk: the receipt's story is told, the next one starts. The sale number stays typed: the next lookup is often the same sale. */
@@ -313,6 +433,8 @@ export class ReturnsFlow {
    * drops the pending key: a different return is a different send.
    */
   #pendingKey: string | null = null;
+  /** The exact input the desk sent and, when refused for approval, sends again unchanged. */
+  #pendingInput: PosReturnInput | null = null;
 
   #buildInput(): PosReturnInput | null {
     if (this.lookup === null || this.method === null) return null;
@@ -345,7 +467,11 @@ export class ReturnsFlow {
     this.drawer = { kind: "unknown" };
     this.cardSimulated = null;
     this.refusal = null;
+    this.dialogOpen = false;
+    this.approverFlows = null;
+    this.approving = false;
     this.#pendingKey = null;
+    this.#pendingInput = null;
   }
 
   async #readDrawer(branchId: string): Promise<void> {

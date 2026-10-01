@@ -28,6 +28,18 @@ export interface MintedSession {
   user: AccountUser;
 }
 
+/**
+ * A minted approver credential: the token for the one return call that may
+ * carry it, plus the approver's display name for the receipt. This is not a
+ * session: the adapter stores nothing of it, custody never sees it, and the
+ * caller drops the token after the one call.
+ */
+export interface ApproverCredential {
+  token: string;
+  approverName: string;
+  expiresAtMs: number;
+}
+
 /** The demo routes' listing and minting, plus the seam the auth package injects. */
 export class DemoAccount implements AccountSurface {
   readonly #client: ApiClient;
@@ -58,6 +70,23 @@ export class DemoAccount implements AccountSurface {
     }
     this.#mint = minted;
     return ok({ ...minted });
+  }
+
+  /**
+   * The approver's credential for a return above the amount (D49): the same
+   * demo mint, asked for the approver flow's card in the Manager approval
+   * dialog. This mint is NOT adopted: the clerk's session is never replaced,
+   * and this adapter stores nothing of the answer. The token rides back to
+   * the caller, which holds it in memory for the one call and drops it.
+   */
+  async mintApproverCredential(flow: string): Promise<Result<ApproverCredential>> {
+    const result = await staffDemo.demoCreateSession(this.#client, { flow });
+    if (!result.ok) return result;
+    const minted = validateMint(result.value, Date.now());
+    if (minted === null) {
+      return err("the approver mint's answer is not a usable session: no token, no usable user block, or no readable expiry in the token");
+    }
+    return ok({ token: minted.token, approverName: minted.user.name, expiresAtMs: minted.tokenExpiresAtMs });
   }
 
   // The seam's remaining operations, answered from the held mint. The two

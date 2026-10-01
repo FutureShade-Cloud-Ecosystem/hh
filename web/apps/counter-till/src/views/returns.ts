@@ -8,6 +8,7 @@ import { css, html, nothing, type TemplateResult } from "lit";
 import { formatMoney } from "../money.js";
 import { approverLabels } from "../returns/approval.js";
 import type { RefundMethod, RefundReceipt, ReasonCode, ReturnsFlow } from "../returns/flow.js";
+import type { PosRefundApproval } from "@hardscapehouse/api-client";
 
 export const returnsStyles = css`
   .returns {
@@ -168,6 +169,43 @@ export const returnsStyles = css`
   .refusal p {
     margin: 0 0 var(--hh-s-8);
   }
+  .refusal button {
+    margin-top: var(--hh-s-8);
+  }
+  .dialog {
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-control);
+    background: var(--hh-card);
+    padding: var(--hh-s-16);
+    margin: var(--hh-s-16) 0 0;
+    max-width: 480px;
+  }
+  .dialog h3 {
+    font-size: var(--hh-s-16);
+    margin: 0 0 var(--hh-s-8);
+  }
+  .dialog p {
+    margin: 0 0 var(--hh-s-12);
+  }
+  .dialog .cards {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hh-s-12);
+    margin: 0 0 var(--hh-s-16);
+  }
+  .dialog .card {
+    min-height: 64px;
+    font-size: var(--hh-s-16);
+    font-weight: 600;
+    background: var(--hh-card);
+    color: var(--hh-text);
+    border: 1px solid var(--hh-control-line);
+    text-align: start;
+    padding: var(--hh-s-16) var(--hh-s-20);
+  }
+  .dialog .card:hover:not(:disabled) {
+    border-color: var(--hh-accent);
+  }
   .receipt h3 {
     font-size: var(--hh-s-16);
     margin: 0 0 var(--hh-s-8);
@@ -198,12 +236,13 @@ export function renderReturns(flow: ReturnsFlow): TemplateResult {
       ${flow.notice === null ? nothing : html`<p class="notice" role="status" data-testid="returns-notice">${flow.notice}</p>`}
       ${flow.lookup === null ? nothing : renderSale(flow)}
       ${flow.refusal === null || flow.receipt !== null ? nothing : renderRefusal(flow.refusal)}
+      ${flow.dialogOpen ? renderApprovalDialog(flow) : nothing}
       ${flow.receipt === null ? nothing : renderReceipt(flow.receipt)}
     </section>
   `;
 }
 
-function renderRefusal(approval: { amount_cents: number; approvers: string[] }): TemplateResult {
+function renderRefusal(approval: PosRefundApproval): TemplateResult {
   // The roles named the way the refusal speaks them: the Sales manager, or
   // the Branch manager. A role key with no label shows as the key itself.
   const named = approverLabels(approval.approvers).map((role) => `the ${role}`);
@@ -217,6 +256,40 @@ function renderRefusal(approval: { amount_cents: number; approvers: string[] }):
         this desk cannot commit it as rung.
       </p>
       <p>It can be committed by ${roles}: a manager whose role holds the approval.</p>
+      <button type="button" class="btn-primary" data-action="returns-approve">Manager approval</button>
+    </section>
+  `;
+}
+
+function renderApprovalDialog(flow: ReturnsFlow): TemplateResult {
+  return html`
+    <section class="dialog" role="dialog" aria-modal="true" aria-label="Manager approval" data-testid="approval-dialog">
+      <h3>Manager approval</h3>
+      <p>The manager taps their own card here: the till stays the clerk's, and the refund is recorded as the manager's decision with the clerk named beside.</p>
+      ${flow.approverFlows === null
+        ? html`<p class="notice" role="status">Asking for the approver cards.</p>`
+        : flow.approverFlows.length === 0
+          ? html`<p class="notice">No approver card is available in this demo.</p>`
+          : html`
+              <div class="cards" role="group" aria-label="Approver roles">
+                ${flow.approverFlows.map(
+                  (row) => html`
+                    <button
+                      type="button"
+                      class="card"
+                      data-action="returns-approver-flow"
+                      data-flow=${row.flow}
+                      ?disabled=${flow.approving}
+                    >
+                      ${row.label ?? row.flow}
+                    </button>
+                  `,
+                )}
+              </div>
+            `}
+      <button type="button" class="btn-secondary" data-action="returns-approve-cancel" ?disabled=${flow.approving}>
+        Cancel
+      </button>
     </section>
   `;
 }

@@ -22,6 +22,7 @@ import { demoBanner, demoBannerStyles } from "./demo-banner.js";
 import { entryStyles, renderEntry, type FlowsState } from "./views/entry.js";
 import { tillStyles, renderTill } from "./views/till.js";
 import { ReturnsFlow } from "./returns/flow.js";
+import { OneTimeCredential } from "./returns/approval.js";
 import { RefundApprovalCapture } from "./returns/capture.js";
 import { returnsStyles, renderReturns } from "./views/returns.js";
 
@@ -74,6 +75,7 @@ export class CounterTillApp extends HHElement {
   readonly #sessions = new SessionStore();
   readonly #account: DemoAccount;
   readonly #controller: AuthController;
+  readonly #approverCredential: OneTimeCredential;
   #flowsState: FlowsState = { kind: "loading" };
   #busy = false;
   #message: string | null = null;
@@ -86,19 +88,38 @@ export class CounterTillApp extends HHElement {
     // (the amount and the approver roles beside the envelope) reaches the
     // returns flow: the generated client carries the error string alone.
     const capture = new RefundApprovalCapture();
-    const client = new ApiClient({
-      baseUrl: "",
-      fetch: capture.fetch,
-      headers: authHeaderProvider({
-        callerClass: "staff",
-        sessions: this.#sessions,
-        activeOrg: () => DEMO_ORG,
-      }),
+    const staffHeaders = authHeaderProvider({
+      callerClass: "staff",
+      sessions: this.#sessions,
+      activeOrg: () => DEMO_ORG,
     });
+    const client = new ApiClient({ baseUrl: "", fetch: capture.fetch, headers: staffHeaders });
     this.#account = new DemoAccount({ client });
     this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
+    // The approver's client exists for the one return call that may carry the
+    // approver's credential (D49): its provider takes the token out of the
+    // one time slot during that send, and taking is dropping, so the token
+    // rests nowhere before and survives nothing after. The clerk's client is
+    // a different instance and never carries the credential, so no other call
+    // this app makes can leak it. Nothing here touches storage or logs.
+    const approverCredential = new OneTimeCredential();
+    this.#approverCredential = approverCredential;
+    const approverClient = new ApiClient({
+      baseUrl: "",
+      headers: async () => {
+        const headers = await staffHeaders();
+        const token = approverCredential.take();
+        if (token !== null) {
+          headers["X-Approver-Authorization"] = `Bearer ${token}`;
+        }
+        return headers;
+      },
+    });
     this.#returns = new ReturnsFlow({
       client,
+      approverClient,
+      account: this.#account,
+      credential: approverCredential,
       clerkName: () => this.#sessions.current?.user.name ?? null,
       capture,
       onChange: () => this.requestUpdate(),
@@ -147,6 +168,18 @@ export class CounterTillApp extends HHElement {
     }
     if (control.getAttribute("data-action") === "returns-another") {
       this.#returns.startAnotherReturn();
+    }
+    if (control.getAttribute("data-action") === "returns-approve") {
+      void this.#returns.openApprovalDialog();
+    }
+    if (control.getAttribute("data-action") === "returns-approve-cancel") {
+      this.#returns.closeApprovalDialog();
+    }
+    if (control.getAttribute("data-action") === "returns-approver-flow") {
+      const approverFlow = control.getAttribute("data-flow");
+      if (approverFlow !== null && approverFlow !== "") {
+        void this.#returns.approveWithFlow(approverFlow);
+      }
     }
   };
 

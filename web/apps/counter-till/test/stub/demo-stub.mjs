@@ -186,12 +186,36 @@ const APPROVER_ROLES = ["sales_manager", "branch_manager"];
 
 let RETURN_SEQ = 0;
 
+// The approver credential, read the way the caller's is: a bearer this stub
+// minted, carried in its own header. `present` says whether the header rode
+// the request at all; `account` is the verified approver or null.
+function approverFromRequest(request) {
+  const header = request.headers["x-approver-authorization"] ?? "";
+  if (header === "") return { present: false, account: null };
+  const match = /^Bearer (.+)$/.exec(header);
+  if (match === null) return { present: true, account: null };
+  const parts = match[1].split(".");
+  if (parts.length !== 3) return { present: true, account: null };
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    const sub = payload === null || typeof payload !== "object" ? undefined : payload.sub;
+    if (typeof sub !== "string") return { present: true, account: null };
+    for (const flow of Object.keys(USERS)) {
+      if (USERS[flow].user_id === sub) return { present: true, account: USERS[flow] };
+    }
+    return { present: true, account: null };
+  } catch {
+    return { present: true, account: null };
+  }
+}
+
 // What the return's own rails refuse before any money moves, in the
 // contract's envelope. The approval refusal names itself in the error string
 // and carries the requirement under the approval key: the amount and the
 // approver roles, present exactly on that refusal (the contract's own words),
-// so the desk can name both.
-function returnsRefusal(caller, body) {
+// so the desk can name both. A verified approver's credential turns the same
+// return into the approver's decision, committed as one.
+function returnsRefusal(caller, body, approver) {
   if (body === null || typeof body !== "object") {
     return { status: 400, body: { error: "the return's body is not readable" } };
   }
@@ -226,7 +250,7 @@ function returnsRefusal(caller, body) {
     return { status: 409, body: { error: "the drawer named is not the open one" } };
   }
   const totalCents = returnTotal(sale, body.lines);
-  if (totalCents > APPROVAL_AMOUNT_CENTS && !APPROVER_ROLES.includes(caller.account.role_code)) {
+  if (totalCents > APPROVAL_AMOUNT_CENTS && !APPROVER_ROLES.includes(caller.account.role_code) && !approver.present) {
     return {
       status: 409,
       body: {
@@ -456,6 +480,20 @@ const server = createServer(async (request, response) => {
         respondJson(response, 401, { error: "no usable staff credential" });
         return;
       }
+      // The approver's credential beside the clerk's bearer, verified the way
+      // the real rule verifies it: the same mint, an account whose role holds
+      // the approval, a person other than the clerk. A header that is present
+      // and not valid is refused before anything else is judged.
+      const approver = approverFromRequest(request);
+      if (
+        approver.present &&
+        (approver.account === null ||
+          !APPROVER_ROLES.includes(approver.account.role_code) ||
+          approver.account.user_id === caller.account.user_id)
+      ) {
+        respondJson(response, 403, { error: "the approver credential does not name an approver other than the clerk" });
+        return;
+      }
       let body;
       try {
         body = JSON.parse(await readBody(request));
@@ -463,12 +501,12 @@ const server = createServer(async (request, response) => {
         respondJson(response, 400, { error: "the request body is not JSON" });
         return;
       }
-      const refusal = returnsRefusal(caller, body);
+      const refusal = returnsRefusal(caller, body, approver);
       if (refusal !== null) {
         respondJson(response, refusal.status, refusal.body);
         return;
       }
-      respondJson(response, 201, commitReturn(caller, body));
+      respondJson(response, 201, commitReturn(caller, body, approver));
       return;
     }
     respondJson(response, 404, { error: "not found" });
