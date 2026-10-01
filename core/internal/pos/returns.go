@@ -7,6 +7,7 @@ package pos
 
 import (
 	"context"
+	"errors"
 	"math"
 	"net/http"
 	"strings"
@@ -24,6 +25,33 @@ const qtyEpsilon = 1e-6
 // from ("rreq:" + request id). It is RESERVED: a public return may never use it (a colliding key would
 // hijack a PENDING request's replay slot and stamp the wrong money onto its decision).
 const reservedRequestKeyPrefix = "rreq:"
+
+// auditActionRefundApprovalRefused is the audit action of one return the
+// till refused for want of an approval: the row names the clerk, the sale
+// and the amount (D49).
+const auditActionRefundApprovalRefused = "REFUND_APPROVAL_REFUSED"
+
+// refundApprovalRequiredError is the error string the contract pins as the
+// discriminator of the approval refusal (the 409 body's Error envelope;
+// the approval key rides beside it, present exactly when this refusal is
+// the one the till's screen shows the manager dialog for).
+const refundApprovalRequiredError = "refund_approval_required"
+
+// ErrRefundApprovalRequired refuses one return above the configured
+// amount from a role that holds no approval: AmountCents is the
+// configured amount without approval, Approvers the role keys that hold
+// it, both as the configuration sets them (X7), and RefundCents is the
+// refused refund's own total, the fact the audit row keeps. The handler
+// maps it to the contract's 409.
+type ErrRefundApprovalRequired struct {
+	AmountCents int64
+	Approvers   []string
+	RefundCents int64
+}
+
+func (e ErrRefundApprovalRequired) Error() string {
+	return "pos: the refund is above the approval amount and the caller's role holds no approval"
+}
 
 // restocker returns the injected restock seam, defaulting to the behavior-preserving no-op.
 func (s *Service) restocker() StockRestocker {
@@ -183,6 +211,19 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		}
 		total := subtotal + taxTotal
 
+		// The refund rule reads the dealer's configuration (X7): a return
+		// above the configured amount from a role not on the approvers list
+		// is refused HERE, after every line is guarded and before any write
+		// and any rail, so the refusal commits nothing and touches nobody.
+		// At or under the amount no approver is ever asked. The A-06 portal
+		// rail skips this gate: the queue's own decision already approved
+		// that request, and the counter rule is not a second veto over it.
+		if !in.internalRail && s.roles != nil {
+			if refusal, refused := s.refundApprovalRefusal(total, caller); refused {
+				return refusal
+			}
+		}
+
 		// A-06 restocking fee, derived from the ACTUAL committed subtotal (round half-up) so the fee is
 		// exact under partial/capped refunds. fee ≤ subtotal ≤ total by construction (bps ≤ 10000), so the
 		// credited amount (total − fee) can never go negative.
@@ -278,6 +319,19 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		return nil
 	})
 	if err != nil {
+		// The approval refusal writes its own audit row naming the clerk,
+		// the sale and the amount (D49): the money asked for, refused at
+		// the counter, is exactly the fact the trail exists to keep.
+		var refusal ErrRefundApprovalRequired
+		if errors.As(err, &refusal) {
+			s.record(ctx, audit.SensitiveAccess{
+				Action: auditActionRefundApprovalRefused, EntityType: "pos.return", EntityID: oc.OrderID,
+				ActorID: actor, BranchID: oc.BranchID, Purpose: "POS_RETURN",
+				Reason: refundApprovalRequiredError,
+				Extra:  map[string]any{"amount_cents": refusal.RefundCents},
+			})
+			return Return{}, refusal
+		}
 		// A concurrent duplicate hit ux_pos_returns_idem and rolled back, surface the winner (replay).
 		if isUniqueViolationErr(err) {
 			if cached, found, ferr := s.store.FindReturnByKey(ctx, in.IdempotencyKey); ferr == nil && found {
@@ -294,6 +348,34 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		Extra: map[string]any{"return_no": out.ReturnNo, "total_cents": out.TotalCents},
 	})
 	return out, nil
+}
+
+// refundApprovalRefusal answers the configured approval rule (X7) for one
+// computed return total: nil when no configuration is wired (the
+// pre-configuration behavior the older tests pin), when the total sits at
+// or under the amount, or when the caller's role holds the approval. The
+// configured amount is integer cents and the comparison is integer against
+// integer; a role outside the configuration's vocabulary is on no approvers
+// list, fail closed.
+func (s *Service) refundApprovalRefusal(totalCents int64, caller identity.StaffContext) (ErrRefundApprovalRequired, bool) {
+	amount := s.roles.RefundAmountWithoutApprovalCents()
+	if totalCents <= amount {
+		return ErrRefundApprovalRequired{}, false
+	}
+	approved := false
+	if role, ok := canonicalRole(caller); ok {
+		if holds, err := s.roles.ApprovesRefundAboveAmount(role); err == nil {
+			approved = holds
+		}
+	}
+	if approved {
+		return ErrRefundApprovalRequired{}, false
+	}
+	return ErrRefundApprovalRequired{
+		AmountCents: amount,
+		Approvers:   s.roles.RefundApprovers(),
+		RefundCents: totalCents,
+	}, true
 }
 
 // applyAccountCredit books the ACCOUNT_CREDIT rail: offset the original invoice first (floor 0; PAID

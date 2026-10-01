@@ -484,12 +484,22 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var pb ErrPriceBlocked
 	var cb ErrCreditBlocked
 	var nt ErrNoOpenTill
+	var ra ErrRefundApprovalRequired
 	switch {
 	case errors.As(err, &pb):
 		// 409 + the 0016-queue hint (subject_ref = the draft order).
 		httpx.ErrorWith(w, http.StatusConflict, "price_blocked", map[string]any{"policy": pb.Policy, "line": pb.LineNo, "queue": "staff_approvals"})
 	case errors.As(err, &cb):
 		httpx.ErrorWith(w, http.StatusConflict, "credit_blocked", map[string]any{"policy": cb.Policy, "queue": "staff_approvals"})
+	case errors.As(err, &ra):
+		// The contract's PosRefundApprovalRequired: the Error envelope whose
+		// error string discriminates the approval refusal, the approval body
+		// beside it naming the configured amount and the approver role keys
+		// in the configuration's order, so the till's screen can show the
+		// manager dialog (D49, X7).
+		httpx.ErrorWith(w, http.StatusConflict, refundApprovalRequiredError, map[string]any{
+			"approval": map[string]any{"amount_cents": ra.AmountCents, "approvers": ra.Approvers},
+		})
 	case errors.As(err, &nt):
 		httpx.Error(w, http.StatusConflict, nt.Error())
 	case errors.As(err, &ce):
