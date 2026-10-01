@@ -1,17 +1,29 @@
 # @hardscapehouse/counter-till
 
 The Counter Till micro-app: one Vite entry, one bundle (web/apps/README.md).
-This slice is the demo way in: role cards from `GET /api/v1/demo/flows`, the
+This slice is the demo way in (role cards from `GET /api/v1/demo/flows`, the
 demo adapter behind the auth package's `AccountSurface` seam, the api-client
-sending `X-Org: hh-demo`, a header with the Demo banner, the role's name and
-sign out, and a placeholder till. The sale at the counter builds on this shell
-elsewhere in the cycle.
+sending `X-Org: hh-demo`), a header with the Demo banner, the role's name and
+sign out, and the returns desk: the original sale found by its number through
+the branch fenced lookup route, its lines with what is still returnable, the
+three refund rails (cash from the drawer, card to the simulator, account
+credit), and the refund above the dealer's approval amount: refused to the
+clerk with the amount and the approver roles named, completed by a manager's
+own credential entered at the clerk's till through the Manager approval
+dialog, the token held in memory for the one call and dropped, the receipt
+naming the approver and the clerk, and the till still the clerk's. The sale at
+the counter builds on this shell elsewhere in the cycle.
+
+Money is never computed here: every figure on the desk is an integer-cent
+amount the core stated, spelled by the one money helper (`src/money.ts`), and
+no other module formats money.
 
 ## Running the app against the local stub
 
-The app calls the core's demo routes on its own origin. Without a core, a
-local stub serves the same shapes (the contract's `DemoFlowList` and
-`DemoSessionResponse`):
+The app calls the core's routes on its own origin. Without a core, a local
+stub serves the same shapes (the contract's `DemoFlowList`,
+`DemoSessionResponse`, `PosReturnLookup`, `PosReturn`, the approval refusal's
+409, `TillOpenLookup`, `TillZReport`, and `PaymentConfigStatus`):
 
 ```
 node test/stub/demo-stub.mjs        # the demo routes on 127.0.0.1:4821
