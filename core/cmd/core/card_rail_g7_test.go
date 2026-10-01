@@ -410,8 +410,8 @@ func plantDemoWorld(t *testing.T, pool *pgxpool.Pool) {
 		args []any
 	}{
 		{"the demo org", `INSERT INTO org (slug, name) VALUES ($1, $2)`, []any{flows.OrgSlug, "The demo dealer"}},
-		{"the populate's box row", `CREATE TABLE demo_box (moment TIMESTAMPTZ NOT NULL DEFAULT now())`, nil},
-		{"the box row", `INSERT INTO demo_box DEFAULT VALUES`, nil},
+		{"the populate's box table", `CREATE TABLE demo_box (singleton TEXT PRIMARY KEY, populated_at TIMESTAMPTZ NOT NULL, marker TEXT NOT NULL)`, nil},
+		{"the box row", `INSERT INTO demo_box VALUES ('demo', now(), 'hh-demo-populate-v1')`, nil},
 		{"no active outsider accounts", `UPDATE users SET status = 'SUSPENDED' WHERE status = 'ACTIVE'`, nil},
 		{"the demo account", `INSERT INTO users (email, display_name, status) VALUES ($1, $2, 'ACTIVE')`,
 			[]any{"sales@" + flows.ReservedDomain, "Sales (demo)"}},
