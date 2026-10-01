@@ -245,3 +245,54 @@ stop at the lists:
   dealer-admin as the record names them, at levels the matrix says nothing
   about, so any change to those seats is a ruling of its own and no part
   of this reconciliation.
+## Counter Till cycle, lane L0 (W0): the `demoseed -plan` dated range does not describe the world it writes (open)
+
+Item W0's exit test asserts that the demo world's first and last dates in the
+database are those `demoseed -plan` reports for the run's clock. They are not,
+in either direction, on a fresh database built by migrate plus `demoseed
+-apply`:
+
+- The world's oldest rows (the demo customers, products, stock moves and the
+  pricing facts) carry a `created_at` older than the report's first figure.
+  That figure is instead the oldest seeded invoice's issue date: `buildPlan`
+  computes `FirstDate` from the same offset as the deepest invoice issue age
+  (`demoseed_plan.go`, `demoseed_build.go`), while the catalogue, stock and
+  pricing rows are stamped with a deeper `agoDays` figure.
+- The world's newest written row is dated at the run's clock itself; no demo
+  row is written later than the clock. The report's last figure is the
+  furthest scheduled delivery (runs and stops), reached only by scheduled and
+  expiry date columns, never by a written row's own stamp. The widest dated
+  fact in the world overshoots it the other way: a seeded account counter
+  sale's invoice due date lands further out still (the customer's terms added
+  to a sale dated before the clock).
+
+So the report line ("plan N rows across M tables, dated X .. Y") reads as a
+history summary, oldest invoice to furthest scheduled delivery, rather than
+the world's span, and it is not derivable from the rows it summarizes. W0
+recorded this entry rather than narrowing its assertion to the two figures
+that happen to match; the amendment at the end of this entry carries the
+ruling that replaced the span equality with the world's own guarantees (the
+world's earliest written row is recorded, and the newest written row over the
+marker-stamped tables is asserted not after the run's clock). The world
+itself applies clean and is dated to the run's clock: the newest seeded
+counter sale falls on the run's day and every other W0 assertion passes. A
+fix belongs to the seed or its report, never to the test: either derive
+`FirstDate` and `LastDate` from the built rows, or word the report line as
+what it is.
+
+Recorded by lane L0, item W0 (`TestDemoWorld_CounterTill`,
+`core/cmd/core/demoworld_countertill_test.go`). Per the plan's rule for a W0
+gap, the lead closes it inside the goal or puts it to Colton.
+
+- Ruled by the lead, lane L0 amended: the test asserts the world, not the
+  report. The failing equality is replaced by the world's own guarantees
+  (its written history ends at the run's clock, nothing written after it,
+  and its newest business rows, the seeded counter sales, are the run's
+  day), and dated facts that reach past the clock (a seeded account
+  invoice's due date, the furthest scheduled delivery, the planned runs'
+  and stops' own service-day row stamps) are recorded, not treated as the
+  world's end. Both report figures moved to the recorded list, each named
+  for what it actually is (the oldest seeded invoice issue date; the
+  furthest scheduled delivery), so the goal report carries the finding
+  exactly. Fixing the report's wording is outside this cycle's path and
+  goes to the goal report with the recorded values.
