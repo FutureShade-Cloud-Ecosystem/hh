@@ -204,7 +204,11 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		panic("POS card rail selection refused to boot (DIB-416): " + cardErr.Error())
 	}
 	paySvc := payment.NewService(payStore, cardProc)
-	payment.NewHandler(payStore, log).WithUserLinker(link).RegisterRoutes(r, g)
+	// HH-187: the status route's simulated flag reads the service that was
+	// wired, never a handler default: the service's own Simulated is the one
+	// place "which rail is wired" lives, and the screen badge and the demo
+	// build's live-rail refusal both read it.
+	payment.NewHandler(payStore, log).WithUserLinker(link).WithSimulated(paySvc.Simulated()).RegisterRoutes(r, g)
 
 	// A-03 till: the CARD branch's charger seam closes here (payment has
 	// landed): the creds-free adapter, credentials never crossing into the
