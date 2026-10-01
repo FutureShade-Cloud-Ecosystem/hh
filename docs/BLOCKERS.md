@@ -230,13 +230,16 @@ in either direction, on a fresh database built by migrate plus `demoseed
 So the report line ("plan N rows across M tables, dated X .. Y") reads as a
 history summary, oldest invoice to furthest scheduled delivery, rather than
 the world's span, and it is not derivable from the rows it summarizes. W0
-asserts the whole-world reading (min and max `created_at` over every row
-carrying the seed's marker) and records this entry rather than narrowing the
-assertion to the two figures that happen to match. The world itself applies
-clean and is dated to the run's clock: the newest seeded counter sale falls on
-the run's day and every other W0 assertion passes. A fix belongs to the seed
-or its report, never to the test: either derive `FirstDate` and `LastDate`
-from the built rows, or word the report line as what it is.
+recorded this entry rather than narrowing its assertion to the two figures
+that happen to match; the amendment at the end of this entry carries the
+ruling that replaced the span equality with the world's own guarantees (the
+world's earliest written row is recorded, and the newest written row over the
+marker-stamped tables is asserted not after the run's clock). The world
+itself applies clean and is dated to the run's clock: the newest seeded
+counter sale falls on the run's day and every other W0 assertion passes. A
+fix belongs to the seed or its report, never to the test: either derive
+`FirstDate` and `LastDate` from the built rows, or word the report line as
+what it is.
 
 Recorded by lane L0, item W0 (`TestDemoWorld_CounterTill`,
 `core/cmd/core/demoworld_countertill_test.go`). Per the plan's rule for a W0

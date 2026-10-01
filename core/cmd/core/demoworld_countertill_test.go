@@ -20,8 +20,9 @@ package main
 // and GET /api/v1/payments/config.
 //
 // The database gate is this test's own variable, and the harness refuses an address on it that is
-// not local (localhost, a loopback address or a local socket only): a proof of the demo world
-// never points at a shared database. Absent the variable the test skips politely.
+// not local, judged on what the driver would actually dial (localhost, a loopback address or a
+// local socket only): a proof of the demo world never points at a shared database. Absent the
+// variable the test skips politely.
 
 import (
 	"bytes"
@@ -29,20 +30,19 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
@@ -80,23 +80,53 @@ const (
 	refundAmountCents = 25_000
 )
 
-// requireLocalDSN refuses any database address that is not local. A DSN this helper cannot parse
-// as a URL is refused too: the refusal is the point, never a best-effort read of the host.
+// requireLocalDSN refuses any database address that is not local. The judgment lives in
+// checkLocalDSN so the refusal itself has its own test; this wrapper is its one fatal call site.
 func requireLocalDSN(t *testing.T, dsn string) {
 	t.Helper()
-	u, err := url.Parse(dsn)
+	if err := checkLocalDSN(dsn); err != nil {
+		t.Fatal(err.Error())
+	}
+}
+
+// checkLocalDSN judges a database address on what the driver would actually dial, not on the
+// address text: it is parsed with pgconn.ParseConfig, the same parser pgxpool uses, at home in
+// both the URL and the keyword form, with the host= parameter and the environment fallbacks
+// already applied, and every host it would dial, the primary and every fallback, must be local:
+// localhost, a loopback address, or a unix socket directory. An address the parser refuses is
+// refused, and so is an empty resolved host: that would leave the dial target to the
+// environment.
+func checkLocalDSN(dsn string) error {
+	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
-		t.Fatalf("the database address does not parse: %v", err)
+		return fmt.Errorf("the database address does not parse: %w", err)
 	}
-	switch host := u.Hostname(); host {
-	case "", "localhost", "::1":
-		return
-	default:
-		if strings.HasPrefix(host, "127.") {
-			return
+	hosts := make([]string, 0, 1+len(cfg.Fallbacks))
+	hosts = append(hosts, cfg.Host)
+	for _, fb := range cfg.Fallbacks {
+		hosts = append(hosts, fb.Host)
+	}
+	for _, host := range hosts {
+		if hostIsLocal(host) {
+			continue
 		}
-		t.Fatalf("the database address is not local (host %q): the demo world proof runs only against localhost, a loopback address or a local socket", host)
+		return fmt.Errorf("the database address is not local (it would dial host %q): the demo world proof runs only against localhost, a loopback address or a local socket", host)
 	}
+	return nil
+}
+
+// hostIsLocal answers for one resolved dial target: localhost, the loopback range, the IPv6
+// loopback, or a unix socket directory (an absolute path).
+func hostIsLocal(host string) bool {
+	switch {
+	case host == "localhost", host == "::1":
+		return true
+	case strings.HasPrefix(host, "127."):
+		return true
+	case strings.HasPrefix(host, "/"):
+		return true
+	}
+	return false
 }
 
 // freshDemoDB creates this test's own database from zero on the server the DSN names and applies
@@ -143,22 +173,50 @@ func freshDemoDB(t *testing.T, ctx context.Context, dsn string) (*pgxpool.Pool, 
 	return pool, testDSN
 }
 
-// swapDSNDatabase rewrites the database name in a postgres DSN, leaving credentials and options
-// alone.
+// swapDSNDatabase rewrites the database name in a postgres DSN, leaving the server the address
+// dials alone. It parses with the same parser the local-only guard judges the address with and
+// re-serializes the keyword form, so every form the guard accepts (a URL, the keyword form, a
+// host list) swaps correctly. The swapped address spells sslmode=disable: the throwaway local
+// server carries no TLS and the proof never leaves the box.
 func swapDSNDatabase(dsn, name string) string {
-	slash := strings.LastIndex(dsn, "/")
-	if slash < 0 {
+	cfg, err := pgconn.ParseConfig(dsn)
+	if err != nil {
+		// The local-only guard refuses an address the parser cannot read before this runs.
 		return dsn
 	}
-	tail := ""
-	if q := strings.Index(dsn[slash:], "?"); q >= 0 {
-		tail = dsn[slash+q:]
+	hosts := []string{cfg.Host}
+	ports := []string{strconv.Itoa(int(cfg.Port))}
+	for _, fb := range cfg.Fallbacks {
+		hosts = append(hosts, fb.Host)
+		ports = append(ports, strconv.Itoa(int(fb.Port)))
 	}
-	return dsn[:slash+1] + name + tail
+	parts := []string{
+		"host=" + strings.Join(hosts, ","),
+		"port=" + strings.Join(ports, ","),
+	}
+	if cfg.User != "" {
+		parts = append(parts, "user="+quoteKeyword(cfg.User))
+	}
+	if cfg.Password != "" {
+		parts = append(parts, "password="+quoteKeyword(cfg.Password))
+	}
+	parts = append(parts, "dbname="+quoteKeyword(name), "sslmode=disable")
+	return strings.Join(parts, " ")
 }
 
-// demoseedPlanOutput is the part of the -plan report this test asserts on: the run's clock and the
-// world's first and last dates as the command itself reports them.
+// quoteKeyword renders one keyword-form value, quoted and escaped when it carries a character
+// the unquoted form cannot hold.
+func quoteKeyword(v string) string {
+	if strings.ContainsAny(v, " '\\") {
+		return "'" + strings.ReplaceAll(strings.ReplaceAll(v, "\\", "\\\\"), "'", "\\'") + "'"
+	}
+	return v
+}
+
+// demoseedPlanOutput is what the test reads out of the -plan output. The clock is load bearing:
+// the world's clock assertions compare against it. The row count and the report's two dated
+// figures are recorded only (the lead's W0 ruling: the report is not the world), so an
+// unreadable dated range is carried as empty and logged, never fatal.
 type demoseedPlanOutput struct {
 	clock     time.Time
 	firstDate string
@@ -167,7 +225,7 @@ type demoseedPlanOutput struct {
 }
 
 // demoseedRun drives the demoseed subcommand the way a demo box's entrypoint does, -plan first and
-// then -apply, and returns the plan's own report.
+// then -apply, and returns what the -plan output holds.
 func demoseedRun(t *testing.T, dsn string) demoseedPlanOutput {
 	t.Helper()
 	runRole := func(args ...string) string {
@@ -194,37 +252,31 @@ func demoseedRun(t *testing.T, dsn string) demoseedPlanOutput {
 			if err != nil {
 				t.Fatalf("demoseed -plan clock line %q does not parse: %v", v, err)
 			}
-			// The report prints the clock at whole-second precision, so every world-stamp
-			// comparison truncates the row stamps to that same precision: the test asserts
-			// against the clock the report states, never a finer one.
 			parsed.clock = at
 		}
 		if rest, ok := strings.CutPrefix(line, "  plan           "); ok {
+			// Recorded only: the report's own summary of its row count and dated range. A line
+			// that changed shape costs the run its recorded figures, never its verdict.
 			rest = strings.TrimSpace(rest)
 			var rows int
-			if _, err := fmt.Sscanf(rest, "%d rows across", &rows); err != nil {
-				t.Fatalf("demoseed -plan row count line %q does not parse: %v", rest, err)
+			if _, err := fmt.Sscanf(rest, "%d rows across", &rows); err == nil {
+				parsed.rows = rows
 			}
-			parsed.rows = rows
-			at := strings.Index(rest, ", dated ")
-			if at < 0 {
-				t.Fatalf("demoseed -plan line %q carries no dated range", rest)
-			}
-			dates := strings.SplitN(rest[at+len(", dated "):], " … ", 2)
-			if len(dates) != 2 {
-				t.Fatalf("demoseed -plan dated range in %q does not parse", rest)
-			}
-			parsed.firstDate = strings.TrimSpace(dates[0])
-			parsed.lastDate = strings.TrimSpace(dates[1])
-			for _, d := range []string{parsed.firstDate, parsed.lastDate} {
-				if _, err := time.Parse("2006-01-02", d); err != nil {
-					t.Fatalf("plan date %q does not parse: %v", d, err)
+			if at := strings.Index(rest, ", dated "); at >= 0 {
+				dates := strings.SplitN(rest[at+len(", dated "):], " … ", 2)
+				if len(dates) == 2 {
+					first, last := strings.TrimSpace(dates[0]), strings.TrimSpace(dates[1])
+					_, ferr := time.Parse("2006-01-02", first)
+					_, lerr := time.Parse("2006-01-02", last)
+					if ferr == nil && lerr == nil {
+						parsed.firstDate, parsed.lastDate = first, last
+					}
 				}
 			}
 		}
 	}
-	if parsed.clock.IsZero() || parsed.firstDate == "" || parsed.lastDate == "" || parsed.rows == 0 {
-		t.Fatalf("demoseed -plan output is missing its clock, dated range or row count:\n%s", planOut)
+	if parsed.clock.IsZero() {
+		t.Fatalf("demoseed -plan output is missing its clock line, the one figure the world's clock assertions hang off:\n%s", planOut)
 	}
 
 	applyOut := runRole("-apply")
@@ -478,31 +530,54 @@ type zreportView struct {
 }
 
 // demoHST is the engine's own half-up-once header arithmetic, applied at the engine's resolved
-// rate rather than a constant.
+// rate rather than a constant. The half-cent sale below exists so this formula's rounding is
+// actually discriminated: at a subtotal landing exactly on a half cent, half down and half even
+// both answer one cent less and fail.
 func demoHST(subtotalCents int64, rateBps int) int64 {
 	return (subtotalCents*int64(rateBps) + 5000) / 10000
 }
 
-// demoTaxRate resolves the standard rate the way the engine resolves it: the effective-dated row
-// for the standard reason on the run's day, falling back to the engine's own standard figure when
-// no row is effective.
-func demoTaxRate(t *testing.T, ctx context.Context, pool *pgxpool.Pool, at time.Time) int {
+// engineRate asks the engine's own surface for the standard rate: GET /api/v1/tax/rates, the
+// manager read over the same table the sale's assessment resolves, with the engine's own
+// effective-dating rule applied (rows for the reason effective on the run's day, the latest
+// effective_from wins). No effective row would mean the engine falls back to a built-in figure
+// silently; the proof refuses to guess a fallback and fails instead, so a change in the engine's
+// table or its wiring fails here rather than passing on a figure the test supplied itself.
+func engineRate(t *testing.T, c *tillClient, day time.Time) int {
 	t.Helper()
-	var bps int
-	err := pool.QueryRow(ctx, `
-		SELECT rate_bps FROM tax_rates
-		WHERE jurisdiction = 'ON' AND reason_code = 'STD_ON_HST_13'
-		  AND effective_from <= $1::date
-		  AND (effective_to IS NULL OR effective_to >= $1::date)
-		ORDER BY effective_from DESC
-		LIMIT 1`, at.Format("2006-01-02")).Scan(&bps)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 1300
+	rsp := c.call("GET", "/api/v1/tax/rates", nil)
+	rsp.ok(t, http.StatusOK)
+	var ratesView struct {
+		Rates []struct {
+			Jurisdiction  string `json:"jurisdiction"`
+			ReasonCode    string `json:"reason_code"`
+			RateBps       int    `json:"rate_bps"`
+			EffectiveFrom string `json:"effective_from"`
+			EffectiveTo   string `json:"effective_to"`
+		} `json:"rates"`
 	}
-	if err != nil {
-		t.Fatalf("resolving the engine's tax rate: %v", err)
+	rsp.decode(t, &ratesView)
+	rates := ratesView.Rates
+	dayStr := day.Format("2006-01-02")
+	best, bestFrom := -1, ""
+	for _, r := range rates {
+		if r.Jurisdiction != "ON" || r.ReasonCode != "STD_ON_HST_13" {
+			continue
+		}
+		if r.EffectiveFrom > dayStr {
+			continue
+		}
+		if r.EffectiveTo != "" && r.EffectiveTo < dayStr {
+			continue
+		}
+		if best == -1 || r.EffectiveFrom > bestFrom {
+			best, bestFrom = r.RateBps, r.EffectiveFrom
+		}
 	}
-	return bps
+	if best == -1 {
+		t.Fatalf("the engine's rate table answers no standard rate for %s: the sale's assessment would fall back silently and the proof will not guess the fallback", dayStr)
+	}
+	return best
 }
 
 func TestDemoWorld_CounterTill(t *testing.T) {
@@ -600,8 +675,8 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 		return id
 	}
 	c01, c02, c09 := customer("DEMO-C01"), customer("DEMO-C02"), customer("DEMO-C09")
-	rateBps := demoTaxRate(t, ctx, pool, plan.clock)
-	t.Logf("the engine's standard rate on the run's day: %d bps", rateBps)
+	rateBps := engineRate(t, manager, plan.clock)
+	t.Logf("the engine's standard rate on the run's day, from the engine's own rates read: %d bps", rateBps)
 
 	// 5. the drawer: Sales opens the MAIN drawer at Trenton.
 	drawerRsp := sales.call("POST", "/api/v1/till/sessions", map[string]any{
@@ -667,13 +742,17 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 		t.Fatalf("the cash sale's tax %d is not its subtotal %d at the engine's %d bps, half up once (want %d)",
 			cashRing.TaxCents, cashRing.SubtotalCents, rateBps, demoHST(cashRing.SubtotalCents, rateBps))
 	}
-	if cashRing.ChangeDueCents != cashRing.CashTenderedCents-cashRing.TotalCents {
+	if cashRing.CashTenderedCents != demoCashTendered {
+		t.Fatalf("the cash sale's answer echoes tendered %d, the ring sent %d",
+			cashRing.CashTenderedCents, demoCashTendered)
+	}
+	if cashRing.ChangeDueCents != demoCashTendered-cashRing.TotalCents {
 		t.Fatalf("the cash sale's change due %d is not the tendered %d less the total %d",
-			cashRing.ChangeDueCents, cashRing.CashTenderedCents, cashRing.TotalCents)
+			cashRing.ChangeDueCents, demoCashTendered, cashRing.TotalCents)
 	}
 	t.Logf("the walk-in cash sale %s: subtotal %d, tax %d, total %d, tendered %d, change due %d",
 		cashRing.OrderNo, cashRing.SubtotalCents, cashRing.TaxCents, cashRing.TotalCents,
-		cashRing.CashTenderedCents, cashRing.ChangeDueCents)
+		demoCashTendered, cashRing.ChangeDueCents)
 
 	// 8. the card sale on the fixed demo token, above the refund amount.
 	cardRingRsp := sales.call("POST", "/api/v1/pos/sales", demoSaleBody{
@@ -723,8 +802,13 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 	if invStatus != "FINALIZED" {
 		t.Fatalf("C02's invoice is %s, want FINALIZED", invStatus)
 	}
-	if invBalance != invTotal {
-		t.Fatalf("C02's invoice balance %d is not its total %d", invBalance, invTotal)
+	if invTotal != acctC02.TotalCents {
+		t.Fatalf("C02's invoice totals %d, the ring answered %d, the invoice is not the sale's",
+			invTotal, acctC02.TotalCents)
+	}
+	if invBalance != acctC02.TotalCents {
+		t.Fatalf("C02's invoice balance %d is not the sale's total %d outstanding",
+			invBalance, acctC02.TotalCents)
 	}
 	t.Logf("the account sale for C02 %s: invoice FINALIZED, balance %d", acctC02.OrderNo, invBalance)
 
@@ -767,6 +851,37 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 	c01View := getSaleView(t, sales, acctC01.OrderID)
 	t.Logf("RECORDED (RT-A and the pricing fix change it): C01's Holland paver line rang at %d cents per PC with no cost in the body (subtotal %d)",
 		c01View.Lines[0].UnitPriceCents, c01View.SubtotalCents)
+
+	// 11b. The rounding proof: one sale whose subtotal lands exactly on a half cent at the
+	// engine's rate, so half up passes and half down and half even both fail. C01's wall block
+	// rule price is exact in every rounding mode (the list 1250 less its 1800 bps, 225, with no
+	// remainder), so two units price 2050, and 2050 at 1300 bps is exactly 266.5: half up
+	// answers 267, half down and half even answer 266.
+	halfRingRsp := sales.call("POST", "/api/v1/pos/sales", demoSaleBody{
+		IdempotencyKey: uuid.NewString(),
+		BranchID:       trentonBranchID,
+		SaleType:       "COLLECT_NOW",
+		CustomerID:     c01,
+		Tender:         "ACCOUNT",
+		Lines: []demoSaleLine{
+			{ProductID: wallBlock, QtyEntered: 2, UOMEntered: "PC"},
+		},
+	})
+	halfRingRsp.ok(t, http.StatusCreated)
+	var halfRing saleRing
+	halfRingRsp.decode(t, &halfRing)
+	if halfRing.SubtotalCents != 2050 {
+		t.Fatalf("the half-cent sale's subtotal is %d, want the rule's exact 2050, the figure the rounding assertion hangs off", halfRing.SubtotalCents)
+	}
+	if remainder := halfRing.SubtotalCents * int64(rateBps) % 10000; remainder != 5000 {
+		t.Fatalf("the half-cent sale's subtotal no longer lands on a half cent at the engine's %d bps (remainder %d), the rounding assertion would not bite", rateBps, remainder)
+	}
+	if halfRing.TaxCents != 267 || halfRing.TaxCents != demoHST(halfRing.SubtotalCents, rateBps) {
+		t.Fatalf("the half-cent sale's tax is %d, want 267: 2050 at the engine's %d bps is exactly 266.5, rounded half up once (half down and half even both answer 266)",
+			halfRing.TaxCents, rateBps)
+	}
+	t.Logf("the half-cent sale %s: subtotal 2050 at %d bps lands on exactly 266.5, the tax is 267, half up once",
+		halfRing.OrderNo, rateBps)
 
 	// 12. a parked ticket, parked by Sales, resumed by the Sales manager.
 	parkRsp := sales.call("POST", "/api/v1/pos/parked", map[string]any{
@@ -936,6 +1051,7 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 		{"the card sale", "", cardRing},
 		{"the account sale for C02", c02, acctC02},
 		{"C01's paver sale", c01, acctC01},
+		{"C01's half-cent sale", c01, halfRing},
 	} {
 		view := getSaleView(t, sales, tc.ring.OrderID)
 		if view.SubtotalCents != tc.ring.SubtotalCents || view.TaxCents != tc.ring.TaxCents || view.TotalCents != tc.ring.TotalCents {
@@ -982,6 +1098,10 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 		t.Fatalf("the database holds %d org rows, %d of them hh-demo, want exactly one, hh-demo", orgCount, demoOrgCount)
 	}
 
+	// The run's day here is the seed clock's own UTC day: the seed reads its one clock in UTC
+	// and stamps every row from it, so the world's day is that clock's UTC day. The house rule
+	// that a daily roll means the dealer's own day governs the product's daily windows; this is
+	// the proof of the seed's clock, and the seed's clock is UTC.
 	var newestSeeded time.Time
 	if err := pool.QueryRow(ctx, `
 		SELECT max(ps.created_at) FROM pos_sale ps
@@ -994,10 +1114,14 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 			newestSeeded.UTC().Format(time.RFC3339), plan.clock.Format(time.RFC3339))
 	}
 
-	// What the world guarantees: its written history (every account, product, order, invoice,
-	// payment and stock fact the seed writes) ends at the run's clock, nothing written after it.
-	// Its earliest written row is the earliest dated fact this test reads over the seeded tables,
-	// and it is recorded rather than pinned to a figure.
+	// What the world guarantees, asserted over the seven marker-stamped tables (customers,
+	// products, orders, order_lines, invoices, payments, stock_moves): no row among them is
+	// stamped after the run's clock, at the precision the report prints. That the history
+	// REACHES the clock rests on the newest seeded counter sale check above, and the delivery
+	// tables stand outside this population on purpose: the planned runs and stops are the
+	// world's forward calendar, recorded below, never treated as its history. The earliest
+	// written row here is the earliest dated fact this test reads over the seeded tables,
+	// recorded rather than pinned to a figure.
 	var worldOldest, worldNewest time.Time
 	if err := pool.QueryRow(ctx, `
 		SELECT min(d), max(d) FROM (
@@ -1054,8 +1178,12 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 		Scan(&oldestInvoiceIssue); err != nil {
 		t.Fatalf("reading the oldest seeded invoice: %v", err)
 	}
-	t.Logf("RECORDED: demoseed -plan's first figure %s is the oldest seeded invoice issue date (the database answers %s), its last figure %s is the furthest scheduled delivery (the database answers %s)",
-		plan.firstDate, oldestInvoiceIssue.UTC().Format("2006-01-02"), plan.lastDate, furthestScheduled.UTC().Format("2006-01-02"))
+	if plan.firstDate == "" || plan.lastDate == "" {
+		t.Logf("RECORDED: demoseed -plan's dated range did not parse, its two figures go unrecorded (the report may have changed shape)")
+	} else {
+		t.Logf("RECORDED: demoseed -plan's first figure %s is the oldest seeded invoice issue date (the database answers %s), its last figure %s is the furthest scheduled delivery (the database answers %s)",
+			plan.firstDate, oldestInvoiceIssue.UTC().Format("2006-01-02"), plan.lastDate, furthestScheduled.UTC().Format("2006-01-02"))
+	}
 
 	// 19. the drawer's expected cash: its float plus the cash sale less the cash refund.
 	zRsp := sales.call("GET", "/api/v1/till/sessions/"+drawer.ID+"/zreport", nil)
@@ -1115,4 +1243,75 @@ func engineUnitPrices(t *testing.T, c *tillClient, customerID string, view saleV
 		out[p.ProductID] = p.CustomerCents
 	}
 	return out
+}
+
+// TestDemoWorldHarness_RefusesNonLocalAddresses exercises the harness's local-only refusal
+// itself, on the forms a URL-text guard accepted before: the keyword form, the host= parameter
+// override, an empty host with PGHOST naming a remote server, and a plain remote URL, beside the
+// accepted local forms, each accepted form's database-name swap judged by parsing what the swap
+// produced.
+func TestDemoWorldHarness_RefusesNonLocalAddresses(t *testing.T) {
+	refused := []struct{ name, dsn string }{
+		{"plain remote URL", "postgres://hardscape:hardscape@db.remote.example:5432/hardscapeos?sslmode=disable"},
+		{"keyword form, remote host", "host=db.remote.example port=5432 user=hardscape password=hardscape dbname=hardscapeos sslmode=disable"},
+		{"host parameter overrides a local URL host", "postgres://hardscape@localhost:5590/hardscapeos?host=db.remote.example&sslmode=disable"},
+		{"fallback host remote", "postgres://hardscape@127.0.0.1:5590/hardscapeos?sslmode=disable&host=127.0.0.1,db.remote.example"},
+	}
+	for _, tc := range refused {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := checkLocalDSN(tc.dsn); err == nil {
+				t.Fatal("the address was judged local")
+			}
+		})
+	}
+	t.Run("empty host with PGHOST remote", func(t *testing.T) {
+		t.Setenv("PGHOST", "db.remote.example")
+		if err := checkLocalDSN("postgres:///hardscapeos?sslmode=disable"); err == nil {
+			t.Fatal("the address was judged local while PGHOST names a remote server")
+		}
+	})
+
+	accepted := []struct{ name, dsn string }{
+		{"loopback URL", "postgres://hardscape:hardscape@127.0.0.1:5590/hardscapeos?sslmode=disable"},
+		{"localhost URL", "postgres://hardscape:hardscape@localhost/hardscapeos?sslmode=disable"},
+		{"IPv6 loopback URL", "postgres://hardscape:hardscape@[::1]:5590/hardscapeos?sslmode=disable"},
+		{"keyword form, local host", "host=127.0.0.1 port=5590 user=hardscape password=hardscape dbname=hardscapeos sslmode=disable"},
+	}
+	for _, tc := range accepted {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := checkLocalDSN(tc.dsn); err != nil {
+				t.Fatalf("the local address was refused: %v", err)
+			}
+			swapped := swapDSNDatabase(tc.dsn, "demoworld_till")
+			cfg, err := pgconn.ParseConfig(swapped)
+			if err != nil {
+				t.Fatalf("the swapped address does not parse: %v", err)
+			}
+			if cfg.Database != "demoworld_till" {
+				t.Fatalf("the swapped address names database %q", cfg.Database)
+			}
+			orig, err := pgconn.ParseConfig(tc.dsn)
+			if err != nil {
+				t.Fatalf("the original address does not parse: %v", err)
+			}
+			if cfg.Host != orig.Host || cfg.Port != orig.Port || cfg.User != orig.User || cfg.Password != orig.Password {
+				t.Fatalf("the swap moved the server: host %q to %q, port %d to %d", orig.Host, cfg.Host, orig.Port, cfg.Port)
+			}
+		})
+	}
+	t.Run("empty host with PGHOST unset falls back local", func(t *testing.T) {
+		t.Setenv("PGHOST", "")
+		dsn := "postgres:///hardscapeos?sslmode=disable"
+		if err := checkLocalDSN(dsn); err != nil {
+			t.Fatalf("the socket default was refused: %v", err)
+		}
+		swapped := swapDSNDatabase(dsn, "demoworld_till")
+		cfg, err := pgconn.ParseConfig(swapped)
+		if err != nil {
+			t.Fatalf("the swapped address does not parse: %v", err)
+		}
+		if cfg.Database != "demoworld_till" || !hostIsLocal(cfg.Host) {
+			t.Fatalf("the swapped address names database %q at host %q", cfg.Database, cfg.Host)
+		}
+	})
 }
