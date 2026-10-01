@@ -196,3 +196,77 @@ jobs:
             echo "no web package ran a test suite; the loop above is broken" >&2
             exit 1
           fi
+
+  # The demo tag, and the gated legs whose absence the cycle recorded: the
+  # demo tag never compiled or ran in CI, and the composition and identity
+  # suites' database legs skipped politely in the ci job above because no
+  # gate variable was set. This job sets them, against one throwaway
+  # Postgres service, and migrates the scratch databases the identity
+  # suites expect (their fixtures plant rows and read migration-planted
+  # catalogue rows, so each gate variable points at an already-migrated
+  # database of its own).
+  #
+  # The job is deliberately not a required check: its first runs are read
+  # by the lead, not relied on (the plan's own wording), and the required
+  # status stays the ci job alone until the lead says otherwise.
+  demo:
+    name: demo tag and the gated database legs
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: till_base
+        ports:
+          - 5599:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      BASE: postgres://postgres:postgres@127.0.0.1:5599
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+      - name: Vet and build both tag shapes
+        working-directory: core
+        run: |
+          go vet ./...
+          go vet -tags demo ./...
+          go build -tags demo ./...
+      - name: Create and migrate the scratch databases the gated legs share
+        working-directory: core
+        run: |
+          set -euo pipefail
+          psql "$BASE/postgres?sslmode=disable" -v ON_ERROR_STOP=1 \
+            -c 'CREATE DATABASE till_core_gate' \
+            -c 'CREATE DATABASE till_b3_gate' \
+            -c 'CREATE DATABASE till_b4_gate'
+          for name in till_core_gate till_b3_gate till_b4_gate; do
+            DATABASE_URL="$BASE/$name?sslmode=disable" go run ./cmd/core migrate
+          done
+      - name: Untagged suite with the gate variables set
+        working-directory: core
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_base?sslmode=disable
+          HH_CORE_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_core_gate?sslmode=disable
+          HH_B3_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_b3_gate?sslmode=disable
+          HH_B4_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_b4_gate?sslmode=disable
+        run: go test ./... -count=1 -p 1
+      - name: Demo tag suite with the gate variable set
+        working-directory: core
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_base?sslmode=disable
+          HH_CORE_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_core_gate?sslmode=disable
+        run: go test -tags demo ./... -count=1 -p 1
+      - name: Integration tag suite (the composition legs)
+        working-directory: core
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_base?sslmode=disable
+        run: go test -tags integration ./... -count=1 -p 1
