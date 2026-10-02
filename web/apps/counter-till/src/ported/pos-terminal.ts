@@ -1358,6 +1358,31 @@ export class HosPosTerminal extends LitElement {
         36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
         minmax(52px, auto) minmax(40px, auto) 24px;
     }
+    /* P3-7: below the desktop breakpoint the eight (nine with margin) tracks
+       cannot fit the card: the table ran past its card's right edge and took
+       the money columns with it. The Weight column drops (its figures stay in
+       the Cards view), and the table scrolls inside its card so the qty
+       stepper, the money and the remove control stay reachable. At 820 and
+       above nothing changes. */
+    @media (max-width: 819px) {
+      .linegrid {
+        grid-template-columns:
+          36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
+          24px;
+      }
+      .linegrid.withmargin {
+        grid-template-columns:
+          36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
+          minmax(40px, auto) 24px;
+      }
+      .linehead span:nth-child(7),
+      .linerow .lweight {
+        display: none;
+      }
+      .linegrid {
+        overflow-x: auto;
+      }
+    }
     .linehead,
     .linerow {
       display: grid;
