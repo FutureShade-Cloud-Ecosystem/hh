@@ -302,11 +302,14 @@ export async function openStep(page: Page, step: Step): Promise<void> {
 }
 
 /**
- * The words the entry page states when the box refuses a sign-in (the status
- * line under the cards, where the app renders the mint's refusal): the
- * signal the belt watches for beside the success signal.
+ * The window refusal's own words, inside the entry page's refusal status.
+ * The status line's prefix is no good to the belt: the app prints it for
+ * every failed mint, whatever the reason, and a wait cures only the box's
+ * window refusal. The watch holds the narrower words, so the belt retries
+ * the one refusal a wait can cure and every other failed mint fails
+ * through to the expect without spending its waits.
  */
-const REFUSAL_WORDS = "Demo sign-in refused";
+const REFUSAL_WORDS = "too many sign-in attempts";
 
 /**
  * The wait between a refused tap and the next one: the box's own instruction
@@ -328,13 +331,15 @@ const REFUSAL_RETRIES = 2;
  * shared move of every entry-page sign-in (signIn, and the closed drawer
  * spec's own tap before its press), the pace, the tap, and then the watch.
  * The watch is a belt, not an assertion: the till either renders the
- * signed-in chrome or the entry page states the refusal, and the refusal
- * words name the box's window, not a broken till. The belt waits the window
- * out and taps again, at most twice, so one refused sign-in recovers in
- * place instead of failing its test and restarting the worker (a restart
- * drops every spec file's mint memo and injects the very burst the guard
- * refuses; that cascade is what once left the world's drawer closed and the
- * run's later screens timed out on the session dot).
+ * signed-in chrome or the entry page states a refusal, and the watched words
+ * are the window refusal's own, so the belt waits and taps again only for
+ * the one refusal a wait can cure, at most twice. Any other failed mint
+ * fails through to the text expect with no waits spent. The belt exists so
+ * one refused sign-in recovers in place instead of failing its test and
+ * restarting the worker (a restart drops every spec file's mint memo and
+ * injects the very burst the guard refuses; that cascade is what once left
+ * the world's drawer closed and the run's later screens timed out on the
+ * session dot).
  */
 export async function tapRoleCard(page: Page, role: Role): Promise<void> {
   const card = page.getByRole("button", { name: role, exact: true });
