@@ -90,6 +90,13 @@ func (h *Handler) configure(w http.ResponseWriter, r *http.Request, caller guard
 		httpx.Error(w, http.StatusBadRequest, "merchant_id is required")
 		return
 	}
+	// HH-186: refuse the enable. No tender path on this server computes a surcharge, and D18
+	// requires a recorded jurisdiction and cap before enabling (none is recorded), so accepting
+	// the flag would store a setting nothing enforces. Turning it off stays accepted.
+	if req.SurchargeEnabled {
+		httpx.Error(w, http.StatusUnprocessableEntity, ErrSurchargeNotEnforced.Error())
+		return
+	}
 	actorID := identity.StaffUserIDFromContext(r.Context())
 	if err := h.store.Configure(r.Context(), req.Processor, req.MerchantID, req.Currency, req.BaseURL, req.MDRBps, req.SurchargeEnabled, req.Credentials, actorID); err != nil {
 		h.log.Error("payment: configure failed", "err", err)
