@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -263,11 +265,28 @@ type credsReencryptor interface {
 	reencryptActiveCredsTx(ctx context.Context, tx pgx.Tx, processor string, creds map[string]string) error
 }
 
-// Service is the till-facing seam. It holds the config resolver + the active Processor.
+// Service is the till-facing seam. It holds the config resolver + the active Processor, plus the
+// rotation ledger (see holdRotation).
 type Service struct {
 	cfg  configResolver
 	proc Processor
+
+	rotMu   sync.Mutex
+	rotPend *rotatedCreds
 }
+
+// rotatedCreds is one credential rotation observed during an in-transaction charge: the processor
+// (the row key) and the fresh credential set, snapshotted so a later flush cannot observe a map the
+// dispatch path still holds.
+type rotatedCreds struct {
+	processor string
+	creds     map[string]string
+}
+
+// rotationFlushWindow bounds a rotation flush's wait for a free connection: the flusher blocks while
+// the caller's transaction still holds every connection (a one-connection pool until the ring ends),
+// and the window is wide enough for a saturated pool to drain once the caller's transaction ends.
+const rotationFlushWindow = 30 * time.Second
 
 // NewService wires the config store + the active Processor (RunPaymentsStub by default).
 func NewService(store *Store, proc Processor) *Service { return &Service{cfg: store, proc: proc} }
@@ -299,23 +318,66 @@ func (s *Service) Charge(ctx context.Context, in ChargeInput) (ChargeReceipt, er
 // ChargeTx is Charge on the caller's open transaction. The pos Sale
 // transaction holds one connection for the whole atomic ring while it
 // takes the tender: the config read here rides THAT transaction
-// (activeConfigTx) and the rotation write-back, if it ever fires, rides it
-// too, because a pool read there would have the connection holder wait for
-// a second connection, stalling a one-connection pool on a single sale and
-// deadlocking a full pool of concurrent sales until the caller's context
-// ends (the activeConfigTx discipline, RefundTx's shape on the charge
-// side). No pool use is reachable from this path at all.
+// (activeConfigTx), because a pool read there would have the connection
+// holder wait for a second connection, stalling a one-connection pool on
+// a single sale and deadlocking a full pool of concurrent sales until the
+// caller's context ends (the activeConfigTx discipline, RefundTx's shape
+// on the charge side). The rotation write-back is DIFFERENT from the
+// refund side's: a credential rotation must survive a rolled-back sale
+// (the processor has already exchanged the old key, so losing the fresh
+// one can lock the rail out), so the carrier records the rotation in the
+// ledger and a flusher writes it through the POOL once the caller's
+// transaction has released its connection (on a one-connection pool that
+// is the moment the ring ends, commit or rollback alike; the flusher
+// never waits on the transaction and the transaction never waits on the
+// flusher, so the class discipline holds: no pool use is reachable from
+// inside the transaction's own call stack).
 func (s *Service) ChargeTx(ctx context.Context, tx pgx.Tx, in ChargeInput) (ChargeReceipt, error) {
 	cfg, creds, err := s.cfg.activeConfigTx(ctx, tx)
 	if err != nil {
 		return ChargeReceipt{}, err
 	}
-	return s.charge(ctx, cfg, creds, in, func(ctx context.Context, processor string, creds map[string]string) error {
-		if rs, ok := s.cfg.(credsReencryptor); ok {
-			_ = rs.reencryptActiveCredsTx(ctx, tx, processor, creds)
-		}
-		return nil
-	})
+	return s.charge(ctx, cfg, creds, in, s.carryRotationOutOfTheTransaction)
+}
+
+// holdRotation records the freshest rotated credential set in the ledger. Synchronous, pool-free and
+// transaction-free, so the in-transaction carrier can call it: the write itself is the flusher's job.
+func (s *Service) holdRotation(processor string, creds map[string]string) {
+	snap := make(map[string]string, len(creds))
+	for k, v := range creds {
+		snap[k] = v
+	}
+	s.rotMu.Lock()
+	s.rotPend = &rotatedCreds{processor: processor, creds: snap}
+	s.rotMu.Unlock()
+}
+
+// flushRotation writes whatever the ledger holds through the pool, best-effort (the write-back's
+// error was always ignored: the processor's answer is the receipt). Called by the flusher goroutine
+// and directly by the tests.
+func (s *Service) flushRotation(ctx context.Context) {
+	s.rotMu.Lock()
+	pend := s.rotPend
+	s.rotPend = nil
+	s.rotMu.Unlock()
+	if pend == nil {
+		return
+	}
+	_ = s.resealOnPool(ctx, pend.processor, pend.creds)
+}
+
+// carryRotationOutOfTheTransaction is the write-back carrier for ChargeTx: it records the rotation in
+// the ledger and starts the flusher. The flusher's pool acquire blocks while the caller's transaction
+// holds every connection, which is exactly the ordering the semantics need (the write lands after the
+// ring ends, so a rollback cannot discard it), and its window is bounded.
+func (s *Service) carryRotationOutOfTheTransaction(ctx context.Context, processor string, creds map[string]string) error {
+	s.holdRotation(processor, creds)
+	go func() {
+		fctx, cancel := context.WithTimeout(context.Background(), rotationFlushWindow)
+		defer cancel()
+		s.flushRotation(fctx)
+	}()
+	return nil
 }
 
 // charge is the shared body: dispatch Processor.Charge and return the

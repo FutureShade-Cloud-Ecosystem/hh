@@ -35,11 +35,12 @@ const (
 // - consumed seam (zero-trust interface, A-03 never reaches a sibling's tables) -
 //
 // SCAFFOLD-OWNED SHARED SEAM. CardCharger is RUN-PAY's card rail (the creds-free wrapper over
-// payment.Service.Charge, creds resolve INSIDE RUN-PAY and never cross into the till). It is wired in
-// cmd/server/main.go via a thin adapter so payment does NOT import till (no cycle). The caller's
-// tx passes STRAIGHT THROUGH (the pos CardRefunder discipline on the charge side): TakeTender runs
-// inside the sale transaction, which holds a pool connection, so the rail's config read and any
-// rotation write-back ride THAT transaction instead of asking the pool for a second one.
+// payment.Service.Charge, creds resolve INSIDE RUN-PAY and never cross into the till). It is wired
+// in the composition root (cmd/core) via a thin adapter so payment does NOT import till (no
+// cycle). The caller's tx passes STRAIGHT THROUGH (the pos CardRefunder discipline on the charge
+// side): TakeTender runs inside the sale transaction, which holds a pool connection, so the rail's
+// config read and the rotation ledger's flush never ask the pool for a second connection from
+// inside that transaction.
 type CardCharger interface {
 	Charge(ctx context.Context, tx pgx.Tx, amountCents int64, paymentToken, reference string) (ChargeResult, error)
 }

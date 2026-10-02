@@ -59,7 +59,13 @@ func intPool(t *testing.T) *pgxpool.Pool {
 // stubCharger is the deterministic RunPaymentsStub seam for the card path (no live call).
 type stubCharger struct{ fail bool }
 
-func (c stubCharger) Charge(_ context.Context, _ pgx.Tx, _ int64, _, _ string) (till.ChargeResult, error) {
+func (c stubCharger) Charge(_ context.Context, tx pgx.Tx, _ int64, _, _ string) (till.ChargeResult, error) {
+	// The till must hand the SALE's transaction to the rail (the seam's whole point): a nil here is
+	// the charger back on the pool-shaped path, which only the database-gated legs can catch, so
+	// this rig refuses it on every card tender it serves.
+	if tx == nil {
+		return till.ChargeResult{}, errors.New("stub charger: the till forwarded a nil transaction to the card rail")
+	}
 	if c.fail {
 		return till.ChargeResult{Status: "failed"}, errors.New("processor: declined")
 	}

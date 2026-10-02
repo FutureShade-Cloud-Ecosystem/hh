@@ -36,7 +36,7 @@ import (
 )
 
 // chargeStallRequestTimeout bounds ONE card sale's wait for its response.
-// A healthy ring over the wired fold answers in well under a second; on
+// A healthy ring over the wired fold answers with headroom to spare; on
 // the stall the sale never answers and this timeout is what ends it.
 const chargeStallRequestTimeout = 15 * time.Second
 

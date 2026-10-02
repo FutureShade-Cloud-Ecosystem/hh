@@ -3,7 +3,9 @@ package payment
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -13,13 +15,15 @@ import (
 // fakeResolver implements configResolver (and the optional credsReencryptor) without a database, so
 // the pure Charge gateway call is unit-testable. It hands Charge a FRESH copy of creds each call so
 // in-place rotation by the processor is observable. The tx twins are counted apart from the pool
-// reads and writes: the in-transaction refund must resolve and re-seal through them and never
-// through the pool shapes.
+// reads and writes: the in-transaction charge must resolve through them and never through the pool
+// shapes. The counters and recorded facts sit behind a mutex because the rotation flusher runs on
+// its own goroutine (the HH-181 fakePolicy lesson: a shared test helper must be race-clean).
 type fakeResolver struct {
 	cfg   activeCfg
 	creds map[string]string
 	err   error
 
+	mu            sync.Mutex
 	calls         int
 	txCalls       int
 	reencryptCall int
@@ -41,16 +45,22 @@ func (f *fakeResolver) answer() (activeCfg, map[string]string, error) {
 }
 
 func (f *fakeResolver) activeConfig(_ context.Context) (activeCfg, map[string]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls++
 	return f.answer()
 }
 
 func (f *fakeResolver) activeConfigTx(_ context.Context, _ pgx.Tx) (activeCfg, map[string]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.txCalls++
 	return f.answer()
 }
 
 func (f *fakeResolver) reencryptActiveCreds(_ context.Context, processor string, creds map[string]string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.reencryptCall++
 	f.reencProc = processor
 	f.reencCreds = creds
@@ -58,6 +68,8 @@ func (f *fakeResolver) reencryptActiveCreds(_ context.Context, processor string,
 }
 
 func (f *fakeResolver) reencryptActiveCredsTx(_ context.Context, _ pgx.Tx, processor string, creds map[string]string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.txReencrypt++
 	f.reencProc = processor
 	f.reencCreds = creds
@@ -253,12 +265,14 @@ func TestService_Charge_ReadsThroughThePool(t *testing.T) {
 	}
 }
 
-// The rotation write-back on the tx charge rides the transaction too. The
-// stub never rotates, and that is exactly why it is pinned here: the tx
-// twin must already be the carrier the day a live client starts refreshing
-// mid-charge, so the write-back cannot come back as a pool write inside the
-// sale transaction.
-func TestService_ChargeTx_WriteBackRidesTheTransaction(t *testing.T) {
+// The rotation write-back on the tx charge is CARRIED OUT of the
+// transaction and lands through the pool after the caller's ring ends:
+// a credential rotation must survive a rolled-back sale (the processor
+// has already exchanged the old key, so losing the fresh one can lock the
+// rail out; round 1's P2), and a write riding the caller's transaction is
+// exactly what a rollback discards. The stub never rotates, and that is
+// exactly why the carrier is pinned here with a rotating spy.
+func TestService_ChargeTx_RotationCarriedOutOfTheTransaction(t *testing.T) {
 	fr := &fakeResolver{
 		cfg:   activeCfg{Processor: "run_payments", MerchantID: "MID-1"},
 		creds: map[string]string{"api_key": "expired"},
@@ -268,14 +282,60 @@ func TestService_ChargeTx_WriteBackRidesTheTransaction(t *testing.T) {
 	if _, err := svc.ChargeTx(context.Background(), nil, validInput()); err != nil {
 		t.Fatalf("ChargeTx: %v", err)
 	}
-	if fr.txReencrypt != 1 {
-		t.Fatalf("reencryptActiveCredsTx calls = %d, want 1: the write-back rides the caller's transaction", fr.txReencrypt)
+	// The carrier's synchronous half: the rotation is recorded in the ledger the moment the live
+	// client rotates, the fresh key snapshotted. The transaction twin must NOT have been used.
+	svc.rotMu.Lock()
+	pend := svc.rotPend
+	svc.rotMu.Unlock()
+	if pend == nil {
+		t.Fatal("the rotation was not recorded in the ledger: nothing would survive a rollback")
 	}
-	if fr.reencryptCall != 0 {
-		t.Fatalf("reencryptActiveCreds calls = %d, want 0: a pool write inside the caller's transaction is the stall", fr.reencryptCall)
+	if pend.processor != "run_payments" || pend.creds["api_key"] != "fresh" {
+		t.Fatalf("the ledger kept wrong facts: processor %q creds %v", pend.processor, pend.creds)
 	}
-	if fr.reencProc != "run_payments" || fr.reencCreds["api_key"] != "fresh" {
-		t.Fatalf("write-back kept wrong facts: processor %q creds %v", fr.reencProc, fr.reencCreds)
+	fr.mu.Lock()
+	txReenc, poolReenc := fr.txReencrypt, fr.reencryptCall
+	fr.mu.Unlock()
+	if txReenc != 0 {
+		t.Fatalf("reencryptActiveCredsTx calls = %d, want 0: a write riding the caller's transaction is discarded by a rollback", txReenc)
+	}
+	if poolReenc != 0 {
+		t.Fatalf("reencryptActiveCreds calls = %d, want 0 inside the transaction's call stack: a pool write there is the stall", poolReenc)
+	}
+	// The flusher's target, driven directly (the goroutine only schedules it): the ledger's rotation
+	// lands through the POOL carrier, best-effort, never on the transaction.
+	svc.flushRotation(context.Background())
+	fr.mu.Lock()
+	poolReenc, reencProc, reencCreds := fr.reencryptCall, fr.reencProc, fr.reencCreds
+	fr.mu.Unlock()
+	if poolReenc != 1 {
+		t.Fatalf("reencryptActiveCreds calls after the flush = %d, want 1: the carried rotation must land through the pool", poolReenc)
+	}
+	if reencProc != "run_payments" || reencCreds["api_key"] != "fresh" {
+		t.Fatalf("the flush wrote wrong facts: processor %q creds %v", reencProc, reencCreds)
+	}
+	// The scheduled flusher: a second rotation must land the same way with no help at all, within a
+	// bounded wait (the goroutine only has to be scheduled).
+	sp2 := &spyProcessor{res: ChargeResult{ProcessorRef: "rp_sim_y", Status: "captured"}, mutateKey: "fresher"}
+	svc.proc = sp2
+	if _, err := svc.ChargeTx(context.Background(), nil, validInput()); err != nil {
+		t.Fatalf("ChargeTx (second rotation): %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		fr.mu.Lock()
+		n, last := fr.reencryptCall, fr.reencCreds
+		fr.mu.Unlock()
+		if n >= 2 {
+			if last["api_key"] != "fresher" {
+				t.Fatalf("the flush wrote a stale rotation: api_key = %q, want the freshest", last["api_key"])
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("reencryptActiveCreds calls = %d, want 2: the scheduled flusher did not land the carried rotation", n)
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
 }
 
