@@ -90,7 +90,12 @@ func (a productStockReader) InStockProductIDs(ctx context.Context, branchID stri
 // posTaxAdapter satisfies pos.TaxAssessor over *tax.Service (the M5 engine). It maps the pos-declared
 // TaxQuoteInput → tax.SaleAssessment and the tax.Quote → pos.QuoteResult. EvidenceAttached is pinned false so
 // the pos seam PRESERVES the 0% evidence hard gate, an evidence-gated reason binds the standard rate here,
-// bit-identical to W4/W5 (the real evidence path runs in the tax-admin recompute, not at the counter).
+// bit-identical to W4/W5 (the real evidence path runs in the tax-admin recompute, not at the counter). The
+// engine's no-standard-rate refusal translates into pos.ErrTaxRailUnavailable, the sentinel pos's writeErr maps
+// to the counter-readable 503: pos never imports the tax package, this adapter is the boundary where the tax
+// rail's "not configured" becomes the counter's "tax cannot be assessed", and the ONLY place that translation
+// lives (pinned by tax_adapter_translation_test.go against the real engine). The FlatHSTAssessor default never
+// produces the refusal, so unwired scaffold compositions are unchanged.
 type posTaxAdapter struct{ svc *tax.Service }
 
 func (a posTaxAdapter) AssessSale(ctx context.Context, in pos.TaxQuoteInput) (pos.QuoteResult, error) {
@@ -111,6 +116,9 @@ func (a posTaxAdapter) AssessSale(ctx context.Context, in pos.TaxQuoteInput) (po
 		var unk tax.UnknownReasonError
 		if errors.As(err, &unk) {
 			return pos.QuoteResult{}, fmt.Errorf("%w: %s", pos.ErrUnknownTaxReason, unk.Error())
+		}
+		if errors.Is(err, tax.ErrNoStandardRate) {
+			return pos.QuoteResult{}, pos.ErrTaxRailUnavailable
 		}
 		return pos.QuoteResult{}, err
 	}

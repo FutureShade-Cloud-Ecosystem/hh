@@ -371,6 +371,18 @@ func (ErrNoOpenTill) Error() string { return "pos: open a till session first" }
 // the message the counter reads.
 var ErrUnknownTaxReason = errors.New("pos: that tax reason is not one the counter can ring; choose a listed relief reason or ring the sale standard")
 
+// ErrTaxRailUnavailable refuses the tax-bound doors (ringing a sale, pricing an
+// order, assessing relief, reading the tax rate) when the wired tax engine
+// reports no standard rate row in effect: the rate table is not configured for
+// the date, tax cannot be assessed, and answering an assessed shape anyway is
+// not an answer (a sale rung untaxed, a quote priced untaxed, a read answering
+// rate 0). pos never imports the tax package: the TaxAssessor
+// seam in sale_hooks.go is the boundary, and the composition root's adapter
+// (cmd/core posTaxAdapter) translates the tax engine's typed refusal into this
+// sentinel, which writeErr maps to the counter-readable 503. The flat default
+// assessor never produces it, so unwired scaffold compositions are unchanged.
+var ErrTaxRailUnavailable = errors.New("pos: the tax rate table is not configured, tax cannot be assessed")
+
 var (
 	errBadRequest    = clientError{status: http.StatusBadRequest, msg: "pos: invalid request"}
 	errMissingKey    = clientError{status: http.StatusBadRequest, msg: "idempotency_key (client UUID) is required"}
