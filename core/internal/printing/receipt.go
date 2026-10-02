@@ -145,6 +145,14 @@ func (s *ReceiptService) Receipt(ctx context.Context, id string) (Receipt, error
 	if sale.BalanceCents > 0 && !sale.SplitTender && unpaidAtRing {
 		deposit = sale.DepositCents
 	}
+	// THE WALK-IN IS THE COUNTER'S OWN WORD (the visual read's G3): the house's canonical walk-in
+	// account (0029's seed, the row pos's ResolveWalkIn resolves by account_no) carries a
+	// data-protection placeholder for a name, and a customer holding the paper must read the
+	// counter's word, not a privacy artifact. Yielding the name lets the template speak the
+	// walk-in word; a named account keeps its name.
+	if strings.EqualFold(sale.CustomerAcct, walkInAccountNo) {
+		sale.CustomerName = ""
+	}
 
 	rec := Receipt{
 		OrgName:           head.OrgName,
@@ -196,6 +204,11 @@ func (s *ReceiptService) Receipt(ctx context.Context, id string) (Receipt, error
 	})
 	return rec, nil
 }
+
+// walkInAccountNo is the house's canonical walk-in account number (0029's seed; pos's
+// ResolveWalkIn resolves walk-ins by it). Printing reads the word for the paper, it never writes
+// the account.
+const walkInAccountNo = "WALK-IN"
 
 // callerScope flattens a StaffContext into the (global, branchIDs) pair the branch-scoped resolution
 // takes, the order module's callerBranchScope, same shape.

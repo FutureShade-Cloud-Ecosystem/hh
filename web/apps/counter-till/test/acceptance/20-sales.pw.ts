@@ -219,6 +219,9 @@ test("tender and receipt: cash with change due, held against the core's own read
   expect(printedText).toContain(`Change due\t${dollars(rung.change_due_cents as number)}`);
   expect(printedText).toContain("Collected at the counter");
   expect(printedText).not.toContain("COLLECT_NOW");
+  // The customer row is required on every sale: the walk-in sale prints the
+  // counter's own word beside the walk-in account.
+  expect(printedText).toContain("Customer: Walk-in");
   expect(printedText).toContain("Hardscape House (demo)");
   expect(printedText).toContain("12 Yard Gate Road");
   // The letterhead's honesty pin: the first dealer's real trading name never

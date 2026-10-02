@@ -165,7 +165,9 @@ var receiptTmpl = template.Must(template.New("receipt").Funcs(template.FuncMap{
   <div class="rule"></div>
 
   <div>
-    {{if .CustomerName}}<div>Customer: {{.CustomerName}}{{if .CustomerAccountNo}} ({{.CustomerAccountNo}}){{end}}</div>{{end}}
+    <!-- The customer row is required on every sale (row 666): a sale with no customer on it
+         speaks the counter's own walk-in word, never an empty slot. -->
+    <div>Customer: {{if .CustomerName}}{{.CustomerName}}{{else}}Walk-in{{end}}{{if .CustomerAccountNo}} ({{.CustomerAccountNo}}){{end}}</div>
     {{if .SaleType}}<div class="muted">{{saleWords .SaleType}}</div>{{end}}
     {{if .CashierRef}}<div class="muted">Served by {{.CashierRef}}</div>{{end}}
   </div>
@@ -306,7 +308,9 @@ var receiptPageTmpl = template.Must(template.New("receipt-page").Funcs(template.
   <div class="rule"></div>
 
   <div>
-    {{if .CustomerName}}<div>Customer: {{.CustomerName}}{{if .CustomerAccountNo}} ({{.CustomerAccountNo}}){{end}}</div>{{end}}
+    <!-- The customer row is required on every sale (row 666): a sale with no customer on it
+         speaks the counter's own walk-in word, never an empty slot. -->
+    <div>Customer: {{if .CustomerName}}{{.CustomerName}}{{else}}Walk-in{{end}}{{if .CustomerAccountNo}} ({{.CustomerAccountNo}}){{end}}</div>
     {{if .SaleType}}<div class="muted">{{saleWords .SaleType}}</div>{{end}}
     {{if .CashierRef}}<div class="muted">Served by {{.CashierRef}}</div>{{end}}
   </div>

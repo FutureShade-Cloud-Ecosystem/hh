@@ -268,6 +268,8 @@ test("a walk-in cash sale of three lines rings, and the sale read equals every f
   expect(printedText).toContain(`Change due\t${dollars(sale.change_due_cents as number)}`);
   expect(printedText).toContain("Collected at the counter");
   expect(printedText).not.toContain("COLLECT_NOW");
+  // The customer row is required on every sale: a walk-in prints the counter's own word.
+  expect(printedText).toContain("Customer: Walk-in");
   expect(printedText).toContain(`Subtotal\t${dollars(read.subtotal_cents as number)}`);
   expect(printedText).toContain(`\t${dollars(read.tax_cents as number)}`);
   expect(printedText).toContain(`Total\t${dollars(read.total_cents as number)}`);

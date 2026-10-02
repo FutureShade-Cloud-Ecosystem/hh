@@ -484,3 +484,39 @@ func TestRenderReceiptPageHTML_SameDataOwnLayout(t *testing.T) {
 		t.Fatal("the full-page receipt must escape supplied text, it is markup-boundary rendered")
 	}
 }
+
+// THE WALK-IN IS THE COUNTER'S OWN WORD (the visual read's G3): row 666 lists the customer as a
+// required row, so the customer line renders on every sale, and a sale with no customer on it
+// prints the counter's word for that, never an empty slot and never a plausible other name. A
+// named account still prints its name.
+func TestRenderReceiptHTML_TheCustomerRowAlwaysSpeaks(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		account string
+		want    string
+	}{
+		// html escaped, the template is the boundary
+		{"Quinte Paving & Design", "C03", "Customer: Quinte Paving &amp; Design (C03)"},
+		{"", "WALK-IN", "Customer: Walk-in (WALK-IN)"},
+		{"", "", "Customer: Walk-in"},
+	} {
+		for _, render := range []struct {
+			name string
+			fn   func(Receipt) (string, error)
+		}{
+			{"roll", RenderReceiptHTML},
+			{"page", RenderReceiptPageHTML},
+		} {
+			html, err := render.fn(Receipt{
+				OrderNo: "#SO-30", CustomerName: tc.name, CustomerAccountNo: tc.account,
+				SoldAt: time.Now(), PrintedAt: time.Now(),
+			})
+			if err != nil {
+				t.Fatalf("render %s: %v", render.name, err)
+			}
+			if !strings.Contains(html, tc.want) {
+				t.Errorf("%s: customer name %q account %q must print %q", render.name, tc.name, tc.account, tc.want)
+			}
+		}
+	}
+}

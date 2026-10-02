@@ -2184,6 +2184,11 @@ function receiptView(sale) {
     soldAt: receiptStamp(sale.created_at),
     customerName: customer?.name ?? "",
     customerAccountNo: customer?.account_no ?? "",
+    // The customer row is required on every sale (row 666): the walk-in speaks
+    // the counter's own word, the core's own fallback.
+    customerLine: customer?.name
+      ? `Customer: ${customer.name}${customer.account_no ? ` (${customer.account_no})` : ""}`
+      : "Customer: Walk-in",
     fulfilment: fulfilmentWords(sale.sale_type),
     servedBy: operator?.display_name ?? "",
     lines: sale.lines.map((line) => {
@@ -2268,7 +2273,7 @@ function rollReceiptDocument(v, priorPrints) {
   <div class="rule"></div>
 
   <div>
-    ${v.customerName ? `<div>Customer: ${v.customerName}${v.customerAccountNo ? ` (${v.customerAccountNo})` : ""}</div>` : ""}
+    <div>${v.customerLine}</div>
     ${v.fulfilment ? `<div class="muted">${v.fulfilment}</div>` : ""}
     ${v.servedBy ? `<div class="muted">Served by ${v.servedBy}</div>` : ""}
   </div>
@@ -2389,7 +2394,7 @@ function pageReceiptDocument(v, priorPrints) {
   <div class="rule"></div>
 
   <div>
-    ${v.customerName ? `<div>Customer: ${v.customerName}${v.customerAccountNo ? ` (${v.customerAccountNo})` : ""}</div>` : ""}
+    <div>${v.customerLine}</div>
     ${v.fulfilment ? `<div class="muted">${v.fulfilment}</div>` : ""}
     ${v.servedBy ? `<div class="muted">Served by ${v.servedBy}</div>` : ""}
   </div>

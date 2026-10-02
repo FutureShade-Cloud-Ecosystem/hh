@@ -455,3 +455,33 @@ func TestReceiptHandler_RefusedFormatRecordsNoPrint(t *testing.T) {
 		t.Fatal("the next fetch is the reprint the one served print earned, no ordinal burned on the refusal")
 	}
 }
+
+// THE WALK-IN ACCOUNT'S SCRUB PLACEHOLDER NEVER REACHES THE PAPER (the visual read's G3): the
+// house's canonical walk-in account (0029's seed, the row pos's ResolveWalkIn resolves by) carries
+// a data-protection placeholder for a name, and a customer holding the paper must read the
+// counter's word, not a privacy artifact. The receipt yields the walk-in account's name to the
+// template's own walk-in word.
+func TestReceipt_TheWalkInAccountPrintsTheWalkInWord(t *testing.T) {
+	svc, _ := receiptHarness(t)
+	store := svc.store.(*fakeReceiptStore)
+	store.sale.CustomerAcct = "WALK-IN"
+	store.sale.CustomerName = "Scrubbed Party 0009"
+
+	rec, err := svc.Receipt(staffFor(trentonID), saleOrderID)
+	if err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	if rec.CustomerName != "" {
+		t.Fatalf("the walk-in account's placeholder name must not ride the paper, got %q", rec.CustomerName)
+	}
+	html, err := RenderReceiptHTML(rec)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(html, "Customer: Walk-in (WALK-IN)") {
+		t.Fatal("the walk-in sale must print the counter's walk-in word beside the walk-in account")
+	}
+	if strings.Contains(html, "Scrubbed Party") {
+		t.Fatal("the scrub placeholder must never reach the paper")
+	}
+}
