@@ -29,6 +29,22 @@ func RenderReceiptHTML(r Receipt) (string, error) {
 	return buf.String(), nil
 }
 
+// RenderReceiptPageHTML renders the FULL-PAGE receipt (the route's format=page): the same Receipt
+// struct as the roll, so the two documents can never disagree about what the sale was, laid out as
+// a document for a customer who wants one.
+//
+// PROVENANCE (row 666 item 2): this format is HH's own. The reference product carries no full-page
+// receipt, no reference file exists for it, and this template is this repository's own work: the
+// letterhead, the rows and the honesty are the roll document's (the DIB-410 lineage), the page is
+// ours. The same escaping boundary applies: html/template renders every customer-supplied value.
+func RenderReceiptPageHTML(r Receipt) (string, error) {
+	var buf bytes.Buffer
+	if err := receiptPageTmpl.Execute(&buf, r); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
 // Money renders cents as "$1,234.56", the one place receipt money is formatted.
 func Money(cents int64) string {
 	neg := cents < 0
@@ -213,6 +229,143 @@ var receiptTmpl = template.Must(template.New("receipt").Funcs(template.FuncMap{
   </div>
 
   <div class="noprint center" style="margin-top:12px">
+    <button onclick="window.print()">Print</button>
+  </div>
+</body>
+</html>
+`))
+
+// The FULL-PAGE receipt (format=page), HH's own format (see RenderReceiptPageHTML's provenance
+// note): the roll's blocks and words on a letter and A4 page, the print CSS sized for paper instead
+// of a thermal roll. Margins only, never a forced page size, so the same document prints correctly
+// on both letter and A4 drawers.
+var receiptPageTmpl = template.Must(template.New("receipt-page").Funcs(template.FuncMap{
+	"money": Money,
+	"qty":   Qty,
+}).Parse(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Receipt {{.OrderNo}}</title>
+<style>
+  /* Print CSS for a full sheet: letter and A4 both take these margins, the document keeps a
+     readable measure on paper instead of the thermal roll's narrow column, and the colours stay
+     ink-safe. */
+  @page { margin: 18mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
+    font-size: 13px; line-height: 1.5; color: #000; background: #fff;
+    max-width: 180mm; margin: 0 auto; padding: 8px 0;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: .02em; }
+  .muted { color: #444; }
+  .center { text-align: center; }
+  .right { text-align: right; }
+  .rule { border-top: 1px solid #000; margin: 14px 0; }
+  .order-no { font-size: 24px; font-weight: 700; letter-spacing: .04em; margin: 10px 0 4px; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { padding: 4px 0; vertical-align: top; }
+  th { text-align: left; font-weight: 700; border-bottom: 1px solid #000; }
+  .desc { word-break: break-word; }
+  .totals td { padding: 3px 0; }
+  .grand { font-weight: 700; font-size: 15px; border-top: 1px solid #000; }
+  .reprint {
+    border: 2px solid #000; padding: 6px; margin: 10px 0; text-align: center;
+    font-weight: 700; letter-spacing: .12em;
+  }
+  .foot { margin-top: 16px; font-size: 11px; }
+  /* The product mark, the roll document's own rule carried over: the quietest thing on the page,
+     in the foot, under the dealer's letterhead that owns the top. */
+  .mark { margin-top: 6px; font-size: 10px; letter-spacing: .06em; color: #555; }
+  @media print { .noprint { display: none !important; } }
+</style>
+</head>
+<body>
+  <header class="center">
+    {{if .OrgName}}<h1>{{.OrgName}}</h1>{{end}}
+    <div>{{.BranchName}}{{if .BranchCode}} ({{.BranchCode}}){{end}}</div>
+    {{if .BranchAddress}}<div class="muted">{{.BranchAddress}}</div>{{end}}
+  </header>
+
+  <div class="rule"></div>
+
+  {{if .IsReprint}}
+  <!-- The REPRINT marker is a control, not decoration, on this document as on the roll: it names
+       the ordinal so "the second copy" is distinguishable from "the fifth". -->
+  <div class="reprint">REPRINT #{{.ReprintCount}}</div>
+  {{end}}
+
+  <div class="center">
+    <div class="order-no">{{.OrderNo}}</div>
+    {{if .InvoiceNo}}<div class="muted">Invoice {{.InvoiceNo}}</div>{{end}}
+    <div class="muted">{{.SoldAt.Format "2006-01-02 15:04"}}</div>
+  </div>
+
+  <div class="rule"></div>
+
+  <div>
+    {{if .CustomerName}}<div>Customer: {{.CustomerName}}{{if .CustomerAccountNo}} ({{.CustomerAccountNo}}){{end}}</div>{{end}}
+    {{if .SaleType}}<div class="muted">{{.Fulfilment}}</div>{{end}}
+    {{if .CashierRef}}<div class="muted">Served by {{.CashierRef}}</div>{{end}}
+  </div>
+
+  <div class="rule"></div>
+
+  <table>
+    <thead>
+      <tr><th>Item</th><th class="right">Qty</th><th class="right">Unit</th><th class="right">Total</th></tr>
+    </thead>
+    <tbody>
+      {{range .Lines}}
+      <tr class="line">
+        <td class="desc" colspan="4">{{if .SKU}}{{.SKU}} · {{end}}{{.Description}}</td>
+      </tr>
+      <tr class="line-money">
+        <td></td>
+        <td class="right">{{qty .Qty}} {{.UOM}}</td>
+        <td class="right">{{money .UnitPriceCents}}{{if .PriceUOM}}/{{.PriceUOM}}{{end}}</td>
+        <td class="right">{{money .LineTotalCents}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+
+  <div class="rule"></div>
+
+  <table class="totals">
+    <tr><td>Subtotal</td><td class="right">{{money .SubtotalCents}}</td></tr>
+    <tr class="tax"><td>{{.TaxLabel}}</td><td class="right">{{money .TaxCents}}</td></tr>
+    <tr class="grand"><td>Total</td><td class="right">{{money .TotalCents}}</td></tr>
+  </table>
+
+  <div class="rule"></div>
+
+  <table class="tenders">
+    {{range .Tenders}}
+    <tr class="tender"><td>{{.Label}}{{if .Simulated}} <span class="muted">Simulated card: nothing reached a processor.</span>{{end}}{{if .Ref}} <span class="muted">{{.Ref}}</span>{{end}}</td><td class="right">{{money .AmountCents}}</td></tr>
+    {{end}}
+    {{if gt .ChangeDueCents 0}}
+    <tr class="change-due"><td>Change due</td><td class="right">{{money .ChangeDueCents}}</td></tr>
+    {{end}}
+    {{if gt .DepositCents 0}}
+    <tr class="deposit"><td>Deposit</td><td class="right">{{money .DepositCents}}</td></tr>
+    {{end}}
+    {{if gt .BalanceCents 0}}
+    <tr class="balance"><td>Balance due</td><td class="right">{{money .BalanceCents}}</td></tr>
+    {{end}}
+  </table>
+
+  <div class="foot center muted">
+    Printed {{.PrintedAt.Format "2006-01-02 15:04"}}
+    <div>Keep this receipt, returns require it.</div>
+    <!-- DIB-456 / D-078 · the product mark, in the foot exactly as the roll document carries it:
+         the header belongs to the DEALER, the software's name is a footnote. Static text, no
+         template value, so it cannot be turned into an injection point. -->
+    <div class="mark">HH Yard · a Hardscape House product</div>
+  </div>
+
+  <div class="noprint center" style="margin-top:16px">
     <button onclick="window.print()">Print</button>
   </div>
 </body>

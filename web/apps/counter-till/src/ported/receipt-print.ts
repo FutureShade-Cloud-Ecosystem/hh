@@ -17,6 +17,7 @@ import {
   receiptErrorMessage,
   receiptPath,
   type PrintOutcome,
+  type ReceiptFormat,
   type ReceiptWindow,
 } from './receipt-print-logic.js';
 
@@ -25,25 +26,28 @@ export {
   receiptErrorMessage,
   receiptPath,
   type PrintOutcome,
+  type ReceiptFormat,
   type ReceiptWindow,
 } from './receipt-print-logic.js';
 
 /** Fetch the server-rendered receipt document (staff-gated; the token rides on api()). */
-export async function fetchReceiptHTML(saleId: string): Promise<string> {
-  const res = await api(receiptPath(saleId));
+export async function fetchReceiptHTML(saleId: string, format: ReceiptFormat = 'roll'): Promise<string> {
+  const res = await api(receiptPath(saleId, format));
   if (!res.ok) throw new Error(receiptErrorMessage(res.status));
   return res.text();
 }
 
 /**
  * The whole flow: fetch the document with the session token, open a window, print. `openWindow` is
- * injected so the flow can be exercised without a browser.
+ * injected so the flow can be exercised without a browser. The format picks the paper: the 80 mm
+ * roll (the default) or the full-page document.
  */
 export async function printReceipt(
   saleId: string,
   openWindow: () => ReceiptWindow | null = openBlankWindow,
+  format: ReceiptFormat = 'roll',
 ): Promise<PrintOutcome> {
-  const receiptHtml = await fetchReceiptHTML(saleId);
+  const receiptHtml = await fetchReceiptHTML(saleId, format);
   return printReceiptInto(openWindow(), receiptHtml);
 }
 

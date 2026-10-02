@@ -3,6 +3,7 @@ package printing
 import (
 	"context"
 	"errors"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"strings"
 	"testing"
 	"time"
@@ -271,5 +272,35 @@ func TestReceipt_DepositFromTheCommittedSale(t *testing.T) {
 	}
 	if rec.DepositCents != 0 {
 		t.Fatalf("an unsettled sale with nothing captured at ring carries no deposit, got %d", rec.DepositCents)
+	}
+}
+
+// THE FORMAT PARAMETER (row 666 item 2): the route's one optional query value. Empty and roll name
+// the 80 mm document, page names the full-page document, and anything else is a client error naming
+// the value (the doc_types refusal's shape), never a silent fallthrough to a document the caller
+// did not ask for.
+func TestParseReceiptFormat(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want string
+	}{
+		{"", ReceiptFormatRoll},
+		{"roll", ReceiptFormatRoll},
+		{"page", ReceiptFormatPage},
+	} {
+		got, err := parseReceiptFormat(tc.raw)
+		if err != nil {
+			t.Fatalf("parseReceiptFormat(%q): %v", tc.raw, err)
+		}
+		if got != tc.want {
+			t.Fatalf("parseReceiptFormat(%q) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+	_, err := parseReceiptFormat("poster")
+	if !errors.As(err, new(httpx.BadRequestError)) {
+		t.Fatalf("an unknown format must be a bad request naming the value, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "poster") {
+		t.Fatalf("the refusal must name the value, got %v", err)
 	}
 }

@@ -262,6 +262,19 @@ test("a walk-in cash sale of three lines rings, and the sale read equals every f
   const cashWords = dollars(read.total_cents as number).replace("$", "\\$");
   expect(printedText).toMatch(new RegExp(`CASH PMT-\\d+\\t${cashWords}`));
   await printed.close();
+
+  // The full-page document (format=page) is the same receipt laid out as a
+  // sheet: the same figures on its own print CSS, and the stub's print count
+  // marks it REPRINT #1, the second time this sale's paper was asked for.
+  const pagePrinting = page.context().waitForEvent("page");
+  await sold.getByTestId("sold-print-page").click();
+  const printedPage = await pagePrinting;
+  const pageText = await printedPage.locator("body").innerText();
+  expect(pageText).toContain("Collected at the counter");
+  expect(pageText).toContain(`Total\t${dollars(read.total_cents as number)}`);
+  expect(pageText).toContain(`Change due\t${dollars(sale.change_due_cents as number)}`);
+  expect(pageText).toContain("REPRINT #1");
+  await printedPage.close();
 });
 
 test("the quantity rung is the quantity on the screen, and the requested date is the house zone's day", async ({

@@ -2,6 +2,7 @@ package printing
 
 import (
 	"errors"
+	"fmt"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"log/slog"
@@ -38,6 +39,28 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/printing/jobs", g.RequireStaff(h.staff(h.listJobs)))
 }
 
+// The receipt route's one optional query parameter (row 666 item 2): which paper the document is
+// laid out for. roll is the 80 mm counter receipt and the default; page is HH's own full-page
+// document, letter and A4, the same Receipt rendered as a sheet.
+const (
+	ReceiptFormatRoll = "roll"
+	ReceiptFormatPage = "page"
+)
+
+// parseReceiptFormat resolves the query's format value. Empty means the default (the URL a receipt
+// button has always built stays the roll), and an unknown value is a client error naming the value,
+// the doc_types refusal's shape, never a silent fallthrough to a paper the caller did not ask for.
+func parseReceiptFormat(raw string) (string, error) {
+	switch raw {
+	case "", ReceiptFormatRoll:
+		return ReceiptFormatRoll, nil
+	case ReceiptFormatPage:
+		return ReceiptFormatPage, nil
+	default:
+		return "", httpx.BadRequestError{Msg: fmt.Sprintf("unknown receipt format %q, want roll or page", raw)}
+	}
+}
+
 // receipt renders the print-CSS receipt document for a committed sale.
 func (h *Handler) receipt(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	rec, err := h.receipts.Receipt(r.Context(), r.PathValue("id"))
@@ -45,7 +68,17 @@ func (h *Handler) receipt(w http.ResponseWriter, r *http.Request, caller guards.
 		h.writeErr(w, r, err)
 		return
 	}
-	html, err := RenderReceiptHTML(rec)
+	format, err := parseReceiptFormat(r.URL.Query().Get("format"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	var html string
+	if format == ReceiptFormatPage {
+		html, err = RenderReceiptPageHTML(rec)
+	} else {
+		html, err = RenderReceiptHTML(rec)
+	}
 	if err != nil {
 		h.writeErr(w, r, err)
 		return

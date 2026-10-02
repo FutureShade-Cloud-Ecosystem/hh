@@ -2049,6 +2049,13 @@ const server = createServer(async (request, response) => {
 
   const receiptMatch = path.match(/^\/api\/v1\/pos\/sales\/([^/]+)\/receipt$/);
   if (request.method === "GET" && receiptMatch !== null) {
+    // The route's one optional format value, the core's own refusal shape: an
+    // unknown value is a 400 naming it, never a silent fallthrough.
+    const format = url.searchParams.get("format") ?? "";
+    if (format !== "" && format !== "roll" && format !== "page") {
+      respondJson(response, 400, { error: `unknown receipt format "${format}", want roll or page` });
+      return;
+    }
     const sale = sales.get(receiptMatch[1]) ?? null;
     if (sale === null) {
       respondJson(response, 404, { error: "no such sale" });
@@ -2063,7 +2070,9 @@ const server = createServer(async (request, response) => {
     // (the count lives with the sale, so a later fetch reprints as #N).
     const priorPrints = sale.prints ?? 0;
     sale.prints = priorPrints + 1;
-    const document = rollReceiptDocument(receiptView(sale), priorPrints);
+    const view = receiptView(sale);
+    const document =
+      format === "page" ? pageReceiptDocument(view, priorPrints) : rollReceiptDocument(view, priorPrints);
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(document);
     return;
@@ -2304,6 +2313,127 @@ function rollReceiptDocument(v, priorPrints) {
   </div>
 
   <div class="noprint center" style="margin-top:12px">
+    <button onclick="window.print()">Print</button>
+  </div>
+</body>
+</html>`;
+}
+
+// The full-page receipt (format=page), the demo mirror of the core's second
+// document: the roll's blocks and words laid out as a letter and A4 sheet,
+// the print CSS sized for paper instead of the thermal roll.
+function pageReceiptDocument(v, priorPrints) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Receipt ${v.orderNo}</title>
+<style>
+  @page { margin: 18mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
+    font-size: 13px; line-height: 1.5; color: #000; background: #fff;
+    max-width: 180mm; margin: 0 auto; padding: 8px 0;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: .02em; }
+  .muted { color: #444; }
+  .center { text-align: center; }
+  .right { text-align: right; }
+  .rule { border-top: 1px solid #000; margin: 14px 0; }
+  .order-no { font-size: 24px; font-weight: 700; letter-spacing: .04em; margin: 10px 0 4px; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { padding: 4px 0; vertical-align: top; }
+  th { text-align: left; font-weight: 700; border-bottom: 1px solid #000; }
+  .desc { word-break: break-word; }
+  .totals td { padding: 3px 0; }
+  .grand { font-weight: 700; font-size: 15px; border-top: 1px solid #000; }
+  .reprint {
+    border: 2px solid #000; padding: 6px; margin: 10px 0; text-align: center;
+    font-weight: 700; letter-spacing: .12em;
+  }
+  .foot { margin-top: 16px; font-size: 11px; }
+  .mark { margin-top: 6px; font-size: 10px; letter-spacing: .06em; color: #555; }
+  @media print { .noprint { display: none !important; } }
+</style>
+</head>
+<body>
+  <header class="center">
+    <h1>${v.orgName}</h1>
+    <div>${v.branchName} (${v.branchCode})</div>
+    <div class="muted">${v.branchAddress}</div>
+  </header>
+
+  <div class="rule"></div>
+
+  ${priorPrints > 0 ? `<div class="reprint">REPRINT #${priorPrints}</div>` : ""}
+
+  <div class="center">
+    <div class="order-no">${v.orderNo}</div>
+    ${v.invoiceNo ? `<div class="muted">Invoice ${v.invoiceNo}</div>` : ""}
+    <div class="muted">${v.soldAt}</div>
+  </div>
+
+  <div class="rule"></div>
+
+  <div>
+    ${v.customerName ? `<div>Customer: ${v.customerName}${v.customerAccountNo ? ` (${v.customerAccountNo})` : ""}</div>` : ""}
+    ${v.fulfilment ? `<div class="muted">${v.fulfilment}</div>` : ""}
+    ${v.servedBy ? `<div class="muted">Served by ${v.servedBy}</div>` : ""}
+  </div>
+
+  <div class="rule"></div>
+
+  <table>
+    <thead>
+      <tr><th>Item</th><th class="right">Qty</th><th class="right">Unit</th><th class="right">Total</th></tr>
+    </thead>
+    <tbody>
+      ${v.lines
+        .map(
+          (line) => `<tr class="line">
+        <td class="desc" colspan="4">${line.sku ? `${line.sku} · ` : ""}${line.description}</td>
+      </tr>
+      <tr class="line-money">
+        <td></td>
+        <td class="right">${line.qty} ${line.uom}</td>
+        <td class="right">${receiptMoney(line.unitPriceCents)}${line.priceUom ? `/${line.priceUom}` : ""}</td>
+        <td class="right">${receiptMoney(line.lineTotalCents)}</td>
+      </tr>`,
+        )
+        .join("\n")}
+    </tbody>
+  </table>
+
+  <div class="rule"></div>
+
+  <table class="totals">
+    <tr><td>Subtotal</td><td class="right">${receiptMoney(v.subtotalCents)}</td></tr>
+    <tr class="tax"><td>${v.taxLabel}</td><td class="right">${receiptMoney(v.taxCents)}</td></tr>
+    <tr class="grand"><td>Total</td><td class="right">${receiptMoney(v.totalCents)}</td></tr>
+  </table>
+
+  <div class="rule"></div>
+
+  <table class="tenders">
+    ${v.tenders
+      .map(
+        (tender) =>
+          `<tr class="tender"><td>${tender.label}${tender.simulated ? ` <span class="muted">Simulated card: nothing reached a processor.</span>` : ""}${tender.ref ? ` <span class="muted">${tender.ref}</span>` : ""}</td><td class="right">${receiptMoney(tender.amountCents)}</td></tr>`,
+      )
+      .join("\n")}
+    ${v.changeDueCents > 0 ? `<tr class="change-due"><td>Change due</td><td class="right">${receiptMoney(v.changeDueCents)}</td></tr>` : ""}
+    ${v.depositCents > 0 ? `<tr class="deposit"><td>Deposit</td><td class="right">${receiptMoney(v.depositCents)}</td></tr>` : ""}
+    ${v.balanceCents > 0 ? `<tr class="balance"><td>Balance due</td><td class="right">${receiptMoney(v.balanceCents)}</td></tr>` : ""}
+  </table>
+
+  <div class="foot center muted">
+    Printed ${v.printedAt}
+    <div>Keep this receipt, returns require it.</div>
+    <div class="mark">HH Yard · a Hardscape House product</div>
+  </div>
+
+  <div class="noprint center" style="margin-top:16px">
     <button onclick="window.print()">Print</button>
   </div>
 </body>

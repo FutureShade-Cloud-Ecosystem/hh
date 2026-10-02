@@ -395,3 +395,92 @@ func TestRenderReceiptHTML_DepositAndBalanceRows(t *testing.T) {
 		t.Fatal("an unsettled account sale still carries its Balance due row")
 	}
 }
+
+// THE FULL-PAGE RECEIPT (row 666 item 2): format=page is HH's own second format, a document for a
+// customer who wants one, built FROM THE SAME DATA: the same Receipt struct renders both documents,
+// so the page can never disagree with the roll about what the sale was. The page carries its own
+// print CSS (letter and A4 margins, never the roll's 80 mm column) and the same honesty: the
+// reprint marker, the plain fulfilment words, the change due, deposit and balance rows, the Print
+// button that is not printed.
+func TestRenderReceiptPageHTML_SameDataOwnLayout(t *testing.T) {
+	rec := Receipt{
+		OrgName: "Hardscape House (demo)", BranchName: "Hardscape House (demo), Trenton",
+		BranchCode: "TRT", BranchAddress: "12 Yard Gate Road, Trenton, ON",
+		OrderNo: "#SO-21", InvoiceNo: "#INV-21", SaleType: "COLLECT_NOW",
+		CustomerName: "Quinte Paving & Design", CustomerAccountNo: "C03",
+		Lines: []ReceiptLine{{
+			LineNo: 1, SKU: "DBS-UL-BRUSSELS", Description: "Brussels Block",
+			Qty: 10, UOM: "SF", UnitPriceCents: 1234, PriceUOM: "SF", LineTotalCents: 12340,
+		}},
+		Tenders:        []ReceiptTender{{Method: "CASH", Label: "CASH", AmountCents: 15000, Ref: "PMT-9"}},
+		SubtotalCents:  12340,
+		TaxCents:       1604,
+		TotalCents:     13944,
+		ChangeDueCents: 1056,
+		TaxLabel:       "HST (13%)",
+		ReprintCount:   2,
+		SoldAt:         time.Now(),
+		PrintedAt:      time.Now(),
+	}
+	page, err := RenderReceiptPageHTML(rec)
+	if err != nil {
+		t.Fatalf("render page: %v", err)
+	}
+
+	// The same data the roll carries, word for word where the words are shared.
+	for _, want := range []string{
+		rec.OrderNo, rec.InvoiceNo, rec.OrgName, rec.BranchName, rec.BranchAddress,
+		"Quinte Paving &amp; Design", "(C03)", // html escaped: the template is the boundary
+		"Collected at the counter",
+		rec.Lines[0].SKU, rec.Lines[0].Description,
+		Money(rec.SubtotalCents), rec.TaxLabel, Money(rec.TaxCents), Money(rec.TotalCents),
+		"Change due", Money(rec.ChangeDueCents),
+		"CASH", "PMT-9",
+		"REPRINT #2",
+		"Keep this receipt, returns require it.",
+		"HH Yard · a Hardscape House product",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the full-page receipt must carry %q", want)
+		}
+	}
+
+	// Its own print CSS: letter and A4 margins, never the roll's 80 mm column.
+	if !strings.Contains(page, "@page") || !strings.Contains(page, "@media print") {
+		t.Fatal("the full-page receipt must ship its own print CSS, it is printed, not browsed")
+	}
+	if strings.Contains(page, "max-width: 80mm") {
+		t.Fatal("the full-page receipt must not carry the roll's 80 mm column")
+	}
+	if !strings.Contains(page, "max-width: 180mm") {
+		t.Fatal("the full-page receipt must lay out on a full sheet's measure")
+	}
+	// The Print button is a screen affordance and never printed, on both formats.
+	if !strings.Contains(page, "noprint") {
+		t.Fatal("the full-page receipt's Print button must carry the noprint discipline")
+	}
+
+	// The roll stays the roll: the same receipt renders the 80 mm document, and the two formats are
+	// different bytes (a second format that renders the first's bytes is not a format).
+	roll, err := RenderReceiptHTML(rec)
+	if err != nil {
+		t.Fatalf("render roll: %v", err)
+	}
+	if roll == page {
+		t.Fatal("the page format must be its own document, not the roll's bytes")
+	}
+	if !strings.Contains(roll, "80mm") {
+		t.Fatal("the roll document must keep its 80 mm print CSS")
+	}
+
+	// The page template is html/template too: customer-supplied text lands escaped.
+	evil := rec
+	evil.CustomerName = `<script>alert(1)</script>`
+	evilPage, err := RenderReceiptPageHTML(evil)
+	if err != nil {
+		t.Fatalf("render evil: %v", err)
+	}
+	if strings.Contains(evilPage, "<script>alert(1)</script>") {
+		t.Fatal("the full-page receipt must escape supplied text, it is markup-boundary rendered")
+	}
+}

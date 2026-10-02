@@ -206,6 +206,21 @@ test("tender and receipt: cash with change due, held against the core's own read
   const realDealerName = Buffer.from("RGliYml0cw==", "base64").toString("utf8");
   expect(printedText.toLowerCase()).not.toContain(realDealerName.toLowerCase());
   await printed.close();
+
+  // The full-page document: the same receipt as a sheet (the route's
+  // format=page), served from the same committed sale, so every figure above
+  // is on it too, on its own print CSS, and this second fetch is marked the
+  // reprint it factually is.
+  const pagePrinting = page.context().waitForEvent("page");
+  await sold.getByTestId("sold-print-page").click();
+  const printedPage = await pagePrinting;
+  const pageText = await printedPage.locator("body").innerText();
+  expect(pageText).toContain(`Subtotal\t${dollars(sale.subtotal_cents as number)}`);
+  expect(pageText).toContain(`Total\t${dollars(total)}`);
+  expect(pageText).toContain(`Change due\t${dollars(rung.change_due_cents as number)}`);
+  expect(pageText).toContain("Collected at the counter");
+  expect(pageText).toContain("REPRINT #1");
+  await printedPage.close();
   // A cash confirmation carries no card notice.
   await expect(sold.getByTestId("sold-simulated-notice")).toHaveCount(0);
   await shot(page, "sales-06-receipt-cash", testInfo);
