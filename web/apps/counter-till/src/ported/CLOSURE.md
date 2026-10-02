@@ -4,6 +4,22 @@ DOC-ID: COUNTER-TILL-PORTED-CLOSURE-r1
 
 WIRED (the second UI parity work item): the surface is mounted.
 
+Two rulings close reference entries in the mount (lead rulings 15 and 16):
+
+- Return (the More menu's entry into `hos-pos-return`) is closed: HH's ruled
+  desk (src/views/returns.ts with W8's approval dialog) is the mounted till's
+  ONE returns path. The ported dialog does not carry HH's ruled approval flow,
+  the simulated word, or the clerk-and-approver receipt, so it stays ported
+  (pos-return.ts) and unreachable: nothing in the mount sets showReturn.
+- Past sales, Pricing doc and Assess tax relief (the More menu's other three)
+  are closed: live call paths outside the counter-sale row, unruled and
+  untested in HH; the polish lane may open them with tests if the parity set
+  needs them. Nothing in the mount sets showLookup or showRelief, and no
+  caller reaches savePricingDoc.
+- The till has no margin floor (row 481), so the ring's refusal arms word only
+  the credit gate, in HH's reviewed sentence; a price_blocked refusal has no
+  arm and would surface as the server's own word, like every other refusal.
+
 One ruled truth about money on the mounted surface (lead ruling 17): HH's
 contract gives the counter no rate (PricingBreakdown carries no tax, and the
 rate table is money-desk), so the surface's pre-ring tax and total are

@@ -3280,7 +3280,7 @@ export class HosPosTerminal extends LitElement {
         this.revealSaleOutcome();
         return;
       }
-      if (res.err.status === 409 && (res.err.error === 'credit_blocked' || res.err.error === 'price_blocked')) {
+      if (res.err.status === 409 && res.err.error === 'credit_blocked') {
         this.dispatchEvent(
           new CustomEvent('hos-action-blocked', {
             detail: { policy: res.err.policy, error: res.err.error },
@@ -3288,12 +3288,12 @@ export class HosPosTerminal extends LitElement {
             composed: true,
           }),
         );
+ // HH note: the split's credit refusal carries the same reviewed sentence the
+ // single ring's does; a price_blocked refusal has no arm (row 481) and falls
+ // through to the server's own word below.
         this.ring = {
           state: 'error',
-          msg:
-            res.err.error === 'credit_blocked'
-              ? 'Over credit limit on the account leg: manager approval required (routed to Approvals).'
-              : `Line ${res.err.line ?? ''} below margin floor: manager approval required.`,
+          msg: 'This account cannot carry this sale on account: the credit gate refused it (over the limit, or on a hold). Cash or card still works, and accounts receivable can release or override a hold.',
         };
         return;
       }
@@ -3375,8 +3375,12 @@ export class HosPosTerminal extends LitElement {
         this.revealSaleOutcome();
         return;
       }
-      // 409 credit/price → route to the manager approvals path; 402 → card declined.
-      if (res.err.status === 409 && (res.err.error === 'credit_blocked' || res.err.error === 'price_blocked')) {
+ // HH note: only the credit gate is worded here, in HH's own reviewed
+ // sentence: the gate refused the account sale, cash and card still work, and
+ // accounts receivable owns the release or override. A price_blocked refusal
+ // has no arm at all (row 481: no margin floor at the till), so it falls
+ // through to the server's own word below, like every other refusal.
+      if (res.err.status === 409 && res.err.error === 'credit_blocked') {
         this.dispatchEvent(
           new CustomEvent('hos-action-blocked', {
             detail: { policy: res.err.policy, error: res.err.error },
@@ -3386,16 +3390,7 @@ export class HosPosTerminal extends LitElement {
         );
         this.ring = {
           state: 'error',
-          msg:
-            res.err.error === 'credit_blocked'
- // HH note: the credit gate's word is the one refusal this surface translates,
- // in HH's own reviewed sentence: the gate refused the account sale, cash and
- // card still work, and accounts receivable owns the release or override. The
- // reference routed to its approvals rail; HH's rule keeps the words the
- // counter reviewed (row 481's till has no margin floor, and the credit gate
- // speaks for itself).
-              ? 'This account cannot carry this sale on account: the credit gate refused it (over the limit, or on a hold). Cash or card still works, and accounts receivable can release or override a hold.'
-              : `Line ${res.err.line ?? ''} below margin floor: manager approval required.`,
+          msg: 'This account cannot carry this sale on account: the credit gate refused it (over the limit, or on a hold). Cash or card still works, and accounts receivable can release or override a hold.',
         };
         return;
       }
@@ -5724,10 +5719,12 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
               More</summary
             >
             <div class="util">
-              <button @click=${() => (this.showReturn = true)}>Return</button>
-              <button data-testid="open-lookup" @click=${() => (this.showLookup = true)}>Past sales</button>
-              <button ?disabled=${this.cart.length === 0} @click=${this.savePricingDoc}>Pricing doc</button>
-              <button @click=${() => (this.showRelief = true)}>Assess tax relief</button>
+              ${/* HH note (lead rulings 15 and 16): the reference's More entries are closed in
+                 the mount. Return: HH's ruled desk (the approval dialog, the simulated word,
+                 the clerk-and-approver receipt) is the one returns path, and this reference
+                 dialog carries none of it. Past sales, Pricing doc and Assess tax relief are
+                 live call paths outside the counter-sale row, unruled and untested in HH.
+                 CLOSURE.md records each; the polish lane may open them with tests. */ ''}
             </div>
             ${this.renderOrderOpenRow()}
           </details>
