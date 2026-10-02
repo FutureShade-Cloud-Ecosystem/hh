@@ -20,6 +20,16 @@ Two rulings close reference entries in the mount (lead rulings 15 and 16):
   the credit gate, in HH's reviewed sentence; a price_blocked refusal has no
   arm and would surface as the server's own word, like every other refusal.
 
+Open gap: End Session is closed in the mount. The core refuses a session
+complete unless the session is COUNTED (409, core/internal/till/service.go),
+answers CLOSED, and a drawer that does not balance needs a manager's sign-off
+(row 500). The reference's End Session opened a till-close screen (blind count,
+Z report, sign-off) that this release does not carry, so the button stays
+visible but disabled, with the reason on its title and aria label ("Ending the
+session needs the blind count, the Z report and a manager's sign-off; the
+drawer close is not on this surface yet."). Porting the close flow is the
+work that opens it; the stub carries no complete route.
+
 One deliberate deviation from the reference, on HH's rule (the visual
 review's blocking zero): the reference's empty draft reads Subtotal CA$0.00,
 HST CA$0.00, Total CA$0.00, and the ring button carries the zero. HH's rule

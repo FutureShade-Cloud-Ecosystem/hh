@@ -795,7 +795,15 @@ export class HosPosTerminal extends LitElement {
       white-space: nowrap;
       cursor: pointer;
     }
-    .topbtn:hover {
+    /* HH note: disabled drops its fill and goes grey; fade is not a state. */
+    .topbtn:disabled {
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
+      cursor: not-allowed;
+    }
+    .topbtn:hover:not(:disabled) {
       border-color: var(--hos-stone-amber);
       color: var(--hos-stone-amber-text);
     }
@@ -2681,30 +2689,17 @@ export class HosPosTerminal extends LitElement {
   }
 
   // End Session opens the real A-03 close flow (movements → blind count → Z-report → complete);
- // the local chrome resets only once the till actually closes (or the cashier defers: COUNTED
+  // the local chrome resets only once the till actually closes (or the cashier defers: COUNTED
   // sessions can be completed next morning, per the Dibbits SOP).
- // HH note: the reference's End Session opened its till-close screen
- // (hos-till-close), a host boundary screen this release does not carry, which
- // left the button dead. The mount wires the honest minimal path the contract
- // serves: confirm, complete the session (POST till/sessions/{id}/complete),
- // and the chrome is honestly back at no-session. A refusal lands in words.
-  private async endSession(): Promise<void> {
-    if (!window.confirm('End the till session? The drawer closes for this register.')) return;
-    try {
-      const res = await api(
-        `/api/v1/till/sessions/${encodeURIComponent(this.tillSessionId)}/complete`,
-        { method: 'POST', body: JSON.stringify({ override_notes: '' }) },
-      );
-      if (!res.ok) {
-        this.setUtil(`The session did not end: the server refused it (${res.status}).`, 'bad');
-        return;
-      }
-      this.onTillClosed();
-      this.setUtil('Session ended: the drawer is closed for this register.');
-    } catch {
-      this.setUtil('The session did not end: the call did not go through. Try again.', 'bad');
-    }
-  }
+  // HH note: the reference's End Session opened its till-close screen
+  // (hos-till-close), a host boundary screen this release does not carry. The
+  // core refuses a complete unless the session is COUNTED (409), and a drawer
+  // that does not balance needs a manager's sign-off (row 500), so the mount
+  // cannot honestly end a session from here: the button stays visible but is
+  // closed (disabled, with its reason), and the gap is named in CLOSURE.md.
+  // The reference's handler is dropped for the day the close flow is ported.
+  private readonly endSessionClosedReason =
+    "Ending the session needs the blind count, the Z report and a manager's sign-off; the drawer close is not on this surface yet.";
 
   private onTillClosed(): void {
     this.showTillClose = false;
@@ -4513,7 +4508,13 @@ export class HosPosTerminal extends LitElement {
             ? html`<span class="sessiondot" data-testid="session-dot" title="Till session open: elapsed ${this.elapsed}">
                   <span class="dot" aria-hidden="true"></span> Open
                 </span>
-                <button class="topbtn" @click=${this.endSession}>End Session</button>`
+                <button
+                  class="topbtn"
+                  data-testid="end-session"
+                  disabled
+                  title=${this.endSessionClosedReason}
+                  aria-label=${`End Session. ${this.endSessionClosedReason}`}
+                >End Session</button>`
             : html`<button class="topbtn" @click=${this.openSession}>Open Session</button>`}
           ${/* COUNTER VIEW (R1/R2, the user half). The way back from a dismissed legend
                and the on/off for the hot list, in one place a counter person can reach without an

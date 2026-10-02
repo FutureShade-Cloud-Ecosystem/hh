@@ -1249,24 +1249,6 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  const completeMatch = path.match(/^\/api\/v1\/till\/sessions\/([^/]+)\/complete$/);
-  if (request.method === "POST" && completeMatch !== null) {
-    const row = [...drawers.values()].find((candidate) => candidate.id === completeMatch[1]) ?? null;
-    if (row === null) {
-      respondJson(response, 404, { error: "no such till session" });
-      return;
-    }
-    if (row.branch_id !== callerBranch) {
-      respondJson(response, 403, { error: "that drawer is not one your grant reaches" });
-      return;
-    }
-    readBody(request, () => {
-      drawers.delete(row.branch_id);
-      respondJson(response, 200, { status: "COMPLETED" });
-    });
-    return;
-  }
-
   const tillSessionMatch = path.match(/^\/api\/v1\/till\/sessions\/([^/]+)$/);
   if (request.method === "GET" && tillSessionMatch !== null) {
     const row = [...drawers.values()].find((candidate) => candidate.id === tillSessionMatch[1]) ?? null;

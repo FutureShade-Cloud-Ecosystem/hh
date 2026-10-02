@@ -860,31 +860,37 @@ test("the chrome sits above the surface: the demo banner is in the first viewpor
   await second.close();
 });
 
-test("End Session ends the session: confirm, the server's answer, honestly back at no-session", async ({
+test("End Session is closed on the mount: disabled, grey, its reason stated, and no complete call is made", async ({
   page,
 }) => {
   await signIn(page, "Sales manager");
   await ensureSession(page);
-  const completePost = page.waitForResponse(
-    (response) =>
-      response.url().includes("/api/v1/till/sessions/") &&
-      response.url().endsWith("/complete") &&
-      response.request().method() === "POST",
-  );
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "End Session" }).click();
-  const answer = await (await completePost).json();
-  expect(answer.status).toBe("COMPLETED");
-  // The chrome is honestly back at no-session: the dot is gone, the way in
-  // for the next sale is the open control again.
-  await expect(page.getByTestId("session-dot")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Open Session", exact: true })).toBeVisible();
-  // A declined confirm ends nothing.
-  await page.getByRole("button", { name: "Open Session", exact: true }).click();
+  const completeCalls: string[] = [];
+  page.on("request", (request) => {
+    if (/\/api\/v1\/till\/sessions\/[^/]+\/complete/.test(request.url())) {
+      completeCalls.push(`${request.method()} ${request.url()}`);
+    }
+  });
+  const reason =
+    "Ending the session needs the blind count, the Z report and a manager's sign-off; the drawer close is not on this surface yet.";
+  const button = page.getByTestId("end-session");
+  await expect(button).toBeVisible();
+  await expect(button).toBeDisabled();
+  await expect(button).toHaveAttribute("title", reason);
+  await expect(button).toHaveAttribute("aria-label", `End Session. ${reason}`);
+  // The disabled rule: grey, no fill, no fade.
+  const shape = await button.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { background: style.backgroundColor, opacity: style.opacity, cursor: style.cursor };
+  });
+  expect(shape.background).toBe("rgba(0, 0, 0, 0)");
+  expect(shape.opacity).toBe("1");
+  expect(shape.cursor).toBe("not-allowed");
+  // Pressing it (forced past the disabled state) ends nothing and calls nothing.
+  await button.click({ force: true });
+  await page.waitForTimeout(300);
   await expect(page.getByTestId("session-dot")).toContainText("Open");
-  page.once("dialog", (dialog) => dialog.dismiss());
-  await page.getByRole("button", { name: "End Session" }).click();
-  await expect(page.getByTestId("session-dot")).toContainText("Open");
+  expect(completeCalls).toEqual([]);
 });
 
 test("the search drop rows carry the branch's stock beside the SKU", async ({ page }) => {
