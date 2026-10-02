@@ -640,7 +640,7 @@ export class HosPosCustomerPicker extends LitElement {
                       <div class="acct">${c.account_no} · ${customerTypeWord(c.customer_type)}</div>
                     </div>
                     <div class="credit">
-                      Available<span class="num">${money(available)}</span>
+                      Available (derived)<span class="num">${money(available)}</span>
                     </div>
                   </button>`;
                 })}

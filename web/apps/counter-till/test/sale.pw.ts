@@ -499,6 +499,58 @@ test("a walk-in COD sale is refused in words that are true, and the same sale wi
   expect(read.sale_type).toBe("COD");
 });
 
+test("the account's available credit says it is a derived figure, in the picker row and on the card", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  // The picker's row figure is the browser's own subtraction (limit less
+  // balance, floored at zero): the counter's customer search row carries
+  // limit and balance only, so the label says the figure is derived.
+  await page.getByRole("button", { name: /Select customer/ }).click();
+  const searchBox = page.getByPlaceholder("Search name or account #…");
+  await searchBox.fill("C02");
+  const row = page.locator("button.row").filter({ hasText: "Fenwick Builders Ltd" }).first();
+  await expect(row).toBeVisible();
+  await expect(row.locator(".credit")).toContainText("Available (derived)");
+  // The same figure rides the resolved account's card, and the word goes with
+  // it there too. The pick advances the flow to Items, so the customer step
+  // opens again before the card is read.
+  await row.click();
+  await openStep(page, "customer");
+  await expect(page.getByTestId("customer-card")).toContainText("Available (derived)");
+});
+
+test("a deposit sale's confirmation labels the balance due a derived figure", async ({ page }) => {
+  await signIn(page, "Sales");
+  await pickAccount(page, "C02", "Fenwick Builders Ltd");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  // The deposit rides Charge Account or COD, so the tender is chosen first;
+  // the deposit box lives on the customer step's More options.
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Charge Account" }).click();
+  await openStep(page, "customer");
+  await page.locator("details.more > summary").filter({ hasText: "More options" }).click();
+  await page.locator(".deposit input").fill("1.00");
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await openStep(page, "payment");
+  await page.getByTestId("pos-complete-sale").click();
+  const sale = (await (await ringPost).json()) as Record<string, unknown>;
+  expect(sale.deposit_cents).toBe(100);
+
+  // The confirmation's balance (total less the deposit) is browser
+  // arithmetic on server-stated operands, so its label says so. The
+  // headline is the deposit branch's own word, and the deposit fact row
+  // stands beside it.
+  const sold = page.getByTestId("sold-panel");
+  await expect(sold).toBeVisible();
+  await expect(sold).toContainText("Deposit taken");
+  await expect(sold.locator(".sold-amount-label")).toHaveText("Balance due (derived)");
+  await expect(sold).toContainText("CA$3.07");
+  await expect(sold).toContainText("CA$1.00");
+});
+
 test("a C01 Holland paver line rings at its rule price with its margin shown, and the unknown margin stays unknown", async ({
   page,
 }) => {

@@ -171,12 +171,15 @@ export function saleConfirmation(sale: {
   }
   if (deposit > 0) {
     // HH note: the reference subtracted the deposit from the total here; HH's core computes the
-    // balance, so the port asks the host seam instead (CLOSURE.md names it).
+    // balance, so the port asks the host seam instead (CLOSURE.md names it). The seam's answer is
+    // browser arithmetic on server-stated operands (the server does not state this balance on the
+    // ring), so the label says the figure is derived, the same word the available-credit displays
+    // carry.
     const balance = balanceAfterDepositCents(sale.total_cents, deposit);
     return {
       headline: 'Deposit taken',
       settled: false,
-      amountLabel: 'Balance due',
+      amountLabel: 'Balance due (derived)',
       amountCents: balance,
       balanceCents: balance,
       tenderLabel: tenderLabel(sale.tender),

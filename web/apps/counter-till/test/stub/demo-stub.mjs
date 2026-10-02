@@ -1644,6 +1644,16 @@ const server = createServer(async (request, response) => {
         respondJson(response, 400, { error: "unknown tender" });
         return;
       }
+      // The deposit rides an unpaid-at-ring sale (Charge Account or COD):
+      // the ring's answer carries the figure back, because the
+      // confirmation's balance is the total less this deposit and the wire's
+      // own number is the one the till repeats.
+      const depositCents =
+        typeof parsed.deposit_cents === "number" &&
+        Number.isInteger(parsed.deposit_cents) &&
+        parsed.deposit_cents > 0
+          ? parsed.deposit_cents
+          : 0;
       const orderId = uuidFromCounter(4000 + sales.size + 1);
       // The sale's tender word: with a split settlement the contract says the
       // body's tender field is ignored, so the row derives one word from the
@@ -1673,6 +1683,7 @@ const server = createServer(async (request, response) => {
         status: "COMMITTED",
         cash_tendered_cents: cashTendered,
         change_due_cents: changeDue,
+        deposit_cents: depositCents,
         payment_id: paymentId,
         gateway_ref: gatewayRef,
         tenders,
@@ -2060,6 +2071,7 @@ function saleResponseBody(sale, replayed) {
     replayed,
     cash_tendered_cents: sale.cash_tendered_cents,
     change_due_cents: sale.change_due_cents,
+    deposit_cents: sale.deposit_cents,
     tenders: sale.tenders,
   };
 }

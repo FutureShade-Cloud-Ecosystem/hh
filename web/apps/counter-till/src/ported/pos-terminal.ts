@@ -6279,7 +6279,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           </div>
           <div class="cfacts">
             <span>Terms <span class="num">${c.payment_terms_days}d</span></span>
-            <span>Available <span class="num avail">${money(available)}</span></span>
+            <span>Available (derived) <span class="num avail">${money(available)}</span></span>
             ${c.open_balance_cents > 0
               ? html`<span>Outstanding <span class="num out">${money(c.open_balance_cents)}</span></span>`
               : nothing}
