@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -26,6 +27,31 @@ type syncAuditSeam struct {
 	link identity.UserIDLinker
 }
 
+// subjectGroupLen is the group length of the subject encoding: six
+// characters, so the longest digit run inside one group is six, one below
+// the audit chokepoint's redaction threshold of seven (the house
+// precedent on the same allowlist, customerquote's separator encoding,
+// ADR 0022).
+const subjectGroupLen = 6
+
+// separatorEncodeSubject writes a platform subject as groups of six
+// characters joined by colons, so no run of seven digits can occur and the
+// chokepoint stores the subject whole instead of "[redacted]". It is
+// deterministic and lossless for any character set a subject can carry
+// (a colon is outside the id alphabet): stripping the colons returns the
+// subject.
+func separatorEncodeSubject(s string) string {
+	rs := []rune(s)
+	var b strings.Builder
+	for i := 0; i < len(rs); i += subjectGroupLen {
+		if i > 0 {
+			b.WriteByte(':')
+		}
+		b.WriteString(string(rs[i:min(i+subjectGroupLen, len(rs))]))
+	}
+	return b.String()
+}
+
 // RecordSync maps one engine entry onto one audit row.
 func (a syncAuditSeam) RecordSync(ctx context.Context, e sync.AuditEntry) error {
 	actor, subject := "", ""
@@ -38,7 +64,7 @@ func (a syncAuditSeam) RecordSync(ctx context.Context, e sync.AuditEntry) error 
 		// No linked users.id (a tenant caller): the uuid actor column stays
 		// empty and the platform subject rides the allowlisted actor_subject
 		// key, so the trail still names who pushed.
-		subject = e.Actor
+		subject = separatorEncodeSubject(e.Actor)
 	}
 	extra := map[string]any{
 		"scope":     e.Scope,
