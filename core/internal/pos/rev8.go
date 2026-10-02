@@ -1,15 +1,17 @@
 package pos
 
 // rev8.go, DIB-488 rev 8: the role-gated margin glance (item 10), the DIB-502 suggested add-ons
-// read (item 8), and the 0170 policy validation arms (the curated chip set; margin visibility
-// remains a stored dealer switch the glance no longer consults, the configuration's list decides).
+// read (item 8), and the 0170 policy validation arms (the curated chip set; margin visibility is
+// the stored dealer switch the glance consults beside the configuration's list, the margin glance
+// policy ruling: the list decides who MAY be considered, the switch decides whether the answer
+// leaves the server, both must allow).
 //
 // THE MARGIN GATING RULING (the commander's critical rev-8 constraint): margin % and est. profit
 // are computed SERVER-SIDE from the pricing engine's own numbers, revenue through the SAME
 // counter resolve the ring prices with (the till never asks the margin gate, D48 row 481), cost
 // from the engine's cost source (the per-branch WAC row, product_branch_costs.avg_unit_cost_cents),
 // and they are gated at the MARSHAL layer: the response struct is all-omitempty, and a caller the
-// dealer's role configuration's cost and margin list does not allow receives the zero value, i.e. a
+// dealer's two knobs do not both allow receives the zero value, i.e. a
 // `{}` payload with the fields BYTE-ABSENT. This mirrors the portal's marshal-and-assert-absent
 // idiom; dib488_rev8_test.go asserts byte-absence.
 
@@ -73,16 +75,24 @@ func validateQuickChipSet(set []string) ([]string, error) {
 }
 
 // marginAllowed answers whether THIS caller may receive margin/profit, in
-// two gates. First the branch wall (X2): a branch the caller's resolved
+// three gates. First the branch wall (X2): a branch the caller's resolved
 // authority does not reach is REFUSED, never blanked, the refusal carried
-// as the error so the handler writes the wall's 403. Then cost visibility
-// (X3): the dealer's configuration's cost and margin list decides (row
-// 343: the glance reads the configuration, not its managers only default).
-// The nil gate fails closed (the lead's P1-1 ruling): a service built with
-// no configuration refuses the read, it never falls back to the 0170
-// margin_visibility switch, whose managers only default was exactly the
-// permissive answer the configuration replaced. Fail closed likewise: an
-// unreadable policy or an unmapped role receives nothing.
+// as the error so the handler writes the wall's 403. Then the dealer's two
+// knobs, each of which must allow (the margin glance policy ruling). The
+// configuration's cost and margin list (X3) decides who MAY be considered:
+// a caller it does not name receives nothing, never a fallback to the 0170
+// switch. The policy's margin_visibility then decides whether the
+// considered caller's answer leaves the server, resolved through the same
+// store seam the policy read serves: ALL_STAFF admits everyone considered,
+// HIDDEN admits nobody, and MANAGER_UP, like every unknown or empty value,
+// admits managers only (fail closed; the purchasing module's cost gate
+// resolves unknowns the same way). An unreadable policy fails CLOSED and
+// SILENTLY, false with no error, the byte-absent glance: a money gate's
+// failure mode is silence, never a 500 on a display read, while the branch
+// wall's refusal stays an error. The nil gate fails closed (the lead's
+// P1-1 ruling): a service built with no configuration refuses the read, it
+// never falls back to a permissive default. An unresolved caller keeps the
+// pinned empty answer, an unmapped role receives nothing.
 func (s *Service) marginAllowed(ctx context.Context, branchID string) (bool, error) {
 	if s.roles == nil {
 		return false, errRoleConfigUnwired()
@@ -104,7 +114,25 @@ func (s *Service) marginAllowed(ctx context.Context, branchID string) (bool, err
 	if err != nil {
 		return false, nil
 	}
-	return allowed, nil
+	if !allowed {
+		return false, nil
+	}
+	// The policy's switch decides whether the considered caller's answer
+	// leaves the server. An unreadable row refuses silently: the glance is
+	// a display read, a database hiccup blanks it rather than 500ing the
+	// counter.
+	p, err := s.store.ReadPosPolicy(ctx, branchID)
+	if err != nil {
+		return false, nil
+	}
+	switch p.MarginVisibility {
+	case MarginVisibilityAllStaff:
+		return true, nil
+	case MarginVisibilityHidden:
+		return false, nil
+	default: // MANAGER_UP, the column default, and where every unknown or empty value lands
+		return caller.IsManager(), nil
+	}
 }
 
 // marginBpsOf computes gross margin in bps from integer cents (identity.MarginBps's arithmetic,
