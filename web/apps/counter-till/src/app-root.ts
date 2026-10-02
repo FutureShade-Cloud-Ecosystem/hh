@@ -45,7 +45,7 @@ import { returnsStyles, renderReturns } from "./views/returns.js";
 // The ported terminal: its import registers the surface's elements, and the
 // host wiring (ports.ts) answers its seams.
 import "./ported/pos-terminal.js";
-import { setBranches, wirePorts, type AuthUser } from "./ported/ports.js";
+import { clearSessionState, setBranches, wirePorts, type AuthUser } from "./ported/ports.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -114,6 +114,8 @@ export class CounterTillApp extends HHElement {
   readonly #approverCredential: OneTimeCredential;
   readonly #tillClient: TillClient;
   #flowsState: FlowsState = { kind: "loading" };
+  /** The one flows read this element makes; the pop-out's tap waits for it. */
+  #flowsLoaded: Promise<void> = Promise.resolve();
   #busy = false;
   #message: string | null = null;
   /** The role's label from the flow table, held for the chrome and the desk's clerk words. */
@@ -232,19 +234,20 @@ export class CounterTillApp extends HHElement {
     // uncontrolled: the DOM holds what was typed, the flow hears every edit
     // here, and a draft's fresh mount shows the flow's own defaults.
     this.addEventListener("input", this.#onHostInput);
-    void this.#loadFlows();
+    // The flows read happens once; the pop-out, when this window is one,
+    // chains on the same answer rather than asking the route twice.
+    this.#flowsLoaded = this.#loadFlows();
     // The pop-out: a second window opened at this app with ?popout=<flow>
     // signs itself in through the same public cards route, the same tap a
     // person would make, and lands directly on the terminal. The flow name is
     // the only thing that rides the address: never a token, never a
     // credential (this app's custody is memory per tab by design, and its
     // committed sink gate refuses every storage and channel path a handshake
-    // would dial).
+    // would dial). The flow table answers first (its label is the role's name
+    // in the chrome), then the flow runs.
     const popped = new URLSearchParams(window.location.search).get("popout");
     if (typeof popped === "string" && popped !== "") {
-      // The same tap a person would make: the flow table answers first (its
-      // label is the role's name in the chrome), then the flow runs.
-      void this.#loadFlows().then(() => this.#chooseFlow(popped));
+      void this.#flowsLoaded.then(() => this.#chooseFlow(popped));
     }
   }
 
@@ -426,6 +429,9 @@ export class CounterTillApp extends HHElement {
     this.#returns.reset();
     this.#branch = null;
     this.#surface = "entry";
+    // The ported surface's session-owned module state goes with the session:
+    // the next person's boxes and branch facts are earned by their own login.
+    clearSessionState();
     this.requestUpdate();
   }
 

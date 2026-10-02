@@ -22,6 +22,7 @@
 //      has wired its host throws the port message rather than returning a
 //      plausible answer. An honest refusal beats a quiet zero at a counter.
 
+import { centsAmount } from "./_money-format.js";
 import { DEMO_CARD_TOKEN, HOUSE_ZONE, houseDayInZone } from "../till-client.js";
 
 /**
@@ -158,6 +159,11 @@ export function getSessionToken(): string {
 // The reference carried its own simulator's token spelling; the host rewrites
 // any card token the ported surface sends onto the app's own constant, so the
 // wire carries the one token the reviewed rule pins (till-client.ts names it).
+// DEMO ONLY, DELIBERATELY: this whole app is the demo's till (the served
+// phrase gate holds the demo box), and the rewrite below is part of that
+// demo's wiring. The day a real rail serves this surface, this rewrite is
+// what must go with it: a real terminal's token must ride verbatim, never be
+// masked by the demo's constant.
 
 /** The paths whose request bodies the adapter enriches to the contract's shape. */
 const RING_PATH = "/api/v1/pos/sales";
@@ -550,13 +556,13 @@ export interface SplitReadiness {
 /** The bound on split legs, mirrored from the contract's own ring shape (tenders, 2 to 6). */
 export const MAX_SPLIT_LEGS = 6;
 
-/** The split panel's local money formatter: display of integer cents only. */
+/**
+ * The split panel's money word: centsAmount's grouped spelling (the one place
+ * integer cents become a readable amount), with this panel's own CA$ prefix
+ * and minus, exactly as the reference's fmtCents kept its own decoration.
+ */
 function splitFmt(cents: number): string {
-  const negative = cents < 0;
-  const magnitude = negative ? -cents : cents;
-  const whole = Math.floor(magnitude / 100);
-  const remainder = magnitude - whole * 100;
-  return `CA$${negative ? "-" : ""}${whole}.${String(remainder).padStart(2, "0")}`;
+  return `CA$${cents < 0 ? "-" : ""}${centsAmount(cents)}`;
 }
 
 /**
@@ -771,6 +777,20 @@ export function writePanelLayoutRaw(key: string, value: string): void {
 /** Forget the layout under this key; the next read returns the default tiling. */
 export function clearPanelLayoutRaw(key: string): void {
   panelStore.delete(key);
+}
+
+/**
+ * Sign-out's own clear: the module state a SESSION owns goes with the
+ * session. The panel boxes are the last person's arrangement of the counter
+ * they just left; the branch facts are what their login reached. Both are
+ * re-earned by whoever signs in next (the workspace row and the branches
+ * route), so wiping them is the honest hand-over, and a shared till never
+ * opens on the last person's boxes or answers a yard name their login never
+ * reached.
+ */
+export function clearSessionState(): void {
+  panelStore.clear();
+  BRANCHES.length = 0;
 }
 
 /**

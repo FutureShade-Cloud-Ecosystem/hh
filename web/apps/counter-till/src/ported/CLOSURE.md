@@ -282,28 +282,28 @@ formatters, `_pos-rev8.ts` `marginPctLabel`.
   the app's own views compile and run under them too; the app's suites stay
   green under the flags, and the wiring item should keep the difference in
   mind if a view ever depends on class-field define semantics. (P3-1)
-- `product-thumb.ts` renders `<img src>` straight at the thumbnail route,
-  and no ported seam carries that request: the wiring item decides how the
-  thumbnail fetch is authorised (bearer through the api helper, a signed
-  route, or a seam of its own). (P3-3)
+- The thumbnail route: SETTLED (was P3-3). The contract makes
+  `GET /api/v1/products/{id}/image` public by design (`x-role: public`,
+  `security: []`: an `<img src>` cannot carry an Authorization header and the
+  catalogue is public data), the stub answers it ungated with a plain 404,
+  `product-thumb.ts` latches to its placeholder on error, and the README says
+  so. Nothing to decide.
 - `_money-format.ts` `centsAmount` formats a non-finite input as `0.00`, a
   confident zero, carried unchanged from the reference; the polish item gives
   it the blank marker the house prefers. (P3-6)
-- The split panel's problem sentences travelled with the split arithmetic
-  into `evaluateSplit`, so the host seam owns the cashier wording as well as
-  the money; the wiring item's implementation carries those words back.
-  (P3-7)
-- Two seams throw synchronously where the reference returned a promise
-  (`listProducts`, `putProductImage`: the port declares the promise return
-  and the seam's refusal is a synchronous throw), a boundary-shape matter the
-  wiring item settles when it implements them against the host's async
-  helper. (R1-5)
-- The quiet empties are boundary shape too, and the wiring item owns them:
-  `ports.ts` `BRANCHES` is an empty array and `SCREEN_GATE` an empty object
-  by construction, so `pos-product-grid` renders zero yard columns without a
-  word, and `pos-terminal.ts:268` (`BRANCHES[0].id`) would die with an
-  unnamed TypeError rather than the port message; the wiring item either
-  wires them or gives them the loud refusal the other seams carry. (R1-2)
+- The split panel's problem sentences: CARRIED AND HELD (was P3-7).
+  `evaluateSplit` in ports.ts carries the reference's eight sentences word
+  for word, and the seam cases bite on them; only the amount formatter
+  changed (it routes through `centsAmount`, grouping like every other money
+  word).
+- The promise shapes: SETTLED (was R1-5). `listProducts` and
+  `putProductImage` are implemented as async functions over the host's
+  helper, so an unwired or failed call is a rejected promise, the reference's
+  shape.
+- The quiet empties: SETTLED (was R1-2). `BRANCHES` is filled in place from
+  the branches route before anything mounts, `SCREEN_GATE` is a complete
+  table, and a branch that does not resolve keeps the terminal down with a
+  refusal in words.
 
 ## Reference tests brought along
 

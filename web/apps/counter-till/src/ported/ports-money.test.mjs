@@ -160,7 +160,8 @@ test('parseAmountCents handles the shapes people actually type', () => {
   assert.equal(parseAmountCents('$40.00'), 4000);
   assert.equal(parseAmountCents('1,234.56'), 123456);
   assert.equal(parseAmountCents(' 73 '), 7300);
-  // 0.1 + 0.2 float arithmetic must not lose a cent on the way in.
+  // The decimal string answers 29 exactly, never a rounded 28.999...; the
+  // case that actually bites a float multiply is the third decimal below.
   assert.equal(parseAmountCents('0.29'), 29);
   assert.equal(parseAmountCents('113.00'), 11300);
 });

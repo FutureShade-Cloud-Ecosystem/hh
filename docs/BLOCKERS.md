@@ -1131,7 +1131,8 @@ merge read it before running anything selector-shaped:
 - **The detached layout's pixel boxes persist in tab memory**, for the same
   sink gate; the layout CHOICE rides the server's workspace row and follows
   the person, which is the part HH's contract carries.
-- **`listProducts` in the ported pos-api now rides the authed door**: the
-  reference fetched the catalogue list bare of credentials (its core served
-  it ungated); HH's contract gates it like every staff read, so the ask rides
-  `api()` like the counter's other reads.
+- **`listProducts` in the ported pos-api rides the authed door**: the
+  reference fetched the catalogue list bare of credentials. The contract
+  marks `GET /api/v1/products` `x-role: public` (the catalogue is public
+  data), so no credential is needed; the ask rides `api()` anyway, which
+  sends the bearer harmlessly and keeps the counter's reads on one door.
