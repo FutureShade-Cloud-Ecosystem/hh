@@ -225,6 +225,20 @@ func TestIntegration_Receipt_RendersCommittedSale(t *testing.T) {
 		}
 	})
 
+	t.Run("the sale type is plain words, not the raw constant", func(t *testing.T) {
+		// The fixture rings COLLECT_NOW; the served document must carry the plain words in the same
+		// muted line, and the domain constant must not reach the customer's paper.
+		if rec.SaleType != pos.SaleCollectNow {
+			t.Fatalf("fixture assumption broken: sale_type = %q", rec.SaleType)
+		}
+		if !strings.Contains(html, `<div class="muted">Collected at the counter</div>`) {
+			t.Fatalf("a COLLECT_NOW sale's receipt must render the plain words, got sale type line over: %q", rec.SaleType)
+		}
+		if strings.Contains(html, pos.SaleCollectNow) {
+			t.Fatal("the raw sale type constant must not print on the served receipt")
+		}
+	})
+
 	t.Run("DIB-411: the fetch wrote a PRINTED print_queue row for this order", func(t *testing.T) {
 		jobs, err := q.ListForRef(ctx, DocReceipt, sale.OrderID)
 		if err != nil {
