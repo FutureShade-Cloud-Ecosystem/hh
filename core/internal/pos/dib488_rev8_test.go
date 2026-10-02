@@ -56,8 +56,11 @@ func TestMarginGlance_ManagerGetsServerComputedFields(t *testing.T) {
 
 func TestMarginGlance_RoleOffTheList_FieldsByteAbsent(t *testing.T) {
 	h := newHarness()
-	// A role the decided configuration keeps off the cost and margin list
+	// The dealer's switch admits the staff (ALL_STAFF), so the LIST is the
+	// only gate that can blank this caller and the leg bites on the list:
+	// a role the decided configuration keeps off the cost and margin list
 	// (X3 hides it from the yard team).
+	h.store.policies[""] = PosPolicy{MarginVisibility: MarginVisibilityAllStaff}
 	h.caller = identity.StaffContext{UserID: "u-yard", RoleCode: "YARD_TEAM",
 		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
 	h.store.branchCosts = map[string]int64{"prod-paver": 60}
@@ -95,8 +98,13 @@ func TestMarginGlance_EmptyList_NobodyGetsFields(t *testing.T) {
 func TestMarginGlance_ConfiguredList_FrontlineGetsFields(t *testing.T) {
 	h := newHarness()
 	// The decided configuration names Inside Sales on the cost and margin
-	// list (X3, row 343): the counter clerk sees margin, the dealer's
-	// decision and not the caller's tier.
+	// list (X3), so the counter clerk is CONSIDERED; the 0170 policy decides
+	// whether the answer leaves the server, so the leg sets the dealer's
+	// switch to ALL_STAFF and the frontline clerk receives margin. The spine
+	// beside it: a role the list does not consider stays byte-absent under
+	// the same switch, the policy alone never admits, the list still decides
+	// who is considered.
+	h.store.policies[""] = PosPolicy{MarginVisibility: MarginVisibilityAllStaff}
 	h.caller = identity.StaffContext{UserID: "u-counter", RoleCode: "INSIDE_SALES",
 		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
 	h.store.branchCosts = map[string]int64{"prod-paver": 60}
@@ -105,7 +113,18 @@ func TestMarginGlance_ConfiguredList_FrontlineGetsFields(t *testing.T) {
 		t.Fatalf("glance: %v", err)
 	}
 	if out.MarginBps == nil || out.EstProfitCents == nil {
-		t.Fatalf("a configured role receives margin, frontline included: %+v", out)
+		t.Fatalf("a considered role under ALL_STAFF receives margin, frontline included: %+v", out)
+	}
+
+	h.caller = identity.StaffContext{UserID: "u-yard", RoleCode: "YARD_TEAM",
+		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
+	out, err = h.svc.MarginGlance(context.Background(), marginInput())
+	if err != nil {
+		t.Fatalf("glance: %v", err)
+	}
+	raw, _ := json.Marshal(out)
+	if string(raw) != "{}" {
+		t.Fatalf("ALL_STAFF must not admit a role the list does not consider: %s", raw)
 	}
 }
 

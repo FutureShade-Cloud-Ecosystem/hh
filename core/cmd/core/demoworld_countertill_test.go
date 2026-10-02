@@ -724,9 +724,11 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 	}
 	t.Logf("the MAIN drawer at %s is open as Sales (%s)", trentonCode, drawer.ID)
 
-	// 6. the margin glance as each role. Sales's answer is a recorded item (expected {} today,
-	// RT-B changes it), so it is logged and not asserted; the manager's answer is the live
-	// default and must carry the ticket's lines.
+	// 6. the margin glance as each role. The demo's default policy is the
+	// pos_policy column default (MANAGER_UP): the configuration's list
+	// considers Sales, but the policy holds the answer at the server, so
+	// the Sales glance is the byte-absent {} and is asserted; the manager's
+	// answer carries the ticket's lines.
 	glanceBody := map[string]any{
 		"branch_id": trentonBranchID,
 		"lines": []map[string]any{
@@ -735,7 +737,9 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 	}
 	salesGlance := sales.call("POST", "/api/v1/pos/margin-glance", glanceBody)
 	salesGlance.ok(t, http.StatusOK)
-	t.Logf("RECORDED (RT-B changes it): the margin glance as Sales (inside_sales) answers: %s", string(salesGlance.body))
+	if body := strings.TrimSpace(string(salesGlance.body)); body != "{}" {
+		t.Fatalf("the margin glance as Sales must answer the byte-absent {} under the demo's default policy, got: %s", body)
+	}
 	mgrGlance := manager.call("POST", "/api/v1/pos/margin-glance", glanceBody)
 	mgrGlance.ok(t, http.StatusOK)
 	var mgrView struct {

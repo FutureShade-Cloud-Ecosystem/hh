@@ -377,8 +377,9 @@ func (h *Handler) listSalespeople(w http.ResponseWriter, r *http.Request, caller
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
-// marginGlance answers the rev-8 item-10 margin read. The service returns the zero value for a
-// caller the dealer's margin_visibility does not allow, the marshal below then writes `{}` with
+// marginGlance answers the rev-8 item-10 margin read. The service returns the zero value unless
+// BOTH dealer knobs allow, the configuration's cost and margin list considers the caller and the
+// policy's margin_visibility lets the answer leave, and the marshal below then writes `{}` with
 // every margin/profit field BYTE-ABSENT (all omitempty; the commander's gating ruling).
 func (h *Handler) marginGlance(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var in MarginGlanceInput
