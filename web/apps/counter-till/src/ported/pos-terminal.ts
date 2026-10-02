@@ -8,10 +8,9 @@ import {
   availableCreditCents,
   cartSubtotalCents,
   depositCentsFromTyped,
+  parseAmountCents,
   perLineSavingCents,
   sumLineSavingCents,
-  ticketTaxCents,
-  ticketTotalCents,
 } from './ports.js';
 import { drawIcon, iconForId } from './_icon-consumer.js';
 // Boundary: the sold and lookup panels embed neighbouring screens by tag
@@ -52,7 +51,6 @@ import {
   stableRingKey, // rev 5: an identical retry reuses its idempotency key (replay-safe for real)
   customerInitials, // rev 6 (A): the resolved-customer identity card's chip
   accountTypeTag, // rev 6 (A): the account-type tag in counter words
-  cashTenderedPlan, // rev 6 (F): the optional cash-tendered quick entry's arithmetic
   tenderLabel, // POS restructure: the chosen tender in counter words, for the collapsed card
   fulfilmentLabel, // and how the material leaves, for the pre-tender read-back
   decideAdd, // DIB-DUPLINE: merge into the existing line, or append and say why
@@ -1309,13 +1307,6 @@ export class HosPosTerminal extends LitElement {
       padding: 3px 0;
       color: var(--hos-text-dim);
     }
-    .readback .rbrow.total {
-      padding-top: 8px;
-      border-top: 1px solid var(--hos-line);
-      color: var(--hos-text);
-      font-weight: 700;
-      font-size: 15px;
-    }
     .readback .rbrow.saving span {
       color: var(--hos-success);
     }
@@ -2179,15 +2170,14 @@ export class HosPosTerminal extends LitElement {
       margin-top: 0;
       padding-top: 0;
     }
-    .totalscard .trow.grand {
+    /* The tax-and-total row (row 661): muted words where the oversized gold
+       Total used to sit. The ring states both figures; the card does not. */
+    .totalscard .trow.ringwords {
       margin-top: 6px;
       padding-top: 8px;
       border-top: 1px solid var(--hos-line);
-      align-items: baseline;
-    }
- /* The oversized gold Total: the concept's one loud number on the quiet card. */
-    .totalscard .trow.grand .num {
-      font-size: 26px;
+      color: var(--hos-text-dim);
+      font-size: 12px;
     }
     .totals {
       border-top: 1px solid var(--hos-line);
@@ -2202,11 +2192,6 @@ export class HosPosTerminal extends LitElement {
     }
     .trow .num {
       font-family: var(--hos-font-mono);
-    }
-    .trow.grand .num {
-      color: var(--hos-stone-amber-text);
-      font-size: 18px;
-      font-weight: 600;
     }
     /* DIB-165 past-sale lookup sheet. Same scrim primitive the parked/return overlays use
        (--hos-scrim + --hos-z-modal) so the counter's modals stack and dim identically. */
@@ -3343,32 +3328,14 @@ export class HosPosTerminal extends LitElement {
     this.scheduleTicketFacts(); // rev 8: fewer lines = a different margin footer + suggestion set
   }
 
-   // HH note: the pre-ring figures are the counter's ESTIMATE. The subtotal is
-   // the priced lines' own assembly (host seam), but HH's contract gives the
-   // counter no rate (PricingBreakdown carries no tax, and the rate table is
-   // money-desk), so the tax line applies this surface's default of 1300 bps
-   // unless the relief flow set another; the dealer's rate table may differ.
-   // The surface says so: the tax row reads (est.) and the total row carries
-   // the estimate mark, and the ring's committed figures are the binding ones.
+  // HH note: the pre-ring figures are the priced lines' own assembly (host
+  // seam), and that is the WHOLE assembly: the till computes no tax and no
+  // total before the ring (decision log row 661 unwound the earlier estimate
+  // bend: no browser rate, no 1300 default, no estimate marks). The tax and
+  // the total are the ring's own answer, and the rows that once estimated
+  // them name the ring instead (ringTaxWords).
   private subtotal(): number {
     return cartSubtotalCents(this.cart);
-  }
-  // Preview rate: the applied relief's engine-assessed bps, else the counter's
-  // 13% default. The binding rate is the core's, at the ring.
-  private taxRateBps(): number {
-    return this.reliefRateBps ?? 1300;
-  }
-  private tax(): number {
-    return ticketTaxCents(this.subtotal(), this.taxRateBps());
-  }
-  private taxLabel(): string {
-    const bps = this.taxRateBps();
-    const pct = bps % 100 === 0 ? String(bps / 100) : (bps / 100).toFixed(2);
-    const relief = this.reliefRateBps === null ? '' : ' (relief)';
-    return `HST ${pct}%${relief} (est.)`;
-  }
-  private total(): number {
-    return ticketTotalCents(this.subtotal(), this.tax());
   }
  // HH note: an empty draft shows the app's blank marker, never a plausible
  // zero (the house rule; the reference showed CA$0.00 here, and HH's rule
@@ -3381,6 +3348,20 @@ export class HosPosTerminal extends LitElement {
   }
   private moneyOrMarker(cents: number): string {
     return this.hasPricedLine() ? money(cents) : '(not priced)';
+  }
+
+  /**
+   * The words the tax-and-total row carries before the ring: the ring states
+   * both figures, so the till names the ring instead of computing them (row
+   * 661). An applied relief's engine-assessed rate is a server-stated fact
+   * (the relief dialog's outcome), so it may be NAMED here, never multiplied
+   * into a figure.
+   */
+  private ringTaxWords(): string {
+    if (this.reliefRateBps === null) return 'added at the ring';
+    const bps = this.reliefRateBps;
+    const pct = bps % 100 === 0 ? String(bps / 100) : (bps / 100).toFixed(2);
+    return `relief assessed at ${pct}%: added at the ring`;
   }
 
   // A deposit rides only an unpaid-at-ring posture: Charge Account tender or a COD sale.
@@ -3617,12 +3598,14 @@ export class HosPosTerminal extends LitElement {
     const unpaidAtRing = tender === 'ACCOUNT' || isCOD;
     const deposit = unpaidAtRing ? this.depositCents() : 0;
     const cardAtRing = (tender === 'CARD' && !unpaidAtRing) || (deposit > 0 && this.depositMethod === 'CARD');
-    // rev 6 (item F): the optional cash quick entry rides the body ONLY when it covers the total
- // on a paid CASH ring (cashTenderedPlan: a short or empty entry sends nothing; one-click cash
-    // is byte-identical to before). Being in the BODY, it re-mints the idempotency key naturally
-    // through stableRingKey's fingerprint when it changes.
-    const cashPlan = cashTenderedPlan(this.total(), this.cashTenderedDollars);
-    const sendCashTendered = tender === 'CASH' && !unpaidAtRing && cashPlan.sendable;
+    // rev 6 (item F), reworded by row 661: the optional cash quick entry rides the body whenever a
+    // positive amount is typed on a paid CASH ring. Coverage is the server's judgement against its
+    // own total (a short entry is refused there, in the server's words); an untouched box sends
+    // nothing and rings the exact total, one-click cash intact. Being in the BODY, it re-mints the
+    // idempotency key naturally through stableRingKey's fingerprint when it changes.
+    const cashTendered = parseAmountCents(this.cashTenderedDollars);
+    const sendCashTendered =
+      tender === 'CASH' && !unpaidAtRing && !Number.isNaN(cashTendered) && cashTendered > 0;
     const payload = {
       branch_id: this.branchId,
       till_session_id: this.tillSessionId,
@@ -3641,7 +3624,7 @@ export class HosPosTerminal extends LitElement {
  // rev 8 (item 11): the job facts: in the fingerprinted body, so the key re-mints naturally.
       job_address: this.jobAddress.trim() || undefined,
       job_reference: this.jobReference.trim() || undefined,
-      cash_tendered_cents: sendCashTendered ? cashPlan.tenderedCents : undefined,
+      cash_tendered_cents: sendCashTendered ? cashTendered : undefined,
       deposit_cents: deposit > 0 ? deposit : undefined,
       deposit_method: deposit > 0 ? this.depositMethod : undefined,
       lines: this.cart.map((l) => ({
@@ -3952,8 +3935,10 @@ export class HosPosTerminal extends LitElement {
         lines: this.cart.map((l) => ({ product_id: l.product.id, qty_entered: l.qty, uom_entered: l.uom })),
       });
       // DIB-246/247: snapshot who + how much under the server ticket id BEFORE newSale() clears
-      // them, so resume can restore this customer and the parked list can show name + total.
-      this.parkedInfo.set(t.id, { customer: this.customer, totalCents: this.hasPricedLine() ? this.total() : null });
+      // them, so resume can restore this customer and the parked list can show name + figure.
+      // Row 661: the figure is the priced lines' SUBTOTAL, the one assembly the till has; the
+      // parked list names it as a subtotal, and a pending line keeps no figure at all.
+      this.parkedInfo.set(t.id, { customer: this.customer, totalCents: this.hasPricedLine() ? this.subtotal() : null });
       this.newSale();
       this.setUtil(`Parked as ${t.ticket_no}: resume re-prices live.`);
       void this.refreshParkedCount();
@@ -5168,15 +5153,15 @@ export class HosPosTerminal extends LitElement {
    * The facts the COLLAPSED cards summarise (summaryFor, _pos-accordion.ts: pure and tested).
    *
    * `totalLabel` is withheld while Payment is open pre-ring: the totals card inside that step is
-   * the running total's SOURCE, and the doctrine's say-it-once rule means the Items summary must
+   * the subtotal's SOURCE, and the doctrine's say-it-once rule means the Items summary must
    * not echo a number the operator is already looking at. Closed Payment, and the echo comes back:
    * which is the same source-and-echo rule the old header chip followed, now with a better echo.
    *
-   * The echo is an ESTIMATE before the ring (the browser's own arithmetic; the ring is the binding
-   * price), so it carries the same mark the totals rows and both ring buttons carry. After the ring
-   * the summary stops estimating entirely: it reads the sale's committed total, the server's own
-   * figure, with no mark, so the estimate cannot stand on screen beside the confirmation's
-   * committed figure (and they would disagree at any rate other than the preview's).
+   * Before the ring the echo is the priced lines' SUBTOTAL, the one figure the till assembles
+   * (row 661: no browser-computed tax, no browser-computed total), so it carries no mark: there
+   * is no estimate on the sale surface to mark. After the ring it reads the sale's committed
+   * total, the server's own figure: the slot's meaning is named by the ring state, and both of
+   * its figures are assemblies over server-stated lines.
    */
   private stepFacts(): StepSummaryFacts {
     return {
@@ -5187,7 +5172,7 @@ export class HosPosTerminal extends LitElement {
         ? money(this.doneSale().total_cents)
         : this.openStep === 'payment'
           ? ''
-          : `${this.moneyOrMarker(this.total())}${this.hasPricedLine() ? ' (est.)' : ''}`,
+          : this.moneyOrMarker(this.subtotal()),
       // DIB-512 (8) · one word per surface. Before the ring the collapsed Payment card says which
       // tender is CHOSEN; after it, salePillLabel decides the counter word for what the sale
  // actually is ('Paid' / 'On account' / 'COD' / 'Deposit'): never the wire status, which is
@@ -5615,15 +5600,17 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
   /**
  * STEP 3 · PAYMENT: the totals card, the tender tiles and the one gold commit.
    *
-   * The totals card stays adjacent to the tender it justifies (it is the number the clerk reads out
-   * loud), and it is the running total's one source; the collapsed Items card echoes it only while
-   * this step is closed.
+   * The totals card stays adjacent to the tender it justifies (it is the figure the clerk reads out
+   * loud), and it is the subtotal's one source; the collapsed Items card echoes it only while
+   * this step is closed. The tax and the total are not on the card at all: the row names the
+   * ring for them (row 661), so the number the clerk reads out loud at the ring is the server's.
    */
   private renderPaymentBody() {
     return html`
 ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, ABOVE a
-   clearly separate Payment section (concept parity). Same numbers, same derivations;
-   the oversized gold Total is the card's one loud element. The rev-6 total chip in
+   clearly separate Payment section (concept parity). One server-priced figure
+   (the subtotal) and one row of honest words (row 661): the oversized gold
+   Total is gone with the browser arithmetic that fed it. The rev-6 total chip in
    the panel bar stands for the scroll cases. */ ''}
           <section class="panel totalscard" aria-label="Totals" data-testid="pos-totals-card">
             ${this.reliefReason
@@ -5631,8 +5618,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
               : nothing}
             <div class="totals">
               <div class="trow"><span>Subtotal</span><span class="num">${this.moneyOrMarker(this.subtotal())}</span></div>
-              <div class="trow"><span>${this.taxLabel()}</span><span class="num">${this.moneyOrMarker(this.tax())}</span></div>
-              <div class="trow grand"><span>Total (est.)</span><span class="num">${this.moneyOrMarker(this.total())}</span></div>
+              <div class="trow ringwords" data-testid="pos-ring-words"><span>Tax and total</span><span>${this.ringTaxWords()}</span></div>
             </div>
           </section>
 
@@ -5782,8 +5768,8 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                       : this.ringBusy()
                         ? 'Ringing…'
                         : this.tillSessionId === ''
-                          ? `Open session · then complete · ${this.moneyOrMarker(this.total())}${this.hasPricedLine() ? ' (est.)' : ''}`
-                          : `Complete sale · ${this.moneyOrMarker(this.total())}${this.hasPricedLine() ? ' (est.)' : ''}`}
+                          ? `Open session · then complete · subtotal ${this.moneyOrMarker(this.subtotal())} + tax at the ring`
+                          : `Complete sale · subtotal ${this.moneyOrMarker(this.subtotal())} + tax at the ring`}
                     ${!this.ringDone() && this.payKeycap()
                       ? html`<span class="keycap" data-testid="pay-hotkey-chip" aria-hidden="true"
                           >${this.payKeycap()}</span
@@ -5804,7 +5790,12 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
 
           ${this.showSplit
             ? html`<hos-pos-split-tender
-                .totalCents=${this.hasPricedLine() ? this.total() : null}
+                ${/* Pre-ring the panel is handed no total: the legs settle the server's
+                   total at the ring (row 661), so the panel computes no remaining and
+                   fills no leg. A server-stated total (the rate-serving lane's return)
+                   is what this input takes, never a browser assembly. */ ''}
+                .totalCents=${null}
+                .hasLines=${this.cart.length > 0}
                 .hasCustomer=${!!this.customer}
                 .customerName=${this.customer?.name ?? ''}
                 .busy=${this.ringBusy()}
@@ -5986,9 +5977,10 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
  * not a step to also be editing in: the card that owns each fact is one header press away and
    * still open for business.
    *
-   * The totals here are the same derivations the Payment card's totals card shows, and only one
-   * card is open at a time, so the say-it-once rule is kept structurally rather than by suppression.
-   */
+ * The subtotal here is the same derivation the Payment card's totals card shows, and only one
+ * card is open at a time, so the say-it-once rule is kept structurally rather than by suppression.
+ * The tax and the total are not derivations any more: the row names the ring for them (row 661).
+ */
   private renderReadBack() {
     if (this.cart.length === 0) {
       // Empty is never an error. One calm line: what is missing, what that means, the way forward.
@@ -6023,8 +6015,7 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
       <div class="rbrow"><span>${fulfilmentLabel(this.saleType)}</span><span></span></div>
       ${this.requestedDate ? html`<div class="rbrow"><span>Requested</span><span>${this.requestedDate}</span></div>` : nothing}
       <div class="rbrow"><span>Subtotal</span><span class="m">${this.moneyOrMarker(this.subtotal())}</span></div>
-      <div class="rbrow"><span>${this.taxLabel()}</span><span class="m">${this.moneyOrMarker(this.tax())}</span></div>
-      <div class="rbrow total"><span>Total (est.)</span><span class="m">${this.moneyOrMarker(this.total())}</span></div>
+      <div class="rbrow" data-testid="readback-ring-words"><span>Tax and total</span><span class="m">${this.ringTaxWords()}</span></div>
       <div class="rbrow"><span>${tenderLabel(this.payMethod || 'CASH')}</span><span></span></div>
       ${/* "how much am I saving?": the client's words for the thing customers always ask. Server
          arithmetic, summed per line; absent entirely when there is nothing to claim. */ ''}
@@ -6223,17 +6214,18 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
    * answered yet, so there is no identity to card.
    */
   /**
- * rev 6 (item F, the commander-approved opinion #1): the OPTIONAL cash-tendered quick entry.
+   * rev 6 (item A), reworded by row 661: the OPTIONAL cash-tendered quick entry.
    * Shown only once Cash is the chosen tender and FULLY skippable: an untouched box changes
-   * nothing (Complete rings the exact total, one-click cash intact). An entry covering the total
-   * previews the change due here and rides the ring body (the server confirms; the sold panel
-   * shows the committed answer); a short entry says so honestly and sends nothing.
+   * nothing (Complete rings the exact total, one-click cash intact). A typed amount is asked for
+   * and nothing is computed from it: the till computes no total before the ring, so the change
+   * due is the ring's own answer, stated on the confirmation. What the server refuses there (a
+   * short entry) arrives as the server's own refusal words.
    */
   /**
- * rev 8 (item 8: DIB-502): the SUGGESTED ADD-ONS strip below the ticket. Up to 3 tiles from
+   * rev 8 (item 8: DIB-502): the SUGGESTED ADD-ONS strip below the ticket. Up to 3 tiles from
    * the server's category-level co-purchase pairing map (0169), items already on the ticket
    * excluded server-side; an EMPTY answer means the strip does not render at all
- * (empty-never-error). Adds go through the EXISTING add path: the engine prices the line;
+   * (empty-never-error). Adds go through the EXISTING add path: the engine prices the line;
    * the tile's list price is display only.
    */
   private renderAddonsStrip() {
@@ -6297,7 +6289,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
 
   private renderCashTendered() {
     if (this.payMethod !== 'CASH' || this.ringDone()) return nothing;
-    const plan = cashTenderedPlan(this.total(), this.cashTenderedDollars);
+    const typed = parseAmountCents(this.cashTenderedDollars);
     return html`<div class="cashrow">
         <input
           type="number"
@@ -6307,18 +6299,16 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           data-testid="cash-tendered"
           placeholder="Cash tendered (optional, CA$)"
           aria-label="Cash tendered in dollars: optional; leave empty to ring the exact total"
-          title="Type what the customer hands you and the change due shows here and on the confirmation. Leave empty to ring the exact total."
+          title="Type what the customer hands you: the change due is the ring's own answer, stated on the confirmation. Leave empty to ring the exact total."
           .value=${this.cashTenderedDollars}
           @input=${(e: Event) => (this.cashTenderedDollars = (e.target as HTMLInputElement).value)}
         />
       </div>
       ${this.cashTenderedDollars.trim() !== ''
         ? html`<div class="cashhint" data-testid="cash-change-preview">
-            ${!this.hasPricedLine()
-              ? html`Change due <span class="num">(not priced)</span>`
-              : plan.sendable
-                ? html`Change due <span class="num">${money(plan.changeDueCents)} (est.)</span>`
-                : 'Less than the total: the sale rings for the exact total; add more or clear the box.'}
+            ${Number.isNaN(typed) || typed <= 0
+              ? 'Not an amount: type what the customer handed you, or clear the box to ring the exact total.'
+              : "Change due: the ring's own answer, on the confirmation."}
           </div>`
         : nothing}`;
   }

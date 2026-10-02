@@ -54,6 +54,18 @@ export const MAX_SPLIT_LEGS = 6;
 export { evaluateSplit } from './ports.js';
 
 /**
+ * splitDraftRead is the panel's pre-ring read: the legs' typed sum and the
+ * shape refusals, with no total anywhere in it. The total the legs settle is
+ * the server's, stated at the ring, so before the ring the panel compares the
+ * legs against nothing; `evaluateSplit` (above) is for a server-stated total
+ * only.
+ *
+ * HH note: the typed sum is the operator's arithmetic over the operator's own
+ * entries, hosted in the seam file like every other sum (CLOSURE.md names it).
+ */
+export { splitDraftRead } from './ports.js';
+
+/**
  * autoFillRemainder is the ergonomics that makes a split usable at a counter: the cashier types the
  * cash they were handed and the next leg pre-fills with EXACTLY what is left, so the common case
  * needs no mental arithmetic and cannot be off by a cent. Returns 0 (not a negative) when the sale
