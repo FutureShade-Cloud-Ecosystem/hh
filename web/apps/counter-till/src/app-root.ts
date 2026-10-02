@@ -122,6 +122,54 @@ export class CounterTillApp extends HHElement {
         margin-bottom: var(--hh-s-8);
         gap: var(--hh-s-12);
       }
+      /* The entry page's header takes the same compact scale (visual NOTE 2): one row of about 48px,
+         the banner beside the title and the chrome buttons, the same small button face. */
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: var(--hh-s-12);
+        min-height: 48px;
+        box-sizing: border-box;
+        padding: var(--hh-s-8) var(--hh-s-20);
+      }
+      header .title-row {
+        gap: var(--hh-s-12);
+        margin-left: auto;
+      }
+      header .signed-in {
+        margin: 0;
+        gap: var(--hh-s-8);
+      }
+      header .role-name {
+        font-size: 13px;
+      }
+      header button {
+        min-height: 0;
+        padding: 7px 12px;
+        font-size: 11px;
+        line-height: normal;
+        color: var(--hh-text-dim);
+      }
+      header button:hover:not(:disabled) {
+        border-color: var(--hh-accent-text);
+        color: var(--hh-accent-text);
+      }
+      header .demo-banner {
+        margin: 0;
+        padding: var(--hh-s-4) var(--hh-s-12);
+        align-items: center;
+        gap: var(--hh-s-8);
+      }
+      header .demo-banner .word,
+      header .demo-banner .copy {
+        font-size: 12px;
+        line-height: 1.3;
+      }
+      header h1 {
+        font-size: 15px;
+      }
       .surfacebar .signed-in {
         margin: 0;
         gap: var(--hh-s-8);
