@@ -159,10 +159,37 @@ func TestPrintOneshotDatabaseTarget(t *testing.T) {
 			forbid:   []string{"kw-secret", "user=kb"},
 		},
 		{
-			name:     "a DSN in neither shape is named as absent, never guessed",
+			name:     "a URL whose query parameters override its host prints the override, the driver's target, not the decoy half",
+			role:     "migrate",
+			dsn:      "postgres://op:decoy-secret@decoy.example:5432/decoydb?host=real.example&port=6543&dbname=realdb",
+			wantLine: "migrate: database target: host=real.example:6543 database=realdb",
+			forbid:   []string{"decoy.example", "decoydb", "decoy-secret", "op:"},
+		},
+		{
+			name:     "a socket DSN prints the socket directory and the database, no port tacked onto a path",
+			role:     "seed",
+			dsn:      "postgres://op@/sockdb?host=/var/run/postgresql",
+			wantLine: "seed: database target: host=/var/run/postgresql database=sockdb",
+			forbid:   []string{"/var/run/postgresql:5432"},
+		},
+		{
+			name:     "a keyword DSN whose quoted password contains host= prints the host, never a password fragment",
+			role:     "demoseed",
+			dsn:      `host=real.example port=6543 dbname=realdb password="pass word host=decoy"`,
+			wantLine: "demoseed: database target: host=real.example:6543 database=realdb",
+			forbid:   []string{"pass word", "host=decoy", "decoy"},
+		},
+		{
+			name:     "a keyword DSN with spaces around the equals parses the way the driver does",
+			role:     "migrate",
+			dsn:      "host = spaced.example dbname = spaceddb",
+			wantLine: "migrate: database target: host=spaced.example:5432 database=spaceddb",
+		},
+		{
+			name:     "a DSN the driver cannot parse is named as such, never guessed",
 			role:     "migrate",
 			dsn:      "not a dsn at all",
-			wantLine: "migrate: database target: host=(no host in the DSN) database=(no database name in the DSN)",
+			wantLine: "migrate: database target: host=(unparseable DSN) database=(unparseable DSN)",
 		},
 	}
 	for _, tc := range cases {

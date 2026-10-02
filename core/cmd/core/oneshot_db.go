@@ -13,8 +13,9 @@ package main
 import (
 	"fmt"
 	"io"
-	"net/url"
 	"strings"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/config"
 )
@@ -68,38 +69,30 @@ func printOneshotDatabaseTarget(w io.Writer, role, dsn string) {
 	fmt.Fprintf(w, "%s: database target: host=%s database=%s\n", role, host, database)
 }
 
-// dsnTarget reduces a DSN to its host (with port) and database name.
-// URL form first (every DSN this tree writes is URL form); the keyword
-// form second, best effort, so a keyword DSN still names its target. A
-// DSN in neither shape is named as absent rather than guessed, the same
-// never-render-a-confident-wrong-number rule the rest of the tree
-// carries.
+// dsnTarget reduces a DSN to the host (with its port) and database name
+// the driver itself will act on, by asking the driver: pgconn's parse is
+// the one the pool in db.Connect dials through, so the printed target
+// cannot disagree with the target actually reached (a URL whose query
+// parameters override its host and database, a keyword DSN with quoting
+// or spaces, a socket directory: all resolve the way the connection
+// will, where a hand-rolled parse can read the decoy half of the DSN).
+// A DSN the driver cannot parse is named as such rather than guessed,
+// the same never-render-a-confident-wrong-number rule the rest of the
+// tree carries, and nothing else the parse knows (user, password,
+// runtime parameters) is ever printed.
 func dsnTarget(dsn string) (host, database string) {
-	if u, err := url.Parse(strings.TrimSpace(dsn)); err == nil && u.Scheme != "" {
-		host, database = u.Host, strings.TrimPrefix(u.Path, "/")
-	} else {
-		var port string
-		for _, field := range strings.Fields(dsn) {
-			key, value, ok := strings.Cut(field, "=")
-			if !ok {
-				continue
-			}
-			switch key {
-			case "host":
-				host = value
-			case "port":
-				port = value
-			case "dbname":
-				database = value
-			}
-		}
-		if host != "" && port != "" {
-			host = host + ":" + port
-		}
+	cfg, err := pgconn.ParseConfig(strings.TrimSpace(dsn))
+	if err != nil {
+		return "(unparseable DSN)", "(unparseable DSN)"
+	}
+	host = cfg.Host
+	if cfg.Port > 0 && !strings.HasPrefix(host, "/") {
+		host = fmt.Sprintf("%s:%d", host, cfg.Port)
 	}
 	if host == "" {
 		host = "(no host in the DSN)"
 	}
+	database = cfg.Database
 	if database == "" {
 		database = "(no database name in the DSN)"
 	}
