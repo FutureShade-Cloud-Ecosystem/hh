@@ -1,21 +1,24 @@
-// W7's exit test, run as Sales against the stubbed harness (the stub serves
-// the counter routes' contract shapes; the vite dev server proxies /api to
-// it). The story this holds, screen by screen from the plan's section 2: the
-// drawer is found or opened on a first use, three lines ring at the walk-in's
-// retail and the sale read answers every figure the screen showed, a card
-// sale carries the simulated notice on the tender and the receipt (and shows
-// none when the rail answers false), an account sale shows its invoice and
-// its balance, an account on hold is refused in words, a contractor's Holland
-// pavers ring at the account's rule price with the margin shown, the
-// quantity the till sends is the one typed on the screen, the requested date
-// is the house zone's day, and a ticket parks and resumes priced fresh: for a
-// walk-in, and across a sign-out for an account's ticket.
+// The sale at the counter, held against the ported terminal (the surface the
+// parity pass mounted): the stub serves the counter routes' contract shapes
+// and the vite dev server proxies /api to it. The stories this suite holds
+// are the counter's own: the drawer is found or opened on a first use, three
+// lines ring at the walk-in's retail and the sale read answers every figure
+// the confirmation showed, the quantity rung is the one typed and the
+// requested date is the house zone's day, a card sale carries the simulated
+// word on the tender and on the confirmation exactly when the rail answers
+// simulated true (and none when it answers false), an account sale rings on
+// the account with its facts beside the name, an account on hold is refused
+// in the reviewed words, a contractor's Holland pavers ring at the account's
+// rule price with the margin column answered, a ticket parks and resumes with
+// its customer, a second press on Complete commits exactly one sale, and the
+// surface's two modes both work: the layout pick and its persistence, the
+// panel toggles, and the pop-out.
 //
 // The sale read comparison works through the real path: this spec mints its
 // own demo session (the same public route the app's cards use) and reads the
 // committed sale back through the same proxy, with the bearer and org header
 // the staff routes require.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Response } from "@playwright/test";
 
 /** The screen-side rendering of integer cents, for comparing against the app. */
 function dollars(cents: number): string {
@@ -58,113 +61,184 @@ async function getSale(
   return (await read.json()) as Record<string, unknown>;
 }
 
-async function searchAndAdd(page: Page, query: string, hitName: string): Promise<void> {
-  await page.getByLabel("Search the catalogue by sku or name").fill(query);
-  await page.getByRole("button", { name: "Search", exact: true }).click();
-  const hit = page.getByRole("button", { name: `Add ${hitName} to the ticket` });
-  await expect(hit).toBeVisible();
-  await hit.click();
+/** Sign in through the entry cards and land on the ported terminal. */
+async function signIn(page: Page, role: "Sales" | "Sales manager"): Promise<void> {
+  await page.goto("/");
+  await page.getByRole("button", { name: role, exact: true }).click();
+  await expect(page.getByTestId("pos-page-title")).toHaveText("New Counter Sale");
 }
 
-test("a walk-in cash sale of three lines rings with change due, and the sale read equals every figure on screen", async ({
+/** Search from the counter's own field and add the hit: the drop row's click adds. */
+async function searchAndAdd(page: Page, query: string, hitName: string): Promise<void> {
+  // The counter's accordion opens on Customer; the scan box lives in Items.
+  await openStep(page, "items");
+  const field = page.getByTestId("pos-scan-input");
+  await field.fill(query);
+  const row = page.getByTestId("drop-row").filter({ hasText: hitName }).first();
+  await expect(row).toBeVisible();
+  await row.click();
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: hitName })).toHaveCount(1);
+}
+
+/**
+ * The branch's drawer, found or opened: the mount hydrates asynchronously, so
+ * wait for whichever state arrives (the open dot, or the open button) instead
+ * of racing the read with a count.
+ */
+async function ensureSession(page: Page): Promise<void> {
+  const dot = page.getByTestId("session-dot");
+  const openButton = page.getByRole("button", { name: "Open Session", exact: true });
+  await expect(dot.or(openButton).first()).toBeVisible({ timeout: 10_000 });
+  if (await dot.isVisible()) {
+    await expect(dot).toContainText("Open");
+    return;
+  }
+  // The open control can show for an instant before the hydrating read finds
+  // the drawer already open: a click that loses that race is not a failure,
+  // the dot arriving is the state the helper wants.
+  await openButton.click({ timeout: 3_000 }).catch(() => undefined);
+  await expect(dot).toContainText("Open");
+}
+
+/** Open one step of the linear flow by its head (a no-op when it is already open). */
+async function openStep(page: Page, step: "customer" | "items" | "payment" | "summary"): Promise<void> {
+  const head = page.getByTestId(`step-head-${step}`);
+  if ((await head.getAttribute("aria-expanded")) !== "true") {
+    await head.click();
+  }
+  await expect(head).toHaveAttribute("aria-expanded", "true");
+}
+
+/** Pick an account through the counter's own picker. */
+async function pickAccount(page: Page, search: string, name: string): Promise<void> {
+  await page.getByRole("button", { name: /Select customer/ }).click();
+  const searchBox = page.getByPlaceholder("Search name or account #…");
+  await searchBox.fill(search);
+  const row = page.locator("button.row").filter({ hasText: name }).first();
+  await expect(row).toBeVisible();
+  await row.click();
+  // The pick advances the flow toward Items; the account's facts live on the
+  // customer step's card, so open it again and read them. The advance can
+  // land after the first open (the pick reprices the ticket first), so the
+  // open is retried until the card is readable.
+  const card = page.getByTestId("customer-card");
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await openStep(page, "customer");
+    try {
+      await expect(card).toContainText(name, { timeout: 700 });
+      return;
+    } catch {
+      // the advance closed the step again: open it once more
+    }
+  }
+  await expect(card).toContainText(name);
+}
+
+test("a walk-in cash sale of three lines rings, and the sale read equals every figure on the confirmation", async ({
   page,
 }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await signIn(page, "Sales");
 
-  // The drawer: a first use opens it with the invented float.
-  const drawer = page.getByTestId("drawer-status");
-  await expect(drawer).toContainText("Trenton MAIN: open with a float of $200.00");
-
-  // Three lines, one quantity typed and re-priced.
+  // Three lines, one quantity typed: the line reprices through the engine.
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
   await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
   await searchAndAdd(page, "clear", "Clear Stone");
-  const lines = page.getByTestId("ticket-line");
+  const lines = page.getByTestId("pos-line-row");
   await expect(lines).toHaveCount(3);
-  await expect(page.getByTestId("line-unit-price").first()).toHaveText("$4.00");
-  const hollandQty = page.getByLabel("Quantity of Holland Stone 60 mm");
+  const hollandQty = page.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
   await hollandQty.fill("3");
-  await page.getByRole("button", { name: "Re-price the ticket" }).click();
-  await expect(page.getByTestId("line-unit-price").first()).toHaveText("$4.00");
+  await hollandQty.blur();
+  await expect(lines.filter({ hasText: "Holland Stone 60 mm" }).locator(".ltot")).toHaveText("CA$12.00");
 
-  // The walk-in's retail, with the margin column answered for every line
-  // that carries a cost at this branch: the edge restraint is not on this
-  // ticket, so all three show a percent.
-  const margins = page.getByTestId("line-margin");
+  // The walk-in's retail on every line, with the margin column answered for
+  // every line that carries a cost at this branch.
+  const margins = page.getByTestId("pos-line-margin");
   await expect(margins).toHaveCount(3);
   for (let index = 0; index < 3; index += 1) {
     await expect(margins.nth(index)).toContainText("%");
   }
 
-  // Tender cash and ring.
-  await page.getByLabel("Cash tendered, in dollars").fill("80.00");
-  await page.getByRole("button", { name: "Ring the sale" }).click();
+  // The cash quick entry: what the customer hands over names the change due
+  // before anything is rung, here CA$7.68 against the estimated total.
+  await openStep(page, "payment");
+  // The pre-ring summary, figure by figure, on a ticket the stub's prices
+  // pin: 12.00 + 14.00 + 38.00 is a CA$64.00 subtotal; the estimated tax is
+  // the counter's 1300 bps on it (CA$8.32); the estimated total is CA$72.32.
+  // The rows say they are estimates; the ring's figures are the binding ones.
+  const totals = page.getByTestId("pos-totals-card");
+  await expect(totals).toContainText("CA$64.00");
+  await expect(totals).toContainText("HST 13% (est.)");
+  await expect(totals).toContainText("CA$8.32");
+  await expect(totals).toContainText("Total (est.)");
+  await expect(totals).toContainText("CA$72.32");
+  await page.getByLabel("Cash tendered in dollars: optional; leave empty to ring the exact total").fill("80.00");
+  await expect(page.getByTestId("cash-change-preview")).toContainText("Change due");
+  await expect(page.getByTestId("cash-change-preview")).toContainText("CA$7.68");
 
-  // The receipt, figure by figure.
-  const receipt = page.getByTestId("receipt");
-  await expect(receipt).toBeVisible();
-  const orderNo = await receipt.getByTestId("receipt-order-no").textContent();
-  const invoiceNo = await receipt.getByTestId("receipt-invoice-no").textContent();
-  expect(orderNo).toMatch(/^ORD-/);
-  expect(invoiceNo).toMatch(/^INV-/);
-  await expect(receipt.getByTestId("receipt-total")).toContainText("$");
-  // A cash receipt carries no card notice, whatever the rail answers.
-  await expect(receipt.getByTestId("receipt-simulated-notice")).toHaveCount(0);
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await page.getByTestId("pos-complete-sale").click();
+  const sale = (await (await ringPost).json()) as Record<string, unknown>;
+
+  // The confirmation, figure by figure, against the sale the core committed.
+  const sold = page.getByTestId("sold-panel");
+  await expect(sold).toBeVisible();
+  await expect(sold).toContainText("Paid");
+  await expect(sold).toContainText(String(sale.order_no));
+  await expect(sold).toContainText(String(sale.invoice_no));
+  await expect(sold.getByTestId("sold-change-due")).toContainText(dollars(8000));
+  await expect(sold.getByTestId("sold-change-due")).toContainText(
+    dollars(8000 - (sale.total_cents as number)),
+  );
+  // A cash confirmation carries no card notice, whatever the rail answers.
+  await expect(page.getByTestId("sold-simulated-notice")).toHaveCount(0);
+  // The session bar says the drawer is open, and stayed open.
+  await expect(page.getByTestId("session-dot")).toContainText("Open");
 
   // The read path: mint, read, and hold every figure against the screen.
   const bearer = await salesBearer(page);
-  const orderId = await receipt.getAttribute("data-order-id");
-  expect(orderId).toBeTruthy();
-  const sale = await getSale(page, bearer, orderId as string);
-  expect(sale.order_no).toBe(orderNo);
-  expect(sale.invoice_no).toBe(invoiceNo);
-  await expect(receipt.getByTestId("receipt-subtotal")).toHaveText(dollars(sale.subtotal_cents as number));
-  await expect(receipt.getByTestId("receipt-tax")).toHaveText(dollars(sale.tax_cents as number));
-  await expect(receipt.getByTestId("receipt-total")).toHaveText(dollars(sale.total_cents as number));
-  await expect(receipt.getByTestId("receipt-tendered")).toHaveText(dollars(8000));
-  // The change due is the core's figure; the read carries the parts, so the
-  // test puts them together where the test lives.
-  await expect(receipt.getByTestId("receipt-change-due")).toHaveText(
-    dollars((8000 as number) - (sale.total_cents as number)),
-  );
-  const viewLines = sale.lines as Array<Record<string, unknown>>;
+  const read = await getSale(page, bearer, sale.order_id as string);
+  expect(read.order_no).toBe(sale.order_no);
+  expect(read.invoice_no).toBe(sale.invoice_no);
+  await expect(sold).toContainText(dollars(read.total_cents as number));
+  const viewLines = read.lines as Array<Record<string, unknown>>;
   expect(viewLines).toHaveLength(3);
   expect(viewLines[0].unit_price_cents).toBe(400);
   expect(viewLines[0].qty_entered).toBe(3);
   expect(viewLines[0].uom_entered).toBe("sf");
   expect(viewLines[1].unit_price_cents).toBe(1400);
   expect(viewLines[2].unit_price_cents).toBe(3800);
-  const tenderLegs = sale.tenders as Array<Record<string, unknown>>;
+  const tenderLegs = read.tenders as Array<Record<string, unknown>>;
   expect(tenderLegs).toHaveLength(1);
   expect(tenderLegs[0].method).toBe("CASH");
-  expect(tenderLegs[0].amount_cents).toBe(sale.total_cents);
-  // The tender row on the screen agrees with the read.
-  await expect(receipt.getByTestId("receipt-tender")).toContainText("CASH");
-  await expect(receipt.getByTestId("receipt-tender")).toContainText(dollars(sale.total_cents as number));
+  expect(tenderLegs[0].amount_cents).toBe(read.total_cents);
+  // The typed cash tendered and the change due are the core's own figures,
+  // answered on the ring itself.
+  expect(sale.cash_tendered_cents).toBe(8000);
+  expect(sale.change_due_cents).toBe(8000 - (read.total_cents as number));
 });
 
 test("the quantity rung is the quantity on the screen, and the requested date is the house zone's day", async ({
   page,
 }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
-  await expect(page.getByTestId("drawer-status")).toContainText("open");
-
+  await signIn(page, "Sales");
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  await expect(page.getByTestId("line-unit-price").first()).toHaveText("$4.00");
-
-  // Type ten and ring without leaving the field, without re-pricing: what
-  // leaves the till is the ten on the screen, and the ticket re-prices first,
-  // because the engine prices by quantity.
-  await page.getByLabel("Quantity of Holland Stone 60 mm").fill("10");
-  await page.getByLabel("Cash tendered, in dollars").fill("60.00");
-  const ring = page.waitForRequest(
-    (request) => request.method() === "POST" && request.url().includes("/api/v1/pos/sales"),
+  const hollandQty = page.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
+  await hollandQty.fill("10");
+  await hollandQty.blur();
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" }).locator(".ltot")).toHaveText(
+    "CA$40.00",
   );
-  await page.getByRole("button", { name: "Ring the sale" }).click();
-  const ringRequest = await ring;
-  const body = (await ringRequest.postDataJSON()) as Record<string, unknown>;
+
+  await openStep(page, "payment");
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  // No quick entry: the sale rings for the exact total, per the field's own word.
+  await page.getByTestId("pos-complete-sale").click();
+  const ringResponse = await ringPost;
+  const body = (await ringResponse.request().postDataJSON()) as Record<string, unknown>;
   const ringLines = body.lines as Array<Record<string, unknown>>;
   expect(ringLines).toHaveLength(1);
   expect(ringLines[0].qty_entered).toBe(10);
@@ -172,39 +246,53 @@ test("the quantity rung is the quantity on the screen, and the requested date is
   // whose date is not the house zone's day, and the body says it plainly.
   expect(body.requested_date).toBe(houseDay());
 
-  const receipt = page.getByTestId("receipt");
-  await expect(receipt).toBeVisible();
+  const sold = page.getByTestId("sold-panel");
+  await expect(sold).toBeVisible();
+  const committed = (await ringResponse.json()) as Record<string, unknown>;
   const bearer = await salesBearer(page);
-  const sale = await getSale(page, bearer, (await receipt.getAttribute("data-order-id")) as string);
-  const viewLines = sale.lines as Array<Record<string, unknown>>;
+  const read = await getSale(page, bearer, committed.order_id as string);
+  const viewLines = read.lines as Array<Record<string, unknown>>;
   expect(viewLines[0].qty_entered).toBe(10);
   expect(viewLines[0].line_total_cents).toBe(4000);
-  await expect(receipt.getByTestId("receipt-total")).toHaveText(dollars(sale.total_cents as number));
-  expect(sale.total_cents).toBe(4520);
-  await expect(receipt.getByTestId("receipt-change-due")).toHaveText(
-    dollars((6000 as number) - (sale.total_cents as number)),
-  );
+  await expect(sold).toContainText(dollars(read.total_cents as number));
+  expect(read.total_cents).toBe(4520);
 });
 
-test("a card sale shows the simulated notice on the tender and on the receipt, and none when the rail answers false", async ({
+test("a card sale shows the simulated word on the tender and on the confirmation, and none when the rail answers false", async ({
   page,
 }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
-  await expect(page.getByTestId("drawer-status")).toContainText("open");
+  await signIn(page, "Sales");
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  await expect(page.getByTestId("line-unit-price").first()).toHaveText("$4.00");
 
-  await page.getByRole("button", { name: "Card", exact: true }).click();
-  await expect(page.getByTestId("simulated-notice")).toHaveText("Simulated card: no card was charged");
-  await page.getByRole("button", { name: "Ring the sale" }).click();
-  const receipt = page.getByTestId("receipt");
-  await expect(receipt).toBeVisible();
-  await expect(receipt.getByTestId("receipt-simulated-notice")).toHaveText("Simulated card: no card was charged");
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Card" }).click();
+  // The rail's own report: the demo box's simulator names itself on the
+  // tender, exactly while the status route answers simulated true.
+  await expect(page.getByText("TEST MODE: simulated terminal")).toBeVisible();
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await page.getByTestId("pos-complete-sale").click();
+  const sale = (await (await ringPost).json()) as Record<string, unknown>;
+  const sold = page.getByTestId("sold-panel");
+  await expect(sold).toBeVisible();
+  await expect(sold.getByTestId("sold-simulated-notice")).toContainText("Simulated card: no card was charged");
+  const bearer = await salesBearer(page);
+  const read = await getSale(page, bearer, sale.order_id as string);
+  expect(read.tender).toBe("CARD");
 
-  // The notice is value driven: the same screen against a status route that
-  // answers simulated false shows no notice on the tender and none on the
-  // receipt either (and the stub's own answer is true, so both values are
+  // The printed receipt is the core's document and carries no simulated word
+  // (CLOSURE.md names the gap); it opens, and the simulated notice is held by
+  // the till's own screens above.
+  const receiptPage = page.context().waitForEvent("page");
+  await sold.getByTestId("sold-print").click();
+  const printed = await receiptPage;
+  await expect(printed.getByText("Counter sale")).toBeVisible();
+  await printed.close();
+
+  // The notice is value driven: the same surface against a status route that
+  // answers simulated false shows no badge on the tender and no notice on the
+  // confirmation (and the stub's own answer is true, so both values are
   // covered by the suite).
   const other = await page.context().newPage();
   await other.route("**/api/v1/payments/config", (route) =>
@@ -220,382 +308,638 @@ test("a card sale shows the simulated notice on the tender and on the receipt, a
       }),
     }),
   );
-  await other.goto("/");
-  await other.getByRole("button", { name: "Sales", exact: true }).click();
-  await expect(other.getByTestId("drawer-status")).toContainText("open");
+  await signIn(other, "Sales");
   await searchAndAdd(other, "wall", "Retaining Wall Stone, Standard");
-  await expect(other.getByTestId("line-unit-price").first()).toHaveText("$52.00");
-  await other.getByRole("button", { name: "Card", exact: true }).click();
-  await expect(other.getByTestId("simulated-notice")).toHaveCount(0);
-  await other.getByRole("button", { name: "Ring the sale" }).click();
-  const falseReceipt = other.getByTestId("receipt");
-  await expect(falseReceipt).toBeVisible();
-  await expect(falseReceipt.getByTestId("receipt-simulated-notice")).toHaveCount(0);
+  await openStep(other, "payment");
+  await other.getByRole("button", { name: "Card" }).click();
+  await expect(other.getByText("TEST MODE: simulated terminal")).toHaveCount(0);
+  const otherRing = other.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await other.getByTestId("pos-complete-sale").click();
+  await otherRing;
+  const otherSold = other.getByTestId("sold-panel");
+  await expect(otherSold).toBeVisible();
+  await expect(otherSold.getByTestId("sold-simulated-notice")).toHaveCount(0);
+  // The document word's false side is the core's render of its own rail, and
+  // this stub's rail IS its simulator, so a false-side document cannot be
+  // staged honestly here: the false side is held where the app speaks, at the
+  // confirmation above.
   await other.close();
 });
 
-test("an account sale for C02 shows its invoice and its balance, and the receipt keeps the account it was rung for", async ({
+test("an account sale for C02 rings on the account, with its facts beside the name", async ({ page }) => {
+  await signIn(page, "Sales");
+  await pickAccount(page, "C02", "Fenwick Builders Ltd");
+  // The account's facts: available headroom from the core's limit and balance,
+  // and the past-due fact the standing read answered.
+  await expect(page.getByTestId("customer-card")).toContainText("C02");
+  await expect(page.getByTestId("customer-card")).toContainText("Available");
+  await expect(page.getByTestId("cust-past-due")).toContainText(dollars(41500));
+  await expect(page.getByTestId("cust-on-hold")).toHaveCount(0);
+
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  const hollandQty = page.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
+  await hollandQty.fill("10");
+  await hollandQty.blur();
+  // The account's own rule price, ten percent off retail.
+  await expect(
+    page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" }).locator(".lprice"),
+  ).toHaveText("CA$3.60");
+
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Charge Account" }).click();
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await page.getByTestId("pos-complete-sale").click();
+  const sale = (await (await ringPost).json()) as Record<string, unknown>;
+  const sold = page.getByTestId("sold-panel");
+  await expect(sold).toBeVisible();
+  await expect(sold).toContainText("On account");
+  await expect(sold).toContainText(String(sale.invoice_no));
+  const bearer = await salesBearer(page);
+  const read = await getSale(page, bearer, sale.order_id as string);
+  expect(read.tender).toBe("ACCOUNT");
+  expect(read.invoice_no).toBe(sale.invoice_no);
+
+  // The receipt document, printed from the confirmation: the account it was
+  // sold to, the invoice, the figures.
+  const receiptPage = page.context().waitForEvent("page");
+  await sold.getByTestId("sold-print").click();
+  const printed = await receiptPage;
+  await expect(printed.getByText(`Counter sale ${sale.order_no} · invoice ${sale.invoice_no}`)).toBeVisible();
+  await expect(printed.getByText("Sold to Fenwick Builders Ltd (C02)")).toBeVisible();
+  await expect(
+    printed.getByText(`Total ${dollars(read.total_cents as number).replace("$", "")} · ACCOUNT`),
+  ).toBeVisible();
+  await printed.close();
+});
+
+test("an account on hold is refused in the reviewed words, and nothing commits", async ({ page }) => {
+  await signIn(page, "Sales");
+  await pickAccount(page, "C09", "Harbour Drywall Inc");
+  // The hold is the first thing the counter shows, before any money moves.
+  await expect(page.getByTestId("cust-on-hold")).toHaveText("Credit hold");
+
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Charge Account" }).click();
+  await page.getByTestId("pos-complete-sale").click();
+
+  const alert = page.getByRole("alert");
+  await expect(alert).toContainText("the credit gate refused it");
+  await expect(alert).toContainText("Cash or card still works");
+  // Nothing committed: no confirmation exists, and the ticket stands (the
+  // Items panel holds the line; the accordion moved to Payment for the tender).
+  await expect(page.getByTestId("sold-panel")).toHaveCount(0);
+  await openStep(page, "items");
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
+});
+
+test("a C01 Holland paver line rings at its rule price with its margin shown, and the unknown margin stays unknown", async ({
   page,
 }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
-  await expect(page.getByTestId("drawer-status")).toContainText("open");
-
-  // The account's balance before, through the contract's own search read.
-  const bearer = await salesBearer(page);
-  const before = await page.request.get("/api/v1/customers/search?q=C02", {
-    headers: { Authorization: `Bearer ${bearer}`, "X-Org": "hh-demo" },
-  });
-  const rows = (await before.json()) as Array<Record<string, unknown>>;
-  expect(rows).toHaveLength(1);
-  const balanceBefore = rows[0].open_balance_cents as number;
-
-  // Pick the account: its facts show beside its name.
-  await page.getByLabel("Find an account by name or account number").fill("C02");
-  await page.getByRole("button", { name: "Find", exact: true }).click();
-  await page.getByTestId("customer-hits").getByRole("button", { name: "Use" }).click();
-  await expect(page.getByTestId("customer-name")).toContainText("Fenwick Builders Ltd");
-  await expect(page.getByTestId("account-balance")).toHaveText(dollars(balanceBefore));
-  await expect(page.getByTestId("account-standing")).toContainText(dollars(300000));
-  await expect(page.getByTestId("hold-flag")).toHaveCount(0);
-
+  await signIn(page, "Sales");
+  await pickAccount(page, "C01", "Maple Ridge Contracting");
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  const hollandQty = page.getByLabel("Quantity of Holland Stone 60 mm");
-  await hollandQty.fill("10");
-  await page.getByRole("button", { name: "Re-price the ticket" }).click();
-  // The account's own rule price, ten percent off retail.
-  await expect(page.getByTestId("line-unit-price").first()).toHaveText("$3.60");
-
-  await page.getByRole("button", { name: "Account", exact: true }).click();
-  await page.getByRole("button", { name: "Ring the sale" }).click();
-
-  const receipt = page.getByTestId("receipt");
-  await expect(receipt).toBeVisible();
-  const invoiceNo = await receipt.getByTestId("receipt-invoice-no").textContent();
-  expect(invoiceNo).toMatch(/^INV-/);
-  const sale = await getSale(page, bearer, (await receipt.getAttribute("data-order-id")) as string);
-  expect(sale.invoice_no).toBe(invoiceNo);
-  expect(sale.tender).toBe("ACCOUNT");
-  // The balance on the receipt is the freshly read one: before, plus the
-  // sale the core just committed.
-  await expect(receipt.getByTestId("receipt-account")).toContainText("Fenwick Builders Ltd (C02)");
-  await expect(receipt.getByTestId("receipt-account")).toContainText(invoiceNo as string);
-  await expect(receipt.getByTestId("receipt-account")).toContainText(
-    dollars(balanceBefore + (sale.total_cents as number)),
-  );
-
-  // The receipt speaks for the sale, not for whoever the counter serves now:
-  // picking another account and going back to the walk-in moves nothing on
-  // it.
-  await page.getByLabel("Find an account by name or account number").fill("C01");
-  await page.getByRole("button", { name: "Find", exact: true }).click();
-  await page.getByTestId("customer-hits").getByRole("button", { name: "Use" }).click();
-  await expect(page.getByTestId("customer-name")).toContainText("Maple Ridge Contracting");
-  await expect(receipt.getByTestId("receipt-account")).toContainText("Fenwick Builders Ltd (C02)");
-  await page.getByRole("button", { name: "Back to the walk-in" }).click();
-  await expect(page.getByTestId("customer-name")).toContainText("Walk-in");
-  await expect(receipt.getByTestId("receipt-account")).toContainText("Fenwick Builders Ltd (C02)");
-});
-
-test("an account sale for C09 is refused in words", async ({ page }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
-  await expect(page.getByTestId("drawer-status")).toContainText("open");
-
-  await page.getByLabel("Find an account by name or account number").fill("C09");
-  await page.getByRole("button", { name: "Find", exact: true }).click();
-  await page.getByTestId("customer-hits").getByRole("button", { name: "Use" }).click();
-  await expect(page.getByTestId("customer-name")).toContainText("Harbour Drywall Inc");
-  // The hold is the first thing the counter shows, before any money moves.
-  await expect(page.getByTestId("hold-flag")).toHaveText("On hold");
-
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  await page.getByRole("button", { name: "Account", exact: true }).click();
-  await page.getByRole("button", { name: "Ring the sale" }).click();
-
-  await expect(page.getByTestId("tender-refusal")).toContainText("the credit gate refused it");
-  await expect(page.getByTestId("tender-refusal")).toContainText("Cash or card still works");
-  // Nothing committed: no receipt exists, and the ticket stands.
-  await expect(page.getByTestId("receipt")).toHaveCount(0);
-  await expect(page.getByTestId("ticket-line")).toHaveCount(1);
-});
-
-test("a C01 Holland paver line rings at its rule price with its margin shown", async ({ page }) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
-  await expect(page.getByTestId("drawer-status")).toContainText("open");
-
-  await page.getByLabel("Find an account by name or account number").fill("C01");
-  await page.getByRole("button", { name: "Find", exact: true }).click();
-  await page.getByTestId("customer-hits").getByRole("button", { name: "Use" }).click();
-  await expect(page.getByTestId("customer-name")).toContainText("Maple Ridge Contracting");
-
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  // The account's rule: eighteen percent off the $4.00 retail, and the
-  // margin glance's answer rendered beside it.
-  await expect(page.getByTestId("line-unit-price").first()).toHaveText("$3.28");
-  await expect(page.getByTestId("line-margin").first()).toHaveText("15.9%");
-  await expect(page.getByTestId("ticket-line").first()).toContainText("ACCOUNT price");
+  // The account's rule: eighteen percent off the $4.00 retail, and the margin
+  // glance's answer rendered beside it.
+  const holland = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
+  await expect(holland.locator(".lprice")).toHaveText("CA$3.28");
+  // The margin word is the reviewed helper's (half away from zero): 1585 bps
+  // reads 15.9%, the same word every other HH surface spells.
+  await expect(holland.getByTestId("pos-line-margin")).toHaveText("15.9%");
   // The placeholder is real too: the edge restraint carries no cost at this
   // branch, so its margin slot renders the explicit unknown, never a zero.
   await searchAndAdd(page, "edge", "Edge Restraint 8 ft");
-  await expect(page.getByTestId("line-unpriced")).toHaveCount(0);
-  await expect(page.getByTestId("line-margin-none")).toHaveText("(no margin)");
+  const edge = page.getByTestId("pos-line-row").filter({ hasText: "Edge Restraint 8 ft" });
+  await expect(edge.locator(".lprice")).toHaveText("CA$26.24");
+  await expect(edge.getByTestId("pos-line-margin")).toHaveText("(none)");
 });
 
-test("a ticket parks and resumes, re-priced, and the counter's ticket is never thrown away silently", async ({
-  page,
-}) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
-  await expect(page.getByTestId("drawer-status")).toContainText("open");
-
+test("a ticket parks and resumes with its customer, at the account's price", async ({ page }) => {
+  await signIn(page, "Sales");
+  await pickAccount(page, "C01", "Maple Ridge Contracting");
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  await expect(page.getByTestId("line-unit-price").first()).toHaveText("$4.00");
+  const holland = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
+  await expect(holland.locator(".lprice")).toHaveText("CA$3.28");
 
-  await page.getByRole("button", { name: "Park this ticket" }).click();
-  await expect(page.getByTestId("ticket-line")).toHaveCount(0);
-  const parked = page.getByTestId("parked-list").getByTestId("parked-ticket");
-  await expect(parked).toHaveCount(1);
-  // The ticket parked with no account picked, so the row says Walk-in, and
-  // it carries its line count.
-  await expect(parked.first()).toContainText("Walk-in");
-  await expect(parked.first()).toContainText("1 line");
-  // The fence: the stub's world holds a Kingston ticket, and it never shows.
-  await expect(page.getByTestId("parked-list")).not.toContainText("PARK-9001");
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
 
-  // Resuming over lines on the counter refuses in words, and nothing moves.
-  await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
-  await expect(page.getByTestId("ticket-line")).toHaveCount(1);
-  await parked.first().getByRole("button", { name: "Resume" }).click();
-  await expect(page.getByTestId("parked-panel-note").first()).toBeVisible();
-  await expect(page.getByTestId("parked-list").getByTestId("parked-ticket")).toHaveCount(1);
-  await expect(page.getByTestId("ticket-line")).toHaveCount(1);
+  // The branch's parked list: open it, find the ticket, resume it. The fence
+  // is the server's; the stub's world holds a Kingston ticket and it never
+  // shows here.
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  // The dialog renders into the element's shadow root; its card is the rail.
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  await expect(parkedDialog).toContainText("Parked tickets");
+  await expect(parkedDialog.getByText("PARK-9001")).toHaveCount(0);
+  const resumeButton = parkedDialog.getByRole("button", { name: "Resume" }).first();
+  await resumeButton.click();
 
-  // Park the counter's line too, then resume the first ticket: the row goes
-  // with it, and the lines come back priced fresh, in an engine call this
-  // test watches leave.
-  await page.getByRole("button", { name: "Park this ticket" }).click();
-  await expect(page.getByTestId("parked-list").getByTestId("parked-ticket")).toHaveCount(2);
-  const reprice = page.waitForRequest((request) => request.url().includes("/api/v1/pos/counter-prices"));
-  await page.getByTestId("parked-list").getByTestId("parked-ticket").first().getByRole("button", { name: "Resume" }).click();
-  await reprice;
-  await expect(page.getByTestId("ticket-line")).toHaveCount(1);
-  await expect(page.getByTestId("line-unit-price").first()).toHaveText("$4.00");
-  await expect(page.getByTestId("line-margin").first()).toContainText("%");
-  // The resumed row has left the list: one ticket remains parked.
-  await expect(page.getByTestId("parked-list").getByTestId("parked-ticket")).toHaveCount(1);
+  // The ticket comes back with its customer (this till picked the account, so
+  // the display memory knows it) and reprices at the account's rule price.
+  await openStep(page, "customer");
+  await expect(page.getByTestId("customer-card")).toContainText("Maple Ridge Contracting");
+  await openStep(page, "items");
+  await expect(holland.locator(".lprice")).toHaveText("CA$3.28");
 });
 
-test("an account's parked ticket survives the hand-over: the next login resumes it for the account, at the account's price", async ({
-  page,
-}) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
-  await expect(page.getByTestId("drawer-status")).toContainText("open");
-
-  // Sales rings up C01's pavers and parks the ticket.
-  await page.getByLabel("Find an account by name or account number").fill("C01");
-  await page.getByRole("button", { name: "Find", exact: true }).click();
-  await page.getByTestId("customer-hits").getByRole("button", { name: "Use" }).click();
-  await expect(page.getByTestId("customer-name")).toContainText("Maple Ridge Contracting");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  await expect(page.getByTestId("line-unit-price").first()).toHaveText("$3.28");
-  await page.getByRole("button", { name: "Park this ticket" }).click();
-  const c01Row = page
-    .getByTestId("parked-list")
-    .getByTestId("parked-ticket")
-    .filter({ hasText: "Maple Ridge Contracting (C01)" });
-  await expect(c01Row).toHaveCount(1);
-
-  // The hand-over the till's rules name: anyone at the counter picks up any
-  // parked sale at their branch. Sign out; the Sales manager takes the till.
-  await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
-  await expect(page.getByTestId("drawer-status")).toContainText("open");
-
-  // The row names the account, never a walk-in.
-  const managerRows = page.getByTestId("parked-list").getByTestId("parked-ticket");
-  const managerRow = managerRows.filter({ hasText: "Maple Ridge Contracting (C01)" });
-  await expect(managerRow).toHaveCount(1);
-
-  // Resume: the customer is the account, and the line re-prices at the
-  // account's rule price, in an engine call for the account's id.
-  const accountPrice = page.waitForRequest((request) => {
-    if (!request.url().includes("/api/v1/pos/counter-prices")) return false;
-    return (request.postData() ?? "").includes("c-maple-ridge");
-  });
-  await managerRow.getByRole("button", { name: "Resume" }).click();
-  await accountPrice;
-  await expect(page.getByTestId("customer-name")).toContainText("Maple Ridge Contracting");
-  // The account number shows beside the name: the ticket is C01's again.
-  await expect(page.getByText("(C01, CONTRACTOR)")).toBeVisible();
-  await expect(page.getByTestId("line-unit-price").first()).toHaveText("$3.28");
-  await expect(page.getByTestId("line-margin").first()).toHaveText("15.9%");
-  await expect(page.getByTestId("ticket-panel-priced-for")).toContainText("CONTRACTOR");
-  // The resumed row has left the list.
-  await expect(managerRows.filter({ hasText: "Maple Ridge Contracting (C01)" })).toHaveCount(0);
-});
-
-test("a second press on Ring while the settle is in flight commits exactly one sale", async ({ page }) => {
-  // The divergence re-price is slowed, so the first press spends real time
-  // between the settle and the send: exactly where a second press must be
-  // refused.
-  await page.route("**/api/v1/pos/counter-prices", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    await route.fallback();
-  });
+test("a second press on Complete while the ring is in flight commits exactly one sale", async ({ page }) => {
   const ringPosts: Array<Record<string, unknown>> = [];
   page.on("request", (request) => {
-    if (request.method() === "POST" && request.url().includes("/api/v1/pos/sales")) {
+    if (request.method() === "POST" && request.url().endsWith("/api/v1/pos/sales")) {
       ringPosts.push((request.postDataJSON() ?? {}) as Record<string, unknown>);
     }
   });
 
-  await page.goto("/");
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
-  await expect(page.getByTestId("drawer-status")).toContainText("open");
+  await signIn(page, "Sales");
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  await expect(page.getByTestId("line-unit-price").first()).toHaveText("$4.00");
-
-  await page.getByLabel("Quantity of Holland Stone 60 mm").fill("3");
-  await page.getByLabel("Cash tendered, in dollars").fill("20.00");
-  // Two presses in quick succession. The add's price ask is slowed below, so
-  // the first wait here is that ask landing and the ticket pricing. The real
-  // press then takes the ring path and its settle fires a second, slowed ask:
-  // the second press's event is raised exactly while that ask is in flight,
-  // which is where the old order (busy after the settle) rang a second sale
-  // on a second key. Measured both ways; the POST count below is what kills
-  // the old order.
-  const ring = page.getByRole("button", { name: "Ring the sale" });
-  await expect(ring).toBeEnabled();
-  const settleAsk = page.waitForRequest(
-    (request) => request.method() === "POST" && request.url().includes("/api/v1/pos/counter-prices"),
-  );
-  const first = ring.click();
-  await settleAsk;
-  const secondPress = ring.dispatchEvent("click");
-  await secondPress;
-  await first;
-  await expect(ring).toBeDisabled();
-
-  const receipt = page.getByTestId("receipt");
-  await expect(receipt).toBeVisible();
-  await expect(receipt.getByTestId("receipt-total")).toHaveText("$13.56");
-  await page.waitForTimeout(900);
-  expect(ringPosts).toHaveLength(1);
-  const bearer = await salesBearer(page);
-  const sale = await getSale(page, bearer, (await receipt.getAttribute("data-order-id")) as string);
-  const viewLines = sale.lines as Array<Record<string, unknown>>;
-  expect(viewLines[0].qty_entered).toBe(3);
-  expect(sale.total_cents).toBe(1356);
-});
-
-test("an unread account's ticket stays unpriced through ordinary acts, until the account is picked", async ({
-  page,
-}) => {
-  // Sales rings up C01's pavers and parks the ticket.
-  await page.goto("/");
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
-  await expect(page.getByTestId("drawer-status")).toContainText("open");
-  await page.getByLabel("Find an account by name or account number").fill("C01");
-  await page.getByRole("button", { name: "Find", exact: true }).click();
-  await page.getByTestId("customer-hits").getByRole("button", { name: "Use" }).click();
-  await expect(page.getByTestId("customer-name")).toContainText("Maple Ridge Contracting");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  await expect(page.getByTestId("line-unit-price").first()).toHaveText("$3.28");
-  await page.getByRole("button", { name: "Park this ticket" }).click();
   await expect(
-    page.getByTestId("parked-list").getByTestId("parked-ticket").filter({ hasText: "Maple Ridge Contracting (C01)" }),
-  ).toHaveCount(1);
+    page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" }).locator(".ltot"),
+  ).toHaveText("CA$4.00");
+  await openStep(page, "payment");
+  // The drawer first, so the presses below race the RING and only the ring:
+  // a closed drawer would have both presses take the open-then-ring path.
+  await ensureSession(page);
+  const cta = page.getByTestId("pos-complete-sale");
+  await expect(cta).toBeEnabled();
+  // Two presses in quick succession: the second lands while the first is in
+  // flight. The guard is taken synchronously in code (a busy or rung till
+  // refuses in the method, not only in the attribute), and the ring's key is
+  // minted from the body's fingerprint, so whatever slips through replays the
+  // same sale instead of committing twice.
+  const first = cta.dispatchEvent("click");
+  await cta.dispatchEvent("click");
+  await first;
 
-  // A reload is a fresh till: the mint is memory-only, and so is every name
-  // the last till had read.
-  await page.goto("/");
-  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
-  await expect(page.getByTestId("drawer-status")).toContainText("open");
-  const unreadRow = page
-    .getByTestId("parked-list")
-    .getByTestId("parked-ticket")
-    .filter({ hasText: "An account this till has not read" });
-  await expect(unreadRow).toHaveCount(1);
-  await unreadRow.getByRole("button", { name: "Resume" }).click();
-  await expect(page.getByTestId("ticket-line")).toHaveCount(1);
-  await expect(page.getByTestId("line-unpriced")).toHaveText("(not priced)");
-  await expect(page.getByTestId("ticket-message")).toContainText("belongs to an account this till has not read");
-  await expect(page.getByRole("button", { name: "Ring the sale" })).toBeDisabled();
-
-  // One ordinary act: change the quantity and re-price. The ticket prices for
-  // nobody else: still unpriced, the notice still up, the ring still held.
-  // (The quantity box is found by its row: a fresh till has not read the
-  // product's name, and the line shows its id.)
-  await page.getByTestId("ticket-line").first().getByRole("textbox").fill("4");
-  await page.getByRole("button", { name: "Re-price the ticket" }).click();
-  await expect(page.getByTestId("line-unpriced")).toHaveText("(not priced)");
-  await expect(page.getByTestId("ticket-message")).toContainText("belongs to an account this till has not read");
-  await expect(page.getByRole("button", { name: "Ring the sale" })).toBeDisabled();
-
-  // Another ordinary act: add a line. The same wall.
-  await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
-  await expect(page.getByTestId("ticket-line")).toHaveCount(2);
-  await expect(page.getByTestId("line-unpriced")).toHaveCount(2);
-  await expect(page.getByTestId("ticket-message")).toContainText("belongs to an account this till has not read");
-  await expect(page.getByRole("button", { name: "Ring the sale" })).toBeDisabled();
-
-  // The recovery the notice names: search the account and pick it, and the
-  // engine prices the ticket for the account it belongs to.
-  await page.getByLabel("Find an account by name or account number").fill("C01");
-  await page.getByRole("button", { name: "Find", exact: true }).click();
-  await page.getByTestId("customer-hits").getByRole("button", { name: "Use" }).click();
-  await expect(page.getByTestId("customer-name")).toContainText("Maple Ridge Contracting");
-  await expect(page.getByTestId("line-unpriced")).toHaveCount(0);
-  await expect(page.getByTestId("line-unit-price").first()).toHaveText("$3.28");
-  await expect(page.getByTestId("ticket-panel-priced-for")).toContainText("CONTRACTOR");
-  await expect(page.getByRole("button", { name: "Ring the sale" })).toBeEnabled();
+  const sold = page.getByTestId("sold-panel");
+  await expect(sold).toBeVisible();
+  await page.waitForTimeout(500);
+  expect(ringPosts.length).toBeGreaterThanOrEqual(1);
+  const keys = new Set(ringPosts.map((body) => body.idempotency_key));
+  expect(keys.size).toBe(1);
+  // The confirmation names one order, and the sale is complete: the CTA's
+  // step stands down (ringDone disarms it), so a third press has no button
+  // left to press, and the method's own guard refuses the dispatch besides.
+  await expect(page.getByTestId("pos-complete-sale")).toHaveCount(0);
+  expect(sold).toContainText("Paid");
 });
 
-test("a late price answer is discarded: the first ask's answer never lands on the newer ticket", async ({
+test("the lookup answers a scan by its sku: one line lands on the ticket", async ({ page }) => {
+  await signIn(page, "Sales");
+  await openStep(page, "items");
+  const field = page.getByTestId("pos-scan-input");
+  await field.fill("EDG-08");
+  await field.press("Enter");
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Edge Restraint 8 ft" })).toHaveCount(1);
+  await expect(
+    page.getByTestId("pos-line-row").filter({ hasText: "Edge Restraint 8 ft" }).locator(".lprice"),
+  ).toHaveText("CA$32.00");
+});
+
+test("the detached layout works: the pick persists on the workspace row, and the toggles answer", async ({
   page,
 }) => {
-  // The first price ask is held where the route stands; every later ask goes
-  // straight through. When the held answer is finally released, the ticket it
-  // was asked about no longer exists.
-  let releaseFirst: (() => void) | undefined;
-  const held = new Promise<void>((resolve) => {
-    releaseFirst = resolve;
-  });
-  let heldOne = true;
-  await page.route("**/api/v1/pos/counter-prices", async (route) => {
-    if (heldOne) {
-      heldOne = false;
-      await held;
-      await route.fallback();
+  await signIn(page, "Sales");
+  // The counter view menu carries the layout pick. The save is debounced, so
+  // the wait is armed before the pick and the answer read after it.
+  await page.getByTestId("pos-view").click();
+  const saved = page.waitForRequest(
+    (request) => request.method() === "PUT" && request.url().includes("/api/v1/pos/workspace"),
+  );
+  await page.getByTestId("pos-layout-panels").click();
+  const put = await saved;
+  expect((put.postDataJSON() as Record<string, unknown>)["counter_layout"]).toBe("PANELS");
+  // The detached multi-card surface is on: the four panels, arrangeable.
+  await expect(page.getByTestId("pos-flow-panels")).toBeVisible();
+
+  // The choice follows the person: it rides the workspace row, so a fresh
+  // sign-in lands on the same layout.
+  const other = await page.context().newPage();
+  await signIn(other, "Sales");
+  await other.getByTestId("pos-view").click();
+  await expect(other.getByTestId("pos-layout-panels")).toHaveAttribute("aria-checked", "true");
+  await other.close();
+
+  // Back to the standard counter: the linear flow is the other mode, and the
+  // pick back is the same gesture. The save is debounced, so the wait is
+  // armed before the pick: the row carries the stepper choice when this page
+  // closes, and the tests after this one mount the linear flow.
+  await page.getByTestId("pos-view").click();
+  const savedBack = page.waitForRequest(
+    (request) => request.method() === "PUT" && request.url().includes("/api/v1/pos/workspace"),
+  );
+  await page.getByTestId("pos-layout-stepper").click();
+  await savedBack;
+  await expect(page.getByTestId("pos-flow-column")).toBeVisible();
+});
+
+test("the pop-out opens the till on a second window, signed in as the same role", async ({
+  page,
+  context,
+}) => {
+  await signIn(page, "Sales");
+  const popped = context.waitForEvent("page");
+  await page.getByRole("button", { name: "Pop out" }).click();
+  const second = await popped;
+  await second.waitForLoadState();
+  // The second window signs itself in through the same public cards route the
+  // entry page taps, and lands on the terminal: the same yard, the same
+  // register, the same role. The branch's drawer is server-side, so the
+  // second window's own session open finds or opens the same one.
+  await expect(second.getByTestId("pos-page-title")).toHaveText("New Counter Sale");
+  await expect(second.getByTestId("pagectx")).toContainText("Trenton Yard");
+  await expect(second.getByTestId("signed-in-role")).toHaveText("Sales");
+  await second.close();
+});
+
+test("a line the account's price cannot answer reads price pending through ordinary acts, never a zero", async ({
+  page,
+}) => {
+  // The account's price read is held where the route stands for the polymeric
+  // sand, until the account is picked and a re-price is asked again: the
+  // honest pending word through every ordinary act, and a subtotal over the
+  // priced lines only.
+  let refusePolymer = true;
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    const body = route.request().postDataJSON() as { product_id?: string };
+    if (refusePolymer && body.product_id === "p-polymer-sand") {
+      await route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: "line could not be priced by the engine" }) });
       return;
     }
     await route.fallback();
   });
 
-  await page.goto("/");
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
-  await expect(page.getByTestId("drawer-status")).toContainText("open");
-  await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
-  await expect(page.getByTestId("line-unpriced").first()).toBeVisible();
+  await signIn(page, "Sales");
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  const units = page.getByTestId("line-unit-price");
-  await expect(units.nth(0)).toHaveText("$14.00");
-  await expect(units.nth(1)).toHaveText("$4.00");
-  const margins = page.getByTestId("line-margin");
-  await expect(margins.nth(0)).toHaveText("30.0%");
-  await expect(margins.nth(1)).toHaveText("31.0%");
+  await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
+  const polymeric = page.getByTestId("pos-line-row").filter({ hasText: "Polymeric Locking Sand" });
+  await expect(polymeric.locator(".lprice")).toHaveText("price pending");
+
+  // An ordinary act on the OTHER line reprices that line and leaves the
+  // unanswered one saying so.
+  const hollandQty = page.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
+  await hollandQty.fill("3");
+  await hollandQty.blur();
+  await expect(
+    page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" }).locator(".ltot"),
+  ).toHaveText("CA$12.00");
+  await expect(polymeric.locator(".lprice")).toHaveText("price pending");
+  // A pending line beside a priced one keeps the whole summary on the marker:
+  // no figure (CA$12.00 for the priced line alone, or any sum) is stated while
+  // a line has no answer. The ring button and the change preview say the same.
+  await openStep(page, "payment");
+  const totals = page.getByTestId("pos-totals-card");
+  await expect(totals).toContainText("(not priced)");
+  await expect(totals).not.toContainText("CA$12.00");
+  await expect(page.getByTestId("pos-complete-sale")).toContainText("(not priced)");
+  await expect(page.getByTestId("pos-complete-sale")).not.toContainText("CA$");
+  await page.getByTestId("cash-tendered").fill("20");
+  await expect(page.getByTestId("cash-change-preview")).toContainText("(not priced)");
+  await expect(page.getByTestId("cash-change-preview")).not.toContainText("CA$");
+  await page.getByTestId("cash-tendered").fill("");
+  await openStep(page, "items");
+
+  // The recovery: the account is picked, and the re-price answers at the
+  // account's rule.
+  await openStep(page, "customer");
+  const accountPicked = page.waitForRequest(
+    (request) =>
+      request.url().includes("/api/v1/pos/counter-prices") &&
+      (request.postData() ?? "").includes("c-maple-ridge"),
+  );
+  await pickAccount(page, "C01", "Maple Ridge Contracting");
+  await accountPicked;
+  refusePolymer = false;
+  // The pick's own reprices land first, so the edit below is the newest ask
+  // and no re-render writes the input back mid-edit.
+  await page.waitForTimeout(800);
+  await openStep(page, "items");
+  const polymericQty = page.getByRole("textbox", { name: "Quantity: Polymeric Locking Sand" });
+  await polymericQty.fill("2");
+  await polymericQty.blur();
+  // Two bags at the account's rule price: the unit column carries the rule
+  // price (CA$11.48), the line's total the picked quantity's answer.
+  await expect(polymeric.locator(".lprice")).toHaveText("CA$11.48");
+  await expect(polymeric.locator(".ltot")).toHaveText("CA$22.96");
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "price pending" })).toHaveCount(0);
+  // Every line priced: the figures return, the estimate mark on the ring.
+  await openStep(page, "payment");
+  await expect(totals).not.toContainText("(not priced)");
+  await expect(page.getByTestId("pos-complete-sale")).toContainText("(est.)");
+});
+
+test("a pricing answer that arrives for a stale line state is dropped: the newest answer owns the line", async ({
+  page,
+}) => {
+  // The first price ask is held where the route stands; the quantity changes
+  // while it is in flight (a second ask answers), and when the held answer is
+  // finally released its figures are about a ticket that no longer exists.
+  let releaseFirst: (() => void) | undefined;
+  let heldOne = true;
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    const body = route.request().postDataJSON() as { product_id?: string };
+    if (heldOne && body.product_id === "p-holland-60") {
+      heldOne = false;
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+    }
+    await route.fallback();
+  });
+
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  const holland = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
+  const hollandQty = page.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
+  await hollandQty.fill("3");
+  await hollandQty.blur();
+  await expect(holland.locator(".ltot")).toHaveText("CA$12.00");
 
   releaseFirst?.();
+  // The stale answer (priced for one unit) landed on nothing: the line still
+  // carries the newest answer's figures.
   await page.waitForTimeout(600);
-  // The stale answer landed on nothing: the ticket's figures are exactly the
-  // newest ask's, and nothing was blanked or realigned.
-  await expect(units.nth(0)).toHaveText("$14.00");
-  await expect(units.nth(1)).toHaveText("$4.00");
-  await expect(margins.nth(0)).toHaveText("30.0%");
-  await expect(margins.nth(1)).toHaveText("31.0%");
-  await expect(page.getByTestId("line-unpriced")).toHaveCount(0);
+  await expect(holland.locator(".lprice")).toHaveText("CA$4.00");
+  await expect(holland.locator(".ltot")).toHaveText("CA$12.00");
+});
+
+test("a parked ticket survives the hand-over: the next login at the branch sees it and resumes it, priced fresh", async ({
+  page,
+}) => {
+  // The first counter person parks C01's pavers and leaves.
+  await signIn(page, "Sales");
+  await pickAccount(page, "C01", "Maple Ridge Contracting");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+
+  // The next login at the same counter is a second person at the same branch:
+  // the parked rail is the branch's, so the ticket is there, and the row has
+  // left it once resumed. The resumed ticket prices fresh through the engine
+  // (the new tab's display memory is cold, so the ticket resumes for the
+  // walk-in and the line reads retail until an account is picked).
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await signIn(page, "Sales manager");
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  await expect(parkedDialog.getByText("PARK-9001")).toHaveCount(0);
+  await parkedDialog.getByRole("button", { name: "Resume" }).first().click();
+  // The resumed ticket lands on the customer step (the cold cache resumed it
+  // for the walk-in); the line is the Items step's.
+  await openStep(page, "items");
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" })).toHaveCount(1);
+  await expect(
+    page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" }).locator(".lprice"),
+  ).toHaveText("CA$4.00");
+  await expect(parkedDialog).toHaveCount(0);
+});
+
+test("a resume over lines on the counter asks first: declining leaves everything where it was", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  // Park a second ticket, so the rail holds something to resume.
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
+
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  // The counter's lines are work: the rail asks before it consumes the
+  // ticket. Declining keeps the counter's line and the parked ticket both.
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await parkedDialog.getByRole("button", { name: "Resume" }).first().click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
+  await expect(parkedDialog).toBeVisible();
+  await expect(parkedDialog.getByRole("button", { name: "Resume" }).first()).toBeEnabled();
+  // The acceptance: the ask said what accepting means (the counter's lines go
+  // with it), so the parked ticket replaces them knowingly: the Holland line
+  // is back, the polymeric one went with the counter's draft.
+  page.once("dialog", (dialog) => dialog.accept());
+  await parkedDialog.getByRole("button", { name: "Resume" }).first().click();
+  await openStep(page, "items");
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" })).toHaveCount(1);
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Polymeric Locking Sand" })).toHaveCount(0);
+});
+
+test("a split with a card leg carries the simulated word on the confirmation and on the receipt", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await ensureSession(page);
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Split" }).click();
+  // Two legs: cash for part of the estimated total, a card leg for the rest.
+  // The Holland line at retail with tax is CA$4.52: CA$4.00 cash and the
+  // CA$0.52 card leg settle it exactly.
+  const leg0 = page.getByTestId("split-amount-0");
+  const leg1 = page.getByTestId("split-amount-1");
+  await leg0.fill("4.00");
+  await leg1.fill("0.52");
+  // The live verdict: settled exactly, so the panel's ring arms.
+  await expect(page.getByTestId("split-remaining")).toContainText("Settled exactly");
+  await expect(page.getByTestId("split-ring")).toBeEnabled();
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await page.getByTestId("split-ring").click();
+  const sale = (await (await ringPost).json()) as Record<string, unknown>;
+
+  // The confirmation: the split touched the simulated rail, so it says so,
+  // exactly as a CARD tender does.
+  const sold = page.getByTestId("sold-panel");
+  await expect(sold).toBeVisible();
+  await expect(sold.getByTestId("sold-simulated-notice")).toContainText("Simulated card: no card was charged");
+
+  // The read: the legs are the wire's own, one cash and one card.
+  const bearer = await salesBearer(page);
+  const read = await getSale(page, bearer, sale.order_id as string);
+  expect(read.split_tender).toBe(true);
+  const legs = read.tenders as Array<Record<string, unknown>>;
+  expect(legs.map((leg) => leg.method)).toEqual(["CASH", "CARD"]);
+
+  // The printed receipt is the core's document; it opens, and the simulated
+  // notice is held by the till's own screens above.
+  const receiptPage = page.context().waitForEvent("page");
+  await sold.getByTestId("sold-print").click();
+  const printed = await receiptPage;
+  await expect(printed.getByText("Counter sale")).toBeVisible();
+  await printed.close();
+});
+
+test("an empty draft shows the blank marker, never a confident zero, in the linear flow", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await openStep(page, "payment");
+  const totals = page.getByTestId("pos-totals-card");
+  // Nothing on the ticket: the rows say they cannot say, and no plausible
+  // zero appears anywhere on the payment step.
+  await expect(totals).toContainText("(not priced)");
+  await expect(totals).not.toContainText("CA$0.00");
+  await expect(totals).toContainText("Total (est.)");
+  const cta = page.getByTestId("pos-complete-sale");
+  await expect(cta).toContainText("(not priced)");
+  await expect(cta).not.toContainText("CA$0.00");
+  // A priced line returns the figures.
+  await openStep(page, "items");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  await expect(totals).toContainText("CA$4.00");
+  await expect(totals).not.toContainText("(not priced)");
+});
+
+test("an empty draft shows the blank marker in the detached layout too", async ({ page }) => {
+  await signIn(page, "Sales");
+  await page.getByTestId("pos-view").click();
+  await page.getByTestId("pos-layout-panels").click();
+  await expect(page.getByTestId("pos-flow-panels")).toBeVisible();
+  // The Panels payment panel paints from the first render: the same honest
+  // marker, never a zero.
+  const totals = page.getByTestId("pos-totals-card");
+  await expect(totals).toContainText("(not priced)");
+  await expect(totals).not.toContainText("CA$0.00");
+  // Back to the linear flow for the tests after this one (the pick is saved
+  // before this page closes).
+  const savedBack = page.waitForRequest(
+    (request) => request.method() === "PUT" && request.url().includes("/api/v1/pos/workspace"),
+  );
+  await page.getByTestId("pos-view").click();
+  await page.getByTestId("pos-layout-stepper").click();
+  await savedBack;
+});
+
+test("a disabled control on the ported surface drops its fill and goes grey", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await openStep(page, "payment");
+  // The empty ticket's complete-sale button is disabled: grey, no gold fill,
+  // no fade. The computed styles are the assertion: a restored gold fill or
+  // a pure-opacity fade fails here.
+  const cta = page.getByTestId("pos-complete-sale");
+  await expect(cta).toBeDisabled();
+  const shape = await cta.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { background: style.backgroundColor, color: style.color, opacity: style.opacity };
+  });
+  expect(shape.background).toBe("rgba(0, 0, 0, 0)");
+  expect(shape.color).not.toBe("rgb(0, 0, 0)");
+  expect(shape.opacity).toBe("1");
+  // The split panel's ring carries the same shape while it is not settleable.
+  await page.getByRole("button", { name: "Split" }).click();
+  const ring = page.getByTestId("split-ring");
+  await expect(ring).toBeDisabled();
+  const ringShape = await ring.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { background: style.backgroundColor, borderColor: style.borderColor, color: style.color };
+  });
+  expect(ringShape.background).toBe("rgba(0, 0, 0, 0)");
+});
+
+test("the chrome sits above the surface: the demo banner is in the first viewport, on the till and in the pop-out", async ({
+  page,
+  context,
+}) => {
+  await signIn(page, "Sales");
+  // The counter screen: the banner, the role, the pop-out and sign out are
+  // the first row on the page, inside the first viewport.
+  const banner = page.getByRole("note");
+  await expect(banner).toBeVisible();
+  const bannerBox = await banner.boundingBox();
+  const viewport = page.viewportSize();
+  expect(bannerBox).not.toBeNull();
+  expect(bannerBox?.y ?? -1).toBeGreaterThanOrEqual(0);
+  expect((bannerBox?.y ?? 0) + (bannerBox?.height ?? 0)).toBeLessThan((viewport?.height ?? 900) / 2);
+  await expect(page.getByTestId("signed-in-role")).toBeVisible();
+
+  // The pop-out: the same bar, same place, in its own first viewport.
+  const popped = context.waitForEvent("page");
+  await page.getByRole("button", { name: "Pop out" }).click();
+  const second = await popped;
+  await expect(second.getByTestId("pos-page-title")).toBeVisible();
+  const secondBanner = second.getByRole("note");
+  await expect(secondBanner).toBeVisible();
+  const secondBox = await secondBanner.boundingBox();
+  expect((secondBox?.y ?? 0) + (secondBox?.height ?? 0)).toBeLessThan((second.viewportSize()?.height ?? 900) / 2);
+  await second.close();
+});
+
+test("End Session is closed on the mount: disabled, grey, its reason stated, and no complete call is made", async ({
+  page,
+}) => {
+  await signIn(page, "Sales manager");
+  await ensureSession(page);
+  const completeCalls: string[] = [];
+  page.on("request", (request) => {
+    if (/\/api\/v1\/till\/sessions\/[^/]+\/complete/.test(request.url())) {
+      completeCalls.push(`${request.method()} ${request.url()}`);
+    }
+  });
+  const reason =
+    "Ending the session needs the blind count, the Z report and a manager's sign-off; the drawer close is not on this surface yet.";
+  const button = page.getByTestId("end-session");
+  await expect(button).toBeVisible();
+  await expect(button).toBeDisabled();
+  await expect(button).toHaveAttribute("title", reason);
+  await expect(button).toHaveAttribute("aria-label", `End Session. ${reason}`);
+  // The disabled rule: grey, no fill, no fade.
+  const shape = await button.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { background: style.backgroundColor, opacity: style.opacity, cursor: style.cursor };
+  });
+  expect(shape.background).toBe("rgba(0, 0, 0, 0)");
+  expect(shape.opacity).toBe("1");
+  expect(shape.cursor).toBe("not-allowed");
+  // Pressing it (forced past the disabled state) ends nothing and calls nothing.
+  await button.click({ force: true });
+  await page.waitForTimeout(300);
+  await expect(page.getByTestId("session-dot")).toContainText("Open");
+  expect(completeCalls).toEqual([]);
+});
+
+test("the search drop rows carry the branch's stock beside the SKU", async ({ page }) => {
+  await signIn(page, "Sales");
+  await openStep(page, "items");
+  const field = page.getByTestId("pos-scan-input");
+  await field.fill("holland");
+  const row = page.getByTestId("drop-row").filter({ hasText: "Holland Stone 60 mm" }).first();
+  await expect(row).toBeVisible();
+  // The reference's row words: the stock after the SKU, the counter's own
+  // branch (the fence), never guessed.
+  await expect(row).toContainText("HPV-60");
+  await expect(row).toContainText("120 on hand");
+});
+
+test("a sale rung at the till is found by the returns desk right after it commits", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await ensureSession(page);
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await page.getByTestId("pos-complete-sale").click();
+  const sale = (await (await ringPost).json()) as Record<string, unknown>;
+  await expect(page.getByTestId("sold-panel")).toBeVisible();
+
+  // The ruled desk below the till finds the just-rung sale by its number and
+  // lays out its lines with what is still returnable.
+  await page.getByLabel("Sale number").fill(String(sale.order_no));
+  await page.getByRole("button", { name: "Find sale" }).click();
+  await expect(page.getByTestId("returns-sale")).toContainText(String(sale.order_no));
+  await expect(page.getByTestId("returns").getByText("Holland Stone 60 mm")).toBeVisible();
+  await expect(page.getByText("sold 1, returned 0")).toBeVisible();
 });

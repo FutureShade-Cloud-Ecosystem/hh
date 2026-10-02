@@ -120,12 +120,15 @@ import {
 } from './_pos-workspace.js';
 // ── DIB-488 rev 8 ── the concept slate: unified field, header bar, weight/margin columns, the
 // footer transaction bar and the DIB-502 add-ons strip. All decisions pure (_pos-rev8.ts).
+// HH note: the margin word routes through the app's reviewed formatMargin
+// (money.ts, half away from zero): the same core figure reads the same word
+// here as everywhere else in HH (1585 bps is 15.9%, not a float's 15.8%).
+import { formatMargin } from "../money.js";
 import {
   clockLabel,
   lineWeightLbs,
   formatLbs,
   ticketWeightTotalLbs,
-  marginPctLabel,
   txbarSegments,
   resolveCuratedChips,
   payTileStep, // DIB-512: the tender tiles as ONE roving keyboard stop
@@ -792,7 +795,15 @@ export class HosPosTerminal extends LitElement {
       white-space: nowrap;
       cursor: pointer;
     }
-    .topbtn:hover {
+    /* HH note: disabled drops its fill and goes grey; fade is not a state. */
+    .topbtn:disabled {
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
+      cursor: not-allowed;
+    }
+    .topbtn:hover:not(:disabled) {
       border-color: var(--hos-stone-amber);
       color: var(--hos-stone-amber-text);
     }
@@ -1670,8 +1681,12 @@ export class HosPosTerminal extends LitElement {
       border-color: var(--hos-stone-amber-hover);
       color: var(--hos-stone-amber-ink); /* E6: a theme-stable fill pins its theme-stable ink in the SAME rule */
     }
+    /* HH note: disabled drops its fill and goes grey; fade is not a state. */
     .complete-cta:disabled {
-      opacity: 0.45;
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
       cursor: not-allowed;
     }
     /* UNION-TRAIN11 · the counter's pay key worn as a keycap on the CTA (see payKeycap()).
@@ -2642,7 +2657,11 @@ export class HosPosTerminal extends LitElement {
       const res = await api('/api/v1/payments/config');
       if (!res.ok) return; // leave '': no badge rather than a wrong one
       const body = (await res.json()) as { configured: boolean; simulated: boolean };
-      this.cardRail = !body.configured ? 'unconfigured' : body.simulated ? 'test' : 'live';
+ // HH note: the simulated word is value driven on simulated ALONE (the
+ // reviewed rule): a rail that answers simulated true says test whatever it
+ // says about configured, because the notice must render exactly when the
+ // value is true and claim nothing when it is not.
+      this.cardRail = body.simulated === true ? 'test' : body.configured ? 'live' : 'unconfigured';
     } catch {
  /* status is cosmetic: the sale path reports real errors itself */
     }
@@ -2670,11 +2689,17 @@ export class HosPosTerminal extends LitElement {
   }
 
   // End Session opens the real A-03 close flow (movements → blind count → Z-report → complete);
- // the local chrome resets only once the till actually closes (or the cashier defers: COUNTED
+  // the local chrome resets only once the till actually closes (or the cashier defers: COUNTED
   // sessions can be completed next morning, per the Dibbits SOP).
-  private endSession(): void {
-    this.showTillClose = true;
-  }
+  // HH note: the reference's End Session opened its till-close screen
+  // (hos-till-close), a host boundary screen this release does not carry. The
+  // core refuses a complete unless the session is COUNTED (409), and a drawer
+  // that does not balance needs a manager's sign-off (row 500), so the mount
+  // cannot honestly end a session from here: the button stays visible but is
+  // closed (disabled, with its reason), and the gap is named in CLOSURE.md.
+  // The reference's handler is dropped for the day the close flow is ported.
+  private readonly endSessionClosedReason =
+    "Ending the session needs the blind count, the Z report and a manager's sign-off; the drawer close is not on this surface yet.";
 
   private onTillClosed(): void {
     this.showTillClose = false;
@@ -2799,6 +2824,9 @@ export class HosPosTerminal extends LitElement {
         priceUom: uom,
         lineTotalCents: 0,
         breakdown: null,
+        // Pending until the price lookup answers: the summary stays on the
+        // marker rather than a zero for a line nobody has priced yet.
+        priceMissing: true,
       };
       this.cart = [...this.cart, line];
       idx = this.cart.length - 1;
@@ -3097,12 +3125,18 @@ export class HosPosTerminal extends LitElement {
     this.scheduleTicketFacts(); // rev 8: fewer lines = a different margin footer + suggestion set
   }
 
-   // HH note: subtotal, tax and total are the core's arithmetic in HH (the money invariant), so
-   // each answers through a host seam (ports.ts, named in CLOSURE.md) with the reference's shape.
+   // HH note: the pre-ring figures are the counter's ESTIMATE. The subtotal is
+   // the priced lines' own assembly (host seam), but HH's contract gives the
+   // counter no rate (PricingBreakdown carries no tax, and the rate table is
+   // money-desk), so the tax line applies this surface's default of 1300 bps
+   // unless the relief flow set another; the dealer's rate table may differ.
+   // The surface says so: the tax row reads (est.) and the total row carries
+   // the estimate mark, and the ring's committed figures are the binding ones.
   private subtotal(): number {
     return cartSubtotalCents(this.cart);
   }
-  // Preview rate: the applied relief's engine-assessed bps, else the 13% standard. M5 owns the binding value.
+  // Preview rate: the applied relief's engine-assessed bps, else the counter's
+  // 13% default. The binding rate is the core's, at the ring.
   private taxRateBps(): number {
     return this.reliefRateBps ?? 1300;
   }
@@ -3112,10 +3146,23 @@ export class HosPosTerminal extends LitElement {
   private taxLabel(): string {
     const bps = this.taxRateBps();
     const pct = bps % 100 === 0 ? String(bps / 100) : (bps / 100).toFixed(2);
-    return this.reliefRateBps === null ? `HST ${pct}%` : `HST ${pct}% (relief)`;
+    const relief = this.reliefRateBps === null ? '' : ' (relief)';
+    return `HST ${pct}%${relief} (est.)`;
   }
   private total(): number {
     return ticketTotalCents(this.subtotal(), this.tax());
+  }
+ // HH note: an empty draft shows the app's blank marker, never a plausible
+ // zero (the house rule; the reference showed CA$0.00 here, and HH's rule
+ // wins). The summary speaks only when EVERY line is priced: an empty cart, or
+ // any line still pending (a just-added line before its price lookup answers,
+ // or a line whose reprice failed, which keeps its old total), keeps the whole
+ // summary on the marker rather than a confident figure beside a pending word.
+  private hasPricedLine(): boolean {
+    return this.cart.length > 0 && this.cart.every((l) => !l.priceMissing);
+  }
+  private moneyOrMarker(cents: number): string {
+    return this.hasPricedLine() ? money(cents) : '(not priced)';
   }
 
   // A deposit rides only an unpaid-at-ring posture: Charge Account tender or a COD sale.
@@ -3273,7 +3320,7 @@ export class HosPosTerminal extends LitElement {
         this.revealSaleOutcome();
         return;
       }
-      if (res.err.status === 409 && (res.err.error === 'credit_blocked' || res.err.error === 'price_blocked')) {
+      if (res.err.status === 409 && res.err.error === 'credit_blocked') {
         this.dispatchEvent(
           new CustomEvent('hos-action-blocked', {
             detail: { policy: res.err.policy, error: res.err.error },
@@ -3281,12 +3328,12 @@ export class HosPosTerminal extends LitElement {
             composed: true,
           }),
         );
+ // HH note: the split's credit refusal carries the same reviewed sentence the
+ // single ring's does; a price_blocked refusal has no arm (row 481) and falls
+ // through to the server's own word below.
         this.ring = {
           state: 'error',
-          msg:
-            res.err.error === 'credit_blocked'
-              ? 'Over credit limit on the account leg: manager approval required (routed to Approvals).'
-              : `Line ${res.err.line ?? ''} below margin floor: manager approval required.`,
+          msg: 'This account cannot carry this sale on account: the credit gate refused it (over the limit, or on a hold). Cash or card still works, and accounts receivable can release or override a hold.',
         };
         return;
       }
@@ -3368,8 +3415,12 @@ export class HosPosTerminal extends LitElement {
         this.revealSaleOutcome();
         return;
       }
-      // 409 credit/price → route to the manager approvals path; 402 → card declined.
-      if (res.err.status === 409 && (res.err.error === 'credit_blocked' || res.err.error === 'price_blocked')) {
+ // HH note: only the credit gate is worded here, in HH's own reviewed
+ // sentence: the gate refused the account sale, cash and card still work, and
+ // accounts receivable owns the release or override. A price_blocked refusal
+ // has no arm at all (row 481: no margin floor at the till), so it falls
+ // through to the server's own word below, like every other refusal.
+      if (res.err.status === 409 && res.err.error === 'credit_blocked') {
         this.dispatchEvent(
           new CustomEvent('hos-action-blocked', {
             detail: { policy: res.err.policy, error: res.err.error },
@@ -3379,10 +3430,7 @@ export class HosPosTerminal extends LitElement {
         );
         this.ring = {
           state: 'error',
-          msg:
-            res.err.error === 'credit_blocked'
-              ? 'Over credit limit: manager approval required (routed to Approvals).'
-              : `Line ${res.err.line ?? ''} below margin floor: manager approval required.`,
+          msg: 'This account cannot carry this sale on account: the credit gate refused it (over the limit, or on a hold). Cash or card still works, and accounts receivable can release or override a hold.',
         };
         return;
       }
@@ -4449,7 +4497,7 @@ export class HosPosTerminal extends LitElement {
              this bar; what the SALE needs to know is which drawer it is ringing into, which is what
              is left. (The eyebrow above still repeats the shell's brand lockup and the nav tab, and
              that is not fixable from here: two committed gates pin it verbatim: see the report.) */ ''}
-          <div class="pagectx">${branchName(this.branchId)} Yard · Register 01</div>
+          <div class="pagectx" data-testid="pagectx">${branchName(this.branchId)} Yard · Register 01</div>
         </div>
         ${/* DIB-488: the tracked flow: 1 Items → 2 Customer → 3 Payment. Derived from the sale
            data every render (deriveFlow); clicking a step scrolls/focuses its panel and locks
@@ -4464,7 +4512,13 @@ export class HosPosTerminal extends LitElement {
             ? html`<span class="sessiondot" data-testid="session-dot" title="Till session open: elapsed ${this.elapsed}">
                   <span class="dot" aria-hidden="true"></span> Open
                 </span>
-                <button class="topbtn" @click=${this.endSession}>End Session</button>`
+                <button
+                  class="topbtn"
+                  data-testid="end-session"
+                  disabled
+                  title=${this.endSessionClosedReason}
+                  aria-label=${`End Session. ${this.endSessionClosedReason}`}
+                >End Session</button>`
             : html`<button class="topbtn" @click=${this.openSession}>Open Session</button>`}
           ${/* COUNTER VIEW (R1/R2, the user half). The way back from a dismissed legend
                and the on/off for the hot list, in one place a counter person can reach without an
@@ -4805,7 +4859,7 @@ export class HosPosTerminal extends LitElement {
       customerName: this.customer ? this.customer.name : '',
       walkInConfirmed: this.walkInConfirmed,
       lineCount: this.cart.length,
-      totalLabel: this.openStep === 'payment' ? '' : money(this.total()),
+      totalLabel: this.openStep === 'payment' ? '' : this.moneyOrMarker(this.total()),
       // DIB-512 (8) · one word per surface. Before the ring the collapsed Payment card says which
       // tender is CHOSEN; after it, salePillLabel decides the counter word for what the sale
  // actually is ('Paid' / 'On account' / 'COD' / 'Deposit'): never the wire status, which is
@@ -5248,9 +5302,9 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
               ? html`<div class="reliefchip">tax relief: ${this.reliefReason}</div>`
               : nothing}
             <div class="totals">
-              <div class="trow"><span>Subtotal</span><span class="num">${money(this.subtotal())}</span></div>
-              <div class="trow"><span>${this.taxLabel()}</span><span class="num">${money(this.tax())}</span></div>
-              <div class="trow grand"><span>Total</span><span class="num">${money(this.total())}</span></div>
+              <div class="trow"><span>Subtotal</span><span class="num">${this.moneyOrMarker(this.subtotal())}</span></div>
+              <div class="trow"><span>${this.taxLabel()}</span><span class="num">${this.moneyOrMarker(this.tax())}</span></div>
+              <div class="trow grand"><span>Total (est.)</span><span class="num">${this.moneyOrMarker(this.total())}</span></div>
             </div>
           </section>
 
@@ -5400,8 +5454,8 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                       : this.ringBusy()
                         ? 'Ringing…'
                         : this.tillSessionId === ''
-                          ? `Open session · then complete · ${money(this.total())}`
-                          : `Complete sale · ${money(this.total())}`}
+                          ? `Open session · then complete · ${this.moneyOrMarker(this.total())}${this.hasPricedLine() ? ' (est.)' : ''}`
+                          : `Complete sale · ${this.moneyOrMarker(this.total())}${this.hasPricedLine() ? ' (est.)' : ''}`}
                     ${!this.ringDone() && this.payKeycap()
                       ? html`<span class="keycap" data-testid="pay-hotkey-chip" aria-hidden="true"
                           >${this.payKeycap()}</span
@@ -5638,9 +5692,9 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
       </ul>
       <div class="rbrow"><span>${fulfilmentLabel(this.saleType)}</span><span></span></div>
       ${this.requestedDate ? html`<div class="rbrow"><span>Requested</span><span>${this.requestedDate}</span></div>` : nothing}
-      <div class="rbrow"><span>Subtotal</span><span class="m">${money(this.subtotal())}</span></div>
-      <div class="rbrow"><span>${this.taxLabel()}</span><span class="m">${money(this.tax())}</span></div>
-      <div class="rbrow total"><span>Total</span><span class="m">${money(this.total())}</span></div>
+      <div class="rbrow"><span>Subtotal</span><span class="m">${this.moneyOrMarker(this.subtotal())}</span></div>
+      <div class="rbrow"><span>${this.taxLabel()}</span><span class="m">${this.moneyOrMarker(this.tax())}</span></div>
+      <div class="rbrow total"><span>Total (est.)</span><span class="m">${this.moneyOrMarker(this.total())}</span></div>
       <div class="rbrow"><span>${tenderLabel(this.payMethod || 'CASH')}</span><span></span></div>
       ${/* "how much am I saving?": the client's words for the thing customers always ask. Server
          arithmetic, summed per line; absent entirely when there is nothing to claim. */ ''}
@@ -5711,10 +5765,12 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
               More</summary
             >
             <div class="util">
-              <button @click=${() => (this.showReturn = true)}>Return</button>
-              <button data-testid="open-lookup" @click=${() => (this.showLookup = true)}>Past sales</button>
-              <button ?disabled=${this.cart.length === 0} @click=${this.savePricingDoc}>Pricing doc</button>
-              <button @click=${() => (this.showRelief = true)}>Assess tax relief</button>
+              ${/* HH note (lead rulings 15 and 16): the reference's More entries are closed in
+                 the mount. Return: HH's ruled desk (the approval dialog, the simulated word,
+                 the clerk-and-approver receipt) is the one returns path, and this reference
+                 dialog carries none of it. Past sales, Pricing doc and Assess tax relief are
+                 live call paths outside the counter-sale row, unruled and untested in HH.
+                 CLOSURE.md records each; the polish lane may open them with tests. */ ''}
             </div>
             ${this.renderOrderOpenRow()}
           </details>
@@ -5914,7 +5970,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
       ${this.cashTenderedDollars.trim() !== ''
         ? html`<div class="cashhint" data-testid="cash-change-preview">
             ${plan.sendable
-              ? html`Change due <span class="num">${money(plan.changeDueCents)}</span>`
+              ? html`Change due <span class="num">${this.moneyOrMarker(plan.changeDueCents)}</span>`
               : 'Less than the total: the sale rings for the exact total; add more or clear the box.'}
           </div>`
         : nothing}`;
@@ -6234,7 +6290,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           </div>
           ${m
             ? html`<div class="lmargin" data-testid="pos-line-margin" title="Gross margin: computed server-side">
-                ${mb === undefined ? '(none)' : marginPctLabel(mb)}
+                ${mb === undefined ? '(none)' : formatMargin(mb)}
               </div>`
             : nothing}
           <button class="rm" @click=${() => this.removeLine(i)} title="Remove line" aria-label="Remove ${l.product.name}">
@@ -6332,6 +6388,13 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
         <div class="f"><span class="k">Sale</span><span class="v">${sale.order_no}</span></div>
         <div class="f"><span class="k">Invoice</span><span class="v">${sale.invoice_no}</span></div>
         <div class="f"><span class="k">Tender</span><span class="v">${c.tenderLabel}</span></div>
+        ${/* HH note: the simulated card notice rides the rail's own status value, exactly when it
+           answers simulated true, on a card sale's confirmation: the reviewed rule, carried onto
+           this surface's own confirmation panel (the tender step carries the same word as its
+           TEST MODE badge). A rail that answers false, or answers nothing, claims nothing. */ ''}
+        ${(sale.tender === 'CARD' || sale.tenders?.some((leg) => leg.method === 'CARD')) && this.cardRail === 'test'
+          ? html`<div class="f" data-testid="sold-simulated-notice"><span class="k">Card</span><span class="v">Simulated card: no card was charged</span></div>`
+          : nothing}
         ${(sale.deposit_cents ?? 0) > 0
           ? html`<div class="f"><span class="k">Deposit</span><span class="v">${money(sale.deposit_cents ?? 0)}</span></div>`
           : nothing}

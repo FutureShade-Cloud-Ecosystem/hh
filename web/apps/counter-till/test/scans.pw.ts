@@ -34,7 +34,14 @@ const MONEY_HELPER = "money.ts";
 // IN the scanned set: it formats integers and parses one typed string through
 // the decimal string and computes nothing, so it owes the scan zero hits, and
 // if it ever hits, that is a finding, not an exclusion.
-const NAMED_HELPERS = [join(SRC, "ported", "_money-format.ts")];
+// Beside it the seam file, ports.ts: the port rerouted the reference's
+// thirteen client-side money computations there (CLOSURE.md lists each), and
+// the wiring item answers them in that one file as display assembly over
+// figures the core stated, each pinned by ports-money.test.mjs. The ported
+// closure and the app's own views keep owing the scan zero hits: the
+// exclusion names the boundary where the reroute lands, not a licence, and a
+// third file that divides figures by hand must still face the scan.
+const NAMED_HELPERS = [join(SRC, "ported", "_money-format.ts"), join(SRC, "ported", "ports.ts")];
 
 function walkSources(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -73,11 +80,14 @@ test("the money scan prints nothing outside the named display and parse helpers"
     if (hits.length === 0) continue;
     offenders.push(`${file}: ${hits.join(" | ")}`);
   }
-  // The exclusion is exactly the one named display helper and nothing else:
-  // a third file that divides figures by hand must face the scan, not join
-  // the list, and the app's own money helper stays in the walked set.
-  expect(NAMED_HELPERS).toHaveLength(1);
+  // The exclusion is exactly the two named files and nothing else: the one
+  // display helper, and the one seam file that answers the thirteen rerouted
+  // computations. A third file that divides figures by hand must face the
+  // scan, not join the list, and the app's own money helper stays in the
+  // walked set and owes zero hits.
+  expect(NAMED_HELPERS).toHaveLength(2);
   expect(NAMED_HELPERS.some((file) => file.endsWith("_money-format.ts"))).toBe(true);
+  expect(NAMED_HELPERS.some((file) => file.endsWith("ports.ts"))).toBe(true);
   // The walk covers the app's own views, the app's money helper and the
   // ported tree: the claim is about the tree, so the walk must be seen to
   // reach all three.

@@ -23,9 +23,14 @@ export function receiptErrorMessage(status: number): string {
   return `Could not load the receipt (${status}).`;
 }
 
-/** The subset of a browser window this flow touches: injectable, so the flow is testable. */
+/** The subset of a browser window this flow touches: injectable, so the flow is testable.
+ * HH note: the reference's carriage was the document writer (write, close, print). This
+ * app's fence refuses raw DOM markup paths outright, so the host's carriage navigates the
+ * window to the fetched document instead: the window type below names the navigation and
+ * the load event, not the writer. */
 export interface ReceiptWindow {
-  document: { write(markup: string): void; close(): void };
+  location: { assign(url: string): void };
+  addEventListener(kind: "load", listener: () => void): void;
   focus?(): void;
   print?(): void;
 }

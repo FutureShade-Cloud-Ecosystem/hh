@@ -2,11 +2,77 @@ DOC-ID: COUNTER-TILL-PORTED-CLOSURE-r1
 
 # The POS surface port: the closure map
 
+WIRED (the second UI parity work item): the surface is mounted.
+
+Two rulings close reference entries in the mount (lead rulings 15 and 16):
+
+- Return (the More menu's entry into `hos-pos-return`) is closed: HH's ruled
+  desk (src/views/returns.ts with W8's approval dialog) is the mounted till's
+  ONE returns path. The ported dialog does not carry HH's ruled approval flow,
+  the simulated word, or the clerk-and-approver receipt, so it stays ported
+  (pos-return.ts) and unreachable: nothing in the mount sets showReturn.
+- Past sales, Pricing doc and Assess tax relief (the More menu's other three)
+  are closed: live call paths outside the counter-sale row, unruled and
+  untested in HH; the polish lane may open them with tests if the parity set
+  needs them. Nothing in the mount sets showLookup or showRelief, and no
+  caller reaches savePricingDoc.
+- The till has no margin floor (row 481), so the ring's refusal arms word only
+  the credit gate, in HH's reviewed sentence; a price_blocked refusal has no
+  arm and would surface as the server's own word, like every other refusal.
+
+Open gap: End Session is closed in the mount. The core refuses a session
+complete unless the session is COUNTED (409, core/internal/till/service.go),
+answers CLOSED, and a drawer that does not balance needs a manager's sign-off
+(row 500). The reference's End Session opened a till-close screen (blind count,
+Z report, sign-off) that this release does not carry, so the button stays
+visible but disabled, with the reason on its title and aria label ("Ending the
+session needs the blind count, the Z report and a manager's sign-off; the
+drawer close is not on this surface yet."). Porting the close flow is the
+work that opens it; the stub carries no complete route.
+
+Open gap: the printed receipt does not carry the simulated word. The receipt
+is the core's document (GET /api/v1/pos/sales/{id}/receipt, printing module)
+and says nothing of simulation for a simulated card sale; the till's own
+screens (the confirmation's notice, the rail word) carry it. A core change is
+the principal's to sequence, and the suite no longer asserts the word on the
+stub's receipt text.
+
+One deliberate deviation from the reference, on HH's rule (the visual
+review's blocking zero): the reference's empty draft reads Subtotal CA$0.00,
+HST CA$0.00, Total CA$0.00, and the ring button carries the zero. HH's rule
+is explicit: an empty draft shows a blank marker, never a plausible zero.
+The mounted surface shows the app's own `(not priced)` marker in the totals
+card, the Complete sale button's amount, the Change due preview, the Items
+summary and the read-back whenever the cart is empty OR any line is price
+pending (a just-added line before its price lookup answers, or a line whose
+reprice failed), and the figures return when every line is priced (the old
+reviewed till's own marker, views/till.ts's line-unpriced word). The Complete
+sale amount carries (est.) once it states a figure. The search drop rows render
+the contract's per-branch stock (`on_hand_branch`) beside the SKU, as the
+reference's rows do; the contract carries the field, so no gap remains.
+
+One ruled truth about money on the mounted surface (lead ruling 17): HH's
+contract gives the counter no rate (PricingBreakdown carries no tax, and the
+rate table is money-desk), so the surface's pre-ring tax and total are
+ESTIMATES and say so: the tax row reads (est.), the total row carries the
+estimate mark, and the rate applied is this surface's 1300 bps default unless
+the relief flow set an assessed rate. The dealer's rate table may differ; the
+ring's committed figures are the binding ones the confirmation renders. `ports.ts` is
+implemented over the host (the api seam carries the demo org and bearer and
+the two contract shape adaptations, the session facts read the demo mint's
+own IdentityUser block, the money seams answer over core-stated figures, the
+layout store is tab memory and the print choreography the host's, each named
+in the file); the terminal renders as the app's one surface after the entry
+cards, in both its modes. The two test halves this file left with the
+reference have come home: `_pos-add-census.test.mjs` (this tree's own
+add-path census) and `_pos-hotkeys-roster.test.mjs` (the fallback roster
+re-pinned against HH's core hotkeys file), beside `ports-money.test.mjs`
+(the split and money seam cases against the implementations).
+
 The reference is `hardscapeos_dibbits` `master` at 87d7941b, read only at
 `counter-till/ref-master/`. This directory carries the ported surface code of
 `app/src/pos-terminal.ts`'s full import closure, file names mirrored, each file
-opening with its provenance line. Nothing here is mounted yet: the wiring work
-item imports it and implements `ports.ts`. The reference's components render
+opening with its provenance line. The reference's components render
 through the `--hos-*` custom properties, so the port brings the reference's
 token sheet rebased onto the HH design system (see Styles below).
 
@@ -179,8 +245,12 @@ Kept, reviewed as display formatting of figures the core already computed
 are `_money-format.ts` (`centsAmount`, and `plainDollars`, the ungrouped
 cents-to-input-string shape that the relief dialog's outcome line and the
 split panel's fill render through, consolidated here so the division spelling
-lives in one reviewed file) and the app's own `src/money.ts`; the app's money
-scan names both and walks everything else. The remaining thin wrappers and
+lives in one reviewed file) and the app's own `src/money.ts`. The wiring
+answers the thirteen rerouted seams in `ports.ts` itself, display assembly
+over figures the core stated, each pinned by `ports-money.test.mjs`; the
+app's money scan names `_money-format.ts` and the seam file `ports.ts` and
+walks everything else, so the ported closure, the app's own views and
+`src/money.ts` all keep owing it zero hits. The remaining thin wrappers and
 word formatters, none of which divide anything: `pos-api.ts` `money`,
 `_pos-split.ts` `fmtCents`, `price-breakdown.ts` `priceMoney`,
 `pos-terminal.ts` `taxLabel`'s basis points to percent, `tax-api.ts`'s word
@@ -243,28 +313,28 @@ formatters, `_pos-rev8.ts` `marginPctLabel`.
   the app's own views compile and run under them too; the app's suites stay
   green under the flags, and the wiring item should keep the difference in
   mind if a view ever depends on class-field define semantics. (P3-1)
-- `product-thumb.ts` renders `<img src>` straight at the thumbnail route,
-  and no ported seam carries that request: the wiring item decides how the
-  thumbnail fetch is authorised (bearer through the api helper, a signed
-  route, or a seam of its own). (P3-3)
+- The thumbnail route: SETTLED (was P3-3). The contract makes
+  `GET /api/v1/products/{id}/image` public by design (`x-role: public`,
+  `security: []`: an `<img src>` cannot carry an Authorization header and the
+  catalogue is public data), the stub answers it ungated with a plain 404,
+  `product-thumb.ts` latches to its placeholder on error, and the README says
+  so. Nothing to decide.
 - `_money-format.ts` `centsAmount` formats a non-finite input as `0.00`, a
   confident zero, carried unchanged from the reference; the polish item gives
   it the blank marker the house prefers. (P3-6)
-- The split panel's problem sentences travelled with the split arithmetic
-  into `evaluateSplit`, so the host seam owns the cashier wording as well as
-  the money; the wiring item's implementation carries those words back.
-  (P3-7)
-- Two seams throw synchronously where the reference returned a promise
-  (`listProducts`, `putProductImage`: the port declares the promise return
-  and the seam's refusal is a synchronous throw), a boundary-shape matter the
-  wiring item settles when it implements them against the host's async
-  helper. (R1-5)
-- The quiet empties are boundary shape too, and the wiring item owns them:
-  `ports.ts` `BRANCHES` is an empty array and `SCREEN_GATE` an empty object
-  by construction, so `pos-product-grid` renders zero yard columns without a
-  word, and `pos-terminal.ts:268` (`BRANCHES[0].id`) would die with an
-  unnamed TypeError rather than the port message; the wiring item either
-  wires them or gives them the loud refusal the other seams carry. (R1-2)
+- The split panel's problem sentences: CARRIED AND HELD (was P3-7).
+  `evaluateSplit` in ports.ts carries the reference's eight sentences word
+  for word, and the seam cases bite on them; only the amount formatter
+  changed (it routes through `centsAmount`, grouping like every other money
+  word).
+- The promise shapes: SETTLED (was R1-5). `listProducts` and
+  `putProductImage` are implemented as async functions over the host's
+  helper, so an unwired or failed call is a rejected promise, the reference's
+  shape.
+- The quiet empties: SETTLED (was R1-2). `BRANCHES` is filled in place from
+  the branches route before anything mounts, `SCREEN_GATE` is a complete
+  table, and a branch that does not resolve keeps the terminal down with a
+  refusal in words.
 
 ## Reference tests brought along
 

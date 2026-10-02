@@ -1107,3 +1107,32 @@ users rows and grants the populate plants.
   binding position inside the prefix is still refused until it is added on
   purpose, and the gate's own narrowness guards pin those edges. The design
   system's suite is green on the strength of that entry.
+
+## UI parity pass, wiring work item (branch till/ui-2-wire): the ported surface mounted, and what the acceptance item must know
+
+The ported terminal is the app's one surface after the entry cards (the sale
+suite's selectors moved onto the ported surface's own test ids; each move is
+named in the item's report). Recorded here so the acceptance item and the
+merge read it before running anything selector-shaped:
+
+- **W9's acceptance suite still holds the OLD surface's selectors**
+  (`test/acceptance/`: drawer-status, ticket-line, receipt, tender-refusal,
+  the aria labels of the old ticket). The old views came out of the tree with
+  the mount, so the acceptance item's selector moves are owed before
+  `npm run acceptance` can read this branch; the sale suite's own moves in
+  this branch are the worked example.
+- **The pop-out posture differs from the reference, on purpose.** This app's
+  committed sink gate refuses every browser storage and channel path, so the
+  reference's session handshake and its local-store draft handoff have no
+  home here. The pop-out opens the same app at a popout address naming the
+  flow card; the second window signs itself in through the same public demo
+  route and works the same branch drawer. The draft handoff is the server's
+  own park: park the ticket, resume it in the second window.
+- **The detached layout's pixel boxes persist in tab memory**, for the same
+  sink gate; the layout CHOICE rides the server's workspace row and follows
+  the person, which is the part HH's contract carries.
+- **`listProducts` in the ported pos-api rides the authed door**: the
+  reference fetched the catalogue list bare of credentials. The contract
+  marks `GET /api/v1/products` `x-role: public` (the catalogue is public
+  data), so no credential is needed; the ask rides `api()` anyway, which
+  sends the bearer harmlessly and keeps the counter's reads on one door.
