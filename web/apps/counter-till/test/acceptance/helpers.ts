@@ -115,9 +115,14 @@ export function houseDaysAgo(days: number): string {
  * across two suites run against one box. The file matches that reality: the
  * newest writer wins, and a stale file can only delay a mint, never burst
  * one. Parallel suites against one box are not a supported shape, and the
- * file does not pretend otherwise.
+ * file does not pretend otherwise. The file outlives the run in the system
+ * temp directory under its predictable name: fine on the single user runner
+ * this harness assumes, and a stale file can only ever delay a mint.
  */
 const MINT_SPACING_MS = 10_000;
+
+/** The box's sliding window, the span the limiter's own stamps live in. */
+const WINDOW_SPAN_MS = 30_000;
 
 /** The pace file's path: one per box, under the system temp directory. */
 function paceFilePath(): string {
@@ -147,11 +152,18 @@ function holdMintAt(at: number): void {
  * Reserve the next mint's instant and return how long to wait for it: read,
  * decide, and write with no await between them, so one process's concurrent
  * reservations serialize onto the file, then the caller sleeps to the slot.
+ * A held value far ahead of now is a stale or corrupted file (a clock that
+ * stepped back, a hand edited file, a reservation whose mint never
+ * happened), not a pace: past one window plus one spacing ahead the held
+ * value is discarded and the pace restarts from now. One spacing ahead is
+ * the most an honest reservation ever writes.
  */
 function reserveMintSlot(): number {
-  const wait = heldMintAt() + MINT_SPACING_MS - Date.now();
-  holdMintAt(Date.now() + Math.max(wait, 0));
-  return Math.max(wait, 0);
+  const now = Date.now();
+  const raw = heldMintAt() + MINT_SPACING_MS - now;
+  const wait = raw > MINT_SPACING_MS + WINDOW_SPAN_MS ? 0 : Math.max(raw, 0);
+  holdMintAt(now + wait);
+  return wait;
 }
 
 export async function paceMint(page: Page): Promise<void> {
