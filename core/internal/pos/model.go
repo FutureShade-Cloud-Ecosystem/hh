@@ -1,6 +1,7 @@
 package pos
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 )
@@ -362,6 +363,13 @@ func (e ErrCreditBlocked) Error() string { return fmt.Sprintf("pos: credit block
 type ErrNoOpenTill struct{}
 
 func (ErrNoOpenTill) Error() string { return "pos: open a till session first" }
+
+// ErrUnknownTaxReason aborts a relief ring that named a tax reason the engine refuses to bind (outside
+// the lawful reason universe, the mirror of the snapshot CHECK). It is the exported sentinel the
+// composition's tax adapter translates the engine's refusal into (tops_adapters.go), and the writeErr
+// arm maps it to the counter's 400. Wrapping keeps the engine's own words, the offending reason, in
+// the message the counter reads.
+var ErrUnknownTaxReason = errors.New("pos: that tax reason is not one the counter can ring; choose a listed relief reason or ring the sale standard")
 
 var (
 	errBadRequest    = clientError{status: http.StatusBadRequest, msg: "pos: invalid request"}

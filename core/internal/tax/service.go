@@ -37,6 +37,11 @@ func (s *Service) assessSale(ctx context.Context, in SaleAssessment) (Quote, err
 	if reason == "" {
 		reason = ReasonStdON13
 	}
+	// The lawful reason universe (the mirror of the snapshot CHECK): the caller sent a reason the engine
+	// cannot lawfully bind, refuse it as the client error it is, never resolve it through the table.
+	if !LegalReasonCodes[reason] {
+		return Quote{}, httpx.BadRequestf("unknown tax reason %q: not one of the eleven lawful reason codes (the mirror of the snapshot CHECK), the engine cannot bind it", reason)
+	}
 
 	rateBps, found, err := s.rate(ctx, reason, asOf)
 	if err != nil {
@@ -49,6 +54,12 @@ func (s *Service) assessSale(ctx context.Context, in SaleAssessment) (Quote, err
 		if err != nil {
 			return Quote{}, err
 		}
+	}
+	// The ungated-below-standard refusal: EVERY reason that resolves below the standard must be evidence
+	// gated (ReasonManual is the stated exception, its row is a person's decision). An ungated reason at a
+	// below-standard row is a misconfigured table, not a relief: refuse rather than bind it untaxed.
+	if rateBps < stdRateBps && !evidenceGatedReasons[reason] && reason != ReasonManual {
+		return Quote{}, MisconfiguredRateError{ReasonCode: reason, RateBps: rateBps}
 	}
 
 	q := Quote{ReasonCode: reason, RateBps: rateBps}
@@ -99,12 +110,21 @@ func (s *Service) rate(ctx context.Context, reason, asOf string) (int, bool, err
 func (s *Service) ListRates(ctx context.Context) ([]Rate, error) { return s.repo.ListRates(ctx) }
 
 // CreateRate inserts a new effective-dated rate row (a hot change: the engine picks it up live on the sale date).
+// The admin edge enforces the same two rules the bind edge does: the reason must be inside the lawful universe
+// (the mirror of the snapshot CHECK), and an ungated reason cannot be planted below the standard, refused with
+// the same words the engine refuses to bind it, so the admin edge fails first and the ring never sees the row.
 func (s *Service) CreateRate(ctx context.Context, r Rate) (Rate, error) {
 	if r.ReasonCode == "" {
 		return Rate{}, httpx.BadRequestf("reason_code required")
 	}
+	if !LegalReasonCodes[r.ReasonCode] {
+		return Rate{}, httpx.BadRequestf("unknown reason_code %q: not one of the eleven lawful reason codes (the mirror of the snapshot CHECK), the rate table cannot carry it", r.ReasonCode)
+	}
 	if r.RateBps < 0 || r.RateBps > 10000 {
 		return Rate{}, httpx.BadRequestf("rate_bps must be 0..10000")
+	}
+	if r.RateBps < stdRateBps && !evidenceGatedReasons[r.ReasonCode] && r.ReasonCode != ReasonManual {
+		return Rate{}, httpx.BadRequestf("%s", MisconfiguredRateError{ReasonCode: r.ReasonCode, RateBps: r.RateBps}.Error())
 	}
 	if r.Jurisdiction == "" {
 		r.Jurisdiction = jurisdictionON

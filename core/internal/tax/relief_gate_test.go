@@ -46,9 +46,8 @@ func TestAssessSale_FreeFormReasonRefused(t *testing.T) {
 }
 
 // (b) The eleven-but-ungated shape (FNT_PRODUCT's): a planted 0 bps row binds UNGATED on main, the sale
-// would commit untaxed. The leg demands the refusal. Commit 1 asserts the refusal alone (the typed
-// error does not exist on main); the fix commit strengthens this to the typed error naming the reason
-// and the resolved rate.
+// would commit untaxed. The leg demands the refusal as the typed error naming the reason and the
+// resolved rate (commit 1, tests only, asserted the refusal alone: the type does not exist on main).
 func TestAssessSale_UngatedBelowStandardRefused(t *testing.T) {
 	f := newFakeStore()
 	f.rates["ON|"+legReasonFNTProduct] = 0
@@ -56,6 +55,13 @@ func TestAssessSale_UngatedBelowStandardRefused(t *testing.T) {
 	q, err := svc.AssessSale(context.Background(), SaleAssessment{SubtotalCents: 100_000, ReasonCode: legReasonFNTProduct})
 	if err == nil {
 		t.Fatalf("main bound the planted 0 bps row for the ungated reason %q (tax %d): the sale would commit untaxed", legReasonFNTProduct, q.TaxCents)
+	}
+	var mis MisconfiguredRateError
+	if !errors.As(err, &mis) {
+		t.Fatalf("the refusal must be the typed misconfigured-rate error, got %T: %v", err, err)
+	}
+	if mis.ReasonCode != legReasonFNTProduct || mis.RateBps != 0 {
+		t.Fatalf("the typed error must name the reason and the resolved rate: %+v", mis)
 	}
 }
 
@@ -175,7 +181,8 @@ func TestCreateRate_FreeFormReasonRefused(t *testing.T) {
 
 // (e) CreateRate refuses to PLANT the ungated-below-standard shape (FNT_PRODUCT at 0) with the same
 // words the engine refuses to BIND it, so the admin edge fails first and the ring never sees the row.
-// Commit 1 asserts the refusal alone; the fix commit strengthens this to the same-words check.
+// Commit 1, tests only, asserted the refusal alone; the fix commit strengthens this to the same-words
+// check against the typed error's message.
 func TestCreateRate_UngatedBelowStandardRefused(t *testing.T) {
 	f := newFakeStore()
 	svc, _ := newSvc(f)
@@ -186,6 +193,10 @@ func TestCreateRate_UngatedBelowStandardRefused(t *testing.T) {
 	var bad httpx.BadRequestError
 	if !errors.As(err, &bad) {
 		t.Fatalf("the refusal must be the 400-shaped BadRequestError, got %T: %v", err, err)
+	}
+	want := MisconfiguredRateError{ReasonCode: legReasonFNTProduct, RateBps: 0}.Error()
+	if bad.Msg != want {
+		t.Fatalf("the admin refusal must carry the same words the engine refuses to bind with:\n got %q\nwant %q", bad.Msg, want)
 	}
 }
 

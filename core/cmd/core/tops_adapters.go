@@ -25,6 +25,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messagingprovider"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tasks"
@@ -101,6 +102,15 @@ func (a posTaxAdapter) AssessSale(ctx context.Context, in pos.TaxQuoteInput) (po
 		EvidenceAttached: false,
 	})
 	if err != nil {
+		// The engine's reason-universe refusal is a client-correctable refusal at the counter: translate
+		// it into the pos sentinel the handler maps to 400 (the engine's words ride behind the
+		// sentinel's). Any other refusal, the misconfigured-table shape, stays a server fault: the admin
+		// edge is what keeps that shape off the ring, CreateRate refusing to plant the row. Sits beside
+		// the sibling refusal translation out of the same engine.
+		var bad httpx.BadRequestError
+		if errors.As(err, &bad) {
+			return pos.QuoteResult{}, fmt.Errorf("%w: %s", pos.ErrUnknownTaxReason, bad.Msg)
+		}
 		return pos.QuoteResult{}, err
 	}
 	return pos.QuoteResult{TaxCents: q.TaxCents, RateBps: q.RateBps}, nil
