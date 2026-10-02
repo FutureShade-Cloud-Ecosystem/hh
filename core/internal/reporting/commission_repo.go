@@ -15,8 +15,12 @@ import (
 
 // -- rules --------------------------------------------------------------------
 
-// ListCommissionRules reads rules, optionally for one rep, newest scope first.
-func (r *Repository) ListCommissionRules(ctx context.Context, repUserID string) ([]CommissionRule, error) {
+// ListCommissionRules reads rules, optionally for one rep, newest scope first, held to the caller's
+// reach. The branch predicate keeps a rule with NO branch visible to a scoped caller on purpose: an
+// empty branch is chooseRule's wildcard, in force at every branch including the caller's, so it is
+// part of the arithmetic their own fenced preview performs. A rule naming a branch outside the reach
+// is that branch's pay decision and does not surface.
+func (r *Repository) ListCommissionRules(ctx context.Context, repUserID string, reach branchReach) ([]CommissionRule, error) {
 	if r.pool == nil {
 		return nil, ErrNoDatabase
 	}
@@ -29,7 +33,8 @@ SELECT cr.id::text, cr.rep_user_id::text, COALESCE(u.display_name,''), cr.basis,
   LEFT JOIN users u ON u.id = cr.rep_user_id
   LEFT JOIN product_categories pc ON pc.id = cr.category_id
  WHERE ($1::uuid IS NULL OR cr.rep_user_id = $1::uuid)
- ORDER BY u.display_name, cr.effective_from DESC`, nullUUID(repUserID))
+   AND ($2::uuid[] IS NULL OR cr.branch_id IS NULL OR cr.branch_id = ANY($2::uuid[]))
+ ORDER BY u.display_name, cr.effective_from DESC`, nullUUID(repUserID), reach.filter())
 	if err != nil {
 		return nil, fmt.Errorf("list commission rules: %w", err)
 	}
@@ -252,8 +257,10 @@ VALUES ($1::uuid, NULLIF($2,'')::uuid, NULLIF($3,'')::uuid, $4, NULLIF($5,'')::d
 	return out, nil
 }
 
-// ListCommissionRuns reads frozen periods in a window.
-func (r *Repository) ListCommissionRuns(ctx context.Context, from, to time.Time, repUserID string) ([]CommissionPeriod, error) {
+// ListCommissionRuns reads frozen periods in a window, fenced to the caller's branch reach with
+// ($4::uuid[] IS NULL OR cr.branch_id = ANY($4::uuid[])). A consolidated period (branch NULL) never
+// matches ANY(), the same global-only ruling the single read makes.
+func (r *Repository) ListCommissionRuns(ctx context.Context, from, to time.Time, repUserID string, reach branchReach) ([]CommissionPeriod, error) {
 	if r.pool == nil {
 		return nil, ErrNoDatabase
 	}
@@ -265,7 +272,8 @@ SELECT cr.id::text, cr.rep_user_id::text, COALESCE(u.display_name,''), cr.period
   LEFT JOIN users u ON u.id = cr.rep_user_id
  WHERE cr.period_start >= $1::date AND cr.period_end <= $2::date
    AND ($3::uuid IS NULL OR cr.rep_user_id = $3::uuid)
- ORDER BY cr.period_start DESC, u.display_name`, from, to, nullUUID(repUserID))
+   AND ($4::uuid[] IS NULL OR cr.branch_id = ANY($4::uuid[]))
+ ORDER BY cr.period_start DESC, u.display_name`, from, to, nullUUID(repUserID), reach.filter())
 	if err != nil {
 		return nil, fmt.Errorf("list commission runs: %w", err)
 	}
@@ -338,8 +346,10 @@ SELECT COALESCE(invoice_id::text,''), COALESCE(invoice_line_id::text,''), invoic
 	return p, rows.Err()
 }
 
-// AccrualRegister sums frozen, unposted runs per rep in a window.
-func (r *Repository) AccrualRegister(ctx context.Context, from, to time.Time) ([]AccrualLine, error) {
+// AccrualRegister sums frozen, unposted runs per rep in a window, fenced to the caller's branch
+// reach: a scoped caller's register owes their branches' periods alone, and a consolidated period
+// (branch NULL) never matches ANY(), it is the whole company's pay and answers to a global caller.
+func (r *Repository) AccrualRegister(ctx context.Context, from, to time.Time, reach branchReach) ([]AccrualLine, error) {
 	if r.pool == nil {
 		return nil, ErrNoDatabase
 	}
@@ -349,8 +359,9 @@ SELECT cr.rep_user_id::text, COALESCE(u.display_name,''), count(*)::int, sum(cr.
   LEFT JOIN users u ON u.id = cr.rep_user_id
  WHERE cr.period_start >= $1::date AND cr.period_end <= $2::date
    AND cr.gl_journal_id IS NULL
+   AND ($3::uuid[] IS NULL OR cr.branch_id = ANY($3::uuid[]))
  GROUP BY 1, 2
- ORDER BY 4 DESC, 2`, from, to)
+ ORDER BY 4 DESC, 2`, from, to, reach.filter())
 	if err != nil {
 		return nil, fmt.Errorf("commission accrual register: %w", err)
 	}
