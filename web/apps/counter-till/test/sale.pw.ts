@@ -1848,6 +1848,214 @@ test("a resumed ticket reads the pending markers from the moment it lands, befor
   await expect(txbar).toContainText("Est. Profit");
 });
 
+test("a park landing while the parked dialog is open converges the open dialog's list", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+
+  // The branch's parked count as the world holds it right now, read through
+  // the contract's own read (the demo bearer and org header; the fence to the
+  // caller's branch is the server's, so the query names no branch).
+  const bearer = await salesBearer(page);
+  const beforeRead = await page.request.get("/api/v1/pos/parked", {
+    headers: { Authorization: `Bearer ${bearer}`, "X-Org": "hh-demo" },
+  });
+  expect(beforeRead.ok()).toBe(true);
+  const before = ((await beforeRead.json()) as { items: unknown[] }).items.length;
+
+  // Hold the park POST in flight: the park commits only when this story
+  // releases it. A hand parks and opens the dialog in one motion, and the
+  // button's click returns at dispatch, so the dialog's one read racing the
+  // park commit is exactly what this hold makes deterministic.
+  let releasePark: () => void = () => undefined;
+  const parkGate = new Promise<void>((resolve) => {
+    releasePark = resolve;
+  });
+  await page.route((url) => url.pathname === "/api/v1/pos/parked", async (route) => {
+    if (route.request().method() === "POST") await parkGate;
+    await route.continue();
+  });
+
+  const parkPost = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" && response.url().includes("/api/v1/pos/parked"),
+  );
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  // The dialog's first list read is the next parked-list GET in this window:
+  // nothing else reads the list between the held park and the dialog opening.
+  const firstRead = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" && response.url().includes("/api/v1/pos/parked"),
+  );
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  await firstRead;
+  // Open while the park is in flight, the dialog lists the old world only.
+  await expect(parkedDialog.locator(".ticket")).toHaveCount(before);
+
+  releasePark();
+  const created = (await (await parkPost).json()) as { ticket_no: string };
+
+  // The list changed under the open dialog: the dialog converges with it, the
+  // just-parked ticket shows in the open rail, and the button's count and the
+  // dialog's rows agree on the same screen.
+  await expect(parkedDialog.getByText(created.ticket_no)).toBeVisible({ timeout: 10_000 });
+  await expect(
+    page.getByRole("button", { name: new RegExp(`Parked \\(${before + 1}\\)`) }),
+  ).toBeVisible();
+});
+
+test("a stale parked-list read that answers last writes nothing: the open dialog keeps the newest list", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+
+  // Hold the park POST (the park commits only when released), and take the
+  // dialog's first list read without answering it: its response is fetched
+  // now, from the uncommitted world, and delivered last, after the newer
+  // reads have answered. Two reads of the same dialog are then in flight at
+  // once, and the stale one resolves last: whatever writes last wins unless
+  // the dialog orders its own reads.
+  let releasePark: () => void = () => undefined;
+  const parkGate = new Promise<void>((resolve) => {
+    releasePark = resolve;
+  });
+  const staleDelivery: Array<() => Promise<void>> = [];
+  let heldFirstRead = false;
+  await page.route((url) => url.pathname === "/api/v1/pos/parked", async (route) => {
+    if (route.request().method() === "POST") {
+      await parkGate;
+      await route.continue();
+      return;
+    }
+    if (route.request().method() === "GET" && !heldFirstRead) {
+      heldFirstRead = true;
+      const stale = await route.fetch(); // answered now, from the old world
+      staleDelivery.push(async () => {
+        await route.fulfill({ response: stale }); // delivered last
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  const parkPost = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" && response.url().includes("/api/v1/pos/parked"),
+  );
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  expect(heldFirstRead).toBe(true);
+
+  releasePark();
+  const created = (await (await parkPost).json()) as { ticket_no: string };
+  // The reads issued after the park answer with the committed world: the open
+  // dialog converges on the just-parked ticket.
+  await expect(parkedDialog.getByText(created.ticket_no)).toBeVisible({ timeout: 10_000 });
+
+  // The stale read, answered before the park committed, lands last: the
+  // newest list must still be the one on screen.
+  for (const deliver of staleDelivery) await deliver();
+  await expect(parkedDialog.getByText(created.ticket_no)).toBeVisible({ timeout: 10_000 });
+});
+
+test("a discard inside the open parked dialog moves the button's count while the dialog stays open", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+
+  // The branch's parked count before this story parks anything, read through
+  // the contract's own read.
+  const bearer = await salesBearer(page);
+  const beforeRead = await page.request.get("/api/v1/pos/parked", {
+    headers: { Authorization: `Bearer ${bearer}`, "X-Org": "hh-demo" },
+  });
+  expect(beforeRead.ok()).toBe(true);
+  const before = ((await beforeRead.json()) as { items: unknown[] }).items.length;
+
+  const parkPost = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" && response.url().includes("/api/v1/pos/parked"),
+  );
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  const created = (await (await parkPost).json()) as { ticket_no: string };
+
+  // Discard this story's own ticket: the row leaves the open rail, the rail
+  // stays open, and the button beside it must move with the list, not keep
+  // naming a ticket the branch no longer holds.
+  const row = parkedDialog.locator(".ticket").filter({ hasText: created.ticket_no });
+  await expect(row).toBeVisible();
+  await row.getByRole("button", { name: "Discard" }).click();
+  await expect(row).toHaveCount(0);
+  await expect(parkedDialog).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: new RegExp(`Parked \\(${before}\\)`) }),
+  ).toBeVisible({ timeout: 10_000 });
+});
+
+test("a failed reload's error banner does not outlive the next good reload", async ({ page }) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  // Park once with the dialog closed, then put one line back on the counter:
+  // the second park lands under the open dialog (F9 parks through the rail),
+  // and the third needs its own line, scanned straight onto the counter while
+  // the rail is up (the scan box adds on an exact sku's Enter, no pick click,
+  // so nothing under the rail's scrim needs a click).
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  await searchAndAdd(page, "edge", "Edge Restraint 8 ft");
+
+  // Refuse exactly the read the first park under the dialog triggers (the
+  // host's convergence reload, the dialog's open read and the count read
+  // answering before it); every later read answers.
+  let reads = 0;
+  await page.route((url) => url.pathname === "/api/v1/pos/parked", async (route) => {
+    if (route.request().method() === "GET") {
+      reads += 1;
+      if (reads === 3) {
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "reload refused once" }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+
+  // The park lands, the host's reload read is refused: the banner is up.
+  await page.keyboard.press("F9");
+  const banner = parkedDialog.locator(".banner.bad");
+  await expect(banner).toBeVisible({ timeout: 10_000 });
+  await expect(banner).toContainText("parked 500");
+
+  // Scan one more line onto the counter and park again under the open rail:
+  // this reload answers. The banner the refused read raised must not outlive
+  // the good one, and the rail stays open and honest underneath it.
+  const field = page.getByTestId("pos-scan-input");
+  await field.fill("EDG-08");
+  await field.press("Enter");
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Edge Restraint 8 ft" })).toHaveCount(1);
+  await page.keyboard.press("F9");
+  await expect(banner).toBeHidden({ timeout: 10_000 });
+  await expect(parkedDialog).toBeVisible();
+});
+
 test("the top bar is on the till's compact scale: about 48px, small chrome buttons, the banner on one line", async ({
   page,
 }) => {

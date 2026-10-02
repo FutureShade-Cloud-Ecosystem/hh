@@ -1436,3 +1436,30 @@ to the ruling (the surface follows the policy word, and the clerk's glance
 is the byte-absent answer the policy names), and the exit test on the stack
 head runs green, so the row's question is answered and the routing here is
 overtaken by the base's own round 2 closure.
+
+## L2 (till parked dialog): the positions gate admits one new ported event name (recorded, done in this lane)
+
+The parked dialog fix's round 2 wires a discard inside the open dialog to the
+host the way every other child-to-host notification in the ported surface is
+wired: a bubbling composed CustomEvent consumed by a template `@` binding
+(`@pos-parked-discard` on the `hos-pos-parked` mount in pos-terminal.ts,
+beside the existing `@pos-parked-close` and `@pos-parked-resume`). The
+design system's dependents positions gate refuses every binding name the
+ported allow table does not carry, so the tree's root gate (and the PR's
+hosted ci with it) went red on the new name.
+
+The lane's declared Touches consume web/packages rather than edit them, but
+the gate's own record says a new position inside the ported prefix "is still
+refused until it is added here on purpose", and this lane's precedent (the
+dependent lock edit below) made exactly this kind of one list edit with the
+reasoning recorded and the revert offered. The alternative shapes were
+worse: withholding the notification splits the dialog's wiring across two
+idioms (close and resume through template bindings, discard through an
+imperative listener attached per open), and letting the button's count go
+stale after a discard is the defect the round set out to close. The edit
+adds `@pos-parked-discard` to `PORTED_PROPERTY_OR_EVENT` in
+`web/packages/design-system/test/_lib/positions.mjs` and nothing else; the
+table's own narrowness test (an unlisted name refused even inside the
+prefix) keeps biting everywhere else. If the lead or a reviewer rules the
+edit out of bounds for this lane, it reverts as one line and the decision it
+forces is whether the discard notification may reach its host at all.
