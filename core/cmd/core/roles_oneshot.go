@@ -35,7 +35,16 @@ func migrateRole(getenv func(string) string) error {
 	log := logging.New(cfg.Env)
 	ctx := context.Background()
 
-	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	// The target comes from the one-shot resolver, not config.Load:
+	// HH-199's rule (oneshot_db.go), refused and printed before any
+	// connection is attempted.
+	dsn, err := resolveOneshotDatabaseURL(getenv)
+	if err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	printOneshotDatabaseTarget(os.Stdout, "migrate", dsn)
+
+	pool, err := db.Connect(ctx, dsn)
 	if err != nil {
 		return fmt.Errorf("migrate: cannot connect: %w", err)
 	}
@@ -100,6 +109,14 @@ func seedRole(getenv func(string) string) error {
 		return fmt.Errorf("seed: embedded seed file: %w", err)
 	}
 
+	// The target comes from the one-shot resolver, not config.Load:
+	// HH-199's rule (oneshot_db.go), refused before anything here runs
+	// and printed before the connection is attempted.
+	dsn, err := resolveOneshotDatabaseURL(getenv)
+	if err != nil {
+		return fmt.Errorf("seed: %w", err)
+	}
+
 	// Refuse to seed anywhere but dev unless explicitly overridden: the
 	// seed plants Tier-1 GLOBAL admins with a demo password, so this must
 	// match the config's everything-that-is-not-dev-is-production-grade
@@ -108,7 +125,8 @@ func seedRole(getenv func(string) string) error {
 		return fmt.Errorf("seed: refusing to run outside dev (set ALLOW_SEED=true to override), env %q", cfg.Env)
 	}
 
-	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	printOneshotDatabaseTarget(os.Stdout, "seed", dsn)
+	pool, err := db.Connect(ctx, dsn)
 	if err != nil {
 		return fmt.Errorf("seed: cannot connect: %w", err)
 	}
