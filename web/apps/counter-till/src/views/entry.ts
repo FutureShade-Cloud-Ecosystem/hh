@@ -234,12 +234,12 @@ export function renderEntry(view: EntryView): TemplateResult {
             class="card"
             data-action="choose"
             data-flow=${flow.flow ?? nothing}
-            aria-labelledby=${flow.flow ? `entry-role-${flow.flow}` : nothing}
+            aria-label=${flow.label ?? flow.flow ?? nothing}
             ?disabled=${view.busy}
           >
             <span class="mark">${drawIcon(iconForId(FLOW_ICONS[flow.flow ?? ""] ?? "lucide:circle-user"), 29)}</span>
             <span class="words">
-              <span class="role" id=${flow.flow ? `entry-role-${flow.flow}` : nothing}>
+              <span class="role">
                 ${flow.label ?? flow.flow}
               </span>
               ${FLOW_BLURBS[flow.flow ?? ""] === undefined

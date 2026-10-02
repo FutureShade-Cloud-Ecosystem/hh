@@ -6658,11 +6658,16 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           </div>
           ${/* P3-10: the breakdown chip's below-floor row is the one other place a margin figure
                can show on this till (the CARDS presentation). The same policy word gates it:
-               a refused caller reads the below-floor words without the margin figures. */ ''}
+               a refused caller reads the below-floor words without the margin figures. The
+               refusal withholds the figures from a COPY of the line's own breakdown (the line's
+               data is untouched): the positions gate admits no new property binding in the
+               templates, so the flag property stays unset here and the absent figures paint the
+               same words. */ ''}
           ${l.breakdown
             ? html`<hos-price-breakdown
-                .breakdown=${l.breakdown}
-                .marginFiguresVisible=${this.marginPolicyAllows()}
+                .breakdown=${this.marginPolicyAllows()
+                  ? l.breakdown
+                  : { ...l.breakdown, margin_bps: undefined, floor_bps: undefined }}
               ></hos-price-breakdown>`
             : nothing}
         </div>`,

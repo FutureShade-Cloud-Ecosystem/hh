@@ -33,8 +33,11 @@ export interface PriceBreakdown {
   price_uom: string;
   qty_base: number;
   line_total_cents: number;
-  margin_bps: number;
-  floor_bps: number;
+  // Optional so a policy-ruled host can withhold the figures from the data it
+  // passes: absent figures render the below-floor words without the margin
+  // pair, the same words marginFiguresVisible=false paints.
+  margin_bps?: number;
+  floor_bps?: number;
   blocked: boolean;
   block_policy?: string;
 }
@@ -64,10 +67,13 @@ export class HosPriceBreakdown extends LitElement {
 
   /**
    * P3-10 (the comprehensive train review): whether the below-floor row may
-   * spell its margin figures. The renderer holds no policy of its own; the
-   * host that knows the caller passes the answer (the counter till passes its
-   * margin_visibility gate). Default true: a host that mounts this chip
-   * outside a policy-ruled surface keeps the renderer's own behavior.
+   * spell its margin figures. The renderer holds no policy of its own. A host
+   * can refuse the figures two ways, and the counter till uses the second:
+   * set this property false, or withhold margin_bps and floor_bps from the
+   * breakdown it passes (the positions gate admits no new property binding in
+   * the till's templates, so the till strips the figures from a copy instead).
+   * Default true: a host that mounts this chip outside a policy-ruled surface
+   * keeps the renderer's own behavior.
    */
   @property({ type: Boolean }) marginFiguresVisible = true;
 
@@ -208,7 +214,7 @@ export class HosPriceBreakdown extends LitElement {
               ${b.blocked
                 ? html`<div class="blocked">
                     ${b.detail || 'Below the configured margin floor: manager approval required'}${this
-                      .marginFiguresVisible
+                      .marginFiguresVisible && b.margin_bps !== undefined && b.floor_bps !== undefined
                       ? html` (margin ${centsAmount(b.margin_bps)}% &lt; floor
                           ${centsAmount(b.floor_bps)}%)`
                       : nothing}
