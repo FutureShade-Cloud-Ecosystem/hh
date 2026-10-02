@@ -248,7 +248,7 @@ export async function openStep(page: Page, step: Step): Promise<void> {
 
 /**
  * Tap a role card and wait until the till answers under that role's name and
- * has loaded: the session bar's open dot (the drawer found or opened on first
+ * has loaded: the session bar's open dot (the drawer the till finds open)
  * use), the page's context line naming the invented dealer and the branch,
  * and the parked button's count (its first read has landed).
  */

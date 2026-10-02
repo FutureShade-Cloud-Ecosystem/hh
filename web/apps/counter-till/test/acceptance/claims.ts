@@ -89,7 +89,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     { file: "10-world.pw.ts", test: "the reads a technical tester reaches: the manager's reach the clerk's lacks, none fenced to a branch" },
   ],
   "drawer-shared": [
-    { file: "20-sales.pw.ts", test: "the drawer: the branch's MAIN counter drawer, found or opened on first use" },
+    { file: "20-sales.pw.ts", test: "the drawer: the branch's MAIN counter drawer, found open with the till's own float" },
     { file: "30-manager.pw.ts", test: "the drawer: the same shared counter drawer the clerk found" },
   ],
   "known-seeded-card": [
