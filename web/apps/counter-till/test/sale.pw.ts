@@ -80,6 +80,23 @@ async function searchAndAdd(page: Page, query: string, hitName: string): Promise
   await expect(page.getByTestId("pos-line-row").filter({ hasText: hitName })).toHaveCount(1);
 }
 
+/**
+ * The branch's drawer, found or opened: the mount hydrates asynchronously, so
+ * wait for whichever state arrives (the open dot, or the open button) instead
+ * of racing the read with a count.
+ */
+async function ensureSession(page: Page): Promise<void> {
+  const dot = page.getByTestId("session-dot");
+  const openButton = page.getByRole("button", { name: "Open Session", exact: true });
+  await expect(dot.or(openButton).first()).toBeVisible({ timeout: 10_000 });
+  if (await dot.isVisible()) {
+    await expect(dot).toContainText("Open");
+    return;
+  }
+  await openButton.click();
+  await expect(dot).toContainText("Open");
+}
+
 /** Open one step of the linear flow by its head (a no-op when it is already open). */
 async function openStep(page: Page, step: "customer" | "items" | "payment" | "summary"): Promise<void> {
   const head = page.getByTestId(`step-head-${step}`);
@@ -261,6 +278,13 @@ test("a card sale shows the simulated word on the tender and on the confirmation
   const read = await getSale(page, bearer, sale.order_id as string);
   expect(read.tender).toBe("CARD");
 
+  // The receipt document carries the word: the sale touched the simulated rail.
+  const receiptPage = page.context().waitForEvent("page");
+  await sold.getByTestId("sold-print").click();
+  const printed = await receiptPage;
+  await expect(printed.getByText("Simulated card: no card was charged")).toBeVisible();
+  await printed.close();
+
   // The notice is value driven: the same surface against a status route that
   // answers simulated false shows no badge on the tender and no notice on the
   // confirmation (and the stub's own answer is true, so both values are
@@ -292,6 +316,10 @@ test("a card sale shows the simulated word on the tender and on the confirmation
   const otherSold = other.getByTestId("sold-panel");
   await expect(otherSold).toBeVisible();
   await expect(otherSold.getByTestId("sold-simulated-notice")).toHaveCount(0);
+  // The document word's false side is the core's render of its own rail, and
+  // this stub's rail IS its simulator, so a false-side document cannot be
+  // staged honestly here: the false side is held where the app speaks, at the
+  // confirmation above.
   await other.close();
 });
 
@@ -429,11 +457,7 @@ test("a second press on Complete while the ring is in flight commits exactly one
   await openStep(page, "payment");
   // The drawer first, so the presses below race the RING and only the ring:
   // a closed drawer would have both presses take the open-then-ring path.
-  const sessionDot = page.getByTestId("session-dot");
-  if ((await sessionDot.count()) === 0) {
-    await page.getByRole("button", { name: "Open Session", exact: true }).click();
-  }
-  await expect(sessionDot).toContainText("Open");
+  await ensureSession(page);
   const cta = page.getByTestId("pos-complete-sale");
   await expect(cta).toBeEnabled();
   // Two presses in quick succession: the second lands while the first is in
@@ -686,4 +710,49 @@ test("a resume over lines on the counter asks first: declining leaves everything
   await openStep(page, "items");
   await expect(page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" })).toHaveCount(1);
   await expect(page.getByTestId("pos-line-row").filter({ hasText: "Polymeric Locking Sand" })).toHaveCount(0);
+});
+
+test("a split with a card leg carries the simulated word on the confirmation and on the receipt", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await ensureSession(page);
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Split" }).click();
+  // Two legs: cash for part of the estimated total, a card leg for the rest.
+  // The Holland line at retail with tax is CA$4.52: CA$4.00 cash and the
+  // CA$0.52 card leg settle it exactly.
+  const leg0 = page.getByTestId("split-amount-0");
+  const leg1 = page.getByTestId("split-amount-1");
+  await leg0.fill("4.00");
+  await leg1.fill("0.52");
+  // The live verdict: settled exactly, so the panel's ring arms.
+  await expect(page.getByTestId("split-remaining")).toContainText("Settled exactly");
+  await expect(page.getByTestId("split-ring")).toBeEnabled();
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await page.getByTestId("split-ring").click();
+  const sale = (await (await ringPost).json()) as Record<string, unknown>;
+
+  // The confirmation: the split touched the simulated rail, so it says so,
+  // exactly as a CARD tender does.
+  const sold = page.getByTestId("sold-panel");
+  await expect(sold).toBeVisible();
+  await expect(sold.getByTestId("sold-simulated-notice")).toContainText("Simulated card: no card was charged");
+
+  // The read: the legs are the wire's own, one cash and one card.
+  const bearer = await salesBearer(page);
+  const read = await getSale(page, bearer, sale.order_id as string);
+  expect(read.split_tender).toBe(true);
+  const legs = read.tenders as Array<Record<string, unknown>>;
+  expect(legs.map((leg) => leg.method)).toEqual(["CASH", "CARD"]);
+
+  // The receipt document carries the word too.
+  const receiptPage = page.context().waitForEvent("page");
+  await sold.getByTestId("sold-print").click();
+  const printed = await receiptPage;
+  await expect(printed.getByText("Simulated card: no card was charged")).toBeVisible();
+  await printed.close();
 });
