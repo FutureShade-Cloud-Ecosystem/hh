@@ -2532,6 +2532,18 @@ export class HosPosTerminal extends LitElement {
       color: #0b1725;
       border-color: var(--hos-stone-amber);
     }
+    /* The review's G1: a disabled control drops its fill and goes grey (colour is the state,
+       everywhere). Both print controls gate on the one busy flag; while it holds, neither may
+       keep the gold or the navy fill under a loading word, or the pointer promise an act the
+       control cannot make. The rule sits after the primary's so the fill rule never wins. */
+    .sold-actions button:disabled,
+    .sold-actions button.primary:disabled {
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
+      cursor: not-allowed;
+    }
     .reliefchip {
       margin-top: 8px;
       font-size: 12px;

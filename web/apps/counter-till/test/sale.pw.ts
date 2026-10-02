@@ -1889,3 +1889,43 @@ test("the entry page's header is on the same compact scale as the till's top bar
   expect(measured.banner).toBeLessThan(32);
   await expect(page.getByRole("note")).toBeVisible();
 });
+
+test("the sold-actions buttons drop their fill while a receipt loads, in the colour-is-the-state rule", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await page.getByTestId("pos-complete-sale").click();
+  await (await ringPost).json();
+  const sold = page.getByTestId("sold-panel");
+  await expect(sold).toBeVisible();
+  // Hold the receipt read in flight so the loading state is a state, not a blink: while the
+  // document fetch runs, both controls are disabled, and a disabled control drops its fill and
+  // goes grey (colour is the state; fade is not a state, and a word change is not a state).
+  await page.route("**/receipt*", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  });
+  await sold.getByTestId("sold-print").click();
+  const sibling = sold.getByTestId("sold-print-page");
+  await expect(sibling).toBeDisabled();
+  const sib = (await sibling.evaluate((el) => ({
+    cursor: getComputedStyle(el).cursor,
+    background: getComputedStyle(el).backgroundColor,
+    opacity: getComputedStyle(el).opacity,
+  }))) as { cursor: string; background: string; opacity: string };
+  expect(sib.cursor).toBe("not-allowed");
+  expect(sib.background).toBe("rgba(0, 0, 0, 0)");
+  expect(Number(sib.opacity)).toBe(1);
+  const primary = (await sold.getByTestId("sold-print").evaluate((el) => ({
+    cursor: getComputedStyle(el).cursor,
+    background: getComputedStyle(el).backgroundColor,
+  }))) as { cursor: string; background: string };
+  expect(primary.cursor).toBe("not-allowed");
+  expect(primary.background).toBe("rgba(0, 0, 0, 0)");
+  await page.unroute("**/receipt*");
+});
