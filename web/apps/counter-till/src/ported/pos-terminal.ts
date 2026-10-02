@@ -2828,10 +2828,11 @@ export class HosPosTerminal extends LitElement {
   private async refreshParkedCount(): Promise<void> {
     try {
       this.parkedCount = (await listParked(this.branchId)).length;
-      // This read fires exactly when the branch's parked list changes through
-      // the terminal (park, resume, dialog close). The open dialog reads once
-      // on open (the reference's own shape, ref-master app/src/pos-terminal.ts
-      // and pos-parked.ts), so a change landing under it left the open rail
+      // This read fires when the branch's parked list changes: park, resume
+      // and dialog close through the terminal, and a discard inside the open
+      // dialog, which announces itself. The open dialog reads once on open
+      // (the reference's own shape, ref-master app/src/pos-terminal.ts and
+      // pos-parked.ts), so a change landing under it left the open rail
       // frozen at the stale rows while this button beside it stated the newer
       // figure. Telling the open dialog to re-read here converges the two
       // within one read: take-and-improve on the reference (row 563), no
@@ -6514,6 +6515,9 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
             .openLines=${this.cart.length}
             @pos-parked-close=${() => {
               this.showParked = false;
+              void this.refreshParkedCount();
+            }}
+            @pos-parked-discard=${() => {
               void this.refreshParkedCount();
             }}
             @pos-parked-resume=${(e: CustomEvent<{ ticket: ParkedTicket }>) => this.onParkedResume(e.detail.ticket)}

@@ -195,9 +195,10 @@ export class HosPosParked extends LitElement {
    * 87d7941b app/src/pos-parked.ts), so a list change landing under the open
    * dialog left it frozen at the stale rows until close and reopen. The host
    * calls this when its own parked-list read lands (pos-terminal's
-   * refreshParkedCount, which fires exactly when the list changes through the
-   * terminal), so a park landing while the dialog is open converges the open
-   * rail within one read: no polling loop, no contract change.
+   * refreshParkedCount, which fires when the branch's list changes: park,
+   * resume and dialog close through the terminal, and this rail's own
+   * discard, announced), so a change landing while the dialog is open
+   * converges it within one read: no polling loop, no contract change.
    */
   async reload(): Promise<void> {
     const token = ++this.readSeq;
@@ -251,6 +252,10 @@ export class HosPosParked extends LitElement {
     try {
       await discardParked(t.id);
       await this.reload();
+      // The list changed without the terminal acting: announce it the way
+      // close and resume are announced, so the host's count read moves the
+      // button with the list while this rail stays open.
+      this.dispatchEvent(new CustomEvent('pos-parked-discard', { bubbles: true, composed: true }));
     } catch (e) {
       this.error = e instanceof Error ? e.message : 'discard failed';
     } finally {

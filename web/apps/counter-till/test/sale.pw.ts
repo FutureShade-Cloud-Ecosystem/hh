@@ -1964,6 +1964,45 @@ test("a stale parked-list read that answers last writes nothing: the open dialog
   await expect(parkedDialog.getByText(created.ticket_no)).toBeVisible({ timeout: 10_000 });
 });
 
+test("a discard inside the open parked dialog moves the button's count while the dialog stays open", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+
+  // The branch's parked count before this story parks anything, read through
+  // the contract's own read.
+  const bearer = await salesBearer(page);
+  const beforeRead = await page.request.get("/api/v1/pos/parked", {
+    headers: { Authorization: `Bearer ${bearer}`, "X-Org": "hh-demo" },
+  });
+  expect(beforeRead.ok()).toBe(true);
+  const before = ((await beforeRead.json()) as { items: unknown[] }).items.length;
+
+  const parkPost = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" && response.url().includes("/api/v1/pos/parked"),
+  );
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  const created = (await (await parkPost).json()) as { ticket_no: string };
+
+  // Discard this story's own ticket: the row leaves the open rail, the rail
+  // stays open, and the button beside it must move with the list, not keep
+  // naming a ticket the branch no longer holds.
+  const row = parkedDialog.locator(".ticket").filter({ hasText: created.ticket_no });
+  await expect(row).toBeVisible();
+  await row.getByRole("button", { name: "Discard" }).click();
+  await expect(row).toHaveCount(0);
+  await expect(parkedDialog).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: new RegExp(`Parked \\(${before}\\)`) }),
+  ).toBeVisible({ timeout: 10_000 });
+});
+
 test("the top bar is on the till's compact scale: about 48px, small chrome buttons, the banner on one line", async ({
   page,
 }) => {
