@@ -32,6 +32,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // printAt prints one sales_by_day artefact at a branch, as a GLOBAL caller, which is the honest
@@ -297,6 +300,15 @@ func TestIntegration_BranchFence_CommissionAccrualsAreHeldToTheirBranch(t *testi
 	prod := f.product("PAV1", "Paver", f.category("pavers"))
 	freezeAt(t, f, global, repK, kingstonBranch, 20_000, prod, from, to) // repK owed 1_000 at Kingston
 	freezeAt(t, f, global, repT, trentonBranch, 30_000, prod, from, to)  // repT owed 1_500 at Trenton
+	// The consolidated leg: the same window frozen again with no branch, whole company's pay for repT,
+	// global only. The register sums both frozen runs for the global caller (re-freezing is an operator
+	// decision and both are owed) and neither of them for the scoped one.
+	consolidated, err := global.ComputeAndFreeze(ctx, repT, from, to, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.del(`DELETE FROM commission_run_lines WHERE run_id=$1::uuid`, consolidated.RunID)
+	f.del(`DELETE FROM commission_runs WHERE id=$1::uuid`, consolidated.RunID)
 
 	scoped, err := kingston.CommissionAccruals(ctx, from, to)
 	if err != nil {
@@ -307,7 +319,8 @@ func TestIntegration_BranchFence_CommissionAccrualsAreHeldToTheirBranch(t *testi
 			"their branch's period alone", repK, cents, ok)
 	}
 	if _, ok := accrualFor(scoped.Lines, repT); ok {
-		t.Error("a Kingston manager's accrual register contains a Trenton rep's pay at all")
+		t.Error("a Kingston manager's accrual register contains a Trenton rep's pay at all, neither the " +
+			"Trenton period nor the consolidated one is theirs to read")
 	}
 
 	whole, err := global.CommissionAccruals(ctx, from, to)
@@ -317,8 +330,9 @@ func TestIntegration_BranchFence_CommissionAccrualsAreHeldToTheirBranch(t *testi
 	if cents, ok := accrualFor(whole.Lines, repK); !ok || cents != 1_000 {
 		t.Errorf("the global accrual register says rep %s is owed %d (found=%v), want 1000", repK, cents, ok)
 	}
-	if cents, ok := accrualFor(whole.Lines, repT); !ok || cents != 1_500 {
-		t.Errorf("the global accrual register says rep %s is owed %d (found=%v), want 1500", repT, cents, ok)
+	if cents, ok := accrualFor(whole.Lines, repT); !ok || cents != 3_000 {
+		t.Errorf("the global accrual register says rep %s is owed %d (found=%v), want 3000, the Trenton "+
+			"period plus the consolidated one", repT, cents, ok)
 	}
 }
 
@@ -363,6 +377,86 @@ func TestIntegration_BranchFence_CommissionRulesAreHeldToTheirReach(t *testing.T
 		if !ruleRatePresent(globalRules, rate) {
 			t.Errorf("a global caller's rule list lost the %d bps rule", rate)
 		}
+	}
+}
+
+// grantsSvc builds a Service whose caller is branch scoped with exactly the grant map given, which
+// is how the empty grant set is posed: a nil map, an empty map, and an all-false map are three
+// spellings of a real state, a scoped account with no branches.
+func grantsSvc(t *testing.T, pool *pgxpool.Pool, branches map[string]bool) *Service {
+	t.Helper()
+	return NewService(NewRepository(pool)).withCaller(func(context.Context) (identity.StaffContext, bool) {
+		return identity.StaffContext{
+			UserID: fixtureActor(t, pool), RoleCode: "BRANCH_MANAGER",
+			Tier: identity.TierManager, Scope: identity.ScopeBranch, Status: "ACTIVE",
+			Branches: branches,
+		}, true
+	})
+}
+
+// TestIntegration_BranchFence_EmptyGrantSetSeesNothing, the committed legs for the caller with no
+// grants: every fenced read answers nothing (an empty list, not an error, not every row), the single
+// reads answer not found, and only the wildcard rules surface. The reviewer had to probe for these;
+// now they are pinned for all three spellings of the empty grant set.
+func TestIntegration_BranchFence_EmptyGrantSetSeesNothing(t *testing.T) {
+	pool := intPool(t)
+	f := newFixture(t, pool)
+	global := globalSvc(t, pool)
+	ctx := context.Background()
+	from, to := window()
+
+	repK, _ := twoUsers(t, pool)
+	f.commissionRule(repK, BasisRevenue, 500, "", "", from)
+	prod := f.product("PAV1", "Paver", f.category("pavers"))
+	kgnPeriod := freezeAt(t, f, global, repK, kingstonBranch, 20_000, prod, from, to)
+	kgnRun := printAt(t, f, global, kingstonBranch, from, to)
+
+	for name, branches := range map[string]map[string]bool{
+		"nil grant map":    nil,
+		"empty grant map":  {},
+		"all false grants": {kingstonBranch: false, trentonBranch: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc := grantsSvc(t, pool, branches)
+
+			runs, err := svc.Runs(ctx, 200)
+			if err != nil {
+				t.Fatalf("the artefact list errored rather than answering empty: %v", err)
+			}
+			if len(runs) != 0 {
+				t.Errorf("a caller with no grants listed %d artefacts, the empty grant set matches nothing", len(runs))
+			}
+			periods, err := svc.CommissionRuns(ctx, from, to, "")
+			if err != nil {
+				t.Fatalf("the period list errored rather than answering empty: %v", err)
+			}
+			if len(periods) != 0 {
+				t.Errorf("a caller with no grants listed %d periods, the empty grant set matches nothing", len(periods))
+			}
+			acc, err := svc.CommissionAccruals(ctx, from, to)
+			if err != nil {
+				t.Fatalf("the accrual register errored rather than answering empty: %v", err)
+			}
+			if len(acc.Lines) != 0 {
+				t.Errorf("a caller with no grants was owed %d accrual lines, the empty grant set matches nothing", len(acc.Lines))
+			}
+			if _, err := svc.RunArtefact(ctx, kgnRun.ID); !errors.Is(err, ErrNotFound) {
+				t.Errorf("a caller with no grants read a single artefact (err=%v), want not found", err)
+			}
+			if _, err := svc.CommissionRun(ctx, kgnPeriod.RunID); !errors.Is(err, ErrNotFound) {
+				t.Errorf("a caller with no grants read a single period (err=%v), want not found", err)
+			}
+			rules, err := svc.CommissionRules(ctx, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, r := range rules {
+				if r.BranchID != "" {
+					t.Errorf("a caller with no grants saw the branch scoped rule %s, only the "+
+						"wildcard rules (no branch) are in force everywhere", r.ID)
+				}
+			}
+		})
 	}
 }
 
