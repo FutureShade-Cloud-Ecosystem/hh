@@ -75,9 +75,10 @@ func (f *fakeSends) MarkPOSendResult(_ context.Context, id, status, provider, re
 	return nil
 }
 
-func (f *fakeSends) FindPOSendByKey(_ context.Context, key string) (POSend, bool, error) {
+func (f *fakeSends) FindPOSendByKey(_ context.Context, key, poID string) (POSend, bool, error) {
 	f.trail = append(f.trail, "find-key")
-	if key != "" && key == f.priorKey {
+	// Keyed to the order like the real read: a key is a replay only for the order that minted it.
+	if key != "" && key == f.priorKey && poID == f.prior.POID {
 		return f.prior, true, nil
 	}
 	return POSend{}, false, nil

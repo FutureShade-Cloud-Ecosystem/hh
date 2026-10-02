@@ -313,7 +313,7 @@ type sendStore interface {
 	VendorContact(ctx context.Context, vendorID string) (VendorContact, bool, error)
 	InsertPOSend(ctx context.Context, row POSend, actorID string) (POSend, error)
 	MarkPOSendResult(ctx context.Context, id, status, provider, ref, detail string) error
-	FindPOSendByKey(ctx context.Context, key string) (POSend, bool, error)
+	FindPOSendByKey(ctx context.Context, key, poID string) (POSend, bool, error)
 	ListPOSends(ctx context.Context, poID string) ([]POSend, error)
 }
 
@@ -343,12 +343,6 @@ func (s *Service) SendPO(ctx context.Context, poID string, in SendPORequest) (PO
 	if err != nil {
 		return POSend{}, err
 	}
-	if key := strings.TrimSpace(in.IdempotencyKey); key != "" {
-		// An identical retry reuses its key and its row: a double-clicked "Send order" is one order.
-		if prior, ok, err := store.FindPOSendByKey(ctx, key); err == nil && ok {
-			return prior, nil
-		}
-	}
 	orders, err := s.orders()
 	if err != nil {
 		return POSend{}, err
@@ -359,6 +353,16 @@ func (s *Service) SendPO(ctx context.Context, poID string, in SendPORequest) (PO
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
 		return POSend{}, errForbidden
+	}
+	// THE REPLAY ANSWER COMES AFTER THE FENCE, NEVER BEFORE IT (HH-181). The key index is global, so a
+	// key is only a replay for the order that minted it: for any other order it is a collision the
+	// insert below refuses, and for a caller the branch fence just refused it is not an answer at all,
+	// because it would be a read of another branch's send history through the one unguarded door.
+	if key := strings.TrimSpace(in.IdempotencyKey); key != "" {
+		// An identical retry reuses its key and its row: a double-clicked "Send order" is one order.
+		if prior, ok, err := store.FindPOSendByKey(ctx, key, po.ID); err == nil && ok {
+			return prior, nil
+		}
 	}
 	// A DRAFT IS NOT SENDABLE. The lifecycle already says a placed order is one whose line set is
 	// frozen; mailing a draft would hand a vendor a document the buyer can still edit underneath

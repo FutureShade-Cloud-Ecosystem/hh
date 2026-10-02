@@ -280,8 +280,10 @@ func (r *Repository) MarkPOSendResult(ctx context.Context, id, status, provider,
 	return nil
 }
 
-// FindPOSendByKey is the idempotency read: an identical retry reuses its row.
-func (r *Repository) FindPOSendByKey(ctx context.Context, key string) (POSend, bool, error) {
+// FindPOSendByKey is the idempotency read: an identical retry reuses its row. The read is keyed to THIS
+// order because the key index is global (one idempotency key, one send, across every order), so a key
+// held by another order is a collision the insert refuses, not a replay this read may hand back.
+func (r *Repository) FindPOSendByKey(ctx context.Context, key, poID string) (POSend, bool, error) {
 	if r.pool == nil {
 		return POSend{}, false, errNoDB
 	}
@@ -289,7 +291,7 @@ func (r *Repository) FindPOSendByKey(ctx context.Context, key string) (POSend, b
 		return POSend{}, false, nil
 	}
 	out, err := scanPOSend(r.pool.QueryRow(ctx,
-		`SELECT `+poSendCols+` FROM purchasing_po_sends WHERE idempotency_key = $1`, key))
+		`SELECT `+poSendCols+` FROM purchasing_po_sends WHERE idempotency_key = $1 AND po_id = $2::uuid`, key, poID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return POSend{}, false, nil
 	}
