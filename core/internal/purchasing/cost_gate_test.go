@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,12 +33,20 @@ import (
 // - fakes -
 
 type fakePolicy struct {
-	p         Policy
-	err       error
+	mu  sync.Mutex
+	p   Policy
+	err error
+
 	gotBranch string
 }
 
+// Policy records the branch it was asked for. The mutex is for the
+// concurrent double-click test (HH-181): two goroutines ride this fake at
+// once, and an unguarded write here is a data race the race detector
+// reports even though the service under test is clean.
 func (f *fakePolicy) Policy(_ context.Context, branchID string) (Policy, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.gotBranch = branchID
 	return f.p, f.err
 }

@@ -339,7 +339,12 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
 		WithActorNames(staffNameAdapter{repo: orderRepo})
-	arReminderSvc := billing.NewARReminderService(arLandingRepo, arLandingSvc, nil, cfg.StaffBaseURL)
+	// HH-185: the reminder transport is UnwiredSender, named here rather
+	// than left to the constructor's nil default. No transport wired means
+	// the send is recorded and marked FAILED in words, never a phantom
+	// DELIVERED the paper-path sweep would count; a real transport lands
+	// as an adapter passed in this same slot.
+	arReminderSvc := billing.NewARReminderService(arLandingRepo, arLandingSvc, billing.UnwiredSender{}, cfg.StaffBaseURL)
 	billing.NewARLandingHandler(arLandingSvc, arReminderSvc, log).
 		WithUserLinker(link).RegisterRoutes(r, g)
 

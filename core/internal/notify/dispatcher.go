@@ -237,7 +237,10 @@ func (d *Dispatcher) fail(e Event, msg string) Settlement {
 			d.log.Warn("notify: dead-lettered after max attempts",
 				"topic", e.Topic, "event_id", e.EventID, "attempts", e.Attempts+1, "err", msg)
 		}
-		return Settlement{Status: statusDead, LastError: msg}
+		// A dead-lettered SECRET topic redacts like a published one (HH-188): the row is terminal,
+		// and a one-time token must not outlive its delivery in a dead letter any more than in a
+		// delivered row.
+		return Settlement{Status: statusDead, LastError: msg, Redact: d.secret[e.Topic]}
 	}
 	if d.log != nil {
 		d.log.Warn("notify: delivery failed, will retry",

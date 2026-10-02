@@ -1078,3 +1078,29 @@ belongs to whoever owns the template seed or those assertions: either
 the assertions stop pinning the human title, or the seed carries it.
 Recorded so the HH-179 checks can be read honestly: every other test in
 the reporting integration suite passes on the HH-179 branch.
+
+## HH hardening, HH-180 (audit reopen fence): entity types without an owner resolver fail closed on the reopen route
+
+The reopen route `GET /api/v1/audit/transaction/{entityType}/{entityId}` fences a scoped caller
+through the entity's owning branch, resolved by narrow owner adapters wired at the composition
+root (order and quote are wired today). An entity type with no adapter (payment, invoice,
+pos_policy, ar_policy, and every other type the writers mint) answers an empty trail for every
+scoped caller, fail closed; a global caller keeps the full trail. Wiring another owner is a
+follow-up for its owning lane: one adapter over the owner's branch read plus one line in
+wire_money.go. Related, same root cause, pre-existing on main: the policy trails are admin or
+manager gated at their own surfaces while the reopen route is staff gated, so before this change
+any staffer could read them through the route, and the pos_policy and ar_policy rows are
+branch-less besides. The durable fix is the semantic writers stamping `branch_id` on their rows
+(roughly 55 sites across modules, pos and till included), which is not this lane's to make: pos
+and till are the Counter Till lane's.
+## HH hardening, HH-181 (PO send replay): go vet with the integration tag fails on main outside this lane's Touches
+
+`go vet -tags integration ./...` fails on a clean checkout of origin/main at
+4f08060 and keeps failing with this lane's commits applied:
+`core/internal/printing/receipt_integration_test.go` names `CostCents` on
+`pos.LineInput`, a field that struct no longer carries. The untagged
+`go vet ./...` passes because the integration build excludes that file.
+`core/internal/pos/` and the printing integration test are outside this lane's
+declared Touches, so the break is recorded here for the owning lane; the same
+command is one of this lane's exit checks and cannot pass repository-wide
+until the field mismatch is reconciled.

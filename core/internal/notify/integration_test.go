@@ -28,6 +28,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -281,6 +282,65 @@ func TestIntegration_Notify_ADeadRowIsNotClaimedAgain(t *testing.T) {
 	}
 	if len(again) != 1 || again[0].EventID != sentinel {
 		t.Fatalf("the next claim returned %+v, want the newer sentinel, a DEAD row that is claimed again is not terminal, and a broken handler loops forever", again)
+	}
+}
+
+// A secret topic that dead-letters drops its payload (HH-188): the row is kept for audit with its
+// diagnosis, but the one-time token it carried is as spent in a DEAD row as it is in a published
+// one, and it must not sit at rest behind a failure nobody will retry. Driven through the REAL
+// dispatcher so the redact flag is the one fail() computed, not a hand-built Settlement.
+func TestIntegration_Notify_ADeadSecretRowDropsItsPayload(t *testing.T) {
+	pool := intPool(t)
+	store := NewPgOutboxStore(pool)
+	topic := topicFor(t, "dead.secret")
+	id := emit(t, pool, topic, `{"token":"one-time-invite"}`)
+
+	d := NewDispatcher(store, quietLog())
+	d.RegisterSecret(topic, func(context.Context, Event) error { return errors.New("smtp down") })
+	for i := 0; i < defaultMaxAttempts; i++ {
+		drain(t, d, store, 1)
+	}
+
+	st, attempts, lastErr, payload, publishedAt := rowState(t, pool, id)
+	if st != "DEAD" || attempts != defaultMaxAttempts {
+		t.Fatalf("dead secret row: status=%s attempts=%d, want DEAD/%d", st, attempts, defaultMaxAttempts)
+	}
+	if lastErr != "smtp down" {
+		t.Fatalf("last_error=%q, want the handler's diagnosis kept", lastErr)
+	}
+	if publishedAt != nil {
+		t.Fatal("a DEAD row carries a published_at")
+	}
+	if payload != "{}" {
+		t.Fatalf("the DEAD row still carries %s at rest: a one-time token must not outlive its delivery in a dead letter", payload)
+	}
+}
+
+// A NON-secret topic that dead-letters KEEPS its payload (HH-188 round 2): the GL boot replay
+// (requeue.go) and the operator's diagnosis both read it, and redaction is the secret topics'
+// rule, not the table's. This leg pins that boundary from the database side; the round 1 review
+// proved an unconditional-redact mutation of the DEAD update passed the whole suite unnoticed.
+func TestIntegration_Notify_ADeadNonSecretRowKeepsItsPayload(t *testing.T) {
+	pool := intPool(t)
+	store := NewPgOutboxStore(pool)
+	topic := topicFor(t, "dead.plain")
+	id := emit(t, pool, topic, `{"journal_id":"jrn-17","entry_no":42}`)
+
+	d := NewDispatcher(store, quietLog())
+	d.Register(topic, func(context.Context, Event) error { return errors.New("gl down") })
+	for i := 0; i < defaultMaxAttempts; i++ {
+		drain(t, d, store, 1)
+	}
+
+	st, attempts, lastErr, payload, _ := rowState(t, pool, id)
+	if st != "DEAD" || attempts != defaultMaxAttempts {
+		t.Fatalf("dead plain row: status=%s attempts=%d, want DEAD/%d", st, attempts, defaultMaxAttempts)
+	}
+	if lastErr != "gl down" {
+		t.Fatalf("last_error=%q, want the handler's diagnosis kept", lastErr)
+	}
+	if !strings.Contains(payload, "jrn-17") {
+		t.Fatalf("the DEAD non-secret row lost its payload (%s): the boot replay and the operator's diagnosis read it", payload)
 	}
 }
 

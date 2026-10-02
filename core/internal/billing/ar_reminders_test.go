@@ -478,13 +478,14 @@ func TestTrack_RecordsOpenAndClick(t *testing.T) {
 	}
 }
 
-// TestStubSenderNeverFabricatesAnOpen: the default transport reports delivery and nothing else.
+// TestStubSenderNeverFabricatesAnOpen: the delivering TEST SEAM reports delivery and nothing else.
+// The stub reaches a service only by explicit injection, never as a nil default, see HH-185.
 func TestStubSenderNeverFabricatesAnOpen(t *testing.T) {
 	now := arDay(2026, 8, 27)
 	f := newFakeARStore()
 	f.apContact = &APContact{CustomerID: "c1", Email: "ap@rood.example"}
 	f.ctxRow = ReminderContext{CustomerID: "c1", InvoiceNo: "INV-1", DueDate: now.AddDate(0, 0, -10)}
-	svc := sendService(f, nil, now) // nil = the stub, which is what this program ships on
+	svc := sendService(f, StubSender{}, now) // the stub, injected explicitly as the test seam
 	got, err := svc.Send(context.Background(), SendReminderInput{CustomerID: "c1", Channel: ChannelEmail}, "u1")
 	if err != nil {
 		t.Fatalf("stub send: %v", err)
@@ -494,6 +495,38 @@ func TestStubSenderNeverFabricatesAnOpen(t *testing.T) {
 	}
 	if got.FirstOpenAt != nil || got.OpenCount != 0 {
 		t.Fatal("the stub must never fabricate an open, a flag raised on stub data is raised for the true reason")
+	}
+}
+
+// TestSend_NoTransportIsNeverADeliveredSend, HH-185: the production wiring builds this service with
+// NO transport, and a message that never left the server must not be recorded or returned as
+// DELIVERED. On the defect the nil sender resolved to the delivering stub, the row said DELIVERED
+// with a delivered_at, and the paper-path sweep counted the account as a contacted one.
+func TestSend_NoTransportIsNeverADeliveredSend(t *testing.T) {
+	now := arDay(2026, 8, 27)
+	f := newFakeARStore()
+	f.apContact = &APContact{CustomerID: "c1", Email: "ap@rood.example"}
+	f.ctxRow = ReminderContext{CustomerID: "c1", InvoiceNo: "INV-1", DueDate: now.AddDate(0, 0, -10)}
+
+	svc := sendService(f, nil, now) // a nil sender resolves to the unwired default, the same transport the composition root names in words
+	got, err := svc.Send(context.Background(), SendReminderInput{CustomerID: "c1", Channel: ChannelEmail}, "u1")
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if got.Status != SendFailed {
+		t.Fatalf("status = %s, want %s: FAILED is this module's own word for a send that did not go out", got.Status, SendFailed)
+	}
+	if got.DeliveredAt != nil {
+		t.Fatal("delivered_at is stamped on a message that never left the server")
+	}
+	if got.Provider == "stub" {
+		t.Fatalf("provider = %q: the delivering stub must never be what a nil sender resolves to", got.Provider)
+	}
+	if len(f.sends) != 1 {
+		t.Fatalf("%d rows written; the record is the durable part, an unsent message is still a recorded outcome", len(f.sends))
+	}
+	if stored := f.sends[0]; stored.Status != SendFailed || stored.DeliveredAt != nil {
+		t.Fatalf("stored row = %s / delivered_at %v: the row the sweep counts must not say DELIVERED", stored.Status, stored.DeliveredAt)
 	}
 }
 
