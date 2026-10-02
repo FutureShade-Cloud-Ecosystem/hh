@@ -153,6 +153,7 @@ import {
   parkTicket,
   posHotkeys, // the dealer's counter key roster
   counterPrices, // the customer-aware price picture (the pricing engine's answer)
+  searchCustomers, // the account read the card refreshes through after an account sale rings
   accountStanding, // the Customer step's past-due FACT (role-gated at the marshal layer)
   type AccountStanding,
   resolveLine,
@@ -3294,6 +3295,33 @@ export class HosPosTerminal extends LitElement {
     this.standing = out;
   }
 
+  /**
+   * HH: after a sale rings, the picked account's card must show the account's figures as the core
+   * now holds them. An account sale grows the open balance (and shrinks the available credit); the
+   * card carried the figures read when the account was picked, so it stood beside the new
+   * confirmation with the OLD balance. This re-reads the account through the same host seam the
+   * picker uses (customer search, branch walled) and replaces the card's credit figures only.
+   * A failed read leaves the card as it was, and an answer for a customer no longer selected is
+   * dropped, as refreshStanding does.
+   */
+  private async refreshCustomerAfterRing(): Promise<void> {
+    const picked = this.customer;
+    if (!picked || !picked.account_no) return;
+    try {
+      const rows = await searchCustomers(picked.account_no, 20, this.branchId);
+      const fresh = rows.find((row) => row.id === picked.id);
+      if (!fresh || this.customer?.id !== picked.id) return;
+      this.customer = {
+        ...picked,
+        credit_limit_cents: fresh.credit_limit_cents,
+        open_balance_cents: fresh.open_balance_cents,
+      };
+    } catch {
+      // the card keeps the figures it has: no fault banner over a fact nobody asked for
+    }
+    void this.refreshStanding();
+  }
+
  /** DIB-488: the customer card's explicit Walk-in tile: clears any account and confirms walk-in. */
   private async chooseWalkIn(): Promise<void> {
     this.walkInConfirmed = true;
@@ -3370,6 +3398,7 @@ export class HosPosTerminal extends LitElement {
         this.ring = { state: 'done', sale: res.sale };
         this.showSplit = false;
         this.revealSaleOutcome();
+        void this.refreshCustomerAfterRing();
         return;
       }
       if (res.err.status === 409 && res.err.error === 'credit_blocked') {
@@ -3465,6 +3494,7 @@ export class HosPosTerminal extends LitElement {
         this.ringKeyMemo = null; // committed: the next sale mints fresh
         this.ring = { state: 'done', sale: res.sale };
         this.revealSaleOutcome();
+        void this.refreshCustomerAfterRing();
         return;
       }
  // HH note: only the credit gate is worded here, in HH's own reviewed

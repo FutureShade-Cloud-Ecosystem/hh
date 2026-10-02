@@ -351,6 +351,16 @@ test("an account sale for C02 rings on the account, with its facts beside the na
     page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" }).locator(".lprice"),
   ).toHaveText("CA$3.60");
 
+  // The account's open balance as the core holds it before the ring.
+  const bearerBefore = await salesBearer(page);
+  const readBalance = async (): Promise<number> => {
+    const read = await page.request.get("/api/v1/customers/search?q=C02", {
+      headers: { Authorization: `Bearer ${bearerBefore}`, "X-Org": "hh-demo" },
+    });
+    const rows = (await read.json()) as Array<{ account_no: string; open_balance_cents: number }>;
+    return rows.find((row) => row.account_no === "C02")?.open_balance_cents as number;
+  };
+  const balanceBefore = await readBalance();
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Charge Account" }).click();
   const ringPost = page.waitForResponse(
@@ -378,6 +388,14 @@ test("an account sale for C02 rings on the account, with its facts beside the na
     printed.getByText(`Total ${dollars(read.total_cents as number).replace("$", "")} · ACCOUNT`),
   ).toBeVisible();
   await printed.close();
+  // The account card is re-read after the ring: it shows the fresh balance
+  // (the old balance plus this sale), not the figure read when it was picked.
+  const saleTotal = (sale.total_cents as number) ?? 0;
+  expect(saleTotal).toBeGreaterThan(0);
+  expect(await readBalance()).toBe(balanceBefore + saleTotal);
+  await openStep(page, "customer");
+  await expect(page.getByTestId("customer-card")).toContainText(dollars(balanceBefore + saleTotal));
+  await expect(page.getByTestId("customer-card")).not.toContainText(dollars(balanceBefore));
 });
 
 test("an account on hold is refused in the reviewed words, and nothing commits", async ({ page }) => {
