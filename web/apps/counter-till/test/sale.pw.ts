@@ -470,6 +470,9 @@ test("a ticket parks and resumes with its customer, at the account's price", asy
   await expect(parkedDialog.getByText("PARK-9001")).toHaveCount(0);
   const resumeButton = parkedDialog.getByRole("button", { name: "Resume" }).first();
   await resumeButton.click();
+  // The prices answered (every line repriced), so the pickup line says they
+  // were derived (ui3 visual GAP 3: the words are true in both states).
+  await expect(page.locator("#till-message")).toContainText("prices re-derived now");
 
   // The ticket comes back with its customer (this till picked the account, so
   // the display memory knows it) and reprices at the account's rule price.
@@ -1031,7 +1034,7 @@ test("the chrome sits above the surface: the demo banner is in the first viewpor
   await second.close();
 });
 
-test("End Session is closed on the mount: aria-disabled, grey, focusable, its reason on screen, and no complete call is made", async ({
+test("End Session is closed on the mount: aria-disabled, grey, focusable, its reason beside the control, and no complete call is made", async ({
   page,
 }) => {
   await signIn(page, "Sales manager");
@@ -1065,18 +1068,29 @@ test("End Session is closed on the mount: aria-disabled, grey, focusable, its re
   await expect(description).toHaveText(reason);
   await expect(page.locator("#till-message")).toHaveCount(0);
   await expect(button).toHaveAccessibleDescription(reason);
-  // Focus alone puts the reason on screen, in the till's own message line, in a neutral notice style
-  // (not the success green), and the message line does not announce it a second time.
+  // Focus alone puts the reason on screen BESIDE THE CONTROL (ui3 visual GAP 1: the foot message
+  // line answered about 680px away, half under the hotkey bar with the Items step open), in a
+  // neutral notice style (not the success green), and the notice does not announce on focus.
   await button.focus();
   await expect(button).toBeFocused();
-  const message = page.locator("#till-message");
-  await expect(message).toBeVisible();
-  await expect(message).toHaveText(reason);
-  await expect(message).toHaveClass(/\bnote\b/);
-  await expect(message).not.toHaveClass(/\b(ok|bad)\b/);
-  await expect(message).not.toHaveAttribute("role", /.*/);
-  const border = await message.evaluate((el) => getComputedStyle(el).borderTopColor);
-  const success = await message.evaluate((el) => {
+  const notice = page.getByTestId("end-session-notice");
+  await expect(notice).toBeVisible();
+  await expect(notice).toHaveText(reason);
+  await expect(notice).not.toHaveAttribute("role", /.*/);
+  // Beside its control: right-aligned to the button, just under the bar, so the whole notice sits
+  // in the page's first band and no hotkey bar or fold can cover it.
+  const box = await notice.boundingBox();
+  const btnBox = await button.boundingBox();
+  expect(box).not.toBeNull();
+  expect(btnBox).not.toBeNull();
+  const noticeRight = (box?.x ?? 0) + (box?.width ?? 0);
+  const buttonRight = (btnBox?.x ?? 0) + (btnBox?.width ?? 0);
+  expect(Math.abs(noticeRight - buttonRight)).toBeLessThanOrEqual(2);
+  expect((box?.y ?? 0)).toBeGreaterThanOrEqual((btnBox?.y ?? 0) + (btnBox?.height ?? 0));
+  expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThan(300);
+  // Neutral palette: the edge is the control line, never the success green.
+  const border = await notice.evaluate((el) => getComputedStyle(el).borderTopColor);
+  const success = await notice.evaluate((el) => {
     const probe = document.createElement("div");
     probe.style.color = "var(--hos-success)";
     document.body.appendChild(probe);
@@ -1091,9 +1105,11 @@ test("End Session is closed on the mount: aria-disabled, grey, focusable, its re
   await button.click({ force: true });
   await page.waitForLoadState("networkidle");
   await expect(page.getByTestId("session-dot")).toContainText("Open");
-  await expect(message).toHaveText(reason);
-  // A press is the one announcement: the line becomes a status then.
-  await expect(message).toHaveAttribute("role", "status");
+  await expect(notice).toHaveText(reason);
+  // A press is the one announcement: the notice becomes a status then, and the
+  // foot message line carries nothing of it.
+  await expect(notice).toHaveAttribute("role", "status");
+  await expect(page.locator("#till-message")).toHaveCount(0);
   expect(completeCalls).toEqual([]);
 });
 
@@ -1133,26 +1149,33 @@ test("a sale rung at the till is found by the returns desk right after it commit
   await expect(page.getByText("sold 1, returned 0")).toBeVisible();
 });
 
-test("the margin eye keeps one name with aria-pressed, and hover does not look pressed", async ({ page }) => {
+test("the margin eye's accessible name and title say the same thing in both states, and hover does not look pressed", async ({
+  page,
+}) => {
   await signIn(page, "Sales");
   await ensureSession(page);
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
   const eye = page.getByTestId("margin-eye");
   await expect(eye).toBeVisible();
-  await expect(eye).toHaveAttribute("aria-label", "Hide margin and est. profit");
+  await expect(eye).toHaveAttribute("aria-label", "Hide margin and est. profit (counter privacy)");
   await expect(eye).toHaveAttribute("aria-pressed", "false");
-  await expect(eye).toHaveAttribute("title", /^Hide margin/);
+  await expect(eye).toHaveAttribute("title", "Hide margin and est. profit (counter privacy)");
   const bg = () => eye.evaluate((el) => getComputedStyle(el).backgroundColor);
   await eye.hover();
   const hovered = await bg();
   await eye.click();
   await expect(eye).toHaveAttribute("aria-pressed", "true");
-  // The name does not flip against the state (a pressed "Show margin" would read backwards).
-  await expect(eye).toHaveAttribute("aria-label", "Hide margin and est. profit");
-  // The hover title follows the state: pressed means hidden, so it says how to show.
-  await expect(eye).toHaveAttribute("title", /hidden: press to show/);
+  // The name follows the state now (ui3 visual NOTE 1), and it says the same
+  // thing the title says: pressed, both name and title say the margin is
+  // hidden and how to show it again.
+  await expect(eye).toHaveAttribute("aria-label", "Margin and est. profit are hidden: press to show them (counter privacy)");
+  await expect(eye).toHaveAttribute("title", "Margin and est. profit are hidden: press to show them (counter privacy)");
   await page.mouse.move(0, 0);
   expect(await bg()).not.toBe(hovered);
+  // And back: the name returns to the rest words with the rest state.
+  await eye.click();
+  await expect(eye).toHaveAttribute("aria-pressed", "false");
+  await expect(eye).toHaveAttribute("aria-label", "Hide margin and est. profit (counter privacy)");
 });
 
 // The COD tile's gate in the UI. The stub always answers COD allowed, so the off side is held by
@@ -1187,6 +1210,24 @@ test("with COD allowed (the stub's default), the COD tile is selectable", async 
   const tile = page.getByRole("button", { name: /^COD/ });
   await expect(tile).toBeEnabled();
   await expect(tile).not.toContainText("off");
+});
+
+test("a util control that cannot act takes the one disabled rule's cursor", async ({ page }) => {
+  await signIn(page, "Sales");
+  // Park ticket on an empty ticket, then Open order and Print receipt with
+  // nothing typed: each looks grey and closed like the rule's other controls,
+  // so each carries the rule's own not-allowed cursor, not a pointer that
+  // promises an act (ui3 visual NOTE 5).
+  const park = page.getByRole("button", { name: "Park ticket" });
+  await expect(park).toBeDisabled();
+  expect(await park.evaluate((node) => getComputedStyle(node).cursor)).toBe("not-allowed");
+  await page.locator("details.more > summary").filter({ hasText: /^\s*More\s*$/ }).click();
+  const open = page.getByRole("button", { name: "Open order" });
+  await expect(open).toBeDisabled();
+  expect(await open.evaluate((node) => getComputedStyle(node).cursor)).toBe("not-allowed");
+  const print = page.getByRole("button", { name: "Print receipt" });
+  await expect(print).toBeDisabled();
+  expect(await print.evaluate((node) => getComputedStyle(node).cursor)).toBe("not-allowed");
 });
 
 test("a ticket parked with a line price pending lists no total", async ({ page }) => {
@@ -1228,6 +1269,125 @@ test("a parked ticket this window holds no price memory for lists the same marke
     await expect(tickets.nth(i)).toContainText("(not priced)");
     await expect(tickets.nth(i)).not.toContainText("CA$");
   }
+});
+
+test("a pickup whose prices never answer reads the margin marker, never a figure", async ({ page }) => {
+  // Every price the engine would answer is refused for this whole page, so the
+  // pickup's lines stay price pending (a window with no price memory).
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    await route.fulfill({
+      status: 422,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "line could not be priced by the engine" }),
+    });
+  });
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  // A fresh window picks the ticket up. The margin glance still answers (it
+  // derives its figures from the server's own prices), so the margin column IS
+  // on screen, and the building window's rule must hold there too: a line
+  // whose price has not answered reads the marker in its margin cell, never a
+  // percentage beside (not priced).
+  await signIn(page, "Sales");
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  // The rail lists the branch's tickets in insertion order, and the suite's
+  // earlier stories leave theirs parked: the ticket this test just parked is
+  // the rail's last.
+  await parkedDialog.getByRole("button", { name: "Resume" }).last().click();
+  await openStep(page, "items");
+  const rows = page.getByTestId("pos-line-row");
+  await expect(rows).toHaveCount(2);
+  for (let index = 0; index < 2; index += 1) {
+    await expect(rows.nth(index)).toContainText("(not priced)");
+  }
+  const margins = page.getByTestId("pos-line-margin");
+  await expect(margins).toHaveCount(2);
+  for (let index = 0; index < 2; index += 1) {
+    await expect(margins.nth(index)).toHaveText("(none)");
+  }
+});
+
+test("the pickup line says the prices are being re-derived while any line is still pending", async ({
+  page,
+}) => {
+  // Every price the engine would answer is refused for this whole page: the
+  // pickup's lines stay price pending.
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    await route.fulfill({
+      status: 422,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "line could not be priced by the engine" }),
+    });
+  });
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  await signIn(page, "Sales");
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  // The rail lists the branch's tickets in insertion order, and the suite's
+  // earlier stories leave theirs parked: the ticket this test just parked is
+  // the rail's last.
+  await parkedDialog.getByRole("button", { name: "Resume" }).last().click();
+  // The lines above the line still read price pending, so the words say the
+  // derivation is happening, not that it happened (ui3 visual GAP 3).
+  const message = page.locator("#till-message");
+  await expect(message).toContainText(/Resumed PARK-\d+: re-deriving prices\./);
+  await expect(message).not.toContainText("prices re-derived");
+});
+
+test("a price that answers after the pickup line was set flips the line to prices re-derived", async ({
+  page,
+}) => {
+  // The engine refuses every price for now; the refusal lifts mid-story, and an
+  // operator gesture (a quantity edit) reprices the line into an answer. The
+  // pickup line's tail renders from the cart's any-line-pending state, so the
+  // words flip with the answer instead of staying captured from the resume.
+  let refusePrices = true;
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    if (refusePrices) {
+      await route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "line could not be priced by the engine" }),
+      });
+      return;
+    }
+    await route.fallback();
+  });
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  await signIn(page, "Sales");
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  // The rail lists the branch's tickets in insertion order, and the suite's
+  // earlier stories leave theirs parked: the ticket this test just parked is
+  // the rail's last.
+  await parkedDialog.getByRole("button", { name: "Resume" }).last().click();
+  const message = page.locator("#till-message");
+  await expect(message).toContainText(/Resumed PARK-\d+: re-deriving prices\./);
+  await openStep(page, "items");
+  const row = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
+  await expect(row).toHaveCount(1);
+  refusePrices = false;
+  const qty = page.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
+  await qty.fill("2");
+  await qty.blur();
+  await expect(row.locator(".ltot")).toHaveText("CA$8.00");
+  // The line above is priced now, so a tail captured when the message was set
+  // would still say re-deriving: the words say the derivation happened.
+  await expect(message).toContainText(/Resumed PARK-\d+: prices re-derived now\./);
+  await expect(message).not.toContainText("re-deriving prices");
 });
 
 test("the top bar is on the till's compact scale: about 48px, small chrome buttons, the banner on one line", async ({

@@ -558,12 +558,44 @@ export class HosPosTerminal extends LitElement {
   /** A 'note' is announced only when asked for (a press), never on focus, where the closed control's own
    *  description already speaks: one announcement, not two. */
   @state() private utilLive = false;
+  /**
+   * UI-3 (visual GAP 1): where the utility message renders. The End Session reason belongs beside
+   * its control in the top bar (a press answered about 680px away at the foot of the flow, its
+   * lower edge under the hotkey bar with the Items step open); every other message keeps the foot
+   * line. One state machine either way, so the next message still replaces the notice.
+   */
+  @state() private utilWhere: 'foot' | 'session' = 'foot';
+  /**
+   * Round d: the pickup line's captured-once facts, and only those: the ticket, the resume's own
+   * tails (lines the product list dropped, lines the race discarded) and the fault tone. The
+   * line's price tail is NOT captured: its words render from the cart's any-line-pending state
+   * (pickupLineWords), so a price that answers after the line was set flips it, the way every
+   * other marker on the till flips when a price answers. One line at a time: setUtil (any other
+   * message) and every direct clear retire the pickup line with the utility message.
+   */
+  @state() private pickupLine: { ticketNo: string; tails: string; bad: boolean } | null = null;
+
+  /** The pickup line's words: the tail derives from the cart at render time, never from a snapshot. */
+  private pickupLineWords(): string {
+    const line = this.pickupLine;
+    if (line === null) return '';
+    const pending = this.cart.some((l) => l.priceMissing);
+    return `Resumed ${line.ticketNo}: ${pending ? 're-deriving prices' : 'prices re-derived now'}.${line.tails}`;
+  }
 
   /** One door for the utility banner: message + tone together, so a fault can never wear green. */
-  private setUtil(msg: string, tone: 'ok' | 'bad' | 'note' = 'ok', live = true): void {
+  private setUtil(msg: string, tone: 'ok' | 'bad' | 'note' = 'ok', live = true, where: 'foot' | 'session' = 'foot'): void {
     this.utilMsg = msg;
     this.utilTone = tone;
     this.utilLive = live;
+    this.utilWhere = where;
+    this.pickupLine = null; // one message line at a time: a new message retires the pickup line
+  }
+
+  /** One door for the silent clear (a fresh ticket, a park, a pricing doc): the pickup line goes with it. */
+  private clearUtil(): void {
+    this.utilMsg = '';
+    this.pickupLine = null;
   }
   // ── DIB-434 ── the in-progress guard's own state. `quickGuard` is the dialog's open flag; it is
   // set ONLY when quickStartNeedsGuard() says the till holds something to lose, so an empty
@@ -2241,6 +2273,13 @@ export class HosPosTerminal extends LitElement {
       color: var(--hos-safety-red);
       border-color: color-mix(in srgb, var(--hos-safety-red) 40%, var(--hos-line));
     }
+    /* ui3 visual NOTE 5: a util control that cannot act (Park ticket on an empty ticket, Open
+       order and Print receipt with nothing typed) takes the one disabled rule's cursor too:
+       the pointer promised an act the control cannot make, and it was the one cursor outside
+       the rule. */
+    .util button:disabled {
+      cursor: not-allowed;
+    }
     .util button.clear:hover {
       border-color: var(--hos-safety-red);
     }
@@ -2260,6 +2299,24 @@ export class HosPosTerminal extends LitElement {
       background: var(--hos-slate-warm);
       border: 1px solid var(--hos-line);
       color: var(--hos-text);
+    }
+    /* UI-3 (visual GAP 1): the End Session notice rides the same note palette, anchored under its
+       control like the bar's other popovers, at the popover scale, so the bar's height never moves
+       and the words sit in the page's first band in both themes. */
+    .esnotice {
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      z-index: var(--hos-z-modal);
+      width: 320px;
+      background: var(--hos-slate-warm);
+      border: 1px solid var(--hos-line);
+      border-radius: var(--hos-radius-card);
+      box-shadow: var(--hos-elev-1);
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--hos-text);
+      text-align: left;
     }
     /* Visually hidden, still in the accessibility tree: a description a closed control points at. */
     .srdesc {
@@ -3598,7 +3655,7 @@ export class HosPosTerminal extends LitElement {
     this.signatureRef = '';
     this.depositDollars = '';
     this.fulfilment = 'PICKUP';
-    this.utilMsg = '';
+    this.clearUtil();
     this.soldPanelDismissed = false;
     this.ring = { state: 'idle' };
     // DIB-488: the flow facts reset with the sale they describe.
@@ -3760,7 +3817,7 @@ export class HosPosTerminal extends LitElement {
 
  /** Start a fresh ticket: or stop and ask, if the till is holding one. */
   private quickStartSale(): void {
-    this.utilMsg = '';
+    this.clearUtil();
     if (quickStartNeedsGuard(this.liveTicket())) {
       this.quickGuard = true;
       return;
@@ -3810,7 +3867,7 @@ export class HosPosTerminal extends LitElement {
   // ── W7: park / resume / pricing doc ────────────────────────────────────
   private async parkCurrent(): Promise<void> {
     if (this.cart.length === 0) return;
-    this.utilMsg = '';
+    this.clearUtil();
     try {
       const t = await parkTicket({
         branch_id: this.branchId,
@@ -3880,14 +3937,19 @@ export class HosPosTerminal extends LitElement {
       this.cartReplaced(); // D17: the resumed lines are a different ticket's
       for (const l of this.cart) void this.hydrateLineStock(l.product.id); // DIB-488 stock lines
       for (let i = 0; i < this.cart.length; i++) await this.reprice(i);
-      this.setUtil(
-        `Resumed ${t.ticket_no}: prices re-derived now.` +
+      // ui3 visual GAP 3, and round d: the words must be true in both states AND STAY true. The
+      // line's price tail renders from the cart's any-line-pending state (pickupLineWords), so a
+      // price that answers after this line was set flips it; only the resume's own facts are
+      // captured here: the ticket, the dropped lines, the discarded race, the fault tone.
+      this.pickupLine = {
+        ticketNo: t.ticket_no,
+        tails:
           (missing.length ? ` ${missing.length} line(s) dropped (product inactive).` : '') +
           (lostToTheRace > 0
             ? ` ${lostToTheRace} line(s) added while this loaded were discarded with the old ticket: re-scan them.`
             : ''),
-        lostToTheRace > 0 ? 'bad' : 'ok',
-      );
+        bad: lostToTheRace > 0,
+      };
       void this.refreshParkedCount();
     } catch {
       this.setUtil(`Resumed ${t.ticket_no}, but the lines could not be reloaded: re-add manually.`, 'bad');
@@ -3896,7 +3958,7 @@ export class HosPosTerminal extends LitElement {
 
   private async savePricingDoc(): Promise<void> {
     if (this.cart.length === 0) return;
-    this.utilMsg = '';
+    this.clearUtil();
     try {
       this.pricingDoc = await createPricingOrder({
         branch_id: this.branchId,
@@ -4553,13 +4615,24 @@ export class HosPosTerminal extends LitElement {
   }
 
   /**
- * rev 8 (item 10): the one-click quick-hide (eye): counter privacy while a customer watches
+   * rev 8 (item 10): the one-click quick-hide (eye): counter privacy while a customer watches
    * the screen. An ergonomic exactly like the divider position: per-user, debounced merge-save.
    */
   private wsToggleMarginHidden(): void {
     this.wsMarginHidden = !this.wsMarginHidden;
     this.wsDirty.add('marginHidden');
     this.schedulePersist();
+  }
+
+  /**
+   * The eye's words in each state, one source for the hover title AND the accessible name
+   * (ui3 visual NOTE 1: the name stayed "Hide margin and est. profit" while pressed, so the
+   * name asked for an act the state had already performed, and name and title disagreed).
+   */
+  private marginEyeWords(): string {
+    return this.wsMarginHidden
+      ? 'Margin and est. profit are hidden: press to show them (counter privacy)'
+      : 'Hide margin and est. profit (counter privacy)';
   }
 
   /**
@@ -4632,15 +4705,30 @@ export class HosPosTerminal extends LitElement {
             ? html`<span class="sessiondot" data-testid="session-dot" title="Till session open: elapsed ${this.elapsed}">
                   <span class="dot" aria-hidden="true"></span> Open
                 </span>
-                <button
-                  class="topbtn"
-                  data-testid="end-session"
-                  aria-disabled="true"
-                  aria-describedby="end-session-reason"
-                  title=${this.endSessionClosedReason}
-                  @click=${() => this.setUtil(this.endSessionClosedReason, 'note', true)}
-                  @focus=${() => this.setUtil(this.endSessionClosedReason, 'note', false)}
-                >End Session</button>
+                <span class="helpwrap">
+                  <button
+                    class="topbtn"
+                    data-testid="end-session"
+                    aria-disabled="true"
+                    aria-describedby="end-session-reason"
+                    title=${this.endSessionClosedReason}
+                    @click=${() => this.setUtil(this.endSessionClosedReason, 'note', true, 'session')}
+                    @focus=${() => this.setUtil(this.endSessionClosedReason, 'note', false, 'session')}
+                  >End Session</button>
+                  ${/* UI-3 (visual GAP 1): the reason renders beside its control, anchored under the
+                       button like the bar's other popovers, in the note palette (never the success
+                       green), so a press answers where the hand is: the foot line sat at the flow's
+                       end, half under the hotkey bar. The status region arrives only on a press
+                       (announced once, polite); focus shows it silently, per the recorded ruling. */ ''}
+                  ${this.utilMsg !== '' && this.utilWhere === 'session'
+                    ? html`<span
+                        data-testid="end-session-notice"
+                        class="esnotice"
+                        role="${ifDefined(this.utilLive ? 'status' : undefined)}"
+                        >${this.utilMsg}</span
+                      >`
+                    : nothing}
+                </span>
                 <span id="end-session-reason" class="srdesc" data-testid="end-session-reason">${this.endSessionClosedReason}</span>`
             : html`<button class="topbtn" @click=${this.openSession}>Open Session</button>`}
           ${/* COUNTER VIEW (R1/R2, the user half). The way back from a dismissed legend
@@ -5892,8 +5980,8 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
                 class="eye"
                 data-testid="margin-eye"
                 aria-pressed=${this.wsMarginHidden ? 'true' : 'false'}
-                title=${this.wsMarginHidden ? 'Margin and est. profit are hidden: press to show them (counter privacy)' : 'Hide margin and est. profit (counter privacy)'}
-                aria-label="Hide margin and est. profit"
+                title=${this.marginEyeWords()}
+                aria-label=${this.marginEyeWords()}
                 @click=${() => this.wsToggleMarginHidden()}
               >
                 ${this.wsMarginHidden
@@ -5901,9 +5989,11 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
                   : html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M2 12c1.8-5.7 5.5-8 10-8s8.2 2.3 10 8c-1.8 3.7-5.5 6-10 6S3.8 15.7 2 12z"></path><circle cx="12" cy="12" r="2.6"></circle></svg>`}
               </button>`
             : nothing}
-          ${this.utilMsg
-            ? html`<div id="till-message" class="banner ${this.utilTone}" role="${ifDefined(this.utilTone === 'bad' ? 'alert' : this.utilTone === 'note' && !this.utilLive ? undefined : 'status')}">${this.utilMsg}</div>`
-            : nothing}
+          ${this.pickupLine !== null
+            ? html`<div id="till-message" class="banner ${this.pickupLine.bad ? 'bad' : 'ok'}" role="${ifDefined(this.pickupLine.bad ? 'alert' : 'status')}">${this.pickupLineWords()}</div>`
+            : this.utilMsg && this.utilWhere === 'foot'
+              ? html`<div id="till-message" class="banner ${this.utilTone}" role="${ifDefined(this.utilTone === 'bad' ? 'alert' : this.utilTone === 'note' && !this.utilLive ? undefined : 'status')}">${this.utilMsg}</div>`
+              : nothing}
 
           
     </div>`;
@@ -6417,9 +6507,13 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           <div class="lweight" data-testid="pos-line-weight" title=${w === null ? 'No weight on file for this item' : 'Line weight: quantity × unit weight'}>
             ${w === null ? '(none)' : formatLbs(w)}
           </div>
+          ${/* ui3 visual GAP 2: one rule, both windows agree. The margin glance derives its figures
+               from the server's own prices, so on a pickup whose prices never answer it still
+               returns a percentage for the line: while the line's price has not answered, the cell
+               reads the marker, never a stale or derived figure (the building window's rule). */ ''}
           ${m
             ? html`<div class="lmargin" data-testid="pos-line-margin" title="Gross margin: computed server-side">
-                ${mb === undefined ? '(none)' : formatMargin(mb)}
+                ${mb === undefined || l.priceMissing ? '(none)' : formatMargin(mb)}
               </div>`
             : nothing}
           <button class="rm" @click=${() => this.removeLine(i)} title="Remove line" aria-label="Remove ${l.product.name}">
