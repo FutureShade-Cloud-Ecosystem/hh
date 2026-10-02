@@ -322,6 +322,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithAudit(auditSvc)
 	tax.NewHandler(taxSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 	posSvc.WithTaxAssessor(posTaxAdapter{svc: taxSvc}).
+		WithTaxRuleSource(posTaxRuleAdapter{svc: taxSvc}).
 		WithStock(posStockAdapter{svc: inventorySvc}).
 		WithRestocker(posRestockAdapter{svc: inventorySvc}).
 		WithCardRefunder(cardRefunder)

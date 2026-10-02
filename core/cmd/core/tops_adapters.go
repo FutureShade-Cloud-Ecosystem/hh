@@ -106,6 +106,23 @@ func (a posTaxAdapter) AssessSale(ctx context.Context, in pos.TaxQuoteInput) (po
 	return pos.QuoteResult{TaxCents: q.TaxCents, RateBps: q.RateBps}, nil
 }
 
+// posTaxRuleAdapter satisfies pos.TaxRuleSource over *tax.Service: the round rule word the counter's
+// tax-rate read answers, the org default config row's round_mode (empty branch). The read's rate side
+// needs no adapter: the wired posTaxAdapter above IS the rate source, the same assessor the ring binds
+// with, so at the moment of the read the counter's word and the ring's math agree for every ticket the
+// counter can ring today: this adapter pins EvidenceAttached false, so an evidence-gated relief reason
+// falls back to the standard rate at the ring exactly as this read answers (the fragment's description
+// carries the full claim, MANUAL_TAX_REVIEW's ungated row included).
+type posTaxRuleAdapter struct{ svc *tax.Service }
+
+func (a posTaxRuleAdapter) RoundMode(ctx context.Context) (string, error) {
+	c, err := a.svc.GetConfig(ctx, "")
+	if err != nil {
+		return "", err
+	}
+	return c.RoundMode, nil
+}
+
 // posStockAdapter satisfies pos.StockDecrementer over *inventory.Service. It maps the pos-declared
 // StockDecrementInput → inventory.DecrementInput (distinct named types, same shape) so a COLLECT_NOW sale
 // decrements real weighted-avg stock + posts COGS; DELIVERED/COLLECT_LATER records zero moves in-module.
@@ -142,13 +159,16 @@ func (a posRestockAdapter) RestockForReturnTx(ctx context.Context, tx pgx.Tx, in
 	})
 }
 
-// posCardRefunderAdapter satisfies pos.CardRefunder over payment.Service.Refund, the creds-free
+// posCardRefunderAdapter satisfies pos.CardRefunder over payment.Service.RefundTx, the creds-free
 // reversal rail (the cardChargerAdapter mirror): pos passes the ORIGINAL capture's gateway_ref and gets
-// the reversal's own processor ref back; creds stay inside RUN-PAY.
+// the reversal's own processor ref back; creds stay inside RUN-PAY. The pos Return transaction passes
+// STRAIGHT THROUGH: the config read and the rotation write-back ride the caller's transaction, the only
+// shape inside a transaction that holds a connection and the per-sale lock, where a pool read would
+// deadlock a full pool of Return waiters needing the holder's lock.
 type posCardRefunderAdapter struct{ svc *payment.Service }
 
-func (a posCardRefunderAdapter) RefundCard(ctx context.Context, gatewayRef string, amountCents int64, reference, idempotencyKey string) (string, error) {
-	rcpt, err := a.svc.Refund(ctx, payment.RefundInput{
+func (a posCardRefunderAdapter) RefundCard(ctx context.Context, tx pgx.Tx, gatewayRef string, amountCents int64, reference, idempotencyKey string) (string, error) {
+	rcpt, err := a.svc.RefundTx(ctx, tx, payment.RefundInput{
 		AmountCents:    amountCents,
 		ProcessorRef:   gatewayRef,
 		Reference:      reference,

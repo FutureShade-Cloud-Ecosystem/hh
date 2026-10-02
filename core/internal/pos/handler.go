@@ -63,6 +63,10 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/pos/addon-suggestions", g.RequireStaff(h.staff(h.addonSuggestions)))
 
 	// -- W7 counter-v2 --
+	// The counter-readable tax rate (row 661): the rate the ring binds, read
+	// through the ring's own assessor, and the configured round rule beside
+	// it. Staff, not admin: every receipt shows the rate, it is not a secret.
+	r.Handle("GET /api/v1/pos/tax-rate", g.RequireStaff(h.staff(h.getTaxRate)))
 	r.Handle("GET /api/v1/pos/policy", g.RequireStaff(h.staff(h.getPolicy)))
 	r.Handle("PUT /api/v1/pos/policy", g.RequireAdmin(h.staff(h.putPolicy)))
 	// The counter settings change history. ADMIN, matching the write directly above rather than the
@@ -90,6 +94,17 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 }
 
 // -- W7 handlers -------------------------------------------------------------
+
+// getTaxRate serves the counter's tax-rate read: the rate the ring binds and
+// the configured round rule (taxrate.go holds the by-construction story).
+func (h *Handler) getTaxRate(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	out, err := h.svc.TaxRate(r.Context())
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
 
 func (h *Handler) getPolicy(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	p, err := h.svc.Policy(r.Context(), r.URL.Query().Get("branch_id"))

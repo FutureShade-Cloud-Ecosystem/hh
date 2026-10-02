@@ -47,11 +47,22 @@ type TenderTaker interface {
 	GetSession(ctx context.Context, id string) (till.SessionDetail, error)
 }
 
-// CardRefunder is RUN-PAY's card reversal rail (payment.Service.Refund behind a creds-free adapter in
+// CardRefunder is RUN-PAY's card reversal rail (payment.Service.RefundTx behind a creds-free adapter in
 // cmd/server/main.go, mirroring cardChargerAdapter). pos passes the ORIGINAL capture's gateway_ref and
 // receives the reversal's own processor ref, creds never cross into pos, and pos never writes payments.
+//
+// The transaction discipline is part of the seam: the Return transaction is
+// passed and every database touch the refunder makes rides IT (the
+// FindReturnByKeyTx discipline), because the Return transaction holds a
+// connection and the per-sale advisory lock; a refunder reading through the
+// pool there would have the lock holder wait for a second connection every
+// other connection is a Return waiter that needs the holder's lock,
+// deadlocking a full pool until the caller's context ends. Every
+// implementer states its discipline where it is written; a refunder that
+// cannot ride the caller's transaction cannot silently reintroduce the
+// stall.
 type CardRefunder interface {
-	RefundCard(ctx context.Context, gatewayRef string, amountCents int64, reference, idempotencyKey string) (refundRef string, err error)
+	RefundCard(ctx context.Context, tx pgx.Tx, gatewayRef string, amountCents int64, reference, idempotencyKey string) (refundRef string, err error)
 }
 
 // CreditGate is satisfied by an identity-backed adapter (reuses identity.CheckCredit) for ACCOUNT sales.
@@ -215,11 +226,15 @@ type Service struct {
 	curation SurfaceCuration
 	// aging is the AR read behind the Customer step's past-due fact (standing.go). Nil until wired,
 	// and nil says nothing, never an error, and never "this account is current".
-	aging      AgingReader
-	tender     TenderTaker
-	credit     CreditGate
-	sig        SignatureProvider
-	tax        TaxAssessor
+	aging  AgingReader
+	tender TenderTaker
+	credit CreditGate
+	sig    SignatureProvider
+	tax    TaxAssessor
+	// taxRules is the optional round-rule read behind the counter tax-rate
+	// read's round_mode word (taxrate.go). Nil answers INVOICE_TOTAL, the
+	// flat engine's actual behavior.
+	taxRules   TaxRuleSource
 	stock      StockDecrementer
 	restock    StockRestocker
 	cardRefund CardRefunder

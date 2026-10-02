@@ -737,7 +737,9 @@ func (r *fakeRestock) RestockForReturnTx(_ context.Context, _ pgx.Tx, in Restock
 	return r.err
 }
 
-// fakeCardRefunder is RUN-PAY's reversal rail seam.
+// fakeCardRefunder is RUN-PAY's reversal rail seam. The tx parameter is the
+// CardRefunder seam's discipline: the rail rides the caller's Return
+// transaction, this fake records the call and moves on.
 type fakeCardRefunder struct {
 	refundRef string
 	err       error
@@ -746,7 +748,7 @@ type fakeCardRefunder struct {
 	lastCents int64
 }
 
-func (c *fakeCardRefunder) RefundCard(_ context.Context, gatewayRef string, amountCents int64, _, _ string) (string, error) {
+func (c *fakeCardRefunder) RefundCard(_ context.Context, _ pgx.Tx, gatewayRef string, amountCents int64, _, _ string) (string, error) {
 	c.called = true
 	c.lastRef = gatewayRef
 	c.lastCents = amountCents

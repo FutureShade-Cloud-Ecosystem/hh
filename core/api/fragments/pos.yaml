@@ -420,6 +420,41 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
 
   # ── POS: policy, workspace ─────────────────────────────────────────────────
+  /api/v1/pos/tax-rate:
+    get:
+      operationId: posGetTaxRate
+      tags: [staff-pos]
+      summary: Read the tax rate the ring binds and its rounding rule
+      description: >-
+        The rate the ring binds, read through the same assessor the ring
+        assesses with, so at the moment of the read the counter's display and
+        the ring's math agree. Through the wired seam this holds for every
+        ticket the counter can ring today, a relief ticket too: the relief
+        reasons are evidence-gated and the seam carries no evidence, so the
+        relief reason rides the ticket while this rate binds.
+        MANUAL_TAX_REVIEW resolves its own ungated row, equal to the standard
+        today and separately editable, and an effective-dated rate row change
+        between the read and the ring moves the ring's rate. jurisdiction and
+        reason_code are the standard-rated Ontario facts the read answers.
+        The header tax today rounds half-up once at the invoice total;
+        round_mode PER_LINE is stored but not yet applied at ring, so the
+        word says what is configured, not what the ring does yet.
+      x-addition: "the counter-readable tax rate (row 661); no ERP source route"
+      x-role: requireStaff
+      x-access:
+        surfaces: [counter-till]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The rate and the rounding rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosTaxRate"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /api/v1/pos/policy:
     get:
       operationId: posGetPolicy
@@ -1945,6 +1980,20 @@ components:
           items: { $ref: "#/components/schemas/PosAddonSuggestion" }
 
     # ── POS: policy and workspace ────────────────────────────────────────────
+    PosTaxRate:
+      type: object
+      description: >-
+        The counter-readable tax facts: the rate the ring binds (read through
+        the ring's own assessor) and the configured rounding rule.
+      required: [jurisdiction, reason_code, rate_bps, round_mode]
+      properties:
+        jurisdiction: { type: string, enum: [ON] }
+        reason_code: { type: string, enum: [STD_ON_HST_13] }
+        rate_bps: { type: integer, format: int32, description: Basis points, 1300 is 13 percent }
+        round_mode:
+          type: string
+          enum: [INVOICE_TOTAL, PER_LINE]
+          description: The org default row's stored rounding rule; the header tax today rounds half-up once at the invoice total either way
     PosPolicy:
       type: object
       description: >-

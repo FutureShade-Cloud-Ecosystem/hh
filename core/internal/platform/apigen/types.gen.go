@@ -4778,6 +4778,13 @@ type PosAddonSuggestions struct {
 	Suggestions []PosAddonSuggestion `json:"suggestions"`
 }
 
+type PosTaxRate struct {
+	Jurisdiction string `json:"jurisdiction"`
+	ReasonCode   string `json:"reason_code"`
+	RateBps      int32  `json:"rate_bps"`
+	RoundMode    string `json:"round_mode"`
+}
+
 type PosPolicy struct {
 	BranchId             string    `json:"branch_id"`
 	CodEnabled           bool      `json:"cod_enabled"`
