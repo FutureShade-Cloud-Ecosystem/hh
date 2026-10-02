@@ -246,3 +246,277 @@ func TestRenderReceiptHTML_CarriesTheProductMarkWithoutDisplacingTheDealer(t *te
 		t.Error("the product mark is printing ABOVE the dealer's name, the header belongs to the dealer")
 	}
 }
+
+// THE FULFILMENT IN WORDS (row 666 item 1): the paper speaks to the customer, so the sale type
+// renders as the plain words a counter person says, never as the raw constant the wire carries.
+// The map is keyed on pos's own constants, so a constant rename cannot leave a stale word behind:
+// the four known values map, an unknown value passes through verbatim (a future sale type must not
+// print as an empty line), and an empty value renders no line at all.
+func TestRenderReceiptHTML_FulfilmentInWords(t *testing.T) {
+	for _, tc := range []struct {
+		saleType string
+		want     string
+		notWant  string
+	}{
+		{"COLLECT_NOW", "Collected at the counter", "COLLECT_NOW"},
+		{"COLLECT_LATER", "For later collection", "COLLECT_LATER"},
+		{"DELIVERED", "Delivery", "DELIVERED"},
+		{"COD", "Invoice issued, payment before fulfilment", "COD"},
+	} {
+		html, err := RenderReceiptHTML(Receipt{
+			OrderNo: "#SO-1", SaleType: tc.saleType, TaxLabel: "HST (13%)",
+			SoldAt: time.Now(), PrintedAt: time.Now(),
+		})
+		if err != nil {
+			t.Fatalf("render %s: %v", tc.saleType, err)
+		}
+		if !strings.Contains(html, tc.want) {
+			t.Errorf("sale type %s must print as %q, the words are not on the page", tc.saleType, tc.want)
+		}
+		if strings.Contains(html, tc.notWant) {
+			t.Errorf("the raw constant %q must never reach the paper", tc.notWant)
+		}
+	}
+
+	// An unknown value passes through verbatim: a sale type this build does not know must still
+	// print as itself rather than silently vanish.
+	unknown := "WILL_CALL_GATE_2"
+	html, err := RenderReceiptHTML(Receipt{
+		OrderNo: "#SO-2", SaleType: unknown, SoldAt: time.Now(), PrintedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("render unknown: %v", err)
+	}
+	if !strings.Contains(html, unknown) {
+		t.Errorf("an unknown sale type must pass through verbatim, %q is not on the page", unknown)
+	}
+
+	// An empty sale type renders no fulfilment line: the absence is quiet, never a placeholder.
+	empty, err := RenderReceiptHTML(Receipt{
+		OrderNo: "#SO-3", SaleType: "", SoldAt: time.Now(), PrintedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("render empty: %v", err)
+	}
+	if strings.Contains(empty, "Collected at the counter") || strings.Contains(empty, "fulfilment") {
+		t.Error("an empty sale type must render no fulfilment line at all")
+	}
+}
+
+// THE CHANGE DUE ROW (row 666 item 1): a cash over-tender's change is on the paper, carried by the
+// committed sale (the order's own cash-tendered fact), and the row is absent when no change is due:
+// a zero or a negative must not print a row that tells the cashier to hand money back.
+func TestRenderReceiptHTML_ChangeDueRow(t *testing.T) {
+	over := Receipt{
+		OrderNo: "#SO-10", TaxLabel: "HST (13%)", SoldAt: time.Now(), PrintedAt: time.Now(),
+		ChangeDueCents: 1056,
+		Tenders:        []ReceiptTender{{Method: "CASH", Label: "CASH", AmountCents: 15000, Ref: "PMT-1"}},
+	}
+	html, err := RenderReceiptHTML(over)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(html, "Change due") {
+		t.Fatal("an over-tendered cash sale must carry the Change due row")
+	}
+	if !strings.Contains(html, Money(1056)) {
+		t.Fatalf("the change due figure %s must be on the page", Money(1056))
+	}
+	// The row lives in the tenders table, the cash conversation's last word, not as a stray figure.
+	table := strings.Index(html, `<table class="tenders">`)
+	end := strings.Index(html[table:], "</table>") + table
+	at := strings.Index(html, "Change due")
+	if at < table || at > end {
+		t.Fatalf("the Change due row must sit in the tenders table (spans %d..%d), found at %d", table, end, at)
+	}
+
+	exact := over
+	exact.ChangeDueCents = 0
+	exactHTML, err := RenderReceiptHTML(exact)
+	if err != nil {
+		t.Fatalf("render exact: %v", err)
+	}
+	if strings.Contains(exactHTML, "Change due") {
+		t.Fatal("a tendered-exact sale must print no Change due row")
+	}
+}
+
+// THE DEPOSIT AND BALANCE DUE ROWS (row 666 item 1): an unpaid-at-ring sale taken with a deposit
+// states the deposit taken at the counter and the balance that remains, both absent when they do
+// not apply: a fully paid sale prints neither, and an unsettled account sale prints the balance
+// alone (no deposit was taken, and a invented one would be a lie on paper).
+func TestRenderReceiptHTML_DepositAndBalanceRows(t *testing.T) {
+	deposit := Receipt{
+		OrderNo: "#SO-11", TaxLabel: "HST (13%)", SoldAt: time.Now(), PrintedAt: time.Now(),
+		TotalCents:   10000,
+		DepositCents: 4000,
+		BalanceCents: 6000,
+		Tenders:      []ReceiptTender{{Method: "CASH", Label: "CASH", AmountCents: 4000, Ref: "PMT-2"}},
+	}
+	html, err := RenderReceiptHTML(deposit)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(html, "Deposit") {
+		t.Fatal("a sale taken with a deposit must carry the Deposit row")
+	}
+	if !strings.Contains(html, Money(4000)) {
+		t.Fatalf("the deposit figure %s must be on the page", Money(4000))
+	}
+	if !strings.Contains(html, "Balance due") || !strings.Contains(html, Money(6000)) {
+		t.Fatal("the balance due row must carry the invoice's own balance")
+	}
+	// The paper reads in one line: of the total, the deposit came off it, the balance remains.
+	if strings.Index(html, "Deposit") > strings.Index(html, "Balance due") {
+		t.Error("the Deposit row must sit above the Balance due row: total, deposit, balance is the readable order")
+	}
+
+	paid := deposit
+	paid.DepositCents = 0
+	paid.BalanceCents = 0
+	paidHTML, err := RenderReceiptHTML(paid)
+	if err != nil {
+		t.Fatalf("render paid: %v", err)
+	}
+	if strings.Contains(paidHTML, "Deposit") || strings.Contains(paidHTML, "Balance due") {
+		t.Fatal("a fully paid sale must print neither a Deposit nor a Balance due row")
+	}
+
+	unsettled := deposit
+	unsettled.DepositCents = 0
+	unsettledHTML, err := RenderReceiptHTML(unsettled)
+	if err != nil {
+		t.Fatalf("render unsettled: %v", err)
+	}
+	if strings.Contains(unsettledHTML, "Deposit") {
+		t.Fatal("an account sale with no deposit taken must print no Deposit row")
+	}
+	if !strings.Contains(unsettledHTML, "Balance due") {
+		t.Fatal("an unsettled account sale still carries its Balance due row")
+	}
+}
+
+// THE FULL-PAGE RECEIPT (row 666 item 2): format=page is HH's own second format, a document for a
+// customer who wants one, built FROM THE SAME DATA: the same Receipt struct renders both documents,
+// so the page can never disagree with the roll about what the sale was. The page carries its own
+// print CSS (letter and A4 margins, never the roll's 80 mm column) and the same honesty: the
+// reprint marker, the plain fulfilment words, the change due, deposit and balance rows, the Print
+// button that is not printed.
+func TestRenderReceiptPageHTML_SameDataOwnLayout(t *testing.T) {
+	rec := Receipt{
+		OrgName: "Hardscape House (demo)", BranchName: "Hardscape House (demo), Trenton",
+		BranchCode: "TRT", BranchAddress: "12 Yard Gate Road, Trenton, ON",
+		OrderNo: "#SO-21", InvoiceNo: "#INV-21", SaleType: "COLLECT_NOW",
+		CustomerName: "Quinte Paving & Design", CustomerAccountNo: "C03",
+		Lines: []ReceiptLine{{
+			LineNo: 1, SKU: "DBS-UL-BRUSSELS", Description: "Brussels Block",
+			Qty: 10, UOM: "SF", UnitPriceCents: 1234, PriceUOM: "SF", LineTotalCents: 12340,
+		}},
+		Tenders:        []ReceiptTender{{Method: "CASH", Label: "CASH", AmountCents: 15000, Ref: "PMT-9"}},
+		SubtotalCents:  12340,
+		TaxCents:       1604,
+		TotalCents:     13944,
+		ChangeDueCents: 1056,
+		TaxLabel:       "HST (13%)",
+		ReprintCount:   2,
+		SoldAt:         time.Now(),
+		PrintedAt:      time.Now(),
+	}
+	page, err := RenderReceiptPageHTML(rec)
+	if err != nil {
+		t.Fatalf("render page: %v", err)
+	}
+
+	// The same data the roll carries, word for word where the words are shared.
+	for _, want := range []string{
+		rec.OrderNo, rec.InvoiceNo, rec.OrgName, rec.BranchName, rec.BranchAddress,
+		"Quinte Paving &amp; Design", "(C03)", // html escaped: the template is the boundary
+		"Collected at the counter",
+		rec.Lines[0].SKU, rec.Lines[0].Description,
+		Money(rec.SubtotalCents), rec.TaxLabel, Money(rec.TaxCents), Money(rec.TotalCents),
+		"Change due", Money(rec.ChangeDueCents),
+		"CASH", "PMT-9",
+		"REPRINT #2",
+		"Keep this receipt, returns require it.",
+		"HH Yard · a Hardscape House product",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the full-page receipt must carry %q", want)
+		}
+	}
+
+	// Its own print CSS: letter and A4 margins, never the roll's 80 mm column.
+	if !strings.Contains(page, "@page") || !strings.Contains(page, "@media print") {
+		t.Fatal("the full-page receipt must ship its own print CSS, it is printed, not browsed")
+	}
+	if strings.Contains(page, "max-width: 80mm") {
+		t.Fatal("the full-page receipt must not carry the roll's 80 mm column")
+	}
+	if !strings.Contains(page, "max-width: 180mm") {
+		t.Fatal("the full-page receipt must lay out on a full sheet's measure")
+	}
+	// The Print button is a screen affordance and never printed, on both formats.
+	if !strings.Contains(page, "noprint") {
+		t.Fatal("the full-page receipt's Print button must carry the noprint discipline")
+	}
+
+	// The roll stays the roll: the same receipt renders the 80 mm document, and the two formats are
+	// different bytes (a second format that renders the first's bytes is not a format).
+	roll, err := RenderReceiptHTML(rec)
+	if err != nil {
+		t.Fatalf("render roll: %v", err)
+	}
+	if roll == page {
+		t.Fatal("the page format must be its own document, not the roll's bytes")
+	}
+	if !strings.Contains(roll, "80mm") {
+		t.Fatal("the roll document must keep its 80 mm print CSS")
+	}
+
+	// The page template is html/template too: customer-supplied text lands escaped.
+	evil := rec
+	evil.CustomerName = `<script>alert(1)</script>`
+	evilPage, err := RenderReceiptPageHTML(evil)
+	if err != nil {
+		t.Fatalf("render evil: %v", err)
+	}
+	if strings.Contains(evilPage, "<script>alert(1)</script>") {
+		t.Fatal("the full-page receipt must escape supplied text, it is markup-boundary rendered")
+	}
+}
+
+// THE WALK-IN IS THE COUNTER'S OWN WORD (the visual read's G3): row 666 lists the customer as a
+// required row, so the customer line renders on every sale, and a sale with no customer on it
+// prints the counter's word for that, never an empty slot and never a plausible other name. A
+// named account still prints its name.
+func TestRenderReceiptHTML_TheCustomerRowAlwaysSpeaks(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		account string
+		want    string
+	}{
+		// html escaped, the template is the boundary
+		{"Quinte Paving & Design", "C03", "Customer: Quinte Paving &amp; Design (C03)"},
+		{"", "WALK-IN", "Customer: Walk-in (WALK-IN)"},
+		{"", "", "Customer: Walk-in"},
+	} {
+		for _, render := range []struct {
+			name string
+			fn   func(Receipt) (string, error)
+		}{
+			{"roll", RenderReceiptHTML},
+			{"page", RenderReceiptPageHTML},
+		} {
+			html, err := render.fn(Receipt{
+				OrderNo: "#SO-30", CustomerName: tc.name, CustomerAccountNo: tc.account,
+				SoldAt: time.Now(), PrintedAt: time.Now(),
+			})
+			if err != nil {
+				t.Fatalf("render %s: %v", render.name, err)
+			}
+			if !strings.Contains(html, tc.want) {
+				t.Errorf("%s: customer name %q account %q must print %q", render.name, tc.name, tc.account, tc.want)
+			}
+		}
+	}
+}

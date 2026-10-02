@@ -13,25 +13,38 @@ import (
 )
 
 // receiptSale is the committed sale's header as the receipt needs it. It is read from pos_sale +
-// orders (the sale is the counter fact; the order carries the money and the #SO number).
+// orders (the sale is the counter fact; the order carries the money and the #SO number). The two
+// cash facts ride beside the money:
+//
+//   - CashTenderedCents is the order's own cash-tendered fact (orders.metadata), the same column
+//     pos's replay read serves, so the receipt's change due is the ring's own figure and never a
+//     recomputation from the tender rows.
+//   - DepositCents is the money the ring itself captured on an unpaid-at-ring sale: the payments
+//     allocated to this invoice whose received_at equals the invoice's created_at. Both stamps are
+//     now() of the ring's ONE transaction (a deposit sale writes invoice + payment + allocation in
+//     a single tx), so the equality names exactly the ring's own money; a later AR settlement is a
+//     different, later transaction and never rides this figure.
 type receiptSale struct {
-	OrderID       string
-	OrderNo       string
-	BranchID      string
-	InvoiceID     string
-	InvoiceNo     string
-	PaymentID     string
-	Tender        string
-	SaleType      string
-	Status        string
-	SubtotalCents int64
-	TaxCents      int64
-	TotalCents    int64
-	BalanceCents  int64
-	SoldAt        time.Time
-	CustomerName  string
-	CustomerAcct  string
-	CashierName   string
+	OrderID           string
+	OrderNo           string
+	BranchID          string
+	InvoiceID         string
+	InvoiceNo         string
+	PaymentID         string
+	Tender            string
+	SaleType          string
+	Status            string
+	SplitTender       bool
+	SubtotalCents     int64
+	TaxCents          int64
+	TotalCents        int64
+	BalanceCents      int64
+	CashTenderedCents int64
+	DepositCents      int64
+	SoldAt            time.Time
+	CustomerName      string
+	CustomerAcct      string
+	CashierName       string
 }
 
 // branchHeader is the letterhead: the branch row from locations plus the org fields from
@@ -74,7 +87,13 @@ func (r *Repository) ReadReceiptSale(ctx context.Context, id string, global bool
 SELECT o.id::text, o.order_no, o.branch_id::text,
        COALESCE(ps.invoice_id::text,''), COALESCE(i.invoice_no,''), COALESCE(ps.payment_id::text,''),
        ps.tender, ps.sale_type, ps.status,
+       EXISTS(SELECT 1 FROM pos_sale_tenders st WHERE st.pos_sale_id = ps.id),
        o.subtotal_cents, o.tax_cents, o.total_cents, COALESCE(i.balance_cents, 0),
+       COALESCE((o.metadata->>'cash_tendered_cents')::bigint, 0),
+       COALESCE((SELECT SUM(p.amount_cents) FROM payments p
+                  JOIN payment_allocations pa ON pa.payment_id = p.id
+                 WHERE pa.invoice_id = i.id AND p.status <> 'VOID'
+                   AND p.received_at = i.created_at), 0),
        ps.created_at, COALESCE(c.name,''), COALESCE(c.account_no,''), COALESCE(u.display_name,'')
   FROM pos_sale ps
   JOIN orders o ON o.id = ps.order_id
@@ -86,8 +105,9 @@ SELECT o.id::text, o.order_no, o.branch_id::text,
  LIMIT 1`
 	var s receiptSale
 	err := r.pool.QueryRow(ctx, q, args...).Scan(&s.OrderID, &s.OrderNo, &s.BranchID,
-		&s.InvoiceID, &s.InvoiceNo, &s.PaymentID, &s.Tender, &s.SaleType, &s.Status,
+		&s.InvoiceID, &s.InvoiceNo, &s.PaymentID, &s.Tender, &s.SaleType, &s.Status, &s.SplitTender,
 		&s.SubtotalCents, &s.TaxCents, &s.TotalCents, &s.BalanceCents,
+		&s.CashTenderedCents, &s.DepositCents,
 		&s.SoldAt, &s.CustomerName, &s.CustomerAcct, &s.CashierName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return receiptSale{}, false, nil

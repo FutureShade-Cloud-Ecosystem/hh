@@ -484,3 +484,230 @@ func TestIntegration_Receipt_SimulatedFlagFollowsAStubMintedRef(t *testing.T) {
 		t.Fatalf("a CARD capture minted by the real stub (ref %q) must stamp Simulated, the mint and the receipt's check have drifted", res.ProcessorRef)
 	}
 }
+
+// The past-sale reprint path (row 666 item 3): the receipt is fetched from the ORDER (the route
+// resolves the order id or the visible "#SO-" number), and the marker follows the order's own print
+// count: the original is unmarked, and the fetch by the visible number is REPRINT #1 on the paper.
+func TestIntegration_Receipt_ReprintByTheOrderNumber(t *testing.T) {
+	pool := intPool(t)
+	sale, _ := ringCashSale(t, pool)
+	ctx := globalCtx(t, pool)
+	receipts, _ := printingSvcs(pool)
+
+	t.Run("the original, fetched by the order id", func(t *testing.T) {
+		rec, err := receipts.Receipt(ctx, sale.OrderID)
+		if err != nil {
+			t.Fatalf("first fetch: %v", err)
+		}
+		if rec.IsReprint() {
+			t.Fatal("the first fetch is the original")
+		}
+	})
+
+	t.Run("the reprint, fetched by the visible number, is marked with its ordinal", func(t *testing.T) {
+		rec, err := receipts.Receipt(ctx, sale.OrderNo)
+		if err != nil {
+			t.Fatalf("reprint by order_no: %v", err)
+		}
+		if !rec.IsReprint() || rec.ReprintCount != 1 {
+			t.Fatalf("the reprint must be #1, got %d", rec.ReprintCount)
+		}
+		html, err := RenderReceiptHTML(rec)
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		if !strings.Contains(html, "REPRINT #1") {
+			t.Fatal("the marker must be on the paper")
+		}
+	})
+}
+
+// The deposit and the change due, read from the committed rows (row 666 item 1). The deposit is the
+// ring's own capture: the payments allocated to the sale's invoice whose received_at equals the
+// invoice's created_at, both now() of the ring's ONE transaction, so a later settlement (a
+// different, later transaction) joins the tender rows and moves the balance, and never rides the
+// deposit figure. The change due is the order's own cash-tendered fact, the ring's derivation.
+func TestIntegration_Receipt_DepositAndChangeDueFromTheCommittedRows(t *testing.T) {
+	pool := intPool(t)
+	ctx := globalCtx(t, pool)
+	productID, branchID := aPaver(t, pool)
+	var custID string
+	if err := pool.QueryRow(ctx,
+		`SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND credit_limit_cents > 1000000 LIMIT 1`).Scan(&custID); err != nil {
+		t.Skipf("no CONTRACTOR with credit seeded: %v", err)
+	}
+	svc := realPosSvc(t, pool)
+
+	t.Run("a deposit sale states the deposit and the balance that remains", func(t *testing.T) {
+		sale, err := svc.Sale(ctx, pos.SaleInput{
+			IdempotencyKey: key(), BranchID: branchID, CustomerID: custID,
+			TillSessionID: openTill(t, pool, branchID),
+			Tender:        pos.TenderAccount, SaleType: pos.SaleCollectNow,
+			DepositCents: 4000, DepositMethod: pos.TenderCash,
+			Lines: []pos.LineInput{{ProductID: productID, QtyEntered: 10, UOMEntered: "SF"}},
+		})
+		if err != nil {
+			t.Fatalf("deposit ring: %v", err)
+		}
+		receipts, _ := printingSvcs(pool)
+		rec, err := receipts.Receipt(ctx, sale.OrderID)
+		if err != nil {
+			t.Fatalf("receipt: %v", err)
+		}
+		if rec.DepositCents != 4000 {
+			t.Fatalf("the deposit must read 4000 from the ring's own capture, got %d", rec.DepositCents)
+		}
+		if rec.BalanceCents != sale.TotalCents-4000 {
+			t.Fatalf("the balance must be the invoice's total less the deposit, got %d want %d", rec.BalanceCents, sale.TotalCents-4000)
+		}
+		html, err := RenderReceiptHTML(rec)
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		if !strings.Contains(html, "Deposit") || !strings.Contains(html, Money(4000)) {
+			t.Fatal("the Deposit row must be on the paper")
+		}
+		if !strings.Contains(html, "Balance due") || !strings.Contains(html, Money(sale.TotalCents-4000)) {
+			t.Fatal("the Balance due row must be on the paper")
+		}
+
+		// A LATER settlement against the same invoice: a second payment, a
+		// different transaction, allocated by the AR side. The tender rows grow
+		// and the balance moves; the deposit figure does not.
+		settlement := newUUID()
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO payments (id, payment_no, method, amount_cents, status, branch_id, customer_id, received_at)
+			 VALUES ($1::uuid, $2, 'CASH', 2000, 'RECEIVED', $3::uuid, $4::uuid, now() + interval '1 hour')`,
+			settlement, "PMT-ITEST-"+settlement[:8], branchID, custID); err != nil {
+			t.Fatalf("insert settlement: %v", err)
+		}
+		t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM payments WHERE id = $1::uuid`, settlement) })
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO payment_allocations (payment_id, invoice_id, amount_cents) VALUES ($1::uuid, $2::uuid, 2000)`,
+			settlement, sale.InvoiceID); err != nil {
+			t.Fatalf("allocate settlement: %v", err)
+		}
+		// The settlement's third write, the one the AR side's own code performs:
+		// the invoice's balance moves down by the settled amount.
+		if _, err := pool.Exec(ctx,
+			`UPDATE invoices SET balance_cents = balance_cents - 2000 WHERE id = $1::uuid`,
+			sale.InvoiceID); err != nil {
+			t.Fatalf("settle invoice balance: %v", err)
+		}
+		after, err := receipts.Receipt(ctx, sale.OrderID)
+		if err != nil {
+			t.Fatalf("receipt after settlement: %v", err)
+		}
+		if after.DepositCents != 4000 {
+			t.Fatalf("a later settlement must never ride the deposit figure, got %d", after.DepositCents)
+		}
+		if after.BalanceCents != sale.TotalCents-6000 {
+			t.Fatalf("the balance must move with the settlement, got %d want %d", after.BalanceCents, sale.TotalCents-6000)
+		}
+		if len(after.Tenders) != 2 {
+			t.Fatalf("the tender rows must carry the deposit and the settlement, got %d", len(after.Tenders))
+		}
+	})
+
+	t.Run("an over-tendered cash sale states the change due", func(t *testing.T) {
+		sale, err := svc.Sale(ctx, pos.SaleInput{
+			IdempotencyKey: key(), BranchID: branchID,
+			TillSessionID: openTill(t, pool, branchID),
+			Tender:        pos.TenderCash, SaleType: pos.SaleCollectNow,
+			CashTenderedCents: 15000,
+			Lines:             []pos.LineInput{{ProductID: productID, QtyEntered: 1, UOMEntered: "SF"}},
+		})
+		if err != nil {
+			t.Fatalf("cash ring: %v", err)
+		}
+		if sale.ChangeDueCents != 15000-sale.TotalCents {
+			t.Fatalf("fixture assumption: the ring's own change due %d, want %d", sale.ChangeDueCents, 15000-sale.TotalCents)
+		}
+		receipts, _ := printingSvcs(pool)
+		rec, err := receipts.Receipt(ctx, sale.OrderID)
+		if err != nil {
+			t.Fatalf("receipt: %v", err)
+		}
+		if rec.ChangeDueCents != 15000-rec.TotalCents {
+			t.Fatalf("the change due must read %d from the committed sale, got %d", 15000-rec.TotalCents, rec.ChangeDueCents)
+		}
+		html, err := RenderReceiptHTML(rec)
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		if !strings.Contains(html, "Change due") || !strings.Contains(html, Money(rec.ChangeDueCents)) {
+			t.Fatal("the Change due row must be on the paper")
+		}
+	})
+}
+
+// The review's P2-1 shape, pinned: a split of cash and account settles the sale itself, pos
+// refuses a deposit on it, so the cash leg captured in the ring's transaction is a TENDER and the
+// account remainder is the BALANCE, and the paper names no deposit. Run first against the
+// ungated read it failed with the reviewer's own figures (the cash leg reading as a deposit).
+func TestIntegration_Receipt_NoDepositOnASplitWithAnAccountLeg(t *testing.T) {
+	pool := intPool(t)
+	ctx := globalCtx(t, pool)
+	productID, branchID := aPaver(t, pool)
+	var custID string
+	if err := pool.QueryRow(ctx,
+		`SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND credit_limit_cents > 1000000 LIMIT 1`).Scan(&custID); err != nil {
+		t.Skipf("no CONTRACTOR with credit seeded: %v", err)
+	}
+	svc := realPosSvc(t, pool)
+	// The split's legs must sum exactly to the total, and the total is the engine's answer, so a
+	// plain account probe rings the same line first to learn the figure the legs split.
+	probe, err := svc.Sale(ctx, pos.SaleInput{
+		IdempotencyKey: key(), BranchID: branchID, CustomerID: custID,
+		Tender: pos.TenderAccount, SaleType: pos.SaleCollectNow,
+		Lines: []pos.LineInput{{ProductID: productID, QtyEntered: 1, UOMEntered: "SF"}},
+	})
+	if err != nil {
+		t.Fatalf("probe ring: %v", err)
+	}
+	cashLeg := int64(3000)
+	if cashLeg >= probe.TotalCents {
+		cashLeg = probe.TotalCents / 2
+	}
+	sale, err := svc.Sale(ctx, pos.SaleInput{
+		IdempotencyKey: key(), BranchID: branchID, CustomerID: custID,
+		TillSessionID: openTill(t, pool, branchID),
+		SaleType:      pos.SaleCollectNow,
+		Tenders: []pos.TenderLegInput{
+			{Method: pos.TenderCash, AmountCents: cashLeg},
+			{Method: pos.TenderAccount, AmountCents: probe.TotalCents - cashLeg},
+		},
+		Lines: []pos.LineInput{{ProductID: productID, QtyEntered: 1, UOMEntered: "SF"}},
+	})
+	if err != nil {
+		t.Fatalf("split ring: %v", err)
+	}
+	if sale.SplitTender != true {
+		t.Fatal("fixture assumption broken: the ring is not a split")
+	}
+
+	receipts, _ := printingSvcs(pool)
+	rec, err := receipts.Receipt(ctx, sale.OrderID)
+	if err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	if rec.DepositCents != 0 {
+		t.Fatalf("a split's captured leg must never read as a deposit, got %d (the ring answered deposit_cents %d)", rec.DepositCents, sale.DepositCents)
+	}
+	if rec.BalanceCents != probe.TotalCents-cashLeg {
+		t.Fatalf("the account remainder is the balance, got %d want %d", rec.BalanceCents, probe.TotalCents-cashLeg)
+	}
+	if len(rec.Tenders) != 1 || rec.Tenders[0].Method != "CASH" || rec.Tenders[0].AmountCents != cashLeg {
+		t.Fatalf("the tender rows carry the captured leg alone, got %+v", rec.Tenders)
+	}
+	html, err := RenderReceiptHTML(rec)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(html, "Deposit") {
+		t.Fatal("the paper must carry no Deposit row for a split with an account leg")
+	}
+	if !strings.Contains(html, "Balance due") || !strings.Contains(html, Money(probe.TotalCents-cashLeg)) {
+		t.Fatal("the balance due row must carry the account remainder")
+	}
+}

@@ -255,6 +255,55 @@ test("a walk-in cash sale of three lines rings, and the sale read equals every f
   const itemsSummary = page.getByTestId("step-summary-items");
   await expect(itemsSummary).toHaveText(`3 items · CA${dollars(read.total_cents as number)}`);
   await expect(itemsSummary).not.toContainText("(est.)");
+
+  // The printed receipt is the stub's demo mirror of the core's own 80 mm
+  // document, same words, same layout. An over-tendered cash sale carries the
+  // change due row with the ring's own figure, the fulfilment reads as the
+  // counter's plain words and never as the wire's constant, and the totals
+  // and the tender are the sale read's own figures.
+  const receiptPage = page.context().waitForEvent("page");
+  await sold.getByTestId("sold-print").click();
+  const printed = await receiptPage;
+  const printedText = await printed.locator("body").innerText();
+  expect(printedText).toContain(`Change due\t${dollars(sale.change_due_cents as number)}`);
+  expect(printedText).toContain("Collected at the counter");
+  expect(printedText).not.toContain("COLLECT_NOW");
+  // The customer row is required on every sale: a walk-in prints the counter's own word.
+  expect(printedText).toContain("Customer: Walk-in");
+  expect(printedText).toContain(`Subtotal\t${dollars(read.subtotal_cents as number)}`);
+  expect(printedText).toContain(`\t${dollars(read.tax_cents as number)}`);
+  expect(printedText).toContain(`Total\t${dollars(read.total_cents as number)}`);
+  // The tender row names the method and its payment reference on one line.
+  const cashWords = dollars(read.total_cents as number).replace("$", "\\$");
+  expect(printedText).toMatch(new RegExp(`CASH PMT-\\d+\\t${cashWords}`));
+  await printed.close();
+
+  // The full-page document (format=page) is the same receipt laid out as a
+  // sheet: the same figures on its own print CSS, and the stub's print count
+  // marks it REPRINT #1, the second time this sale's paper was asked for.
+  const pagePrinting = page.context().waitForEvent("page");
+  await sold.getByTestId("sold-print-page").click();
+  const printedPage = await pagePrinting;
+  const pageText = await printedPage.locator("body").innerText();
+  expect(pageText).toContain("Collected at the counter");
+  expect(pageText).toContain(`Total\t${dollars(read.total_cents as number)}`);
+  expect(pageText).toContain(`Change due\t${dollars(sale.change_due_cents as number)}`);
+  expect(pageText).toContain("REPRINT #1");
+  await printedPage.close();
+
+  // The reprint path: the More menu's any-past-sale receipt, fetched by the
+  // order id, comes back MARKED with its ordinal, the stub's count mirroring
+  // the core's own (two prints of this sale came before it).
+  await page.locator("details.more > summary").filter({ hasText: /^\s*More\s*$/ }).click();
+  await page.getByLabel("Open order by id or #SO number").fill(String(sale.order_id));
+  const reprintPrinting = page.context().waitForEvent("page");
+  await page.locator("details.more").getByRole("button", { name: "Print receipt" }).click();
+  const reprinted = await reprintPrinting;
+  const reprintedText = await reprinted.locator("body").innerText();
+  expect(reprintedText).toContain("REPRINT #2");
+  expect(reprintedText).toContain(`Total\t${dollars(read.total_cents as number)}`);
+  expect(reprintedText).toContain(`Change due\t${dollars(sale.change_due_cents as number)}`);
+  await reprinted.close();
 });
 
 test("the quantity rung is the quantity on the screen, and the requested date is the house zone's day", async ({
@@ -413,16 +462,22 @@ test("an account sale for C02 rings on the account, with its facts beside the na
   expect(read.tender).toBe("ACCOUNT");
   expect(read.invoice_no).toBe(sale.invoice_no);
 
-  // The receipt document, printed from the confirmation: the account it was
-  // sold to, the invoice, the figures.
+  // The receipt document, printed from the confirmation: the demo mirror of
+  // the core's own document, the account it was sold to, the invoice, the
+  // figures, the ON ACCOUNT row where a payments row does not exist.
   const receiptPage = page.context().waitForEvent("page");
   await sold.getByTestId("sold-print").click();
   const printed = await receiptPage;
-  await expect(printed.getByText(`Counter sale ${sale.order_no} · invoice ${sale.invoice_no}`)).toBeVisible();
-  await expect(printed.getByText("Sold to Fenwick Builders Ltd (C02)")).toBeVisible();
-  await expect(
-    printed.getByText(`Total ${dollars(read.total_cents as number).replace("$", "")} · ACCOUNT`),
-  ).toBeVisible();
+  const printedText = await printed.locator("body").innerText();
+  expect(printedText).toContain(`Customer: Fenwick Builders Ltd (C02)`);
+  expect(printedText).toContain(`Invoice ${String(sale.invoice_no)}`);
+  expect(printedText).toContain(`Subtotal\t${dollars(read.subtotal_cents as number)}`);
+  expect(printedText).toContain(`\t${dollars(read.tax_cents as number)}`);
+  expect(printedText).toContain(`Total\t${dollars(read.total_cents as number)}`);
+  // The ON ACCOUNT row is the core's synthetic tender: the account it bills,
+  // the invoice as its reference, the total as its amount.
+  const accountWords = dollars(read.total_cents as number).replace("$", "\\$");
+  expect(printedText).toMatch(new RegExp(`ON ACCOUNT ${String(sale.invoice_no)}\\t${accountWords}`));
   await printed.close();
   // The account card is re-read after the ring: it shows the fresh balance
   // (the old balance plus this sale), not the figure read when it was picked.
@@ -861,10 +916,13 @@ test("a line the account's price cannot answer reads price pending through ordin
   const cta = page.getByTestId("pos-complete-sale");
   await expect(cta).toContainText("subtotal CA$");
   await expect(cta).toContainText("+ tax at the ring");
-  // The exact shape, both session states: nothing can follow the words, so a
-  // total appended to the button's wording fails here (review round 2, R2-P3-1).
+  // The exact shape, both session states: nothing can follow the words but
+  // the pay key's own keycap chip (the roster's word, aria-hidden, never sale
+  // wording), so a total appended to the button's wording still fails here
+  // (review round 2, R2-P3-1). The chip joined the button after the pin was
+  // written; the pattern admits it by shape, not by the roster's choice of key.
   await expect(cta).toHaveText(
-    /^(Open session · then complete|Complete sale) · subtotal (CA\$[\d,]+\.\d{2}|\(not priced\)) \+ tax at the ring$/,
+    /^\s*(Open session · then complete|Complete sale) · subtotal (CA\$[\d,]+\.\d{2}|\(not priced\)) \+ tax at the ring(\s+[A-Za-z0-9+]+)?\s*$/,
   );
   await expect(cta).not.toContainText("(est.");
 });
@@ -1102,10 +1160,12 @@ test("a split with a card leg carries the simulated word on the confirmation and
   const sale = (await (await ringPost).json()) as Record<string, unknown>;
 
   // The confirmation: the split touched the simulated rail, so it says so,
-  // exactly as a CARD tender does.
+  // exactly as a CARD tender does, and the tender row names the split and
+  // both its legs, never one leg's word for two legs' money.
   const sold = page.getByTestId("sold-panel");
   await expect(sold).toBeVisible();
   await expect(sold.getByTestId("sold-simulated-notice")).toContainText("Simulated card: no card was charged");
+  await expect(sold).toContainText("Split: Cash and Card");
 
   // The read: the legs are the wire's own, one cash and one card.
   const bearer = await salesBearer(page);
@@ -1835,4 +1895,44 @@ test("the entry page's header is on the same compact scale as the till's top bar
   expect(measured.themeFont).toBe("11px");
   expect(measured.banner).toBeLessThan(32);
   await expect(page.getByRole("note")).toBeVisible();
+});
+
+test("the sold-actions buttons drop their fill while a receipt loads, in the colour-is-the-state rule", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await page.getByTestId("pos-complete-sale").click();
+  await (await ringPost).json();
+  const sold = page.getByTestId("sold-panel");
+  await expect(sold).toBeVisible();
+  // Hold the receipt read in flight so the loading state is a state, not a blink: while the
+  // document fetch runs, both controls are disabled, and a disabled control drops its fill and
+  // goes grey (colour is the state; fade is not a state, and a word change is not a state).
+  await page.route("**/receipt*", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  });
+  await sold.getByTestId("sold-print").click();
+  const sibling = sold.getByTestId("sold-print-page");
+  await expect(sibling).toBeDisabled();
+  const sib = (await sibling.evaluate((el) => ({
+    cursor: getComputedStyle(el).cursor,
+    background: getComputedStyle(el).backgroundColor,
+    opacity: getComputedStyle(el).opacity,
+  }))) as { cursor: string; background: string; opacity: string };
+  expect(sib.cursor).toBe("not-allowed");
+  expect(sib.background).toBe("rgba(0, 0, 0, 0)");
+  expect(Number(sib.opacity)).toBe(1);
+  const primary = (await sold.getByTestId("sold-print").evaluate((el) => ({
+    cursor: getComputedStyle(el).cursor,
+    background: getComputedStyle(el).backgroundColor,
+  }))) as { cursor: string; background: string };
+  expect(primary.cursor).toBe("not-allowed");
+  expect(primary.background).toBe("rgba(0, 0, 0, 0)");
+  await page.unroute("**/receipt*");
 });

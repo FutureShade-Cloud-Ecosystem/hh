@@ -3606,6 +3606,16 @@ paths:
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
+        - name: format
+          in: query
+          required: false
+          description: The paper the document is laid out for, the 80 mm counter roll (the default) or the full-page letter and A4 document. An unknown value is a 400 naming the value.
+          schema:
+            type: string
+            enum:
+              - roll
+              - page
+            default: roll
       responses:
         "200":
           description: The receipt as an HTML document
@@ -3613,6 +3623,8 @@ paths:
             text/html:
               schema:
                 type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":

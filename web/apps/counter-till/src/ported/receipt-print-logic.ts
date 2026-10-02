@@ -6,9 +6,16 @@
 // reads the session store at module load, so anything importing it cannot be imported by a DOM-free
 // test. Same reason _pos.ts exists.
 
-/** The receipt route for one sale (accepts the pos_sale id OR the order id: the server resolves both). */
-export function receiptPath(saleId: string): string {
-  return `/api/v1/pos/sales/${encodeURIComponent(saleId)}/receipt`;
+/** The receipt's two papers (the route's one optional format value): the 80 mm counter roll, the
+ * default, and the full-page letter and A4 document. */
+export type ReceiptFormat = 'roll' | 'page';
+
+/** The receipt route for one sale (accepts the pos_sale id OR the order id: the server resolves both).
+ * The format rides the query; the roll is the default and builds the same URL the buttons have
+ * always built, so a caller that never names a format prints the same paper as before. */
+export function receiptPath(saleId: string, format: ReceiptFormat = 'roll'): string {
+  const query = format === 'page' ? '?format=page' : '';
+  return `/api/v1/pos/sales/${encodeURIComponent(saleId)}/receipt${query}`;
 }
 
 /**

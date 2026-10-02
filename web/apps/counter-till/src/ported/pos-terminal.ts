@@ -138,7 +138,7 @@ import {
 // P3-10 (the comprehensive train review): the margin surface follows the policy
 // word /pos/policy answers, not the glance's own serving rule.
 import { marginVisibleToCaller } from './_pos-margin-visibility.js';
-import { printReceipt, openBlankWindow } from './receipt-print.js'; // DIB-410 counter receipt
+import { printReceipt, openBlankWindow, type ReceiptFormat } from './receipt-print.js'; // DIB-410 counter receipt
 import {
   createSale,
   createPricingOrder,
@@ -636,12 +636,12 @@ export class HosPosTerminal extends LitElement {
  * render a 401 at the customer). `saleRef` is the order id or its visible "#SO-" number: the
    * server resolves both.
    */
-  private async printSaleReceipt(saleRef: string): Promise<void> {
+  private async printSaleReceipt(saleRef: string, format: ReceiptFormat = 'roll'): Promise<void> {
     if (!saleRef || this.receiptBusy) return;
     this.receiptBusy = true;
     this.receiptMsg = '';
     try {
-      const out = await printReceipt(saleRef, openBlankWindow);
+      const out = await printReceipt(saleRef, openBlankWindow, format);
       if (!out.ok) this.receiptMsg = out.message;
     } catch (e) {
       this.receiptMsg = e instanceof Error ? e.message : 'Could not load the receipt.';
@@ -2531,6 +2531,18 @@ export class HosPosTerminal extends LitElement {
       background: var(--hos-stone-amber);
       color: #0b1725;
       border-color: var(--hos-stone-amber);
+    }
+    /* The review's G1: a disabled control drops its fill and goes grey (colour is the state,
+       everywhere). Both print controls gate on the one busy flag; while it holds, neither may
+       keep the gold or the navy fill under a loading word, or the pointer promise an act the
+       control cannot make. The rule sits after the primary's so the fill rule never wins. */
+    .sold-actions button:disabled,
+    .sold-actions button.primary:disabled {
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
+      cursor: not-allowed;
     }
     .reliefchip {
       margin-top: 8px;
@@ -6791,6 +6803,17 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           @click=${() => this.printSaleReceipt(sale.order_id)}
         >
           ${this.receiptBusy ? 'Loading receipt…' : 'Print receipt'}
+        </button>
+        ${/* row 666 item 2: the same receipt as a full-page document, for a customer who wants
+           one. The roll stays the primary action (the counter's paper); this is its sibling, the
+           same data on a letter and A4 sheet, and it is disabled whenever the roll print is. */ ''}
+        <button
+          data-testid="sold-print-page"
+          ?disabled=${this.receiptBusy}
+          title="Prints the same receipt as a full-page document (letter or A4), for a customer who wants a document."
+          @click=${() => this.printSaleReceipt(sale.order_id, 'page')}
+        >
+          ${this.receiptBusy ? 'Loading receipt…' : 'Print full page'}
         </button>
         <button @click=${this.newSaleClicked}>Next sale</button>
       </div>

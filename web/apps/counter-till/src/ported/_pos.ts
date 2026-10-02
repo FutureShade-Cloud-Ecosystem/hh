@@ -153,10 +153,23 @@ export function saleConfirmation(sale: {
   payment_id?: string;
   deposit_cents?: number;
   replayed?: boolean;
+  split_tender?: boolean;
+  tenders?: Array<{ method: string }>;
 }): SaleConfirmation {
   const deposit = sale.deposit_cents ?? 0;
   const paidInFull = !!sale.payment_id && deposit === 0;
   const isCOD = sale.sale_type === 'COD';
+  // The visual read's G4: a split settled across two rails confirmed under ONE leg's word, the
+  // screen understating the other leg's money. A split names itself and names its legs, in the
+  // tiles' own words, in the order the legs were submitted, each rail said once. An answer that
+  // names the split but lists no legs falls back to the sale's own tender word.
+  const legs = sale.split_tender === true ? sale.tenders ?? [] : [];
+  const legWords: string[] = [];
+  for (const leg of legs) {
+    const word = tenderLabel(leg.method);
+    if (!legWords.includes(word)) legWords.push(word);
+  }
+  const tenderWords = legWords.length >= 1 ? `Split: ${legWords.join(' and ')}` : tenderLabel(sale.tender);
   // A ring retried over a flaky counter connection returns the ORIGINAL sale rather than making a
   // second one. Saying so is the whole point of the ticket: the clerk who pressed Cash twice needs
   // to know the second press did not take a second payment.
@@ -179,7 +192,7 @@ export function saleConfirmation(sale: {
       amountLabel: '',
       amountCents: sale.total_cents,
       balanceCents: 0,
-      tenderLabel: tenderLabel(sale.tender),
+      tenderLabel: tenderWords,
       note,
     };
   }
@@ -196,7 +209,7 @@ export function saleConfirmation(sale: {
       amountLabel: 'Balance due (derived)',
       amountCents: balance,
       balanceCents: balance,
-      tenderLabel: tenderLabel(sale.tender),
+      tenderLabel: tenderWords,
       note,
     };
   }
@@ -206,7 +219,7 @@ export function saleConfirmation(sale: {
     amountLabel: 'Balance due',
     amountCents: sale.total_cents,
     balanceCents: sale.total_cents,
-    tenderLabel: tenderLabel(sale.tender),
+    tenderLabel: tenderWords,
     note,
   };
 }

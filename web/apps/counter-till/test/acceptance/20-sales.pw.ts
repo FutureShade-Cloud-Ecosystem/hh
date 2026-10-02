@@ -202,6 +202,11 @@ test("tender and receipt: cash with change due, held against the core's own read
   await expect(sold.getByTestId("sold-change-due")).toContainText(dollars(6000 - total));
   // The confirmation shows the total; the subtotal and the tax are the
   // printed receipt's own lines, the core's document, read against the sale.
+  // The document is the quality receipt the pass asks for: the change due row
+  // carries the ring's own figure, the fulfilment reads as the counter's
+  // plain words and never as the wire's constant, and the letterhead is the
+  // demo dealer's invented words end to end, never the first dealer's real
+  // trading name.
   const printing = page.context().waitForEvent("page");
   await sold.getByTestId("sold-print").click();
   const printed = await printing;
@@ -209,7 +214,51 @@ test("tender and receipt: cash with change due, held against the core's own read
   expect(printedText).toContain(`Subtotal\t${dollars(sale.subtotal_cents as number)}`);
   expect(printedText).toContain(`\t${dollars(sale.tax_cents as number)}`);
   expect(printedText).toContain(`Total\t${dollars(total)}`);
+  expect(typeof rung.change_due_cents).toBe("number");
+  expect(rung.change_due_cents as number).toBe(6000 - total);
+  expect(printedText).toContain(`Change due\t${dollars(rung.change_due_cents as number)}`);
+  expect(printedText).toContain("Collected at the counter");
+  expect(printedText).not.toContain("COLLECT_NOW");
+  // The customer row is required on every sale: the walk-in sale prints the
+  // counter's own word beside the walk-in account.
+  expect(printedText).toContain("Customer: Walk-in");
+  expect(printedText).toContain("Hardscape House (demo)");
+  expect(printedText).toContain("12 Yard Gate Road");
+  // The letterhead's honesty pin: the first dealer's real trading name never
+  // prints. The name rides encoded (the name sweep's own discipline), so the
+  // assertion ships without the name anywhere in the tree.
+  const realDealerName = Buffer.from("RGliYml0cw==", "base64").toString("utf8");
+  expect(printedText.toLowerCase()).not.toContain(realDealerName.toLowerCase());
   await printed.close();
+
+  // The full-page document: the same receipt as a sheet (the route's
+  // format=page), served from the same committed sale, so every figure above
+  // is on it too, on its own print CSS, and this second fetch is marked the
+  // reprint it factually is.
+  const pagePrinting = page.context().waitForEvent("page");
+  await sold.getByTestId("sold-print-page").click();
+  const printedPage = await pagePrinting;
+  const pageText = await printedPage.locator("body").innerText();
+  expect(pageText).toContain(`Subtotal\t${dollars(sale.subtotal_cents as number)}`);
+  expect(pageText).toContain(`Total\t${dollars(total)}`);
+  expect(pageText).toContain(`Change due\t${dollars(rung.change_due_cents as number)}`);
+  expect(pageText).toContain("Collected at the counter");
+  expect(pageText).toContain("REPRINT #1");
+  await printedPage.close();
+
+  // The reprint path: the More menu's any-past-sale receipt, fetched by the
+  // order id the past sale carries, arrives MARKED with its ordinal (two
+  // prints of this sale came before it) and carries the sale's figures again.
+  await page.locator("details.more > summary").filter({ hasText: /^\s*More\s*$/ }).click();
+  await page.getByLabel("Open order by id or #SO number").fill(rung.order_id);
+  const reprintPrinting = page.context().waitForEvent("page");
+  await page.locator("details.more").getByRole("button", { name: "Print receipt" }).click();
+  const reprinted = await reprintPrinting;
+  const reprintedText = await reprinted.locator("body").innerText();
+  expect(reprintedText).toContain("REPRINT #2");
+  expect(reprintedText).toContain(`Total\t${dollars(total)}`);
+  expect(reprintedText).toContain(`Change due\t${dollars(rung.change_due_cents as number)}`);
+  await reprinted.close();
   // A cash confirmation carries no card notice.
   await expect(sold.getByTestId("sold-simulated-notice")).toHaveCount(0);
   // The ring's advance closed the payment step; reopened, the pre-ring card
