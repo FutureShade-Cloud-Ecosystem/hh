@@ -123,8 +123,8 @@ export function ticketWeightTotalLbs(lineLbs: ReadonlyArray<number | null>): { t
 
 /** marginPctLabel: 3230 bps → "32.3%" (one decimal, trailing zero kept: a stable column).
  * HH note: kept for its own unit tests and the reference's shape; the mounted
- * surface's margin words route through the app's reviewed formatMargin
- * (money.ts, half away from zero), so the same core figure reads the same
+ * surface's margin words route through the app's reviewed margin helper
+ * (in the money module, half away from zero), so the same core figure reads the same
  * word everywhere in HH. */
 export function marginPctLabel(bps: number): string {
   return `${(bps / 100).toFixed(1)}%`;
