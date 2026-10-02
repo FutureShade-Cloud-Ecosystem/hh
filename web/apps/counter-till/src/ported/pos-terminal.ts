@@ -4234,7 +4234,7 @@ export class HosPosTerminal extends LitElement {
   }
 
   /**
-   * The one CTA. Split rings from its own panel (legs must add up first), so the CTA defers to it.
+   * The one CTA. Split rings from its own panel (the ring judges the legs' sum), so the CTA defers to it.
    *
  * WAVE 2 · finding 11: THE SHUT DRAWER IS HANDLED BEFORE THE PRESS, NOT AFTER IT. The button's
    * disabled predicate carried no till term, so a clerk on a register with no session pressed a
@@ -5615,7 +5615,9 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
               : nothing}
             <div class="totals">
               <div class="trow"><span>Subtotal</span><span class="num">${this.moneyOrMarker(this.subtotal())}</span></div>
-              <div class="trow ringwords" data-testid="pos-ring-words"><span>Tax and total</span><span>${ringTaxWords(this.reliefRateBps)}</span></div>
+              ${this.ringDone()
+                ? nothing
+                : html`<div class="trow ringwords" data-testid="pos-ring-words"><span>Tax and total</span><span>${ringTaxWords(this.reliefRateBps)}</span></div>`}
             </div>
           </section>
 
@@ -5788,7 +5790,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                          have). */ ''}
                     ${this.cart.length === 0
                     ? 'Add a line before splitting the tender.'
-                    : 'The legs must add up to the total first; the panel below rings the split.'}</span
+                    : "The legs settle the server's total at the ring; the panel below rings the split."}</span
                   >
                 </p>`}
 
