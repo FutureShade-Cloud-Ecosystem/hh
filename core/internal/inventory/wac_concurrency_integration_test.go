@@ -109,12 +109,14 @@ func TestWACLock_ReceiptVsLandedCost_NoLostUpdate(t *testing.T) {
 			}
 		}
 
-		// Perpetual subledger value MUST equal every contribution, no lost update leaked value.
+		// Perpetual subledger value MUST equal every contribution, no lost update leaked value. The
+		// contributions are PREDICTED by the oracle's own statement of the report's ROUND, never
+		// computed with the service helpers under test (review round 2: a mirror cannot catch a change).
 		finalAvg := branchCost(t, pool, p)
 		finalOH := onHand(t, pool, p)
-		gotValue := round(float64(finalAvg) * finalOH)
-		initValue := round(float64(startAvg) * startOnHand)
-		receiptValue := round(recvQty * float64(recvUnit))
+		gotValue := oracleValue(t, finalOH, finalAvg)
+		initValue := oracleValue(t, startOnHand, startAvg)
+		receiptValue := oracleValue(t, recvQty, recvUnit)
 		wantValue := initValue + receiptValue + freight
 		if gotValue != wantValue {
 			t.Fatalf("iter %d: perpetual value = %d (avg %d × oh %.0f), want %d "+
@@ -127,8 +129,8 @@ func TestWACLock_ReceiptVsLandedCost_NoLostUpdate(t *testing.T) {
 			t.Fatalf("iter %d: on-hand = %.4f, want %.4f", i, finalOH, wantOH)
 		}
 		// And the final WAC must be a valid SEQUENTIAL result: receipt-then-capitalize OR capitalize-then-receipt.
-		wantR2C := seqReceiptThenCapitalize(startOnHand, startAvg, recvQty, recvUnit, freight)
-		wantC2R := seqCapitalizeThenReceipt(startOnHand, startAvg, recvQty, recvUnit, freight)
+		wantR2C := seqReceiptThenCapitalize(t, startOnHand, startAvg, recvQty, recvUnit, freight)
+		wantC2R := seqCapitalizeThenReceipt(t, startOnHand, startAvg, recvQty, recvUnit, freight)
 		if finalAvg != wantR2C && finalAvg != wantC2R {
 			t.Fatalf("iter %d: final WAC %d is neither serial order (R→C=%d, C→R=%d), not serialized",
 				i, finalAvg, wantR2C, wantC2R)
@@ -137,16 +139,21 @@ func TestWACLock_ReceiptVsLandedCost_NoLostUpdate(t *testing.T) {
 }
 
 // seqReceiptThenCapitalize is the WAC when the receipt commits first, then the freight capitalizes over the grown on-hand.
-func seqReceiptThenCapitalize(oh float64, avg int64, recvQty float64, recvUnit, freight int64) int64 {
-	afterReceipt := round((oh*float64(avg) + recvQty*float64(recvUnit)) / (oh + recvQty))
+// The oracle PREDICTS the serial orders from the formulas' own statement (hh183_blend_oracle_test.go): the blend
+// rounds once over the unrounded terms, the capitalization re-derives round(value / on-hand), and no step calls a
+// service helper, so a change to the service arithmetic cannot silently re-tune the prediction.
+func seqReceiptThenCapitalize(t *testing.T, oh float64, avg int64, recvQty float64, recvUnit, freight int64) int64 {
+	t.Helper()
+	afterReceipt := oracleBlend(t, oh, avg, recvQty, recvUnit)
 	newOH := oh + recvQty
-	oldVal := round(float64(afterReceipt) * newOH)
-	return round(float64(oldVal+freight) / newOH)
+	oldVal := oracleValue(t, newOH, afterReceipt)
+	return oracleDivCents(t, oldVal+freight, newOH)
 }
 
 // seqCapitalizeThenReceipt is the WAC when the freight capitalizes first (over the original on-hand), then the receipt blends in.
-func seqCapitalizeThenReceipt(oh float64, avg int64, recvQty float64, recvUnit, freight int64) int64 {
-	oldVal := round(float64(avg) * oh)
-	afterCap := round(float64(oldVal+freight) / oh)
-	return round((oh*float64(afterCap) + recvQty*float64(recvUnit)) / (oh + recvQty))
+func seqCapitalizeThenReceipt(t *testing.T, oh float64, avg int64, recvQty float64, recvUnit, freight int64) int64 {
+	t.Helper()
+	oldVal := oracleValue(t, oh, avg)
+	afterCap := oracleDivCents(t, oldVal+freight, oh)
+	return oracleBlend(t, oh, afterCap, recvQty, recvUnit)
 }

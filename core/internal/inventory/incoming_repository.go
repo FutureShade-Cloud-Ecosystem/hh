@@ -119,6 +119,8 @@ func (r *Repository) ReplenishLineFor(ctx context.Context, productID, branchID s
 		return ShortfallRow{}, false, err
 	}
 	// Derived in Go from the ONE definition, exactly as ShortfallWorklist does after its scan.
-	s.Derive()
+	if err := s.Derive(); err != nil {
+		return ShortfallRow{}, false, err
+	}
 	return s, true, nil
 }

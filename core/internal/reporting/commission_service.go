@@ -12,9 +12,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// CommissionRules lists rules (all reps, or one).
+// CommissionRules lists rules (all reps, or one), held to the caller's reach. A rule is readable when
+// it is in force at a branch the caller can reach, which by chooseRule's own ruling means its branch
+// is empty (in force everywhere) or names a granted branch: a Trenton rate is Trenton's pay decision,
+// while a company-wide rate governs the caller's own branch and is part of the arithmetic their own
+// fenced preview performs.
 func (s *Service) CommissionRules(ctx context.Context, repUserID string) ([]CommissionRule, error) {
-	if _, err := s.caller(ctx); err != nil {
+	reach, err := s.reachOf(ctx)
+	if err != nil {
 		return nil, err
 	}
 	if repUserID != "" {
@@ -22,7 +27,7 @@ func (s *Service) CommissionRules(ctx context.Context, repUserID string) ([]Comm
 			return nil, errBadRequest("rep_user_id must be a uuid")
 		}
 	}
-	return s.repo.ListCommissionRules(ctx, repUserID)
+	return s.repo.ListCommissionRules(ctx, repUserID, reach)
 }
 
 // CreateCommissionRule validates and writes a rule. Validation is here and not only at the substrate
@@ -103,7 +108,15 @@ func (s *Service) CommissionPreview(ctx context.Context, repUserID, from, to, br
 	if err != nil {
 		return nil, err
 	}
-	rules, err := s.repo.ListCommissionRules(ctx, repUserID)
+	// The rules are read inside the caller's reach too. ChooseRule can only ever pick a rule whose
+	// branch is empty or matches the line's branch, and the lines above are already fenced to
+	// branchID, so for a scoped caller this changes nothing about which rule wins; it only stops the
+	// unreachable rules riding along in memory.
+	reach, err := s.reachOf(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rules, err := s.repo.ListCommissionRules(ctx, repUserID, reach)
 	if err != nil {
 		return nil, err
 	}
@@ -154,40 +167,57 @@ func (s *Service) ComputeAndFreeze(ctx context.Context, repUserID, from, to, bra
 	return s.repo.InsertCommissionRun(ctx, periods[0], c.UserID)
 }
 
-// CommissionRuns lists frozen periods.
+// CommissionRuns lists frozen periods, held to the caller's branch reach. A global caller keeps the
+// whole list; a scoped caller sees their branches' periods alone, and a consolidated period (no
+// branch) never appears for them because it is the whole company's pay.
 func (s *Service) CommissionRuns(ctx context.Context, from, to, repUserID string) ([]CommissionPeriod, error) {
-	if _, err := s.caller(ctx); err != nil {
+	reach, err := s.reachOf(ctx)
+	if err != nil {
 		return nil, err
 	}
 	fromT, toT, err := parseWindow(from, to)
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.ListCommissionRuns(ctx, fromT, toT, repUserID)
+	return s.repo.ListCommissionRuns(ctx, fromT, toT, repUserID, reach)
 }
 
-// CommissionRun reads one frozen period with its drill-through.
+// CommissionRun reads one frozen period with its drill-through, behind the branch fence: the caller
+// must be able to read the period's branch, and a period with no branch (consolidated) answers to a
+// global caller alone. A refusal is NOT FOUND, for the same reason RunArtefact's is: the id itself
+// must not confirm the period exists at a branch the caller cannot reach.
 func (s *Service) CommissionRun(ctx context.Context, id string) (CommissionPeriod, error) {
-	if _, err := s.caller(ctx); err != nil {
+	c, err := s.caller(ctx)
+	if err != nil {
 		return CommissionPeriod{}, err
 	}
 	if _, err := uuid.Parse(id); err != nil {
 		return CommissionPeriod{}, ErrNotFound
 	}
-	return s.repo.GetCommissionRun(ctx, id)
+	p, err := s.repo.GetCommissionRun(ctx, id)
+	if err != nil {
+		return CommissionPeriod{}, err
+	}
+	if !canReadBranch(c, p.BranchID) {
+		return CommissionPeriod{}, ErrNotFound
+	}
+	return p, nil
 }
 
 // CommissionAccruals is the accrual view. It answers "what is owed and unpaid" and says, in the payload
-// itself, that none of it is in the general ledger.
+// itself, that none of it is in the general ledger. The register is grouped by REP, but the money
+// underneath is branch scoped, so the fence goes on the runs being summed: a scoped caller's register
+// owes their branches' periods alone.
 func (s *Service) CommissionAccruals(ctx context.Context, from, to string) (Accrual, error) {
-	if _, err := s.caller(ctx); err != nil {
+	reach, err := s.reachOf(ctx)
+	if err != nil {
 		return Accrual{}, err
 	}
 	fromT, toT, err := parseWindow(from, to)
 	if err != nil {
 		return Accrual{}, err
 	}
-	lines, err := s.repo.AccrualRegister(ctx, fromT, toT)
+	lines, err := s.repo.AccrualRegister(ctx, fromT, toT, reach)
 	if err != nil {
 		return Accrual{}, err
 	}
@@ -284,6 +314,16 @@ func (s *Service) PrintCommissionRun(ctx context.Context, id, printBranchID stri
 	body := renderHTML(res)
 	body = strings.Replace(body, "</table>",
 		`</table><p style="margin-top:14px;font-size:11px;color:#444">`+AccrualNote+`</p>`, 1)
+
+	// The artefact is STAMPED with its period's branch at print time. params is JSONB, so this is a
+	// row-shape change with no migration, and it is what makes the artefact's scope its OWN: the
+	// (rep, window) linkage in params can only say "some period of this rep and window", so once
+	// another branch freezes the same window, an ordinary month-end for a rep who sells at two
+	// branches, the linkage could mean either period and an honest reader's own statement would fall
+	// out of their reach. A stamped artefact answers its stamp; rows printed before the stamp exists
+	// keep the linkage derivation, with its ambiguity, as the fallback. Stamped AFTER renderHTML on
+	// purpose: the printed document is unchanged, the stamp is fence metadata, not copy.
+	res.Params["branch_id"] = p.BranchID
 
 	run, err := s.repo.InsertRunWithPrintJob(ctx, Run{
 		Kind:         RunKindCommission,
