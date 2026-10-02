@@ -35,13 +35,19 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// cardChargerAdapter satisfies till.CardCharger by wrapping payment.Service.Charge, the creds-free
-// seam the till uses for a CARD tender. It lives here (package main) so payment does NOT import till
-// (no cycle) and decrypted credentials never cross into the till module.
+// cardChargerAdapter satisfies till.CardCharger over payment.Service.ChargeTx, the creds-free
+// charge rail (the posCardRefunderAdapter mirror): the till passes the tender amount and token and
+// gets the capture's own processor ref back; creds stay inside RUN-PAY. The sale transaction passes
+// STRAIGHT THROUGH: the config read rides the caller's transaction, the only shape inside a
+// transaction that holds a connection, where a pool read would stall a one-connection pool on a
+// single sale and deadlock a full pool of concurrent sales. The rotation write-back does NOT ride
+// the transaction: the service carries it to its rotation ledger and flushes it through the pool on
+// its own goroutine (see payment.Service.ChargeTx), so a rolled-back sale cannot discard a key the
+// processor has already exchanged.
 type cardChargerAdapter struct{ svc *payment.Service }
 
-func (a cardChargerAdapter) Charge(ctx context.Context, amountCents int64, paymentToken, reference string) (till.ChargeResult, error) {
-	rcpt, err := a.svc.Charge(ctx, payment.ChargeInput{
+func (a cardChargerAdapter) Charge(ctx context.Context, tx pgx.Tx, amountCents int64, paymentToken, reference string) (till.ChargeResult, error) {
+	rcpt, err := a.svc.ChargeTx(ctx, tx, payment.ChargeInput{
 		AmountCents:  amountCents,
 		PaymentToken: paymentToken,
 		Reference:    reference,

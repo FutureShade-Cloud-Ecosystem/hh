@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // - lifecycle + method constants -
@@ -33,10 +35,16 @@ const (
 // - consumed seam (zero-trust interface, A-03 never reaches a sibling's tables) -
 //
 // SCAFFOLD-OWNED SHARED SEAM. CardCharger is RUN-PAY's card rail (the creds-free wrapper over
-// payment.Service.Charge, creds resolve INSIDE RUN-PAY and never cross into the till). It is wired in
-// cmd/server/main.go via a thin adapter so payment does NOT import till (no cycle).
+// payment.Service.Charge, creds resolve INSIDE RUN-PAY and never cross into the till). It is wired
+// in the composition root (cmd/core) via a thin adapter so payment does NOT import till (no
+// cycle). The caller's tx passes STRAIGHT THROUGH (the pos CardRefunder discipline on the charge
+// side): TakeTender runs inside the sale transaction, which holds a pool connection, so the rail's
+// config read rides that transaction and nothing in the transaction's own call stack asks the pool
+// for a second connection. The rotation write-back is the service's own concern: its flush runs on
+// a separate goroutine and may take a second connection while the transaction is still open on a
+// wider pool, always after the ring's outcome can no longer discard it.
 type CardCharger interface {
-	Charge(ctx context.Context, amountCents int64, paymentToken, reference string) (ChargeResult, error)
+	Charge(ctx context.Context, tx pgx.Tx, amountCents int64, paymentToken, reference string) (ChargeResult, error)
 }
 
 // ChargeResult mirrors payment.ChargeResult{ProcessorRef, Status} (status: captured|authorized|failed).

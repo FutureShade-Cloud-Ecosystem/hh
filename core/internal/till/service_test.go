@@ -445,7 +445,7 @@ type fakeCharger struct {
 	lastRef    string
 }
 
-func (c *fakeCharger) Charge(_ context.Context, amountCents int64, token, ref string) (ChargeResult, error) {
+func (c *fakeCharger) Charge(_ context.Context, _ pgx.Tx, amountCents int64, token, ref string) (ChargeResult, error) {
 	c.calls++
 	c.lastAmount = amountCents
 	c.lastToken = token
