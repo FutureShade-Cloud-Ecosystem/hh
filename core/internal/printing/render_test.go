@@ -79,12 +79,12 @@ func TestRenderReceiptHTML_OriginalHasNoReprintMarker(t *testing.T) {
 }
 
 // The simulated card word: a card sale rung on the demo box's simulated rail must not print paper
-// that reads like a live card charge. The stub mints gateway refs with a recognizable prefix, the
-// repository stamps ReceiptTender.Simulated from the row's own ref, and the template carries the
-// word once, inside the tender line. The guard legs hold the other direction: a live gateway card
-// charge prints no simulated word anywhere, and the word is the ONLY delta between the two
-// documents, so a receipt with no simulated card rows renders byte-identically to the flag-less
-// document.
+// that reads like a live card charge. The till's capture stub mints gateway refs with a
+// recognizable prefix, the repository stamps ReceiptTender.Simulated from the row's own ref, and
+// the template carries the word once, inside the tender line. The guard legs hold the other
+// direction: a live gateway card charge prints no simulated word anywhere, and the word is the
+// ONLY delta between the two documents, so a receipt with no simulated card rows renders
+// byte-identically to the flag-less document.
 func TestRenderReceiptHTML_SimulatedCardWord(t *testing.T) {
 	receipt := func(simulated bool) Receipt {
 		return Receipt{

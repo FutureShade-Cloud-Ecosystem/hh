@@ -165,10 +165,11 @@ func (r *Repository) ReadReceiptTenders(ctx context.Context, paymentID, invoiceI
 			t.Label = "CARD · " + cardType
 		}
 		t.Ref = paymentNo
-		// The word follows the ROW's own ref: a CARD capture whose gateway ref carries the stub's
-		// prefix never reached a processor, and the receipt says so beside the tender. A live
-		// gateway's adapter writes its own refs, so a live charge stamps nothing, and a reprint
-		// stays honest even after the box switches rails.
+		// The word follows the ROW's own ref: a CARD capture whose gateway ref carries the till's
+		// capture stub's prefix never reached a processor, and the receipt says so beside the
+		// tender. A live gateway's adapter writes its own refs, so a live charge stamps nothing,
+		// and a reprint stays honest even after the box switches rails. The portal rail's stub
+		// (payments.StubGateway, refs ch_) is a separate rail, its receipts are a filed follow-up.
 		t.Simulated = t.Method == "CARD" && strings.HasPrefix(gatewayRef, payment.StubCaptureRefPrefix)
 		out = append(out, t)
 	}

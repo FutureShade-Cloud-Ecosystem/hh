@@ -375,11 +375,12 @@ func TestIntegration_Receipt_UnknownSaleIsNotFound(t *testing.T) {
 	}
 }
 
-// The scan leg: the simulated flag follows the ROW's own gateway ref, not the rail wired today. A
-// CARD row whose ref carries the stub's prefix is a simulated capture and stamps the flag; a CARD
-// row carrying a foreign ref (a live gateway writes its own shapes) must not stamp. The rows here
-// are direct inserts (the bankrec fixture idiom): the flag is the repository's stamping decision
-// over the real row, and that decision is what this leg pins.
+// The scan leg: the simulated flag follows the ROW's own gateway ref, not the rail currently
+// wired. A CARD row whose ref carries the till's capture stub's prefix is a simulated capture and
+// stamps the flag; a CARD row carrying a foreign ref (a live gateway writes its own shapes) must
+// not stamp. The rows here are direct inserts (the bankrec fixture idiom): the flag is the
+// repository's stamping decision over the real row, and that decision is what this leg pins. The
+// tie leg below covers the case this one cannot: a ref the real stub minted.
 func TestIntegration_Receipt_TenderSimulatedFlagFollowsTheRowRef(t *testing.T) {
 	pool := intPool(t)
 	_, branchID := aPaver(t, pool)
@@ -415,7 +416,7 @@ func TestIntegration_Receipt_TenderSimulatedFlagFollowsTheRowRef(t *testing.T) {
 	})
 
 	t.Run("a foreign ref does not stamp", func(t *testing.T) {
-		id := insertCard(t, "ch_live_9f8e2a77")
+		id := insertCard(t, "8812340077")
 		tenders, err := repo.ReadReceiptTenders(ctx, id, "")
 		if err != nil {
 			t.Fatalf("read tenders: %v", err)

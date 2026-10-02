@@ -8,10 +8,14 @@ import (
 	"fmt"
 )
 
-// StubCaptureRefPrefix prefixes every capture ref the stub mints. The printed receipt reads it to
+// StubCaptureRefPrefix prefixes every capture ref the TILL's capture stub mints (RunPaymentsStub,
+// the demo box's simulated card rail behind Service.Simulated()). The printed receipt reads it to
 // mark simulated card charges on paper: a CARD payments row whose gateway_ref carries this prefix
 // is a charge that never reached a processor, and the receipt says so beside the tender. A live
-// gateway's adapter writes its own refs, only the stub mints this shape.
+// gateway's adapter writes its own refs, only this stub mints this shape. The PORTAL rail's own
+// stub (payments.StubGateway, refs beginning ch_) is a separate rail entirely: its CARD rows reach
+// receipts through the allocation arm and carry no simulated word here, that follow-up is filed
+// for the principal.
 const StubCaptureRefPrefix = "rp_sim_"
 
 // RunPaymentsStub is the DETERMINISTIC stand-in for the Run Payments /api/v1/charge keyed / card-NOT-
@@ -39,13 +43,14 @@ func (RunPaymentsStub) Charge(_ context.Context, creds map[string]string, mercha
 	if amountCents <= 0 {
 		return ChargeResult{}, errors.New("amount must be positive")
 	}
-	// Deterministic ref: prefer the idempotency key, else hash(token|amount|mid).
+	// Deterministic ref: prefer the idempotency key, else hash(token|amount|mid). Minted WITH the
+	// exported constant, so the receipt's check and this mint cannot drift apart silently.
 	seed := creds["__idem"]
 	if seed == "" {
 		seed = fmt.Sprintf("%s|%d|%s", paymentToken, amountCents, merchantID)
 	}
 	h := sha256.Sum256([]byte(seed))
-	return ChargeResult{ProcessorRef: "rp_sim_" + hex.EncodeToString(h[:8]), Status: "captured"}, nil
+	return ChargeResult{ProcessorRef: StubCaptureRefPrefix + hex.EncodeToString(h[:8]), Status: "captured"}, nil
 }
 
 // Refund reverses a prior capture DETERMINISTICALLY (the gate default; no live network call). It mirrors
