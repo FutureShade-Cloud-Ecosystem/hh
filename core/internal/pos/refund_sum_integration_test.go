@@ -210,21 +210,52 @@ func TestIntegration_Trenton_RefundSums_SameKeyDuplicate(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	bearer := s.bearer(trentonClerkSub)
+	fire := func(ctx context.Context) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/pos/returns", bytes.NewReader(raw)).WithContext(ctx)
+		req.Header.Set("Authorization", bearer)
+		req.Header.Set("X-Org", demoOrgSlug)
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, req)
+		return rec
+	}
 
+	// Both copies are parked ON the per-sale advisory key before either can
+	// insert, so both pre-transaction replay checks run while no row exists
+	// and the loser is guaranteed the in-transaction re-check path: the test
+	// holds the very advisory key a Return transaction takes, inside a real
+	// transaction (the xact-scoped lock evaporates with a bare statement's
+	// implicit transaction), copy A is given time to park on it, copy B
+	// fires and parks behind it, then the key releases and the pair
+	// serializes. Without the parking, a copy whose pre-transaction check
+	// happens to run after its twin committed replays before any
+	// transaction and the pair never exercises the in-transaction path.
+	hold, herr := s.pool.Begin(context.Background())
+	if herr != nil {
+		t.Fatalf("begin: %v", herr)
+	}
+	if _, err := hold.Exec(context.Background(),
+		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "pos:return:"+sale.OrderID); err != nil {
+		_ = hold.Rollback(context.Background())
+		t.Fatalf("hold the sale's advisory key: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 	results := make([]*httptest.ResponseRecorder, 2)
 	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/pos/returns", bytes.NewReader(raw))
-			req.Header.Set("Authorization", bearer)
-			req.Header.Set("X-Org", demoOrgSlug)
-			rec := httptest.NewRecorder()
-			s.mux.ServeHTTP(rec, req)
-			results[i] = rec
-		}(i)
-	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		results[0] = fire(ctx)
+	}()
+	time.Sleep(300 * time.Millisecond) // copy A parks on the held key
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		results[1] = fire(ctx)
+	}()
+	time.Sleep(300 * time.Millisecond)      // copy B parks behind it
+	_ = hold.Rollback(context.Background()) // the key frees, the pair serializes
 	wg.Wait()
 
 	created, replayed := 0, 0
