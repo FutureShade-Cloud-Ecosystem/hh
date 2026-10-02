@@ -33,8 +33,9 @@ type TaxQuoteInput struct {
 // QuoteResult is the binding tax + binding rate. RateBps carries the fallback rate the assess-relief paths
 // route through (FlatHSTAssessor returns 1300 → bit-identical to the old flatHSTRateBps fallbacks).
 type QuoteResult struct {
-	TaxCents int64
-	RateBps  int
+	TaxCents      int64
+	RateBps       int
+	OnCreditCents int64
 }
 
 // FlatHSTAssessor is the behavior-preserving default: flat 13% HST, RateBps 1300, identical to flatHST13. It

@@ -899,9 +899,17 @@ func (s *Service) Sale(ctx context.Context, in SaleInput) (Sale, error) {
 			}
 		}
 		if in.Relief != nil {
+			// The audit snapshot records the quote the ring bound, in the shape the tax package's W4
+			// recompute reads back: rate_bps the ASSESSED rate, full_hst_cents the STANDARD-rate HST on
+			// the subtotal (flatHST13, bit-identical to the engine's hstOn at 1300; the recompute's
+			// reconstructBase divides this column by the constant 1300, so it must never carry the
+			// assessed rate's tax), on_credit_cents the quote's ON credit, net_collected_cents the
+			// assessed tax the ring actually collected. At the standard rate this row is byte-identical
+			// to the old flat-constant write.
 			if _, err := s.store.InsertTaxSnapshot(ctx, tx, taxSnapshotRow{
-				OrderID: orderID, TaxReasonCode: taxReason, RuleVersion: ruleVersionW4, RateBps: flatHSTRateBps,
-				FullHSTCents: tax, NetCollectedCents: tax, Automated: false,
+				OrderID: orderID, TaxReasonCode: taxReason, RuleVersion: ruleVersionW4, RateBps: quote.RateBps,
+				FullHSTCents: flatHST13(subtotal), OnCreditCents: quote.OnCreditCents,
+				NetCollectedCents: tax, Automated: false,
 				EvidenceDocID: in.Relief.EvidenceDocID,
 			}); err != nil {
 				return err
