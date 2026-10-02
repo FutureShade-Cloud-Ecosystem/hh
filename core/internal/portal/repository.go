@@ -321,7 +321,7 @@ func (r *Repository) ConsumePasswordReset(ctx context.Context, tokenHash string,
 // revokes no session: the platform issues every session, HH-197). It closes the window where a leaked
 // reset link could be replayed after the password already changed. The legacy design note that live
 // JWT invalidation is bounded by the token TTL describes the unserved portal login path. Best-effort: a
-no-op (zero rows) is success.
+// no-op (zero rows) is success.
 func (r *Repository) RevokeSessions(ctx context.Context, userID string) error {
 	if r.pool == nil {
 		return errNoDB
