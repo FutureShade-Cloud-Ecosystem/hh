@@ -206,7 +206,7 @@ func buildWorld(t *testing.T, pool *pgxpool.Pool) {
 			INSERT INTO users (id, email, display_name, status, platform_user_id, org_id)
 			VALUES ($1::uuid, $2, $3, 'ACTIVE', $4, $5::uuid)
 			ON CONFLICT (id) DO NOTHING`,
-			adminUserID, "till-l2c-admin@dibbits.example", "General manager (till L2C)", trentonAdminSub, orgID); err != nil {
+			adminUserID, "till-l2c-admin@hh-demo.invalid", "General manager (till L2C)", trentonAdminSub, orgID); err != nil {
 			worldErr = fmt.Errorf("user %s: %w", trentonAdminSub, err)
 			return
 		}
