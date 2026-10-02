@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 )
 
@@ -53,6 +55,23 @@ func (f *fakeStore) ListByEntity(_ context.Context, et, id string) ([]Entry, err
 		if e.EntityType == et && e.EntityID == id {
 			out = append(out, e)
 		}
+	}
+	return out, nil
+}
+
+// ListByEntityFenced mirrors the repo fence: the entity's rows minus every branched row outside the
+// given set, branch-less rows kept. The SQL predicate itself is proven against Postgres by the
+// HH-180 integration test; this copy exists so the service seam's decision is testable without a DB.
+func (f *fakeStore) ListByEntityFenced(_ context.Context, et, id string, branches []string) ([]Entry, error) {
+	var out []Entry
+	for _, e := range f.snapshot() {
+		if e.EntityType != et || e.EntityID != id {
+			continue
+		}
+		if e.BranchID != "" && !slices.Contains(branches, e.BranchID) {
+			continue
+		}
+		out = append(out, e)
 	}
 	return out, nil
 }
@@ -649,6 +668,121 @@ func (s *pathCallStore) GetByID(ctx context.Context, id string) (*Entry, error) 
 func (s *pathCallStore) ListByEntity(ctx context.Context, et, id string) ([]Entry, error) {
 	s.listByEntityCalled = true
 	return []Entry{}, nil
+}
+
+// reopenCallStore records which reopen read the service chose (the unfenced ListByEntity or the
+// fenced ListByEntityFenced, and with which branches), so the fence decision is observable without
+// touching which rows a store returns.
+type reopenCallStore struct {
+	fakeStore
+	unfenced bool
+	fenced   bool
+	branches []string
+}
+
+func (s *reopenCallStore) ListByEntity(ctx context.Context, et, id string) ([]Entry, error) {
+	s.unfenced = true
+	return s.fakeStore.ListByEntity(ctx, et, id)
+}
+
+func (s *reopenCallStore) ListByEntityFenced(ctx context.Context, et, id string, branches []string) ([]Entry, error) {
+	s.fenced = true
+	s.branches = branches
+	return s.fakeStore.ListByEntityFenced(ctx, et, id, branches)
+}
+
+// TestReopenTransactionFor_BranchFence pins the fence decision on the service seam the reopen route
+// rides (HH-180): a global authority keeps the unfenced read and the full trail, every other
+// authority fails closed into the fenced read carrying the caller's granted branches, and the rows
+// that come back are the caller's branch's plus the branch-less ones, never another branch's.
+func TestReopenTransactionFor_BranchFence(t *testing.T) {
+	const home = "b11111111-1111-4111-8111-111111111111"
+	const away = "c22222222-2222-4222-8222-222222222222"
+	seeded := func() *reopenCallStore {
+		st := &reopenCallStore{fakeStore: *newFakeStore()}
+		for _, e := range []Entry{
+			{Action: ActOrderChanged, EntityType: "order", EntityID: sampleUUID, BranchID: home,
+				Changes: map[string]any{"field": "unit_price_cents"}},
+			{Action: ActOrderChanged, EntityType: "order", EntityID: sampleUUID, BranchID: away,
+				Changes: map[string]any{"field": "line_total_cents"}},
+			{Action: ActHTTPPost, EntityType: "order", EntityID: sampleUUID,
+				Changes: map[string]any{"status": 201, "actor_role": "sales"}},
+		} {
+			if err := st.Insert(context.Background(), e); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+		}
+		return st
+	}
+	assertNoAway := func(rows []Entry) {
+		t.Helper()
+		for _, e := range rows {
+			if e.BranchID == away {
+				t.Errorf("leaked the out-of-branch row: action %q branch %q", e.Action, e.BranchID)
+			}
+		}
+	}
+
+	// Global authority: the unfenced read, the full three-row trail.
+	{
+		st := seeded()
+		rows, err := newTestService(st).ReopenTransactionFor(context.Background(),
+			identity.StaffAuthority{RoleID: "r", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal},
+			"order", sampleUUID)
+		if err != nil {
+			t.Fatalf("global: %v", err)
+		}
+		if !st.unfenced || st.fenced {
+			t.Errorf("global must take the unfenced read, got unfenced=%v fenced=%v", st.unfenced, st.fenced)
+		}
+		if len(rows) != 3 {
+			t.Errorf("global got %d rows, want 3 (the full cross-branch trail)", len(rows))
+		}
+	}
+
+	// Branch-scoped authority granted home: the fenced read with exactly home, the home row plus the
+	// branch-less coarse row.
+	{
+		st := seeded()
+		rows, err := newTestService(st).ReopenTransactionFor(context.Background(),
+			identity.StaffAuthority{RoleID: "r", Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
+				Branches: []string{home}},
+			"order", sampleUUID)
+		if err != nil {
+			t.Fatalf("scoped: %v", err)
+		}
+		if st.unfenced || !st.fenced {
+			t.Errorf("scoped must take the fenced read, got unfenced=%v fenced=%v", st.unfenced, st.fenced)
+		}
+		if len(st.branches) != 1 || st.branches[0] != home {
+			t.Errorf("fenced read carried branches %v, want [%s]", st.branches, home)
+		}
+		if len(rows) != 2 {
+			t.Errorf("scoped got %d rows, want 2 (the home row + the branch-less coarse row)", len(rows))
+		}
+		assertNoAway(rows)
+	}
+
+	// A scoped authority with no grants, and an authority naming neither scope (the zero value a
+	// miswired guard would leave): both fail closed into the fenced read, and only the branch-less
+	// row survives.
+	for name, authority := range map[string]identity.StaffAuthority{
+		"no grants": {RoleID: "r", Scope: identity.ScopeBranch},
+		"no scope":  {},
+	} {
+		st := seeded()
+		rows, err := newTestService(st).ReopenTransactionFor(context.Background(), authority, "order", sampleUUID)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if st.unfenced || !st.fenced {
+			t.Errorf("%s: must fail closed into the fenced read, got unfenced=%v fenced=%v", name, st.unfenced, st.fenced)
+		}
+		if len(rows) != 1 {
+			t.Errorf("%s: got %d rows, want 1 (the branch-less row only)", name, len(rows))
+		}
+		assertNoAway(rows)
+	}
 }
 
 // TestAuditPathID_ValidatesID is the regression for sweep #46 findings #7/#23: the get() and reopen()

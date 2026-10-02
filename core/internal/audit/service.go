@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 )
 
 // Authenticator resolves the acting user from a request (mirrors gable audit.go). identity.Handler
@@ -30,6 +32,7 @@ type store interface {
 	InsertTx(ctx context.Context, q Execer, e Entry) error
 	List(ctx context.Context, f Filter) ([]Entry, error)
 	ListByEntity(ctx context.Context, entityType, entityID string) ([]Entry, error)
+	ListByEntityFenced(ctx context.Context, entityType, entityID string, branches []string) ([]Entry, error)
 	GetByID(ctx context.Context, id string) (*Entry, error)
 }
 
@@ -139,6 +142,25 @@ func (s *Service) Get(ctx context.Context, id string) (*Entry, error) { return s
 
 func (s *Service) ReopenTransaction(ctx context.Context, entityType, entityID string) ([]Entry, error) {
 	return s.repo.ListByEntity(ctx, entityType, entityID)
+}
+
+// ReopenTransactionFor is the operator reopen read fenced to the caller's branch reach (HH-180): a
+// global caller keeps the full trail, every other authority is scoped and sees only rows in branches
+// its grants reach plus branch-less rows, so a scoped caller with no grants sees only the branch-less
+// rows, fail closed. The fence is a predicate on the read itself, computed from the rows' own
+// branch_id (0013), never a post-filter and never a resolve through the entity's owner: the audit
+// module answers from its own table. An entity whose every row is out of reach answers an EMPTY
+// trail, never a refusal: this surface has no not-found shape of its own (an unknown entity id
+// already answers 200 with no rows), so an unreachable one answers the same and the read is no
+// existence oracle. The in-process seam ReopenTransaction above stays unfenced on purpose: its
+// callers (order history and edit history, quote, dispatch, billing, the POS return approval, the
+// customer-quote acceptance load) gate on the owning entity before they ask, each in its owner's
+// way; only the route reached the rows with nobody asking.
+func (s *Service) ReopenTransactionFor(ctx context.Context, caller identity.StaffAuthority, entityType, entityID string) ([]Entry, error) {
+	if caller.Scope == identity.ScopeGlobal {
+		return s.repo.ListByEntity(ctx, entityType, entityID)
+	}
+	return s.repo.ListByEntityFenced(ctx, entityType, entityID, caller.Branches)
 }
 
 // -- middleware --------------------------------------------------------------
