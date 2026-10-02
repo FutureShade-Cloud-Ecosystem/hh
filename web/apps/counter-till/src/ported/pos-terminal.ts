@@ -6228,7 +6228,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
    * answered yet, so there is no identity to card.
    */
   /**
-   * rev 6 (item A), reworded by row 661: the OPTIONAL cash-tendered quick entry.
+   * rev 6 (item F), reworded by row 661: the OPTIONAL cash-tendered quick entry.
    * Shown only once Cash is the chosen tender and FULLY skippable: an untouched box changes
    * nothing (Complete rings the exact total, one-click cash intact). A typed amount is asked for
    * and nothing is computed from it: the till computes no total before the ring, so the change
