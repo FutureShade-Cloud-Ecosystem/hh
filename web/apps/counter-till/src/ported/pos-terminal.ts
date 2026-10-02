@@ -5872,7 +5872,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
               </button>`
             : nothing}
           ${this.utilMsg
-            ? html`<div id="till-message" class="banner ${this.utilTone}" role=${ifDefined(this.utilTone === 'bad' ? 'alert' : this.utilTone === 'note' && !this.utilLive ? undefined : 'status')}>${this.utilMsg}</div>`
+            ? html`<div id="till-message" class="banner ${this.utilTone}" role="${ifDefined(this.utilTone === 'bad' ? 'alert' : this.utilTone === 'note' && !this.utilLive ? undefined : 'status')}">${this.utilMsg}</div>`
             : nothing}
 
           
