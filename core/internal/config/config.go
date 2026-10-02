@@ -1,5 +1,6 @@
 // Package config centralizes all environment configuration for HardscapeOS.
-// Every value has a sane dev default; production overrides via env vars.
+// Dev has sane defaults for local work; staging, production and demo must say what they mean
+// (see Validate), and APP_ENV itself must be set for any role that serves traffic.
 //
 // The carried configuration is trimmed by the carry itself: the HS256 world
 // this package used to configure (PORTAL_JWT_SECRET and STAFF_JWT_SECRET and
@@ -204,6 +205,15 @@ func (c Config) Validate() error {
 	if c.DemoMode && c.Env != EnvDemo {
 		return fmt.Errorf("DEMO_MODE is set but APP_ENV=%q: the demo sign-in is a credential bypass and may run only on a demo box (APP_ENV=%q) or in dev", c.Env, EnvDemo)
 	}
+	// APP_ENV must be exactly one of the four named values, case-sensitive and untrimmed. A
+	// typo such as prod, Production or "dev " would otherwise get the strict checks below but
+	// slip past the ones elsewhere that compare against the literal word production (the card
+	// rail refusals in payment and payments). The bad value is deliberately not echoed.
+	switch c.Env {
+	case "staging", "production", EnvDemo:
+	default:
+		return fmt.Errorf("APP_ENV is not one of the accepted values: set it exactly (case-sensitive, no spaces) to dev, staging, production or demo")
+	}
 	// RUN-PAY vault key: fail closed outside dev. A wrong-length key must not boot a
 	// non-dev box silently encrypting credentials with an ephemeral key it loses on restart.
 	if b, err := hex.DecodeString(c.PaymentVaultKey); err != nil || len(b) != 32 {
@@ -212,34 +222,89 @@ func (c Config) Validate() error {
 	// The link bases that invite, reset and reminder messages point at. A demo box is exempt:
 	// it sends nothing live and has always run on the localhost defaults.
 	if c.Env != EnvDemo {
-		if err := checkPublicHTTPSURL("PORTAL_BASE_URL", c.PortalBaseURL); err != nil {
+		if err := checkBaseURL("PORTAL_BASE_URL", c.PortalBaseURL); err != nil {
 			return err
 		}
-		if err := checkPublicHTTPSURL("ERP_BASE_URL", c.StaffBaseURL); err != nil {
+		if err := checkBaseURL("ERP_BASE_URL", c.StaffBaseURL); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// checkPublicHTTPSURL requires an absolute https URL with a host that is not a loopback name.
-// The error names the variable and the reason, never the value.
-func checkPublicHTTPSURL(name, raw string) error {
+// checkBaseURL requires an absolute https URL with a usable link base. It enforces: https; a
+// host that is not empty, localhost (or *.localhost, with or without a trailing dot), a
+// loopback or unspecified address, an IPv6 zone, or one of the numeric shorthand spellings of
+// an address (127.1, 2130706433, 0x7f.0.0.1, 0177.0.0.1) that the resolver would read as
+// loopback; and no userinfo, query, fragment, space or control character, because links are
+// built by appending a path to this value and every link would carry the rest. POLICY: it does
+// NOT require a public address. Private ranges, tailnet addresses, .local, .internal and
+// single-label hosts pass, since a staging box may sit on a tailnet. The error names the
+// variable and the reason and never the value.
+func checkBaseURL(name, raw string) error {
 	if raw == "" {
-		return fmt.Errorf("%s must be set outside dev: it is the public origin that links in messages point at", name)
+		return fmt.Errorf("%s must be set outside dev: it is the origin that links in messages point at", name)
+	}
+	for _, r := range raw {
+		if r <= 0x20 || r == 0x7f {
+			return fmt.Errorf("%s must not contain spaces or control characters", name)
+		}
 	}
 	u, err := url.Parse(raw)
 	if err != nil || !u.IsAbs() || u.Scheme != "https" {
 		return fmt.Errorf("%s must be an absolute https URL outside dev", name)
 	}
-	host := strings.ToLower(u.Hostname())
-	if host == "" || host == "localhost" || strings.HasSuffix(host, ".localhost") {
-		return fmt.Errorf("%s must name a public host outside dev, not an empty or localhost host", name)
+	if u.User != nil {
+		return fmt.Errorf("%s must not carry credentials (userinfo): they would be mailed in every link", name)
 	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-		return fmt.Errorf("%s must name a public host outside dev, not a loopback address", name)
+	if strings.ContainsAny(raw, "?#") {
+		return fmt.Errorf("%s must not carry a query or fragment: links are built by appending a path to it", name)
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	const notLocal = "%s must name a real host outside dev, not an empty, localhost, loopback, unspecified or numeric-shorthand host"
+	if host == "" || host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.Contains(host, "%") {
+		return fmt.Errorf(notLocal, name)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsUnspecified() {
+			return fmt.Errorf(notLocal, name)
+		}
+		return nil
+	}
+	if numericShorthand(host) {
+		return fmt.Errorf(notLocal, name)
 	}
 	return nil
+}
+
+// numericShorthand reports whether every dot-separated label is all digits or a 0x-prefixed hex
+// group: the integer and short forms of an IPv4 address that net.ParseIP does not accept but
+// the system resolver does.
+func numericShorthand(host string) bool {
+	for _, label := range strings.Split(host, ".") {
+		if label == "" {
+			return false
+		}
+		digits := label
+		if strings.HasPrefix(label, "0x") {
+			digits = label[2:]
+			if digits == "" {
+				return false
+			}
+			for _, r := range digits {
+				if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+					return false
+				}
+			}
+			continue
+		}
+		for _, r := range digits {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func strEnv(k, def string) string {

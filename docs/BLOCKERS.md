@@ -1289,3 +1289,14 @@ and till are the Counter Till lane's.
 declared Touches, so the break is recorded here for the owning lane; the same
 command is one of this lane's exit checks and cannot pass repository-wide
 until the field mismatch is reconciled.
+
+## HH-198 (config validation): `core seed` still reads an unset APP_ENV as dev
+
+`core/cmd/core/roles_oneshot.go` (the seed role, the `cfg.Env != "dev"` check near line 107) runs
+with `APP_ENV` unset or empty because `config.Load` resolves it to `dev`, so `core seed` on a box
+with the variable forgotten still plants the Tier-1 global admins with the demo password. This
+lane did not change it on purpose: the one-shot roles (migrate, seed, demoseed) read an unset
+`APP_ENV` as dev so CI, reviewers and local developers can run them without setting it. Serve and
+worker, which call `Validate`, now refuse an unset `APP_ENV` (`Config.EnvUnset`). Proposed
+follow-up: CI sets `APP_ENV=dev` on the seed and demoseed steps in `.github/workflows/ci.yml`,
+then seed refuses `cfg.EnvUnset`. Owner: the platform lane or the principal.
