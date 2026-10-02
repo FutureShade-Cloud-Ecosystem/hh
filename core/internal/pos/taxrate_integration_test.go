@@ -39,7 +39,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
 )
 
@@ -60,9 +59,9 @@ func (a servedTaxAssessor) AssessSale(ctx context.Context, in TaxQuoteInput) (Qu
 		EvidenceAttached: false,
 	})
 	if err != nil {
-		var bad httpx.BadRequestError
-		if errors.As(err, &bad) {
-			return QuoteResult{}, fmt.Errorf("%w: %s", ErrUnknownTaxReason, bad.Msg)
+		var unk tax.UnknownReasonError
+		if errors.As(err, &unk) {
+			return QuoteResult{}, fmt.Errorf("%w: %s", ErrUnknownTaxReason, unk.Error())
 		}
 		return QuoteResult{}, err
 	}

@@ -25,7 +25,6 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messagingprovider"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tasks"
@@ -104,12 +103,14 @@ func (a posTaxAdapter) AssessSale(ctx context.Context, in pos.TaxQuoteInput) (po
 	if err != nil {
 		// The engine's reason-universe refusal is a client-correctable refusal at the counter: translate
 		// it into the pos sentinel the handler maps to 400 (the engine's words ride behind the
-		// sentinel's). Any other refusal, the misconfigured-table shape, stays a server fault: the admin
-		// edge is what keeps that shape off the ring, CreateRate refusing to plant the row. Sits beside
-		// the sibling refusal translation out of the same engine.
-		var bad httpx.BadRequestError
-		if errors.As(err, &bad) {
-			return pos.QuoteResult{}, fmt.Errorf("%w: %s", pos.ErrUnknownTaxReason, bad.Msg)
+		// sentinel's). The translation keys on the TYPED refusal, never on the 400 shape, so no later
+		// 400-shaped engine refusal can reach the counter worded as an unknown tax reason. Any other
+		// refusal, the misconfigured-table shape, stays a server fault: the admin edge is what keeps
+		// that shape off the ring, CreateRate refusing to plant the row. Sits beside the sibling
+		// refusal translation out of the same engine.
+		var unk tax.UnknownReasonError
+		if errors.As(err, &unk) {
+			return pos.QuoteResult{}, fmt.Errorf("%w: %s", pos.ErrUnknownTaxReason, unk.Error())
 		}
 		return pos.QuoteResult{}, err
 	}

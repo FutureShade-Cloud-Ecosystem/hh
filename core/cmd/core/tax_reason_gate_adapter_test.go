@@ -30,21 +30,27 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// ungatedPlantNotes is the marker this leg's planted row carries: the fixture
+// only ever touches rows it marked itself, so a database lawfully carrying a
+// FNT_PRODUCT row keeps it.
+const ungatedPlantNotes = "ungated gate leg marker"
+
 // plantUngatedZeroRow plants the misconfigured shape the admin edge now
 // refuses to plant itself: FNT_PRODUCT (in the lawful universe, never gated)
-// at 0 bps. Fixture scoped: any stale row goes first, the leg's row goes in
-// the cleanup.
+// at 0 bps, marked as this leg's own. Fixture scoped by the marker: any stale
+// row this leg left behind goes first, and the cleanup removes only marked
+// rows.
 func plantUngatedZeroRow(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := pool.Exec(ctx, `DELETE FROM tax_rates WHERE jurisdiction = 'ON' AND reason_code = 'FNT_PRODUCT'`); err != nil {
-		t.Fatalf("pre-clean the ungated row: %v", err)
+	if _, err := pool.Exec(ctx, `DELETE FROM tax_rates WHERE jurisdiction = 'ON' AND reason_code = 'FNT_PRODUCT' AND notes = $1`, ungatedPlantNotes); err != nil {
+		t.Fatalf("pre-clean the leg's marked rows: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO tax_rates (jurisdiction, reason_code, rate_bps) VALUES ('ON', 'FNT_PRODUCT', 0)`); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO tax_rates (jurisdiction, reason_code, rate_bps, notes) VALUES ('ON', 'FNT_PRODUCT', 0, $1)`, ungatedPlantNotes); err != nil {
 		t.Fatalf("plant the ungated zero row: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := pool.Exec(ctx, `DELETE FROM tax_rates WHERE jurisdiction = 'ON' AND reason_code = 'FNT_PRODUCT'`); err != nil {
+		if _, err := pool.Exec(ctx, `DELETE FROM tax_rates WHERE jurisdiction = 'ON' AND reason_code = 'FNT_PRODUCT' AND notes = $1`, ungatedPlantNotes); err != nil {
 			t.Errorf("remove the planted ungated row: %v", err)
 		}
 	})

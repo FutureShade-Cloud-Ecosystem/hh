@@ -81,17 +81,45 @@ var LegalReasonCodes = map[string]bool{
 }
 
 // MisconfiguredRateError is the typed refusal for the ungated-below-standard shape: a reason that resolves
-// below the standard rate while being neither evidence gated nor the manual exception. The table is
-// misconfigured against the gate map; the error names the reason and the resolved rate, so the row to fix
-// is named in the engine's refusal and in the admin's 400 alike (CreateRate refuses to plant such a row
-// with these same words).
+// below the standard IN EFFECT for the date while being neither evidence gated nor the manual exception.
+// The comparison is against the standard row the dealer actually configured (the table exists to replace
+// the hard-coded default), never the constant; the error names the reason, the resolved rate and the
+// standard it fell short of, so the row to fix is named in the engine's refusal and in the admin's 400
+// alike (CreateRate refuses to plant such a row with these same words).
 type MisconfiguredRateError struct {
 	ReasonCode string
 	RateBps    int
+	StdBps     int
 }
 
 func (e MisconfiguredRateError) Error() string {
-	return fmt.Sprintf("tax reason %s resolves %d bps, below the %d bps standard, without an evidence gate and without the manual exception: the rate row is misconfigured against the gate map", e.ReasonCode, e.RateBps, stdRateBps)
+	return fmt.Sprintf("tax reason %s resolves %d bps, below the %d bps standard in effect, without an evidence gate and without the manual exception: the rate row is misconfigured against the gate map", boundReason(e.ReasonCode), e.RateBps, e.StdBps)
+}
+
+// UnknownReasonError is the typed refusal for a reason outside the lawful universe: the composition's
+// adapters key on THIS type (never on the 400 shape), so a later 400-shaped engine refusal can never
+// reach the counter worded as an unknown tax reason. The admin edge keeps its own 400-shaped refusal for
+// the tax handler's mapping; the echo of the offending reason is bounded, because the caller's string is
+// caller data and the refusal travels to a counter.
+type UnknownReasonError struct {
+	ReasonCode string
+}
+
+func (e UnknownReasonError) Error() string {
+	return fmt.Sprintf("unknown tax reason %s: not one of the lawful reason codes the counter can ring", boundReason(e.ReasonCode))
+}
+
+// reasonEchoBound bounds how much of a caller's reason code a refusal echoes back: the code is caller
+// data of unbounded length and the refusal's words travel to a counter.
+const reasonEchoBound = 48
+
+// boundReason echoes a reason code bounded, marking the cut.
+func boundReason(reason string) string {
+	r := []rune(reason)
+	if len(r) <= reasonEchoBound {
+		return fmt.Sprintf("%q", reason)
+	}
+	return fmt.Sprintf("%q...", string(r[:reasonEchoBound]))
 }
 
 // errNoDB marks a repository call made with no pool (scaffold/offline).
