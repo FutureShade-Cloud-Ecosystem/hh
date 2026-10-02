@@ -99,8 +99,8 @@ func ringCashSale(t *testing.T, pool *pgxpool.Pool) (pos.Sale, string) {
 		IdempotencyKey: key(), BranchID: branchID, TillSessionID: openTill(t, pool, branchID),
 		Tender: pos.TenderCash, SaleType: pos.SaleCollectNow,
 		Lines: []pos.LineInput{
-			{ProductID: productID, QtyEntered: 10, UOMEntered: "SF", CostCents: 1000},
-			{ProductID: productID, QtyEntered: 4, UOMEntered: "SF", CostCents: 1000},
+			{ProductID: productID, QtyEntered: 10, UOMEntered: "SF"},
+			{ProductID: productID, QtyEntered: 4, UOMEntered: "SF"},
 		},
 	})
 	if err != nil {
