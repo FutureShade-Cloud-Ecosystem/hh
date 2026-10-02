@@ -177,8 +177,14 @@ func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)
 	// healthz: the same live database ping the default build serves.
 	mux.Handle("GET /healthz", healthzHandler(graph.pool.Ping, graph.tops.bistrackSvc.HealthStatus()))
 
+	addr, err := listenAddr(getenv)
+	if err != nil {
+		return err
+	}
+	slog.Info("serve listen address", "addr", addr)
+
 	srv := &http.Server{
-		Addr:              listenAddr(getenv),
+		Addr:              addr,
 		Handler:           otelhttp.Wrap(nil)(auditWrap(mux, graph)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

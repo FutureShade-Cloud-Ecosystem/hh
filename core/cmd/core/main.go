@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -146,11 +147,12 @@ func loadServeConfig(getenv func(string) string) (serveConfig, error) {
 		appwriteURL:    getenv("CORE_APPWRITE_ENDPOINT"),
 		appwriteProj:   getenv("CORE_APPWRITE_PROJECT"),
 		appwriteKey:    getenv("CORE_APPWRITE_API_KEY"),
-		listenAddr:     getenv("CORE_LISTEN_ADDR"),
 	}
-	if cfg.listenAddr == "" {
-		cfg.listenAddr = ":8080"
+	addr, err := resolveListenAddr(getenv)
+	if err != nil {
+		return serveConfig{}, err
 	}
+	cfg.listenAddr = addr
 	for env, dst := range map[string]*time.Duration{
 		"CORE_JWKS_CACHE_TTL":     &cfg.jwksCacheTTL,
 		"CORE_JWKS_REFRESH_FLOOR": &cfg.refreshFloor,
@@ -421,8 +423,14 @@ func serve(getenv func(string) string) error {
 	// gate fails honestly when the database is down.
 	mux.Handle("GET /healthz", healthzHandler(graph.pool.Ping, graph.tops.bistrackSvc.HealthStatus()))
 
+	addr, err := listenAddr(getenv)
+	if err != nil {
+		return err
+	}
+	slog.Info("serve listen address", "addr", addr)
+
 	srv := &http.Server{
-		Addr: listenAddr(getenv),
+		Addr: addr,
 		// A-21 records every mutating /api request, outside the authz
 		// wrapping (the pin's Handler order: the audit middleware wraps the
 		// whole mux, the otel middleware wraps from outside it).
@@ -450,13 +458,34 @@ func serve(getenv func(string) string) error {
 	return nil
 }
 
-// listenAddr resolves the listen address the same way the serve config
-// does (the default :8080).
-func listenAddr(getenv func(string) string) string {
+// listenAddr resolves the address serve listens on, and is the one
+// resolver both serve builds call. registerRoutes has already refused a bad
+// PORT through loadServeConfig, so the error here is the same refusal seen
+// again, never a new failure.
+func listenAddr(getenv func(string) string) (string, error) {
+	return resolveListenAddr(getenv)
+}
+
+// resolveListenAddr is the listen address rule: CORE_LISTEN_ADDR wins when
+// set; otherwise PORT (the platform's injected port) gives ":<port>"; with
+// neither set the address is ":8080". A PORT that is set but not a whole
+// number from 1 to 65535 is refused by name, never ignored: the shared
+// config's intEnv falls back to a default on junk, and a service listening
+// somewhere the platform did not point is unreachable with no error. Empty
+// reads as unset, as for CORE_LISTEN_ADDR.
+func resolveListenAddr(getenv func(string) string) (string, error) {
 	if v := strings.TrimSpace(getenv("CORE_LISTEN_ADDR")); v != "" {
-		return v
+		return v, nil
 	}
-	return ":8080"
+	raw := strings.TrimSpace(getenv("PORT"))
+	if raw == "" {
+		return ":8080", nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > 65535 {
+		return "", fmt.Errorf("PORT must be a whole number from 1 to 65535, got %q", raw)
+	}
+	return ":" + strconv.Itoa(n), nil
 }
 
 // auditWrap applies the A-21 recording middleware (every mutating /api
