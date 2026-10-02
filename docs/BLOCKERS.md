@@ -1315,3 +1315,4 @@ in `demoseed_main.go`, so it is out of that follow-up's scope. Owner: the platfo
 principal.
 
 HH-199 closed the two-names trap recorded above: the one-shot roles (migrate, seed, demoseed) now read CORE_DATABASE_URL with DATABASE_URL as the fallback, refuse a set-and-differing pair before any connection, and print the target host and database name before acting; the localhost dev default is reachable only behind ALLOW_DEV_DEFAULT_DB=true.
+Closed by the refund-sum lane: the refund approval gate judged each return alone, so one sale could walk its whole value out of the drawer in approved-sized slices (the comprehensive review's finding, ruled per the principal); the gate now sums the sale's earlier committed returns with the new one against the configured amount and refuses the crossing return with the contract's 409, the returns of one sale serialized by a transaction-scoped advisory lock, on fix/refund-approval-sums-per-sale.
