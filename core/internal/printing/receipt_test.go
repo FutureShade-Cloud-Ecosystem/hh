@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 )
@@ -403,5 +406,52 @@ func TestReceipt_NoDepositOnASplit(t *testing.T) {
 	}
 	if rec.DepositCents != 3000 {
 		t.Fatalf("the plain deposit sale must still read its deposit, got %d", rec.DepositCents)
+	}
+}
+
+// THE REFUSAL PRECEDES THE RECORD (the review's P2-2): the handler parses the format BEFORE it
+// reads the sale, so a refused format burns no reprint ordinal and writes no print row and no
+// audit row for a paper nobody received. The marker is a control; an ordinal spent on a 400 is a
+// control lying. The pin drives the handler itself over the fakes: the refused request answers
+// 400 with zero jobs recorded, and the next fetch is the original.
+func TestReceiptHandler_RefusedFormatRecordsNoPrint(t *testing.T) {
+	svc, qs := receiptHarness(t)
+	h := NewHandler(svc, NewQueueService(qs), nil)
+
+	serve := func(rawQuery string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/api/v1/pos/sales/"+saleOrderID+"/receipt"+rawQuery, nil)
+		req.SetPathValue("id", saleOrderID)
+		req = req.WithContext(identity.ContextWithStaff(req.Context(), identity.StaffContext{
+			UserID: "u-1", RoleCode: "INSIDE_SALES", Tier: identity.TierFrontline,
+			Scope: identity.ScopeBranch, Status: identity.StatusActive, Branches: map[string]bool{trentonID: true},
+		}))
+		rr := httptest.NewRecorder()
+		h.receipt(rr, req, guards.StaffCaller{})
+		return rr
+	}
+
+	refused := serve("?format=poster")
+	if refused.Code != http.StatusBadRequest {
+		t.Fatalf("an unknown format must answer 400, got %d", refused.Code)
+	}
+	if len(qs.jobs) != 0 {
+		t.Fatalf("a refused format must record no print, got %d job(s)", len(qs.jobs))
+	}
+
+	served := serve("?format=page")
+	if served.Code != http.StatusOK {
+		t.Fatalf("the page format must serve, got %d", served.Code)
+	}
+	if len(qs.jobs) != 1 {
+		t.Fatalf("the served paper records its one print, got %d", len(qs.jobs))
+	}
+
+	again := serve("")
+	if again.Code != http.StatusOK {
+		t.Fatalf("the default roll must serve, got %d", again.Code)
+	}
+	html := again.Body.String()
+	if !strings.Contains(html, "REPRINT #1") {
+		t.Fatal("the next fetch is the reprint the one served print earned, no ordinal burned on the refusal")
 	}
 }

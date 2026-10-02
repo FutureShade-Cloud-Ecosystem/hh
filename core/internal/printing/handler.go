@@ -62,13 +62,19 @@ func parseReceiptFormat(raw string) (string, error) {
 }
 
 // receipt renders the print-CSS receipt document for a committed sale.
+//
+// THE REFUSAL PRECEDES THE RECORD (the review's P2-2): the format is parsed before the sale is
+// read, because the read is the print (the service enqueues the job, marks it PRINTED and writes
+// the audit row). Parsing second would answer a refused format with a 400 that had already burned
+// a reprint ordinal and recorded paper nobody received; the stub's mirror refuses in this order
+// already.
 func (h *Handler) receipt(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-	rec, err := h.receipts.Receipt(r.Context(), r.PathValue("id"))
+	format, err := parseReceiptFormat(r.URL.Query().Get("format"))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
 	}
-	format, err := parseReceiptFormat(r.URL.Query().Get("format"))
+	rec, err := h.receipts.Receipt(r.Context(), r.PathValue("id"))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
