@@ -32,6 +32,14 @@ export interface MintedSession {
    * display wording. Nothing gates a request on it.
    */
   roleCode: string;
+  /**
+   * The rest of the mint's IdentityUser block, validated field by field:
+   * role_name, tier and scope. The ported surface's session facts read these
+   * (the role's name for the chrome, the tier and scope for the
+   * platform-admin gate's shape), so the block is carried whole rather than
+   * re-asked for.
+   */
+  identity: { roleName: string; tier: number; scope: string };
 }
 
 /**
@@ -128,18 +136,32 @@ export class DemoAccount implements AccountSurface {
 }
 
 /** Field-by-field, never a cast: the staff login user block this app needs. */
-function userFromMint(raw: unknown): { user: AccountUser; roleCode: string } | null {
+function userFromMint(raw: unknown): {
+  user: AccountUser;
+  roleCode: string;
+  identity: { roleName: string; tier: number; scope: string };
+} | null {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
   const userId = record["user_id"];
   const email = record["email"];
   const name = record["display_name"];
   const roleCode = record["role_code"];
+  const roleName = record["role_name"];
+  const tier = record["tier"];
+  const scope = record["scope"];
   if (typeof userId !== "string" || userId === "") return null;
   if (typeof email !== "string") return null;
   if (typeof name !== "string") return null;
   if (typeof roleCode !== "string" || roleCode === "") return null;
-  return { user: { userId, email, name }, roleCode };
+  if (typeof roleName !== "string") return null;
+  if (typeof tier !== "number" || !Number.isInteger(tier)) return null;
+  if (typeof scope !== "string" || scope === "") return null;
+  return {
+    user: { userId, email, name },
+    roleCode,
+    identity: { roleName, tier, scope },
+  };
 }
 
 /**
@@ -179,5 +201,11 @@ function validateMint(response: DemoSessionResponse, now: number): MintedSession
   if (mintedUser === null) return null;
   const tokenExpiresAtMs = expiryFromToken(token, now);
   if (tokenExpiresAtMs === null) return null;
-  return { token, tokenExpiresAtMs, user: mintedUser.user, roleCode: mintedUser.roleCode };
+  return {
+    token,
+    tokenExpiresAtMs,
+    user: mintedUser.user,
+    roleCode: mintedUser.roleCode,
+    identity: mintedUser.identity,
+  };
 }

@@ -84,7 +84,7 @@
 <h2>Tenders and receipts</h2>
 <p data-claim="cash-change">Cash asks how much was tendered and shows the change due on the receipt.</p>
 <p data-claim="simulated">Cards are simulated. A card sale says <em>Simulated card: no card was charged</em>, and a card refund says that nothing reached a card. No card number is ever typed anywhere: there is no field for one.</p>
-<p data-claim="account-balance">An account sale bills the customer's account: the receipt names the invoice and shows the account's fresh balance.</p>
+<p data-claim="account-balance">An account sale bills the customer's account: the receipt names the invoice, and the account's card in the Customer step shows the fresh balance.</p>
 
 <h2>Refunds, and the manager walking over</h2>
 <p data-claim="return-within">The returns desk finds a sale by its number. A refund within the dealer's approval amount, 250.00, commits for the clerk, and a cash refund comes out of the drawer: the drawer's expected cash drops by it.</p>
@@ -99,7 +99,7 @@
 <p data-claim="parked-branch">A ticket can be parked and picked up again by anyone at the same counter, whatever role they signed in as. The parked list is this branch's own: a ticket parked at Kingston never shows at Trenton.</p>
 
 <h2>The drawer</h2>
-<p data-claim="drawer-shared">One shared drawer serves each branch's counter, and every tester rings into the same drawer, so its count will not balance. That is expected: closing and counting the drawer is not in this release.</p>
+<p data-claim="drawer-shared">One shared drawer serves each branch's counter, and every tester rings into the same drawer, so its count will not balance. That is expected: closing and counting the drawer is not in this release. On a fresh box the drawer starts closed: Sales presses Open Session, and the drawer opens with a 300.00 float, the reference till's own.</p>
 
 <h2>Known issues you will meet</h2>
 <ul>

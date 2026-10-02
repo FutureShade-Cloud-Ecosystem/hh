@@ -1315,3 +1315,79 @@ in `demoseed_main.go`, so it is out of that follow-up's scope. Owner: the platfo
 principal.
 
 HH-199 closed the two-names trap recorded above: the one-shot roles (migrate, seed, demoseed) now read CORE_DATABASE_URL with DATABASE_URL as the fallback, refuse a set-and-differing pair before any connection, and print the target host and database name before acting; the localhost dev default is reachable only behind ALLOW_DEV_DEFAULT_DB=true.
+### UI parity pass, port work item (branch till/ui-1-port): the template fence against the ported surface's idioms
+
+- **The positions gate over dependents fails on the ported tree, and no
+  in-lane fix exists that is still a port.** The design system's positions
+  gate (`web/packages/design-system/test/positions.test.mjs`, allow lists in
+  `test/_lib/positions.mjs`) scans every dependent package's sources, and the
+  Counter Till app is the dependents lock's one entry. The ported surface
+  (`web/apps/counter-till/src/ported/`) carries the reference's Lit idioms
+  whole: roughly eleven hundred template bindings in the `@event` and
+  `.property` forms (the gate's property and event allow table is deliberately
+  empty), roving `tabindex` bindings, and bound values on attributes outside
+  the gate's allow list (`title`, `value`, `style`, `id`, `placeholder`,
+  `name`, `max`, `label`, `alt`). The compliant idiom exists and the app's own
+  views use it (host delegation: listeners on the element, controls read off
+  `composedPath()`, static template branches); converting the ported surface
+  to it is a rewrite of the surface's whole template layer, which the port
+  brief forbids ("take the existing and improve: port the code, never
+  rebuild"). What the port could do without crossing that line is done and
+  committed: the raw-markup gate and the two-places rule pass (the receipt
+  window write became a host seam, the panel layout store became host seams,
+  `width`/`height` open from static per-size branches, `d`, `class` and `role`
+  bindings are quoted, the `html` name appears only in its two places), and
+  the tooltip bindings moved to the allowed `aria-label` namespace, which
+  loses the hover tooltip until the polish item gives the surface a tooltip
+  primitive. The decision this blocker asks for: whether the wiring and
+  polish items convert the ported templates to the host-delegation idiom, or
+  the design system's allow lists grow to admit the ported surface's forms
+  deliberately. Until then the design system suite's one dependents test
+  ("every html and svg template in any package that depends on this one sits
+  in an allowed position") fails, and the failure is the record, not a
+  surprise: every other suite in the loop is green on this branch.
+
+  The lead has ruled on it (the fix commit that follows the ruling): the
+  positions gate's allowance grows deliberately for the ported directory, per
+  the dependents lock's own mechanism ("this lock must name it deliberately").
+  The entry is the ported prefix named in the gate's lib
+  (`apps/counter-till/src/ported/`) with the binding positions enumerated by
+  name: the . and @ bindings the ported files use, their boolean bindings
+  besides ?disabled, the attributes they bind values onto, and a whole-value
+  src for the thumbnail route; style is the one deliberate admission past the
+  gate's own security refusal, and the raw-markup refusals keep biting inside
+  the prefix. Converting the ported templates to host delegation stays the
+  rewrite row 563 forbids, so the ported code keeps the reference's idiom;
+  every HH-written file outside the prefix is held exactly as before, a new
+  binding position inside the prefix is still refused until it is added on
+  purpose, and the gate's own narrowness guards pin those edges. The design
+  system's suite is green on the strength of that entry.
+
+## UI parity pass, wiring work item (branch till/ui-2-wire): the ported surface mounted, and what the acceptance item must know
+
+The ported terminal is the app's one surface after the entry cards (the sale
+suite's selectors moved onto the ported surface's own test ids; each move is
+named in the item's report). Recorded here so the acceptance item and the
+merge read it before running anything selector-shaped:
+
+- **W9's acceptance suite still holds the OLD surface's selectors**
+  (`test/acceptance/`: drawer-status, ticket-line, receipt, tender-refusal,
+  the aria labels of the old ticket). The old views came out of the tree with
+  the mount, so the acceptance item's selector moves are owed before
+  `npm run acceptance` can read this branch; the sale suite's own moves in
+  this branch are the worked example.
+- **The pop-out posture differs from the reference, on purpose.** This app's
+  committed sink gate refuses every browser storage and channel path, so the
+  reference's session handshake and its local-store draft handoff have no
+  home here. The pop-out opens the same app at a popout address naming the
+  flow card; the second window signs itself in through the same public demo
+  route and works the same branch drawer. The draft handoff is the server's
+  own park: park the ticket, resume it in the second window.
+- **The detached layout's pixel boxes persist in tab memory**, for the same
+  sink gate; the layout CHOICE rides the server's workspace row and follows
+  the person, which is the part HH's contract carries.
+- **`listProducts` in the ported pos-api rides the authed door**: the
+  reference fetched the catalogue list bare of credentials. The contract
+  marks `GET /api/v1/products` `x-role: public` (the catalogue is public
+  data), so no credential is needed; the ask rides `api()` anyway, which
+  sends the bearer harmlessly and keeps the counter's reads on one door.

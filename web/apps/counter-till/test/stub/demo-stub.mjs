@@ -25,6 +25,19 @@
 //   POST /api/v1/pos/parked/{id}/resume     -> PosParkedTicket
 //   GET  /api/v1/pos/returns/lookup         -> PosReturnLookup
 //   POST /api/v1/pos/returns                -> PosReturn (409 PosRefundApprovalRequired)
+//   GET  /api/v1/pos/policy                 -> PosPolicy
+//   GET  /api/v1/pos/workspace              -> PosWorkspacePrefs (PUT writes, DELETE resets)
+//   GET  /api/v1/pos/hotkeys                -> PosHotkeys (the shipped default: no keys)
+//   GET  /api/v1/pos/salespeople            -> { items: [{id, name}] }
+//   GET  /api/v1/pos/quick-picks            -> PosQuickPicks (the demo dealer's three-tile hot list)
+//   GET  /api/v1/products                   -> PosProduct[] (the browse grid's read)
+//   GET  /api/v1/products/scan              -> CounterHit | 404
+//   GET  /api/v1/pos/stock-glance           -> StockGlance
+//   GET  /api/v1/pos/addon-suggestions      -> { suggestions: [] }
+//   POST /api/v1/pricing/resolve            -> PricingBreakdown
+//   POST /api/v1/pos/signatures(/typed)     -> { signature_ref }
+//   POST /api/v1/pos/assess-relief          -> ReliefOutcome (the standard rate)
+//   GET  /api/v1/pos/sales/{id}/receipt     -> the rendered HTML document
 // The demo routes are public in the contract (security: []), so they check no
 // credential; the phrase gate in front of the real demo box is Caddy's (W5's
 // image), not the routes'. The staff routes are not public, and they answer
@@ -127,10 +140,14 @@ const ACCOUNT_BRANCH = { "demo-account-sales": TRENTON_ID, "demo-account-sales-m
 // carries no cost at Trenton on purpose: a glance line with no cost stays
 // byte-absent in the real answer, and the till shows the explicit placeholder
 // there, never a fake margin. sold_by is the unit the counter rings in.
+// The demo dealer's curated hot list: the quick-pick tiles, in tap order.
+const HOT_LIST_SKUS = ["HPV-60", "PSN-100", "WAT-STD"];
+
 const PRODUCTS = [
   {
     product_id: "p-holland-60",
     sku: "HPV-60",
+    category: "Pavers",
     name: "Holland Stone 60 mm",
     description: "The Holland paver, 60 mm, per square foot",
     aliases: ["holland paver", "holland stone"],
@@ -142,6 +159,7 @@ const PRODUCTS = [
   {
     product_id: "p-polymer-sand",
     sku: "PSN-100",
+    category: "Sand and base",
     name: "Polymeric Locking Sand",
     description: "Jointing sand for paver courses",
     aliases: ["polymer sand", "jointing sand"],
@@ -153,6 +171,7 @@ const PRODUCTS = [
   {
     product_id: "p-edge-8",
     sku: "EDG-08",
+    category: "Edging",
     name: "Edge Restraint 8 ft",
     description: "Flexible paver edge restraint, eight foot strip",
     aliases: ["edge restraint", " edging"],
@@ -164,6 +183,7 @@ const PRODUCTS = [
   {
     product_id: "p-wall-std",
     sku: "WAT-STD",
+    category: "Walls",
     name: "Retaining Wall Stone, Standard",
     description: "Standard wall unit, per piece",
     aliases: ["wall stone", "retaining wall"],
@@ -175,6 +195,7 @@ const PRODUCTS = [
   {
     product_id: "p-clear-stone",
     sku: "GRA-CL",
+    category: "Sand and base",
     name: "Clear Stone",
     description: "Clear gravel base, per cubic yard",
     aliases: ["gravel", "clear gravel"],
@@ -738,7 +759,14 @@ function returnsRefusal(caller, body, approver) {
     return { status: 409, body: { error: "the sale was not paid by card, so there is no capture to reverse" } };
   }
   if (body.refund_method === "CASH" && body.till_session_id !== DRAWER.session_id) {
-    return { status: 409, body: { error: "the drawer named is not the open one" } };
+    // The returns desk names the returns world's own drawer; the ported
+    // surface's return modal names the counter world's open drawer at the
+    // caller's branch. Either way the rule is the same: a cash refund comes
+    // out of an open drawer, named.
+    const counterDrawer = drawers.get(callerBranch);
+    if (body.till_session_id !== counterDrawer?.id) {
+      return { status: 409, body: { error: "the drawer named is not the open one" } };
+    }
   }
   const totalCents = returnTotal(sale, body.lines);
   if (totalCents > APPROVAL_AMOUNT_CENTS && !APPROVER_ROLES.includes(caller.account.role_code) && !approver.present) {
@@ -765,10 +793,38 @@ function returnTotal(sale, lines) {
   return total;
 }
 
+// A sale committed at the counter world, shaped for the returns desk's reads
+// (the desk's lookup lines carry the returnable quantities and the per-line
+// figures; the committed sale's own lines carry the same fields).
+function committedSaleAsReturnable(sale) {
+  return {
+    order_id: sale.order_id,
+    order_no: sale.order_no,
+    branch_id: sale.branch_id,
+    customer_id: sale.customer_id,
+    invoice_id: sale.invoice_id,
+    sale_tender: sale.tender,
+    card_refundable: sale.tender === "CARD",
+    // The desk reads the quantity as `qty_sold`; the counter's own line
+    // carries it as the quantity entered.
+    lines: sale.lines.map((line) => ({ ...line, qty_sold: line.qty_entered })),
+  };
+}
+
 function saleFromInput(body) {
   if (typeof body.order_no === "string" && SALES[body.order_no] !== undefined) return SALES[body.order_no];
   if (typeof body.order_id === "string") {
     return Object.values(SALES).find((row) => row.order_id === body.order_id);
+  }
+  // A sale the counter world just rung answers the desk too: the demo world's
+  // two halves are one shop floor for the people standing at it.
+  if (typeof body.order_no === "string") {
+    const committed = sales.get(body.order_no) ?? [...sales.values()].find((row) => row.order_no === body.order_no);
+    if (committed !== undefined) return committedSaleAsReturnable(committed);
+  }
+  if (typeof body.order_id === "string") {
+    const committed = [...sales.values()].find((row) => row.order_id === body.order_id);
+    if (committed !== undefined) return committedSaleAsReturnable(committed);
   }
   return undefined;
 }
@@ -808,7 +864,11 @@ function commitReturn(caller, body, approver) {
     clerk: caller.account.user_id,
     approver: approver.present && approver.account !== null ? approver.account.user_id : null,
   });
-  if (body.refund_method === "CASH") DRAWER.cash_out_cents += answer.total_cents;
+  // Only the returns world's own drawer counts its cash here: a refund out of
+  // the counter world's drawer moves that world, which keeps its own counters.
+  if (body.refund_method === "CASH" && body.till_session_id === DRAWER.session_id) {
+    DRAWER.cash_out_cents += answer.total_cents;
+  }
   return answer;
 }
 
@@ -834,7 +894,11 @@ function tillSessionDetail(row) {
   };
 }
 
-function counterHit(product) {
+// The demo world's standing stock per branch: one number, the same read the
+// catalogue list answers, so the counter's own branch shows what it holds.
+const ON_HAND_BY_BRANCH = { [TRENTON_ID]: 120, [KINGSTON_ID]: 80 };
+
+function counterHit(product, branchId) {
   return {
     product_id: product.product_id,
     sku: product.sku,
@@ -844,8 +908,92 @@ function counterHit(product) {
     sold_by: product.sold_by,
     has_image: false,
     match_reason: "NAME",
+    on_hand_branch: ON_HAND_BY_BRANCH[branchId],
+    on_hand_by_branch: ON_HAND_BY_BRANCH,
   };
 }
+
+// The catalogue list read the browse grid fills from: every row enriched with
+// the retail anchor and the per-branch on-hand (the list read's own contract:
+// absent-is-honest, and the demo world carries both), the featured flag, and
+// no image (the thumb placeholder is the honest tile).
+function productRow(product) {
+  return {
+    id: product.product_id,
+    sku: product.sku,
+    name: product.name,
+    color_family: "",
+    // The browse grid's category chips read the list row's application word;
+    // the demo catalogue groups its five products under four of them.
+    application: product.category,
+    sold_by: product.sold_by,
+    base_uom: product.base_uom,
+    is_active: true,
+    list_price_cents: product.list_cents,
+    list_price_uom: product.sold_by,
+    on_hand_by_branch: ON_HAND_BY_BRANCH,
+    is_featured: product.sku === "HPV-60",
+    has_image: false,
+  };
+}
+
+// The pricing resolve's answer: one line priced through the same table the
+// ring and the counter-price read answer from, in the contract's
+// PricingBreakdown shape (the reference's own field names, byte for byte).
+function resolveBreakdown(customerId, productId, branchId, qtyEntered, uomEntered) {
+  const resolved = resolveLine(customerId, productId, branchId);
+  const product = PRODUCTS.find((p) => p.product_id === productId);
+  if (resolved === null || product === undefined) {
+    return { status: 422, body: { error: `line could not be priced by the engine (${productId})` } };
+  }
+  const qty = typeof qtyEntered === "number" && qtyEntered > 0 ? qtyEntered : 1;
+  const unit = resolved.customer_cents;
+  const lineTotal = lineTotalCents(unit, qty);
+  const costPerUnit = product.branch_cost_cents[branchId];
+  const revenue = lineTotal;
+  const cost = costPerUnit === undefined ? 0 : lineTotalCents(costPerUnit, qty);
+  const source = resolved.basis === "ACCOUNT" ? "CUSTOMER_PRODUCT_RULE" : "LIST";
+  return {
+    status: 200,
+    body: {
+      original_cents: resolved.retail_cents,
+      final_cents: unit,
+      discount_bps:
+        resolved.saving_cents > 0 ? Math.round((resolved.saving_cents / resolved.retail_cents) * 10000) : 0,
+      source,
+      detail: resolved.basis === "ACCOUNT" ? "The account's own rule price" : "Retail",
+      price_uom: resolved.price_uom,
+      qty_base: qty,
+      line_total_cents: lineTotal,
+      margin_bps: costPerUnit === undefined || revenue <= 0 ? 0 : marginBpsOf(revenue, cost),
+      floor_bps: 0,
+      blocked: false,
+    },
+  };
+}
+
+// The workspace row: one per account (the caller's own ergonomics), dealer
+// defaults until a PUT writes the caller's own. The layout choice rides the
+// same row (the save body's counter_layout), so the pick survives a reload.
+const workspaceRows = new Map(); // user_id -> row
+
+function workspaceRowFor(userId) {
+  const row = workspaceRows.get(userId);
+  if (row !== undefined) return { ...row, source: "user" };
+  return {
+    split_pct: 55,
+    arrangement: "LOOKUP_LEFT",
+    lookup_collapsed: false,
+    sale_collapsed: false,
+    lookup_presentation: "CARDS",
+    margin_hidden: false,
+    counter_layout: "STEPPER",
+    source: "dealer",
+  };
+}
+
+// The counter's salesperson roster: the demo accounts, in flow-table order.
+const SALESPEOPLE = Object.values(USERS).map((account) => ({ id: account.user_id, name: account.display_name }));
 
 function customerSearchRow(customer) {
   return {
@@ -938,12 +1086,13 @@ const server = createServer(async (request, response) => {
     const orderNo = url.searchParams.get("order_no");
     const orderId = url.searchParams.get("order_id");
     const sale =
-      (typeof orderNo === "string" && orderNo !== "" && SALES[orderNo]) ||
-      (typeof orderId === "string" && orderId !== "" && Object.values(SALES).find((row) => row.order_id === orderId)) ||
+      (typeof orderNo === "string" && orderNo !== "" && saleFromInput({ order_no: orderNo })) ||
+      (typeof orderId === "string" && orderId !== "" && saleFromInput({ order_id: orderId })) ||
       undefined;
     if (sale === undefined) {
-      // A sale this caller's branch does not reach (another branch's sale
-      // among them: the real lookup is branch fenced) is an invisible one.
+      // The real lookup is branch fenced; this stub does NOT check the
+      // caller's branch (known gap, no test relies on it). Only a sale it
+      // does not know answers 404.
       respondJson(response, 404, { error: "no sale with that number answers at this counter" });
       return;
     }
@@ -1027,6 +1176,17 @@ const server = createServer(async (request, response) => {
       return;
     }
     respondJson(response, 201, commitReturn(caller, body, approver));
+    return;
+  }
+
+  // The catalogue thumbnail route is ungated by design (the contract's own
+  // words: an <img src> cannot carry an Authorization header), and a missing
+  // image is a plain 404 the UI turns into its placeholder glyph. The demo
+  // world carries no images.
+  const imageMatch = path.match(/^\/api\/v1\/products\/([^/]+)\/image$/);
+  if (request.method === "GET" && imageMatch !== null) {
+    response.writeHead(404, { "content-type": "text/plain" });
+    response.end("no image");
     return;
   }
 
@@ -1121,12 +1281,15 @@ const server = createServer(async (request, response) => {
       respondJson(response, 200, { items: [] });
       return;
     }
+    // The requested branch is the counter's own (the fence is the caller's
+    // grant); the stock is the contract's own per-branch answer.
+    const requestedBranch = url.searchParams.get("branch_id") ?? callerBranch;
     const items = PRODUCTS.filter(
       (p) =>
         p.sku.toLowerCase().startsWith(q) ||
         p.name.toLowerCase().includes(q) ||
         p.aliases.some((alias) => alias.includes(q)),
-    ).map(counterHit);
+    ).map((p) => counterHit(p, requestedBranch));
     respondJson(response, 200, { items });
     return;
   }
@@ -1336,6 +1499,9 @@ const server = createServer(async (request, response) => {
         subtotal += total;
         outLines.push({
           line_no: index + 1,
+          // The line's own id and its share of the sale's tax: the returns
+          // desk's reads and refund price the lines by them.
+          order_line_id: uuidFromCounter(30000 + sales.size * 10 + index),
           product_id: resolved.product.product_id,
           description: resolved.product.name,
           qty_entered: qty,
@@ -1343,6 +1509,7 @@ const server = createServer(async (request, response) => {
           unit_price_cents: resolved.customer_cents,
           price_uom: resolved.price_uom,
           line_total_cents: total,
+          tax_cents: Math.round((total * HST_RATE_BPS) / 10000),
         });
       }
       const tax = taxCents(subtotal);
@@ -1352,13 +1519,84 @@ const server = createServer(async (request, response) => {
       let changeDue;
       let paymentId;
       let gatewayRef;
-      if (tender === "CASH") {
-        cashTendered = parsed.cash_tendered_cents;
-        if (!Number.isInteger(cashTendered) || cashTendered < total) {
+      // The split settlement (the contract's tenders, 2 to 6 legs): the legs
+      // must sum exactly to the sale's total, every leg names a rail, a card
+      // leg carries the terminal's token, and an account leg needs an account
+      // (the credit gate runs below, on the whole sale). The single-tender
+      // arms below answer every other ring.
+      const legs = Array.isArray(parsed.tenders) ? parsed.tenders : null;
+      if (legs !== null) {
+        if (legs.length < 2 || legs.length > 6) {
+          respondJson(response, 400, { error: "a split settlement carries two to six legs" });
+          return;
+        }
+        if (customer.id === "" && legs.some((leg) => leg?.method === "ACCOUNT")) {
+          respondJson(response, 400, { error: "the walk-in has no account to bill" });
+          return;
+        }
+        if (legs.some((leg) => leg?.method === "ACCOUNT")) {
+          // The credit gate, before any money moves, on the whole sale: a
+          // hold is a hard stop, and so is a total that would carry the
+          // account past its limit.
+          if (customer.on_hold === true) {
+            const blocked = creditBlocked("COD_CONSTRAINT");
+            respondJson(response, blocked.status, blocked.body);
+            return;
+          }
+          if (customer.open_balance_cents + total > customer.credit_limit_cents) {
+            const blocked = creditBlocked("CREDIT_LIMIT_EXCEEDED");
+            respondJson(response, blocked.status, blocked.body);
+            return;
+          }
+          customer.open_balance_cents += total;
+        }
+        let sum = 0;
+        for (const [index, leg] of legs.entries()) {
+          const method = leg?.method;
+          const amount = leg?.amount_cents;
+          if (!["CASH", "CARD", "CHEQUE", "ACCOUNT"].includes(method)) {
+            respondJson(response, 400, { error: `leg ${index + 1} does not name a rail` });
+            return;
+          }
+          if (!Number.isInteger(amount) || amount <= 0) {
+            respondJson(response, 400, { error: `leg ${index + 1} carries no amount` });
+            return;
+          }
+          if (method === "CARD" && typeof leg.payment_token !== "string") {
+            respondJson(response, 400, { error: "a card leg carries the terminal's token, never a card number" });
+            return;
+          }
+          sum += amount;
+        }
+        if (sum !== total) {
+          respondJson(response, 400, { error: "the legs do not sum exactly to the sale's total" });
+          return;
+        }
+        legs.forEach((leg, index) => {
+          const legPaymentId = nextDocNo("pay");
+          if (index === 0) paymentId = legPaymentId;
+          tenders.push({
+            seq: index + 1,
+            method: leg.method,
+            amount_cents: leg.amount_cents,
+            payment_id: legPaymentId,
+            ...(leg.method === "CARD" ? { gateway_ref: `rp_sim_${docCounter + 1}` } : {}),
+          });
+        });
+      } else if (tender === "CASH") {
+        // The contract's own rule: cash_tendered_cents 0 (or absent) means not
+        // entered, and the sale rings for the exact total. A typed figure that
+        // falls short is refused; one that covers names the change due.
+        cashTendered = typeof parsed.cash_tendered_cents === "number" ? parsed.cash_tendered_cents : 0;
+        if (!Number.isInteger(cashTendered) || cashTendered < 0) {
+          respondJson(response, 400, { error: "the cash tendered is not an amount" });
+          return;
+        }
+        if (cashTendered > 0 && cashTendered < total) {
           respondJson(response, 400, { error: "the cash tendered does not cover the sale's total" });
           return;
         }
-        changeDue = cashTendered - total;
+        changeDue = cashTendered > 0 ? cashTendered - total : 0;
         paymentId = nextDocNo("pay");
         tenders.push({ seq: 1, method: "CASH", amount_cents: total, payment_id: paymentId });
       } else if (tender === "CARD") {
@@ -1395,12 +1633,24 @@ const server = createServer(async (request, response) => {
         return;
       }
       const orderId = uuidFromCounter(4000 + sales.size + 1);
+      // The sale's tender word: with a split settlement the contract says the
+      // body's tender field is ignored, so the row derives one word from the
+      // legs (the confirmation's own vocabulary) instead of storing ''.
+      const saleTender =
+        legs !== null
+          ? legs.some((leg) => leg.method === "ACCOUNT")
+            ? "ACCOUNT"
+            : legs.some((leg) => leg.method === "CARD")
+              ? "CARD"
+              : "CASH"
+          : tender;
       const sale = {
         order_id: orderId,
         order_no: nextDocNo("ORD"),
         invoice_id: uuidFromCounter(5000 + sales.size + 1),
         invoice_no: nextDocNo("INV"),
-        tender,
+        tender: saleTender,
+        split_tender: legs !== null,
         sale_type: typeof parsed.sale_type === "string" ? parsed.sale_type : "COLLECT_NOW",
         branch_id: branchId,
         customer_id: customer.id,
@@ -1442,6 +1692,7 @@ const server = createServer(async (request, response) => {
       sale_type: sale.sale_type,
       tender: sale.tender,
       status: sale.status,
+      split_tender: sale.split_tender === true,
       subtotal_cents: sale.subtotal_cents,
       tax_cents: sale.tax_cents,
       total_cents: sale.total_cents,
@@ -1496,7 +1747,7 @@ const server = createServer(async (request, response) => {
         notes: typeof parsed.notes === "string" ? parsed.notes : "",
         status: "PARKED",
         lines,
-        created_at: "2026-01-01T00:00:00Z",
+        created_at: new Date().toISOString(),
       };
       parked.set(id, ticket);
       respondJson(response, 201, ticket);
@@ -1528,6 +1779,248 @@ const server = createServer(async (request, response) => {
     }
     ticket.status = "RESUMED";
     respondJson(response, 200, ticket);
+    return;
+  }
+
+  // ── the ported surface's reads: the counter's configuration, roster and ──
+  // ── catalogue, each in the contract's shape, empty or defaulted where   ──
+  // ── the demo world simply does not curate.                              ──
+
+  if (request.method === "GET" && path === "/api/v1/pos/policy") {
+    const branchId = url.searchParams.get("branch_id") ?? "";
+    if (branchId !== callerBranch) {
+      respondJson(response, 403, { error: "that branch is not one your grant reaches" });
+      return;
+    }
+    respondJson(response, 200, {
+      branch_id: branchId,
+      cod_enabled: true,
+      notes: "The demo dealer's counter policy.",
+      line_presentation: "LINES",
+      quick_chips_enabled: true,
+      workspace_split_pct: 55,
+      workspace_arrangement: "LOOKUP_LEFT",
+      lookup_presentation: "CARDS",
+      margin_visibility: "ALL_STAFF",
+      quick_chip_set: ["Pavers", "Sand and base", "Walls"],
+    });
+    return;
+  }
+
+  if (request.method === "GET" && path === "/api/v1/pos/workspace") {
+    respondJson(response, 200, workspaceRowFor(caller.userId));
+    return;
+  }
+  if (request.method === "PUT" && path === "/api/v1/pos/workspace") {
+    readBody(request, (parsed) => {
+      const row = {
+        split_pct: typeof parsed.split_pct === "number" ? parsed.split_pct : 55,
+        arrangement: parsed.arrangement === "SALE_LEFT" ? "SALE_LEFT" : "LOOKUP_LEFT",
+        lookup_collapsed: parsed.lookup_collapsed === true,
+        sale_collapsed: parsed.sale_collapsed === true,
+        lookup_presentation: parsed.lookup_presentation === "ROWS" ? "ROWS" : "CARDS",
+        margin_hidden: parsed.margin_hidden === true,
+        counter_layout: parsed.counter_layout === "PANELS" ? "PANELS" : "STEPPER",
+      };
+      workspaceRows.set(caller.userId, row);
+      respondJson(response, 200, { ...row, source: "user" });
+    });
+    return;
+  }
+  if (request.method === "DELETE" && path === "/api/v1/pos/workspace") {
+    // Reset IS a delete of the per-user row (the dashboard ruling).
+    workspaceRows.delete(caller.userId);
+    respondJson(response, 204, {});
+    return;
+  }
+
+  if (request.method === "GET" && path === "/api/v1/pos/hotkeys") {
+    // The demo dealer curates nothing: the shipped default is the answer, and
+    // the client's fallback roster stands either way.
+    respondJson(response, 200, { source: "default", keys: [] });
+    return;
+  }
+
+  if (request.method === "GET" && path === "/api/v1/pos/salespeople") {
+    respondJson(response, 200, { items: SALESPEOPLE });
+    return;
+  }
+
+  if (request.method === "GET" && path === "/api/v1/pos/quick-picks") {
+    const branchId = url.searchParams.get("branch_id") ?? "";
+    if (branchId !== callerBranch) {
+      respondJson(response, 403, { error: "that branch is not one your grant reaches" });
+      return;
+    }
+    const customerId = url.searchParams.get("customer_id") ?? "";
+    const customer = customerFor(customerId);
+    // The demo dealer curates a short hot list (the same three SKUs the chip
+    // set names), grouped by the catalogue's category word and priced for the
+    // customer on the sale through the same engine the counter prices read
+    // answer from, so the filled quick-pick tiles and chips are exercised.
+    // The contract is unchanged: PosQuickPicks is this shape already.
+    const items = HOT_LIST_SKUS.map((sku) => {
+      const product = PRODUCTS.find((p) => p.sku === sku);
+      const resolved = product === undefined ? null : resolveLine(customerId, product.product_id, branchId);
+      if (product === undefined || resolved === null) return null;
+      return {
+        product_id: product.product_id,
+        sku: product.sku,
+        name: product.name,
+        uom: product.sold_by,
+        has_image: false,
+        category: product.category,
+        subcategory: product.category,
+        price: {
+          product_id: product.product_id,
+          price_uom: resolved.price_uom,
+          retail_cents: resolved.retail_cents,
+          customer_cents: resolved.customer_cents,
+          ...(resolved.saving_cents > 0 ? { saving_cents: resolved.saving_cents } : {}),
+          ...(resolved.basis !== undefined ? { basis: resolved.basis } : {}),
+        },
+      };
+    }).filter((row) => row !== null);
+    respondJson(response, 200, {
+      source: "dealer",
+      customer_type: customer === null ? "RETAIL" : customer.customer_type,
+      items,
+    });
+    return;
+  }
+
+  if (request.method === "GET" && path === "/api/v1/products") {
+    respondJson(response, 200, PRODUCTS.map(productRow));
+    return;
+  }
+
+  if (request.method === "GET" && path === "/api/v1/products/scan") {
+    const code = (url.searchParams.get("code") ?? "").trim().toLowerCase();
+    const product = PRODUCTS.find(
+      (p) => p.sku.toLowerCase() === code || p.aliases.some((alias) => alias.toLowerCase() === code),
+    );
+    if (product === undefined) {
+      respondJson(response, 404, { error: "no product answers that code" });
+      return;
+    }
+    const requestedBranch = url.searchParams.get("branch_id") ?? callerBranch;
+    respondJson(response, 200, counterHit(product, requestedBranch));
+    return;
+  }
+
+  if (request.method === "GET" && path === "/api/v1/pos/stock-glance") {
+    const productId = url.searchParams.get("product_id") ?? "";
+    const product = PRODUCTS.find((p) => p.product_id === productId);
+    if (product === undefined) {
+      respondJson(response, 404, { error: "no such product" });
+      return;
+    }
+    respondJson(response, 200, {
+      product_id: product.product_id,
+      on_hand: { [TRENTON_ID]: 120, [KINGSTON_ID]: 80 },
+      base_uom: product.base_uom,
+      sell_uom: product.sold_by,
+      sell_factor: 1,
+      weight_kg_per_base: product.base_uom === "yd" ? 1450 : undefined,
+    });
+    return;
+  }
+
+  if (request.method === "GET" && path === "/api/v1/pos/addon-suggestions") {
+    // The strip hides entirely on an empty answer: the demo world curates none.
+    respondJson(response, 200, { suggestions: [] });
+    return;
+  }
+
+  if (request.method === "POST" && path === "/api/v1/pricing/resolve") {
+    readBody(request, (parsed) => {
+      const branchId = typeof parsed.branch_id === "string" ? parsed.branch_id : "";
+      if (branchId !== callerBranch) {
+        respondJson(response, 403, { error: "that branch is not one your grant reaches" });
+        return;
+      }
+      const customerId = typeof parsed.customer_id === "string" ? parsed.customer_id : "";
+      const customer = customerFor(customerId);
+      if (customer === null) {
+        respondJson(response, 404, { error: "no such customer account" });
+        return;
+      }
+      const answer = resolveBreakdown(
+        customer.id,
+        typeof parsed.product_id === "string" ? parsed.product_id : "",
+        branchId,
+        parsed.qty_entered,
+        parsed.uom_entered,
+      );
+      respondJson(response, answer.status, answer.body);
+    });
+    return;
+  }
+
+  const signatureRoute =
+    request.method === "POST" &&
+    (path === "/api/v1/pos/signatures" || path === "/api/v1/pos/signatures/typed");
+  if (signatureRoute) {
+    readBody(request, () => {
+      respondJson(response, 201, { signature_ref: uuidFromCounter(60000 + docCounter) });
+    });
+    return;
+  }
+
+  if (request.method === "POST" && path === "/api/v1/pos/assess-relief") {
+    readBody(request, (parsed) => {
+      // The demo world carries no relief profile: the engine's answer is the
+      // standard rate on whatever subtotal the ask named, collected in full,
+      // no evidence required.
+      const subtotal = typeof parsed.subtotal_cents === "number" ? parsed.subtotal_cents : 0;
+      const fullHst = Math.round((subtotal * HST_RATE_BPS) / 10000);
+      respondJson(response, 200, {
+        purchaser_type: "OTHER",
+        masked_identifier: "",
+        outcome: "STANDARD",
+        reason_code: "NOT_ELIGIBLE",
+        rate_bps: HST_RATE_BPS,
+        full_hst_cents: fullHst,
+        on_credit_cents: 0,
+        net_collected_cents: fullHst,
+        automated: true,
+        requires_evidence: false,
+        evidence_satisfied: false,
+      });
+    });
+    return;
+  }
+
+  const receiptMatch = path.match(/^\/api\/v1\/pos\/sales\/([^/]+)\/receipt$/);
+  if (request.method === "GET" && receiptMatch !== null) {
+    const sale = sales.get(receiptMatch[1]) ?? null;
+    if (sale === null) {
+      respondJson(response, 404, { error: "no such sale" });
+      return;
+    }
+    if (sale.branch_id !== callerBranch) {
+      respondJson(response, 403, { error: "that sale is not one your grant reaches" });
+      return;
+    }
+    const customer = CUSTOMERS.find((c) => c.id === sale.customer_id);
+    const rows = sale.lines
+      .map(
+        (line) =>
+          `<tr><td>${line.qty_entered} ${line.uom_entered}</td><td>${line.description}</td><td>${(
+            line.line_total_cents / 100
+          ).toFixed(2)}</td></tr>`,
+      )
+      .join("");
+    const receiptDocument = `<!doctype html><html><head><title>${sale.order_no}</title></head><body>
+<h1>Hardscape House</h1>
+<p>Counter sale ${sale.order_no} · invoice ${sale.invoice_no}</p>
+${customer ? `<p>Sold to ${customer.name} (${customer.account_no})</p>` : ""}
+<table>${rows}</table>
+<p>Subtotal ${(sale.subtotal_cents / 100).toFixed(2)} · tax ${(sale.tax_cents / 100).toFixed(2)}</p>
+<p>Total ${(sale.total_cents / 100).toFixed(2)} · ${sale.tender}</p>
+</body></html>`;
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.end(receiptDocument);
     return;
   }
 
