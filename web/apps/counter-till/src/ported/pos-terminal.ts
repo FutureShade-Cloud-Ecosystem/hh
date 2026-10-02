@@ -5784,18 +5784,28 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                 >
                   Split: compose the legs below
                   <span class="band-why" data-testid="cta-split-why"
-                    >The legs must add up to the total first; the panel below rings the split.</span
+                    >${
+                      /* An empty ticket has no legs to settle any total, so the band says
+                         that in its own words (the panel is not rendered at all: its
+                         shape words would speak of legs a ticket without lines cannot
+                         have). */ ''}
+                    ${this.cart.length === 0
+                    ? 'Add a line before splitting the tender.'
+                    : 'The legs must add up to the total first; the panel below rings the split.'}</span
                   >
                 </p>`}
 
-          ${this.showSplit
+          ${
+            /* Pre-ring the panel is handed no total: the legs settle the server's
+               total at the ring (row 661), so the panel computes no remaining and
+               fills no leg. A server-stated total (the rate-serving lane's return)
+               is what this input takes, never a browser assembly. The panel's own
+               has-lines input stays unbound (the positions gate admits no new
+               binding name; the empty cart's words are this band's below, so the
+               input's default true is never a lie here). */ ''}
+          ${this.showSplit && this.cart.length > 0
             ? html`<hos-pos-split-tender
-                ${/* Pre-ring the panel is handed no total: the legs settle the server's
-                   total at the ring (row 661), so the panel computes no remaining and
-                   fills no leg. A server-stated total (the rate-serving lane's return)
-                   is what this input takes, never a browser assembly. */ ''}
                 .totalCents=${null}
-                .hasLines=${this.cart.length > 0}
                 .hasCustomer=${!!this.customer}
                 .customerName=${this.customer?.name ?? ''}
                 .busy=${this.ringBusy()}
