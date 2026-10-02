@@ -322,7 +322,10 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 	// letterhead) renders the first dealer's real trading name from the
 	// demo database. The updates are guarded on the value they would write,
 	// so a re-run touches nothing, the same discipline the planted renames
-	// follow.
+	// follow. The branch display words' replacement is recorded in
+	// docs/BLOCKERS.md as the granted exception to the Touches of the lane
+	// that wrote it (the review round's P2-1); the org_name row is this
+	// item's own extension of that convergence.
 	dealerNames, err := renameDemoDealer(ctx, tx)
 	report.DealerNamesReplaced = dealerNames
 	if err != nil {
