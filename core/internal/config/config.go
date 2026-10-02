@@ -141,6 +141,13 @@ func (c Config) DemoEnabled() bool {
 	return c.DemoMode && (c.Env == "dev" || c.Env == EnvDemo)
 }
 
+// DevDatabaseURLDefault is the single literal behind Load's DATABASE_URL
+// default. The one-shot roles' guarded default (cmd/core's
+// resolveOneshotDatabaseURL) reads the same constant, so the two
+// spellings cannot drift: a second, slightly different localhost default
+// is exactly the two-names defect class HH-199 closed.
+const DevDatabaseURLDefault = "postgres://hardscape:hardscape@localhost:5435/hardscapeos?sslmode=disable"
+
 func Load() Config {
 	env, envSet := os.LookupEnv("APP_ENV")
 	envUnset := !envSet || env == ""
@@ -157,7 +164,7 @@ func Load() Config {
 	return Config{
 		EnvUnset:        envUnset,
 		Port:            intEnv("PORT", 8080),
-		DatabaseURL:     strEnv("DATABASE_URL", "postgres://hardscape:hardscape@localhost:5435/hardscapeos?sslmode=disable"),
+		DatabaseURL:     strEnv("DATABASE_URL", DevDatabaseURLDefault),
 		NATSURL:         strEnv("NATS_URL", ""),
 		JWKSURL:         strEnv("JWKS_URL", ""),
 		Env:             env,
