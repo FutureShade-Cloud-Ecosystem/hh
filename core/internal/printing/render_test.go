@@ -143,16 +143,16 @@ func TestRenderReceiptHTML_SimulatedCardWord(t *testing.T) {
 // (core/internal/pos/model.go) renders as the plain words true to what that sale is, inside the
 // same muted line, and the raw constant never prints. The words carry no payment claim (an ACCOUNT
 // tender can ride any sale type, so "paid" is not the paper's to assert) and no time-relative word
-// (a reprint months later must read as true as the first copy).
+// (a reprint must read as true as the first copy).
 func TestRenderReceiptHTML_SaleTypeRendersPlainWords(t *testing.T) {
 	for _, tc := range []struct {
 		saleType string
 		words    string
 	}{
 		{pos.SaleCollectNow, "Collected at the counter"},
-		{pos.SaleCollectLater, "Held for later collection"},
+		{pos.SaleCollectLater, "For later collection"},
 		{pos.SaleDelivered, "Delivery"},
-		{pos.SaleCOD, "Invoice issued, held until paid"},
+		{pos.SaleCOD, "Invoice issued, payment before fulfilment"},
 	} {
 		html, err := RenderReceiptHTML(Receipt{
 			OrderNo: "#SO-1", SaleType: tc.saleType,
@@ -170,7 +170,7 @@ func TestRenderReceiptHTML_SaleTypeRendersPlainWords(t *testing.T) {
 	}
 }
 
-// An unknown sale type renders exactly as it does today: the raw value, in the muted line. Nothing
+// An unknown sale type renders the raw value itself, in the muted line. Nothing
 // is hidden and nothing is guessed, a value the mapping does not know is the customer's own data on
 // the paper, not a blank and not invented words.
 func TestRenderReceiptHTML_UnknownSaleTypeRendersRaw(t *testing.T) {
@@ -198,7 +198,7 @@ func TestRenderReceiptHTML_EmptySaleTypeRendersNoLine(t *testing.T) {
 	}
 	for _, word := range []string{
 		`<div class="muted"></div>`,
-		"Collected at the counter", "Held for later collection", "Delivery", "Invoice issued, held until paid",
+		"Collected at the counter", "For later collection", "Delivery", "Invoice issued, payment before fulfilment",
 	} {
 		if strings.Contains(html, word) {
 			t.Fatalf("a receipt with no sale type must render no sale type line at all, found %q", word)

@@ -66,15 +66,17 @@ func saleTypeWords(saleType string) string {
 		// counter pickup: stock issues and the order fulfils at ring, the goods leave with the customer
 		return "Collected at the counter"
 	case pos.SaleCollectLater:
-		// will-call: no stock moves at ring, the goods stay for a later pickup
-		return "Held for later collection"
+		// will-call: the mode, named, never the goods' current state (a will-call pickup
+		// confirmation fulfils the order later, and the sale type on a reprint never changes)
+		return "For later collection"
 	case pos.SaleDelivered:
 		// the fulfilment mode, named: never a claim the delivery already happened
 		return "Delivery"
 	case pos.SaleCOD:
-		// a payment posture, not a fulfilment: the invoice is FINALIZED at ring (its number is on
-		// this same paper) and fulfilment is locked until paid, so both halves are facts of the ring
-		return "Invoice issued, held until paid"
+		// a payment posture, not a fulfilment, stated as the sale's standing terms: the invoice
+		// is FINALIZED at ring (its number is on this same paper) and fulfilment waits for
+		// payment, whatever the balance's later state
+		return "Invoice issued, payment before fulfilment"
 	default:
 		return saleType
 	}
