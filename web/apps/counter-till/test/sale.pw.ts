@@ -731,6 +731,21 @@ test("a resume over lines on the counter asks first: declining leaves everything
   await expect(page.getByTestId("pos-line-row").filter({ hasText: "Polymeric Locking Sand" })).toHaveCount(0);
 });
 
+test("the split state is a status band, not a disabled button", async ({ page }) => {
+  await signIn(page, "Sales");
+  await ensureSession(page);
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Split" }).click();
+  const band = page.getByTestId("cta-split-state");
+  await expect(band).toBeVisible();
+  await expect(band).toContainText("Split: compose the legs below");
+  // A statement, not a control: no button, no disabled state to fake.
+  expect(await band.evaluate((el) => el.tagName)).not.toBe("BUTTON");
+  await expect(band).toHaveAttribute("role", "status");
+  await expect(page.getByRole("button", { name: /Split: compose/ })).toHaveCount(0);
+});
+
 test("a split with a card leg carries the simulated word on the confirmation and on the receipt", async ({
   page,
 }) => {

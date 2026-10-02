@@ -1695,13 +1695,23 @@ export class HosPosTerminal extends LitElement {
       cursor: not-allowed;
     }
     /* UI-3 (visual GAP 7): the split state is a band, not a control: the reference's pale yellow
-       in both themes, with the theme-stable ink. It is a statement, so it is not greyed. */
-    .complete-cta.splitstate:disabled {
+       in both themes, with the theme-stable ink. It is a statement, so it is not greyed, and it is
+       not a button either: a disabled button must look disabled (AGENTS.md). */
+    .split-band {
+      display: block;
+      box-sizing: border-box;
+      width: 100%;
+      margin: 12px 0 0;
       background: color-mix(in srgb, var(--hos-stone-amber) 42%, white);
-      border-color: color-mix(in srgb, var(--hos-stone-amber) 42%, white);
+      border: 1px solid color-mix(in srgb, var(--hos-stone-amber) 42%, white);
+      border-radius: var(--hos-radius-control);
       color: var(--hos-stone-amber-ink);
-      opacity: 1;
-      cursor: default;
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 700;
+      line-height: normal;
+      padding: 14px 10px;
+      text-align: center;
     }
     /* UNION-TRAIN11 · the counter's pay key worn as a keycap on the CTA (see payKeycap()).
        Gold-on-gold: the chip borrows the CTA's own ink (D-078: the ONLY ink gold may carry), so
@@ -5501,14 +5511,14 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                       : nothing}
                   </button>
                   `
-              : html`<button
-                  class="complete-cta splitstate"
+              : html`<p
+                  class="split-band"
+                  role="status"
                   data-testid="cta-split-state"
-                  disabled
                   title="A split is composed before it is committed: the legs must add up first, and the panel below rings it."
                 >
                   Split: compose the legs below
-                </button>`}
+                </p>`}
 
           ${this.showSplit
             ? html`<hos-pos-split-tender
