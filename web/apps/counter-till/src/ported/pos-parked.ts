@@ -246,7 +246,7 @@ export class HosPosParked extends LitElement {
               // price). A cold snapshot degrades to the account/walk-in label with no total.
               const snap = this.info.get(t.id);
               const who = snap?.customer?.name || (t.customer_id ? 'Account customer' : 'Walk-in');
-              const total = snap ? money(snap.totalCents) : '';
+              const total = snap && snap.totalCents !== null ? money(snap.totalCents) : snap ? '(not priced)' : '';
               return html`<div class="ticket">
                 <div>
                   <div class="tno">${t.ticket_no}</div>

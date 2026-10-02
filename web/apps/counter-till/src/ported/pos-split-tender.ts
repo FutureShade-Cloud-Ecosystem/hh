@@ -38,6 +38,11 @@ import {
 export class HosPosSplitTender extends LitElement {
   /** The sale total the legs must settle, in cents. */
   @property({ type: Number, attribute: 'total-cents' }) totalCents = 0;
+  /**
+   * False while any line on the ticket is price pending: the total above is then a sum that
+   * leaves a line out (or carries a stale one), so no remaining amount is stated.
+   */
+  @property({ attribute: false }) priced = true;
  /** Whether an account is selected: an ACCOUNT leg needs one. */
   @property({ type: Boolean, attribute: 'has-customer' }) hasCustomer = false;
   /** Name of the selected account, for the on-screen confirmation of what gets charged. */
@@ -234,7 +239,7 @@ export class HosPosSplitTender extends LitElement {
 
   render() {
     const state = evaluateSplit(this.draft(), this.totalCents, this.hasCustomer);
-    const remainingClass = state.remainingCents === 0 ? 'settled' : state.remainingCents > 0 ? 'owing' : 'over';
+    const remainingClass = !this.priced ? 'pending' : state.remainingCents === 0 ? 'settled' : state.remainingCents > 0 ? 'owing' : 'over';
     return html`
       <div class="panel" data-testid="pos-split-panel">
         <h3>Split tender</h3>
@@ -298,7 +303,9 @@ export class HosPosSplitTender extends LitElement {
         <div class="foot">
           <div>
             <div class="remaining ${remainingClass}" data-testid="split-remaining">
-              ${state.remainingCents === 0
+              ${!this.priced
+                ? 'Remaining: (not priced)'
+                : state.remainingCents === 0
                 ? 'Settled exactly'
                 : state.remainingCents > 0
                   ? `${fmtCents(state.remainingCents)} remaining`

@@ -174,6 +174,8 @@ test("a walk-in cash sale of three lines rings, and the sale read equals every f
   await page.getByLabel("Cash tendered in dollars: optional; leave empty to ring the exact total").fill("80.00");
   await expect(page.getByTestId("cash-change-preview")).toContainText("Change due");
   await expect(page.getByTestId("cash-change-preview")).toContainText("CA$7.68");
+  // The figure is computed from the estimated total, so it carries the estimate mark.
+  await expect(page.getByTestId("cash-change-preview")).toContainText("(est.)");
 
   const ringPost = page.waitForResponse(
     (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
@@ -601,7 +603,21 @@ test("a line the account's price cannot answer reads price pending through ordin
   await page.getByTestId("cash-tendered").fill("20");
   await expect(page.getByTestId("cash-change-preview")).toContainText("(not priced)");
   await expect(page.getByTestId("cash-change-preview")).not.toContainText("CA$");
+  // Below the stale total: the "Less than the total" decision is not made either.
+  await page.getByTestId("cash-tendered").fill("1");
+  await expect(page.getByTestId("cash-change-preview")).toContainText("(not priced)");
+  await expect(page.getByTestId("cash-change-preview")).not.toContainText("Less than the total");
   await page.getByTestId("cash-tendered").fill("");
+  // The split panel's remaining amount follows the marker too: a remaining against a total that
+  // leaves the pending line out would be the same confident wrong figure.
+  await page.getByRole("button", { name: "Split" }).click();
+  const splitPanel = page.getByTestId("pos-split-panel");
+  await splitPanel.getByTestId("split-amount-0").fill("5.00");
+  await expect(page.getByTestId("split-remaining")).toContainText("(not priced)");
+  await expect(page.getByTestId("split-remaining")).not.toContainText("CA$");
+  await expect(page.getByTestId("split-remaining")).not.toContainText("Settled");
+  await splitPanel.getByRole("button", { name: "Cancel" }).click();
+  await expect(splitPanel).toHaveCount(0);
   await openStep(page, "items");
 
   // The recovery: the account is picked, and the re-price answers at the
@@ -1015,4 +1031,26 @@ test("with COD allowed (the stub's default), the COD tile is selectable", async 
   const tile = page.getByRole("button", { name: /^COD/ });
   await expect(tile).toBeEnabled();
   await expect(tile).not.toContainText("off");
+});
+
+test("a ticket parked with a line price pending lists no total", async ({ page }) => {
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    const body = route.request().postDataJSON() as { product_id?: string };
+    if (body.product_id === "p-polymer-sand") {
+      await route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: "line could not be priced by the engine" }) });
+      return;
+    }
+    await route.fallback();
+  });
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
+  await expect(page.getByTestId("pos-line-row").locator(".lprice")).toHaveText("price pending");
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  const ticket = parkedDialog.locator(".ticket").first();
+  await expect(ticket).toContainText("(not priced)");
+  await expect(ticket).not.toContainText("CA$");
 });

@@ -3753,7 +3753,7 @@ export class HosPosTerminal extends LitElement {
       });
       // DIB-246/247: snapshot who + how much under the server ticket id BEFORE newSale() clears
       // them, so resume can restore this customer and the parked list can show name + total.
-      this.parkedInfo.set(t.id, { customer: this.customer, totalCents: this.total() });
+      this.parkedInfo.set(t.id, { customer: this.customer, totalCents: this.hasPricedLine() ? this.total() : null });
       this.newSale();
       this.setUtil(`Parked as ${t.ticket_no}: resume re-prices live.`);
       void this.refreshParkedCount();
@@ -5529,6 +5529,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
           ${this.showSplit
             ? html`<hos-pos-split-tender
                 .totalCents=${this.total()}
+                .priced=${this.hasPricedLine()}
                 .hasCustomer=${!!this.customer}
                 .customerName=${this.customer?.name ?? ''}
                 .busy=${this.ringBusy()}
@@ -6025,9 +6026,11 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
       </div>
       ${this.cashTenderedDollars.trim() !== ''
         ? html`<div class="cashhint" data-testid="cash-change-preview">
-            ${plan.sendable
-              ? html`Change due <span class="num">${this.moneyOrMarker(plan.changeDueCents)}</span>`
-              : 'Less than the total: the sale rings for the exact total; add more or clear the box.'}
+            ${!this.hasPricedLine()
+              ? html`Change due <span class="num">(not priced)</span>`
+              : plan.sendable
+                ? html`Change due <span class="num">${money(plan.changeDueCents)} (est.)</span>`
+                : 'Less than the total: the sale rings for the exact total; add more or clear the box.'}
           </div>`
         : nothing}`;
   }
