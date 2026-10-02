@@ -337,10 +337,12 @@ func (s *Service) Charge(ctx context.Context, in ChargeInput) (ChargeReceipt, er
 // reachable from it; on a one-connection pool the flush's acquire waits
 // for the ring to release the only connection (the write lands after the
 // ring ends, commit or rollback alike), while on a wider pool the flush
-// may run on a second connection while the ring is still closing. Until
-// the flush lands, the read side overlays the pending rotation
-// (freshestCreds), so no charge presents a key the processor has already
-// exchanged.
+// may run on a second connection while the ring is still closing. While
+// an entry sits pending, the read side overlays it (freshestCreds), so a
+// charge does not present the exchanged key from the stale row. One
+// window remains by design: a charge that reads the row in the instant
+// the flush lands and clears the entry presents the old key once and
+// heals on the next sale (recorded, the round 3 review's P3 2).
 func (s *Service) ChargeTx(ctx context.Context, tx pgx.Tx, in ChargeInput) (ChargeReceipt, error) {
 	cfg, creds, err := s.cfg.activeConfigTx(ctx, tx)
 	if err != nil {
@@ -367,14 +369,21 @@ func (s *Service) holdRotation(processor string, creds map[string]string) {
 // rail would refuse the refresh (the round 2 review's probe: the sale straight after a rotating
 // declined sale failed once on a multi-connection pool). The ledger's snapshot is the complete fresh
 // set the dispatch path held, so it replaces the row's answer outright; a nil ledger or a different
-// processor's entry leaves the row's answer alone.
+// processor's entry leaves the row's answer alone. The answer is a COPY taken under the lock: the
+// dispatch path writes its call-scoped __idem into the credentials it is handed and the live client
+// rotates keys in place, so the ledger's own map must stay immutable after holdRotation (the round 3
+// review's P1: the aliased map aborted the process under overlapping charges).
 func (s *Service) freshestCreds(processor string, creds map[string]string) map[string]string {
 	s.rotMu.Lock()
 	defer s.rotMu.Unlock()
 	if s.rotPend == nil || s.rotPend.processor != processor {
 		return creds
 	}
-	return s.rotPend.creds
+	cp := make(map[string]string, len(s.rotPend.creds))
+	for k, v := range s.rotPend.creds {
+		cp[k] = v
+	}
+	return cp
 }
 
 // flushRotation writes whatever the ledger holds through the pool, best-effort, and KEEPS the entry
@@ -494,11 +503,21 @@ func (s *Service) RefundTx(ctx context.Context, tx pgx.Tx, in RefundInput) (Refu
 // resealOnPool is the write-back carrier for the pool-shaped Charge and
 // Refund, the behavior those entry points have always had. Its error surfaces to the caller
 // (the shared bodies ignore it, exactly as the write-back always was: best-effort); the flusher
-// is the one caller that reads it, to keep the ledger entry alive for a retry.
+// is the one caller that reads it, to keep the ledger entry alive for a retry. A successful write
+// clears any pending entry for the same processor: the row now carries this set (or something
+// newer), and a sitting entry must not shadow the row the next read sees (the round 3 review's
+// note: with the overlay handing copies, a stale entry would outlive the pool path's own landing).
 func (s *Service) resealOnPool(ctx context.Context, processor string, creds map[string]string) error {
 	if rs, ok := s.cfg.(credsReencryptor); ok {
-		return rs.reencryptActiveCreds(ctx, processor, creds)
+		if err := rs.reencryptActiveCreds(ctx, processor, creds); err != nil {
+			return err
+		}
 	}
+	s.rotMu.Lock()
+	if s.rotPend != nil && s.rotPend.processor == processor {
+		s.rotPend = nil
+	}
+	s.rotMu.Unlock()
 	return nil
 }
 

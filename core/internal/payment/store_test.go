@@ -81,8 +81,11 @@ func (f *fakeResolver) reencryptActiveCredsTx(_ context.Context, _ pgx.Tx, proce
 	return nil
 }
 
-// spyProcessor records what Service.Charge dispatched and can simulate an api_key rotation.
+// spyProcessor records what Service.Charge dispatched and can simulate an api_key rotation. Its
+// counters and recorded facts sit behind a mutex: the overlapping-charges leg shares one spy across
+// goroutines (the HH-181 fakePolicy lesson: a shared test helper must be race-clean).
 type spyProcessor struct {
+	mu        sync.Mutex
 	res       ChargeResult
 	err       error
 	calls     int
@@ -95,6 +98,8 @@ type spyProcessor struct {
 
 func (p *spyProcessor) Name() string { return "spy" }
 func (p *spyProcessor) Charge(_ context.Context, creds map[string]string, mid string, amount int64, token string) (ChargeResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.calls++
 	p.gotMID, p.gotAmount, p.gotToken = mid, amount, token
 	p.gotKey = creds["api_key"]
@@ -606,5 +611,76 @@ func TestCredentialKeys_StripsInjected(t *testing.T) {
 	}
 	if got["api_key"] != "k" || got["refresh_token"] != "rt" {
 		t.Fatalf("real credentials must be preserved, got %+v", got)
+	}
+}
+
+// The ledger map is immutable once held (the round 3 review's P1): the overlay hands every charge a
+// COPY, because the dispatch path writes its call-scoped __idem into the credentials it is handed and
+// the live client rotates keys in place, so the ledger's own map must never be the map a charge (or
+// the flusher) walks. This leg drives the exact abort shape the review reproduced: a pending entry,
+// the flusher held, then overlapping charges and a flush against it at once. Under the race detector
+// the aliased map aborts the run; with the copy, the run completes and the ledger's snapshot comes out
+// clean of every charge's idempotency key.
+func TestService_OverlappingChargesAgainstAPendingEntry(t *testing.T) {
+	fr := &fakeResolver{
+		cfg:   activeCfg{Processor: "run_payments", MerchantID: "MID-1"},
+		creds: map[string]string{"api_key": "expired"},
+	}
+	rotate := &spyProcessor{res: ChargeResult{ProcessorRef: "rp_rot", Status: "captured"}, mutateKey: "fresh"}
+	svc := &Service{cfg: fr, proc: rotate}
+	svc.startFlusher = func() {} // hold the flusher: the entry sits for the whole leg
+	if _, err := svc.ChargeTx(context.Background(), nil, validInput()); err != nil {
+		t.Fatalf("ChargeTx (rotating): %v", err)
+	}
+	// The concurrent phase dispatches through a NON-rotating spy, so the held entry is never
+	// re-held: every __idem write below happens on the COPY the overlay handed the charge, and the
+	// ledger's snapshot must come out exactly as it was held (its own rotation's __idem from the
+	// setup charge, never a concurrent charge's).
+	svc.proc = &spyProcessor{res: ChargeResult{ProcessorRef: "rp_see", Status: "captured"}}
+
+	// Script the concurrent flushes to fail, so the entry provably sits pending through the whole
+	// leg and the snapshot assertions at the end really inspect it (a successful flush would clear
+	// it, which is its own leg).
+	fr.mu.Lock()
+	fr.failReencrypt = 1000
+	fr.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 7; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				in := validInput()
+				in.IdempotencyKey = "idem-concurrent"
+				if _, err := svc.ChargeTx(context.Background(), nil, in); err != nil {
+					t.Errorf("overlapping charge %d: %v", i, err)
+					return
+				}
+			}
+		}(i)
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for j := 0; j < 20; j++ {
+			svc.flushRotation(context.Background())
+		}
+	}()
+	wg.Wait()
+
+	// The ledger's snapshot must carry no trace of the charges' call-scoped key: with the aliased
+	// map, __idem landed in the snapshot and one charge could present another's idempotency key.
+	svc.rotMu.Lock()
+	pend := svc.rotPend
+	svc.rotMu.Unlock()
+	if pend == nil {
+		t.Fatal("the pending entry vanished with the flusher held and every write scripted to fail: nothing should clear it")
+	}
+	if got := pend.creds["__idem"]; got == "idem-concurrent" {
+		t.Fatal("a concurrent charge's call-scoped idempotency key landed in the ledger's snapshot: the overlay handed out the ledger's own map")
+	}
+	if pend.creds["api_key"] != "fresh" {
+		t.Fatalf("the ledger's snapshot was mutated in place: api_key = %q, want the held rotation's", pend.creds["api_key"])
 	}
 }
