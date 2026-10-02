@@ -198,8 +198,12 @@ SELECT id, kind, template_code, params, branch_id::text, row_count, totals, html
 	return run, nil
 }
 
-// ListRuns reads the most recent artefacts (HTML omitted, a list of documents, not the documents).
-func (r *Repository) ListRuns(ctx context.Context, limit int) ([]Run, error) {
+// ListRuns reads the most recent artefacts (HTML omitted, a list of documents, not the documents),
+// fenced to the caller's branch reach with ($2::uuid[] IS NULL OR r.branch_id = ANY($2::uuid[])).
+// A NULL parameter is the global caller's whole list; an empty array answers no rows; and a
+// consolidated artefact (branch NULL) never matches ANY(), the same global-only ruling the single
+// read makes.
+func (r *Repository) ListRuns(ctx context.Context, limit int, reach branchReach) ([]Run, error) {
 	if r.pool == nil {
 		return nil, ErrNoDatabase
 	}
@@ -211,8 +215,9 @@ SELECT r.id, r.kind, r.template_code, COALESCE(t.name, ''), r.params, r.branch_i
        r.row_count, r.totals, r.print_job_id::text, r.run_by::text, r.created_at
   FROM report_runs r
   LEFT JOIN report_templates t ON t.code = r.template_code
+ WHERE ($2::uuid[] IS NULL OR r.branch_id = ANY($2::uuid[]))
  ORDER BY r.created_at DESC
- LIMIT $1`, limit)
+ LIMIT $1`, limit, reach.filter())
 	if err != nil {
 		return nil, fmt.Errorf("list report runs: %w", err)
 	}

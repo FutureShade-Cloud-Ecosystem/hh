@@ -102,6 +102,60 @@ func (s *Service) authorizeBranch(ctx context.Context, branchID string) (identit
 	return c, nil
 }
 
+// branchReach is a caller's branch authority projected onto a LIST read: every branch for a global
+// caller, the granted branches for a scoped one. reporting's own copy of the shape purchasing,
+// inventory and payments each keep, by the codebase's zero-trust convention: a module must not be able
+// to accept another module's authority object by accident.
+type branchReach struct {
+	global    bool
+	branchIDs []string
+}
+
+// filter renders the reach for the ($n::uuid[] IS NULL OR branch_id = ANY($n::uuid[])) predicate a
+// fenced list read uses. nil means SQL NULL, the predicate short-circuits true, and a global caller
+// keeps the whole list. A scoped caller with no grants binds an EMPTY array, and = ANY('{}') is false
+// for every row, so the fence fails closed rather than open.
+func (r branchReach) filter() any {
+	if r.global {
+		return nil
+	}
+	return r.branchIDs
+}
+
+// reachOf projects the caller onto a list read. Unlike authorizeBranch it refuses nothing: a read has
+// a truthful answer for every caller, which is the rows inside their reach, and an empty list is that
+// answer for a scoped caller with no grants.
+func (s *Service) reachOf(ctx context.Context) (branchReach, error) {
+	c, err := s.caller(ctx)
+	if err != nil {
+		return branchReach{}, err
+	}
+	if c.Scope == identity.ScopeGlobal {
+		return branchReach{global: true}, nil
+	}
+	ids := make([]string, 0, len(c.Branches))
+	for id, granted := range c.Branches {
+		if granted {
+			ids = append(ids, id)
+		}
+	}
+	// Sorted so the SQL parameter, and therefore the query plan, does not depend on Go's randomised
+	// map iteration order.
+	sort.Strings(ids)
+	return branchReach{branchIDs: ids}, nil
+}
+
+// canReadBranch answers whether this caller may read ONE artefact scoped to branchID. An empty branch
+// is a consolidated artefact, the whole company's numbers, and answers to a GLOBAL caller alone, the
+// same ruling authorizeBranch makes for a run. A caller outside the branch gets NOT FOUND rather than
+// forbidden: a 403 confirms the artefact exists, and whether it exists is branch information too.
+func canReadBranch(c identity.StaffContext, branchID string) bool {
+	if branchID == "" {
+		return c.Scope == identity.ScopeGlobal
+	}
+	return c.CanAccessBranch(branchID)
+}
+
 // -- catalogue ----------------------------------------------------------------
 
 // Categories returns the runnable catalogue, grouped, in nav order. Any authenticated staff member may
@@ -247,20 +301,34 @@ func (s *Service) resolvePrintBranch(c identity.StaffContext, paramBranch, expli
 	return ""
 }
 
-// Runs lists recent artefacts; Run reads one.
+// Runs lists recent artefacts, held to the caller's branch reach. A global caller keeps the whole
+// list; a scoped caller sees their branches' artefacts alone, and a consolidated artefact (no branch)
+// never appears for them because its numbers are the whole company's.
 func (s *Service) Runs(ctx context.Context, limit int) ([]Run, error) {
-	if _, err := s.caller(ctx); err != nil {
+	reach, err := s.reachOf(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return s.repo.ListRuns(ctx, limit)
+	return s.repo.ListRuns(ctx, limit, reach)
 }
 
-// RunArtefact reads one persisted artefact by id.
+// RunArtefact reads one persisted artefact by id, behind the branch fence: the caller must be able to
+// read the artefact's branch, and an artefact with no branch (consolidated) answers to a global
+// caller alone. A refusal is NOT FOUND rather than forbidden, so the id itself does not confirm the
+// artefact exists at a branch the caller cannot reach.
 func (s *Service) RunArtefact(ctx context.Context, id string) (Run, error) {
-	if _, err := s.caller(ctx); err != nil {
+	c, err := s.caller(ctx)
+	if err != nil {
 		return Run{}, err
 	}
-	return s.repo.GetRun(ctx, id)
+	run, err := s.repo.GetRun(ctx, id)
+	if err != nil {
+		return Run{}, err
+	}
+	if !canReadBranch(c, run.BranchID) {
+		return Run{}, ErrNotFound
+	}
+	return run, nil
 }
 
 // -- saved views --------------------------------------------------------------
