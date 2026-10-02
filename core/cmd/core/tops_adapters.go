@@ -122,7 +122,7 @@ func (a posTaxAdapter) AssessSale(ctx context.Context, in pos.TaxQuoteInput) (po
 		}
 		return pos.QuoteResult{}, err
 	}
-	return pos.QuoteResult{TaxCents: q.TaxCents, RateBps: q.RateBps}, nil
+	return pos.QuoteResult{TaxCents: q.TaxCents, RateBps: q.RateBps, OnCreditCents: q.OnCreditCents}, nil
 }
 
 // posTaxRuleAdapter satisfies pos.TaxRuleSource over *tax.Service: the round rule word the counter's
