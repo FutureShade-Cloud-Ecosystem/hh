@@ -814,6 +814,10 @@ export class HosPosTerminal extends LitElement {
       gap: 8px;
       font-size: 13px;
       color: var(--hos-text-dim);
+      /* ui3d P2-1: the End Session notice's positioning context: the notice hangs off the whole
+         session region, so its anchored right edge and its 320px of width can never reach past
+         the window's left edge the way a button wrap anchor did on a wrapped bar. */
+      position: relative;
     }
     .timer {
       font-family: var(--hos-font-mono);
@@ -2299,15 +2303,18 @@ export class HosPosTerminal extends LitElement {
       border: 1px solid var(--hos-line);
       color: var(--hos-text);
     }
-    /* UI-3 (visual GAP 1): the End Session notice rides the same note palette, anchored under its
-       control like the bar's other popovers, at the popover scale, so the bar's height never moves
-       and the words sit in the page's first band in both themes. */
+    /* UI-3 (visual GAP 1): the End Session notice rides the same note palette, anchored under the
+       session region its control lives in, at the popover scale, so the bar's height never moves
+       and the words sit in the page's first band in both themes. ui3d P2-1: right-aligned to that
+       region (never past it toward the window's left) and clamped to the window minus the bar's
+       own padding on each side, so the card stays fully inside the viewport at every width. */
     .esnotice {
       position: absolute;
       top: calc(100% + 8px);
       right: 0;
       z-index: var(--hos-z-modal);
       width: 320px;
+      max-width: calc(100vw - 2 * var(--hos-space-5));
       background: var(--hos-slate-warm);
       border: 1px solid var(--hos-line);
       border-radius: var(--hos-radius-card);
@@ -4685,20 +4692,26 @@ export class HosPosTerminal extends LitElement {
                     @click=${() => this.setUtil(this.endSessionClosedReason, 'note', true, 'session')}
                     @focus=${() => this.setUtil(this.endSessionClosedReason, 'note', false, 'session')}
                   >End Session</button>
-                  ${/* UI-3 (visual GAP 1): the reason renders beside its control, anchored under the
-                       button like the bar's other popovers, in the note palette (never the success
-                       green), so a press answers where the hand is: the foot line sat at the flow's
-                       end, half under the hotkey bar. The status region arrives only on a press
-                       (announced once, polite); focus shows it silently, per the recorded ruling. */ ''}
-                  ${this.utilMsg !== '' && this.utilWhere === 'session'
-                    ? html`<span
-                        data-testid="end-session-notice"
-                        class="esnotice"
-                        role="${ifDefined(this.utilLive ? 'status' : undefined)}"
-                        >${this.utilMsg}</span
-                      >`
-                    : nothing}
                 </span>
+                ${/* UI-3 (visual GAP 1): the reason renders beside its control, anchored under the
+                     session region the button lives in, in the note palette (never the success
+                     green), so a press answers where the hand is: the foot line sat at the flow's
+                     end, half under the hotkey bar. The status region arrives only on a press
+                     (announced once, polite); focus shows it silently, per the recorded ruling. */ ''}
+                ${/* ui3d P2-1: the card hangs off the SESSION region, not the button's own wrap: a
+                     wrap anchor right-aligns a 320px card to the button's right edge, and on a
+                     wrapped bar that edge sits a few hundred pixels from the window's left, so the
+                     card ran off screen below about 1415px wide. The session region is at least a
+                     card wide plus the bar's padding at every width the till supports, so its band
+                     keeps both edges of the card on screen. */ ''}
+                ${this.utilMsg !== '' && this.utilWhere === 'session'
+                  ? html`<span
+                      data-testid="end-session-notice"
+                      class="esnotice"
+                      role="${ifDefined(this.utilLive ? 'status' : undefined)}"
+                      >${this.utilMsg}</span
+                    >`
+                  : nothing}
                 <span id="end-session-reason" class="srdesc" data-testid="end-session-reason">${this.endSessionClosedReason}</span>`
             : html`<button class="topbtn" @click=${this.openSession}>Open Session</button>`}
           ${/* COUNTER VIEW (R1/R2, the user half). The way back from a dismissed legend
