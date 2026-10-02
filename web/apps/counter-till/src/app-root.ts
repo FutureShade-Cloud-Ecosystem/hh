@@ -37,6 +37,7 @@ import {
   type BranchRef,
 } from "./till-client.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
+import { THEME_LABEL, ThemeController, themeControlLabel } from "./theme.js";
 import { entryStyles, renderEntry, type FlowsState } from "./views/entry.js";
 import { ReturnsFlow } from "./returns/flow.js";
 import { OneTimeCredential } from "./returns/approval.js";
@@ -133,6 +134,8 @@ export class CounterTillApp extends HHElement {
   readonly #controller: AuthController;
   readonly #approverCredential: OneTimeCredential;
   readonly #tillClient: TillClient;
+  /** The theme choice: Auto follows the system, Light and Dark pin it; tab memory only (see theme.ts). */
+  readonly #theme = new ThemeController(() => this.requestUpdate());
   #flowsState: FlowsState = { kind: "loading" };
   /** The one flows read this element makes; the pop-out's tap waits for it. */
   #flowsLoaded: Promise<void> = Promise.resolve();
@@ -254,6 +257,9 @@ export class CounterTillApp extends HHElement {
     // uncontrolled: the DOM holds what was typed, the flow hears every edit
     // here, and a draft's fresh mount shows the flow's own defaults.
     this.addEventListener("input", this.#onHostInput);
+    // The system's light setting is honoured from the first paint; the Theme
+    // control in the account area cycles Auto, Light and Dark.
+    this.#theme.start();
     // The flows read happens once; the pop-out, when this window is one,
     // chains on the same answer rather than asking the route twice.
     this.#flowsLoaded = this.#loadFlows();
@@ -274,6 +280,7 @@ export class CounterTillApp extends HHElement {
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
     this.removeEventListener("input", this.#onHostInput);
+    this.#theme.stop();
     super.disconnectedCallback();
   }
 
@@ -308,6 +315,9 @@ export class CounterTillApp extends HHElement {
     const flow = control.getAttribute("data-flow");
     if (control.getAttribute("data-action") === "choose" && typeof flow === "string" && flow !== "") {
       void this.#chooseFlow(flow);
+    }
+    if (control.getAttribute("data-action") === "theme") {
+      this.#theme.cycle();
     }
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
@@ -486,6 +496,23 @@ export class CounterTillApp extends HHElement {
     this.requestUpdate();
   }
 
+  /** The Theme control of the account area: one button, its value beside the word. */
+  #themeControl(): TemplateResult {
+    const choice = this.#theme.choice;
+    return html`
+      <button
+        type="button"
+        class="btn-secondary"
+        data-action="theme"
+        data-testid="theme-control"
+        aria-label=${themeControlLabel(choice)}
+        title=${themeControlLabel(choice)}
+      >
+        Theme: ${THEME_LABEL[choice]}
+      </button>
+    `;
+  }
+
   render(): TemplateResult {
     // The banner's rule is "only once the flows route has answered with
     // cards": an error answer and an empty answer alike are not the demo
@@ -502,10 +529,11 @@ export class CounterTillApp extends HHElement {
               <div class="title-row">
                 <h1>Counter Till</h1>
                 ${this.#till === null
-                  ? nothing
+                  ? html`<p class="signed-in">${this.#themeControl()}</p>`
                   : html`
                       <p class="signed-in">
                         <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
+                        ${this.#themeControl()}
                         <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
                           Sign out
                         </button>
@@ -522,6 +550,7 @@ export class CounterTillApp extends HHElement {
                 ${demoPresent ? demoBanner() : nothing}
                 <p class="signed-in">
                   <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
+                  ${this.#themeControl()}
                   <button
                     type="button"
                     class="btn-secondary"
