@@ -275,6 +275,20 @@ test("a walk-in cash sale of three lines rings, and the sale read equals every f
   expect(pageText).toContain(`Change due\t${dollars(sale.change_due_cents as number)}`);
   expect(pageText).toContain("REPRINT #1");
   await printedPage.close();
+
+  // The reprint path: the More menu's any-past-sale receipt, fetched by the
+  // order id, comes back MARKED with its ordinal, the stub's count mirroring
+  // the core's own (two prints of this sale came before it).
+  await page.locator("details.more > summary").filter({ hasText: /^\s*More\s*$/ }).click();
+  await page.getByLabel("Open order by id or #SO number").fill(String(sale.order_id));
+  const reprintPrinting = page.context().waitForEvent("page");
+  await page.locator("details.more").getByRole("button", { name: "Print receipt" }).click();
+  const reprinted = await reprintPrinting;
+  const reprintedText = await reprinted.locator("body").innerText();
+  expect(reprintedText).toContain("REPRINT #2");
+  expect(reprintedText).toContain(`Total\t${dollars(read.total_cents as number)}`);
+  expect(reprintedText).toContain(`Change due\t${dollars(sale.change_due_cents as number)}`);
+  await reprinted.close();
 });
 
 test("the quantity rung is the quantity on the screen, and the requested date is the house zone's day", async ({

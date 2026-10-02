@@ -166,8 +166,12 @@ func TestReceipt_EnqueuesAndMarksPrinted(t *testing.T) {
 		t.Fatalf("a counter receipt renders in the BROWSER, got %q", qs.jobs[0].RenderTarget)
 	}
 
-	// A prior PRINTED row is what makes the next fetch a reprint.
-	qs.printed = 2
+	// Prior PRINTED rows are what make the next fetch a reprint: the fetch
+	// above wrote the first one, one more planted row makes this sale's
+	// history two prints, as the real store would hold them.
+	qs.jobs = append(qs.jobs,
+		Job{ID: "00000000-0000-4000-8000-0000000000a1", DocType: DocReceipt, RefID: saleOrderID, Status: StatusPrinted},
+	)
 	rec, err = svc.Receipt(staffFor(trentonID), saleOrderID)
 	if err != nil {
 		t.Fatalf("reprint: %v", err)
@@ -302,5 +306,38 @@ func TestParseReceiptFormat(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "poster") {
 		t.Fatalf("the refusal must name the value, got %v", err)
+	}
+}
+
+// THE REPRINT FROM THE ORDER (row 666 item 3): the past-sale reprint is fetched by the ORDER (its
+// id or its visible number: the More menu's box takes either), and it is MARKED: the count of prior
+// prints is keyed on the order, so the same sale fetched first by id and then by number reads the
+// same count and renders the ordinal. An unmarked duplicate is how a return gets run twice.
+func TestReceipt_ReprintByTheOrderCarriesTheOrdinal(t *testing.T) {
+	svc, _ := receiptHarness(t)
+
+	// The customer's first copy, fetched by the order id.
+	first, err := svc.Receipt(staffFor(trentonID), saleOrderID)
+	if err != nil {
+		t.Fatalf("first fetch: %v", err)
+	}
+	if first.IsReprint() {
+		t.Fatal("the first fetch is the original")
+	}
+
+	// The past-sale reprint, fetched by the VISIBLE number: marked, with its ordinal.
+	reprint, err := svc.Receipt(staffFor(trentonID), "#SO-42")
+	if err != nil {
+		t.Fatalf("reprint by the order number: %v", err)
+	}
+	if !reprint.IsReprint() || reprint.ReprintCount != 1 {
+		t.Fatalf("the reprint must be marked #1, got count %d", reprint.ReprintCount)
+	}
+	html, err := RenderReceiptHTML(reprint)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(html, "REPRINT #1") {
+		t.Fatal("the marker must be on the paper")
 	}
 }

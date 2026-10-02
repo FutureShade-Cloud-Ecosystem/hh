@@ -484,3 +484,40 @@ func TestIntegration_Receipt_SimulatedFlagFollowsAStubMintedRef(t *testing.T) {
 		t.Fatalf("a CARD capture minted by the real stub (ref %q) must stamp Simulated, the mint and the receipt's check have drifted", res.ProcessorRef)
 	}
 }
+
+// The past-sale reprint path (row 666 item 3): the receipt is fetched from the ORDER (the route
+// resolves the order id or the visible "#SO-" number), and the marker follows the order's own print
+// count: the original is unmarked, and the fetch by the visible number is REPRINT #1 on the paper.
+func TestIntegration_Receipt_ReprintByTheOrderNumber(t *testing.T) {
+	pool := intPool(t)
+	sale, _ := ringCashSale(t, pool)
+	ctx := globalCtx(t, pool)
+	receipts, _ := printingSvcs(pool)
+
+	t.Run("the original, fetched by the order id", func(t *testing.T) {
+		rec, err := receipts.Receipt(ctx, sale.OrderID)
+		if err != nil {
+			t.Fatalf("first fetch: %v", err)
+		}
+		if rec.IsReprint() {
+			t.Fatal("the first fetch is the original")
+		}
+	})
+
+	t.Run("the reprint, fetched by the visible number, is marked with its ordinal", func(t *testing.T) {
+		rec, err := receipts.Receipt(ctx, sale.OrderNo)
+		if err != nil {
+			t.Fatalf("reprint by order_no: %v", err)
+		}
+		if !rec.IsReprint() || rec.ReprintCount != 1 {
+			t.Fatalf("the reprint must be #1, got %d", rec.ReprintCount)
+		}
+		html, err := RenderReceiptHTML(rec)
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		if !strings.Contains(html, "REPRINT #1") {
+			t.Fatal("the marker must be on the paper")
+		}
+	})
+}

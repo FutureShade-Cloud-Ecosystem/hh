@@ -221,6 +221,20 @@ test("tender and receipt: cash with change due, held against the core's own read
   expect(pageText).toContain("Collected at the counter");
   expect(pageText).toContain("REPRINT #1");
   await printedPage.close();
+
+  // The reprint path: the More menu's any-past-sale receipt, fetched by the
+  // order id the past sale carries, arrives MARKED with its ordinal (two
+  // prints of this sale came before it) and carries the sale's figures again.
+  await page.locator("details.more > summary").filter({ hasText: /^\s*More\s*$/ }).click();
+  await page.getByLabel("Open order by id or #SO number").fill(rung.order_id);
+  const reprintPrinting = page.context().waitForEvent("page");
+  await page.locator("details.more").getByRole("button", { name: "Print receipt" }).click();
+  const reprinted = await reprintPrinting;
+  const reprintedText = await reprinted.locator("body").innerText();
+  expect(reprintedText).toContain("REPRINT #2");
+  expect(reprintedText).toContain(`Total\t${dollars(total)}`);
+  expect(reprintedText).toContain(`Change due\t${dollars(rung.change_due_cents as number)}`);
+  await reprinted.close();
   // A cash confirmation carries no card notice.
   await expect(sold.getByTestId("sold-simulated-notice")).toHaveCount(0);
   await shot(page, "sales-06-receipt-cash", testInfo);
