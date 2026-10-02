@@ -18,8 +18,10 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -240,5 +242,61 @@ func TestIntegrationAFailingProviderDeadLettersRatherThanLoopingForever(t *testi
 	}
 	if lastErr == "" {
 		t.Fatal("a dead-lettered notice must record why")
+	}
+}
+
+// TestIntegrationADeadRowDoesNotKeepItsPayload (HH-188): a DEAD row is as terminal as a PUBLISHED one,
+// and its payload carries the same phone number (and, on the quote topics, the live share link, a
+// bearer credential for the public quote view and accept routes). The dead-letter UPDATE must redact
+// it, the way the published one always has.
+//
+// The driver is the worker's exact main shape for this topic: the Wave 2 consumer registered, the
+// quote topics unowned, so the share notice settles "no handler registered for topic". That
+// unregistered path is the one that must never park a token at rest, a registered secret topic that
+// fails five times gets the same terminal redaction through the same UPDATE, and no secret marking
+// exists to consult for a topic nobody registered.
+func TestIntegrationADeadRowDoesNotKeepItsPayload(t *testing.T) {
+	pool, outbox, _ := markedFixture(t)
+	ctx := context.Background()
+
+	// EnqueueAt returns the row's id (Enqueue does not), and a zero notBefore means immediately due.
+	id, err := outbox.EnqueueAt(ctx, TopicQuoteShare, QuoteShareNotice{
+		QuoteID: "fx-dead-share", QuoteNo: "Q-FX-1", CustomerID: "fx-cust-1",
+		ShareURL: "https://erp.fx.invalid/quote.html?t=fx-live-share-token",
+	}, time.Time{})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	stub, serr := Select(Settings{}, nil)
+	if serr != nil {
+		t.Fatalf("select: %v", serr)
+	}
+	d := notify.NewDispatcher(outbox, slog.Default())
+	NewConsumer(stub, NewConsentResolver(NewPrefsStore(pool), nil), slog.Default()).RegisterHandlers(d)
+
+	// One tick is enough: the due clause has no backoff, so the drain re-claims the still-PENDING
+	// row until the fifth attempt dead-letters it (the audit's "all in one drain").
+	d.DrainOnce(ctx)
+
+	var status string
+	var attempts int
+	var lastErr, payload string
+	if err := pool.QueryRow(ctx,
+		`SELECT status, attempts, last_error, payload::text FROM sms_outbox WHERE event_id = $1`, id).
+		Scan(&status, &attempts, &lastErr, &payload); err != nil {
+		t.Fatalf("read the dead row: %v", err)
+	}
+	if status != "DEAD" {
+		t.Fatalf("status = %s after one drain, want DEAD (the unregistered topic must dead-letter)", status)
+	}
+	if attempts != 5 {
+		t.Fatalf("attempts = %d, want 5 burned in the one drain", attempts)
+	}
+	if lastErr != "no handler registered for topic" {
+		t.Fatalf("last_error = %q, want the unregistered-topic diagnosis", lastErr)
+	}
+	if strings.Contains(payload, "fx-live-share-token") || payload != "{}" {
+		t.Fatalf("the DEAD row still carries its payload (%s): a share link nobody will ever deliver must not sit in plaintext at rest", payload)
 	}
 }

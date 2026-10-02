@@ -228,8 +228,15 @@ func (o *Outbox) processOne(ctx context.Context, settle func(context.Context, no
 			    payload = '{}'::jsonb
 			WHERE event_id = $1`, e.EventID)
 	case dispositionDead:
+		// A DEAD notice is as terminal as a published one, and its payload carries the same phone
+		// number, and on the quote topics the live share link, a bearer credential for the public
+		// quote view and accept routes. It is redacted unconditionally rather than by the settle
+		// flag (HH-188): a topic no handler was ever registered for has no secret marking to
+		// consult, and that unwired path is exactly the one that must never park a token at rest.
+		// The topic and last_error stay for the operator.
 		_, err = tx.Exec(ctx, `
-			UPDATE sms_outbox SET status = 'DEAD', attempts = attempts + 1, last_error = $2
+			UPDATE sms_outbox
+			SET status = 'DEAD', attempts = attempts + 1, last_error = $2, payload = '{}'::jsonb
 			WHERE event_id = $1`, e.EventID, st.LastError)
 	default:
 		_, err = tx.Exec(ctx, `

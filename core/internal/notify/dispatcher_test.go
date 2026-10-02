@@ -199,3 +199,41 @@ func TestDispatcher_UnknownTopicDeadLetters(t *testing.T) {
 		t.Errorf("unknown topic final status = %q, want DEAD", fs.last().Status)
 	}
 }
+
+// A secret topic that exhausts its retries redacts on DEAD exactly as it does on PUBLISH (HH-188):
+// the row is terminal either way, and a one-time token must not outlive its delivery in a dead
+// letter any more than in a published row. A plain topic keeps its payload for audit.
+func TestDispatcher_DeadLetterRedactsSecretTopicsOnly(t *testing.T) {
+	run := func(secret bool) Settlement {
+		topic := "t.plain.dead"
+		if secret {
+			topic = "t.secret.dead"
+		}
+		fs := &fakeStore{queue: []Event{{EventID: "1", Topic: topic}}}
+		d := NewDispatcher(fs, nil)
+		booms := func(context.Context, Event) error { return errors.New("provider down") }
+		if secret {
+			d.RegisterSecret(topic, booms)
+		} else {
+			d.Register(topic, booms)
+		}
+		d.DrainOnce(context.Background()) // fakeStore requeues PENDING, so the row walks to DEAD
+		return fs.last()
+	}
+
+	secretDead := run(true)
+	if secretDead.Status != statusDead {
+		t.Fatalf("secret topic final status = %q, want DEAD", secretDead.Status)
+	}
+	if !secretDead.Redact {
+		t.Error("a secret topic that dead-letters must redact: the row is terminal, and the one-time token must not outlive it at rest")
+	}
+
+	plainDead := run(false)
+	if plainDead.Status != statusDead {
+		t.Fatalf("plain topic final status = %q, want DEAD", plainDead.Status)
+	}
+	if plainDead.Redact {
+		t.Error("a plain topic's DEAD row must keep its payload for audit")
+	}
+}

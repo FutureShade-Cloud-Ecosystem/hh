@@ -284,6 +284,37 @@ func TestIntegration_Notify_ADeadRowIsNotClaimedAgain(t *testing.T) {
 	}
 }
 
+// A secret topic that dead-letters drops its payload (HH-188): the row is kept for audit with its
+// diagnosis, but the one-time token it carried is as spent in a DEAD row as it is in a published
+// one, and it must not sit at rest behind a failure nobody will retry. Driven through the REAL
+// dispatcher so the redact flag is the one fail() computed, not a hand-built Settlement.
+func TestIntegration_Notify_ADeadSecretRowDropsItsPayload(t *testing.T) {
+	pool := intPool(t)
+	store := NewPgOutboxStore(pool)
+	topic := topicFor(t, "dead.secret")
+	id := emit(t, pool, topic, `{"token":"one-time-invite"}`)
+
+	d := NewDispatcher(store, quietLog())
+	d.RegisterSecret(topic, func(context.Context, Event) error { return errors.New("smtp down") })
+	for i := 0; i < defaultMaxAttempts; i++ {
+		drain(t, d, store, 1)
+	}
+
+	st, attempts, lastErr, payload, publishedAt := rowState(t, pool, id)
+	if st != "DEAD" || attempts != defaultMaxAttempts {
+		t.Fatalf("dead secret row: status=%s attempts=%d, want DEAD/%d", st, attempts, defaultMaxAttempts)
+	}
+	if lastErr != "smtp down" {
+		t.Fatalf("last_error=%q, want the handler's diagnosis kept", lastErr)
+	}
+	if publishedAt != nil {
+		t.Fatal("a DEAD row carries a published_at")
+	}
+	if payload != "{}" {
+		t.Fatalf("the DEAD row still carries %s at rest: a one-time token must not outlive its delivery in a dead letter", payload)
+	}
+}
+
 // -- the claim, under real concurrency ------------------------------------------------------------
 
 // FOR UPDATE SKIP LOCKED is the promise that two dispatchers (or two replicas) divide the work and
