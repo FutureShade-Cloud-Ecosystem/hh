@@ -1683,6 +1683,15 @@ export class HosPosTerminal extends LitElement {
       opacity: 1;
       cursor: not-allowed;
     }
+    /* UI-3 (visual GAP 7): the split state is a band, not a control: the reference's pale yellow
+       in both themes, with the theme-stable ink. It is a statement, so it is not greyed. */
+    .complete-cta.splitstate:disabled {
+      background: color-mix(in srgb, var(--hos-stone-amber) 42%, #ffffff);
+      border-color: color-mix(in srgb, var(--hos-stone-amber) 42%, #ffffff);
+      color: var(--hos-stone-amber-ink);
+      opacity: 1;
+      cursor: default;
+    }
     /* UNION-TRAIN11 · the counter's pay key worn as a keycap on the CTA (see payKeycap()).
        Gold-on-gold: the chip borrows the CTA's own ink (D-078: the ONLY ink gold may carry), so
        every CTA state (hover included) keeps the pair legal with zero new colours. */
@@ -5461,7 +5470,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                   </button>
                   `
               : html`<button
-                  class="complete-cta"
+                  class="complete-cta splitstate"
                   data-testid="cta-split-state"
                   disabled
                   title="A split is composed before it is committed: the legs must add up first, and the panel below rings it."
