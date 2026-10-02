@@ -5,7 +5,9 @@
 // reads the assertions compare the screen against, and the screenshot helper
 // that names every screen of the story.
 import { expect, test as base, type Page, type TestInfo } from "@playwright/test";
-import { mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export type Role = "Sales" | "Sales manager";
@@ -103,30 +105,62 @@ export function houseDaysAgo(days: number): string {
  * state, and at most four even with clock skew between the runner and the
  * box, one full mint of headroom under the allowance of five. A tighter
  * spacing sits on the knife edge, the fifth stamp at the exact instant the
- * first expires, the refusal decided by the skew alone. The clock lives on
- * the worker's global object, not in module state: the run's spec files each
- * get their own module instance, and the pace is one pace for the whole run.
+ * first expires, the refusal decided by the skew alone. The clock lives in a
+ * small JSON file under the system temp directory, its name keyed on the box
+ * (a hash of the box's address), read and written synchronously at each
+ * pace: Playwright restarts the worker process after every failed test, a
+ * restart resets any in-process clock to zero and drops the per spec file
+ * mint memo, and every restart then injects the very burst the guard
+ * refuses, while the box's limiter memory persists across restarts and
+ * across two suites run against one box. The file matches that reality: the
+ * newest writer wins, and a stale file can only delay a mint, never burst
+ * one. Parallel suites against one box are not a supported shape, and the
+ * file does not pretend otherwise.
  */
 const MINT_SPACING_MS = 10_000;
-type MintClock = { lastMintAt: number };
 
-function mintClock(): MintClock {
-  const carrier = globalThis as { __ctMintClock?: MintClock };
-  if (carrier.__ctMintClock === undefined) carrier.__ctMintClock = { lastMintAt: 0 };
-  return carrier.__ctMintClock;
+/** The pace file's path: one per box, under the system temp directory. */
+function paceFilePath(): string {
+  const base = process.env.CT_IMAGE_URL ?? "http://127.0.0.1:5801";
+  const key = createHash("sha256").update(base).digest("hex").slice(0, 16);
+  return join(tmpdir(), `ct-mint-pace-${key}.json`);
+}
+
+/** The last reserved mint's epoch milliseconds, zero when nothing is held. */
+function heldMintAt(): number {
+  try {
+    const held = JSON.parse(readFileSync(paceFilePath(), "utf8")) as { lastMintAt?: number };
+    return typeof held.lastMintAt === "number" ? held.lastMintAt : 0;
+  } catch {
+    // No file yet, or one that cannot be read: the pace starts from zero,
+    // and the belt below, not the clock, then stands between the run and
+    // the guard.
+    return 0;
+  }
+}
+
+function holdMintAt(at: number): void {
+  writeFileSync(paceFilePath(), JSON.stringify({ lastMintAt: at }));
+}
+
+/**
+ * Reserve the next mint's instant and return how long to wait for it: read,
+ * decide, and write with no await between them, so one process's concurrent
+ * reservations serialize onto the file, then the caller sleeps to the slot.
+ */
+function reserveMintSlot(): number {
+  const wait = heldMintAt() + MINT_SPACING_MS - Date.now();
+  holdMintAt(Date.now() + Math.max(wait, 0));
+  return Math.max(wait, 0);
 }
 
 export async function paceMint(page: Page): Promise<void> {
-  const clock = mintClock();
-  const wait = clock.lastMintAt + MINT_SPACING_MS - Date.now();
+  const wait = reserveMintSlot();
   if (wait > 0) await page.waitForTimeout(wait);
-  clock.lastMintAt = Date.now();
 }
 
 function paceMintOffPage(): Promise<void> {
-  const clock = mintClock();
-  const wait = clock.lastMintAt + MINT_SPACING_MS - Date.now();
-  clock.lastMintAt = Date.now() + Math.max(wait, 0);
+  const wait = reserveMintSlot();
   return wait > 0 ? new Promise((resolve) => setTimeout(resolve, wait)) : Promise.resolve();
 }
 
