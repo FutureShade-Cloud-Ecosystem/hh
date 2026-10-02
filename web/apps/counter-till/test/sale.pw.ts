@@ -1325,6 +1325,53 @@ test("the pickup line says the prices are being re-derived while any line is sti
   await expect(message).not.toContainText("prices re-derived");
 });
 
+test("a price that answers after the pickup line was set flips the line to prices re-derived", async ({
+  page,
+}) => {
+  // The engine refuses every price for now; the refusal lifts mid-story, and an
+  // operator gesture (a quantity edit) reprices the line into an answer. The
+  // pickup line's tail renders from the cart's any-line-pending state, so the
+  // words flip with the answer instead of staying captured from the resume.
+  let refusePrices = true;
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    if (refusePrices) {
+      await route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "line could not be priced by the engine" }),
+      });
+      return;
+    }
+    await route.fallback();
+  });
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  await signIn(page, "Sales");
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  // The rail lists the branch's tickets in insertion order, and the suite's
+  // earlier stories leave theirs parked: the ticket this test just parked is
+  // the rail's last.
+  await parkedDialog.getByRole("button", { name: "Resume" }).last().click();
+  const message = page.locator("#till-message");
+  await expect(message).toContainText(/Resumed PARK-\d+: re-deriving prices\./);
+  await openStep(page, "items");
+  const row = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
+  await expect(row).toHaveCount(1);
+  refusePrices = false;
+  const qty = page.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
+  await qty.fill("2");
+  await qty.blur();
+  await expect(row.locator(".ltot")).toHaveText("CA$8.00");
+  // The line above is priced now, so a tail captured when the message was set
+  // would still say re-deriving: the words say the derivation happened.
+  await expect(message).toContainText(/Resumed PARK-\d+: prices re-derived now\./);
+  await expect(message).not.toContainText("re-deriving prices");
+});
+
 test("the top bar is on the till's compact scale: about 48px, small chrome buttons, the banner on one line", async ({
   page,
 }) => {

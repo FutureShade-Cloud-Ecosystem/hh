@@ -564,6 +564,23 @@ export class HosPosTerminal extends LitElement {
    * line. One state machine either way, so the next message still replaces the notice.
    */
   @state() private utilWhere: 'foot' | 'session' = 'foot';
+  /**
+   * Round d: the pickup line's captured-once facts, and only those: the ticket, the resume's own
+   * tails (lines the product list dropped, lines the race discarded) and the fault tone. The
+   * line's price tail is NOT captured: its words render from the cart's any-line-pending state
+   * (pickupLineWords), so a price that answers after the line was set flips it, the way every
+   * other marker on the till flips when a price answers. One line at a time: setUtil (any other
+   * message) and every direct clear retire the pickup line with the utility message.
+   */
+  @state() private pickupLine: { ticketNo: string; tails: string; bad: boolean } | null = null;
+
+  /** The pickup line's words: the tail derives from the cart at render time, never from a snapshot. */
+  private pickupLineWords(): string {
+    const line = this.pickupLine;
+    if (line === null) return '';
+    const pending = this.cart.some((l) => l.priceMissing);
+    return `Resumed ${line.ticketNo}: ${pending ? 're-deriving prices' : 'prices re-derived now'}.${line.tails}`;
+  }
 
   /** One door for the utility banner: message + tone together, so a fault can never wear green. */
   private setUtil(msg: string, tone: 'ok' | 'bad' | 'note' = 'ok', live = true, where: 'foot' | 'session' = 'foot'): void {
@@ -571,6 +588,13 @@ export class HosPosTerminal extends LitElement {
     this.utilTone = tone;
     this.utilLive = live;
     this.utilWhere = where;
+    this.pickupLine = null; // one message line at a time: a new message retires the pickup line
+  }
+
+  /** One door for the silent clear (a fresh ticket, a park, a pricing doc): the pickup line goes with it. */
+  private clearUtil(): void {
+    this.utilMsg = '';
+    this.pickupLine = null;
   }
   // ── DIB-434 ── the in-progress guard's own state. `quickGuard` is the dialog's open flag; it is
   // set ONLY when quickStartNeedsGuard() says the till holds something to lose, so an empty
@@ -3601,7 +3625,7 @@ export class HosPosTerminal extends LitElement {
     this.signatureRef = '';
     this.depositDollars = '';
     this.fulfilment = 'PICKUP';
-    this.utilMsg = '';
+    this.clearUtil();
     this.soldPanelDismissed = false;
     this.ring = { state: 'idle' };
     // DIB-488: the flow facts reset with the sale they describe.
@@ -3763,7 +3787,7 @@ export class HosPosTerminal extends LitElement {
 
  /** Start a fresh ticket: or stop and ask, if the till is holding one. */
   private quickStartSale(): void {
-    this.utilMsg = '';
+    this.clearUtil();
     if (quickStartNeedsGuard(this.liveTicket())) {
       this.quickGuard = true;
       return;
@@ -3813,7 +3837,7 @@ export class HosPosTerminal extends LitElement {
   // ── W7: park / resume / pricing doc ────────────────────────────────────
   private async parkCurrent(): Promise<void> {
     if (this.cart.length === 0) return;
-    this.utilMsg = '';
+    this.clearUtil();
     try {
       const t = await parkTicket({
         branch_id: this.branchId,
@@ -3883,20 +3907,19 @@ export class HosPosTerminal extends LitElement {
       this.cartReplaced(); // D17: the resumed lines are a different ticket's
       for (const l of this.cart) void this.hydrateLineStock(l.product.id); // DIB-488 stock lines
       for (let i = 0; i < this.cart.length; i++) await this.reprice(i);
-      // ui3 visual GAP 3: the words must be true in both states. While any
-      // line's price is still pending the line says the prices are being
-      // re-derived; it reads "prices re-derived" only once no line is pending
-      // (the old wording claimed the derivation beside cells that still read
-      // (not priced)).
-      const pricesPending = this.cart.some((l) => l.priceMissing);
-      this.setUtil(
-        `Resumed ${t.ticket_no}: ${pricesPending ? 're-deriving prices' : 'prices re-derived now'}.` +
+      // ui3 visual GAP 3, and round d: the words must be true in both states AND STAY true. The
+      // line's price tail renders from the cart's any-line-pending state (pickupLineWords), so a
+      // price that answers after this line was set flips it; only the resume's own facts are
+      // captured here: the ticket, the dropped lines, the discarded race, the fault tone.
+      this.pickupLine = {
+        ticketNo: t.ticket_no,
+        tails:
           (missing.length ? ` ${missing.length} line(s) dropped (product inactive).` : '') +
           (lostToTheRace > 0
             ? ` ${lostToTheRace} line(s) added while this loaded were discarded with the old ticket: re-scan them.`
             : ''),
-        lostToTheRace > 0 ? 'bad' : 'ok',
-      );
+        bad: lostToTheRace > 0,
+      };
       void this.refreshParkedCount();
     } catch {
       this.setUtil(`Resumed ${t.ticket_no}, but the lines could not be reloaded: re-add manually.`, 'bad');
@@ -3905,7 +3928,7 @@ export class HosPosTerminal extends LitElement {
 
   private async savePricingDoc(): Promise<void> {
     if (this.cart.length === 0) return;
-    this.utilMsg = '';
+    this.clearUtil();
     try {
       this.pricingDoc = await createPricingOrder({
         branch_id: this.branchId,
@@ -5936,9 +5959,11 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
                   : html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M2 12c1.8-5.7 5.5-8 10-8s8.2 2.3 10 8c-1.8 3.7-5.5 6-10 6S3.8 15.7 2 12z"></path><circle cx="12" cy="12" r="2.6"></circle></svg>`}
               </button>`
             : nothing}
-          ${this.utilMsg && this.utilWhere === 'foot'
-            ? html`<div id="till-message" class="banner ${this.utilTone}" role="${ifDefined(this.utilTone === 'bad' ? 'alert' : this.utilTone === 'note' && !this.utilLive ? undefined : 'status')}">${this.utilMsg}</div>`
-            : nothing}
+          ${this.pickupLine !== null
+            ? html`<div id="till-message" class="banner ${this.pickupLine.bad ? 'bad' : 'ok'}" role="${ifDefined(this.pickupLine.bad ? 'alert' : 'status')}">${this.pickupLineWords()}</div>`
+            : this.utilMsg && this.utilWhere === 'foot'
+              ? html`<div id="till-message" class="banner ${this.utilTone}" role="${ifDefined(this.utilTone === 'bad' ? 'alert' : this.utilTone === 'note' && !this.utilLive ? undefined : 'status')}">${this.utilMsg}</div>`
+              : nothing}
 
           
     </div>`;
