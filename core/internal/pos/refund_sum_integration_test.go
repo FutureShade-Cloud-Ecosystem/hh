@@ -30,11 +30,16 @@ package pos
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // The reviewer's slice on one sale: a 40 SF sale at the exact 10.00 anchor
@@ -245,6 +250,12 @@ func TestIntegration_Trenton_RefundSums_SameKeyDuplicate(t *testing.T) {
 	if refusals := s.auditRows(auditActionRefundApprovalRefused, sale.OrderID); len(refusals) != 0 {
 		t.Fatalf("a return that committed must leave no refusal row behind: %v", refusals)
 	}
+	// The pair's audit trail exactly: the winner's one completion row, the
+	// replaying duplicate adding none (the replayedHere answer writes no
+	// completion row of its own).
+	if completions := s.auditRows("RETURN_COMPLETED", winnerID); len(completions) != 1 {
+		t.Fatalf("the pair's trail is one completion row for the committed winner, got %d: %v", len(completions), completions)
+	}
 }
 
 // The prospect's prior blind spot, over the real composition: two lines each
@@ -281,5 +292,85 @@ func TestIntegration_Trenton_RefundSums_TwoLinesManagerHeader(t *testing.T) {
 	}
 	if decisionRow == nil {
 		t.Fatalf("the commit must be the manager's decision, no completion row names the manager: %v", s.auditRows("RETURN_COMPLETED", committedReturn))
+	}
+}
+
+// smallPool is a second pool over the rig's DSN with a tiny connection
+// budget: the deadlock leg's whole point is that a Return transaction must
+// never need a second connection while it holds one, and two connections
+// make any such need deadlock immediately and deterministically.
+func smallPool(t *testing.T, maxConns int32) *pgxpool.Pool {
+	t.Helper()
+	url, set := os.LookupEnv("DATABASE_URL")
+	if !set || url == "" {
+		t.Skip("the small-pool leg needs DATABASE_URL at a throwaway container")
+	}
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	cfg.MaxConns = maxConns
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	if err := pool.Ping(context.Background()); err != nil {
+		pool.Close()
+		t.Fatalf("small pool not reachable: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// The pool deadlock the round 2 review fired: at least four parallel
+// distinct-key returns of ONE sale over a two-connection pool. Every Return
+// transaction holds one connection while it waits on the per-sale advisory
+// lock, so the moment any in-transaction work reads through the POOL the
+// lock holder blocks forever on a second connection every other connection
+// is a waiter that needs the holder's lock: the whole leg stalls until the
+// context deadline. On the transaction-reading core the four returns
+// serialize on the lock and every one of them answers.
+func TestIntegration_Trenton_RefundSums_ParallelReturnsSmallPool(t *testing.T) {
+	s := newTrentonStackOnPool(t, smallPool(t, 2))
+	// One line of 30 SF, four returns of 5 SF each, four distinct keys: each
+	// 56.50, the four together 226.00, under the configured 250.00, so on a
+	// healthy core every one of them commits.
+	sale := s.ringSale(key(), trentonBranchID, s.trentonTill, "trenton", []float64{30}, TenderCash)
+
+	bearer := s.bearer(trentonClerkSub)
+	bodies := make([]*bytes.Reader, 4)
+	for i := 0; i < 4; i++ {
+		raw, err := json.Marshal(s.returnBody(key(), sale, 0, RefundCash, 5))
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		bodies[i] = bytes.NewReader(raw)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	results := make([]*httptest.ResponseRecorder, 4)
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/pos/returns", bodies[i]).WithContext(ctx)
+			req.Header.Set("Authorization", bearer)
+			req.Header.Set("X-Org", demoOrgSlug)
+			rec := httptest.NewRecorder()
+			s.mux.ServeHTTP(rec, req)
+			results[i] = rec
+		}(i)
+	}
+	wg.Wait()
+
+	if ctx.Err() != nil {
+		t.Fatalf("the small-pool parallel returns deadlocked until the context deadline: %v", ctx.Err())
+	}
+	for i, rec := range results {
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("distinct-key return %d must commit on the small pool, got %d: %s", i+1, rec.Code, rec.Body.String())
+		}
 	}
 }

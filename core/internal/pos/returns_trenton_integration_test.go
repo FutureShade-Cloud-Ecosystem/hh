@@ -255,8 +255,15 @@ type trentonStack struct {
 }
 
 func newTrentonStack(t *testing.T) *trentonStack {
+	return newTrentonStackOnPool(t, intPool(t))
+}
+
+// newTrentonStackOnPool wires the whole rig over the caller's pool: the
+// parallel-returns deadlock leg builds a second, tiny pool over the same
+// DSN to prove the return path never needs a second connection while a
+// Return transaction holds one.
+func newTrentonStackOnPool(t *testing.T, pool *pgxpool.Pool) *trentonStack {
 	t.Helper()
-	pool := intPool(t)
 	buildWorld(t, pool)
 	ctx := context.Background()
 
