@@ -289,7 +289,9 @@ test("a card sale shows the simulated word on the tender and on the confirmation
   const receiptPage = page.context().waitForEvent("page");
   await sold.getByTestId("sold-print").click();
   const printed = await receiptPage;
-  await expect(printed.getByText("Counter sale")).toBeVisible();
+  // The document's own number, which the stub and the core's receipt both render (not the stub's wording).
+  expect(typeof sale.order_no).toBe("string");
+  await expect(printed.getByText(sale.order_no as string).first()).toBeVisible();
   await printed.close();
 
   // The notice is value driven: the same surface against a status route that
@@ -632,8 +634,8 @@ test("a line the account's price cannot answer reads price pending through ordin
   await accountPicked;
   refusePolymer = false;
   // The pick's own reprices land first, so the edit below is the newest ask
-  // and no re-render writes the input back mid-edit.
-  await page.waitForTimeout(800);
+  // and no re-render writes the input back mid-edit: wait until none is in flight.
+  await page.waitForLoadState("networkidle");
   await openStep(page, "items");
   const polymericQty = page.getByRole("textbox", { name: "Quantity: Polymeric Locking Sand" });
   await polymericQty.fill("2");
@@ -804,7 +806,9 @@ test("a split with a card leg carries the simulated word on the confirmation and
   const receiptPage = page.context().waitForEvent("page");
   await sold.getByTestId("sold-print").click();
   const printed = await receiptPage;
-  await expect(printed.getByText("Counter sale")).toBeVisible();
+  // The document's own number, which the stub and the core's receipt both render (not the stub's wording).
+  expect(typeof sale.order_no).toBe("string");
+  await expect(printed.getByText(sale.order_no as string).first()).toBeVisible();
   await printed.close();
 });
 
