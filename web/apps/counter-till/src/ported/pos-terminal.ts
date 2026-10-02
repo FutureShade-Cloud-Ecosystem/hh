@@ -4555,13 +4555,24 @@ export class HosPosTerminal extends LitElement {
   }
 
   /**
- * rev 8 (item 10): the one-click quick-hide (eye): counter privacy while a customer watches
+   * rev 8 (item 10): the one-click quick-hide (eye): counter privacy while a customer watches
    * the screen. An ergonomic exactly like the divider position: per-user, debounced merge-save.
    */
   private wsToggleMarginHidden(): void {
     this.wsMarginHidden = !this.wsMarginHidden;
     this.wsDirty.add('marginHidden');
     this.schedulePersist();
+  }
+
+  /**
+   * The eye's words in each state, one source for the hover title AND the accessible name
+   * (ui3 visual NOTE 1: the name stayed "Hide margin and est. profit" while pressed, so the
+   * name asked for an act the state had already performed, and name and title disagreed).
+   */
+  private marginEyeWords(): string {
+    return this.wsMarginHidden
+      ? 'Margin and est. profit are hidden: press to show them (counter privacy)'
+      : 'Hide margin and est. profit (counter privacy)';
   }
 
   /**
@@ -5909,8 +5920,8 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
                 class="eye"
                 data-testid="margin-eye"
                 aria-pressed=${this.wsMarginHidden ? 'true' : 'false'}
-                title=${this.wsMarginHidden ? 'Margin and est. profit are hidden: press to show them (counter privacy)' : 'Hide margin and est. profit (counter privacy)'}
-                aria-label="Hide margin and est. profit"
+                title=${this.marginEyeWords()}
+                aria-label=${this.marginEyeWords()}
                 @click=${() => this.wsToggleMarginHidden()}
               >
                 ${this.wsMarginHidden

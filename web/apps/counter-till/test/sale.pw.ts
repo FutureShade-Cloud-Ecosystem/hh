@@ -1131,26 +1131,33 @@ test("a sale rung at the till is found by the returns desk right after it commit
   await expect(page.getByText("sold 1, returned 0")).toBeVisible();
 });
 
-test("the margin eye keeps one name with aria-pressed, and hover does not look pressed", async ({ page }) => {
+test("the margin eye's accessible name and title say the same thing in both states, and hover does not look pressed", async ({
+  page,
+}) => {
   await signIn(page, "Sales");
   await ensureSession(page);
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
   const eye = page.getByTestId("margin-eye");
   await expect(eye).toBeVisible();
-  await expect(eye).toHaveAttribute("aria-label", "Hide margin and est. profit");
+  await expect(eye).toHaveAttribute("aria-label", "Hide margin and est. profit (counter privacy)");
   await expect(eye).toHaveAttribute("aria-pressed", "false");
-  await expect(eye).toHaveAttribute("title", /^Hide margin/);
+  await expect(eye).toHaveAttribute("title", "Hide margin and est. profit (counter privacy)");
   const bg = () => eye.evaluate((el) => getComputedStyle(el).backgroundColor);
   await eye.hover();
   const hovered = await bg();
   await eye.click();
   await expect(eye).toHaveAttribute("aria-pressed", "true");
-  // The name does not flip against the state (a pressed "Show margin" would read backwards).
-  await expect(eye).toHaveAttribute("aria-label", "Hide margin and est. profit");
-  // The hover title follows the state: pressed means hidden, so it says how to show.
-  await expect(eye).toHaveAttribute("title", /hidden: press to show/);
+  // The name follows the state now (ui3 visual NOTE 1), and it says the same
+  // thing the title says: pressed, both name and title say the margin is
+  // hidden and how to show it again.
+  await expect(eye).toHaveAttribute("aria-label", "Margin and est. profit are hidden: press to show them (counter privacy)");
+  await expect(eye).toHaveAttribute("title", "Margin and est. profit are hidden: press to show them (counter privacy)");
   await page.mouse.move(0, 0);
   expect(await bg()).not.toBe(hovered);
+  // And back: the name returns to the rest words with the rest state.
+  await eye.click();
+  await expect(eye).toHaveAttribute("aria-pressed", "false");
+  await expect(eye).toHaveAttribute("aria-label", "Hide margin and est. profit (counter privacy)");
 });
 
 // The COD tile's gate in the UI. The stub always answers COD allowed, so the off side is held by
