@@ -1277,7 +1277,10 @@ test("a pickup whose prices never answer reads the margin marker, never a figure
   await page.getByRole("button", { name: /^Parked \(/ }).click();
   const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
   await expect(parkedDialog).toBeVisible();
-  await parkedDialog.getByRole("button", { name: "Resume" }).first().click();
+  // The rail lists the branch's tickets in insertion order, and the suite's
+  // earlier stories leave theirs parked: the ticket this test just parked is
+  // the rail's last.
+  await parkedDialog.getByRole("button", { name: "Resume" }).last().click();
   await openStep(page, "items");
   const rows = page.getByTestId("pos-line-row");
   await expect(rows).toHaveCount(2);
@@ -1311,7 +1314,10 @@ test("the pickup line says the prices are being re-derived while any line is sti
   await page.getByRole("button", { name: /^Parked \(/ }).click();
   const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
   await expect(parkedDialog).toBeVisible();
-  await parkedDialog.getByRole("button", { name: "Resume" }).first().click();
+  // The rail lists the branch's tickets in insertion order, and the suite's
+  // earlier stories leave theirs parked: the ticket this test just parked is
+  // the rail's last.
+  await parkedDialog.getByRole("button", { name: "Resume" }).last().click();
   // The lines above the line still read price pending, so the words say the
   // derivation is happening, not that it happened (ui3 visual GAP 3).
   const message = page.locator("#till-message");
