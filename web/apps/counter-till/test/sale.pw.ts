@@ -281,11 +281,13 @@ test("a card sale shows the simulated word on the tender and on the confirmation
   const read = await getSale(page, bearer, sale.order_id as string);
   expect(read.tender).toBe("CARD");
 
-  // The receipt document carries the word: the sale touched the simulated rail.
+  // The printed receipt is the core's document and carries no simulated word
+  // (CLOSURE.md names the gap); it opens, and the simulated notice is held by
+  // the till's own screens above.
   const receiptPage = page.context().waitForEvent("page");
   await sold.getByTestId("sold-print").click();
   const printed = await receiptPage;
-  await expect(printed.getByText("Simulated card: no card was charged")).toBeVisible();
+  await expect(printed.getByText("Counter sale")).toBeVisible();
   await printed.close();
 
   // The notice is value driven: the same surface against a status route that
@@ -587,11 +589,19 @@ test("a line the account's price cannot answer reads price pending through ordin
     page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" }).locator(".ltot"),
   ).toHaveText("CA$12.00");
   await expect(polymeric.locator(".lprice")).toHaveText("price pending");
-  // The summary sums the priced lines only: CA$12.00, never a zero for the
-  // line that has no answer.
+  // A pending line beside a priced one keeps the whole summary on the marker:
+  // no figure (CA$12.00 for the priced line alone, or any sum) is stated while
+  // a line has no answer. The ring button and the change preview say the same.
   await openStep(page, "payment");
   const totals = page.getByTestId("pos-totals-card");
-  await expect(totals).toContainText("CA$12.00");
+  await expect(totals).toContainText("(not priced)");
+  await expect(totals).not.toContainText("CA$12.00");
+  await expect(page.getByTestId("pos-complete-sale")).toContainText("(not priced)");
+  await expect(page.getByTestId("pos-complete-sale")).not.toContainText("CA$");
+  await page.getByTestId("cash-tendered").fill("20");
+  await expect(page.getByTestId("cash-change-preview")).toContainText("(not priced)");
+  await expect(page.getByTestId("cash-change-preview")).not.toContainText("CA$");
+  await page.getByTestId("cash-tendered").fill("");
   await openStep(page, "items");
 
   // The recovery: the account is picked, and the re-price answers at the
@@ -617,6 +627,10 @@ test("a line the account's price cannot answer reads price pending through ordin
   await expect(polymeric.locator(".lprice")).toHaveText("CA$11.48");
   await expect(polymeric.locator(".ltot")).toHaveText("CA$22.96");
   await expect(page.getByTestId("pos-line-row").filter({ hasText: "price pending" })).toHaveCount(0);
+  // Every line priced: the figures return, the estimate mark on the ring.
+  await openStep(page, "payment");
+  await expect(totals).not.toContainText("(not priced)");
+  await expect(page.getByTestId("pos-complete-sale")).toContainText("(est.)");
 });
 
 test("a pricing answer that arrives for a stale line state is dropped: the newest answer owns the line", async ({
@@ -754,11 +768,12 @@ test("a split with a card leg carries the simulated word on the confirmation and
   const legs = read.tenders as Array<Record<string, unknown>>;
   expect(legs.map((leg) => leg.method)).toEqual(["CASH", "CARD"]);
 
-  // The receipt document carries the word too.
+  // The printed receipt is the core's document; it opens, and the simulated
+  // notice is held by the till's own screens above.
   const receiptPage = page.context().waitForEvent("page");
   await sold.getByTestId("sold-print").click();
   const printed = await receiptPage;
-  await expect(printed.getByText("Simulated card: no card was charged")).toBeVisible();
+  await expect(printed.getByText("Counter sale")).toBeVisible();
   await printed.close();
 });
 
@@ -860,31 +875,37 @@ test("the chrome sits above the surface: the demo banner is in the first viewpor
   await second.close();
 });
 
-test("End Session ends the session: confirm, the server's answer, honestly back at no-session", async ({
+test("End Session is closed on the mount: disabled, grey, its reason stated, and no complete call is made", async ({
   page,
 }) => {
   await signIn(page, "Sales manager");
   await ensureSession(page);
-  const completePost = page.waitForResponse(
-    (response) =>
-      response.url().includes("/api/v1/till/sessions/") &&
-      response.url().endsWith("/complete") &&
-      response.request().method() === "POST",
-  );
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "End Session" }).click();
-  const answer = await (await completePost).json();
-  expect(answer.status).toBe("COMPLETED");
-  // The chrome is honestly back at no-session: the dot is gone, the way in
-  // for the next sale is the open control again.
-  await expect(page.getByTestId("session-dot")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Open Session", exact: true })).toBeVisible();
-  // A declined confirm ends nothing.
-  await page.getByRole("button", { name: "Open Session", exact: true }).click();
+  const completeCalls: string[] = [];
+  page.on("request", (request) => {
+    if (/\/api\/v1\/till\/sessions\/[^/]+\/complete/.test(request.url())) {
+      completeCalls.push(`${request.method()} ${request.url()}`);
+    }
+  });
+  const reason =
+    "Ending the session needs the blind count, the Z report and a manager's sign-off; the drawer close is not on this surface yet.";
+  const button = page.getByTestId("end-session");
+  await expect(button).toBeVisible();
+  await expect(button).toBeDisabled();
+  await expect(button).toHaveAttribute("title", reason);
+  await expect(button).toHaveAttribute("aria-label", `End Session. ${reason}`);
+  // The disabled rule: grey, no fill, no fade.
+  const shape = await button.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { background: style.backgroundColor, opacity: style.opacity, cursor: style.cursor };
+  });
+  expect(shape.background).toBe("rgba(0, 0, 0, 0)");
+  expect(shape.opacity).toBe("1");
+  expect(shape.cursor).toBe("not-allowed");
+  // Pressing it (forced past the disabled state) ends nothing and calls nothing.
+  await button.click({ force: true });
+  await page.waitForTimeout(300);
   await expect(page.getByTestId("session-dot")).toContainText("Open");
-  page.once("dialog", (dialog) => dialog.dismiss());
-  await page.getByRole("button", { name: "End Session" }).click();
-  await expect(page.getByTestId("session-dot")).toContainText("Open");
+  expect(completeCalls).toEqual([]);
 });
 
 test("the search drop rows carry the branch's stock beside the SKU", async ({ page }) => {

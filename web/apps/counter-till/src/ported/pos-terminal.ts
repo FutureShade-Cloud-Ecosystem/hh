@@ -797,7 +797,15 @@ export class HosPosTerminal extends LitElement {
       white-space: nowrap;
       cursor: pointer;
     }
-    .topbtn:hover {
+    /* HH note: disabled drops its fill and goes grey; fade is not a state. */
+    .topbtn:disabled {
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
+      cursor: not-allowed;
+    }
+    .topbtn:hover:not(:disabled) {
       border-color: var(--hos-stone-amber);
       color: var(--hos-stone-amber-text);
     }
@@ -2719,30 +2727,17 @@ export class HosPosTerminal extends LitElement {
   }
 
   // End Session opens the real A-03 close flow (movements → blind count → Z-report → complete);
- // the local chrome resets only once the till actually closes (or the cashier defers: COUNTED
+  // the local chrome resets only once the till actually closes (or the cashier defers: COUNTED
   // sessions can be completed next morning, per the Dibbits SOP).
- // HH note: the reference's End Session opened its till-close screen
- // (hos-till-close), a host boundary screen this release does not carry, which
- // left the button dead. The mount wires the honest minimal path the contract
- // serves: confirm, complete the session (POST till/sessions/{id}/complete),
- // and the chrome is honestly back at no-session. A refusal lands in words.
-  private async endSession(): Promise<void> {
-    if (!window.confirm('End the till session? The drawer closes for this register.')) return;
-    try {
-      const res = await api(
-        `/api/v1/till/sessions/${encodeURIComponent(this.tillSessionId)}/complete`,
-        { method: 'POST', body: JSON.stringify({ override_notes: '' }) },
-      );
-      if (!res.ok) {
-        this.setUtil(`The session did not end: the server refused it (${res.status}).`, 'bad');
-        return;
-      }
-      this.onTillClosed();
-      this.setUtil('Session ended: the drawer is closed for this register.');
-    } catch {
-      this.setUtil('The session did not end: the call did not go through. Try again.', 'bad');
-    }
-  }
+  // HH note: the reference's End Session opened its till-close screen
+  // (hos-till-close), a host boundary screen this release does not carry. The
+  // core refuses a complete unless the session is COUNTED (409), and a drawer
+  // that does not balance needs a manager's sign-off (row 500), so the mount
+  // cannot honestly end a session from here: the button stays visible but is
+  // closed (disabled, with its reason), and the gap is named in CLOSURE.md.
+  // The reference's handler is dropped for the day the close flow is ported.
+  private readonly endSessionClosedReason =
+    "Ending the session needs the blind count, the Z report and a manager's sign-off; the drawer close is not on this surface yet.";
 
   private onTillClosed(): void {
     this.showTillClose = false;
@@ -2867,6 +2862,9 @@ export class HosPosTerminal extends LitElement {
         priceUom: uom,
         lineTotalCents: 0,
         breakdown: null,
+        // Pending until the price lookup answers: the summary stays on the
+        // marker rather than a zero for a line nobody has priced yet.
+        priceMissing: true,
       };
       this.cart = [...this.cart, line];
       idx = this.cart.length - 1;
@@ -3194,11 +3192,12 @@ export class HosPosTerminal extends LitElement {
   }
  // HH note: an empty draft shows the app's blank marker, never a plausible
  // zero (the house rule; the reference showed CA$0.00 here, and HH's rule
- // wins). The figures return the moment a priced line exists; a line whose
- // price cannot answer keeps the whole summary saying nothing rather than a
- // confident zero beside a pending word.
+ // wins). The summary speaks only when EVERY line is priced: an empty cart, or
+ // any line still pending (a just-added line before its price lookup answers,
+ // or a line whose reprice failed, which keeps its old total), keeps the whole
+ // summary on the marker rather than a confident figure beside a pending word.
   private hasPricedLine(): boolean {
-    return this.cart.some((l) => !l.priceMissing);
+    return this.cart.length > 0 && this.cart.every((l) => !l.priceMissing);
   }
   private moneyOrMarker(cents: number): string {
     return this.hasPricedLine() ? money(cents) : '(not priced)';
@@ -4551,7 +4550,13 @@ export class HosPosTerminal extends LitElement {
             ? html`<span class="sessiondot" data-testid="session-dot" title="Till session open: elapsed ${this.elapsed}">
                   <span class="dot" aria-hidden="true"></span> Open
                 </span>
-                <button class="topbtn" @click=${this.endSession}>End Session</button>`
+                <button
+                  class="topbtn"
+                  data-testid="end-session"
+                  disabled
+                  title=${this.endSessionClosedReason}
+                  aria-label=${`End Session. ${this.endSessionClosedReason}`}
+                >End Session</button>`
             : html`<button class="topbtn" @click=${this.openSession}>Open Session</button>`}
           ${/* COUNTER VIEW (R1/R2, the user half). The way back from a dismissed legend
                and the on/off for the hot list, in one place a counter person can reach without an
@@ -4892,7 +4897,7 @@ export class HosPosTerminal extends LitElement {
       customerName: this.customer ? this.customer.name : '',
       walkInConfirmed: this.walkInConfirmed,
       lineCount: this.cart.length,
-      totalLabel: this.openStep === 'payment' ? '' : money(this.total()),
+      totalLabel: this.openStep === 'payment' ? '' : this.moneyOrMarker(this.total()),
       // DIB-512 (8) · one word per surface. Before the ring the collapsed Payment card says which
       // tender is CHOSEN; after it, salePillLabel decides the counter word for what the sale
  // actually is ('Paid' / 'On account' / 'COD' / 'Deposit'): never the wire status, which is
@@ -5487,8 +5492,8 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                       : this.ringBusy()
                         ? 'Ringing…'
                         : this.tillSessionId === ''
-                          ? `Open session · then complete · ${this.moneyOrMarker(this.total())}`
-                          : `Complete sale · ${this.moneyOrMarker(this.total())}`}
+                          ? `Open session · then complete · ${this.moneyOrMarker(this.total())}${this.hasPricedLine() ? ' (est.)' : ''}`
+                          : `Complete sale · ${this.moneyOrMarker(this.total())}${this.hasPricedLine() ? ' (est.)' : ''}`}
                     ${!this.ringDone() && this.payKeycap()
                       ? html`<span class="keycap" data-testid="pay-hotkey-chip" aria-hidden="true"
                           >${this.payKeycap()}</span
@@ -5725,9 +5730,9 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
       </ul>
       <div class="rbrow"><span>${fulfilmentLabel(this.saleType)}</span><span></span></div>
       ${this.requestedDate ? html`<div class="rbrow"><span>Requested</span><span>${this.requestedDate}</span></div>` : nothing}
-      <div class="rbrow"><span>Subtotal</span><span class="m">${money(this.subtotal())}</span></div>
-      <div class="rbrow"><span>${this.taxLabel()}</span><span class="m">${money(this.tax())}</span></div>
-      <div class="rbrow total"><span>Total (est.)</span><span class="m">${money(this.total())}</span></div>
+      <div class="rbrow"><span>Subtotal</span><span class="m">${this.moneyOrMarker(this.subtotal())}</span></div>
+      <div class="rbrow"><span>${this.taxLabel()}</span><span class="m">${this.moneyOrMarker(this.tax())}</span></div>
+      <div class="rbrow total"><span>Total (est.)</span><span class="m">${this.moneyOrMarker(this.total())}</span></div>
       <div class="rbrow"><span>${tenderLabel(this.payMethod || 'CASH')}</span><span></span></div>
       ${/* "how much am I saving?": the client's words for the thing customers always ask. Server
          arithmetic, summed per line; absent entirely when there is nothing to claim. */ ''}
@@ -6005,7 +6010,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
       ${this.cashTenderedDollars.trim() !== ''
         ? html`<div class="cashhint" data-testid="cash-change-preview">
             ${plan.sendable
-              ? html`Change due <span class="num">${money(plan.changeDueCents)}</span>`
+              ? html`Change due <span class="num">${this.moneyOrMarker(plan.changeDueCents)}</span>`
               : 'Less than the total: the sale rings for the exact total; add more or clear the box.'}
           </div>`
         : nothing}`;
