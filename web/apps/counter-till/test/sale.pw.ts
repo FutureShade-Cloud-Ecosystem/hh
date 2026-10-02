@@ -1848,6 +1848,65 @@ test("a resumed ticket reads the pending markers from the moment it lands, befor
   await expect(txbar).toContainText("Est. Profit");
 });
 
+test("a park landing while the parked dialog is open converges the open dialog's list", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+
+  // The branch's parked count as the world holds it right now, read through
+  // the contract's own read (the demo bearer and org header; the fence to the
+  // caller's branch is the server's, so the query names no branch).
+  const bearer = await salesBearer(page);
+  const beforeRead = await page.request.get("/api/v1/pos/parked", {
+    headers: { Authorization: `Bearer ${bearer}`, "X-Org": "hh-demo" },
+  });
+  expect(beforeRead.ok()).toBe(true);
+  const before = ((await beforeRead.json()) as { items: unknown[] }).items.length;
+
+  // Hold the park POST in flight: the park commits only when this story
+  // releases it. A hand parks and opens the dialog in one motion, and the
+  // button's click returns at dispatch, so the dialog's one read racing the
+  // park commit is exactly what this hold makes deterministic.
+  let releasePark: () => void = () => undefined;
+  const parkGate = new Promise<void>((resolve) => {
+    releasePark = resolve;
+  });
+  await page.route((url) => url.pathname === "/api/v1/pos/parked", async (route) => {
+    if (route.request().method() === "POST") await parkGate;
+    await route.continue();
+  });
+
+  const parkPost = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" && response.url().includes("/api/v1/pos/parked"),
+  );
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  // The dialog's first list read is the next parked-list GET in this window:
+  // nothing else reads the list between the held park and the dialog opening.
+  const firstRead = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" && response.url().includes("/api/v1/pos/parked"),
+  );
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  await firstRead;
+  // Open while the park is in flight, the dialog lists the old world only.
+  await expect(parkedDialog.locator(".ticket")).toHaveCount(before);
+
+  releasePark();
+  const created = (await (await parkPost).json()) as { ticket_no: string };
+
+  // The list changed under the open dialog: the dialog converges with it, the
+  // just-parked ticket shows in the open rail, and the button's count and the
+  // dialog's rows agree on the same screen.
+  await expect(parkedDialog.getByText(created.ticket_no)).toBeVisible({ timeout: 10_000 });
+  await expect(
+    page.getByRole("button", { name: new RegExp(`Parked \\(${before + 1}\\)`) }),
+  ).toBeVisible();
+});
+
 test("the top bar is on the till's compact scale: about 48px, small chrome buttons, the banner on one line", async ({
   page,
 }) => {
