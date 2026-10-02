@@ -787,7 +787,7 @@ func TestIntegration_DemoSeedIdempotent(t *testing.T) {
 
 	// Re-apply the guarded seed body: the WTY-D1 guard makes the claim block a no-op, and the ON CONFLICT
 	// clauses make the profile/vendor/customer inserts no-ops. Counts must be UNCHANGED.
-	body, err := os.ReadFile("../../migrations/0057_warranty_demo_seed.sql")
+	body, err := os.ReadFile("../../db/migrations/0057_warranty_demo_seed.sql")
 	if err != nil {
 		t.Fatalf("read migration 0057: %v", err)
 	}
@@ -863,7 +863,7 @@ func TestIntegration_SeedCoherence_NoLostClaimCarriesSettlement(t *testing.T) {
 	}
 
 	// Re-apply 0057 (idempotent), its coherence clause must clean every terminal-LOST claim's settlement fields.
-	body, err := os.ReadFile("../../migrations/0057_warranty_demo_seed.sql")
+	body, err := os.ReadFile("../../db/migrations/0057_warranty_demo_seed.sql")
 	if err != nil {
 		t.Fatalf("read migration 0057: %v", err)
 	}
