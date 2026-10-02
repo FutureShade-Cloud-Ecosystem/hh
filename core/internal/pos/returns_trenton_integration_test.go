@@ -294,6 +294,15 @@ func newTrentonStack(t *testing.T) *trentonStack {
 // DSN to prove the return path never needs a second connection while a
 // Return transaction holds one.
 func newTrentonStackOnPool(t *testing.T, pool *pgxpool.Pool) *trentonStack {
+	return newTrentonStackOnPoolWithRail(t, pool, nil)
+}
+
+// newTrentonStackOnPoolWithRail is newTrentonStackOnPool with the card rail
+// the caller chooses: nil keeps the rig's counting fake (the wall legs'
+// rail, counted through s.cards), a non-nil rail is wired in its place and
+// no counting fake is built at all, so s.cards keeps its one meaning: the
+// fake the rig wired, nil when another rail rides instead.
+func newTrentonStackOnPoolWithRail(t *testing.T, pool *pgxpool.Pool, rail CardRefunder) *trentonStack {
 	t.Helper()
 	buildWorld(t, pool)
 	ctx := context.Background()
@@ -334,7 +343,11 @@ func newTrentonStackOnPool(t *testing.T, pool *pgxpool.Pool) *trentonStack {
 	if err != nil {
 		t.Fatalf("roleconfig.Default: %v", err)
 	}
-	cards := &countingCards{}
+	var cards *countingCards
+	if rail == nil {
+		cards = &countingCards{}
+		rail = cards
+	}
 	cat := product.NewService(product.NewRepository(pool))
 	priceSvc := pricing.NewService(pricing.NewRepository(pool)).
 		WithCategoryResolver(cat).
@@ -346,7 +359,7 @@ func newTrentonStackOnPool(t *testing.T, pool *pgxpool.Pool) *trentonStack {
 		WithLineResolver(priceSvc).
 		WithTenderTaker(tillSvc).
 		WithCreditGate(NewIdentityCreditGate()).
-		WithCardRefunder(cards).
+		WithCardRefunder(rail).
 		WithAudit(auditSvc).
 		WithRoleConfig(cfg).
 		WithApproverSource(g).
