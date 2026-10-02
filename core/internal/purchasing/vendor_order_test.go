@@ -43,6 +43,7 @@ type fakeSends struct {
 	rows     []POSend
 	priorKey string
 	prior    POSend
+	findErr  error
 
 	trail    []string
 	inserted POSend
@@ -77,6 +78,11 @@ func (f *fakeSends) MarkPOSendResult(_ context.Context, id, status, provider, re
 
 func (f *fakeSends) FindPOSendByKey(_ context.Context, key, poID string) (POSend, bool, error) {
 	f.trail = append(f.trail, "find-key")
+	// A read the test fails on purpose, the round 2 arm: what the service does with a replay read
+	// that errors is a decision this file can prove.
+	if f.findErr != nil {
+		return POSend{}, false, f.findErr
+	}
 	// Keyed to the order like the real read: a key is a replay only for the order that minted it.
 	if key != "" && key == f.priorKey && poID == f.prior.POID {
 		return f.prior, true, nil
@@ -422,7 +428,7 @@ func TestSendPO_AnIdenticalRetryReusesItsRow(t *testing.T) {
 // HH-181 (b): the key index is global in the database, so a client that reuses one key across two orders
 // must be told it collided, in the 409 shape this route already speaks, and must never be handed the FIRST
 // order's record as though the second order went out. A caller told "sent" for an order that was never
-// sent waits three weeks for a truck nobody ordered.
+// sent is left waiting for a truck nobody ordered.
 func TestSendPO_AKeyHeldByAnotherOrderIsAKeyCollisionNotAReplay(t *testing.T) {
 	sends := &fakeSends{contact: taggedDesk(), tagged: true,
 		priorKey: "k-1", prior: POSend{ID: "send-0", POID: "po-2", Status: SendFailed,
@@ -467,6 +473,26 @@ func TestSendPO_AReplayKeyDoesNotAnswerForACallerOutsideTheBranch(t *testing.T) 
 	}
 	if sender.calls != 0 {
 		t.Fatalf("the transport was called %d times for a caller the fence refuses", sender.calls)
+	}
+}
+
+// HH-181 round 2 (P2): a replay read that FAILS must be returned, never fallen past. Falling through
+// answers a genuine same-order retry as a key collision once the insert trips the index, which is a
+// claim about a row the code just failed to read.
+func TestSendPO_AFailedReplayReadIsReturnedNeverFallenPast(t *testing.T) {
+	sends := &fakeSends{contact: taggedDesk(), tagged: true,
+		findErr: errors.New("purchasing: find po send: connection reset")}
+	sender := &recordingSender{live: true, delivered: true}
+	got, err := sendSvc(orderedPO(), sends, sender, DefaultPolicy()).
+		SendPO(context.Background(), "po-1", SendPORequest{IdempotencyKey: "k-1"})
+	if err == nil || !strings.Contains(err.Error(), "connection reset") {
+		t.Fatalf("err = %v, the failed replay read was swallowed and the send proceeded to %+v", err, got)
+	}
+	if indexOf(sends.trail, "insert") >= 0 {
+		t.Fatalf("a send whose replay read failed still wrote a row: %v", sends.trail)
+	}
+	if sender.calls != 0 {
+		t.Fatalf("the transport was called %d times behind a failed read", sender.calls)
 	}
 }
 
