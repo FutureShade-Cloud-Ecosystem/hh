@@ -646,7 +646,12 @@ func (s *Service) refundApprovalRefusal(cumulativeCents, newTotalCents int64, ca
 // union), the remainder is a counted non-invoice CREDIT_MEMO. txn_type CREDIT_MEMO is the 0009 CHECK's
 // vocabulary for the design's "CREDIT" row.
 func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, total int64) error {
-	cust, err := s.store.ReadCustomer(ctx, oc.CustomerID)
+	// The customer read rides THIS transaction (ReadCustomerTx, the
+	// FindReturnByKeyTx discipline): a pool read while the Return
+	// transaction holds its connection has the per-sale lock's holder wait
+	// on a second connection every other connection is a Return waiter
+	// that needs the holder's lock, deadlocking a full pool.
+	cust, err := s.store.ReadCustomerTx(ctx, tx, oc.CustomerID)
 	if err != nil {
 		return err
 	}

@@ -39,15 +39,15 @@ import (
 // all four scopes exactly as the composition root wires them (the
 // shared-stream proof needs the stops scope beside the board's).
 type boardFixture struct {
-	pool         *pgxpool.Pool
-	svc          *Service
-	stops        *StopsSyncStore
-	loads        *LoadsSyncStore
-	delivery     *DeliveryStopsSyncStore
-	willCall     *WillCallSyncStore
-	engine       *sync.Engine
-	north        sync.ScopeFilter
-	south        sync.ScopeFilter
+	pool        *pgxpool.Pool
+	svc         *Service
+	stops       *StopsSyncStore
+	loads       *LoadsSyncStore
+	delivery    *DeliveryStopsSyncStore
+	willCall    *WillCallSyncStore
+	engine      *sync.Engine
+	north       sync.ScopeFilter
+	south       sync.ScopeFilter
 	stagedPicks map[string]bool
 	openPicks   map[string]bool
 	willCallNo  int
@@ -68,12 +68,12 @@ func newBoardFixture(t *testing.T) *boardFixture {
 		t.Fatalf("fixture build: %v", err)
 	}
 	f := &boardFixture{
-		pool:  pool,
-		svc:   h.svc,
-		north: sync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: testkit.SubInsideSales},
-		south: sync.ScopeFilter{OrgID: testkit.OrgSouthID, Actor: testkit.SubInsideSales},
-		stagedPicks:  map[string]bool{},
-		openPicks:    map[string]bool{},
+		pool:        pool,
+		svc:         h.svc,
+		north:       sync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: testkit.SubInsideSales},
+		south:       sync.ScopeFilter{OrgID: testkit.OrgSouthID, Actor: testkit.SubInsideSales},
+		stagedPicks: map[string]bool{},
+		openPicks:   map[string]bool{},
 	}
 	picks := boardPicks{f: f}
 	orders := testOrders{pool: pool}

@@ -38,19 +38,19 @@ const widgetsColumns = `user_id::text, widget_key, shape, measure, split, COALES
 
 // widgetRow is the wire shape of one cached widget row.
 type widgetRow struct {
-	ID         string    `json:"id"`
-	UserID     string    `json:"user_id"`
-	WidgetKey  string    `json:"widget_key"`
-	Shape      string    `json:"shape"`
-	Measure    string    `json:"measure"`
-	Split      string    `json:"split"`
-	BranchID   string    `json:"branch_id"`
-	TimeRange  string    `json:"time_range"`
-	Size       string    `json:"size"`
-	Title      string    `json:"title"`
-	Position   int       `json:"position"`
-	Visible    bool      `json:"visible"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	WidgetKey string    `json:"widget_key"`
+	Shape     string    `json:"shape"`
+	Measure   string    `json:"measure"`
+	Split     string    `json:"split"`
+	BranchID  string    `json:"branch_id"`
+	TimeRange string    `json:"time_range"`
+	Size      string    `json:"size"`
+	Title     string    `json:"title"`
+	Position  int       `json:"position"`
+	Visible   bool      `json:"visible"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // widgetID derives the stable uuid of one (user, widget key) pair.

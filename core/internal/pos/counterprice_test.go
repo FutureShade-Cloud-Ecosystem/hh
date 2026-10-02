@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
+	"github.com/jackc/pgx/v5"
 )
 
 // fakeQuoter records what it was ASKED, and answers a fixed picture. Recording the input is the
@@ -81,6 +82,12 @@ func TestCounterPrices_CustomerTypeComesFromTheAccount(t *testing.T) {
 type missingCustStore struct{ *fakeStore }
 
 func (missingCustStore) ReadCustomer(context.Context, string) (customerRec, error) {
+	return customerRec{}, errors.New("pos: no such customer")
+}
+
+// The tx twin answers from the same data the pool read answers from: no
+// customer row is ever found, on either shape.
+func (missingCustStore) ReadCustomerTx(context.Context, pgx.Tx, string) (customerRec, error) {
 	return customerRec{}, errors.New("pos: no such customer")
 }
 

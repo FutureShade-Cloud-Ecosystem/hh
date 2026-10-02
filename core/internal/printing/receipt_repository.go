@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -165,12 +166,19 @@ func (r *Repository) ReadReceiptTenders(ctx context.Context, paymentID, invoiceI
 			t.Label = "CARD · " + cardType
 		}
 		t.Ref = paymentNo
-		// The word follows the ROW's own ref: a CARD capture whose gateway ref carries the till's
-		// capture stub's prefix never reached a processor, and the receipt says so beside the
-		// tender. A live gateway's adapter writes its own refs, so a live charge stamps nothing,
-		// and a reprint stays honest even after the box switches rails. The portal rail's stub
-		// (payments.StubGateway, refs ch_) is a separate rail, its receipts are a filed follow-up.
-		t.Simulated = t.Method == "CARD" && strings.HasPrefix(gatewayRef, payment.StubCaptureRefPrefix)
+		// The word follows the ROW's own ref: a CARD capture whose gateway ref the receipt can
+		// name as a simulated rail's mint never reached a processor, and the paper says so
+		// beside the tender. TWO rails' stubs mint such refs, each stamped by its own
+		// construction: the TILL's capture stub by its exported prefix
+		// (payment.StubCaptureRefPrefix), and the PORTAL rail's own stub (payments.StubGateway,
+		// the default gateway) by its exact mint shape (payments.IsStubChargeRef: the prefix
+		// plus exactly 16 lowercase hex chars, a construction whose only minter in the
+		// repository is that stub's own mint). The exact shape is the discriminator, not a bare
+		// prefix: the live gateways write their own refs (the Run adapter persists the
+		// processor's TransID verbatim), a shape not ours to bound, so a live charge stamps
+		// nothing and a reprint stays honest even after a box switches rails.
+		t.Simulated = (t.Method == "CARD" && strings.HasPrefix(gatewayRef, payment.StubCaptureRefPrefix)) ||
+			(t.Method == "CARD" && payments.IsStubChargeRef(gatewayRef))
 		out = append(out, t)
 	}
 	return out, rows.Err()

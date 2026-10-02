@@ -194,6 +194,12 @@ func (f *fakeStore) ReadCustomer(_ context.Context, id string) (customerRec, err
 	return customerRec{ID: id, CustomerType: "RETAIL"}, nil
 }
 
+// The tx twin answers from the same map: the fake has one world, the tx
+// shape exists so the service's in-transaction customer read stays tx-bound.
+func (f *fakeStore) ReadCustomerTx(_ context.Context, _ pgx.Tx, id string) (customerRec, error) {
+	return f.ReadCustomer(context.Background(), id)
+}
+
 func (f *fakeStore) ResolveWalkIn(_ context.Context) (string, error) { return f.walkInID, nil }
 
 func (f *fakeStore) ReadStockOnHand(_ context.Context, productID string) (map[string]float64, error) {

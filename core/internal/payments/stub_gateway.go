@@ -35,7 +35,7 @@ func (g *StubGateway) Charge(_ context.Context, req ChargeRequest) (ChargeResult
 	}
 	return ChargeResult{
 		Outcome:    OutcomeApproved,
-		GatewayRef: stubRef("ch", req.CustomerID, req.IdempotencyKey),
+		GatewayRef: stubChargeRef(req.CustomerID, req.IdempotencyKey),
 		AuthCode:   "STUBOK",
 		Message:    "approved (stub)",
 	}, nil
@@ -62,6 +62,18 @@ func (g *StubGateway) DetachMethod(_ context.Context, _ string) error { return n
 func stubRef(prefix, a, b string) string {
 	sum := sha256.Sum256([]byte(a + "|" + b))
 	return fmt.Sprintf("%s_%s", prefix, hex.EncodeToString(sum[:8]))
+}
+
+// stubChargeRef mints the CARD charge ref WITH the exported pieces (StubChargeRefPrefix, the
+// exact construction IsStubChargeRef names), so the constant, this mint and the receipt's
+// simulated stamp are one thing and cannot drift apart. The value is the prefix, then the
+// first 8 bytes of sha256 over the two inputs, hex encoded, exactly 16 lowercase chars. The
+// construction is load bearing rather than a style choice: persisted payments rows carry these
+// bytes as gateway_ref, and readers that match a row's ref by value (the receipt's simulated
+// stamp is one) depend on the mint never varying on its own.
+func stubChargeRef(a, b string) string {
+	sum := sha256.Sum256([]byte(a + "|" + b))
+	return StubChargeRefPrefix + hex.EncodeToString(sum[:8])
 }
 
 // compile-time assertion: StubGateway satisfies the port.

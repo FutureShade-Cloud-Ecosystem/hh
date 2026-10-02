@@ -224,6 +224,21 @@ func (r *Repository) ReturnOrderContextTx(ctx context.Context, tx pgx.Tx, orderI
 	return oc, true, nil
 }
 
+// ReadCustomerTx is the customer credit read on the open Return transaction,
+// the tx twin the ACCOUNT_CREDIT rail's subledger booking needs (see
+// FindReturnByKeyTx): applyAccountCredit runs inside the Return transaction,
+// and a customer read through the pool there would have the per-sale lock's
+// holder wait for a second connection every other connection is a Return
+// waiter that needs the holder's lock, deadlocking a full pool until the
+// caller's context ends.
+func (r *Repository) ReadCustomerTx(ctx context.Context, tx pgx.Tx, customerID string) (customerRec, error) {
+	var c customerRec
+	err := tx.QueryRow(ctx, readCustomerQuery, customerID).Scan(
+		&c.ID, &c.CustomerType, &c.PaymentTermsDays, &c.CreditLimitCents, &c.OpenBalanceCents,
+	)
+	return c, err
+}
+
 func (r *Repository) ListReturnableLines(ctx context.Context, orderID string) ([]ReturnableLineView, error) {
 	if r.pool == nil {
 		return nil, errNoPool

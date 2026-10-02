@@ -83,6 +83,14 @@ type posStore interface {
 	FindSaleByKey(ctx context.Context, key string) (Sale, bool, error)
 	// credit-gate + pricing reads (non-tx)
 	ReadCustomer(ctx context.Context, customerID string) (customerRec, error)
+	// ReadCustomerTx is ReadCustomer's open-transaction twin: the
+	// ACCOUNT_CREDIT rail reads the customer inside the Return transaction,
+	// on ITS transaction, never through the pool while the transaction
+	// holds a connection (the FindReturnByKeyTx discipline: a pool read
+	// there has the per-sale lock's holder wait on a second connection
+	// every other connection is a Return waiter that needs the holder's
+	// lock).
+	ReadCustomerTx(ctx context.Context, tx pgx.Tx, customerID string) (customerRec, error)
 	ResolveWalkIn(ctx context.Context) (string, error)
 	// multi-branch stock glance (non-tx read; M2 debt)
 	ReadStockOnHand(ctx context.Context, productID string) (map[string]float64, error)

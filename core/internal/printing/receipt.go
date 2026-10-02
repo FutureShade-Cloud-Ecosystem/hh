@@ -283,12 +283,11 @@ type ReceiptTender struct {
 	AmountCents int64
 	Ref         string
 
-	// Simulated marks a CARD tender whose gateway ref carries the TILL's capture stub's prefix
-	// (payment.StubCaptureRefPrefix): the charge was that deterministic stub's, nothing reached a
-	// processor, and the printed receipt says so beside the label. The flag is stamped from the
-	// row's own ref, so a reprint stays honest even after the box switches rails: the word follows
-	// what actually processed that payment. The PORTAL rail's own stub (payments.StubGateway, refs
-	// beginning ch_) is a separate rail whose receipts carry no word here, a follow-up filed for
-	// the principal.
+	// Simulated marks a CARD tender whose gateway ref names a simulated rail's mint: the TILL's
+	// capture stub by its exported prefix (payment.StubCaptureRefPrefix), the PORTAL rail's own
+	// stub by its exact mint shape (payments.IsStubChargeRef). Either way the charge was that
+	// deterministic stub's, nothing reached a processor, and the printed receipt says so beside
+	// the label. The flag is stamped from the row's own ref, so a reprint stays honest even after
+	// the box switches rails: the word follows what actually processed that payment.
 	Simulated bool
 }

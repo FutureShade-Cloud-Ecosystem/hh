@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 )
 
 func TestMoney(t *testing.T) {
@@ -134,6 +136,73 @@ func TestRenderReceiptHTML_SimulatedCardWord(t *testing.T) {
 	// the bytes must equal the live document exactly.
 	if strings.Replace(simHTML, addition, "", 1) != liveHTML {
 		t.Fatal("the word must be the only delta: the same receipt without the flag must render byte-identically to the live document")
+	}
+}
+
+// The sale type words: the customer's paper is not the codebase's vocabulary. Each pos sale type
+// (core/internal/pos/model.go) renders as the plain words true to what that sale is, inside the
+// same muted line, and the raw constant never prints. The words carry no payment claim (an ACCOUNT
+// tender can ride any sale type, so "paid" is not the paper's to assert) and no time-relative word
+// (a reprint must read as true as the first copy).
+func TestRenderReceiptHTML_SaleTypeRendersPlainWords(t *testing.T) {
+	for _, tc := range []struct {
+		saleType string
+		words    string
+	}{
+		{pos.SaleCollectNow, "Collected at the counter"},
+		{pos.SaleCollectLater, "For later collection"},
+		{pos.SaleDelivered, "Delivery"},
+		{pos.SaleCOD, "Invoice issued, payment before fulfilment"},
+	} {
+		html, err := RenderReceiptHTML(Receipt{
+			OrderNo: "#SO-1", SaleType: tc.saleType,
+			TaxLabel: "HST (13%)", SoldAt: time.Now(), PrintedAt: time.Now(),
+		})
+		if err != nil {
+			t.Fatalf("render %q: %v", tc.saleType, err)
+		}
+		if !strings.Contains(html, `<div class="muted">`+tc.words+`</div>`) {
+			t.Fatalf("sale type %q must render the plain words in the muted line, %q not found", tc.saleType, tc.words)
+		}
+		if strings.Contains(html, tc.saleType) {
+			t.Fatalf("sale type %q must never print the raw constant on the receipt", tc.saleType)
+		}
+	}
+}
+
+// An unknown sale type renders the raw value itself, in the muted line. Nothing
+// is hidden and nothing is guessed, a value the mapping does not know is the customer's own data on
+// the paper, not a blank and not invented words.
+func TestRenderReceiptHTML_UnknownSaleTypeRendersRaw(t *testing.T) {
+	html, err := RenderReceiptHTML(Receipt{
+		OrderNo: "#SO-2", SaleType: "TELEPORT",
+		TaxLabel: "HST (13%)", SoldAt: time.Now(), PrintedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(html, `<div class="muted">TELEPORT</div>`) {
+		t.Fatal("an unknown sale type must render the raw value, muted, verbatim")
+	}
+}
+
+// An empty sale type renders no line at all: the template's if stands, so no empty muted div and
+// no placeholder words are invented for a sale that carries no sale type.
+func TestRenderReceiptHTML_EmptySaleTypeRendersNoLine(t *testing.T) {
+	html, err := RenderReceiptHTML(Receipt{
+		OrderNo: "#SO-3", SaleType: "",
+		TaxLabel: "HST (13%)", SoldAt: time.Now(), PrintedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, word := range []string{
+		`<div class="muted"></div>`,
+		"Collected at the counter", "For later collection", "Delivery", "Invoice issued, payment before fulfilment",
+	} {
+		if strings.Contains(html, word) {
+			t.Fatalf("a receipt with no sale type must render no sale type line at all, found %q", word)
+		}
 	}
 }
 
