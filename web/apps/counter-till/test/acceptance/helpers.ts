@@ -1,5 +1,6 @@
-// Shared words and moves for the W9 acceptance run: signing in as a role, the
-// counter's search and add rhythm, the money strings the one helper renders
+// Shared words and moves for the W9 acceptance run, on the ported POS surface
+// (the stepper cards, the session bar, the sold panel): signing in as a role,
+// the counter's search and add rhythm, the money strings the one helper renders
 // (mirrored here so the test never imports the app's own code), the staff
 // reads the assertions compare the screen against, and the screenshot helper
 // that names every screen of the story.
@@ -48,6 +49,15 @@ export function dollars(cents: number): string {
   const whole = Math.floor(magnitude / 100);
   const remainder = magnitude - whole * 100;
   return `${negative ? "-" : ""}$${whole.toLocaleString("en-CA")}.${String(remainder).padStart(2, "0")}`;
+}
+
+/**
+ * The ported surface's own money word on a line, the total card and the sold
+ * panel: "CA$5.95". The returns desk (HH's own view) keeps the plain "$"
+ * words, so both renderings are mirrored here.
+ */
+export function cad(cents: number): string {
+  return `CA${dollars(cents)}`;
 }
 
 /** The column's percent from basis points, as the app's helper rounds it. */
@@ -202,50 +212,170 @@ export async function expectedCash(page: Page, bearer: string, drawerId: string)
 
 /**
  * The invented trading name the demo populate writes onto the branch rows
- * (the review round's P2-1): every till screen's drawer strip and parked list
- * header carries it, and the first dealer's real trading name appears
- * nowhere.
+ * (the review round's P2-1): the till's identity line under the page title
+ * carries it, and the first dealer's real trading name appears nowhere on a
+ * till screen.
  */
 export const DEMO_DEALER = "Hardscape House (demo)";
 
-/** Tap a role card and wait until the till answers under that role's name. */
+/** The steps of the linear flow, by the id their head carries. */
+export type Step = "customer" | "items" | "payment" | "summary";
+
+/** Open one step of the accordion by its head (a no-op when it is already open). */
+export async function openStep(page: Page, step: Step): Promise<void> {
+  const head = page.getByTestId(`step-head-${step}`);
+  // A pick or an add can advance the flow a moment after it lands, closing
+  // the head this call just opened: press again until it holds open.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
+    try {
+      await expect(head).toHaveAttribute("aria-expanded", "true", { timeout: 1_000 });
+      await page.waitForTimeout(250);
+      if ((await head.getAttribute("aria-expanded")) === "true") return;
+    } catch {
+      // closed again by the advance: press once more
+    }
+  }
+  await expect(head).toHaveAttribute("aria-expanded", "true");
+}
+
+/**
+ * Tap a role card and wait until the till answers under that role's name and
+ * has loaded: the session bar's open dot (the drawer found or opened on first
+ * use), the page's context line naming the invented dealer and the branch,
+ * and the parked button's count (its first read has landed).
+ */
 export async function signIn(page: Page, role: Role): Promise<void> {
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await paceMint(page);
   await page.getByRole("button", { name: role, exact: true }).click();
   await expect(page.getByTestId("signed-in-role")).toHaveText(role);
-  // The till's own start: the branch resolved, the drawer found or opened,
-  // named for the invented dealer the populate wrote, not the migrated name.
-  await expect(page.getByTestId("drawer-status")).toContainText(DEMO_DEALER);
-  await expect(page.getByTestId("drawer-status")).toContainText("MAIN: open with a float of $200.00");
+  await expect(page.getByTestId("session-dot")).toContainText("Open", { timeout: 15_000 });
+  await expect(page.getByTestId("pagectx")).toContainText(DEMO_DEALER);
+  await expect(page.getByTestId("pagectx")).toContainText("Trenton");
+  // The parked read has landed: the button states 0 until it does, and the
+  // seeded world always holds Trenton's walk-in ticket (a pickup parks a
+  // ticket back), so a count of one or more is the loaded state.
+  await expect(page.getByRole("button", { name: /^Parked \([1-9]\d*\)/ })).toBeVisible();
 }
 
-/** Search the catalogue and add the named hit to the ticket. */
+/** The drawer Z report's opening float, the figure the drawer was opened with. */
+export async function openingFloat(page: Page, bearer: string, drawerId: string): Promise<number> {
+  const report = await staffGet(page, bearer, `/api/v1/till/sessions/${drawerId}/zreport`);
+  const cash = report.body.cash as { opening_float_cents?: number } | undefined;
+  expect(typeof cash?.opening_float_cents).toBe("number");
+  return cash?.opening_float_cents as number;
+}
+
+/** Search from the scan box and add the named hit: the drop row's click adds. */
 export async function searchAndAdd(page: Page, query: string, hitName: string): Promise<void> {
-  await page.getByLabel("Search the catalogue by sku or name").fill(query);
-  await page.getByRole("button", { name: "Search", exact: true }).click();
-  const hit = page.getByRole("button", { name: `Add ${hitName} to the ticket` });
-  await expect(hit).toBeVisible();
-  await hit.click();
+  // The accordion opens on Customer; the scan box lives in Items.
+  await openStep(page, "items");
+  await page.getByTestId("pos-scan-input").fill(query);
+  const row = page.getByTestId("drop-row").filter({ hasText: hitName }).first();
+  await expect(row).toBeVisible();
+  await row.click();
+  await expect(lineRow(page, hitName)).toHaveCount(1);
+  // The line is priced when its price lookup answers: the unit price slot
+  // reads a figure, never the pending marker.
+  await expect(lineRow(page, hitName).locator(".lprice")).toContainText("$");
+}
+
+/** The ticket's line for one product, found by its name. */
+export function lineRow(page: Page, hitName: string) {
+  return page.getByTestId("pos-line-row").filter({ hasText: hitName });
+}
+
+/** Type a quantity into a line's stepper input and let the engine reprice it. */
+export async function setQuantity(page: Page, hitName: string, qty: string): Promise<void> {
+  const field = page.getByRole("textbox", { name: `Quantity: ${hitName}` });
+  await field.fill(qty);
+  await field.blur();
 }
 
 /**
  * Find an account by a word of its number or name and pick the row that
- * names it. The picked panel is held to the expected words on the whole
- * Customer section: the strong carries the display name and the account
- * number sits beside it, so the caller may name either.
+ * names it. The pick advances the flow, so the Customer card is opened again
+ * (retried until it is readable) and held to the expected words: the strong
+ * carries the display name and the account number sits beside it, so the
+ * caller may name either.
  */
 export async function pickCustomer(page: Page, query: string, expected: string): Promise<void> {
-  await page.getByLabel("Find an account by name or account number").fill(query);
-  await page.getByRole("button", { name: "Find", exact: true }).click();
-  const row = page
-    .getByTestId("customer-hits")
-    .getByRole("listitem")
-    .filter({ hasText: expected });
+  await openStep(page, "customer");
+  // A picked account is changed through its card's own control; a walk-in
+  // opens the picker from the select button.
+  const change = page.getByTestId("customer-change");
+  if (await change.isVisible()) await change.click();
+  else await page.getByRole("button", { name: /Select customer/ }).click();
+  await page.getByPlaceholder("Search name or account #…").fill(query);
+  const row = page.locator("button.row").filter({ hasText: expected });
   await expect(row).toHaveCount(1);
-  await row.getByRole("button", { name: "Use" }).click();
-  await expect(page.getByLabel("Customer")).toContainText(expected);
+  await row.click();
+  const card = page.getByTestId("customer-card");
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await openStep(page, "customer");
+    try {
+      await expect(card).toContainText(expected, { timeout: 700 });
+      return;
+    } catch {
+      // the advance closed the step again: open it once more
+    }
+  }
+  await expect(card).toContainText(expected);
+}
+
+/** What the ring's POST answered: the identifiers and figures of the committed sale. */
+export interface Rung {
+  order_id: string;
+  order_no: string;
+  invoice_no: string;
+  total_cents: number;
+}
+
+/**
+ * Press Complete sale on the Payment step and return the core's own answer to
+ * the ring. The caller has chosen the tender and typed any cash tendered.
+ */
+export async function ring(page: Page): Promise<Rung> {
+  await openStep(page, "payment");
+  const posted = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await page.getByTestId("pos-complete-sale").click();
+  const answer = await posted;
+  expect(answer.ok()).toBe(true);
+  const sale = (await answer.json()) as Rung;
+  await expect(page.getByTestId("sold-panel")).toBeVisible();
+  return sale;
+}
+
+/** A cash ring: the quick entry typed, then the ring. */
+export async function ringCash(page: Page, tendered: string): Promise<Rung> {
+  await openStep(page, "payment");
+  await page.getByLabel(/Cash tendered in dollars/).fill(tendered);
+  return ring(page);
+}
+
+/**
+ * The parked tickets dialog, opened from the button that carries the count,
+ * and read once its list has landed: the dialog's rows equal the count the
+ * button states (the dialog shows its empty word until the first read lands).
+ */
+export async function openParked(page: Page) {
+  const button = page.getByRole("button", { name: /^Parked \(\d+\)/ });
+  const stated = async (): Promise<number> =>
+    Number(/\((\d+)\)/.exec((await button.textContent()) ?? "")?.[1] ?? "-1");
+  await button.click();
+  const dialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Parked tickets");
+  // The button's count refreshes a beat after a park, the dialog's list reads
+  // on open: both settle on the same figure.
+  await expect
+    .poll(async () => (await dialog.locator(".ticket").count()) - (await stated()))
+    .toBe(0);
+  return dialog;
 }
 
 /**
@@ -258,15 +388,94 @@ export function returnLineInputs(page: Page) {
   return page.getByTestId("returns").getByRole("spinbutton");
 }
 
-/**
- * One screenshot per screen per role, into the folder the run was given:
- * clearly named, produced on demand, carried by no commit.
- */
-export async function shot(page: Page, name: string, testInfo: TestInfo): Promise<void> {
+function shotDir(testInfo: TestInfo): string {
   // Outside Playwright's own output directory: a later leg's run start would
   // sweep the earlier leg's screenshots away with the rest of its artifacts.
   const dir =
     process.env.CT_SHOT_DIR ?? join(testInfo.config.rootDir, "..", "..", "acceptance-screens");
   mkdirSync(dir, { recursive: true });
-  await page.screenshot({ path: join(dir, `${name}.png`), fullPage: true });
+  return dir;
+}
+
+/**
+ * The page is at rest: fonts are in, and no placeholder of a read still in
+ * flight ("Reading ...", "Loading ...") is on the screen, shadow roots
+ * included. A shot of a half loaded screen shows nothing of its claim.
+ */
+export async function settle(page: Page): Promise<void> {
+  await expect(page.getByText(/\b(Reading|Loading)\b/)).toHaveCount(0);
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+}
+
+/**
+ * One screenshot per screen per role, into the folder the run was given:
+ * clearly named, produced on demand, carried by no commit. The page settles
+ * first. A clip narrows the picture to the part of the screen that carries
+ * the claim (the session bar and the identity line, for the drawer).
+ */
+export async function shot(
+  page: Page,
+  name: string,
+  testInfo: TestInfo,
+  options: { clip?: { x: number; y: number; width: number; height: number } } = {},
+): Promise<void> {
+  await settle(page);
+  await page.screenshot({
+    path: join(shotDir(testInfo), `${name}.png`),
+    fullPage: options.clip === undefined,
+    clip: options.clip,
+  });
+}
+
+/** The top of the screen: the demo banner, the role, the dealer line and the session bar. */
+export const TOP_BAR_CLIP = { x: 0, y: 0, width: 1280, height: 280 };
+
+/**
+ * A staff read shown as the browser shows it, for the claims whose evidence
+ * the screen does not carry (the drawer's Z report, the dispatch read): a
+ * fresh page under the same gate, the bearer attached to the one navigation,
+ * the picture returned as bytes for a composed shot. The bearer is a demo
+ * session token; it never appears in the picture, only the core's answer does.
+ */
+export async function apiPicture(page: Page, bearer: string, path: string): Promise<Buffer> {
+  const evidence = await page.context().newPage();
+  // A short viewport, so the full page picture is the answer's own height.
+  await evidence.setViewportSize({ width: 1280, height: 100 });
+  await evidence.route("**/api/v1/**", (route) =>
+    route.continue({
+      headers: { ...route.request().headers(), Authorization: `Bearer ${bearer}`, "X-Org": "hh-demo" },
+    }),
+  );
+  const answer = await evidence.goto(path);
+  expect(answer).not.toBeNull();
+  await expect(evidence.locator("body")).not.toBeEmpty();
+  const picture = await evidence.screenshot({ fullPage: true });
+  await evidence.close();
+  return picture;
+}
+
+/**
+ * One screenshot made of several pictures stacked top to bottom, each a real
+ * capture of the product (a region of the till, a staff read as the browser
+ * shows it): the shot for a claim whose proof lives in more than one place,
+ * so the one named file shows all of it.
+ */
+export async function shotParts(
+  page: Page,
+  name: string,
+  testInfo: TestInfo,
+  parts: Buffer[],
+): Promise<void> {
+  const composer = await page.context().newPage();
+  await composer.setViewportSize({ width: 1280, height: 800 });
+  const images = parts
+    .map(
+      (part) =>
+        `<img style="display:block;max-width:1240px;margin:0 0 16px 0;border:1px solid #c9ced6" src="data:image/png;base64,${part.toString("base64")}">`,
+    )
+    .join("");
+  await composer.setContent(`<body style="margin:20px;background:#fff">${images}</body>`);
+  await composer.waitForFunction(() => Array.from(document.images).every((image) => image.complete));
+  await composer.screenshot({ path: join(shotDir(testInfo), `${name}.png`), fullPage: true });
+  await composer.close();
 }
