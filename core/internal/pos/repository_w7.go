@@ -237,20 +237,23 @@ SELECT ol.id::text, COALESCE(ol.product_id::text,''), ol.qty_base::float8, ol.un
 	return rl, true, nil
 }
 
+// sumCommittedReturnTotalsQuery is the sale's committed return total. Every
+// pos_returns row is COMMITTED by the table's own CHECK constraint
+// (migration 0043 pins status to the one value 'COMMITTED'), so the sum
+// needs no status filter.
+const sumCommittedReturnTotalsQuery = `SELECT COALESCE(SUM(total_cents), 0) FROM pos_returns WHERE order_id = $1`
+
 // SumCommittedReturnTotals reads the sale's committed return total before
 // any transaction opens: the approval prospect adds it to the requested
 // lines' original totals, so a manager credential in the header is still
 // consulted when the CUMULATIVE would cross the amount even though the new
-// return alone sits under it. Every pos_returns row is COMMITTED by the
-// table's own CHECK constraint (migration 0043 pins status to the one value
-// 'COMMITTED'), so the sum needs no status filter.
+// return alone sits under it.
 func (r *Repository) SumCommittedReturnTotals(ctx context.Context, orderID string) (int64, error) {
 	if r.pool == nil {
 		return 0, errNoPool
 	}
-	const q = `SELECT COALESCE(SUM(total_cents), 0) FROM pos_returns WHERE order_id = $1`
 	var sum int64
-	err := r.pool.QueryRow(ctx, q, orderID).Scan(&sum)
+	err := r.pool.QueryRow(ctx, sumCommittedReturnTotalsQuery, orderID).Scan(&sum)
 	return sum, err
 }
 
@@ -259,9 +262,8 @@ func (r *Repository) SumCommittedReturnTotals(ctx context.Context, orderID strin
 // lock below, the prior total is exact against any concurrent return of the
 // same sale.
 func (r *Repository) SumCommittedReturnTotalsTx(ctx context.Context, tx pgx.Tx, orderID string) (int64, error) {
-	const q = `SELECT COALESCE(SUM(total_cents), 0) FROM pos_returns WHERE order_id = $1`
 	var sum int64
-	err := tx.QueryRow(ctx, q, orderID).Scan(&sum)
+	err := tx.QueryRow(ctx, sumCommittedReturnTotalsQuery, orderID).Scan(&sum)
 	return sum, err
 }
 

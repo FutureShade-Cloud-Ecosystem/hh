@@ -62,6 +62,9 @@ func TestRefundSumsPerSale_EarlierReturn_CumulativeCross_Refused(t *testing.T) {
 	if len(h.store.returnRows) != 0 || len(h.store.returnLineRows) != 0 || h.tender.refundCalled {
 		t.Fatal("a refused return must persist nothing and touch no rail")
 	}
+	if len(h.store.returnLocks) != 1 || h.store.returnLocks[0] != "order-1" {
+		t.Fatalf("every Return must take the per-sale lock, refusals included: %v", h.store.returnLocks)
+	}
 	if len(h.rec.rows) != 1 {
 		t.Fatalf("want exactly the refusal's audit row, got %v", h.rec.rows)
 	}
@@ -80,7 +83,8 @@ func TestRefundSumsPerSale_EarlierReturn_CumulativeCross_Refused(t *testing.T) {
 
 // The same new return against a sale with NO earlier return commits: the
 // per-return rule still holds, the sale's running total is what moves the
-// answer, not the mere existence of a prior slice.
+// answer, not the mere existence of a prior slice. A second Return on the
+// same sale takes the per-sale lock again: two Returns, two lock entries.
 func TestRefundSumsPerSale_NoEarlierReturn_Commits(t *testing.T) {
 	h := newHarness()
 	seedSaleWorth(h, 44296, 0)
@@ -93,6 +97,14 @@ func TestRefundSumsPerSale_NoEarlierReturn_Commits(t *testing.T) {
 	}
 	if out.TotalCents != 22148 || len(h.store.returnRows) != 1 || !h.tender.refundCalled {
 		t.Fatalf("the return must commit through the rail: %+v", out)
+	}
+	again := fiveUnitReturn()
+	again.IdempotencyKey = "ret-key-2"
+	if _, err := h.svc.Return(ctxWithActor("u-cashier"), again); err != nil {
+		t.Fatalf("the second return must pass through the same path: %v", err)
+	}
+	if len(h.store.returnLocks) != 2 || h.store.returnLocks[0] != "order-1" || h.store.returnLocks[1] != "order-1" {
+		t.Fatalf("every Return takes the per-sale lock, one entry each: %v", h.store.returnLocks)
 	}
 }
 
@@ -124,6 +136,9 @@ func TestRefundSumsPerSale_CumulativeCross_ManagerHeaderCommits(t *testing.T) {
 	}
 	if src.calls != 1 {
 		t.Fatalf("the header must be consulted when the cumulative would cross, resolver calls=%d", src.calls)
+	}
+	if len(h.store.returnLocks) != 1 || h.store.returnLocks[0] != "order-1" {
+		t.Fatalf("every Return must take the per-sale lock: %v", h.store.returnLocks)
 	}
 	ev, ok := h.store.lastEvent("pos.return.committed")
 	if !ok {
