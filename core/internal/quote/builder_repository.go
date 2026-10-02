@@ -256,15 +256,17 @@ func (r *Repository) UpdateTermsGuarded(ctx context.Context, quoteID string, in 
 		return QuoteTerms{}, fmt.Errorf("update quote terms: %w", err)
 	}
 	// The money fold-up: subtotal from the lines (unchanged semantics), tax stamped flat-HST over
-	// subtotal + delivery, total = subtotal + delivery + tax.
+	// subtotal + delivery, total = subtotal + delivery + tax. The tax base's SUM is cast ::bigint
+	// (HH-204): SUM(bigint) returns numeric, and uncast the + 5000 half-up and the / 10000 become a
+	// NUMERIC division whose fraction the bigint column rounds a second time, one cent high.
 	if _, err := tx.Exec(ctx, `
 		UPDATE quotes SET
 		    subtotal_cents = COALESCE((SELECT SUM(line_total_cents) FROM quote_lines WHERE quote_id = $1), 0),
-		    tax_cents      = ((COALESCE((SELECT SUM(line_total_cents) FROM quote_lines WHERE quote_id = $1), 0)
+		    tax_cents      = ((COALESCE((SELECT SUM(line_total_cents) FROM quote_lines WHERE quote_id = $1), 0)::bigint
 		                       + delivery_fee_cents) * $2 + 5000) / 10000,
 		    total_cents    = COALESCE((SELECT SUM(line_total_cents) FROM quote_lines WHERE quote_id = $1), 0)
 		                     + delivery_fee_cents
-		                     + ((COALESCE((SELECT SUM(line_total_cents) FROM quote_lines WHERE quote_id = $1), 0)
+		                     + ((COALESCE((SELECT SUM(line_total_cents) FROM quote_lines WHERE quote_id = $1), 0)::bigint
 		                         + delivery_fee_cents) * $2 + 5000) / 10000
 		 WHERE id = $1`, quoteID, hstRateBps); err != nil {
 		return QuoteTerms{}, fmt.Errorf("recompute quote terms money: %w", err)
