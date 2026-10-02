@@ -25,9 +25,12 @@ complete unless the session is COUNTED (409, core/internal/till/service.go),
 answers CLOSED, and a drawer that does not balance needs a manager's sign-off
 (row 500). The reference's End Session opened a till-close screen (blind count,
 Z report, sign-off) that this release does not carry, so the button stays
-visible but disabled, with the reason on its title and aria label ("Ending the
-session needs the blind count, the Z report and a manager's sign-off; the
-drawer close is not on this surface yet."). Porting the close flow is the
+visible but closed: `aria-disabled="true"` (so it takes focus), grey and
+unfilled, named "End Session", with the reason on its title; a press or focus
+shows the reason as text in the till's own message line, which the button
+points at with `aria-describedby` ("Ending the session needs the blind count,
+the Z report and a manager's sign-off; the drawer close is not on this
+surface yet."), and it makes no request. Porting the close flow is the
 work that opens it; the stub carries no complete route.
 
 Open gap: the printed receipt does not carry the simulated word. The receipt
@@ -35,7 +38,10 @@ is the core's document (GET /api/v1/pos/sales/{id}/receipt, printing module)
 and says nothing of simulation for a simulated card sale; the till's own
 screens (the confirmation's notice, the rail word) carry it. A core change is
 the principal's to sequence, and the suite no longer asserts the word on the
-stub's receipt text.
+stub's receipt text. A second, related gap: the printed receipt window is
+the core's own document and is unstyled (a plain default-font page, a table
+for the lines, no currency marks, no layout); styling it is the core's
+printing module, outside this lane, and the principal sequences it.
 
 One deliberate deviation from the reference, on HH's rule (the visual
 review's blocking zero): the reference's empty draft reads Subtotal CA$0.00,
@@ -47,7 +53,11 @@ summary and the read-back whenever the cart is empty OR any line is price
 pending (a just-added line before its price lookup answers, or a line whose
 reprice failed), and the figures return when every line is priced (the old
 reviewed till's own marker, views/till.ts's line-unpriced word). The Complete
-sale amount carries (est.) once it states a figure. The search drop rows render
+sale amount carries (est.) once it states a figure, as does the Change due
+preview. The split panel's remaining amount, the parked list's total and the
+Change due preview's choice between a change figure and "Less than the total"
+follow the same marker while any line is price pending (the parked snapshot
+keeps no total for such a ticket). The search drop rows render
 the contract's per-branch stock (`on_hand_branch`) beside the SKU, as the
 reference's rows do; the contract carries the field, so no gap remains.
 
@@ -86,16 +96,35 @@ own commit on `till/ui-3-polish`.
   Auto follows the system's light setting live. The reference persists its
   choice in local storage; this app's committed sink gate refuses every
   storage path, so the choice rests in tab memory only and a reload, a
-  sign-out and the pop-out window start on Auto (`src/theme.ts`).
+  sign-out and the pop-out window start on Auto (`src/theme.ts`). A press is announced in a polite status (focus stays on the button), and a test
+  holds that Auto follows an emulated system colour-scheme change.
 - Header (GAP 6): the title, the stepper and the session bar share one row at
   the column cap while no session is open (the bar's gap and the session
   cluster's gap tightened). With a session open the bar gains the dot and End
   Session and wraps, as the reference's own bar does.
 - Split banner (GAP 7): the split state's band is the reference's pale yellow
-  with the theme-stable ink in both themes.
+  with the theme-stable ink in both themes. It is a status element (`p`,
+  `role="status"`), not a disabled button: a disabled button must look
+  disabled. Its fill is the LOCAL role `--hos-band-fill` in `styles/tokens.css`
+  (theme-invariant, flagged for promotion), not a colour keyword; the hex ratchet
+  test also refuses `white` and `black` in a colour position.
 - Margin eye (GAP 8): an outlined control (the utility buttons' hairline), at
   the end of the utility row, so it never shifts Park ticket when the first
-  priced line brings margin into view.
+  priced line brings margin into view. One constant accessible name ("Hide
+  margin and est. profit") with `aria-pressed` (pressed means hidden); pressed
+  wears a tint so a hovered eye does not look pressed.
+- Top bar (visual NOTE 3): the bar above the till is on the till's compact
+  scale, about 48px, with the till's small-chrome button face and type size and
+  a one-line demo banner. The design system's 44px control floor still governs
+  the entry page.
+- Disabled controls (visual NOTE 4): the Items Add button and the returns
+  desk's disabled buttons take the one rule Complete sale uses: no fill, grey
+  ink and line, no fade. Still on the older fade rule and not in this pass's
+  list: the split panel's and the lookup sheet's own disabled buttons
+  (`opacity: 0.5`).
+- Control boundary: the returns desk's inputs and the till's own inputs and
+  selects take `--hh-control-line` (3:1 or better in both themes), not the
+  hairline, through the `--hos-control-line` alias; a test reads the border.
 - Panels Fulfilment row (GAP 9): all four choices share one row at the default
   panel width (the tile floor is 112px). None are left out: Collect now,
   Will-call, Delivery and COD are all sale types of the contract's ring body.
@@ -108,7 +137,9 @@ own commit on `till/ui-3-polish`.
   carry their category, so the filled tiles, the drill, the add, the curated
   chip row and Favorites are exercised in `test/hotlist.pw.ts`. No contract
   change: the shapes are the contract's `PosQuickPicks` and the catalogue
-  list's application word. The tiles wear the placeholder thumbnail because
+  list's application word. The empty hot-list note and the COD tile's "off"
+  gate are held by tests that answer the one read differently for a page (the
+  stub's own defaults stay filled and allowed). The tiles wear the placeholder thumbnail because
   the stub carries no photo bytes (`has_image` false).
 - Signature area (NOTE 7): decided, left closed. The signature capture
   (`pos-signature.ts`) rides the tax relief assessment ("Assess tax relief"
@@ -124,7 +155,9 @@ own commit on `till/ui-3-polish`.
   ticket's blank marker, the hotkey legend, the help popover and the Counter
   view menu. The Counter settings editor is administrator-gated (`isAdmin`),
   and neither demo role is one, so it is not reachable on this build and was
-  not seen.
+  not seen (recorded as a gap: neither demo role reaches the Counter settings
+  dialog, so its restyle and the hot-list and key editing it carries are not
+  checked here).
 
 The reference is `hardscapeos_dibbits` `master` at 87d7941b, read only at
 `counter-till/ref-master/`. This directory carries the ported surface code of
