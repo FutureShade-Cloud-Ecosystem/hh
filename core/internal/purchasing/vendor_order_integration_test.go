@@ -12,8 +12,12 @@ package purchasing
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
@@ -299,6 +303,57 @@ func TestIntegration_Item5_TheOrderGoesToTheOneTaggedDeskOrIsRefusedInWords(t *t
 	after, _ := h.svc.ListPOSends(h.ctx, po.ID)
 	if len(after) != 1 || after[0].RecipientKind != RecipientVendorContact {
 		t.Fatalf("untagging changed the story of a send that already happened: %+v", after)
+	}
+}
+
+// HH-181: the send replay is keyed to ITS ORDER and answered AFTER the branch fence. The key index is
+// global in the database (one idempotency key, one send, across every order), so a key held by another
+// order must be refused as a collision in the 409 shape this route already speaks, and a key must never
+// be an answer for a caller the branch fence refuses.
+func TestIntegration_Item5_TheSendReplayIsKeyedToItsOrderAndFencedByBranch(t *testing.T) {
+	h := item5Harness(t)
+	product := h.newProduct(t, "hh181-key")
+	first := h.orderedPO(t, product, 10, 100)
+	second := h.orderedPO(t, product, 10, 100)
+	if _, err := h.svc.SetVendorContact(h.ctx, VendorContact{
+		VendorID: h.vendor, Name: "Orders desk", Email: "orders@vendor.example"}); err != nil {
+		t.Fatalf("tag: %v", err)
+	}
+
+	key := fmt.Sprintf("hh181-%d", time.Now().UnixNano())
+	got, err := h.svc.SendPO(h.ctx, first.ID, SendPORequest{IdempotencyKey: key})
+	if err != nil {
+		t.Fatalf("first send: %v", err)
+	}
+	// (a) THE IDENTICAL RETRY OF THE SAME ORDER is still one order, the behavior this route promises.
+	again, err := h.svc.SendPO(h.ctx, first.ID, SendPORequest{IdempotencyKey: key})
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if again.ID != got.ID {
+		t.Fatalf("the retry minted a second send: %s vs %s", again.ID, got.ID)
+	}
+
+	// (b) THE SAME KEY ON A SECOND ORDER is a collision, answered with the existing 409 shape. The
+	// second order is never sent and the caller is never handed the first order's record.
+	sent, err := h.svc.SendPO(h.ctx, second.ID, SendPORequest{IdempotencyKey: key})
+	var ce clientError
+	if !errors.As(err, &ce) || ce.status != http.StatusConflict {
+		t.Fatalf("the second order under a held key = (%+v, %v), want the 409 collision classification", sent, err)
+	}
+	if sent.ID == got.ID || sent.POID == first.ID {
+		t.Fatalf("the collision answered with the first order's record: %+v", sent)
+	}
+	if rows, _ := h.svc.ListPOSends(h.ctx, second.ID); len(rows) != 0 {
+		t.Fatalf("the refused send left %d rows on the second order", len(rows))
+	}
+
+	// (c) A CALLER WITH NO GRANT ON THE ORDER'S BRANCH is answered by the fence, never by the replay,
+	// even with a real key in hand.
+	outsider := NewService(NewRepository(h.pool)).
+		withCaller(scopedCaller(h.user, branchKGN))
+	if _, err := outsider.SendPO(h.ctx, first.ID, SendPORequest{IdempotencyKey: key}); !errors.Is(err, errForbidden) {
+		t.Fatalf("a Kingston-scoped caller quoting a Trenton order's key = %v, want the 403 fence", err)
 	}
 }
 

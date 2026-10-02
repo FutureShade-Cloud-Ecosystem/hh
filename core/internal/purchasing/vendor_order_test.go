@@ -13,6 +13,7 @@ package purchasing
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -54,6 +55,13 @@ func (f *fakeSends) VendorContact(context.Context, string) (VendorContact, bool,
 }
 
 func (f *fakeSends) InsertPOSend(_ context.Context, row POSend, actorID string) (POSend, error) {
+	// The table's key index is GLOBAL: one idempotency key names one send across every order. The
+	// repository answers a violation of that index with the 409 conflict shape, so the fake speaks the
+	// same contract: a key held by ANOTHER order's row is a collision, not a replay.
+	if row.IdempotencyKey != "" && row.IdempotencyKey == f.priorKey && row.POID != f.prior.POID {
+		return POSend{}, conflict("purchasing: idempotency key %q already belongs to a send for another order, a new order needs a new key",
+			row.IdempotencyKey)
+	}
 	f.trail = append(f.trail, "insert")
 	row.ID = "send-1"
 	f.inserted = row
@@ -122,8 +130,13 @@ func sendCaller() identity.StaffContext {
 }
 
 func sendSvc(orders *fakeOrders, sends *fakeSends, sender POSender, p Policy) *Service {
+	return sendSvcAs(sendCaller(), orders, sends, sender, p)
+}
+
+// sendSvcAs is sendSvc for a caller the test chooses, the arm the branch-fence cases need.
+func sendSvcAs(c identity.StaffContext, orders *fakeOrders, sends *fakeSends, sender POSender, p Policy) *Service {
 	svc := NewService(nil).
-		withCaller(func(context.Context) (identity.StaffContext, bool) { return sendCaller(), true }).
+		withCaller(func(context.Context) (identity.StaffContext, bool) { return c, true }).
 		withOrderStore(orders).
 		withSendStore(sends).
 		withCatalogueStore(&fakeCatalogue{}).
@@ -390,7 +403,7 @@ func TestSendPO_TheDocumentCrossesTheSeamWithTheMessage(t *testing.T) {
 
 func TestSendPO_AnIdenticalRetryReusesItsRow(t *testing.T) {
 	sends := &fakeSends{contact: taggedDesk(), tagged: true,
-		priorKey: "k-1", prior: POSend{ID: "send-0", Status: SendFailed, Recipient: "orders@unilock.example"}}
+		priorKey: "k-1", prior: POSend{ID: "send-0", POID: "po-1", Status: SendFailed, Recipient: "orders@unilock.example"}}
 	sender := &recordingSender{live: true, delivered: true}
 	got, err := sendSvc(orderedPO(), sends, sender, DefaultPolicy()).
 		SendPO(context.Background(), "po-1", SendPORequest{IdempotencyKey: "k-1"})
@@ -402,6 +415,57 @@ func TestSendPO_AnIdenticalRetryReusesItsRow(t *testing.T) {
 	}
 	if sender.calls != 0 {
 		t.Fatalf("the retry called the transport %d times", sender.calls)
+	}
+}
+
+// HH-181 (b): the key index is global in the database, so a client that reuses one key across two orders
+// must be told it collided, in the 409 shape this route already speaks, and must never be handed the FIRST
+// order's record as though the second order went out. A caller told "sent" for an order that was never
+// sent waits three weeks for a truck nobody ordered.
+func TestSendPO_AKeyHeldByAnotherOrderIsAKeyCollisionNotAReplay(t *testing.T) {
+	sends := &fakeSends{contact: taggedDesk(), tagged: true,
+		priorKey: "k-1", prior: POSend{ID: "send-0", POID: "po-2", Status: SendFailed,
+			Recipient: "orders@unilock.example"}}
+	sender := &recordingSender{live: true, delivered: true}
+	got, err := sendSvc(orderedPO(), sends, sender, DefaultPolicy()).
+		SendPO(context.Background(), "po-1", SendPORequest{IdempotencyKey: "k-1"})
+	if err == nil {
+		t.Fatalf("the second order was answered with the first order's record %+v, a key collision is not a replay", got)
+	}
+	var ce clientError
+	if !errors.As(err, &ce) || ce.status != http.StatusConflict {
+		t.Fatalf("the collision = %v, want the 409 conflict classification", err)
+	}
+	if got.ID == "send-0" || got.POID == "po-2" {
+		t.Fatalf("the first order's record leaked through the collision: %+v", got)
+	}
+	if sender.calls != 0 {
+		t.Fatalf("the second order was sent to the vendor %d times behind a colliding key", sender.calls)
+	}
+}
+
+// HH-181 (c): the replay answer must arrive AFTER the branch fence, never before it. A manager scoped to
+// another branch who quotes a real key must meet the fence, not the record: a replay answered first is a
+// read of another branch's send history through the one route that forgot to ask.
+func TestSendPO_AReplayKeyDoesNotAnswerForACallerOutsideTheBranch(t *testing.T) {
+	outsider := identity.StaffContext{UserID: "u-other", Tier: identity.TierManager,
+		Scope: identity.ScopeBranch, Branches: map[string]bool{"b-2": true}}
+	sends := &fakeSends{contact: taggedDesk(), tagged: true,
+		priorKey: "k-1", prior: POSend{ID: "send-0", POID: "po-1", Status: SendFailed}}
+	sender := &recordingSender{live: true, delivered: true}
+	got, err := sendSvcAs(outsider, orderedPO(), sends, sender, DefaultPolicy()).
+		SendPO(context.Background(), "po-1", SendPORequest{IdempotencyKey: "k-1"})
+	if !errors.Is(err, errForbidden) {
+		t.Fatalf("err = %v, a caller outside the branch was answered through the replay instead of the fence", err)
+	}
+	if got.ID == "send-0" {
+		t.Fatalf("the replay handed another branch's send record to a caller the fence refuses: %+v", got)
+	}
+	if indexOf(sends.trail, "find-key") >= 0 {
+		t.Fatalf("the replay lookup ran before the branch fence: %v", sends.trail)
+	}
+	if sender.calls != 0 {
+		t.Fatalf("the transport was called %d times for a caller the fence refuses", sender.calls)
 	}
 }
 
