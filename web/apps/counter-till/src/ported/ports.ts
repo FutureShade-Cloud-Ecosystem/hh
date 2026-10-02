@@ -11,13 +11,16 @@
 // Two house rules are baked into the shape of this file:
 //
 //   1. The core computes money. Where the reference computed a money figure in
-//      the browser (a subtotal sum, a tax line, a change-due, a refund
+//      the browser (a subtotal sum, a change-due, a refund
 //      estimate, a credit headroom, a balance after deposit, a typed dollar
 //      amount parsed through a float), the computation is left out of the
 //      ported files entirely and reappears here as a host call. Each such seam
 //      carries the reference's signature so the ported call sites stay
 //      shaped as they were, and every figure a seam answers is assembled from
-//      figures the core stated.
+//      figures the core stated. One pair of the reference's assemblies is not
+//      rerouted but REMOVED (decision log row 661): the ticket's tax line and
+//      total were browser guesses at a rate the contract never serves, so the
+//      seam carries neither, and the ring states both figures.
 //   2. Every seam fails loudly until wired: calling one before the app root
 //      has wired its host throws the port message rather than returning a
 //      plausible answer. An honest refusal beats a quiet zero at a counter.
@@ -522,10 +525,13 @@ export function depositCentsFromTyped(raw: string): number {
 
 /**
  * The quick entry's plan: parse what the cashier typed, compare it with the
- * total and answer the change due. The total is the ticket's own assembly of
- * core-priced lines; the tendered figure is the typed string's boundary
- * conversion; the difference is the same subtraction the core performs at the
- * ring, where the binding change due is stated and the receipt renders it.
+ * total and answer the change due. The tendered figure is the typed string's
+ * boundary conversion; the difference is the same subtraction the core
+ * performs at the ring, where the binding change due is stated and the
+ * receipt renders it. CALL IT ONLY WITH A SERVER-STATED TOTAL: before the
+ * ring the till has none (row 661), so the cash tile words the ring instead
+ * of calling this, and the typed amount rides the ring body for the server to
+ * judge.
  */
 export function cashTenderedPlan(totalCents: number, rawDollars: string): CashTenderedPlan {
   const parsed = parseAmountCents(rawDollars);
@@ -572,7 +578,9 @@ function splitFmt(cents: number): string {
  * most the contract's bound, one account leg at most, an account leg only with
  * a customer picked). The ring itself re-validates every one of these
  * server-side; these words are how the cashier learns the shape before the
- * refusal does.
+ * refusal does. CALL IT ONLY WITH A SERVER-STATED TOTAL (row 661): before the
+ * ring the till has none, so the panel reads its draft through
+ * `splitDraftRead` instead, which compares the legs against nothing.
  */
 export function evaluateSplit(
   legs: readonly SplitLeg[],
@@ -646,7 +654,9 @@ export function splitDraftRead(
 
 /**
  * What is left for the leg being filled: the total less the other legs, and
- * never an over-tender (0 once the sale is covered).
+ * never an over-tender (0 once the sale is covered). CALL IT ONLY WITH A
+ * SERVER-STATED TOTAL (row 661): before the ring the till has none, so the
+ * panel's Rest affordance does not render and no leg fills.
  */
 export function autoFillRemainder(
   legs: readonly SplitLeg[],
@@ -669,24 +679,6 @@ export function cartSubtotalCents(lines: readonly { lineTotalCents: number }[]):
     if (Number.isFinite(line.lineTotalCents)) sum += line.lineTotalCents;
   }
   return sum;
-}
-
-/**
- * The ticket's ESTIMATED tax line at the given rate in basis points, over the
- * sum of the core-priced lines. The rate is the counter's default of 1300 bps
- * unless the relief flow set another (an engine-assessed value); HH's
- * contract gives the counter no rate of its own (PricingBreakdown carries no
- * tax, and the rate table is money-desk), so the dealer's rate table may
- * differ and the surface marks the row and the total as estimates. The
- * binding tax is the core's answer at the ring, which the receipt renders.
- */
-export function ticketTaxCents(subtotalCents: number, rateBps: number): number {
-  return Math.round((subtotalCents * rateBps) / 10000);
-}
-
-/** The ticket's estimated total: subtotal plus the estimated tax line. */
-export function ticketTotalCents(subtotalCents: number, taxCents: number): number {
-  return subtotalCents + taxCents;
 }
 
 /**

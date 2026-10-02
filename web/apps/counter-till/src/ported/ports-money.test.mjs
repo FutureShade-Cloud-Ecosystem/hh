@@ -8,6 +8,7 @@
 // runner, same loader as the other ported suites.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as seam from './ports.ts';
 import {
   MAX_SPLIT_LEGS,
   autoFillRemainder,
@@ -22,11 +23,18 @@ import {
   refundEstimateCents,
   splitDraftRead,
   sumLineSavingCents,
-  ticketTaxCents,
-  ticketTotalCents,
 } from './ports.ts';
 
 const TOTAL = 11300; // CA$113.00, the sale being settled in most cases below
+
+// ── the seam's own shape: no browser-computed tax or total ────────────────────
+test('the seam serves no ticket tax and no ticket total: the ring states both (row 661)', () => {
+  // The estimate bend (LEAD RULINGS 14 and 17) is unwound: the ticket tax and
+  // total assemblies left the seam, and with them the sale surface's last
+  // browser-computed figures.
+  assert.equal('ticketTaxCents' in seam, false);
+  assert.equal('ticketTotalCents' in seam, false);
+});
 
 // ── the exact-sum rule ───────────────────────────────────────────────────────
 test('an exactly-settled split is ready to ring', () => {
@@ -267,20 +275,6 @@ test('cartSubtotalCents sums the priced lines and skips nothing into a guess', (
     cartSubtotalCents([{ lineTotalCents: 4000 }, { lineTotalCents: NaN }, { lineTotalCents: 7300 }]),
     11300,
   );
-});
-
-test('ticketTaxCents and ticketTotalCents assemble the ticket over the stated rate', () => {
-  assert.equal(ticketTaxCents(10000, 1300), 1300);
-  // The rate is respected: a different rate answers a different line, so a
-  // seam that ignored its parameter for a hardcoded rate fails here.
-  assert.equal(ticketTaxCents(10000, 1500), 1500);
-  assert.equal(ticketTaxCents(10000, 1200), 1200);
-  // Rounded to the whole cent where rounding and flooring disagree:
-  // 1958 at 1300 bps is 254.54, which rounds to 255 and floors to 254.
-  assert.equal(ticketTaxCents(1958, 1300), 255);
-  // The total carries the estimated tax line on the assembled subtotal.
-  assert.equal(ticketTotalCents(10000, 1300), 11300);
-  assert.equal(ticketTotalCents(6400, 832), 7232);
 });
 
 test('sumLineSavingCents multiplies per line and sums, skipping what the engine left out', () => {

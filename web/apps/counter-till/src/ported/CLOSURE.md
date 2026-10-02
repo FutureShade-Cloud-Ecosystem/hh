@@ -75,13 +75,19 @@ with no price memory in this window lists the marker too). The search drop rows 
 the contract's per-branch stock (`on_hand_branch`) beside the SKU, as the
 reference's rows do; the contract carries the field, so no gap remains.
 
-One ruled truth about money on the mounted surface (lead ruling 17): HH's
+One ruled truth about money on the mounted surface (decision log row 661,
+which unwinds the earlier estimate bend of LEAD RULINGS 14 and 17): HH's
 contract gives the counter no rate (PricingBreakdown carries no tax, and the
-rate table is money-desk), so the surface's pre-ring tax and total are
-ESTIMATES and say so: the tax row reads (est.), the total row carries the
-estimate mark, and the rate applied is this surface's 1300 bps default unless
-the relief flow set an assessed rate. The dealer's rate table may differ; the
-ring's committed figures are the binding ones the confirmation renders. `ports.ts` is
+rate table is money-desk), so the till computes NO tax and NO total before
+the ring: no browser rate, no 1300 bps default, and no estimate mark anywhere
+on the sale surface. Before the ring the till assembles the priced lines'
+subtotal only (the pricing resolve's own line totals, summed over the host
+seam), and the tax and the total are named as the ring's own answer, in
+words, on the totals card and the read-back; an applied relief's
+engine-assessed rate may be NAMED there (a server-stated fact) but is never
+multiplied into a figure. The figures come back, exact, when the core serves
+the counter its tax rate, and the ring's committed figures are the binding
+ones the confirmation renders. `ports.ts` is
 implemented over the host (the api seam carries the demo org and bearer and
 the two contract shape adaptations, the session facts read the demo mint's
 own IdentityUser block, the money seams answer over core-stated figures, the
@@ -329,10 +335,13 @@ reappears as a `ports.ts` seam with the reference's signature:
   `autoFillRemainder`.
 - `pos-terminal.ts` `subtotal`: summed the cart's line totals. Seam:
   `cartSubtotalCents`.
-- `pos-terminal.ts` `tax`: computed `subtotal * rateBps / 10000` in the
-  browser. Seam: `ticketTaxCents`.
-- `pos-terminal.ts` `total`: added subtotal and tax. Seam:
-  `ticketTotalCents`.
+- `pos-terminal.ts` `tax` and `total`: computed
+  `subtotal * rateBps / 10000` and added subtotal and tax in the
+  browser, over a rate the contract never serves (the 1300 default, or the
+  relief flow's assessed one). NOT rerouted: REMOVED (decision log row 661).
+  The seams (`ticketTaxCents`, `ticketTotalCents`) are gone from `ports.ts`
+  and the surface carries no browser-computed tax or total; the ring states
+  both figures.
 - `pos-terminal.ts` `depositCents`: parsed the typed deposit through
   `parseFloat` times 100. Seam: `depositCentsFromTyped`.
 - `pos-terminal.ts` `ticketSavingCents`: multiplied per-line saving cents by
@@ -365,15 +374,17 @@ are `_money-format.ts` (`centsAmount`, and `plainDollars`, the ungrouped
 cents-to-input-string shape that the relief dialog's outcome line and the
 split panel's fill render through, consolidated here so the division spelling
 lives in one reviewed file) and the app's own `src/money.ts`. The wiring
-answers the thirteen rerouted seams in `ports.ts` itself, display assembly
+answers the rerouted seams in `ports.ts` itself (eleven of the reference's
+computations, plus the panel's pre-ring `splitDraftRead`; of the reference's
+thirteen assemblies the tax line and the total are the two that were removed
+outright, row 661), display assembly
 over figures the core stated, each pinned by `ports-money.test.mjs`; the
 app's money scan names `_money-format.ts` and the seam file `ports.ts` and
 walks everything else, so the ported closure, the app's own views and
 `src/money.ts` all keep owing it zero hits. The remaining thin wrappers and
 word formatters, none of which divide anything: `pos-api.ts` `money`,
 `_pos-split.ts` `fmtCents`, `price-breakdown.ts` `priceMoney`,
-`pos-terminal.ts` `taxLabel`'s basis points to percent, `tax-api.ts`'s word
-formatters, `_pos-rev8.ts` `marginPctLabel`.
+`tax-api.ts`'s word formatters, `_pos-rev8.ts` `marginPctLabel`.
 
 ## Sweeps carried through the port
 
