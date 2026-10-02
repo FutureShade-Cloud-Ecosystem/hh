@@ -1077,17 +1077,35 @@ test("End Session is closed on the mount: aria-disabled, grey, focusable, its re
   await expect(notice).toBeVisible();
   await expect(notice).toHaveText(reason);
   await expect(notice).not.toHaveAttribute("role", /.*/);
-  // Beside its control: right-aligned to the button, just under the bar, so the whole notice sits
-  // in the page's first band and no hotkey bar or fold can cover it.
+  // Beside its control: the notice rides the session region the button lives
+  // in, right-aligned to that band and reaching back toward the button, just
+  // under the bar, so the whole notice sits in the page's first band and no
+  // hotkey bar or fold can cover it.
   const box = await notice.boundingBox();
   const btnBox = await button.boundingBox();
   expect(box).not.toBeNull();
   expect(btnBox).not.toBeNull();
   const noticeRight = (box?.x ?? 0) + (box?.width ?? 0);
   const buttonRight = (btnBox?.x ?? 0) + (btnBox?.width ?? 0);
-  expect(Math.abs(noticeRight - buttonRight)).toBeLessThanOrEqual(2);
+  expect(noticeRight).toBeGreaterThanOrEqual(buttonRight - 2);
+  expect((box?.x ?? 0)).toBeLessThanOrEqual(buttonRight);
   expect((box?.y ?? 0)).toBeGreaterThanOrEqual((btnBox?.y ?? 0) + (btnBox?.height ?? 0));
   expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThan(300);
+  // Fully inside the window (ui3d P2-1): the left edge on screen, no
+  // horizontal overflow, at this width...
+  const wide = page.viewportSize()?.width ?? 0;
+  expect(wide).toBeGreaterThan(0);
+  expect((box?.x ?? 0)).toBeGreaterThanOrEqual(0);
+  expect(noticeRight).toBeLessThanOrEqual(wide);
+  // ...and at a narrower one: with a session open the bar wraps its session
+  // row, which is exactly where the notice used to run off the left edge.
+  await page.setViewportSize({ width: 1024, height: 700 });
+  await page.waitForTimeout(150);
+  const narrowBox = await notice.boundingBox();
+  expect(narrowBox).not.toBeNull();
+  expect((narrowBox?.x ?? -1)).toBeGreaterThanOrEqual(0);
+  expect((narrowBox?.x ?? 0) + (narrowBox?.width ?? 0)).toBeLessThanOrEqual(1024);
+  await expect(notice).toBeVisible();
   // Neutral palette: the edge is the control line, never the success green.
   const border = await notice.evaluate((el) => getComputedStyle(el).borderTopColor);
   const success = await notice.evaluate((el) => {
@@ -1310,6 +1328,14 @@ test("a pickup whose prices never answer reads the margin marker, never a figure
   for (let index = 0; index < 2; index += 1) {
     await expect(margins.nth(index)).toHaveText("(none)");
   }
+  // The footer bar keeps the same rule (ui3d P2-2): the glance still answers
+  // with a ticket margin and a profit figure derived from the server's own
+  // prices, and while a line is pending neither segment may state one. The
+  // building window's bar shows neither segment with these lines.
+  const txbar = page.getByTestId("pos-txbar");
+  await expect(txbar).toContainText("2 Items");
+  await expect(txbar).not.toContainText("Margin");
+  await expect(txbar).not.toContainText("Est. Profit");
 });
 
 test("the pickup line says the prices are being re-derived while any line is still pending", async ({
