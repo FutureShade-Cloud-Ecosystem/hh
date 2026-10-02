@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -374,6 +375,44 @@ SELECT cr.rep_user_id::text, COALESCE(u.display_name,''), count(*)::int, sum(cr.
 		}
 		out = append(out, a)
 	}
+	return out, rows.Err()
+}
+
+// CommissionArtefactScopes reads the branch scope of a COMMISSION artefact's data: the branches of
+// every frozen period matching the (rep, window) linkage the artefact row carries in params. A
+// period with no branch comes back as "" and reads as consolidated. The artefact row names no period
+// id (params carries rep_user_id, period_start and period_end, nothing else), so when the same
+// window was frozen more than once the artefact could mean any of the matches and the caller must
+// treat the set as a whole; no match at all returns the empty set, which the caller also reads as
+// consolidated, global only, fail closed.
+func (r *Repository) CommissionArtefactScopes(ctx context.Context, repUserID, periodStart, periodEnd string) ([]string, error) {
+	if r.pool == nil {
+		return nil, ErrNoDatabase
+	}
+	rows, err := r.pool.Query(ctx, `
+SELECT DISTINCT COALESCE(cr.branch_id::text, '')
+  FROM commission_runs cr
+ WHERE cr.rep_user_id = NULLIF($1, '')::uuid
+   AND cr.period_start = $2::date
+   AND cr.period_end = $3::date`, repUserID, periodStart, periodEnd)
+	if err != nil {
+		return nil, fmt.Errorf("commission artefact scope: %w", err)
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	var out []string
+	for rows.Next() {
+		var b string
+		if err := rows.Scan(&b); err != nil {
+			return nil, fmt.Errorf("scan commission artefact scope: %w", err)
+		}
+		if !seen[b] {
+			seen[b] = true
+			out = append(out, b)
+		}
+	}
+	// Sorted so the scope set, and any assertion on it, does not depend on row order.
+	sort.Strings(out)
 	return out, rows.Err()
 }
 

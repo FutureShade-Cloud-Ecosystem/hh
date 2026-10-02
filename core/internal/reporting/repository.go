@@ -199,10 +199,20 @@ SELECT id, kind, template_code, params, branch_id::text, row_count, totals, html
 }
 
 // ListRuns reads the most recent artefacts (HTML omitted, a list of documents, not the documents),
-// fenced to the caller's branch reach with ($2::uuid[] IS NULL OR r.branch_id = ANY($2::uuid[])).
-// A NULL parameter is the global caller's whole list; an empty array answers no rows; and a
-// consolidated artefact (branch NULL) never matches ANY(), the same global-only ruling the single
-// read makes.
+// fenced to the caller's branch reach BY THE DATA THE ARTEFACTS CARRY, not by r.branch_id, which is
+// only the print branch (paper comes out of a printer that lives somewhere, so even a consolidated
+// report is printed AT a branch):
+//
+//	TEMPLATE    params.branch_id is the report's own branch; NULLIF drops the consolidated rows,
+//	            which stay global-only exactly as the single read rules them.
+//	COMMISSION  the row carries no period id, only the (rep, window) linkage in params, so the
+//	            predicate asks the frozen periods that linkage matches: at least one must sit inside
+//	            the reach and none may sit outside it (a consolidated match, branch NULL, is outside
+//	            every reach). No match at all fails the EXISTS and the artefact reads as
+//	            consolidated: global only, fail closed.
+//
+// A NULL parameter is the global caller's whole list; an empty array answers no rows. This is the
+// same ruling artefactScopes and artefactReadable make for the single read, stated in SQL.
 func (r *Repository) ListRuns(ctx context.Context, limit int, reach branchReach) ([]Run, error) {
 	if r.pool == nil {
 		return nil, ErrNoDatabase
@@ -215,7 +225,22 @@ SELECT r.id, r.kind, r.template_code, COALESCE(t.name, ''), r.params, r.branch_i
        r.row_count, r.totals, r.print_job_id::text, r.run_by::text, r.created_at
   FROM report_runs r
   LEFT JOIN report_templates t ON t.code = r.template_code
- WHERE ($2::uuid[] IS NULL OR r.branch_id = ANY($2::uuid[]))
+ WHERE ($2::uuid[] IS NULL
+    OR (r.kind = 'TEMPLATE'
+        AND NULLIF(r.params->>'branch_id', '')::uuid = ANY($2::uuid[]))
+    OR (r.kind = 'COMMISSION'
+        AND EXISTS (SELECT 1
+                      FROM commission_runs cr
+                     WHERE cr.rep_user_id = NULLIF(r.params->>'rep_user_id', '')::uuid
+                       AND cr.period_start = (r.params->>'period_start')::date
+                       AND cr.period_end   = (r.params->>'period_end')::date
+                       AND cr.branch_id = ANY($2::uuid[]))
+        AND NOT EXISTS (SELECT 1
+                          FROM commission_runs cr
+                         WHERE cr.rep_user_id = NULLIF(r.params->>'rep_user_id', '')::uuid
+                           AND cr.period_start = (r.params->>'period_start')::date
+                           AND cr.period_end   = (r.params->>'period_end')::date
+                           AND (cr.branch_id IS NULL OR NOT (cr.branch_id = ANY($2::uuid[]))))))
  ORDER BY r.created_at DESC
  LIMIT $1`, limit, reach.filter())
 	if err != nil {

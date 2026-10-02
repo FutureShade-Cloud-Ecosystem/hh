@@ -312,10 +312,11 @@ func (s *Service) Runs(ctx context.Context, limit int) ([]Run, error) {
 	return s.repo.ListRuns(ctx, limit, reach)
 }
 
-// RunArtefact reads one persisted artefact by id, behind the branch fence: the caller must be able to
-// read the artefact's branch, and an artefact with no branch (consolidated) answers to a global
-// caller alone. A refusal is NOT FOUND rather than forbidden, so the id itself does not confirm the
-// artefact exists at a branch the caller cannot reach.
+// RunArtefact reads one persisted artefact by id, behind the branch fence. The fence is on the DATA
+// the artefact carries (artefactScopes below), never on run.BranchID, which is only where the paper
+// came out: print_queue.branch_id is NOT NULL, so even a consolidated report is printed AT a branch,
+// and fencing on the printer would hand a scoped manager the whole company's numbers. A refusal is
+// NOT FOUND rather than forbidden, so the id itself does not confirm the artefact exists.
 func (s *Service) RunArtefact(ctx context.Context, id string) (Run, error) {
 	c, err := s.caller(ctx)
 	if err != nil {
@@ -325,10 +326,50 @@ func (s *Service) RunArtefact(ctx context.Context, id string) (Run, error) {
 	if err != nil {
 		return Run{}, err
 	}
-	if !canReadBranch(c, run.BranchID) {
+	if c.Scope == identity.ScopeGlobal {
+		return run, nil // a global caller reads everything, the scope need not be derived
+	}
+	scopes, err := s.artefactScopes(ctx, run)
+	if err != nil {
+		return Run{}, err
+	}
+	if !artefactReadable(c, scopes) {
 		return Run{}, ErrNotFound
 	}
 	return run, nil
+}
+
+// artefactScopes returns the BRANCH SCOPE of the data an artefact carries, as a set the reader must
+// be inside entirely. It is deliberately not run.BranchID (the print branch, see RunArtefact):
+//
+//	TEMPLATE    the report's own branch parameter, params.branch_id. Empty or absent is the
+//	            consolidated report, the whole company's numbers.
+//	COMMISSION  the artefact row names no period id; params carries the (rep, window) linkage its
+//	            print rendered and nothing else, so the scope is the branches of every frozen period
+//	            that linkage matches. The same window can be frozen more than once (branch scoped and
+//	            consolidated), the row cannot say which one it rendered, and the reader has to be
+//	            inside all of them. No match at all (the periods are gone) is the genuinely
+//	            underivable case and reads as consolidated: global only, fail closed.
+func (s *Service) artefactScopes(ctx context.Context, run Run) ([]string, error) {
+	if run.Kind != RunKindCommission {
+		return []string{run.Params["branch_id"]}, nil
+	}
+	return s.repo.CommissionArtefactScopes(ctx,
+		run.Params["rep_user_id"], run.Params["period_start"], run.Params["period_end"])
+}
+
+// artefactReadable answers the fence for one artefact against its scope set: every branch of the
+// data must be readable, and the empty set (underivable) reads as consolidated, global only.
+func artefactReadable(c identity.StaffContext, scopes []string) bool {
+	if len(scopes) == 0 {
+		scopes = []string{""}
+	}
+	for _, b := range scopes {
+		if !canReadBranch(c, b) {
+			return false
+		}
+	}
+	return true
 }
 
 // -- saved views --------------------------------------------------------------
