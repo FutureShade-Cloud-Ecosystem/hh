@@ -1,10 +1,12 @@
 // The Counter Till's root element: the thin UI layer the house invariants ask
-// for. It renders server and package state and calls client actions; no
-// figure on this screen is computed here: prices, margins, totals, tax and
-// change due all arrive from the core, through the ported surface's host
-// seams (src/ported/ports.ts) or the desk's own client. What lives in this
-// element is the counter's own state machine: which surface is mounted, what
-// is in flight, and what a refusal says.
+// for. It renders server and package state and calls client actions. The
+// figures the core states (line prices, the ring's and the refund's committed
+// totals, the account's facts) arrive through the ported surface's host seams
+// (src/ported/ports.ts) or the desk's own client; the ported surface's live
+// assemblies over those figures, its pre-ring tax and total included, are
+// marked as estimates on the surface (the contract gives the till no rate).
+// What lives in this element is the counter's own state machine: which
+// surface is mounted, what is in flight, and what a refusal says.
 //
 // The surface after sign-in is the ported terminal (hos-pos-terminal), the
 // POS surface carried over from the older product and wired to HH's contract:

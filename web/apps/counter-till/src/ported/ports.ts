@@ -631,16 +631,19 @@ export function cartSubtotalCents(lines: readonly { lineTotalCents: number }[]):
 }
 
 /**
- * The ticket's tax line at the given rate in basis points. The rate is the
- * core's own word (an engine-assessed relief rate, else the standard rate the
- * configuration names); the base is the sum of the core-priced lines. The
+ * The ticket's ESTIMATED tax line at the given rate in basis points, over the
+ * sum of the core-priced lines. The rate is the counter's default of 1300 bps
+ * unless the relief flow set another (an engine-assessed value); HH's
+ * contract gives the counter no rate of its own (PricingBreakdown carries no
+ * tax, and the rate table is money-desk), so the dealer's rate table may
+ * differ and the surface marks the row and the total as estimates. The
  * binding tax is the core's answer at the ring, which the receipt renders.
  */
 export function ticketTaxCents(subtotalCents: number, rateBps: number): number {
   return Math.round((subtotalCents * rateBps) / 10000);
 }
 
-/** The ticket's total: subtotal plus the tax line. */
+/** The ticket's estimated total: subtotal plus the estimated tax line. */
 export function ticketTotalCents(subtotalCents: number, taxCents: number): number {
   return subtotalCents + taxCents;
 }

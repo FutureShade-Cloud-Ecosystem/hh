@@ -3097,12 +3097,18 @@ export class HosPosTerminal extends LitElement {
     this.scheduleTicketFacts(); // rev 8: fewer lines = a different margin footer + suggestion set
   }
 
-   // HH note: subtotal, tax and total are the core's arithmetic in HH (the money invariant), so
-   // each answers through a host seam (ports.ts, named in CLOSURE.md) with the reference's shape.
+   // HH note: the pre-ring figures are the counter's ESTIMATE. The subtotal is
+   // the priced lines' own assembly (host seam), but HH's contract gives the
+   // counter no rate (PricingBreakdown carries no tax, and the rate table is
+   // money-desk), so the tax line applies this surface's default of 1300 bps
+   // unless the relief flow set another; the dealer's rate table may differ.
+   // The surface says so: the tax row reads (est.) and the total row carries
+   // the estimate mark, and the ring's committed figures are the binding ones.
   private subtotal(): number {
     return cartSubtotalCents(this.cart);
   }
-  // Preview rate: the applied relief's engine-assessed bps, else the 13% standard. M5 owns the binding value.
+  // Preview rate: the applied relief's engine-assessed bps, else the counter's
+  // 13% default. The binding rate is the core's, at the ring.
   private taxRateBps(): number {
     return this.reliefRateBps ?? 1300;
   }
@@ -3112,7 +3118,8 @@ export class HosPosTerminal extends LitElement {
   private taxLabel(): string {
     const bps = this.taxRateBps();
     const pct = bps % 100 === 0 ? String(bps / 100) : (bps / 100).toFixed(2);
-    return this.reliefRateBps === null ? `HST ${pct}%` : `HST ${pct}% (relief)`;
+    const relief = this.reliefRateBps === null ? '' : ' (relief)';
+    return `HST ${pct}%${relief} (est.)`;
   }
   private total(): number {
     return ticketTotalCents(this.subtotal(), this.tax());
@@ -5256,7 +5263,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
             <div class="totals">
               <div class="trow"><span>Subtotal</span><span class="num">${money(this.subtotal())}</span></div>
               <div class="trow"><span>${this.taxLabel()}</span><span class="num">${money(this.tax())}</span></div>
-              <div class="trow grand"><span>Total</span><span class="num">${money(this.total())}</span></div>
+              <div class="trow grand"><span>Total (est.)</span><span class="num">${money(this.total())}</span></div>
             </div>
           </section>
 
@@ -5646,7 +5653,7 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
       ${this.requestedDate ? html`<div class="rbrow"><span>Requested</span><span>${this.requestedDate}</span></div>` : nothing}
       <div class="rbrow"><span>Subtotal</span><span class="m">${money(this.subtotal())}</span></div>
       <div class="rbrow"><span>${this.taxLabel()}</span><span class="m">${money(this.tax())}</span></div>
-      <div class="rbrow total"><span>Total</span><span class="m">${money(this.total())}</span></div>
+      <div class="rbrow total"><span>Total (est.)</span><span class="m">${money(this.total())}</span></div>
       <div class="rbrow"><span>${tenderLabel(this.payMethod || 'CASH')}</span><span></span></div>
       ${/* "how much am I saving?": the client's words for the thing customers always ask. Server
          arithmetic, summed per line; absent entirely when there is nothing to claim. */ ''}

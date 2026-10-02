@@ -21,13 +21,15 @@ clerk's till through the Manager approval dialog, the token held in memory
 for the one call and dropped, the receipt naming the approver and the clerk,
 and the till still the clerk's.
 
-Money is never computed here: every figure on the counter is an integer-cent
-amount the core stated. The ported surface's live assemblies (a subtotal of
-priced lines, a tax line at the stated rate, a split's verdict, a change-due
-preview) answer through the host seams in `ports.ts` over those figures, and
-the binding figures at the ring and the refund are always the core's own
-answers, which the confirmations render. The returns desk spells its figures
-through the one money helper (`src/money.ts`).
+Money on the counter is integer cents throughout. The figures the core states
+(line prices from the pricing resolve, the committed sale's and return's own
+totals, the account's limit and balance) are what the counter renders; the
+port's host seams (`ports.ts`) assemble those figures for the surface's live
+read-back, and the counter's pre-ring tax and total are marked on the surface
+as estimates: HH's contract gives the till no rate, so the estimate applies
+the counter's 1300 bps default (or the relief flow's assessed rate), and the
+ring's committed figures are the binding ones the confirmation renders. The
+returns desk spells its figures through the one money helper (`src/money.ts`).
 
 ## Running the app against the local stub
 

@@ -2,7 +2,15 @@ DOC-ID: COUNTER-TILL-PORTED-CLOSURE-r1
 
 # The POS surface port: the closure map
 
-WIRED (the second UI parity work item): the surface is mounted. `ports.ts` is
+WIRED (the second UI parity work item): the surface is mounted.
+
+One ruled truth about money on the mounted surface (lead ruling 17): HH's
+contract gives the counter no rate (PricingBreakdown carries no tax, and the
+rate table is money-desk), so the surface's pre-ring tax and total are
+ESTIMATES and say so: the tax row reads (est.), the total row carries the
+estimate mark, and the rate applied is this surface's 1300 bps default unless
+the relief flow set an assessed rate. The dealer's rate table may differ; the
+ring's committed figures are the binding ones the confirmation renders. `ports.ts` is
 implemented over the host (the api seam carries the demo org and bearer and
 the two contract shape adaptations, the session facts read the demo mint's
 own IdentityUser block, the money seams answer over core-stated figures, the
