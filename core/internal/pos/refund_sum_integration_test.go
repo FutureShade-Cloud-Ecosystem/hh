@@ -223,7 +223,7 @@ func TestIntegration_Trenton_RefundSums_SameKeyDuplicate(t *testing.T) {
 	wg.Wait()
 
 	created, replayed := 0, 0
-	var winnerID string
+	var winnerID, replayID string
 	for _, rec := range results {
 		switch rec.Code {
 		case http.StatusCreated:
@@ -231,15 +231,16 @@ func TestIntegration_Trenton_RefundSums_SameKeyDuplicate(t *testing.T) {
 			winnerID = s.decodeBody(rec)["return_id"].(string)
 		case http.StatusOK:
 			replayed++
-			if id := s.decodeBody(rec)["return_id"].(string); id != winnerID {
-				t.Fatalf("the replay must carry the committed winner's return id, got %s vs %s", id, winnerID)
-			}
+			replayID = s.decodeBody(rec)["return_id"].(string)
 		default:
 			t.Fatalf("the same-key pair must answer one commit and one replay, got %d: %s", rec.Code, rec.Body.String())
 		}
 	}
 	if created != 1 || replayed != 1 {
 		t.Fatalf("exactly one commit and one replay for the same-key pair, got created=%d replayed=%d", created, replayed)
+	}
+	if replayID != winnerID {
+		t.Fatalf("the replay must carry the committed winner's return id, got %s vs %s", replayID, winnerID)
 	}
 	if refusals := s.auditRows(auditActionRefundApprovalRefused, sale.OrderID); len(refusals) != 0 {
 		t.Fatalf("a return that committed must leave no refusal row behind: %v", refusals)

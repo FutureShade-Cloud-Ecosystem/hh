@@ -159,6 +159,11 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 	// caller's own decision, whoever's credential arrived (the lead's
 	// P2-B ruling: within the amount the header is inert, never consulted).
 	approvedHere := false
+	// replayedHere records that the in-transaction idempotency re-check
+	// found the key already committed (the same-key duplicate that waited on
+	// the per-sale lock while its twin committed): the answer is the
+	// twin's replay, no completion audit row, no rail.
+	replayedHere := false
 	if !in.internalRail {
 		if s.roles == nil {
 			return Return{}, errRoleConfigUnwired()
@@ -203,6 +208,26 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		// lock is transaction-scoped, released at commit or rollback.
 		if err := s.store.LockSaleForReturn(ctx, tx, oc.OrderID); err != nil {
 			return err
+		}
+		// A same-key duplicate that arrived while its twin held the lock
+		// passed the pre-transaction replay check before either row existed.
+		// The lock has now serialized them, so whatever is committed under
+		// this key is final: the duplicate answers it here as the replay,
+		// the same shape as the pre-transaction check (the cached return,
+		// judged against its own sale by the branch wall), committing this
+		// now-empty transaction with no gate, no rail and no audit row.
+		// Without the re-check the duplicate's own gate would read its
+		// twin's committed row into the prior sum and answer a false
+		// refusal (or trip the over-return guard) for a return that
+		// committed.
+		cached, found, rerr := s.replayIfAllowed(ctx, in.IdempotencyKey, caller)
+		if rerr != nil {
+			return rerr
+		}
+		if found {
+			out = cached
+			replayedHere = true
+			return nil
 		}
 
 		// 1. Lock + guard every requested line, derive its refund money/tax.
@@ -451,6 +476,11 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 			}
 		}
 		return Return{}, err
+	}
+	// The in-transaction duplicate answered its twin's replay: the twin's
+	// own completion row already exists, this answer writes none.
+	if replayedHere {
+		return out, nil
 	}
 
 	completed := audit.SensitiveAccess{
