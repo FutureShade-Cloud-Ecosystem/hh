@@ -103,8 +103,17 @@ async function ensureSession(page: Page): Promise<void> {
 /** Open one step of the linear flow by its head (a no-op when it is already open). */
 async function openStep(page: Page, step: "customer" | "items" | "payment" | "summary"): Promise<void> {
   const head = page.getByTestId(`step-head-${step}`);
-  if ((await head.getAttribute("aria-expanded")) !== "true") {
-    await head.click();
+  // A pick or an add can advance the flow a moment after it lands, closing the
+  // head this call just opened: press again until it holds open.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
+    try {
+      await expect(head).toHaveAttribute("aria-expanded", "true", { timeout: 1_000 });
+      await page.waitForTimeout(250);
+      if ((await head.getAttribute("aria-expanded")) === "true") return;
+    } catch {
+      // closed again by the advance: press once more
+    }
   }
   await expect(head).toHaveAttribute("aria-expanded", "true");
 }
