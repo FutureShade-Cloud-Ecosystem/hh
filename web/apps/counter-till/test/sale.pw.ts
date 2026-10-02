@@ -1271,7 +1271,10 @@ test("the split panel's ring wears the disabled rule's shape until the legs meet
   page,
 }) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
+  // The stub's own Holland line: this suite runs against the stub's world,
+  // whose catalogue names it differently from the demo image's (the demo
+  // image's DEMO-PAV-HOLLAND name belongs to the acceptance run).
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Split" }).click();
   const ring = page.getByTestId("split-ring");
