@@ -10,10 +10,8 @@ package pos
 // driven on the same damaged table. On the defect both assessSale fallback
 // reads discard the found flag, so the ring commits UNTAXED with a 2xx and
 // the read answers rate_bps 0 with a 200; the leg demands the 503 refusal
-// (the counter-readable shape: the rate table is not configured, the sale
-// cannot be ringed) and that no pos_sale row was written. The legs are
-// written against main's tree, so the first demand is the refusal itself; the
-// exact sentinel wording lands with the fix.
+// the counter-readable shape: the rate table is not configured, the sale
+// cannot be ringed) and that no pos_sale row was written.
 //
 // Run (own throwaway container, removed afterwards, an unused port):
 //
@@ -30,6 +28,7 @@ package pos
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -39,10 +38,11 @@ import (
 
 // ringTaxAssessor mirrors the cmd/core posTaxAdapter over *tax.Service (the
 // M5 engine), which a test cannot import: the pos-declared input mapped onto
-// tax.SaleAssessment with evidence pinned false, so the ring and the read
-// assess through the real engine exactly as the wired composition does. The
-// production adapter is this adapter's twin; when the fix lands, both gain
-// the same translation.
+// tax.SaleAssessment with evidence pinned false, and the engine's
+// no-standard-rate refusal translated into pos.ErrTaxRailUnavailable, the
+// same translation the production adapter makes, so the ring and the read
+// assess through the real engine exactly as the wired composition does and
+// the served 503 is the shape writeErr answers.
 type ringTaxAssessor struct{ svc *tax.Service }
 
 func (a ringTaxAssessor) AssessSale(ctx context.Context, in TaxQuoteInput) (QuoteResult, error) {
@@ -53,6 +53,9 @@ func (a ringTaxAssessor) AssessSale(ctx context.Context, in TaxQuoteInput) (Quot
 		EvidenceAttached: false,
 	})
 	if err != nil {
+		if errors.Is(err, tax.ErrNoStandardRate) {
+			return QuoteResult{}, ErrTaxRailUnavailable
+		}
 		return QuoteResult{}, err
 	}
 	return QuoteResult{TaxCents: q.TaxCents, RateBps: q.RateBps}, nil

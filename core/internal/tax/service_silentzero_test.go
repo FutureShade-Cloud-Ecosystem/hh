@@ -6,17 +6,13 @@ package tax
 // reads in assessSale discard the found flag, so a deleted, never-seeded or
 // fully expired standard row binds a silent zero rate on a sale, a quote, a
 // relief assessment and the counter's tax-rate read: every ticket rings
-// untaxed while the ledger believes a rate is configured. The legs are
-// written against main's tree, so the demand here is the refusal itself (a
-// non-nil error where main answers nil); the typed sentinel demand lands with
-// the fix. The regression pins beside them hold the two behaviors the refusal
-// must not disturb: the nil-repo offline service keeps answering the standard
-// rate, and a healthy table keeps answering exactly the seeded shape (the
-// values the existing matrix test pins).
+// untaxed while the ledger believes a rate is configured. The regression pins
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 )
 
@@ -37,6 +33,12 @@ func TestAssessSale_StandardRowAbsent_RefusesNotSilentZero(t *testing.T) {
 	if err == nil {
 		t.Fatalf("no standard rate row in effect: the engine must refuse, not bind a silent zero: got Quote{RateBps: %d, TaxCents: %d} with a nil error", q.RateBps, q.TaxCents)
 	}
+	if !errors.Is(err, ErrNoStandardRate) {
+		t.Fatalf("the refusal must be the typed no-standard-rate error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "jurisdiction ON") {
+		t.Errorf("the refusal's message must name the jurisdiction, got %q", err.Error())
+	}
 	if q.RateBps != 0 || q.TaxCents != 0 {
 		t.Errorf("a refused assessment must carry no quote values, got %+v", q)
 	}
@@ -55,6 +57,9 @@ func TestAssessSale_EvidenceGateStandardRowAbsent_RefusesNotSilentZero(t *testin
 	})
 	if err == nil {
 		t.Fatalf("no standard rate row in effect under the relief gate: the engine must refuse, not bind 0 as the standard: got Quote{RateBps: %d, TaxCents: %d} with a nil error", q.RateBps, q.TaxCents)
+	}
+	if !errors.Is(err, ErrNoStandardRate) {
+		t.Fatalf("the refusal must be the typed no-standard-rate error, got %v", err)
 	}
 	if q.RateBps != 0 || q.TaxCents != 0 {
 		t.Errorf("a refused assessment must carry no quote values, got %+v", q)

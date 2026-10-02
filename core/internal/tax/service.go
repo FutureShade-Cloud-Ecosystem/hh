@@ -28,6 +28,8 @@ func (s *Service) clock() time.Time {
 // binds its relief rate only when evidence is attached; otherwise it falls back to the standard rate and flags
 // RequiresEvidence), rounds ONCE at the total (half-up), and returns the FN split fields. The per-line split is
 // the caller's job (moneyutil.AllocateLargestRemainder), so this is the single source of the binding header tax.
+// Both standard fallback reads check found: with the standard row not in effect either, the engine REFUSES with
+// the typed ErrNoStandardRate, never a silent 0%.
 func (s *Service) assessSale(ctx context.Context, in SaleAssessment) (Quote, error) {
 	asOf, err := normDate(in.AsOf, s.clock)
 	if err != nil {
@@ -43,12 +45,20 @@ func (s *Service) assessSale(ctx context.Context, in SaleAssessment) (Quote, err
 		return Quote{}, err
 	}
 	if !found {
-		// No configured row for this reason on this date → fall back to the standard rate (never a silent 0%).
-		s.log.Warn("tax: no effective rate row; falling back to standard", "reason", reason, "as_of", asOf)
-		rateBps, _, err = s.rate(ctx, ReasonStdON13, asOf)
+		// No configured row for this reason on this date → fall back to the standard rate. The fallback read
+		// checks found: with the standard row not in effect either, the engine REFUSES (typed ErrNoStandardRate).
+		// A zero-rate Quote with a nil error would ring every ticket untaxed while the ledger believes a rate is
+		// configured (row 680 item 2).
+		s.log.Warn("tax: no effective rate row for the reason; trying the standard rate row", "reason", reason, "as_of", asOf)
+		stdBps, stdFound, err := s.rate(ctx, ReasonStdON13, asOf)
 		if err != nil {
 			return Quote{}, err
 		}
+		if !stdFound {
+			s.log.Warn("tax: no standard rate row in effect; refusing the assessment (never a silent 0%)", "reason", reason, "as_of", asOf)
+			return Quote{}, noStandardRate(jurisdictionON, asOf)
+		}
+		rateBps = stdBps
 	}
 
 	q := Quote{ReasonCode: reason, RateBps: rateBps}
@@ -57,15 +67,20 @@ func (s *Service) assessSale(ctx context.Context, in SaleAssessment) (Quote, err
 	// evidence the BINDING rate falls back to standard, bit-identical to the W4/pos behavior, while the reason
 	// code is retained and RequiresEvidence is flagged so the caller knows the relief is pending. reliefBinds
 	// gates BOTH the reduced rate and any point-of-sale credit: an ungated credit would hand back the 8% with no
-	// proof even though the rate correctly reverted to standard (S3 W6 B3).
+	// proof even though the rate correctly reverted to standard (S3 W6 B3). The gate's standard fallback read
+	// checks found too: with the standard row not in effect, the engine REFUSES, never binds 0 as "the standard".
 	reliefBinds := true
 	if evidenceGatedReasons[reason] {
 		q.RequiresEvidence = true
 		if !in.EvidenceAttached {
 			reliefBinds = false
-			std, _, rerr := s.rate(ctx, ReasonStdON13, asOf)
+			std, stdFound, rerr := s.rate(ctx, ReasonStdON13, asOf)
 			if rerr != nil {
 				return Quote{}, rerr
+			}
+			if !stdFound {
+				s.log.Warn("tax: no standard rate row in effect for the relief fallback; refusing the assessment (never a silent 0%)", "reason", reason, "as_of", asOf)
+				return Quote{}, noStandardRate(jurisdictionON, asOf)
 			}
 			q.RateBps = std
 		}
