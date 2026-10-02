@@ -113,6 +113,45 @@ test("at 390 the line table drops its weight column and keeps qty, price and rem
   await expect(lineRow).toHaveCount(0);
 });
 
+/**
+ * The page itself must hold the 390 viewport: the visual review caught the
+ * DOCUMENT scrolling sideways at 390 (scroll width 551 against the viewport)
+ * even after the rows and the table were fixed, so the pin is on the
+ * document's scroll width, not on any one row or table.
+ */
+async function expectDocumentHolds(page: Page): Promise<void> {
+  const widths = await page.evaluate(() => ({
+    doc: document.documentElement.scrollWidth,
+    view: window.innerWidth,
+  }));
+  expect(
+    widths.doc,
+    `the document's scroll width ${widths.doc} runs past the ${widths.view} viewport at 390`,
+  ).toBeLessThanOrEqual(widths.view);
+}
+
+test("at 390 the page itself holds the viewport with an empty ticket: no sideways document scroll", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page);
+  await expectDocumentHolds(page);
+  // The scroll allowance is the boxes' own: the step bar scrolls inside its
+  // box at phone width, the same idiom the line table takes in its card.
+  await expect(page.locator("hos-pos-flow-steps")).toHaveCSS("overflow-x", "auto");
+});
+
+test("at 390 the page itself holds the viewport with a priced line: no sideways document scroll", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page);
+  const row = await searchDropRow(page, "holland", "Holland Stone 60 mm");
+  await row.click();
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" })).toHaveCount(1);
+  await expectDocumentHolds(page);
+});
+
 test("at desktop width the line table keeps its weight column and needs no sideways scroll", async ({
   page,
 }) => {

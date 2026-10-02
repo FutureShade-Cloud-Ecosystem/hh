@@ -1391,6 +1391,30 @@ export class HosPosTerminal extends LitElement {
       .linegrid {
         overflow-x: auto;
       }
+      /* P3-7's page half: the two header rows that cannot shrink on their own
+         were scrolling the whole DOCUMENT sideways at 390 (the step bar's five
+         pills and connectors measured 539, the session bar's row 380). The
+         step bar takes the table's idiom: it scrolls inside its own box, which
+         also zeroes its automatic flex minimum, so the row it sits in can
+         shrink it and the last pills stay reachable by that scroll. The
+         session bar's row WRAPS instead of clipping, because a scroll or clip
+         here would swallow the End Session notice, which hangs below the bar
+         (absolute against the session region): wrapped, nothing the row holds
+         can push the document wide and every control stays in view. At 820
+         and above neither rule applies and the header is untouched. */
+      hos-pos-flow-steps {
+        /* relative: the pills' visually-hidden state text is absolute, and an
+           absolute box takes its containing block from the nearest positioned
+           ancestor: without this it skipped past the scroll box above the bar
+           and still pushed the document wide by its clipped 1px box. */
+        position: relative;
+        min-width: 0;
+        max-width: 100%;
+        overflow-x: auto;
+      }
+      .session {
+        flex-wrap: wrap;
+      }
     }
     .linehead,
     .linerow {
