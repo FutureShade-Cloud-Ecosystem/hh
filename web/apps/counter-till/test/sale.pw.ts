@@ -751,6 +751,51 @@ test("a resume over lines on the counter asks first: declining leaves everything
   await expect(page.getByTestId("pos-line-row").filter({ hasText: "Polymeric Locking Sand" })).toHaveCount(0);
 });
 
+// WCAG 1.4.11 for the till's own inputs (pos-terminal's select, input and textarea rule): the
+// boundary is the design system's control line and clears 3:1 against what it sits on, in both
+// themes, as the returns desk's find input does.
+for (const scheme of ["dark", "light"] as const) {
+  test(`the till's own inputs keep the control boundary at 3:1 (${scheme})`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await signIn(page, "Sales");
+    await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+    await openStep(page, "payment");
+    const input = page.getByTestId("cash-tendered");
+    await expect(input).toBeVisible();
+    const read = await input.evaluate((el) => {
+      const rgb = (css: string): number[] => (css.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+      const lum = (c: number[]): number => {
+        const [r, g, b] = c.map((v) => {
+          const s = v / 255;
+          return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const ratio = (a: number[], b: number[]): number => {
+        const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+        return (hi + 0.05) / (lo + 0.05);
+      };
+      const resolve = (token: string): number[] => {
+        const probe = document.createElement("div");
+        probe.style.color = `var(${token})`;
+        document.body.appendChild(probe);
+        const out = rgb(getComputedStyle(probe).color);
+        probe.remove();
+        return out;
+      };
+      const border = rgb(getComputedStyle(el).borderTopColor);
+      return {
+        isControlLine: border.join() === resolve("--hh-control-line").join(),
+        onCard: ratio(border, resolve("--hh-card")),
+        onFill: ratio(border, rgb(getComputedStyle(el).backgroundColor)),
+      };
+    });
+    expect(read.isControlLine).toBe(true);
+    expect(read.onCard).toBeGreaterThanOrEqual(3);
+    expect(read.onFill).toBeGreaterThanOrEqual(3);
+  });
+}
+
 test("the split state is a status band, not a disabled button", async ({ page }) => {
   await signIn(page, "Sales");
   await ensureSession(page);
