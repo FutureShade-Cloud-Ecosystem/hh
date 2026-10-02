@@ -182,3 +182,103 @@ func TestIntegration_Trenton_RefundSums_ConcurrentLines(t *testing.T) {
 		t.Fatalf("exactly one of the two parallel returns may commit, got created=%d refused=%d", created, refused)
 	}
 }
+
+// Two copies of the SAME return, same idempotency key, fired together, on a
+// line whose doubled total crosses the amount (the reviewer's probe): both
+// pass the pre-transaction replay check before either row exists, and the
+// loser waits on the per-sale advisory lock while the winner commits. The
+// loser must answer the committed winner as the replay (a 200-class body
+// carrying the winner's return id), never read the winner's own row into
+// its prior sum and refuse a return that actually committed, and the sale
+// must carry no REFUND_APPROVAL_REFUSED audit row at all.
+func TestIntegration_Trenton_RefundSums_SameKeyDuplicate(t *testing.T) {
+	s := newTrentonStack(t)
+	// One line of 30 SF, 15 SF returned per copy: a return pays 169.50, the
+	// doubled total 339.00 over the configured 250.00, and each copy alone
+	// leaves half the line returnable so the loser clears the over-return
+	// guard and reaches the gate, the reviewer's probe.
+	sale := s.ringSale(key(), trentonBranchID, s.trentonTill, "trenton", []float64{30}, TenderCash)
+
+	idem := key()
+	raw, err := json.Marshal(s.returnBody(idem, sale, 0, RefundCash, 15))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	bearer := s.bearer(trentonClerkSub)
+
+	results := make([]*httptest.ResponseRecorder, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/pos/returns", bytes.NewReader(raw))
+			req.Header.Set("Authorization", bearer)
+			req.Header.Set("X-Org", demoOrgSlug)
+			rec := httptest.NewRecorder()
+			s.mux.ServeHTTP(rec, req)
+			results[i] = rec
+		}(i)
+	}
+	wg.Wait()
+
+	created, replayed := 0, 0
+	var winnerID string
+	for _, rec := range results {
+		switch rec.Code {
+		case http.StatusCreated:
+			created++
+			winnerID = s.decodeBody(rec)["return_id"].(string)
+		case http.StatusOK:
+			replayed++
+			if id := s.decodeBody(rec)["return_id"].(string); id != winnerID {
+				t.Fatalf("the replay must carry the committed winner's return id, got %s vs %s", id, winnerID)
+			}
+		default:
+			t.Fatalf("the same-key pair must answer one commit and one replay, got %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+	if created != 1 || replayed != 1 {
+		t.Fatalf("exactly one commit and one replay for the same-key pair, got created=%d replayed=%d", created, replayed)
+	}
+	if refusals := s.auditRows(auditActionRefundApprovalRefused, sale.OrderID); len(refusals) != 0 {
+		t.Fatalf("a return that committed must leave no refusal row behind: %v", refusals)
+	}
+}
+
+// The prospect's prior blind spot, over the real composition: two lines each
+// individually under the amount, the first line's return commits with no
+// approval, and the second line's return carrying the Sales manager's
+// credential commits as the manager's decision, the header consulted only
+// because the prior committed total pushes the cumulative over (the
+// requested line's own original total sits under the amount).
+func TestIntegration_Trenton_RefundSums_TwoLinesManagerHeader(t *testing.T) {
+	s := newTrentonStack(t)
+	// Two lines of 15 SF (150.00 of goods a line): a whole-line return pays
+	// 169.50, under the amount alone, over it with its sibling.
+	sale := s.ringSale(key(), trentonBranchID, s.trentonTill, "trenton", []float64{15, 15}, TenderCash)
+
+	in1 := s.returnBody(key(), sale, 0, RefundCash, 15)
+	rec := s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), "", in1)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the first line's return commits under the amount, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	in2 := s.returnBody(key(), sale, 1, RefundCash, 15)
+	mgrToken := "Bearer " + s.harness.Minter.StaffToken(t, trentonMgrSub)
+	rec = s.do(http.MethodPost, "/api/v1/pos/returns", s.bearer(trentonClerkSub), mgrToken, in2)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the second line's return must commit on the manager's credential, got %d: %s", rec.Code, rec.Body.String())
+	}
+	committedReturn := s.decodeBody(rec)["return_id"].(string)
+	var decisionRow map[string]any
+	for _, row := range s.auditRows("RETURN_COMPLETED", committedReturn) {
+		if row["approver_id"] == managerUserID {
+			decisionRow = row
+			break
+		}
+	}
+	if decisionRow == nil {
+		t.Fatalf("the commit must be the manager's decision, no completion row names the manager: %v", s.auditRows("RETURN_COMPLETED", committedReturn))
+	}
+}
