@@ -8,12 +8,11 @@
 // page is served by the image's app (the built testers page), behind the same
 // phrase gate as the till, so this spec fetches it the way a tester's browser
 // does.
-import { expect, test } from "@playwright/test";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { CLAIM_COVERAGE } from "./claims.js";
-import { shot } from "./helpers.js";
+import { expect, shot, test } from "./helpers.js";
 
 /** Every test title the named spec file declares, read off its source. */
 function titlesIn(dir: string, file: string): Set<string> {

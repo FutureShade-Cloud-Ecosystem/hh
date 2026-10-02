@@ -3,22 +3,33 @@
 The Counter Till micro-app: one Vite entry, one bundle (web/apps/README.md).
 This slice is the demo way in (role cards from `GET /api/v1/demo/flows`, the
 demo adapter behind the auth package's `AccountSurface` seam, the api-client
-sending `X-Org: hh-demo`), a header with the Demo banner, the role's name and
-sign out, the sale at the counter (the branch's drawer, the priced ticket with
-its margin column, cash, card and account tenders, the receipt, and the
-branch's parked tickets), and the returns desk beside it: the original sale
-found by its number through the branch fenced lookup route, its lines with
-what is still returnable, the three refund rails (cash from the drawer, card
-to the simulator, account credit), and the refund above the dealer's approval
-amount: refused to the clerk with the amount and the approver roles named,
-completed by a manager's own credential entered at the clerk's till through
-the Manager approval dialog, the token held in memory for the one call and
-dropped, the receipt naming the approver and the clerk, and the till still the
-clerk's.
+sending `X-Org: hh-demo`), a chrome with the Demo banner, the role's name, a
+Pop out control and sign out, and then the ported POS terminal as the till:
+the surface carried over from the older product and wired to HH's contract
+(`src/ported/`, its seams implemented in `src/ported/ports.ts`, the closure
+map in `src/ported/CLOSURE.md`). The terminal works in both its modes: the
+linear flow (the Customer, Items, Payment and Summary accordion) and the
+detached multi-card layout (the counter view menu's layout pick, persisted on
+the workspace row, with the pop-out opening the same till on a second window
+against the same branch drawer). The returns desk stays beside it: the
+original sale found by its number through the branch fenced lookup route, its
+lines with what is still returnable, the three refund rails (cash from the
+drawer, card to the simulator, account credit), and the refund above the
+dealer's approval amount: refused to the clerk with the amount and the
+approver roles named, completed by a manager's own credential entered at the
+clerk's till through the Manager approval dialog, the token held in memory
+for the one call and dropped, the receipt naming the approver and the clerk,
+and the till still the clerk's.
 
-Money is never computed here: every figure on the desk is an integer-cent
-amount the core stated, spelled by the one money helper (`src/money.ts`), and
-no other module formats money.
+Money on the counter is integer cents throughout. The figures the core states
+(line prices from the pricing resolve, the committed sale's and return's own
+totals, the account's limit and balance) are what the counter renders; the
+port's host seams (`ports.ts`) assemble those figures for the surface's live
+read-back, and the counter's pre-ring tax and total are marked on the surface
+as estimates: HH's contract gives the till no rate, so the estimate applies
+the counter's 1300 bps default (or the relief flow's assessed rate), and the
+ring's committed figures are the binding ones the confirmation renders. The
+returns desk spells its figures through the one money helper (`src/money.ts`).
 
 ## Running the app against the local stub
 
@@ -46,7 +57,9 @@ serves, because there the route answers nothing too.
 `npm test` runs the unit and scan files first (`test/unit.test.mjs`, the one
 time credential slot's own assertions, and `test/sinks.test.mjs`, the scan
 that refuses any place in `src` a credential could rest in or surface from),
-then the Playwright suite (playwright.config.ts). Playwright starts the stub
+the ported surface's own node suites (`src/ported/*.test.mjs`, the ported
+reference tests plus the wiring item's money seam, add-path census and hotkey
+roster cross-checks), then the Playwright suite (playwright.config.ts). Playwright starts the stub
 and the dev server itself and drives the system Chrome through the `chrome`
 channel: the same browser the design system's browser leg expects on the
 runner, so no browser download rides the npm install. The suite's ports are
@@ -57,6 +70,14 @@ run can still pin ports with `CT_APP_PORT` and `CT_STUB_PORT`. The Playwright
 spec files are named `*.pw.ts` so the repository root's bun drift gate (which
 discovers `*.test.*` suites) does not pick them up; the two unit and scan
 files are `.test.mjs` and run under both the app's own script and that gate.
+
+The stub answers every route the ported terminal speaks besides the ones the
+older slices drove: the counter's policy, workspace (with the layout choice
+echoed), hotkeys, salespeople and quick-picks reads; the catalogue list, scan
+and the ungated thumbnail route (404: the demo world carries no images); the
+stock glance and the empty add-ons strip; the pricing resolve in the
+contract's breakdown shape; the signatures, the relief assessment and the
+rendered receipt document.
 
 The stub also serves `GET /_stub/state`, a harness-only peek at its own
 ledgers (the api requests it has sighted and whether any carried the approver

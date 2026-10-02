@@ -1,0 +1,291 @@
+/* Ported from hardscapeos_dibbits master 87d7941b app/src/styles/tokens.css; adapted for HH.
+   Ported: HH note.
+   This is the reference surface's token sheet, rebased onto the HH design system
+   (web/packages/design-system/src/tokens.css). The components of the ported POS
+   consume the --hos-* names, so the sheet keeps those names as ALIASES: every
+   role the design system carries resolves to its --hh-* token and follows the
+   base sheet's themes. The roles the design system does not carry yet keep the
+   reference's own value here, each marked LOCAL: the polish work item either
+   promotes the role into the design system (the brief's "extend with the tokens
+   the reference needs") or retires it. Nothing here overrides a --hh-* token.
+
+   The reference sheet carried three theme blocks (dark, light, loud). The base
+   sheet carries dark and light, so the aliases in :root follow them without a
+   light block of their own: var() resolves at use. Only the LOCAL roles need an
+   explicit light half. The loud theme has no base half at all: its block below
+   re-values the --hos-* names directly and stays flagged.
+
+   Carried conduct rules (the base sheet's): colour never encodes state alone,
+   and disabled controls change colour, not opacity. */
+
+:root {
+  /* The brand gold family: a FILL, never an ink; the ink a gold fill carries is
+     invariant across themes, and gold AS INK (and the focus ring) is the one
+     accent role that flips. Aliased to the base sheet's family. */
+  --hos-stone-amber: var(--hh-accent);
+  --hos-stone-amber-hover: var(--hh-accent-hover);
+  --hos-stone-amber-ink: var(--hh-accent-ink);
+  --hos-stone-amber-text: var(--hh-accent-text);
+
+  /* Canvases, surfaces, line, inks: role for role with the base sheet. */
+  --hos-deep-earth: var(--hh-page);
+  --hos-slate-warm: var(--hh-card);
+  --hos-line: var(--hh-line);
+  /* The boundary a non-filled control is seen by (WCAG 1.4.11, 3:1 in both themes); --hos-line is a hairline. */
+  --hos-control-line: var(--hh-control-line);
+  --hos-text: var(--hh-text);
+  --hos-text-dim: var(--hh-text-dim);
+
+  /* Status inks and their solid fills (the base sheet's per-theme pairs). */
+  --hos-safety-red: var(--hh-danger);
+  --hos-safety-red-fill: var(--hh-danger-fill);
+  --hos-info-blue: var(--hh-info);
+  --hos-success: var(--hh-success);
+  --hos-success-fill: var(--hh-success-fill);
+  --hos-state-good: var(--hh-state-good);
+  --hos-state-watch: var(--hh-state-watch);
+  --hos-state-stop: var(--hh-state-stop);
+
+  /* The row stripe pair: "the row's own ground" and that ground plus a whisper
+     of the ink, so the stripe works on any surface a list is put on. */
+  --hos-row: var(--hh-row);
+  --hos-row-alt: var(--hh-row-alt);
+
+  /* Type. The faces are the base sheet's stacks; no webfont ships here. */
+  --hos-font-ui: var(--hh-font-ui);
+  --hos-font-mono: var(--hh-font-mono);
+  --hos-color-scheme: var(--hh-color-scheme);
+
+  /* The spacing grid: value-named, aliased to the base grid. */
+  --hos-s-2: var(--hh-s-2);
+  --hos-s-4: var(--hh-s-4);
+  --hos-s-8: var(--hh-s-8);
+  --hos-s-12: var(--hh-s-12);
+  --hos-s-16: var(--hh-s-16);
+  --hos-s-20: var(--hh-s-20);
+  --hos-s-24: var(--hh-s-24);
+  --hos-s-28: var(--hh-s-28);
+  --hos-s-32: var(--hh-s-32);
+  --hos-s-40: var(--hh-s-40);
+  --hos-s-48: var(--hh-s-48);
+  --hos-s-64: var(--hh-s-64);
+
+  /* LOCAL (flagged for the polish item): the legacy index scale, kept as
+     literals because ported surfaces still consume it and the base sheet
+     deliberately does not carry it. Name by index: --hos-space-4 is 16px. */
+  --hos-space-1: 4px;
+  --hos-space-2: 8px;
+  --hos-space-3: 12px;
+  --hos-space-4: 16px;
+  --hos-space-5: 20px;
+  --hos-space-6: 28px;
+  --hos-space-7: 40px;
+
+  /* Radius, by role. */
+  --hos-radius-control: var(--hh-radius-control);
+  --hos-radius-card: var(--hh-radius-card);
+  --hos-radius-pill: var(--hh-radius-pill);
+  --hos-radius-widget: var(--hh-radius-widget);
+
+  /* The widget layer: a surface one step off the page. Aliased to the base
+     sheet's dashboard layer. */
+  --hos-ground: var(--hh-ground);
+  --hos-widget: var(--hh-widget);
+  --hos-widget-raised: var(--hh-widget-raised);
+  --hos-hairline: var(--hh-hairline);
+  --hos-track: var(--hh-track);
+  --hos-widget-shadow: var(--hh-widget-shadow);
+
+  /* LOCAL (flagged): the pale band fill the split state wears (the reference's pale
+     yellow, the gold fill lightened to 42 percent over white). Theme-invariant on
+     purpose, valued once here, so no theme block re-values it; its ink is the gold
+     fill's own invariant ink, pinned in the same rule that uses it. 14.65:1 together. */
+  --hos-band-fill: #ffe69c;
+
+  /* LOCAL (flagged): the pop kit's remaining three roles. The wash is the
+     hero's soft gold radial wash and the only ambient wash in the surface; the
+     edge is the 1px lighter top edge a dark card wears; the raised shadow is
+     the second of exactly two elevation levels. */
+  --hos-wash: rgba(242, 183, 5, 0.09);
+  --hos-edge: rgba(255, 255, 255, 0.12);
+  --hos-widget-shadow-raised: 0 12px 30px -14px rgba(0, 0, 0, 0.6);
+  --hos-gap-widget: 16px;
+
+  /* LOCAL (flagged): the three figure sizes, as ranges a container clamps
+     between. A widget renders a different form per size, never a scaled copy. */
+  --hos-hero-size: clamp(44px, 4.4vw, 56px);
+  --hos-stat-size: clamp(28px, 2.6vw, 32px);
+  --hos-stat-size-compact: clamp(22px, 2vw, 26px);
+
+  /* LOCAL (flagged): series colours, the ordered ladder for an ordered
+     breakdown, validated against the dark widget surface in the reference. */
+  --hos-series-1: #5f93b4;
+  --hos-series-2: #8db9d6;
+  --hos-series-3: #c2dceb;
+
+  /* LOCAL (flagged): the categorical family, one hue per position in an
+     unordered breakdown. In the calm themes the family deliberately collapses
+     to one neutral fill, so the rendered pixels are what the bars already drew;
+     the loud block below is where the family gets its eight hues. */
+  --hos-cat-1: var(--hos-text-dim);
+  --hos-cat-2: var(--hos-text-dim);
+  --hos-cat-3: var(--hos-text-dim);
+  --hos-cat-4: var(--hos-text-dim);
+  --hos-cat-5: var(--hos-text-dim);
+  --hos-cat-6: var(--hos-text-dim);
+  --hos-cat-7: var(--hos-text-dim);
+  --hos-cat-8: var(--hos-text-dim);
+
+  /* Breakpoints, documentation for JS and matchMedia; CSS mirrors the px. */
+  --hos-bp-sm: var(--hh-bp-sm);
+  --hos-bp-md: var(--hh-bp-md);
+  --hos-bp-lg: var(--hh-bp-lg);
+
+  /* The page layout contract: two gutters, the measure for text that has no
+     measure of its own, the reading pane's cap, and the guarded form column. */
+  --hos-page-gutter: var(--hh-page-gutter);
+  --hos-page-gutter-block: var(--hh-page-gutter-block);
+  --hos-measure: var(--hh-measure);
+  --hos-reading-max: var(--hh-reading-max);
+  --hos-content-max: var(--hh-content-max);
+  --hos-form-col: var(--hh-form-col);
+  --hos-pane-columns: var(--hh-pane-columns);
+
+  /* LOCAL (flagged): the feedback pill's reserved lane, measured as
+     inset + pill + inset, so a surface's last row can keep itself clear. */
+  --hos-fab-inset: 22px;
+  --hos-fab-size: 38px;
+  --hos-fab-lane: calc(var(--hos-fab-size) + var(--hos-fab-inset) * 2);
+
+  /* Elevation: dark lifts with the surface step and keeps shadows for raised
+     surfaces; the scrim puts the page behind a dialog. */
+  --hos-elev-1: var(--hh-elev-1);
+  --hos-elev-2: var(--hh-elev-2);
+  --hos-elev-3: var(--hh-elev-3);
+  --hos-scrim: var(--hh-scrim);
+
+  /* Z-index, one ordered scale so layers never fight. */
+  --hos-z-nav: var(--hh-z-nav);
+  --hos-z-dropdown: var(--hh-z-dropdown);
+  --hos-z-overlay: var(--hh-z-overlay);
+  --hos-z-modal: var(--hh-z-modal);
+  --hos-z-toast: var(--hh-z-toast);
+
+  /* Safe-area insets for the mobile chrome; they resolve to 0 where
+     unsupported. */
+  --hos-safe-top: var(--hh-safe-top);
+  --hos-safe-right: var(--hh-safe-right);
+  --hos-safe-bottom: var(--hh-safe-bottom);
+  --hos-safe-left: var(--hh-safe-left);
+
+  /* LOCAL (flagged): shell chrome widths the reference's sidebar and bottom
+     nav were sized from. */
+  --hos-sidebar-width: 232px;
+  --hos-bottom-nav-height: 60px;
+}
+
+/* LOCAL light halves (flagged): only the roles with no base alias follow. The
+   gold fill family, the inks, the fills, the stripe and the elevations all
+   resolve through their --hh-* aliases and need no light block here. */
+:root[data-theme="light"] {
+  --hos-wash: rgba(217, 154, 18, 0.1);
+  /* Transparent on purpose: a white card on the warm grey ground already reads
+     as one step up, and the light lift is the shadow's job alone. */
+  --hos-edge: transparent;
+  --hos-widget-shadow-raised: 0 2px 4px rgba(0, 0, 0, 0.05), 0 18px 40px -16px rgba(0, 0, 0, 0.28);
+  --hos-series-1: #8fb6d0;
+  --hos-series-2: #4f8aae;
+  --hos-series-3: #25618a;
+}
+
+/* LOCAL (flagged): the loud theme, the reference's third value of the one
+   data-theme attribute. The base sheet carries no loud block, so these are the
+   reference's own measured values, kept verbatim; the polish item decides
+   whether loud becomes a base theme, and until then nothing may treat this
+   block as the design system's voice. The gold family, the text inks and the
+   elevation roles are held across the themes on purpose (see the base sheet's
+   ruling), so loud re-values only its own surfaces and data hues. */
+:root[data-theme="loud"] {
+  --hos-color-scheme: dark;
+
+  --hos-deep-earth: #05070b;
+  --hos-slate-warm: #131a27;
+  --hos-line: #2e3947;
+  --hos-scrim: rgba(0, 0, 0, 0.78);
+
+  --hos-ground: #05070b;
+  --hos-widget: #0b0f17;
+  --hos-widget-raised: #141a26;
+  --hos-hairline: rgba(255, 255, 255, 0.1);
+  --hos-track: rgba(255, 255, 255, 0.1);
+  --hos-edge: rgba(255, 255, 255, 0.2);
+  --hos-wash: rgba(255, 195, 19, 0.14);
+  --hos-widget-shadow: none;
+  --hos-widget-shadow-raised: 0 12px 34px -12px rgba(0, 0, 0, 0.9);
+
+  /* The eight categorical hues, ordered so adjacent indices sit far apart: a
+     chart draws three to six rows, so the ring is interleaved rather than
+     walked in hue order. */
+  --hos-cat-1: #eda761; /* h30, amber-sand */
+  --hos-cat-2: #84bbf1; /* h210, sky */
+  --hos-cat-3: #17d317; /* h120, green */
+  --hos-cat-4: #f394f3; /* h300, orchid */
+  --hos-cat-5: #9ac516; /* h75, lime */
+  --hos-cat-6: #beabf6; /* h255, periwinkle */
+  --hos-cat-7: #17cda0; /* h165, teal */
+  --hos-cat-8: #f49db3; /* h345, rose */
+
+  --hos-series-1: #4fa8e8;
+  --hos-series-2: #7fd0ff;
+  --hos-series-3: #bee7ff;
+
+  --hos-state-good: #3de08a;
+  --hos-state-watch: #ffa033;
+  --hos-state-stop: #ff6b81;
+}
+
+/* The reference's document chrome. The wiring item decides whether the till
+   adopts it (the base sheet owns this app's page today); it is carried so the
+   ported surface renders as it did, and it expresses everything in tokens. */
+
+html,
+body {
+  margin: 0;
+  background: var(--hos-deep-earth);
+  color: var(--hos-text);
+  font-family: var(--hos-font-ui);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+/* The ring is gold-as-ink, not the gold fill: in light theme the fill stays
+   gold and the ring becomes dark-gold, which is the brand's own answer to gold
+   on a light background. The same declaration lives in styles/focus-ring.ts. */
+:focus-visible {
+  outline: 2px solid var(--hos-stone-amber-text);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--hos-stone-amber);
+  color: #0b1725; /* the ink on gold never flips: see the base sheet's gold rule */
+}
+
+html {
+  scrollbar-color: var(--hos-line) var(--hos-deep-earth);
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--hos-deep-earth);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--hos-line);
+  border-radius: var(--hos-radius-pill);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--hos-text-dim);
+}

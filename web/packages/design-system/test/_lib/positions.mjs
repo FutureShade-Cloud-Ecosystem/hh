@@ -85,6 +85,65 @@ const ALLOWED_BOOLEAN = 'disabled';
 // is asserted by the gate's tests.
 export const ALLOWED_PROPERTY_OR_EVENT = new Set([]);
 
+// ── the ported surface's deliberate allowance (the UI parity ruling) ────────────
+//
+// The Counter Till's ported POS surface (web/apps/counter-till/src/ported/,
+// carried from hardscapeos_dibbits master 87d7941b) keeps the reference's own
+// Lit idioms: @event and .property bindings in the templates, roving tabindex,
+// bound id/value/label and friends. Converting roughly eleven hundred bindings
+// to this package's host-delegation discipline is the rewrite of the template
+// layer the port's brief forbids, so the lead's parity ruling grows the gate
+// for that one directory, by name. The three tables below are the ruling's
+// record: each name is a binding position the ported files actually use, a NEW
+// position inside the ported prefix is still refused until it is added here on
+// purpose, every HH-written file outside the prefix is held exactly as before,
+// and the raw-markup refusals (srcdoc and friends, on* handlers, script and
+// base) keep biting inside the prefix too. STYLE is the one deliberate
+// admission past this gate's own security refusal: the multi-card surface's
+// draggable panels position at runtime and the values are the surface's own
+// geometry, never wire data; the polish item retires it when the surface
+// adopts the kit discipline. SRC is admitted the same way, as one whole value
+// only: product-thumb's thumbnail route is the module's own same-origin
+// relative path with the id URI-encoded, and the address helper cannot wrap a
+// nested call by this gate's own spelling rule.
+export const PORTED_SURFACE_PREFIX = 'apps/counter-till/src/ported/';
+
+export const isPortedSurfaceFile = (file) => file.startsWith(PORTED_SURFACE_PREFIX);
+
+/** The . and @ binding names the ported files use, sigils included. */
+export const PORTED_PROPERTY_OR_EVENT = new Set([
+  '@change', '@click', '@error', '@focus', '@focusin', '@hos-customer-picker-close',
+  '@hos-customer-selected', '@input', '@keydown', '@open-order', '@order-changed',
+  '@order-lifecycle-loaded', '@order-status-changed', '@pointercancel', '@pointerdown',
+  '@pointermove', '@pointerup', '@pos-add-echo', '@pos-add-product', '@pos-drop-exit',
+  '@pos-flow-goto', '@pos-legend-dismiss', '@pos-panel-focus', '@pos-parked-close',
+  '@pos-parked-resume', '@pos-relief-applied', '@pos-relief-close', '@pos-return-close',
+  '@pos-scan-resolved', '@pos-signature', '@pos-split-cancel', '@pos-split-ring',
+  '@pos-step-toggle', '@pos-term-changed', '@pos-term-commit-top', '@pos-term-enter-list',
+  '@pricing-doc-close', '@quick-start-clear', '@quick-start-continue', '@quick-start-park',
+  '@related-doc-open', '@submit', '@till-close-cancel', '@till-closed',
+  '.active', '.alt', '.branchId', '.breakdown', '.busy', '.checked', '.complete',
+  '.curated', '.customer', '.customerId', '.customerName', '.doc', '.externalTerm',
+  '.fault', '.hasCustomer', '.hasImage', '.hint', '.homeBranchId', '.info', '.label',
+  '.n', '.open', '.openLines', '.orderId', '.presentation', '.productId', '.refId',
+  '.retry', '.roster', '.rows', '.sessionId', '.showChips', '.size', '.state', '.step',
+  '.steps', '.subtotalCents', '.summary', '.term', '.ticket', '.ticketEpoch',
+  '.tillSessionId', '.totalCents', '.value', '.vocabulary',
+]);
+
+/** The boolean bindings besides ?disabled the ported files use. */
+export const PORTED_BOOLEANS = new Set(['autofocus-scan', 'busy', 'hidden', 'selected', 'unified']);
+
+/** The attributes the ported files bind a value onto, beyond this package's allow list. */
+export const PORTED_BOUND_VALUES = new Set([
+  'alt', 'branch-id', 'doc-id', 'id', 'label', 'max', 'name', 'order-id', 'placeholder',
+  'slot', 'style', 'tabindex', 'title', 'value',
+]);
+
+/** The address attributes the ported files may bind as one whole value, past the
+ * helper-only rule (see the ruling comment above for the src ground). */
+export const PORTED_ADDRESS_VALUES = new Set(['src']);
+
 // Elements whose content the browser reads as code or raw text: no binding may
 // land there, text included.
 const RAW_TEXT_ELEMENTS = new Set(['script', 'style', 'textarea', 'title', 'xmp']);
@@ -1007,10 +1066,22 @@ const auditTemplate = (source, file, template, offences, baseLine = null) => {
         at(line, `the boolean binding ?${ALLOWED_BOOLEAN}`, 'allowed');
         return;
       }
+      if (isPortedSurfaceFile(file) && PORTED_BOOLEANS.has(name.slice(1))) {
+        at(line, `the boolean binding ${name} (the ported surface's allowance)`, 'allowed');
+        return;
+      }
       at(line, `the boolean binding ${name}`, `only ?${ALLOWED_BOOLEAN} is on the allow list`);
       return;
     }
     if (name.startsWith('.') || name.startsWith('@')) {
+      if (isPortedSurfaceFile(file) && PORTED_PROPERTY_OR_EVENT.has(name)) {
+        at(
+          line,
+          `${name.startsWith('.') ? 'a property' : 'an event'} binding (${name[0]} form, the ported surface's allowance)`,
+          'allowed',
+        );
+        return;
+      }
       at(line, `${name.startsWith('.') ? 'a property' : 'an event'} binding (${name[0]} form)`, `the property and event allow table is empty: no . or @ binding exists in the package today, so every one is refused`);
       return;
     }
@@ -1023,7 +1094,7 @@ const auditTemplate = (source, file, template, offences, baseLine = null) => {
       at(line, `a value in the event attribute ${name}`, 'these kits take no inline handlers');
       return;
     }
-    if (REFUSED_VALUE_ATTRIBUTES.has(lowerName)) {
+    if (REFUSED_VALUE_ATTRIBUTES.has(lowerName) && !(isPortedSurfaceFile(file) && PORTED_BOUND_VALUES.has(lowerName))) {
       at(line, `a value in the ${name} attribute`, `escaping cannot make a binding in the ${name} attribute safe (srcdoc is entity-decoded back into a document, style sets arbitrary CSS, the SVG animation attributes are decoded onto their target, object data loads a document of its own)`);
       return;
     }
@@ -1033,12 +1104,28 @@ const auditTemplate = (source, file, template, offences, baseLine = null) => {
         at(line, `a binding inside the address attribute ${name} that is not wholly one value`, 'an address must be one whole binding: a scheme reassembled from parts is invisible to any per-value check');
         return;
       }
+      if (isPortedSurfaceFile(file) && PORTED_ADDRESS_VALUES.has(lowerName)) {
+        at(line, `the address attribute ${name} as one whole value (the ported surface's allowance)`, 'allowed');
+        return;
+      }
       if (!ADDRESS_CALL.test(chunk.text)) {
         at(line, `a binding inside the address attribute ${name}`, `the only source the gate permits in an address attribute is the package's one address helper, ${ADDRESS_HELPER}(), which checks the scheme`);
         return;
       }
       at(line, `the address attribute ${name} through ${ADDRESS_HELPER}()`, 'allowed');
       return;
+    }
+    if (isPortedSurfaceFile(file) && PORTED_BOUND_VALUES.has(lowerName)) {
+      if (ctx.region === 'quoted') {
+        at(line, `a quoted value in the ${name} attribute (the ported surface's allowance)`, 'allowed');
+        return;
+      }
+      const whole = !ctx.valuePrefix && (nextStatic === '' || WHITESPACE.test(nextStatic[0]) || nextStatic[0] === '>' || nextStatic[0] === '/');
+      if (whole) {
+        at(line, `a whole unquoted value in the ${name} attribute (the ported surface's allowance)`, 'allowed');
+        return;
+      }
+      // an unquoted value with static text beside the binding stays refused, as everywhere else
     }
     if (ctx.region === 'quoted' && isAllowedValueAttribute(lowerName)) {
       at(line, `a quoted value in ${name}`, 'allowed');
