@@ -131,6 +131,14 @@ export class HosPosSplitTender extends LitElement {
         font-weight: 600;
         padding: 10px 18px;
       }
+      /* HH note: disabled drops its fill and goes grey; fade is not a state. */
+      button.ring:disabled {
+        background: transparent;
+        border-color: var(--hos-line);
+        color: var(--hos-text-dim);
+        opacity: 1;
+        cursor: not-allowed;
+      }
       button.ring:not(:disabled) {
         background: color-mix(in srgb, var(--hos-stone-amber) 14%, transparent);
       }

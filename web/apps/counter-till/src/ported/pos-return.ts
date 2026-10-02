@@ -139,6 +139,13 @@ export class HosPosReturn extends LitElement {
       opacity: 0.45;
       cursor: not-allowed;
     }
+    /* HH note: disabled drops its fill and goes grey; fade is not a state. */
+    button.primary:disabled {
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
+    }
     table {
       width: 100%;
       border-collapse: collapse;
