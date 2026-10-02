@@ -165,6 +165,11 @@ func (r *ARLandingRepository) ActiveHoldCustomers(ctx context.Context) (map[stri
 // delivered_never_opened counts sends INSIDE the window; last_open_at is deliberately NOT windowed,
 // because "this customer opened one in February" is a fact that should stop a paper-path flag no
 // matter which window is configured today.
+//
+// last_reminder_at counts DELIVERED sends only (HH-185 round 2): the field drives the work list's
+// cadence, and a FAILED send that advanced it would move the account from "Send reminder" to "Call"
+// for a whole cadence period on a message that never left the server, the same phantom the
+// DELIVERED filter already refuses to count.
 func (r *ARLandingRepository) EngagementFor(ctx context.Context, customerIDs []string, windowDays int, now time.Time) (map[string]EngagementInput, error) {
 	out := map[string]EngagementInput{}
 	if r.pool == nil {
@@ -177,7 +182,8 @@ func (r *ARLandingRepository) EngagementFor(ctx context.Context, customerIDs []s
 	rows, err := r.pool.Query(ctx, `
 		SELECT c.id::text,
 		       EXISTS (SELECT 1 FROM ar_ap_contacts a WHERE a.customer_id = c.id),
-		       (SELECT max(s.sent_at)      FROM ar_reminder_sends s WHERE s.customer_id = c.id),
+		       (SELECT max(s.sent_at)      FROM ar_reminder_sends s
+		         WHERE s.customer_id = c.id AND s.status = 'DELIVERED'),
 		       (SELECT max(s.first_open_at) FROM ar_reminder_sends s WHERE s.customer_id = c.id),
 		       (SELECT count(*) FROM ar_reminder_sends s
 		         WHERE s.customer_id = c.id AND s.status = 'DELIVERED'
