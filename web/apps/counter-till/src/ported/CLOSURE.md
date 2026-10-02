@@ -49,6 +49,63 @@ add-path census) and `_pos-hotkeys-roster.test.mjs` (the fallback roster
 re-pinned against HH's core hotkeys file), beside `ports-money.test.mjs`
 (the split and money seam cases against the implementations).
 
+## The polish pass (UI-3)
+
+The third UI parity work item, from the visual review's findings. Each is its
+own commit on `till/ui-3-polish`.
+
+- Returns desk placement (GAP 2): the plain "Returns" section under the till
+  now wears the till's own card: the terminal's column and gutter, the
+  accordion card's face, hairline, radius and shadow, a 15px semibold head,
+  13px body copy, 11px caption labels and the till's input face, in both
+  themes. One returns path stays (lead ruling 15): the desk's flow, its ruled
+  approval dialog and its receipt are unchanged; the ported Return dialog
+  stays unreachable.
+- Theme (GAP 3): the Theme control sits in the account area beside Pop out and
+  Sign out (and on the entry page's header). It cycles Auto, Light and Dark;
+  Auto follows the system's light setting live. The reference persists its
+  choice in local storage; this app's committed sink gate refuses every
+  storage path, so the choice rests in tab memory only and a reload, a
+  sign-out and the pop-out window start on Auto (`src/theme.ts`).
+- Header (GAP 6): the title, the stepper and the session bar share one row at
+  the column cap while no session is open (the bar's gap and the session
+  cluster's gap tightened). With a session open the bar gains the dot and End
+  Session and wraps, as the reference's own bar does.
+- Split banner (GAP 7): the split state's band is the reference's pale yellow
+  with the theme-stable ink in both themes.
+- Margin eye (GAP 8): an outlined control (the utility buttons' hairline), at
+  the end of the utility row, so it never shifts Park ticket when the first
+  priced line brings margin into view.
+- Panels Fulfilment row (GAP 9): all four choices share one row at the default
+  panel width (the tile floor is 112px). None are left out: Collect now,
+  Will-call, Delivery and COD are all sale types of the contract's ring body.
+  COD stays gated by the branch policy read (`cod_enabled`): the tile is
+  disabled and reads "COD: off" where the policy refuses it, and the COD
+  fulfilment select (Pickup, Will-call, Delivery) opens only once COD is
+  chosen, as in the reference.
+- Quick picks and category chips (NOTE 2): the demo stub curates a three-tile
+  hot list (grouped by the catalogue's category word) and the catalogue rows
+  carry their category, so the filled tiles, the drill, the add, the curated
+  chip row and Favorites are exercised in `test/hotlist.pw.ts`. No contract
+  change: the shapes are the contract's `PosQuickPicks` and the catalogue
+  list's application word. The tiles wear the placeholder thumbnail because
+  the stub carries no photo bytes (`has_image` false).
+- Signature area (NOTE 7): decided, left closed. The signature capture
+  (`pos-signature.ts`) rides the tax relief assessment ("Assess tax relief"
+  under More), which lead ruling 16 closed in the mount as a live call path
+  outside the counter-sale row, unruled and untested in HH. The parity set
+  (the linear flow, the detached multi-card layout, the light theme, focus
+  rings, the hotkeys legend, empty and loading states) does not name it, so
+  opening it would add an unruled path for a surface the parity set does not
+  ask for. The Print receipt button is present on both Paid cards.
+- Checked and found at parity, no change: focus rings (the keyboard ring on
+  the fulfilment tile, the scan box and the stepper match the reference's),
+  the empty search state ("No match"), the empty hot-list note, the empty
+  ticket's blank marker, the hotkey legend, the help popover and the Counter
+  view menu. The Counter settings editor is administrator-gated (`isAdmin`),
+  and neither demo role is one, so it is not reachable on this build and was
+  not seen.
+
 The reference is `hardscapeos_dibbits` `master` at 87d7941b, read only at
 `counter-till/ref-master/`. This directory carries the ported surface code of
 `app/src/pos-terminal.ts`'s full import closure, file names mirrored, each file
