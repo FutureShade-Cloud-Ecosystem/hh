@@ -52,6 +52,7 @@ import {
   type TenderChoice,
 } from "./views/checkout.js";
 import { parkedStyles, renderParked, type ParkedPanel, type ParkedRow } from "./views/parked.js";
+import { setBranches, wirePorts, type AuthUser } from "./ported/ports.js";
 import {
   tillStyles,
   renderTill,
@@ -158,6 +159,12 @@ export class CounterTillApp extends HHElement {
   #clerkUserId: string | null = null;
   /** The role code the clerk's mint stated, for the receipt's display words. */
   #clerkRoleCode: string | null = null;
+  /**
+   * The mint's own IdentityUser block, in the ported surface's session shape:
+   * the facts the terminal reads (the role's name, the tier and scope behind
+   * the platform-admin gate's shape), handed over unchanged from the mint.
+   */
+  #clerkIdentity: AuthUser | null = null;
   readonly #returns: ReturnsFlow;
   #branch: BranchRef | null = null;
   #drawer: DrawerPanel = FRESH_DRAWER_PANEL;
@@ -276,6 +283,17 @@ export class CounterTillApp extends HHElement {
       onChange: () => this.requestUpdate(),
     });
     this.#tillClient = new TillClient(client);
+    // The ported surface's host wiring: one door, wired once, reading custody
+    // through this element's own closures so the bearer never rests in a
+    // second place. The org header is the demo org by construction (the same
+    // provider the staff client carries), and the requested-date default is
+    // the house zone's day, the conversion the sale's ring already rides.
+    wirePorts({
+      headers: staffHeaders,
+      houseDay: () => houseDayInZone(HOUSE_ZONE),
+      user: () => this.#clerkIdentity,
+      token: () => this.#sessions.current?.token ?? "",
+    });
   }
 
   connectedCallback(): void {
@@ -471,6 +489,15 @@ export class CounterTillApp extends HHElement {
     }
     this.#clerkUserId = minted.value.user.userId;
     this.#clerkRoleCode = minted.value.roleCode;
+    this.#clerkIdentity = {
+      user_id: minted.value.user.userId,
+      email: minted.value.user.email,
+      display_name: minted.value.user.name,
+      role_code: minted.value.roleCode,
+      role_name: minted.value.identity.roleName,
+      tier: minted.value.identity.tier,
+      scope: minted.value.identity.scope,
+    };
     this.#till = { label: this.#labelFor(flow) };
     this.requestUpdate();
     void this.#initTill();
@@ -518,6 +545,7 @@ export class CounterTillApp extends HHElement {
     this.#message = null;
     this.#clerkUserId = null;
     this.#clerkRoleCode = null;
+    this.#clerkIdentity = null;
     this.#returns.reset();
     this.#branch = null;
     this.#drawer = FRESH_DRAWER_PANEL;
@@ -570,6 +598,10 @@ export class CounterTillApp extends HHElement {
       return;
     }
     this.#branch = branch.value;
+    // The branch facts the ported surface reads (the branch default, the yard
+    // names beside stock): filled in place from the route's own answer, before
+    // anything mounts.
+    setBranches([{ id: branch.value.id, name: branch.value.name }]);
     await this.#ensureDrawer();
     // The card rail's own report: the simulated notices ride exactly this
     // value, true only, so an unanswered status means no notice, never a

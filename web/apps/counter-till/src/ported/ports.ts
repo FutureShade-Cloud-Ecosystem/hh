@@ -47,9 +47,18 @@ function unwired(seam: string): never {
  */
 export interface PortHost {
   /** Headers for every api() call: the demo org plus the live bearer. */
-  headers(): Promise<Record<string, string>>;
+  headers(): Record<string, string> | Promise<Record<string, string>>;
   /** The dealer's day in the house zone: the ring's requested-date default. */
   houseDay(): string;
+  /** The signed-in staff member, in the mint's own IdentityUser shape, or null. */
+  user(): AuthUser | null;
+  /** The live bearer, only ever to hand a session across a window boundary. */
+  token(): string;
+}
+
+/** True when the host has been wired and carries a live session. */
+function sessionLive(): boolean {
+  return host !== null && host.user() !== null && host.token() !== "";
 }
 
 let host: PortHost | null = null;
@@ -109,22 +118,36 @@ export function branchName(id: string): string {
   return b ? b.name : id.slice(0, 8);
 }
 
-/** The signed-in user, or null between sessions. */
+/**
+ * The signed-in user, or null between sessions. The shape is the demo mint's
+ * own IdentityUser block (user_id, email, display_name, role_code, role_name,
+ * tier, scope), handed over unchanged: the ported surface reads the session
+ * facts the server stated, never re-derived ones.
+ */
 export function getCurrentUser(): AuthUser | null {
-  return unwired("getCurrentUser");
+  if (host === null) return unwired("getCurrentUser");
+  return host.user();
 }
 
-/** Whether the signed-in user clears the platform-admin gate. */
+/**
+ * Whether the signed-in user clears the platform-admin gate. The same shape
+ * the core's own gate reads (a Tier-one global scope): the demo's two flow
+ * accounts are branch-scoped staff, so this answers false for both, and the
+ * counter-settings entry the gate holds stays closed on the demo box exactly
+ * as the reviewed rule keeps it.
+ */
 export function isAdmin(): boolean {
-  return unwired("isAdmin");
+  const me = getCurrentUser();
+  return me !== null && me.tier === 1 && me.scope === "GLOBAL";
 }
 
 /**
  * The raw bearer token, only ever to hand a session across a window boundary
- * (the reference's pop-out handshake). Never placed in a URL.
+ * (the pop-out). Never placed in a URL.
  */
 export function getSessionToken(): string {
-  return unwired("getSessionToken");
+  if (host === null) return unwired("getSessionToken");
+  return host.token();
 }
 
 // ---------------------------------------------------------------------------
@@ -263,11 +286,14 @@ export async function api(path: string, init: RequestInit = {}): Promise<Respons
 
 /**
  * The hash a navigation target produces: `#home`, `#apps`, `#unit` or
- * `#unit/module`. The host shell owns the real route table; the reference's
- * shapes are kept so the ported quick-action registry reads as it did.
+ * `#unit/module`, in the reference's own spelling. This app is one surface
+ * (the till), so the hashes it produces are well-formed addresses of the one
+ * module the host carries; nothing here writes location state.
  */
 export function hashTargetFor(active: string, module?: string): string {
-  return unwired("hashTargetFor");
+  if (active === "home") return "#home";
+  if (active === "apps") return "#apps";
+  return module && module !== "overview" ? `#${active}/${module}` : `#${active}`;
 }
 
 /**
@@ -319,16 +345,61 @@ export type NavModuleKey =
   | 'hotkeys'
   | 'account';
 
+const UNIT_KEYS: readonly NavUnitKey[] = [
+  "sales",
+  "finance",
+  "inventory",
+  "compliance",
+  "messaging",
+  "warranty",
+  "dispatch",
+  "yard",
+  "purchasing",
+  "reporting",
+  "admin",
+];
+
+const MODULE_KEYS: readonly NavModuleKey[] = [
+  "catalogue",
+  "calculator",
+  "quote",
+  "quotes",
+  "pos",
+  "invoices",
+  "returns",
+  "pricing",
+  "gl",
+  "bankrec",
+  "statements",
+  "ar",
+  "inventory",
+  "lien",
+  "tax",
+  "warranty",
+  "messaging",
+  "dispatch",
+  "yard",
+  "purchasing",
+  "reporting",
+  "staff",
+  "approvals",
+  "audit",
+  "assist",
+  "assist-admin",
+  "hotkeys",
+  "account",
+];
+
 export function isNavUnitKey(v: string): v is NavUnitKey {
-  return unwired('isNavUnitKey');
+  return (UNIT_KEYS as readonly string[]).includes(v);
 }
 
 export function isNavModuleKey(v: string): v is NavModuleKey {
-  return unwired('isNavModuleKey');
+  return (MODULE_KEYS as readonly string[]).includes(v);
 }
 
 /** Who may see an entry point: the reference's gate vocabulary. */
-export type Gate = 'always' | 'authed' | 'manager' | 'admin';
+export type Gate = "always" | "authed" | "manager" | "admin";
 
 /** The caller's grants as the three predicates the shell computes. */
 export interface AccessRole {
@@ -338,20 +409,37 @@ export interface AccessRole {
 }
 
 /**
- * The per-screen gate table. Declared empty and cast: the host's RBAC (the
- * per-dealer role defaults HH decided) supplies the real table, and every
- * read goes through canSeeGate, which refuses until wired.
+ * The per-screen gate table, answered from the host's role model. This micro
+ * app carries one surface: the till (`pos`), which any signed-in counter role
+ * works (the entry cards are the gate's front door). The other modules name
+ * screens this app does not carry, so their gates hold at `admin`: an action
+ * that named one refuses as data (the registry's own words: a visible dead
+ * click, never a silent parallel navigation path), and nobody on the demo box
+ * clears the gate that would open it.
  */
-export const SCREEN_GATE: Record<NavModuleKey, Gate> = {} as Record<NavModuleKey, Gate>;
+export const SCREEN_GATE: Record<NavModuleKey, Gate> = MODULE_KEYS.reduce(
+  (table, key) => {
+    table[key] = key === "pos" ? "authed" : "admin";
+    return table;
+  },
+  {} as Record<NavModuleKey, Gate>,
+);
 
 /** Does this role clear this gate? The host answers from its own role model. */
 export function canSeeGate(gate: Gate, role: AccessRole): boolean {
-  return unwired('canSeeGate');
+  if (gate === "always") return true;
+  if (gate === "authed") return role.authed;
+  if (gate === "manager") return role.manager;
+  return role.admin;
 }
 
 /** The modules of one unit this role may see, in rail order. */
 export function visibleModuleKeys(unit: NavUnitKey, role: AccessRole): NavModuleKey[] {
-  return unwired('visibleModuleKeys');
+  // The host's live registry: the sales unit carries the till; the other units
+  // name surfaces this app does not carry, so they have no visible modules
+  // here for any role.
+  if (unit !== "sales") return [];
+  return canSeeGate(SCREEN_GATE["pos"], role) ? ["pos"] : [];
 }
 
 // ---------------------------------------------------------------------------
