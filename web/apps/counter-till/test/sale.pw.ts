@@ -18,7 +18,7 @@
 // own demo session (the same public route the app's cards use) and reads the
 // committed sale back through the same proxy, with the bearer and org header
 // the staff routes require.
-import { expect, test, type Page, type Response } from "@playwright/test";
+import { expect, test, type Page, type Response, type Route } from "@playwright/test";
 
 /** The screen-side rendering of integer cents, for comparing against the app. */
 function dollars(cents: number): string {
@@ -1414,6 +1414,47 @@ test("a price that answers after the pickup line was set flips the line to price
   // would still say re-deriving: the words say the derivation happened.
   await expect(message).toContainText(/Resumed PARK-\d+: prices re-derived now\./);
   await expect(message).not.toContainText("re-deriving prices");
+});
+
+test("a resumed ticket reads the pending markers from the moment it lands, before any price answer", async ({
+  page,
+}) => {
+  // Every pricing answer is HELD, not refused: the request stays in flight, so
+  // the test sees the ticket exactly as the resume paints it, before the first
+  // answer lands. The resumed lines carry the add path's pending flag, so the
+  // cells read the markers, the footer bar shows neither margin nor profit
+  // figure, and nothing states CA$0.00 for a line nobody has priced yet.
+  const held: Route[] = [];
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    held.push(route); // held in flight: answered only when the test releases it
+  });
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  await signIn(page, "Sales");
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  // The rail lists the branch's tickets in insertion order, and the suite's
+  // earlier stories leave theirs parked: the ticket this test just parked is
+  // the rail's last.
+  await parkedDialog.getByRole("button", { name: "Resume" }).last().click();
+  await expect(parkedDialog).not.toBeVisible();
+  await openStep(page, "items");
+  const row = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
+  await expect(row).toHaveCount(1);
+  // Before any answer: the pending marker on the cell, the footer bar silent.
+  await expect(row.locator(".ltot")).toHaveText("(not priced)");
+  const txbar = page.getByTestId("pos-txbar");
+  await expect(txbar).toContainText("1 Item");
+  await expect(txbar).not.toContainText("Margin");
+  await expect(txbar).not.toContainText("Est. Profit");
+  // The answer lands: the real figures return.
+  for (const route of held) await route.fallback().catch(() => undefined);
+  await expect(row.locator(".ltot")).toHaveText("CA$4.00");
+  await expect(txbar).toContainText("Margin");
+  await expect(txbar).toContainText("Est. Profit");
 });
 
 test("the top bar is on the till's compact scale: about 48px, small chrome buttons, the banner on one line", async ({

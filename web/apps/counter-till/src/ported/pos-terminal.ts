@@ -3938,6 +3938,11 @@ export class HosPosTerminal extends LitElement {
           priceUom: ln.uom_entered,
           lineTotalCents: 0,
           breakdown: null,
+          // Pending until the price lookup answers, the add path's own rule: the summary stays on
+          // the marker rather than a zero for a line nobody has priced yet. Without the flag the
+          // resumed ticket painted CA$0.00 totals and margin figures in the instant before the
+          // first answer landed (ui3d visual NOTE).
+          priceMissing: true,
         });
       }
       this.cart = cart;
