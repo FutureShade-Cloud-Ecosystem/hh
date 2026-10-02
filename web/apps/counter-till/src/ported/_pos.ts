@@ -293,6 +293,27 @@ export function counterRingMessage(err: { status: number; error: string }): stri
 }
 
 /**
+ * creditBlockMessage: the credit gate's refusal words, picked by the policy the gate named.
+ *
+ * The gate answers one error word (credit_blocked) for refusals that are not the same refusal, and
+ * the account sentence below is true for only some of them. A walk-in COD sale (no account on the
+ * ticket) is refused under the COD constraint, and there the account sentence is false in every
+ * clause: there is no account, nothing rides on account, and the tender chosen is Cash. The policy
+ * word rides the refusal's own body (it already feeds the hos-action-blocked event's detail), so the
+ * words can follow it. A hold or an over-the-limit refusal names an account that IS on the sale, and
+ * keeps the reviewed sentence, which is true there.
+ *
+ * Pure: exercised in credit-words.test.mjs. Both ring arms (the single tender and the split) call
+ * this one helper, so the two refusals cannot drift apart again.
+ */
+export function creditBlockMessage(policy: string | undefined, hasCustomer: boolean): string {
+  if (!hasCustomer && policy === 'COD_CONSTRAINT') {
+    return 'COD needs a customer account: pick one, or ring the sale as Collect now.';
+  }
+  return 'This account cannot carry this sale on account: the credit gate refused it (over the limit, or on a hold). Cash or card still works, and accounts receivable can release or override a hold.';
+}
+
+/**
  * INTERNAL_VOCABULARY: the shapes that mean "this sentence was written for a developer".
  *
  * A snake_case identifier is a column name (`deposit_method`, `po_job_ref`, `idempotency_key`). A

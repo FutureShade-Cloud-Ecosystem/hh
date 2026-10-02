@@ -45,6 +45,7 @@ import {
   restoreParkedCustomer,
   clearSaleNeedsConfirm,
   counterRingMessage, // rev 5: ringErrorMessage in counter wording (module prefix stripped, fixes named)
+  creditBlockMessage, // the credit gate's refusal words, by the policy the gate named
   saleConfirmation, // DIB-444: what the confirmation panel may claim
   salePillLabel, // DIB-512: the counter word for a rung sale's pay-state (never the wire status)
   cleanQty, // rev 5: NaN/garbage in a qty box snaps to 1 instead of corrupting the line
@@ -3511,12 +3512,14 @@ export class HosPosTerminal extends LitElement {
             composed: true,
           }),
         );
- // HH note: the split's credit refusal carries the same reviewed sentence the
- // single ring's does; a price_blocked refusal has no arm (row 481) and falls
+ // HH note: the split's credit refusal words come from the same helper the
+ // single ring's do (creditBlockMessage): the sentence follows the policy the
+ // gate named, so a walk-in COD sale is not told about an account it does not
+ // have. A price_blocked refusal has no arm (row 481) and falls
  // through to the server's own word below.
         this.ring = {
           state: 'error',
-          msg: 'This account cannot carry this sale on account: the credit gate refused it (over the limit, or on a hold). Cash or card still works, and accounts receivable can release or override a hold.',
+          msg: creditBlockMessage(res.err.policy, !!this.customer),
         };
         return;
       }
@@ -3599,11 +3602,14 @@ export class HosPosTerminal extends LitElement {
         void this.refreshCustomerAfterRing();
         return;
       }
- // HH note: only the credit gate is worded here, in HH's own reviewed
- // sentence: the gate refused the account sale, cash and card still work, and
- // accounts receivable owns the release or override. A price_blocked refusal
- // has no arm at all (row 481: no margin floor at the till), so it falls
- // through to the server's own word below, like every other refusal.
+ // HH note: only the credit gate is worded here, and its words follow the
+ // policy the gate named (creditBlockMessage, one rule for both ring arms): a
+ // hold or an over-the-limit refusal keeps HH's reviewed account sentence,
+ // which is true there; a walk-in COD sale is refused under the COD
+ // constraint and says so instead, since there is no account to speak of. A
+ // price_blocked refusal has no arm at all (row 481: no margin floor at the
+      // till), so it falls through to the server's own word below, like every
+      // other refusal.
       if (res.err.status === 409 && res.err.error === 'credit_blocked') {
         this.dispatchEvent(
           new CustomEvent('hos-action-blocked', {
@@ -3614,7 +3620,7 @@ export class HosPosTerminal extends LitElement {
         );
         this.ring = {
           state: 'error',
-          msg: 'This account cannot carry this sale on account: the credit gate refused it (over the limit, or on a hold). Cash or card still works, and accounts receivable can release or override a hold.',
+          msg: creditBlockMessage(res.err.policy, !!this.customer),
         };
         return;
       }

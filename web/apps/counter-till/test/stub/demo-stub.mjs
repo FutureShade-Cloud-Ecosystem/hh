@@ -1469,6 +1469,18 @@ const server = createServer(async (request, response) => {
         respondJson(response, 400, { error: "the walk-in has no account to bill" });
         return;
       }
+      // The COD constraint, the core's own gate for an unpaid-at-ring sale: a
+      // COD sale draws on an account, and the walk-in has none (its limit is
+      // no credit at all), so the ring answers the credit gate's refusal
+      // before any money moves: the single tender and the split settle both
+      // pass through here. The same word an on-hold account's sale meets
+      // below; the policy names the constraint, and the account sales keep
+      // their own arms.
+      if (parsed.sale_type === "COD" && customer.id === "") {
+        const blocked = creditBlocked("COD_CONSTRAINT");
+        respondJson(response, blocked.status, blocked.body);
+        return;
+      }
       if (parsed.requested_date !== houseDay()) {
         respondJson(response, 400, {
           error: `the sale's requested date is not the dealer's day in the house zone (${HOUSE_ZONE})`,

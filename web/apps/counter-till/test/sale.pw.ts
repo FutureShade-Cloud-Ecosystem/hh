@@ -428,6 +428,59 @@ test("an account on hold is refused in the reviewed words, and nothing commits",
   await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
 });
 
+test("a walk-in COD sale is refused in words that are true, and the same sale with an account rings", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  // The COD tile sits in the Items step's fulfilment row, beside Collect now.
+  // COD is unpaid at ring, so the requested-date box appears; the counter
+  // asks for the house zone's day and the stub refuses any other.
+  await page.getByRole("button", { name: /^COD/ }).click();
+  await page.getByLabel("Requested date: type eight digits YYYYMMDD, or use the calendar button").fill(
+    houseDay().replace(/-/g, ""),
+  );
+  // The customer stays Walk-in and Cash is the chosen tender: this sale draws
+  // on no account at all, and the counter still asks the server to ring it.
+  await openStep(page, "payment");
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await page.getByTestId("pos-complete-sale").click();
+
+  // The server refuses it under the COD constraint, before any money moves.
+  const refused = await ringPost;
+  expect(refused.status()).toBe(409);
+  const body = (await refused.json()) as Record<string, unknown>;
+  expect(body.error).toBe("credit_blocked");
+  expect(body.policy).toBe("COD_CONSTRAINT");
+
+  // The refusal's words say what it is: COD, the missing account, and the two
+  // ways out. The account sentence every other credit_blocked carries is
+  // FALSE here (there is no account, nothing is on account, Cash is chosen),
+  // so it must not appear.
+  const alert = page.getByRole("alert");
+  await expect(alert).toContainText("COD needs a customer account");
+  await expect(alert).toContainText("Collect now");
+  await expect(alert).not.toContainText("This account cannot carry this sale on account");
+  await expect(page.getByTestId("sold-panel")).toHaveCount(0);
+
+  // The other edge, pinned so the rule cuts both ways: the same COD sale with
+  // an account on it rings.
+  await openStep(page, "customer");
+  await pickAccount(page, "C02", "Fenwick Builders Ltd");
+  const ringWithAccount = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await openStep(page, "payment");
+  await page.getByTestId("pos-complete-sale").click();
+  const sale = (await (await ringWithAccount).json()) as Record<string, unknown>;
+  await expect(page.getByTestId("sold-panel")).toBeVisible();
+  const bearer = await salesBearer(page);
+  const read = await getSale(page, bearer, sale.order_id as string);
+  expect(read.sale_type).toBe("COD");
+});
+
 test("a C01 Holland paver line rings at its rule price with its margin shown, and the unknown margin stays unknown", async ({
   page,
 }) => {
