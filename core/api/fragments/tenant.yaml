@@ -347,8 +347,9 @@ paths:
         Currently always answers 501 and creates nothing: no invite row, no
         token and no message is produced, because an invite can be neither
         delivered nor accepted until the sign-in work (HH-4.2) lands. The 201,
-        400 and 409 responses below describe the route once it is enabled and
-        are not reachable today.
+        the 400 for a rejected body and the 409 describe the route once it is
+        enabled and are not reachable today; the guard's answers (400 for an
+        X-Org header, 401, 403) still are.
       x-role: capability:manage_users
       security: [{ TenantBearer: [] }]
       requestBody:
