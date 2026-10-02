@@ -8,6 +8,7 @@ import {
   availableCreditCents,
   cartSubtotalCents,
   depositCentsFromTyped,
+  parseAmountCents,
   perLineSavingCents,
   sumLineSavingCents,
   ticketTaxCents,
@@ -52,7 +53,6 @@ import {
   stableRingKey, // rev 5: an identical retry reuses its idempotency key (replay-safe for real)
   customerInitials, // rev 6 (A): the resolved-customer identity card's chip
   accountTypeTag, // rev 6 (A): the account-type tag in counter words
-  cashTenderedPlan, // rev 6 (F): the optional cash-tendered quick entry's arithmetic
   tenderLabel, // POS restructure: the chosen tender in counter words, for the collapsed card
   fulfilmentLabel, // and how the material leaves, for the pre-tender read-back
   decideAdd, // DIB-DUPLINE: merge into the existing line, or append and say why
@@ -3617,12 +3617,14 @@ export class HosPosTerminal extends LitElement {
     const unpaidAtRing = tender === 'ACCOUNT' || isCOD;
     const deposit = unpaidAtRing ? this.depositCents() : 0;
     const cardAtRing = (tender === 'CARD' && !unpaidAtRing) || (deposit > 0 && this.depositMethod === 'CARD');
-    // rev 6 (item F): the optional cash quick entry rides the body ONLY when it covers the total
- // on a paid CASH ring (cashTenderedPlan: a short or empty entry sends nothing; one-click cash
-    // is byte-identical to before). Being in the BODY, it re-mints the idempotency key naturally
-    // through stableRingKey's fingerprint when it changes.
-    const cashPlan = cashTenderedPlan(this.total(), this.cashTenderedDollars);
-    const sendCashTendered = tender === 'CASH' && !unpaidAtRing && cashPlan.sendable;
+    // rev 6 (item F), reworded by row 661: the optional cash quick entry rides the body whenever a
+    // positive amount is typed on a paid CASH ring. Coverage is the server's judgement against its
+    // own total (a short entry is refused there, in the server's words); an untouched box sends
+    // nothing and rings the exact total, one-click cash intact. Being in the BODY, it re-mints the
+    // idempotency key naturally through stableRingKey's fingerprint when it changes.
+    const cashTendered = parseAmountCents(this.cashTenderedDollars);
+    const sendCashTendered =
+      tender === 'CASH' && !unpaidAtRing && !Number.isNaN(cashTendered) && cashTendered > 0;
     const payload = {
       branch_id: this.branchId,
       till_session_id: this.tillSessionId,
@@ -3641,7 +3643,7 @@ export class HosPosTerminal extends LitElement {
  // rev 8 (item 11): the job facts: in the fingerprinted body, so the key re-mints naturally.
       job_address: this.jobAddress.trim() || undefined,
       job_reference: this.jobReference.trim() || undefined,
-      cash_tendered_cents: sendCashTendered ? cashPlan.tenderedCents : undefined,
+      cash_tendered_cents: sendCashTendered ? cashTendered : undefined,
       deposit_cents: deposit > 0 ? deposit : undefined,
       deposit_method: deposit > 0 ? this.depositMethod : undefined,
       lines: this.cart.map((l) => ({
@@ -5804,7 +5806,12 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
 
           ${this.showSplit
             ? html`<hos-pos-split-tender
-                .totalCents=${this.hasPricedLine() ? this.total() : null}
+                ${/* Pre-ring the panel is handed no total: the legs settle the server's
+                   total at the ring (row 661), so the panel computes no remaining and
+                   fills no leg. A server-stated total (the rate-serving lane's return)
+                   is what this input takes, never a browser assembly. */ ''}
+                .totalCents=${null}
+                .hasLines=${this.cart.length > 0}
                 .hasCustomer=${!!this.customer}
                 .customerName=${this.customer?.name ?? ''}
                 .busy=${this.ringBusy()}
@@ -6223,17 +6230,18 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
    * answered yet, so there is no identity to card.
    */
   /**
- * rev 6 (item F, the commander-approved opinion #1): the OPTIONAL cash-tendered quick entry.
+   * rev 6 (item A), reworded by row 661: the OPTIONAL cash-tendered quick entry.
    * Shown only once Cash is the chosen tender and FULLY skippable: an untouched box changes
-   * nothing (Complete rings the exact total, one-click cash intact). An entry covering the total
-   * previews the change due here and rides the ring body (the server confirms; the sold panel
-   * shows the committed answer); a short entry says so honestly and sends nothing.
+   * nothing (Complete rings the exact total, one-click cash intact). A typed amount is asked for
+   * and nothing is computed from it: the till computes no total before the ring, so the change
+   * due is the ring's own answer, stated on the confirmation. What the server refuses there (a
+   * short entry) arrives as the server's own refusal words.
    */
   /**
- * rev 8 (item 8: DIB-502): the SUGGESTED ADD-ONS strip below the ticket. Up to 3 tiles from
+   * rev 8 (item 8: DIB-502): the SUGGESTED ADD-ONS strip below the ticket. Up to 3 tiles from
    * the server's category-level co-purchase pairing map (0169), items already on the ticket
    * excluded server-side; an EMPTY answer means the strip does not render at all
- * (empty-never-error). Adds go through the EXISTING add path: the engine prices the line;
+   * (empty-never-error). Adds go through the EXISTING add path: the engine prices the line;
    * the tile's list price is display only.
    */
   private renderAddonsStrip() {
@@ -6297,7 +6305,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
 
   private renderCashTendered() {
     if (this.payMethod !== 'CASH' || this.ringDone()) return nothing;
-    const plan = cashTenderedPlan(this.total(), this.cashTenderedDollars);
+    const typed = parseAmountCents(this.cashTenderedDollars);
     return html`<div class="cashrow">
         <input
           type="number"
@@ -6307,18 +6315,16 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           data-testid="cash-tendered"
           placeholder="Cash tendered (optional, CA$)"
           aria-label="Cash tendered in dollars: optional; leave empty to ring the exact total"
-          title="Type what the customer hands you and the change due shows here and on the confirmation. Leave empty to ring the exact total."
+          title="Type what the customer hands you: the change due is the ring's own answer, stated on the confirmation. Leave empty to ring the exact total."
           .value=${this.cashTenderedDollars}
           @input=${(e: Event) => (this.cashTenderedDollars = (e.target as HTMLInputElement).value)}
         />
       </div>
       ${this.cashTenderedDollars.trim() !== ''
         ? html`<div class="cashhint" data-testid="cash-change-preview">
-            ${!this.hasPricedLine()
-              ? html`Change due <span class="num">(not priced)</span>`
-              : plan.sendable
-                ? html`Change due <span class="num">${money(plan.changeDueCents)} (est.)</span>`
-                : 'Less than the total: the sale rings for the exact total; add more or clear the box.'}
+            ${Number.isNaN(typed) || typed <= 0
+              ? 'Not an amount: type what the customer handed you, or clear the box to ring the exact total.'
+              : "Change due: the ring's own answer, on the confirmation."}
           </div>`
         : nothing}`;
   }

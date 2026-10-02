@@ -20,6 +20,7 @@ import {
   evaluateSplit,
   parseAmountCents,
   refundEstimateCents,
+  splitDraftRead,
   sumLineSavingCents,
   ticketTaxCents,
   ticketTotalCents,
@@ -208,6 +209,54 @@ test('cashTenderedPlan answers the change due only when the entry covers the tot
   assert.deepEqual(cashTenderedPlan(7232, '80.00'), { tenderedCents: 8000, changeDueCents: 768, sendable: true });
   assert.deepEqual(cashTenderedPlan(7232, '72.32'), { tenderedCents: 7232, changeDueCents: 0, sendable: true });
   assert.deepEqual(cashTenderedPlan(7232, '72.31'), { tenderedCents: 7231, changeDueCents: 0, sendable: false });
+});
+
+// ── the split panel's pre-ring read: the typed sum and the shape, no total ────────────────────
+test('splitDraftRead sums the typed legs and words the shape, with no total in it', () => {
+  const read = splitDraftRead(
+    [
+      { method: 'CASH', amountCents: 400 },
+      { method: 'CARD', amountCents: 52 },
+    ],
+    false,
+    true,
+  );
+  assert.deepEqual(read, { typedCents: 452, problem: '' });
+  // A leg that has not parsed contributes nothing to the sum and refuses the shape.
+  const half = splitDraftRead(
+    [
+      { method: 'CASH', amountCents: 452 },
+      { method: 'CARD', amountCents: NaN },
+    ],
+    false,
+    true,
+  );
+  assert.equal(half.typedCents, 452);
+  assert.match(half.problem, /amount greater than zero/);
+  // The shape refusals are the server's own rules, worded.
+  assert.match(splitDraftRead([{ method: 'CASH', amountCents: 452 }], false, true).problem, /at least two/);
+  assert.match(
+    splitDraftRead(
+      [
+        { method: 'CASH', amountCents: 100 },
+        { method: 'ACCOUNT', amountCents: 352 },
+      ],
+      false,
+      true,
+    ).problem,
+    /Pick a customer account/,
+  );
+  assert.match(
+    splitDraftRead(
+      [
+        { method: 'CASH', amountCents: 100 },
+        { method: 'CARD', amountCents: 352 },
+      ],
+      false,
+      false,
+    ).problem,
+    /Add a line/,
+  );
 });
 
 // ── the ticket assemblies, over core-priced figures ──────────────────────────

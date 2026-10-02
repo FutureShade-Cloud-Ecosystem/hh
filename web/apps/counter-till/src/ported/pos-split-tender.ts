@@ -9,6 +9,7 @@ import {
   evaluateSplit,
   autoFillRemainder,
   parseAmountCents,
+  splitDraftRead,
   fmtCents,
   toPostBody,
   SPLIT_METHODS,
@@ -24,12 +25,15 @@ import {
  * three invoices, three receipts for one pile of stone: and a return against any of them had no
  * single sale to reverse.
  *
- * THE UI'S ONE JOB IS THE ARITHMETIC. The server refuses a split whose legs do not sum to the total
- * exactly, and migration 0100's deferred trigger refuses it again at COMMIT. Neither is a good place
- * for a cashier to find out: by then the card is out and the queue is four deep. So the remaining
- * balance is shown live on every keystroke, the Ring button is disabled until it reads zero, and the
- * next empty leg pre-fills with exactly what is left: which means the common two-way split cannot
- * be off by a cent at all. All of that arithmetic lives in _pos-split.ts, DOM-free and unit-tested.
+ * THE SETTLEMENT IS THE RING'S OWN ANSWER. The server refuses a split whose legs do not sum exactly
+ * to the sale's total, and migration 0100's deferred trigger refuses it again at COMMIT. The till
+ * computes no total of its own before the ring (decision log row 661), so the panel compares the
+ * legs against nothing: it shows the typed sum (arithmetic over the operator's own entries), words
+ * the shape refusals the server would also refuse, states that the legs settle the server's total
+ * at the ring, and arms Ring on that shape alone. The total arithmetic (the live remainder, the
+ * Rest fill) comes back when the counter is served a server-stated total; the `totalCents` input
+ * takes one, never a browser assembly. All of the pre-ring read lives in _pos-split.ts's
+ * splitDraftRead (the seam file ports.ts owns the sum), DOM-free and unit-tested.
  *
  * The panel emits `pos-split-ring` with the wire-shaped legs; the terminal owns the actual POST, so
  * there is exactly one place in the app that rings a sale.
@@ -37,12 +41,16 @@ import {
 @customElement('hos-pos-split-tender')
 export class HosPosSplitTender extends LitElement {
   /**
-   * The sale total the legs must settle, in cents; null while any line on the ticket is price
-   * pending (the sum would leave a line out or carry a stale one), so no remaining is stated.
+   * The sale total the legs must settle, in cents. The terminal passes null
+   * before the ring (the only state it has): no remaining is computed and no
+   * leg is auto-filled against a browser figure. A server-stated total (the
+   * rate-serving lane's return) restores the live remainder.
    */
   @property({ type: Number, attribute: 'total-cents' }) totalCents: number | null = 0;
- /** Whether an account is selected: an ACCOUNT leg needs one. */
+  /** Whether an account is selected: an ACCOUNT leg needs one. */
   @property({ type: Boolean, attribute: 'has-customer' }) hasCustomer = false;
+  /** Whether the ticket holds any line: an empty ticket cannot be split. */
+  @property({ type: Boolean, attribute: 'has-lines' }) hasLines = true;
   /** Name of the selected account, for the on-screen confirmation of what gets charged. */
   @property({ attribute: 'customer-name' }) customerName = '';
   /** Disables the controls while the parent's ring is in flight. */
@@ -77,11 +85,11 @@ export class HosPosSplitTender extends LitElement {
         color: var(--hos-text-dim);
         font-weight: 600;
       }
- /* THE SALE TOTAL IS NOT THIS PANEL'S FACT. A.total rule used to paint it here at 18px in the
-         amber text role, ~200px under the totals card's own 26px amber Total and above this
-         panel's "… remaining": the same number, the same ink family, three sizes, all three in
-         one 1440×900 viewport. The totals card is the source and it is directly above; what this
-         panel ADDS is the remainder, which is why the remainder is the only figure left in it. */
+ /* THE SALE TOTAL IS NOT THIS PANEL'S FACT, AND NEITHER IS THE REMAINDER. A.total rule used to
+         paint the total here at 18px in the amber text role, ~200px under the totals card's own
+         26px amber Total; the remainder took its place and now it is gone too (the ring states
+         the settlement, so the browser compares the legs against nothing). What this panel ADDS
+         is the typed sum, which is arithmetic over the operator's own entries, and the words. */
       .leg {
         display: flex;
         gap: 8px;
@@ -216,9 +224,10 @@ export class HosPosSplitTender extends LitElement {
     this.legs = this.legs.filter((_, n) => n !== i);
   }
 
- /** fill puts exactly what is left into one leg: the counter's whole reason to trust this panel. */
+  /** fill puts exactly what is left into one leg: the counter's whole reason to trust this panel. */
   private fill(i: number): void {
-    // A pending price leaves no total to fill against: a 0.00 leg would be a wrong figure.
+    // A server-stated total is the only thing a leg fills against; pre-ring the
+    // panel is handed none, and the Rest affordance does not render at all.
     if (this.totalCents === null) return;
     const cents = autoFillRemainder(this.draft(), this.totalCents ?? 0, i);
     this.setAmount(i, plainDollars(cents));
@@ -226,7 +235,7 @@ export class HosPosSplitTender extends LitElement {
 
   private ring(): void {
     const legs = this.draft();
-    if (!evaluateSplit(legs, this.totalCents ?? 0, this.hasCustomer).ready) return;
+    if (!this.reads(legs).armed) return;
     this.dispatchEvent(
       new CustomEvent('pos-split-ring', {
         detail: { tenders: toPostBody(legs) },
@@ -240,9 +249,25 @@ export class HosPosSplitTender extends LitElement {
     this.dispatchEvent(new CustomEvent('pos-split-cancel', { bubbles: true, composed: true }));
   }
 
+  /**
+   * The panel's read of the draft, in one shape for both postures: pre-ring
+   * (no total from the terminal) it is splitDraftRead's typed sum and shape
+   * words, and the ring arms on the shape alone; with a server-stated total it
+   * is evaluateSplit's live verdict, the remainder included.
+   */
+  private reads(legs: DraftLeg[]): { typedCents: number; remainingCents: number; armed: boolean; problem: string } {
+    if (this.totalCents === null) {
+      const shape = splitDraftRead(legs, this.hasCustomer, this.hasLines);
+      return { typedCents: shape.typedCents, remainingCents: 0, armed: shape.problem === '', problem: shape.problem };
+    }
+    const live = evaluateSplit(legs, this.totalCents, this.hasCustomer);
+    return { typedCents: live.tenderedCents, remainingCents: live.remainingCents, armed: live.ready, problem: live.problem };
+  }
+
   render() {
-    const state = evaluateSplit(this.draft(), this.totalCents ?? 0, this.hasCustomer);
-    const remainingClass = this.totalCents === null ? 'pending' : state.remainingCents === 0 ? 'settled' : state.remainingCents > 0 ? 'owing' : 'over';
+    const read = this.reads(this.draft());
+    const remainingClass =
+      read.remainingCents === 0 ? 'settled' : read.remainingCents > 0 ? 'owing' : 'over';
     return html`
       <div class="panel" data-testid="pos-split-panel">
         <h3>Split tender</h3>
@@ -268,15 +293,20 @@ export class HosPosSplitTender extends LitElement {
                 ?disabled=${this.busy}
                 @input=${(e: Event) => this.setAmount(i, (e.target as HTMLInputElement).value)}
               />
-              <button
-                class="drop"
-                type="button"
-                title="Fill this tender with the remaining balance"
-                ?disabled=${this.busy}
-                @click=${() => this.fill(i)}
-              >
-                Rest
-              </button>
+              ${/* The Rest fill needs a total to fill toward, and the total is
+                 the server's, at the ring: with none in hand the affordance
+                 does not render, rather than a button that fills from a guess. */ ''}
+              ${this.totalCents !== null
+                ? html`<button
+                    class="drop"
+                    type="button"
+                    title="Fill this tender with the remaining balance"
+                    ?disabled=${this.busy}
+                    @click=${() => this.fill(i)}
+                  >
+                    Rest
+                  </button>`
+                : nothing}
               ${/* The glyph is not a name. With no aria-label the button's accessible name was
                  "✕": a screen reader announced "✕ button" three times down a three-leg split with
                  nothing to tell them apart. The ticket row two panels away already does this
@@ -305,19 +335,23 @@ export class HosPosSplitTender extends LitElement {
 
         <div class="foot">
           <div>
-            <div class="remaining ${remainingClass}" data-testid="split-remaining">
-              ${this.totalCents === null
-                ? 'Remaining: (not priced)'
-                : state.remainingCents === 0
-                ? 'Settled exactly'
-                : state.remainingCents > 0
-                  ? `${fmtCents(state.remainingCents)} (est.) remaining`
-                  : `${fmtCents(-state.remainingCents)} (est.) over`}
-            </div>
-            ${/* aria-live: the balance changes on every keystroke and is the one thing a
+            ${this.totalCents === null
+              ? html`<div class="remaining" data-testid="split-typed">${fmtCents(read.typedCents)} typed so far</div>`
+              : html`<div class="remaining ${remainingClass}" data-testid="split-remaining">
+                  ${read.remainingCents === 0
+                    ? 'Settled exactly'
+                    : read.remainingCents > 0
+                    ? `${fmtCents(read.remainingCents)} remaining`
+                    : `${fmtCents(-read.remainingCents)} over`}
+                </div>`}
+            ${/* aria-live: the line changes on every keystroke and is the one thing a
                screen-reader user needs to hear without leaving the amount box. */ ''}
             <div class="problem" role="status" aria-live="polite" data-testid="split-problem">
-              ${this.totalCents === null ? 'A price is still pending: the split rings once every line is priced.' : state.problem || nothing}
+              ${this.totalCents === null
+                ? read.problem === ''
+                  ? "The legs settle the server's total at the ring."
+                  : read.problem
+                : read.problem || nothing}
             </div>
           </div>
           <div>
@@ -326,7 +360,7 @@ export class HosPosSplitTender extends LitElement {
               class="ring"
               type="button"
               data-testid="split-ring"
-              ?disabled=${this.busy || !state.ready}
+              ?disabled=${this.busy || !read.armed}
               @click=${this.ring}
             >
               ${this.busy ? 'Ringing…' : 'Ring split sale'}

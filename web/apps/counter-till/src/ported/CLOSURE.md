@@ -56,18 +56,22 @@ review's blocking zero): the reference's empty draft reads Subtotal CA$0.00,
 HST CA$0.00, Total CA$0.00, and the ring button carries the zero. HH's rule
 is explicit: an empty draft shows a blank marker, never a plausible zero.
 The mounted surface shows the app's own `(not priced)` marker in the totals
-card, the Complete sale button's amount, the Change due preview, the Items
+card, the Complete sale button's amount, the Items
 summary and the read-back whenever the cart is empty OR any line is price
 pending (a just-added line before its price lookup answers, or a line whose
 reprice failed), and the figures return when every line is priced (the old
 reviewed till's own marker, views/till.ts's line-unpriced word). The Complete
-sale amount carries (est.) once it states a figure, as does the Change due
-preview. The split panel's remaining amount, the parked list's total and the
-Change due preview's choice between a change figure and "Less than the total"
-follow the same marker while any line is price pending (the parked snapshot
-keeps no total for such a ticket); a parked ticket with no price memory in this
-window lists the marker too. While pending the split panel's problem line says
-a price is pending (not "Add a line") and Rest fills no leg. The search drop rows render
+sale amount carries (est.) once it states a figure.
+The cash tile computes nothing from a typed amount (the change due is the
+ring's own answer, stated on the confirmation), so the preview's figure, its
+estimate mark and its "Less than the total" choice are gone with the total
+they were derived from. The split panel states no remaining at all: the legs
+settle the server's total at the ring (decision log row 661), so the panel
+shows the typed sum, which is arithmetic over the operator's own entries, and
+words the shape; Rest fills no leg until a server-stated total returns. The
+parked list's total follows the marker while any line is price pending (the
+parked snapshot keeps no figure for such a ticket); a parked ticket with no
+price memory in this window lists the marker too. The search drop rows render
 the contract's per-branch stock (`on_hand_branch`) beside the SKU, as the
 reference's rows do; the contract carries the field, so no gap remains.
 
@@ -341,6 +345,12 @@ reappears as a `ports.ts` seam with the reference's signature:
 - `pos-customer-strip.ts`, `pos-customer-picker.ts` and `pos-terminal.ts`:
   credit headroom as `credit_limit_cents - open_balance_cents`. Seam:
   `availableCreditCents`.
+- `pos-split-tender.ts`, pre-ring (a new seam, not the reference's):
+  `splitDraftRead` sums the typed legs, which are the operator's own entries,
+  and words the shape refusals, comparing the legs against no total at all;
+  the total they settle is the server's, stated at the ring (decision log row
+  661). `evaluateSplit` and `autoFillRemainder` stay for a server-stated
+  total only.
 
 The scan's stated limits, recorded rather than hidden (the reference's own
 scan missed these shapes too): compound assignment (`subtotalCents += x`)

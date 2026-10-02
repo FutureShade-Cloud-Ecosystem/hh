@@ -593,6 +593,15 @@ function splitProblem(
   hasCustomer: boolean,
 ): string {
   if (totalCents <= 0) return "Add a line before splitting the tender.";
+  const shape = splitShapeProblem(legs, hasCustomer);
+  if (shape !== "") return shape;
+  if (remainingCents > 0) return `${splitFmt(remainingCents)} still to tender.`;
+  if (remainingCents < 0) return `${splitFmt(-remainingCents)} over-tendered.`;
+  return "";
+}
+
+/** The shape refusals both split reads share: the rules the server would also refuse, worded. */
+function splitShapeProblem(legs: readonly SplitLeg[], hasCustomer: boolean): string {
   if (legs.length < 2) return "A split needs at least two tenders.";
   if (legs.length > MAX_SPLIT_LEGS) return `A split takes at most ${MAX_SPLIT_LEGS} tenders.`;
   if (legs.some((l) => !Number.isFinite(l.amountCents) || l.amountCents <= 0)) {
@@ -604,9 +613,35 @@ function splitProblem(
   if (legs.some((l) => l.method === "ACCOUNT") && !hasCustomer) {
     return "Pick a customer account before putting part of the sale on account.";
   }
-  if (remainingCents > 0) return `${splitFmt(remainingCents)} still to tender.`;
-  if (remainingCents < 0) return `${splitFmt(-remainingCents)} over-tendered.`;
   return "";
+}
+
+/** The split panel's pre-ring read: the typed sum and the shape's verdict. */
+export interface SplitDraftRead {
+  /** The sum of what the operator has typed across the legs, in cents. */
+  typedCents: number;
+  /** Why the ring stays disarmed, in words a cashier can act on; empty when armed. */
+  problem: string;
+}
+
+/**
+ * The split panel's read before the ring: the legs' own typed sum (arithmetic
+ * over the operator's own entries, hosted here so no component sums money) and
+ * the shape refusals the server would also refuse. It compares the legs
+ * against NOTHING: the total they must settle is the server's, stated at the
+ * ring, and a browser guess at it is exactly what the till no longer computes
+ * (decision log row 661). `evaluateSplit`, which does compare against a total,
+ * is for a server-stated total only.
+ */
+export function splitDraftRead(
+  legs: readonly SplitLeg[],
+  hasCustomer: boolean,
+  hasLines: boolean,
+): SplitDraftRead {
+  let typed = 0;
+  for (const leg of legs) typed += Number.isFinite(leg.amountCents) ? leg.amountCents : 0;
+  const problem = !hasLines ? "Add a line before splitting the tender." : splitShapeProblem(legs, hasCustomer);
+  return { typedCents: typed, problem };
 }
 
 /**
