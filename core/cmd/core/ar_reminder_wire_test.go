@@ -8,7 +8,7 @@ package main
 // defect (every send DELIVERED, the paper-path sweep counting phantoms)
 // with every suite green. The round 1 review proved exactly that mutation
 // survives. This test drives the FULL served surface over the fixture
-// database, exactly as the binary wires it: a branch-A sales manager
+// database, exactly as the binary wires it: the global general manager
 // posts the send route for a customer the test plants (AP contact tagged,
 // the policy tier raised to PRO for the duration, both put back), and the
 // answer must be the unwired transport's own words: status FAILED,
@@ -50,7 +50,7 @@ func TestComposition_HH185ReminderTransport_UnwiredAtTheServedSurface(t *testing
 	}
 	t.Cleanup(func() { _ = repo.UpsertARLandingPolicy(context.Background(), stashed) })
 
-	// One contractor in the sales manager's own branch, with a tagged AP contact so the send has
+	// One contractor in branch A, with a tagged AP contact so the send has
 	// a recipient without the fallback confirmation. The sends cascade from customers, so one
 	// delete unwinds the rig.
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000_000)

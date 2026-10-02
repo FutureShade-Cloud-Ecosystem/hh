@@ -21,9 +21,10 @@ import (
 	"time"
 )
 
-// TestIntegrationARReminder_NoTransportIsNotADeliveredSendOrAFlag drives the REAL repository with a
-// nil sender, the exact shape the composition root wires, and proves the phantom deliveries are
-// neither counted by the detector's input nor flagged by its sweep.
+// TestIntegrationARReminder_NoTransportIsNotADeliveredSendOrAFlag drives the REAL repository with
+// a nil sender, the unwired default the service ships (the same transport the composition root
+// names in words), and proves the phantom deliveries are neither counted by the detector's input
+// nor flagged by its sweep.
 func TestIntegrationARReminder_NoTransportIsNotADeliveredSendOrAFlag(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
@@ -135,5 +136,33 @@ func TestIntegrationARReminder_NoTransportIsNotADeliveredSendOrAFlag(t *testing.
 	}
 	if got := NextAction(in, p, time.Now()); got != "Send reminder" {
 		t.Errorf("next action = %q, want %q: the work list moved on a send that never left the server", got, "Send reminder")
+	}
+
+	// Round 3, the other direction: a DELIVERED send IS a reminder. The filter is pinned both
+	// ways or not at all: a predicate that counted no send (or only QUEUED rows) would pass the
+	// leg above while the cadence stopped moving for real deliveries. The delivering stub is
+	// injected explicitly, the test seam it exists for, and one delivered send must set
+	// LastReminderAt and hold the work list on "Call" inside the cadence window.
+	deliveredSvc := NewARReminderService(repo, landing, StubSender{}, "https://dibbits.example")
+	dgot, err := deliveredSvc.Send(ctx, SendReminderInput{CustomerID: customerID, Channel: ChannelEmail}, "u1")
+	if err != nil {
+		t.Fatalf("delivered send: %v", err)
+	}
+	if dgot.Status != SendDelivered {
+		t.Fatalf("delivered send status = %s, want %s: the leg needs a row that actually delivered", dgot.Status, SendDelivered)
+	}
+	deng, err := repo.EngagementFor(ctx, []string{customerID}, p.BlackHoleWindowDays, time.Now())
+	if err != nil {
+		t.Fatalf("engagement after delivery: %v", err)
+	}
+	din, ok := deng[customerID]
+	if !ok {
+		t.Fatalf("no engagement row for the seeded customer after delivery")
+	}
+	if din.LastReminderAt == nil {
+		t.Errorf("last reminder at never after a DELIVERED send: only delivered sends advance the cadence, and this one did deliver")
+	}
+	if got := NextAction(din, p, time.Now()); got != "Call" {
+		t.Errorf("next action = %q, want %q: inside the cadence window a delivered reminder holds the work list on Call", got, "Call")
 	}
 }
