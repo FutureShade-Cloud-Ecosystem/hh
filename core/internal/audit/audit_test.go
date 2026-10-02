@@ -726,7 +726,7 @@ func (r stubEntityBranchResolver) BranchOf(_ context.Context, entityID string) (
 // never another branch's; an entity out of reach, an entity that does not resolve, an entity type
 // with no resolver and a resolver failure each answer empty (or the error) with no row read at all.
 func TestReopenTransactionFor_BranchFence(t *testing.T) {
-	const home = "b11111111-1111-4111-8111-111111111111"
+	const home = "b1111111-1111-4111-8111-111111111111"
 	const away = "c2222222-2222-4222-8222-222222222222"
 	seeded := func() *reopenCallStore {
 		st := &reopenCallStore{fakeStore: *newFakeStore()}
@@ -959,8 +959,8 @@ func TestAuditPathID_ValidatesID(t *testing.T) {
 // branch-less one and the service saw the fenced read; the global caller keeps the unfenced read
 // and the full trail.
 func TestReopenHandler_FencesOnCaller(t *testing.T) {
-	const home = "b11111111-1111-4111-8111-111111111111"
-	const away = "c22222222-2222-4222-8222-222222222222"
+	const home = "b1111111-1111-4111-8111-111111111111"
+	const away = "c2222222-2222-4222-8222-222222222222"
 	newHandlerStore := func() (*Handler, *reopenCallStore) {
 		st := &reopenCallStore{fakeStore: *newFakeStore()}
 		for _, e := range []Entry{
