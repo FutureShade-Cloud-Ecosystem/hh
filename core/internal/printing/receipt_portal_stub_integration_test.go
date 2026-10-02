@@ -55,6 +55,10 @@ func newPortalPayRig(t *testing.T) *portalPayRig {
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, customerID)
 		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, customerID)
+		// payment_intents rows go BEFORE payments: each settle leaves one intent naming the
+		// customer (that table RESTRICTs the customer delete), so skipping this delete leaves
+		// the customer behind with the errors swallowed. Children before parents from here down.
+		_, _ = pool.Exec(c, `DELETE FROM payment_intents WHERE customer_id = $1::uuid`, customerID)
 		_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE payment_id IN
 			(SELECT id FROM payments WHERE customer_id = $1::uuid)`, customerID)
 		_, _ = pool.Exec(c, `DELETE FROM payments WHERE customer_id = $1::uuid`, customerID)
@@ -128,9 +132,9 @@ func TestIntegration_Receipt_PortalStubSettlementPrintsTheWord(t *testing.T) {
 	}
 }
 
-// insertPortalCard plants a bare CARD payments row (the scan leg's fixture idiom): the stamping
-// decision over the row's own ref is what the two guard legs pin.
-func insertPortalCard(t *testing.T, pool *pgxpool.Pool, gatewayRef string) string {
+// insertPortalCard plants a bare payments row (the scan leg's fixture idiom): the stamping
+// decision over the row's own method and ref is what the guard legs pin.
+func insertPortalCard(t *testing.T, pool *pgxpool.Pool, method, gatewayRef string) string {
 	t.Helper()
 	var branchID string
 	if err := pool.QueryRow(context.Background(), `SELECT id::text FROM locations WHERE loc_type='BRANCH' LIMIT 1`).Scan(&branchID); err != nil {
@@ -139,9 +143,9 @@ func insertPortalCard(t *testing.T, pool *pgxpool.Pool, gatewayRef string) strin
 	id := newUUID()
 	if _, err := pool.Exec(context.Background(),
 		`INSERT INTO payments (id, payment_no, method, amount_cents, status, branch_id, gateway_ref)
-		 VALUES ($1::uuid, $2, 'CARD', 5000, 'RECEIVED', $3::uuid, $4)`,
-		id, "PMT-PORTAL-"+id[:8], branchID, gatewayRef); err != nil {
-		t.Fatalf("insert card payment: %v", err)
+		 VALUES ($1::uuid, $2, $3, 5000, 'RECEIVED', $4::uuid, $5)`,
+		id, "PMT-PORTAL-"+id[:8], method, branchID, gatewayRef); err != nil {
+		t.Fatalf("insert %s payment: %v", method, err)
 	}
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM payments WHERE id = $1::uuid`, id)
@@ -154,7 +158,7 @@ func insertPortalCard(t *testing.T, pool *pgxpool.Pool, gatewayRef string) strin
 // print no word anywhere on the paper.
 func TestIntegration_Receipt_LiveRunShapedRefStampsNothing(t *testing.T) {
 	pool := intPool(t)
-	id := insertPortalCard(t, pool, "8812340077")
+	id := insertPortalCard(t, pool, "CARD", "8812340077")
 	tenders, err := NewRepository(pool).ReadReceiptTenders(context.Background(), id, "")
 	if err != nil {
 		t.Fatalf("read tenders: %v", err)
@@ -180,7 +184,7 @@ func TestIntegration_Receipt_LiveRunShapedRefStampsNothing(t *testing.T) {
 func TestIntegration_Receipt_LongHexChRefStampsNothing(t *testing.T) {
 	pool := intPool(t)
 	ref := payments.StubChargeRefPrefix + "0123456789abcdef0123456789abcdef"
-	id := insertPortalCard(t, pool, ref)
+	id := insertPortalCard(t, pool, "CARD", ref)
 	tenders, err := NewRepository(pool).ReadReceiptTenders(context.Background(), id, "")
 	if err != nil {
 		t.Fatalf("read tenders: %v", err)
@@ -197,5 +201,44 @@ func TestIntegration_Receipt_LongHexChRefStampsNothing(t *testing.T) {
 	}
 	if strings.Contains(html, "Simulated card") {
 		t.Fatal("a near-miss live shape must print no simulated word anywhere on the receipt")
+	}
+}
+
+// The word belongs to a CARD row: a NON-CARD tender carrying a ref of the stub's own mint shape
+// is a bank settlement with an unlucky ref, not a simulated card charge, and it must stamp
+// nothing and print no word. Dropping the CARD guard from the portal disjunct fails this leg.
+func TestIntegration_Receipt_NonCardRowWithStubShapeStampsNothing(t *testing.T) {
+	pool := intPool(t)
+	res, err := payments.NewStubGateway().Charge(context.Background(), payments.ChargeRequest{
+		CustomerID:     "cust-non-card-guard",
+		AmountCents:    5000,
+		IdempotencyKey: "idem-non-card-guard",
+	})
+	if err != nil {
+		t.Fatalf("stub charge: %v", err)
+	}
+	if !payments.IsStubChargeRef(res.GatewayRef) {
+		t.Fatalf("fixture assumption broken: %q is not the stub's mint shape", res.GatewayRef)
+	}
+	id := insertPortalCard(t, pool, "EFT", res.GatewayRef)
+	tenders, err := NewRepository(pool).ReadReceiptTenders(context.Background(), id, "")
+	if err != nil {
+		t.Fatalf("read tenders: %v", err)
+	}
+	if len(tenders) != 1 {
+		t.Fatalf("want the one EFT row, got %d", len(tenders))
+	}
+	if tenders[0].Method != "EFT" {
+		t.Fatalf("fixture assumption broken: method %q, want EFT", tenders[0].Method)
+	}
+	if tenders[0].Simulated {
+		t.Fatalf("a non CARD row (method %q) must never stamp Simulated, even carrying a ref of the stub's own mint shape (%q)", tenders[0].Method, res.GatewayRef)
+	}
+	html, err := RenderReceiptHTML(Receipt{Tenders: tenders, SoldAt: time.Now(), PrintedAt: time.Now()})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(html, "Simulated card") {
+		t.Fatal("a non CARD tender must print no simulated word anywhere on the receipt")
 	}
 }
