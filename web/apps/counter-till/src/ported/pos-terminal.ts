@@ -1702,10 +1702,10 @@ export class HosPosTerminal extends LitElement {
       box-sizing: border-box;
       width: 100%;
       margin: 12px 0 0;
-      background: color-mix(in srgb, var(--hos-stone-amber) 42%, white);
-      border: 1px solid color-mix(in srgb, var(--hos-stone-amber) 42%, white);
+      background: var(--hos-band-fill);
+      border: 1px solid var(--hos-band-fill);
       border-radius: var(--hos-radius-control);
-      color: var(--hos-stone-amber-ink);
+      color: var(--hos-stone-amber-ink); /* a theme-stable fill pins its theme-stable ink in the SAME rule */
       font-family: inherit;
       font-size: 15px;
       font-weight: 700;

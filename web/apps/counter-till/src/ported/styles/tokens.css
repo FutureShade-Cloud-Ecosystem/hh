@@ -94,6 +94,12 @@
   --hos-track: var(--hh-track);
   --hos-widget-shadow: var(--hh-widget-shadow);
 
+  /* LOCAL (flagged): the pale band fill the split state wears (the reference's pale
+     yellow, the gold fill lightened to 42 percent over white). Theme-invariant on
+     purpose, valued once here, so no theme block re-values it; its ink is the gold
+     fill's own invariant ink, pinned in the same rule that uses it. 14.65:1 together. */
+  --hos-band-fill: #ffe69c;
+
   /* LOCAL (flagged): the pop kit's remaining three roles. The wash is the
      hero's soft gold radial wash and the only ambient wash in the surface; the
      edge is the 1px lighter top edge a dark card wears; the raised shadow is
