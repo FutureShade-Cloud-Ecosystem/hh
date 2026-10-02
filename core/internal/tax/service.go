@@ -124,16 +124,18 @@ func (s *Service) ListRates(ctx context.Context) ([]Rate, error) { return s.repo
 
 // CreateRate inserts a new effective-dated rate row (a hot change: the engine picks it up live on the sale date).
 // The admin edge enforces the same two rules the bind edge does: the reason must be inside the lawful universe
-// (the mirror of the snapshot CHECK), and an ungated reason cannot be planted below the standard IN EFFECT for
-// the row's own date, refused with the same words the engine refuses to bind it, so the admin edge fails first
-// and the ring never sees the row. The standard reason itself is the reference, never the subject: the dealer
-// may lawfully raise or lower the standard row.
+// (the mirror of the snapshot CHECK), and an ungated reason cannot be planted below the highest standard
+// in effect anywhere over the row's own interval, refused with the same words the engine refuses to bind it,
+// so the admin edge fails first and the ring never sees the row. The standard reason itself is the
+// reference, never the subject: the dealer may lawfully raise or lower the standard row. One residue the
+// guard cannot reach: raising the standard does not re-judge rows already planted; the bind edge refuses
+// those (its own guard), a server fault at the ring until the row is fixed.
 func (s *Service) CreateRate(ctx context.Context, r Rate) (Rate, error) {
 	if r.ReasonCode == "" {
 		return Rate{}, httpx.BadRequestf("reason_code required")
 	}
 	if !LegalReasonCodes[r.ReasonCode] {
-		return Rate{}, httpx.BadRequestf("%s", UnknownReasonError{ReasonCode: r.ReasonCode}.Error())
+		return Rate{}, httpx.BadRequestf("unknown reason_code %s: not one of the lawful reason codes the rate table can carry", boundReason(r.ReasonCode))
 	}
 	if r.RateBps < 0 || r.RateBps > 10000 {
 		return Rate{}, httpx.BadRequestf("rate_bps must be 0..10000")
@@ -148,10 +150,17 @@ func (s *Service) CreateRate(ctx context.Context, r Rate) (Rate, error) {
 		return Rate{}, httpx.BadRequestf("effective_from must be YYYY-MM-DD")
 	}
 	if r.ReasonCode != ReasonStdON13 && r.ReasonCode != ReasonManual && !evidenceGatedReasons[r.ReasonCode] {
-		if stdBps, stdFound, err := s.rate(ctx, ReasonStdON13, r.EffectiveFrom); err != nil {
+		// The guard measures the row's WHOLE life, not only its first day: the highest standard in
+		// effect anywhere the row's interval reaches (an open-ended row reaches into every standard
+		// era that follows it). A backdated row must clear the later raised standards it will govern
+		// beside, and a row planted today must clear today's (the round 2 review's P2: a backdated
+		// ungated row slipped in beside a later raise and the ring then refused it as a server fault).
+		maxStd, anyStd, err := s.repo.MaxRateInRange(ctx, r.Jurisdiction, ReasonStdON13, r.EffectiveFrom, r.EffectiveTo)
+		if err != nil {
 			return Rate{}, err
-		} else if stdFound && r.RateBps < stdBps {
-			return Rate{}, httpx.BadRequestf("%s", MisconfiguredRateError{ReasonCode: r.ReasonCode, RateBps: r.RateBps, StdBps: stdBps}.Error())
+		}
+		if anyStd && r.RateBps < maxStd {
+			return Rate{}, httpx.BadRequestf("%s", MisconfiguredRateError{ReasonCode: r.ReasonCode, RateBps: r.RateBps, StdBps: maxStd}.Error())
 		}
 	}
 	return s.repo.InsertRate(ctx, r)

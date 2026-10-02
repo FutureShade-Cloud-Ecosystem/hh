@@ -19,7 +19,7 @@ func TestWriteErr_UnknownTaxReasonAnswers400(t *testing.T) {
 	h := NewHandler(NewService(NewRepository(nil)), slog.Default())
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/pos/sales", nil)
-	h.writeErr(rec, req, fmt.Errorf("%w: unknown tax reason %q: not one of the eleven lawful reason codes (the mirror of the snapshot CHECK), the engine cannot bind it",
+	h.writeErr(rec, req, fmt.Errorf("%w: unknown tax reason %q: not one of the lawful reason codes the counter can ring",
 		ErrUnknownTaxReason, "FROB_NOMINAL_RELIEF"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("the unknown tax reason must answer the counter 400, got %d: %s", rec.Code, rec.Body.String())

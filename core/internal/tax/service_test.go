@@ -16,6 +16,7 @@ import (
 
 type fakeStore struct {
 	rates     map[string]int // "jur|reason" -> bps (effective-agnostic for the unit tests)
+	rateRows  []Rate         // dated rows, what MaxRateInRange honestly resolves (the interval legs)
 	profiles  map[string]StatusCardProfile
 	evidence  map[string]Evidence
 	config    map[string]Config
@@ -26,7 +27,7 @@ type fakeStore struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{
+	f := &fakeStore{
 		rates: map[string]int{
 			"ON|" + ReasonStdON13:    stdRateBps,
 			"ON|" + ReasonONFNPos8:   ontarioNetBps,
@@ -38,15 +39,49 @@ func newFakeStore() *fakeStore {
 		evidence: map[string]Evidence{},
 		config:   map[string]Config{},
 	}
+	// The dated mirror of the seeded five (the seed migration plants them open-ended), so the
+	// interval guard sees the same world the map shows ResolveRate.
+	for reason, bps := range f.rates {
+		f.rateRows = append(f.rateRows, Rate{
+			Jurisdiction:  "ON",
+			ReasonCode:    reason[len("ON|"):],
+			RateBps:       bps,
+			EffectiveFrom: "2000-01-01",
+		})
+	}
+	return f
 }
 
 func (f *fakeStore) ResolveRate(_ context.Context, jur, reason, _ string) (int, bool, error) {
 	bps, ok := f.rates[jur+"|"+reason]
 	return bps, ok, nil
 }
+
+// MaxRateInRange mirrors the repository's overlap honestly over the dated rows (an empty to is
+// open-ended); the rates map is not consulted, so the interval legs really drive the date logic.
+func (f *fakeStore) MaxRateInRange(_ context.Context, jur, reason, from, to string) (int, bool, error) {
+	best, found := 0, false
+	for _, r := range f.rateRows {
+		if r.Jurisdiction != jur || r.ReasonCode != reason {
+			continue
+		}
+		if r.EffectiveFrom > to && to != "" {
+			continue // the row starts after the range ends
+		}
+		if r.EffectiveTo != "" && r.EffectiveTo < from {
+			continue // the row ends before the range starts
+		}
+		if !found || r.RateBps > best {
+			best, found = r.RateBps, true
+		}
+	}
+	return best, found, nil
+}
+
 func (f *fakeStore) ListRates(context.Context) ([]Rate, error) { return nil, nil }
 func (f *fakeStore) InsertRate(_ context.Context, r Rate) (Rate, error) {
 	f.rates[r.Jurisdiction+"|"+r.ReasonCode] = r.RateBps
+	f.rateRows = append(f.rateRows, r)
 	r.ID = "rate-1"
 	return r, nil
 }

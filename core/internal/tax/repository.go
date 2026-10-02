@@ -30,6 +30,31 @@ func str(p *string) string {
 	return *p
 }
 
+// MaxRateInRange returns the highest rate_bps among the rows for (jurisdiction, reasonCode) whose
+// effectiveness overlaps [from, to] (to empty means open-ended, matching an open-ended new row).
+// found=false when no row overlaps. The admin edge's guard uses it against the standard reason: a
+// backdated row governs beside every later standard era its interval reaches into, and must clear the
+// highest of them.
+func (r *Repository) MaxRateInRange(ctx context.Context, jurisdiction, reasonCode, from, to string) (int, bool, error) {
+	if r.pool == nil {
+		return 0, false, errNoDB
+	}
+	var bps int
+	err := r.pool.QueryRow(ctx, `
+		SELECT MAX(rate_bps) FROM tax_rates
+		WHERE jurisdiction = $1 AND reason_code = $2
+		  AND effective_from <= coalesce(NULLIF($4, '')::date, 'infinity'::date)
+		  AND (effective_to IS NULL OR effective_to >= $3::date)`,
+		jurisdiction, reasonCode, from, to).Scan(&bps)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return bps, true, nil
+}
+
 // -- rates ---------------------------------------------------------------------
 
 // ResolveRate returns the rate_bps of the row in effect for (jurisdiction, reasonCode) on asOf: the latest

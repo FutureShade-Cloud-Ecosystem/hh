@@ -306,10 +306,50 @@ func TestUnknownReasonEchoIsBounded(t *testing.T) {
 	}
 	err := UnknownReasonError{ReasonCode: string(long)}
 	msg := err.Error()
-	if len(msg) > 256 {
-		t.Fatalf("the refusal echoes an unbounded reason: the message is %d runes long", len(msg))
+	if runeCount := len([]rune(msg)); runeCount > 256 {
+		t.Fatalf("the refusal echoes an unbounded reason: the message is %d runes long", runeCount)
 	}
 	if !strings.Contains(msg, "...") {
 		t.Fatalf("a cut echo must be marked, got %q", msg)
+	}
+}
+
+// (k) The interval guard (round 3's P2): the admin edge measures the row's WHOLE life. A backdated
+// ungated row, planted while the standard was 1300 but open-ended into an era where the standard row
+// reads 1500, must be refused against the 1500 it will govern beside. On the round 2 head the guard
+// measured only the row's first day, saw the 1300 standard of that day, and planted it; the ring then
+// refused it as a server fault (the reviewer's probe).
+func TestCreateRate_BackdatedUngatedRowRefusedAgainstTheLaterStandard(t *testing.T) {
+	f := newFakeStore()
+	// The standard eras: 1300 from the seed's day, then a raise to 1500 (dated rows only; the map
+	// answer stays 1300 so the bind edge is untouched by the era plant).
+	f.rateRows = append(f.rateRows,
+		Rate{Jurisdiction: "ON", ReasonCode: ReasonStdON13, RateBps: 1500, EffectiveFrom: "2026-08-01"},
+	)
+	svc, _ := newSvc(f)
+	_, err := svc.CreateRate(context.Background(), Rate{
+		ReasonCode:    legReasonFNTProduct,
+		RateBps:       1300,
+		EffectiveFrom: "2026-01-01", // backdated: open-ended into the 1500 era
+	})
+	if err == nil {
+		t.Fatal("the admin edge planted a backdated ungated row whose open end governs beside the later 1500 standard: the guard must measure the row's whole interval")
+	}
+	var bad httpx.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("the refusal must be the 400-shaped BadRequestError, got %T: %v", err, err)
+	}
+	want := MisconfiguredRateError{ReasonCode: legReasonFNTProduct, RateBps: 1300, StdBps: 1500}.Error()
+	if bad.Msg != want {
+		t.Fatalf("the admin refusal must name the later standard it fell short of:\n got %q\nwant %q", bad.Msg, want)
+	}
+	// The same row, closed BEFORE the raise, is lawful: it never governs beside the 1500 era.
+	if _, err := svc.CreateRate(context.Background(), Rate{
+		ReasonCode:    legReasonFNTProduct,
+		RateBps:       1300,
+		EffectiveFrom: "2026-01-01",
+		EffectiveTo:   "2026-07-31",
+	}); err != nil {
+		t.Fatalf("a row closed before the raise never governs beside it and must be accepted: %v", err)
 	}
 }

@@ -249,6 +249,10 @@ type ReliefEligibility struct {
 // -- store seam (the service depends on this; *Repository satisfies it; unit tests inject a fake) ----------
 type taxStore interface {
 	ResolveRate(ctx context.Context, jurisdiction, reasonCode, asOf string) (rateBps int, found bool, err error)
+	// MaxRateInRange answers the highest rate whose effectiveness overlaps [from, to] (to empty means
+	// open-ended): the admin edge's ungated-below-standard guard compares a new row against every
+	// standard it will govern beside over its whole life, not only the one on its first day.
+	MaxRateInRange(ctx context.Context, jurisdiction, reasonCode, from, to string) (rateBps int, found bool, err error)
 	ListRates(ctx context.Context) ([]Rate, error)
 	InsertRate(ctx context.Context, r Rate) (Rate, error)
 
