@@ -253,8 +253,9 @@ func (m *Mint) Session(w http.ResponseWriter, r *http.Request) {
 	// hammering the mint drains no team allowance. The two limits keep
 	// their own mutexes and the peeks and the records are separate
 	// instants, so two concurrent mints at the boundary can both peek
-	// fit and both spend: that is one extra mint, the sweep class's own
-	// looseness, never a wrong refusal.
+	// fit and both spend, and N concurrent at the boundary can overshoot
+	// the allowance by N minus 1: that is the sweep class's own
+	// looseness, a few extra mints, never a wrong refusal.
 	address := clientAddress(r)
 	key := "a:" + address
 	if id := visitorIDFrom(r); id != "" {

@@ -93,16 +93,27 @@ func (l *AddressLimit) Allow(address string) bool {
 }
 
 // Peek reports whether one more admission from the address would fit
-// inside the allowance, and records nothing. It is the question half of
-// the mint's two bucket check: a mint that must fit its own key and the
-// address ceiling at once peeks both before anything spends, so a
-// refusal spends nothing anywhere.
+// inside the allowance, and records nothing: not a stamp, and not even
+// the window slide's compaction. It walks the stamps and counts those
+// the window still holds, because the live helper rewrites the slice's
+// backing array in place, and a read that compacted without storing the
+// shortened slice back would leave the stored length over mutated
+// positions, phantom stamps behind every expired one. It is the
+// question half of the mint's two bucket check: a mint that must fit
+// its own key and the address ceiling at once peeks both before
+// anything spends, so a refusal spends nothing anywhere.
 func (l *AddressLimit) Peek(address string) bool {
 	now := l.now()
 	cutoff := now.Add(-l.window)
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return len(l.live(l.entries[address], cutoff)) < l.allow
+	live := 0
+	for _, s := range l.entries[address] {
+		if s.After(cutoff) {
+			live++
+		}
+	}
+	return live < l.allow
 }
 
 // Record spends one admission for the address, the answer half of the
