@@ -110,3 +110,67 @@ func TestKeyRefusalSpendsNothing(t *testing.T) {
 		t.Fatalf("a fresh tester after the hammering answered %d, want 200: the team's ceiling must have survived (body: %s)", rsp.Code, rsp.Body.String())
 	}
 }
+
+// The staggered partial slide leg (the round three review's P1, and the
+// round two review's missing pin folded in here): stamps spread across
+// the window, the clock advanced part way into the window's inside,
+// where the oldest stamps have slid out and the rest have not. Every
+// tap must answer 200, and the stored stamps must be exactly the live
+// ones. Where the key's peek compacts the stored slice in place without
+// storing the shortened slice back, the expired positions keep copies
+// of live ones, and the tap after the partial slide is wrongly refused.
+func TestMintSurvivesAPartialSlideOfTheKey(t *testing.T) {
+	clock := &testClock{at: time.Unix(0, 0).UTC()}
+	// The defaults: the key's allowance of five on the default window,
+	// the ceiling at its team scale; only the key's bucket is under
+	// test here.
+	m, mintAs := spendMint(t, clock, 5, DefaultBurstWindow, DefaultAddressCeiling)
+
+	tester := fmt.Sprintf("%032x", 11)
+	base := time.Unix(0, 0).UTC()
+	taps := []struct {
+		advance time.Duration
+		at      int
+	}{
+		{0, 0}, {10 * time.Second, 10}, {2 * time.Second, 12},
+		{2 * time.Second, 14}, {2 * time.Second, 16}, {15 * time.Second, 31},
+	}
+	for _, tap := range taps {
+		clock.advance(tap.advance)
+		if rsp := mintAs(tester); rsp.Code != http.StatusOK {
+			t.Fatalf("the tap at +%ds answered %d, want 200 (body: %s)", tap.at, rsp.Code, rsp.Body.String())
+		}
+		if tap.at == 31 {
+			// Four of the recorded stamps are live at +31 (the 0 stamp
+			// slid out) and the grant recorded the new one: the stored
+			// slice is exactly those five, with no phantom riding the
+			// compacted array behind them.
+			stored := m.limit.entries["v:"+tester]
+			if len(stored) != 5 {
+				t.Errorf("the key holds %d stamps after the tap at +31, want the five live ones: a phantom rides the compacted slice", len(stored))
+			} else {
+				for i, want := range []int{10, 12, 14, 16, 31} {
+					if !stored[i].Equal(base.Add(time.Duration(want) * time.Second)) {
+						t.Errorf("stamp %d is %v, want the +%ds stamp", i, stored[i], want)
+					}
+				}
+			}
+		}
+	}
+	// At +41 only the +10 stamp is expired of the recorded five, four
+	// stamps truly live under the allowance of five: the tap must pass.
+	// Where the peek left phantoms, this is the wrong 429.
+	clock.advance(10 * time.Second)
+	if rsp := mintAs(tester); rsp.Code != http.StatusOK {
+		t.Fatalf("the tap at +41s answered %d, want 200: four stamps are truly live under the allowance of five (body: %s)", rsp.Code, rsp.Body.String())
+	}
+	stored := m.limit.entries["v:"+tester]
+	if len(stored) != 5 {
+		t.Fatalf("the key holds %d stamps at the end, want the five live ones", len(stored))
+	}
+	for i, want := range []int{12, 14, 16, 31, 41} {
+		if !stored[i].Equal(base.Add(time.Duration(want) * time.Second)) {
+			t.Errorf("stamp %d is %v, want the +%ds stamp", i, stored[i], want)
+		}
+	}
+}

@@ -326,7 +326,9 @@ func TestMintFallsBackToTheAddressKeyOnAMalformedCookie(t *testing.T) {
 	}
 	values := []string{
 		"short",
-		"deadbeef",
+		// Right characters, one short: the length coverage keeps both
+		// ends beside the upper case one.
+		strings.Repeat("0", 31),
 		// Upper case hex: the right characters in the wrong case, so it
 		// is outside the issued shape for the key and the re-issue both.
 		strings.Repeat("A", 32),
