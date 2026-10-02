@@ -15,6 +15,7 @@ package messagingprovider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
@@ -296,7 +297,20 @@ func TestIntegrationADeadRowDoesNotKeepItsPayload(t *testing.T) {
 	if lastErr != "no handler registered for topic" {
 		t.Fatalf("last_error = %q, want the unregistered-topic diagnosis", lastErr)
 	}
-	if strings.Contains(payload, "fx-live-share-token") || payload != "{}" {
-		t.Fatalf("the DEAD row still carries its payload (%s): a share link nobody will ever deliver must not sit in plaintext at rest", payload)
+	// Round 2: the redaction is SELECTIVE. The sensitive keys are gone (the share link nobody
+	// will ever deliver, the recipient's number and address), and the business reference stays:
+	// a dead row is the operator's only trace of what failed, and an anonymous one (this topic's
+	// enqueue returns no event id) leaves nobody to call.
+	var kept map[string]any
+	if err := json.Unmarshal([]byte(payload), &kept); err != nil {
+		t.Fatalf("the DEAD row's payload is not JSON (%s): %v", payload, err)
+	}
+	for _, key := range []string{"share_url", "to", "email"} {
+		if _, still := kept[key]; still {
+			t.Errorf("the DEAD row still carries %s (%v): a credential or a contact nobody will ever deliver must not sit at rest", key, kept[key])
+		}
+	}
+	if kept["quote_id"] != "fx-dead-share" {
+		t.Errorf("the DEAD row lost its quote reference (payload %s): the operator's only trace of what failed must survive the redaction", payload)
 	}
 }

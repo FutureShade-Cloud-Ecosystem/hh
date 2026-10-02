@@ -315,6 +315,34 @@ func TestIntegration_Notify_ADeadSecretRowDropsItsPayload(t *testing.T) {
 	}
 }
 
+// A NON-secret topic that dead-letters KEEPS its payload (HH-188 round 2): the GL boot replay
+// (requeue.go) and the operator's diagnosis both read it, and redaction is the secret topics'
+// rule, not the table's. This leg pins that boundary from the database side; the round 1 review
+// proved an unconditional-redact mutation of the DEAD update passed the whole suite unnoticed.
+func TestIntegration_Notify_ADeadNonSecretRowKeepsItsPayload(t *testing.T) {
+	pool := intPool(t)
+	store := NewPgOutboxStore(pool)
+	topic := topicFor(t, "dead.plain")
+	id := emit(t, pool, topic, `{"journal_id":"jrn-17","entry_no":42}`)
+
+	d := NewDispatcher(store, quietLog())
+	d.Register(topic, func(context.Context, Event) error { return errors.New("gl down") })
+	for i := 0; i < defaultMaxAttempts; i++ {
+		drain(t, d, store, 1)
+	}
+
+	st, attempts, lastErr, payload, _ := rowState(t, pool, id)
+	if st != "DEAD" || attempts != defaultMaxAttempts {
+		t.Fatalf("dead plain row: status=%s attempts=%d, want DEAD/%d", st, attempts, defaultMaxAttempts)
+	}
+	if lastErr != "gl down" {
+		t.Fatalf("last_error=%q, want the handler's diagnosis kept", lastErr)
+	}
+	if !strings.Contains(payload, "jrn-17") {
+		t.Fatalf("the DEAD non-secret row lost its payload (%s): the boot replay and the operator's diagnosis read it", payload)
+	}
+}
+
 // -- the claim, under real concurrency ------------------------------------------------------------
 
 // FOR UPDATE SKIP LOCKED is the promise that two dispatchers (or two replicas) divide the work and

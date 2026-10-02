@@ -144,8 +144,14 @@ func TestWorkerSmsDispatcherOwnsTheQuoteTopics(t *testing.T) {
 				topic, string(s.got.Status), s.got.LastError)
 		}
 	}
-	if s := byTopic[messagingprovider.TopicQuoteShare]; string(s.got.Status) == "PUBLISHED" && !s.got.Redact {
-		t.Error("the quote share topic must settle as SECRET: its payload carries the share link, a live bearer credential")
+	for _, topic := range []string{
+		messagingprovider.TopicQuoteShare,
+		messagingprovider.TopicQuoteFollowupSMS,
+		messagingprovider.TopicQuoteFollowupEmail,
+	} {
+		if s := byTopic[topic]; string(s.got.Status) == "PUBLISHED" && !s.got.Redact {
+			t.Errorf("topic %s must settle as SECRET: its payload carries the share link or the customer's address, a live credential", topic)
+		}
 	}
 
 	// The email leg is only honest if a transport is wired: a follow-up
