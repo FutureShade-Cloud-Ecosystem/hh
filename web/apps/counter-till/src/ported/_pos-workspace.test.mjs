@@ -212,6 +212,14 @@ test('BUDGET: hardcoded hex colour literals in pos-terminal.ts may only FALL (ra
   );
 });
 
+test('BUDGET: no named colour (white, black) stands in for a role in a colour position', () => {
+  // A keyword is the same hard-coded literal as a hex; the ratchet above would not see it.
+  // A role the design system does not carry is declared LOCAL in styles/tokens.css instead.
+  const named = terminalSrc.match(/(?:color|background|background-color|border(?:-[a-z]+)?|fill|stroke|outline)\s*:[^;{}]*\b(?:white|black)\b/g) ?? [];
+  const mixes = terminalSrc.match(/color-mix\([^)]*,\s*(?:white|black)\s*\)/g) ?? [];
+  assert.deepEqual([...named, ...mixes], [], 'name a LOCAL role in tokens.css, not a colour keyword');
+});
+
 // ── 0220 · the counter layout rides the same whole-or-absent row ─────────────────────────────────
 //
 // The ruling being pinned: the four-step single column is the shipped default at every level, and

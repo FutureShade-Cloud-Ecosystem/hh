@@ -798,14 +798,15 @@ export class HosPosTerminal extends LitElement {
       cursor: pointer;
     }
     /* HH note: disabled drops its fill and goes grey; fade is not a state. */
-    .topbtn:disabled {
+    .topbtn:disabled,
+    .topbtn[aria-disabled='true'] {
       background: transparent;
       border-color: var(--hos-line);
       color: var(--hos-text-dim);
       opacity: 1;
       cursor: not-allowed;
     }
-    .topbtn:hover:not(:disabled) {
+    .topbtn:hover:not(:disabled):not([aria-disabled='true']) {
       border-color: var(--hos-stone-amber);
       color: var(--hos-stone-amber-text);
     }
@@ -1695,13 +1696,23 @@ export class HosPosTerminal extends LitElement {
       cursor: not-allowed;
     }
     /* UI-3 (visual GAP 7): the split state is a band, not a control: the reference's pale yellow
-       in both themes, with the theme-stable ink. It is a statement, so it is not greyed. */
-    .complete-cta.splitstate:disabled {
-      background: color-mix(in srgb, var(--hos-stone-amber) 42%, white);
-      border-color: color-mix(in srgb, var(--hos-stone-amber) 42%, white);
-      color: var(--hos-stone-amber-ink);
-      opacity: 1;
-      cursor: default;
+       in both themes, with the theme-stable ink. It is a statement, so it is not greyed, and it is
+       not a button either: a disabled button must look disabled (AGENTS.md). */
+    .split-band {
+      display: block;
+      box-sizing: border-box;
+      width: 100%;
+      margin: 12px 0 0;
+      background: var(--hos-band-fill);
+      border: 1px solid var(--hos-band-fill);
+      border-radius: var(--hos-radius-control);
+      color: var(--hos-stone-amber-ink); /* a theme-stable fill pins its theme-stable ink in the SAME rule */
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 700;
+      line-height: normal;
+      padding: 14px 10px;
+      text-align: center;
     }
     /* UNION-TRAIN11 · the counter's pay key worn as a keycap on the CTA (see payKeycap()).
        Gold-on-gold: the chip borrows the CTA's own ink (D-078: the ONLY ink gold may carry), so
@@ -2043,7 +2054,7 @@ export class HosPosTerminal extends LitElement {
       width: 100%;
       background: var(--hos-deep-earth);
       color: var(--hos-text);
-      border: 1px solid var(--hos-line);
+      border: 1px solid var(--hos-control-line);
       border-radius: var(--hos-radius-control);
       padding: 8px 10px;
       font-size: 13px;
@@ -2198,9 +2209,12 @@ export class HosPosTerminal extends LitElement {
       border-color: var(--hos-stone-amber);
       color: var(--hos-stone-amber-text);
     }
+    /* One name with aria-pressed (pressed means the margin is hidden). Pressed is a filled tint
+       so a hovered eye (outline only) never reads as pressed; the glyph change carries it too. */
     .saleutil .eye[aria-pressed='true'] {
       border-color: var(--hos-stone-amber);
       color: var(--hos-stone-amber-text);
+      background: color-mix(in srgb, var(--hos-stone-amber) 16%, transparent);
     }
     .util button.clear {
       color: var(--hos-safety-red);
@@ -2734,7 +2748,7 @@ export class HosPosTerminal extends LitElement {
   // core refuses a complete unless the session is COUNTED (409), and a drawer
   // that does not balance needs a manager's sign-off (row 500), so the mount
   // cannot honestly end a session from here: the button stays visible but is
-  // closed (disabled, with its reason), and the gap is named in CLOSURE.md.
+  // closed (aria-disabled, focusable, its reason shown in the till's message line), and the gap is named in CLOSURE.md.
   // The reference's handler is dropped for the day the close flow is ported.
   private readonly endSessionClosedReason =
     "Ending the session needs the blind count, the Z report and a manager's sign-off; the drawer close is not on this surface yet.";
@@ -3739,7 +3753,7 @@ export class HosPosTerminal extends LitElement {
       });
       // DIB-246/247: snapshot who + how much under the server ticket id BEFORE newSale() clears
       // them, so resume can restore this customer and the parked list can show name + total.
-      this.parkedInfo.set(t.id, { customer: this.customer, totalCents: this.total() });
+      this.parkedInfo.set(t.id, { customer: this.customer, totalCents: this.hasPricedLine() ? this.total() : null });
       this.newSale();
       this.setUtil(`Parked as ${t.ticket_no}: resume re-prices live.`);
       void this.refreshParkedCount();
@@ -4553,9 +4567,11 @@ export class HosPosTerminal extends LitElement {
                 <button
                   class="topbtn"
                   data-testid="end-session"
-                  disabled
+                  aria-disabled="true"
+                  aria-describedby="till-message"
                   title=${this.endSessionClosedReason}
-                  aria-label=${`End Session. ${this.endSessionClosedReason}`}
+                  @click=${() => this.setUtil(this.endSessionClosedReason)}
+                  @focus=${() => this.setUtil(this.endSessionClosedReason)}
                 >End Session</button>`
             : html`<button class="topbtn" @click=${this.openSession}>Open Session</button>`}
           ${/* COUNTER VIEW (R1/R2, the user half). The way back from a dismissed legend
@@ -5501,18 +5517,18 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                       : nothing}
                   </button>
                   `
-              : html`<button
-                  class="complete-cta splitstate"
+              : html`<p
+                  class="split-band"
+                  role="status"
                   data-testid="cta-split-state"
-                  disabled
                   title="A split is composed before it is committed: the legs must add up first, and the panel below rings it."
                 >
                   Split: compose the legs below
-                </button>`}
+                </p>`}
 
           ${this.showSplit
             ? html`<hos-pos-split-tender
-                .totalCents=${this.total()}
+                .totalCents=${this.hasPricedLine() ? this.total() : null}
                 .hasCustomer=${!!this.customer}
                 .customerName=${this.customer?.name ?? ''}
                 .busy=${this.ringBusy()}
@@ -5805,8 +5821,8 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
                 class="eye"
                 data-testid="margin-eye"
                 aria-pressed=${this.wsMarginHidden ? 'true' : 'false'}
-                title=${this.wsMarginHidden ? 'Show margin and est. profit' : 'Hide margin and est. profit (counter privacy)'}
-                aria-label=${this.wsMarginHidden ? 'Show margin' : 'Hide margin'}
+                title="Hide margin and est. profit (counter privacy)"
+                aria-label="Hide margin and est. profit"
                 @click=${() => this.wsToggleMarginHidden()}
               >
                 ${this.wsMarginHidden
@@ -5815,7 +5831,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
               </button>`
             : nothing}
           ${this.utilMsg
-            ? html`<div class="banner ${this.utilTone}" role="${this.utilTone === 'bad' ? 'alert' : 'status'}">${this.utilMsg}</div>`
+            ? html`<div id="till-message" class="banner ${this.utilTone}" role="${this.utilTone === 'bad' ? 'alert' : 'status'}">${this.utilMsg}</div>`
             : nothing}
 
           
@@ -6009,9 +6025,11 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
       </div>
       ${this.cashTenderedDollars.trim() !== ''
         ? html`<div class="cashhint" data-testid="cash-change-preview">
-            ${plan.sendable
-              ? html`Change due <span class="num">${this.moneyOrMarker(plan.changeDueCents)}</span>`
-              : 'Less than the total: the sale rings for the exact total; add more or clear the box.'}
+            ${!this.hasPricedLine()
+              ? html`Change due <span class="num">(not priced)</span>`
+              : plan.sendable
+                ? html`Change due <span class="num">${money(plan.changeDueCents)} (est.)</span>`
+                : 'Less than the total: the sale rings for the exact total; add more or clear the box.'}
           </div>`
         : nothing}`;
   }

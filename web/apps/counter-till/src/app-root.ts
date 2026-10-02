@@ -37,7 +37,7 @@ import {
   type BranchRef,
 } from "./till-client.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
-import { THEME_LABEL, ThemeController, themeControlLabel } from "./theme.js";
+import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 import { entryStyles, renderEntry, type FlowsState } from "./views/entry.js";
 import { ReturnsFlow } from "./returns/flow.js";
 import { OneTimeCredential } from "./returns/approval.js";
@@ -109,8 +109,47 @@ export class CounterTillApp extends HHElement {
         border-bottom: 1px solid var(--hh-line);
         margin: 0 calc(-1 * var(--hh-s-20)) var(--hh-s-16);
       }
+      /* UI-3 (visual NOTE 3): the bar is on the till's own compact scale: a bar of about 48px
+         (the reference shell bar's), the till's small-chrome button face and type size, and a
+         one-line banner that stays visible and legible. The design system's 44px control floor
+         is for the entry page; this bar's controls take the till's chrome role. */
+      main.on-till {
+        padding-top: 0;
+      }
+      .surfacebar {
+        min-height: 48px;
+        padding: var(--hh-s-8) var(--hh-s-20);
+        margin-bottom: var(--hh-s-8);
+        gap: var(--hh-s-12);
+      }
+      .surfacebar .signed-in {
+        margin: 0;
+        gap: var(--hh-s-8);
+      }
+      .surfacebar .role-name {
+        font-size: 13px;
+      }
+      .surfacebar button {
+        min-height: 0;
+        padding: 7px 12px;
+        font-size: 11px;
+        line-height: normal;
+        color: var(--hh-text-dim);
+      }
+      .surfacebar button:hover:not(:disabled) {
+        border-color: var(--hh-accent-text);
+        color: var(--hh-accent-text);
+      }
       .surfacebar .demo-banner {
         margin: 0;
+        padding: var(--hh-s-4) var(--hh-s-12);
+        align-items: center;
+        gap: var(--hh-s-8);
+      }
+      .surfacebar .demo-banner .word,
+      .surfacebar .demo-banner .copy {
+        font-size: 12px;
+        line-height: 1.3;
       }
       .chrome-row {
         margin: var(--hh-s-16) 0 0;
@@ -136,6 +175,8 @@ export class CounterTillApp extends HHElement {
   readonly #tillClient: TillClient;
   /** The theme choice: Auto follows the system, Light and Dark pin it; tab memory only (see theme.ts). */
   readonly #theme = new ThemeController(() => this.requestUpdate());
+  /** What a screen reader hears after a Theme press: focus stays on the button, so the new name is not re-read. */
+  #themeStatus = "";
   #flowsState: FlowsState = { kind: "loading" };
   /** The one flows read this element makes; the pop-out's tap waits for it. */
   #flowsLoaded: Promise<void> = Promise.resolve();
@@ -318,6 +359,7 @@ export class CounterTillApp extends HHElement {
     }
     if (control.getAttribute("data-action") === "theme") {
       this.#theme.cycle();
+      this.#themeStatus = themeStatusText(this.#theme.choice);
     }
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
@@ -521,6 +563,7 @@ export class CounterTillApp extends HHElement {
       this.#surface === "terminal" ||
       (this.#flowsState.kind === "ready" && this.#flowsState.flows.length > 0);
     return html`
+      <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
       ${this.#surface === "terminal"
         ? nothing
         : html`
@@ -542,7 +585,7 @@ export class CounterTillApp extends HHElement {
               </div>
             </header>
           `}
-      <main>
+      <main class="${this.#surface === "terminal" ? "on-till" : ""}">
         ${this.#surface === "terminal"
           ? html`
               <h2 class="visually-hidden">Till</h2>

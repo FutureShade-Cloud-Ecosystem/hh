@@ -36,8 +36,11 @@ import {
  */
 @customElement('hos-pos-split-tender')
 export class HosPosSplitTender extends LitElement {
-  /** The sale total the legs must settle, in cents. */
-  @property({ type: Number, attribute: 'total-cents' }) totalCents = 0;
+  /**
+   * The sale total the legs must settle, in cents; null while any line on the ticket is price
+   * pending (the sum would leave a line out or carry a stale one), so no remaining is stated.
+   */
+  @property({ type: Number, attribute: 'total-cents' }) totalCents: number | null = 0;
  /** Whether an account is selected: an ACCOUNT leg needs one. */
   @property({ type: Boolean, attribute: 'has-customer' }) hasCustomer = false;
   /** Name of the selected account, for the on-screen confirmation of what gets charged. */
@@ -212,13 +215,13 @@ export class HosPosSplitTender extends LitElement {
 
  /** fill puts exactly what is left into one leg: the counter's whole reason to trust this panel. */
   private fill(i: number): void {
-    const cents = autoFillRemainder(this.draft(), this.totalCents, i);
+    const cents = autoFillRemainder(this.draft(), this.totalCents ?? 0, i);
     this.setAmount(i, plainDollars(cents));
   }
 
   private ring(): void {
     const legs = this.draft();
-    if (!evaluateSplit(legs, this.totalCents, this.hasCustomer).ready) return;
+    if (!evaluateSplit(legs, this.totalCents ?? 0, this.hasCustomer).ready) return;
     this.dispatchEvent(
       new CustomEvent('pos-split-ring', {
         detail: { tenders: toPostBody(legs) },
@@ -233,8 +236,8 @@ export class HosPosSplitTender extends LitElement {
   }
 
   render() {
-    const state = evaluateSplit(this.draft(), this.totalCents, this.hasCustomer);
-    const remainingClass = state.remainingCents === 0 ? 'settled' : state.remainingCents > 0 ? 'owing' : 'over';
+    const state = evaluateSplit(this.draft(), this.totalCents ?? 0, this.hasCustomer);
+    const remainingClass = this.totalCents === null ? 'pending' : state.remainingCents === 0 ? 'settled' : state.remainingCents > 0 ? 'owing' : 'over';
     return html`
       <div class="panel" data-testid="pos-split-panel">
         <h3>Split tender</h3>
@@ -298,7 +301,9 @@ export class HosPosSplitTender extends LitElement {
         <div class="foot">
           <div>
             <div class="remaining ${remainingClass}" data-testid="split-remaining">
-              ${state.remainingCents === 0
+              ${this.totalCents === null
+                ? 'Remaining: (not priced)'
+                : state.remainingCents === 0
                 ? 'Settled exactly'
                 : state.remainingCents > 0
                   ? `${fmtCents(state.remainingCents)} remaining`

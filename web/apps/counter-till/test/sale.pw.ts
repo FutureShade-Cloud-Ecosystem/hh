@@ -174,6 +174,8 @@ test("a walk-in cash sale of three lines rings, and the sale read equals every f
   await page.getByLabel("Cash tendered in dollars: optional; leave empty to ring the exact total").fill("80.00");
   await expect(page.getByTestId("cash-change-preview")).toContainText("Change due");
   await expect(page.getByTestId("cash-change-preview")).toContainText("CA$7.68");
+  // The figure is computed from the estimated total, so it carries the estimate mark.
+  await expect(page.getByTestId("cash-change-preview")).toContainText("(est.)");
 
   const ringPost = page.waitForResponse(
     (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
@@ -287,7 +289,9 @@ test("a card sale shows the simulated word on the tender and on the confirmation
   const receiptPage = page.context().waitForEvent("page");
   await sold.getByTestId("sold-print").click();
   const printed = await receiptPage;
-  await expect(printed.getByText("Counter sale")).toBeVisible();
+  // The document's own number, which the stub and the core's receipt both render (not the stub's wording).
+  expect(typeof sale.order_no).toBe("string");
+  await expect(printed.getByText(sale.order_no as string).first()).toBeVisible();
   await printed.close();
 
   // The notice is value driven: the same surface against a status route that
@@ -601,7 +605,21 @@ test("a line the account's price cannot answer reads price pending through ordin
   await page.getByTestId("cash-tendered").fill("20");
   await expect(page.getByTestId("cash-change-preview")).toContainText("(not priced)");
   await expect(page.getByTestId("cash-change-preview")).not.toContainText("CA$");
+  // Below the stale total: the "Less than the total" decision is not made either.
+  await page.getByTestId("cash-tendered").fill("1");
+  await expect(page.getByTestId("cash-change-preview")).toContainText("(not priced)");
+  await expect(page.getByTestId("cash-change-preview")).not.toContainText("Less than the total");
   await page.getByTestId("cash-tendered").fill("");
+  // The split panel's remaining amount follows the marker too: a remaining against a total that
+  // leaves the pending line out would be the same confident wrong figure.
+  await page.getByRole("button", { name: "Split" }).click();
+  const splitPanel = page.getByTestId("pos-split-panel");
+  await splitPanel.getByTestId("split-amount-0").fill("5.00");
+  await expect(page.getByTestId("split-remaining")).toContainText("(not priced)");
+  await expect(page.getByTestId("split-remaining")).not.toContainText("CA$");
+  await expect(page.getByTestId("split-remaining")).not.toContainText("Settled");
+  await splitPanel.getByRole("button", { name: "Cancel" }).click();
+  await expect(splitPanel).toHaveCount(0);
   await openStep(page, "items");
 
   // The recovery: the account is picked, and the re-price answers at the
@@ -616,8 +634,8 @@ test("a line the account's price cannot answer reads price pending through ordin
   await accountPicked;
   refusePolymer = false;
   // The pick's own reprices land first, so the edit below is the newest ask
-  // and no re-render writes the input back mid-edit.
-  await page.waitForTimeout(800);
+  // and no re-render writes the input back mid-edit: wait until none is in flight.
+  await page.waitForLoadState("networkidle");
   await openStep(page, "items");
   const polymericQty = page.getByRole("textbox", { name: "Quantity: Polymeric Locking Sand" });
   await polymericQty.fill("2");
@@ -731,6 +749,21 @@ test("a resume over lines on the counter asks first: declining leaves everything
   await expect(page.getByTestId("pos-line-row").filter({ hasText: "Polymeric Locking Sand" })).toHaveCount(0);
 });
 
+test("the split state is a status band, not a disabled button", async ({ page }) => {
+  await signIn(page, "Sales");
+  await ensureSession(page);
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Split" }).click();
+  const band = page.getByTestId("cta-split-state");
+  await expect(band).toBeVisible();
+  await expect(band).toContainText("Split: compose the legs below");
+  // A statement, not a control: no button, no disabled state to fake.
+  expect(await band.evaluate((el) => el.tagName)).not.toBe("BUTTON");
+  await expect(band).toHaveAttribute("role", "status");
+  await expect(page.getByRole("button", { name: /Split: compose/ })).toHaveCount(0);
+});
+
 test("a split with a card leg carries the simulated word on the confirmation and on the receipt", async ({
   page,
 }) => {
@@ -773,7 +806,9 @@ test("a split with a card leg carries the simulated word on the confirmation and
   const receiptPage = page.context().waitForEvent("page");
   await sold.getByTestId("sold-print").click();
   const printed = await receiptPage;
-  await expect(printed.getByText("Counter sale")).toBeVisible();
+  // The document's own number, which the stub and the core's receipt both render (not the stub's wording).
+  expect(typeof sale.order_no).toBe("string");
+  await expect(printed.getByText(sale.order_no as string).first()).toBeVisible();
   await printed.close();
 });
 
@@ -875,7 +910,7 @@ test("the chrome sits above the surface: the demo banner is in the first viewpor
   await second.close();
 });
 
-test("End Session is closed on the mount: disabled, grey, its reason stated, and no complete call is made", async ({
+test("End Session is closed on the mount: aria-disabled, grey, focusable, its reason on screen, and no complete call is made", async ({
   page,
 }) => {
   await signIn(page, "Sales manager");
@@ -890,9 +925,11 @@ test("End Session is closed on the mount: disabled, grey, its reason stated, and
     "Ending the session needs the blind count, the Z report and a manager's sign-off; the drawer close is not on this surface yet.";
   const button = page.getByTestId("end-session");
   await expect(button).toBeVisible();
-  await expect(button).toBeDisabled();
+  // Closed in the accessibility tree, but not natively disabled: it takes focus, so a keyboard or touch clerk reaches it.
+  await expect(button).toHaveAttribute("aria-disabled", "true");
+  await expect(button).not.toHaveAttribute("disabled", /.*/);
+  await expect(button).toHaveAccessibleName("End Session");
   await expect(button).toHaveAttribute("title", reason);
-  await expect(button).toHaveAttribute("aria-label", `End Session. ${reason}`);
   // The disabled rule: grey, no fill, no fade.
   const shape = await button.evaluate((node) => {
     const style = getComputedStyle(node);
@@ -901,10 +938,19 @@ test("End Session is closed on the mount: disabled, grey, its reason stated, and
   expect(shape.background).toBe("rgba(0, 0, 0, 0)");
   expect(shape.opacity).toBe("1");
   expect(shape.cursor).toBe("not-allowed");
-  // Pressing it (forced past the disabled state) ends nothing and calls nothing.
+  // Focus alone puts the reason on screen, in the till's own message line, and the button points at it.
+  await button.focus();
+  await expect(button).toBeFocused();
+  const message = page.locator("#till-message");
+  await expect(message).toBeVisible();
+  await expect(message).toHaveText(reason);
+  await expect(button).toHaveAccessibleDescription(reason);
+  // Pressing it ends nothing and calls nothing.
+  // (Playwright treats aria-disabled as not actionable, so the press is forced.)
   await button.click({ force: true });
-  await page.waitForTimeout(300);
+  await page.waitForLoadState("networkidle");
   await expect(page.getByTestId("session-dot")).toContainText("Open");
+  await expect(message).toHaveText(reason);
   expect(completeCalls).toEqual([]);
 });
 
@@ -942,4 +988,99 @@ test("a sale rung at the till is found by the returns desk right after it commit
   await expect(page.getByTestId("returns-sale")).toContainText(String(sale.order_no));
   await expect(page.getByTestId("returns").getByText("Holland Stone 60 mm")).toBeVisible();
   await expect(page.getByText("sold 1, returned 0")).toBeVisible();
+});
+
+test("the margin eye keeps one name with aria-pressed, and hover does not look pressed", async ({ page }) => {
+  await signIn(page, "Sales");
+  await ensureSession(page);
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  const eye = page.getByTestId("margin-eye");
+  await expect(eye).toBeVisible();
+  await expect(eye).toHaveAttribute("aria-label", "Hide margin and est. profit");
+  await expect(eye).toHaveAttribute("aria-pressed", "false");
+  const bg = () => eye.evaluate((el) => getComputedStyle(el).backgroundColor);
+  await eye.hover();
+  const hovered = await bg();
+  await eye.click();
+  await expect(eye).toHaveAttribute("aria-pressed", "true");
+  // The name does not flip against the state (a pressed "Show margin" would read backwards).
+  await expect(eye).toHaveAttribute("aria-label", "Hide margin and est. profit");
+  await page.mouse.move(0, 0);
+  expect(await bg()).not.toBe(hovered);
+});
+
+// The COD tile's gate in the UI. The stub always answers COD allowed, so the off side is held by
+// answering the policy read with cod_enabled false for this one page (the contract's own shape).
+test("with COD off by policy, the COD tile reads 'COD: off' and cannot be selected", async ({ page }) => {
+  await page.route("**/api/v1/pos/policy*", async (route) => {
+    const real = await route.fetch();
+    const body = (await real.json()) as Record<string, unknown>;
+    await route.fulfill({ response: real, json: { ...body, cod_enabled: false } });
+  });
+  await signIn(page, "Sales");
+  await ensureSession(page);
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  const tile = page.getByRole("button", { name: /^COD/ });
+  await expect(tile).toBeVisible();
+  await expect(tile).toContainText("COD: off");
+  await expect(tile).toBeDisabled();
+  await expect(tile).toHaveAttribute("title", /disabled by policy/);
+  await expect(tile).toHaveAttribute("aria-pressed", "false");
+});
+
+test("with COD allowed (the stub's default), the COD tile is selectable", async ({ page }) => {
+  await signIn(page, "Sales");
+  await ensureSession(page);
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  const tile = page.getByRole("button", { name: /^COD/ });
+  await expect(tile).toBeEnabled();
+  await expect(tile).not.toContainText("off");
+});
+
+test("a ticket parked with a line price pending lists no total", async ({ page }) => {
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    const body = route.request().postDataJSON() as { product_id?: string };
+    if (body.product_id === "p-polymer-sand") {
+      await route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: "line could not be priced by the engine" }) });
+      return;
+    }
+    await route.fallback();
+  });
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
+  await expect(page.getByTestId("pos-line-row").locator(".lprice")).toHaveText("price pending");
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  const ticket = parkedDialog.locator(".ticket").first();
+  await expect(ticket).toContainText("(not priced)");
+  await expect(ticket).not.toContainText("CA$");
+});
+
+test("the top bar is on the till's compact scale: about 48px, small chrome buttons, the banner on one line", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page, "Sales");
+  const measured = await page.evaluate(() => {
+    const root = document.querySelector("ct-app-root")?.shadowRoot;
+    const height = (selector: string): number => root?.querySelector(selector)?.getBoundingClientRect().height ?? -1;
+    const theme = root?.querySelector("[data-testid=theme-control]");
+    return {
+      bar: height(".surfacebar"),
+      banner: height(".demo-banner"),
+      theme: height("[data-testid=theme-control]"),
+      themeFont: theme === null || theme === undefined ? "" : getComputedStyle(theme).fontSize,
+    };
+  });
+  expect(measured.bar).toBeLessThanOrEqual(56);
+  expect(measured.bar).toBeGreaterThanOrEqual(44);
+  expect(measured.theme).toBeLessThan(40);
+  expect(measured.themeFont).toBe("11px");
+  expect(measured.banner).toBeLessThan(32);
+  // The banner stays visible and legible.
+  await expect(page.getByRole("note")).toBeVisible();
+  await expect(page.getByRole("note")).toContainText("Everything on this box is invented demo data");
 });

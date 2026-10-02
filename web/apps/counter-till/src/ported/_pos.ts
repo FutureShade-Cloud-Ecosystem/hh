@@ -17,7 +17,8 @@ import { balanceAfterDepositCents } from './ports.js';
 // total at park time (the server stores no prices, so this is the only place it survives).
 export interface ParkedInfo {
   customer: PosCustomer | null;
-  totalCents: number;
+  /** The ticket's estimated total at park time; null when a line was price pending (no figure is kept). */
+  totalCents: number | null;
 }
 
 /**

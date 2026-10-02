@@ -42,3 +42,31 @@ test.describe("with the system on dark", () => {
     await expect(root).toHaveAttribute("data-theme", "light");
   });
 });
+
+test.describe("live behaviour", () => {
+  test.use({ colorScheme: "light" });
+
+  test("Auto follows a system colour-scheme change made while the page is open", async ({ page }) => {
+    await page.goto("/");
+    const root = page.locator("html");
+    await expect(page.getByTestId("theme-control")).toContainText("Theme: Auto");
+    await expect(root).toHaveAttribute("data-theme", "light");
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect(root).not.toHaveAttribute("data-theme", /.*/);
+    await page.emulateMedia({ colorScheme: "light" });
+    await expect(root).toHaveAttribute("data-theme", "light");
+  });
+
+  test("a press announces the new state in a polite status, with focus left on the control", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    const status = page.getByTestId("theme-status");
+    await expect(status).toHaveAttribute("aria-live", "polite");
+    await expect(status).toHaveText("");
+    await page.getByTestId("theme-control").click();
+    await expect(status).toHaveText("Theme is now Light.");
+    await page.getByTestId("theme-control").click();
+    await expect(status).toHaveText("Theme is now Dark.");
+  });
+});

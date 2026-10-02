@@ -55,6 +55,16 @@ export const returnsStyles = css`
   .returns .btn-secondary {
     font-size: 13px;
   }
+  /* UI-3 (visual NOTE 4): the one disabled rule the till uses (Complete sale): no fill, grey ink
+     and line, no fade, in both themes; not the design system's pale fill. */
+  .returns button:disabled,
+  .returns button:disabled:hover {
+    background: transparent;
+    border-color: var(--hos-line);
+    color: var(--hos-text-dim);
+    opacity: 1;
+    cursor: not-allowed;
+  }
   .find-row {
     display: flex;
     align-items: end;
@@ -75,7 +85,7 @@ export const returnsStyles = css`
     font-size: 13px;
     color: var(--hos-text);
     background: var(--hos-deep-earth);
-    border: 1px solid var(--hos-line);
+    border: 1px solid var(--hh-control-line);
     border-radius: var(--hos-radius-control);
     padding: var(--hh-s-8) var(--hh-s-12);
     min-height: 44px;
@@ -123,7 +133,7 @@ export const returnsStyles = css`
     font-size: 13px;
     color: var(--hos-text);
     background: var(--hos-deep-earth);
-    border: 1px solid var(--hos-line);
+    border: 1px solid var(--hh-control-line);
     border-radius: var(--hos-radius-control);
     padding: var(--hh-s-8) var(--hh-s-12);
     width: 5em;
@@ -160,7 +170,7 @@ export const returnsStyles = css`
     font-size: 13px;
     color: var(--hos-text);
     background: var(--hos-deep-earth);
-    border: 1px solid var(--hos-line);
+    border: 1px solid var(--hh-control-line);
     border-radius: var(--hos-radius-control);
     padding: var(--hh-s-8) var(--hh-s-12);
     min-height: 44px;
