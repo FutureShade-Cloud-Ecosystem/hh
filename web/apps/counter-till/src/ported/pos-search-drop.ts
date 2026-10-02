@@ -220,6 +220,37 @@ export class HosPosSearchDrop extends LitElement {
         font-size: 12px;
         color: var(--hos-text-dim);
       }
+      /* P3-7: below the desktop breakpoint the row's three tracks cannot share
+         one line: the price column's floor plus the nowrap meta ran the row
+         over its card and the money printed over the name. The facts stack:
+         the name on its own line, the meta and the price sharing the second,
+         the thumb spanning both. The desktop row at 820 and above is untouched. */
+      @media (max-width: 819px) {
+        .row {
+          grid-template-columns: 34px minmax(0, 1fr) auto;
+          row-gap: 2px;
+        }
+        .row hos-product-thumb {
+          grid-row: 1 / span 2;
+          align-self: center;
+        }
+        .id {
+          display: contents;
+        }
+        .name {
+          grid-column: 2 / 4;
+          grid-row: 1;
+        }
+        .meta {
+          grid-column: 2;
+          grid-row: 2;
+          align-self: center;
+        }
+        .price {
+          grid-column: 3;
+          grid-row: 2;
+        }
+      }
     `,
   ];
 

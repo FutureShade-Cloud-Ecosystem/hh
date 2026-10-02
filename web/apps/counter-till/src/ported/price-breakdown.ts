@@ -12,7 +12,7 @@ import { focusRing } from './styles/focus-ring.js';
  *
  * Renders the pre-tax `Breakdown` returned by `POST /api/v1/pricing/resolve`
  * (original → final, discount %, source, detail, price UOM, and the below-floor
- * "manager approval required" state). A read-only inspector (Ryan Rood) can drive
+ * "manager approval required" state). A read-only inspector (the counter lead's ask) can drive
  * the engine here without `go test`. NEVER renders tax: A-07 is pre-tax only (M5
  * owns tax).
  *

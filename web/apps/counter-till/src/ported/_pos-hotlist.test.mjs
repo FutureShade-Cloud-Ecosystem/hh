@@ -2,10 +2,10 @@
 
 // _pos-hotlist.test.mjs: the drillable photo HOT LIST (category → subcategory → item).
 //
-// Ryan Rood's ask, verbatim: touchscreen tiles with photos, drilling category → subcategory →
-// item: his example was bulk → mulch → black: and "something that BisTrack does not do". Ryan
-// Bostock's volume note is why it matters: bulk material dwarfs contracts and projects here, so
-// this is the high-frequency path, not decoration.
+// The client's ask, verbatim: touchscreen tiles with photos, drilling category → subcategory →
+// item: the example was bulk → mulch → black: and "something that BisTrack does not do". The
+// back-office lead's volume note is why it matters: bulk material dwarfs contracts and projects
+// here, so this is the high-frequency path, not decoration.
 //
 // WHAT THIS FILE PINS, AND WHY EACH ONE IS A REAL FAILURE MODE:
 // · the drill and the ONE-TAP way back (a tree you can only descend is a trap)

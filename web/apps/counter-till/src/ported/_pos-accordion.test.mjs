@@ -57,7 +57,7 @@ test('accordion: the ids are stable and contain no characters a selector would c
 // ── what a CLOSED card still says ──────────────────────────────────────────────────────────────
 
 test('accordion: a collapsed Customer card names the account', () => {
-  assert.equal(summaryFor('customer', facts({ customerName: 'Dibbits Landscaping' })), 'Dibbits Landscaping');
+  assert.equal(summaryFor('customer', facts({ customerName: 'Maple Ridge Contracting' })), 'Maple Ridge Contracting');
 });
 
 test('accordion: a collapsed Customer card says Walk-in when there is no account: the posture, not a blank', () => {
@@ -96,7 +96,7 @@ test('accordion: every step answers with a string for every state: a summary slo
   for (const step of FLOW_ORDER)
     for (const lines of [0, 1, 2])
       for (const rung of bools)
-        for (const name of ['', 'Dibbits Landscaping'])
+        for (const name of ['', 'Maple Ridge Contracting'])
           for (const tender of ['', 'Cash']) {
             const out = summaryFor(step, facts({ lineCount: lines, rungDone: rung, customerName: name, tenderLabel: tender, totalLabel: 'CA$1.00', orderNo: 'SO-1' }));
             assert.equal(typeof out, 'string', `${step} ${JSON.stringify([lines, rung, name, tender])}`);
