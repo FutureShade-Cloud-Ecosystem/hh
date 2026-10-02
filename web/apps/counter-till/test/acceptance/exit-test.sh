@@ -111,7 +111,10 @@ tar -C "$APP" --exclude=node_modules --exclude=dist --exclude=test-results --exc
 # the overlays land on.
 rm -rf "$SCRATCH/context/core"
 mkdir -p "$SCRATCH/context/core"
-tar -C core -cf - . | tar -C "$SCRATCH/context/core" -xf -
+# The same exclusion discipline the app overlay keeps: untracked build
+# artifacts under core/ (the contract tools' installed node_modules, a stray
+# probe file) never ride into the image's build context.
+tar -C core --exclude=node_modules --exclude=dist --exclude=test-results --exclude=acceptance-screens -cf - . | tar -C "$SCRATCH/context/core" -xf -
 pass "the union context assembles ($MAIN_REF with this branch's app and core directories)"
 
 echo "== building the image"
@@ -119,7 +122,7 @@ docker build -f "$SCRATCH/context/deploy/demo/Dockerfile" -t "$IMAGE" "$SCRATCH/
 	fail "the image build failed"
 	exit 1
 }
-pass "the image builds from main's tree and this branch's app"
+pass "the image builds from main's tree and this branch's app and core"
 
 echo "== the throwaway Postgres"
 docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET" >/dev/null
