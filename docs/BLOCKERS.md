@@ -1059,3 +1059,15 @@ users rows and grants the populate plants.
   phrase gate accept that waits for W2's mint; and the app holds a till past
   the token's expiry with nothing to re-check it against until W7's first
   core call. W5, W9, W2 and W7 hold the closures, per the plan.
+
+## HH hardening, HH-181 (PO send replay): go vet with the integration tag fails on main outside this lane's Touches
+
+`go vet -tags integration ./...` fails on a clean checkout of origin/main at
+4f08060 and keeps failing with this lane's commits applied:
+`core/internal/printing/receipt_integration_test.go` names `CostCents` on
+`pos.LineInput`, a field that struct no longer carries. The untagged
+`go vet ./...` passes because the integration build excludes that file.
+`core/internal/pos/` and the printing integration test are outside this lane's
+declared Touches, so the break is recorded here for the owning lane; the same
+command is one of this lane's exit checks and cannot pass repository-wide
+until the field mismatch is reconciled.
