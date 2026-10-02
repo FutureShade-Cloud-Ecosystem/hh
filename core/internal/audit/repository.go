@@ -82,6 +82,8 @@ func (r *Repo) List(ctx context.Context, f Filter) ([]Entry, error) {
 }
 
 // ListByEntity powers the operator reopen path (one transaction's chronological trail, oldest-first).
+// It is UNFENCED by design: its callers are in-process seams that gate on the owning entity before
+// they ask. The route's fenced read is ListByEntityFenced below.
 func (r *Repo) ListByEntity(ctx context.Context, entityType, entityID string) ([]Entry, error) {
 	if r.pool == nil {
 		return []Entry{}, nil
@@ -91,6 +93,31 @@ func (r *Repo) ListByEntity(ctx context.Context, entityType, entityID string) ([
 		WHERE entity_type = $1 AND entity_id = $2::uuid
 		ORDER BY created_at ASC, id ASC`
 	rows, err := r.pool.Query(ctx, q, entityType, entityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return collectEntries(rows)
+}
+
+// ListByEntityFenced is ListByEntity with the branch fence a scoped caller needs (HH-180): rows in
+// the given branches plus branch-less rows, oldest-first. The fence is a predicate on the query
+// itself, never a post-filter, and an empty branch set yields the branch-less rows only, so a scoped
+// caller with no grants fails closed with no special case. Branch-less rows stay in because the
+// coarse middleware rows carry no branch and they are the spine of every entity's trail.
+func (r *Repo) ListByEntityFenced(ctx context.Context, entityType, entityID string, branches []string) ([]Entry, error) {
+	if r.pool == nil {
+		return []Entry{}, nil
+	}
+	if branches == nil {
+		branches = []string{}
+	}
+	q := `SELECT ` + entryCols + `
+		FROM audit_log
+		WHERE entity_type = $1 AND entity_id = $2::uuid
+		  AND (branch_id IS NULL OR branch_id = ANY($3::uuid[]))
+		ORDER BY created_at ASC, id ASC`
+	rows, err := r.pool.Query(ctx, q, entityType, entityID, branches)
 	if err != nil {
 		return nil, err
 	}

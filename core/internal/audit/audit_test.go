@@ -2,16 +2,20 @@ package audit
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 )
 
@@ -53,6 +57,23 @@ func (f *fakeStore) ListByEntity(_ context.Context, et, id string) ([]Entry, err
 		if e.EntityType == et && e.EntityID == id {
 			out = append(out, e)
 		}
+	}
+	return out, nil
+}
+
+// ListByEntityFenced mirrors the repo fence: the entity's rows minus every branched row outside the
+// given set, branch-less rows kept. The SQL predicate itself is proven against Postgres by the
+// HH-180 integration test; this copy exists so the service seam's decision is testable without a DB.
+func (f *fakeStore) ListByEntityFenced(_ context.Context, et, id string, branches []string) ([]Entry, error) {
+	var out []Entry
+	for _, e := range f.snapshot() {
+		if e.EntityType != et || e.EntityID != id {
+			continue
+		}
+		if e.BranchID != "" && !slices.Contains(branches, e.BranchID) {
+			continue
+		}
+		out = append(out, e)
 	}
 	return out, nil
 }
@@ -634,7 +655,9 @@ func TestAuditList_ValidatesActorAndSince(t *testing.T) {
 }
 
 // pathCallStore records whether the get/reopen store reads were reached, so a test can assert a
-// malformed path id is rejected at the handler BEFORE any store/DB call.
+// malformed path id is rejected at the handler BEFORE any store/DB call. The reopen read runs fenced
+// for every non-global caller (the zero-value caller of the valid-id leg included), so both read
+// methods set the flag.
 type pathCallStore struct {
 	fakeStore
 	getByIDCalled      bool
@@ -649,6 +672,218 @@ func (s *pathCallStore) GetByID(ctx context.Context, id string) (*Entry, error) 
 func (s *pathCallStore) ListByEntity(ctx context.Context, et, id string) ([]Entry, error) {
 	s.listByEntityCalled = true
 	return []Entry{}, nil
+}
+
+func (s *pathCallStore) ListByEntityFenced(ctx context.Context, et, id string, branches []string) ([]Entry, error) {
+	s.listByEntityCalled = true
+	return []Entry{}, nil
+}
+
+// reopenCallStore records which reopen read the service chose (the unfenced ListByEntity or the
+// fenced ListByEntityFenced, and with which branches), so the fence decision is observable without
+// touching which rows a store returns.
+type reopenCallStore struct {
+	fakeStore
+	unfenced bool
+	fenced   bool
+	branches []string
+}
+
+func (s *reopenCallStore) ListByEntity(ctx context.Context, et, id string) ([]Entry, error) {
+	s.unfenced = true
+	return s.fakeStore.ListByEntity(ctx, et, id)
+}
+
+func (s *reopenCallStore) ListByEntityFenced(ctx context.Context, et, id string, branches []string) ([]Entry, error) {
+	s.fenced = true
+	s.branches = branches
+	return s.fakeStore.ListByEntityFenced(ctx, et, id, branches)
+}
+
+// stubEntityBranchResolver is the owner seam's test double: a fixed entity id to branch map, so the
+// entity-gate decision (HH-180 round 2) is observable without any owning module.
+type stubEntityBranchResolver struct {
+	branch map[string]string
+	misses map[string]bool // entity ids that resolve to not-found
+	errOn  string          // an entity id whose resolution errors
+}
+
+func (r stubEntityBranchResolver) BranchOf(_ context.Context, entityID string) (string, bool, error) {
+	if entityID == r.errOn {
+		return "", false, errors.New("resolver: unreachable")
+	}
+	if r.misses[entityID] {
+		return "", false, nil
+	}
+	branch, ok := r.branch[entityID]
+	return branch, ok, nil
+}
+
+// TestReopenTransactionFor_BranchFence pins the fence decision on the service seam the reopen route
+// rides (HH-180): a global authority keeps the unfenced read and the full trail, every other
+// authority is held to the ENTITY first (its owning branch resolved through its owner's resolver)
+// and the rows second. The rows that come back are the caller's branch's plus the branch-less ones,
+// never another branch's; an entity out of reach, an entity that does not resolve, an entity type
+// with no resolver and a resolver failure each answer empty (or the error) with no row read at all.
+func TestReopenTransactionFor_BranchFence(t *testing.T) {
+	const home = "b1111111-1111-4111-8111-111111111111"
+	const away = "c2222222-2222-4222-8222-222222222222"
+	seeded := func() *reopenCallStore {
+		st := &reopenCallStore{fakeStore: *newFakeStore()}
+		for _, e := range []Entry{
+			{Action: ActOrderChanged, EntityType: "order", EntityID: sampleUUID, BranchID: home,
+				Changes: map[string]any{"field": "unit_price_cents"}},
+			{Action: ActOrderChanged, EntityType: "order", EntityID: sampleUUID, BranchID: away,
+				Changes: map[string]any{"field": "line_total_cents"}},
+			{Action: ActHTTPPost, EntityType: "order", EntityID: sampleUUID,
+				Changes: map[string]any{"status": 201, "actor_role": "sales"}},
+		} {
+			if err := st.Insert(context.Background(), e); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+		}
+		return st
+	}
+	// The owner seam's double resolves the sample entity to a branch per leg.
+	resolving := func(to string, miss, errOn bool) map[string]EntityBranchResolver {
+		stub := stubEntityBranchResolver{branch: map[string]string{sampleUUID: to}}
+		if miss {
+			stub.misses = map[string]bool{sampleUUID: true}
+		}
+		if errOn {
+			stub.errOn = sampleUUID
+		}
+		return map[string]EntityBranchResolver{"order": stub}
+	}
+	assertNoAway := func(rows []Entry) {
+		t.Helper()
+		for _, e := range rows {
+			if e.BranchID == away {
+				t.Errorf("leaked the out-of-branch row: action %q branch %q", e.Action, e.BranchID)
+			}
+		}
+	}
+	assertNothingRead := func(name string, st *reopenCallStore) {
+		t.Helper()
+		if st.unfenced || st.fenced {
+			t.Errorf("%s: no row read may run, got unfenced=%v fenced=%v", name, st.unfenced, st.fenced)
+		}
+	}
+	scoped := identity.StaffAuthority{RoleID: "r", Tier: identity.TierFrontline,
+		Scope: identity.ScopeBranch, Branches: []string{home}}
+
+	// Global authority: the unfenced read, the full three-row trail, resolvers never consulted.
+	{
+		st := seeded()
+		rows, err := newTestService(st).WithEntityBranchResolvers(resolving(home, false, false)).
+			ReopenTransactionFor(context.Background(),
+				identity.StaffAuthority{RoleID: "r", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal},
+				"order", sampleUUID)
+		if err != nil {
+			t.Fatalf("global: %v", err)
+		}
+		if !st.unfenced || st.fenced {
+			t.Errorf("global must take the unfenced read, got unfenced=%v fenced=%v", st.unfenced, st.fenced)
+		}
+		if len(rows) != 3 {
+			t.Errorf("global got %d rows, want 3 (the full cross-branch trail)", len(rows))
+		}
+	}
+
+	// Branch-scoped authority granted home, entity owned by home: the fenced read with exactly home,
+	// the home row plus the branch-less coarse row.
+	{
+		st := seeded()
+		rows, err := newTestService(st).WithEntityBranchResolvers(resolving(home, false, false)).
+			ReopenTransactionFor(context.Background(), scoped, "order", sampleUUID)
+		if err != nil {
+			t.Fatalf("scoped: %v", err)
+		}
+		if st.unfenced || !st.fenced {
+			t.Errorf("scoped must take the fenced read, got unfenced=%v fenced=%v", st.unfenced, st.fenced)
+		}
+		if len(st.branches) != 1 || st.branches[0] != home {
+			t.Errorf("fenced read carried branches %v, want [%s]", st.branches, home)
+		}
+		if len(rows) != 2 {
+			t.Errorf("scoped got %d rows, want 2 (the home row + the branch-less coarse row)", len(rows))
+		}
+		assertNoAway(rows)
+	}
+
+	// The entity is owned by a branch the caller cannot reach (the price-edit-trail shape: the rows
+	// carry no branch of their own, so only the entity gate holds the line): an empty trail, and no
+	// row read runs at all.
+	{
+		st := seeded()
+		rows, err := newTestService(st).WithEntityBranchResolvers(resolving(away, false, false)).
+			ReopenTransactionFor(context.Background(), scoped, "order", sampleUUID)
+		if err != nil {
+			t.Fatalf("out of reach: %v", err)
+		}
+		if len(rows) != 0 {
+			t.Errorf("out of reach returned %d rows, want 0", len(rows))
+		}
+		assertNothingRead("out of reach", st)
+	}
+
+	// The entity does not resolve (no such order): an empty trail, no row read.
+	{
+		st := seeded()
+		rows, err := newTestService(st).WithEntityBranchResolvers(resolving("", true, false)).
+			ReopenTransactionFor(context.Background(), scoped, "order", sampleUUID)
+		if err != nil {
+			t.Fatalf("not found: %v", err)
+		}
+		if len(rows) != 0 {
+			t.Errorf("not found returned %d rows, want 0", len(rows))
+		}
+		assertNothingRead("not found", st)
+	}
+
+	// The entity type carries no resolver (everything wired today is order and quote): an empty
+	// trail for a scoped caller, no row read. The global authority above is the one that keeps
+	// reading such trails.
+	{
+		st := seeded()
+		rows, err := newTestService(st).ReopenTransactionFor(context.Background(), scoped, "order", sampleUUID)
+		if err != nil {
+			t.Fatalf("no resolver: %v", err)
+		}
+		if len(rows) != 0 {
+			t.Errorf("no resolver returned %d rows, want 0", len(rows))
+		}
+		assertNothingRead("no resolver", st)
+	}
+
+	// A resolver failure surfaces as the read's error, never as an empty success.
+	{
+		st := seeded()
+		if _, err := newTestService(st).WithEntityBranchResolvers(resolving("", false, true)).
+			ReopenTransactionFor(context.Background(), scoped, "order", sampleUUID); err == nil {
+			t.Errorf("resolver error must surface, got nil")
+		}
+		assertNothingRead("resolver error", st)
+	}
+
+	// A scoped authority with no grants, and an authority naming neither scope (the zero value a
+	// miswired guard would leave): both fail closed before any read, an empty trail even for an
+	// entity whose owner resolves.
+	for name, authority := range map[string]identity.StaffAuthority{
+		"no grants": {RoleID: "r", Scope: identity.ScopeBranch},
+		"no scope":  {},
+	} {
+		st := seeded()
+		rows, err := newTestService(st).WithEntityBranchResolvers(resolving(home, false, false)).
+			ReopenTransactionFor(context.Background(), authority, "order", sampleUUID)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(rows) != 0 {
+			t.Errorf("%s: got %d rows, want 0 (fail closed before any read)", name, len(rows))
+		}
+		assertNothingRead(name, st)
+	}
 }
 
 // TestAuditPathID_ValidatesID is the regression for sweep #46 findings #7/#23: the get() and reopen()
@@ -699,17 +934,92 @@ func TestAuditPathID_ValidatesID(t *testing.T) {
 		}
 	}
 
-	// reopen(): valid {entityId} → passes the gate and reaches the store.
+	// reopen(): valid {entityId} → passes the path gate and reaches the store read. The zero-value
+	// caller is scoped with no resolver, which since the HH-180 entity gate answers an empty trail
+	// with no read at all, so this leg drives a GLOBAL authority: the one authority guaranteed to
+	// reach the store for any entity type.
 	{
 		h, st := newHandlerStore()
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/transaction/till.session/x", nil)
 		req.SetPathValue("entityType", "till.session")
 		req.SetPathValue("entityId", sampleUUID)
 		rr := httptest.NewRecorder()
-		h.reopen(rr, req, guards.StaffCaller{})
+		h.reopen(rr, req, guards.StaffCaller{StaffAuthority: identity.StaffAuthority{
+			RoleID: "r", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}})
 		if rr.Code == http.StatusBadRequest || !st.listByEntityCalled {
 			t.Fatalf("reopen() valid entityId: code=%d listByEntityCalled=%v, want gate-pass and store call", rr.Code, st.listByEntityCalled)
 		}
+	}
+}
+
+// TestReopenHandler_FencesOnCaller drives the reopen handler with a resolved caller (HH-180): the
+// handler ignored its caller entirely before the fence, so the scoped leg here is the regression.
+// The service carries the entity resolver the composition wires (the sample entity is owned by the
+// scoped caller's branch), so the scoped caller's response holds only their branch's row plus the
+// branch-less one and the service saw the fenced read; the global caller keeps the unfenced read
+// and the full trail.
+func TestReopenHandler_FencesOnCaller(t *testing.T) {
+	const home = "b1111111-1111-4111-8111-111111111111"
+	const away = "c2222222-2222-4222-8222-222222222222"
+	newHandlerStore := func() (*Handler, *reopenCallStore) {
+		st := &reopenCallStore{fakeStore: *newFakeStore()}
+		for _, e := range []Entry{
+			{Action: ActOrderChanged, EntityType: "order", EntityID: sampleUUID, BranchID: home,
+				Changes: map[string]any{"field": "unit_price_cents"}},
+			{Action: ActOrderChanged, EntityType: "order", EntityID: sampleUUID, BranchID: away,
+				Changes: map[string]any{"field": "line_total_cents"}},
+			{Action: ActHTTPPost, EntityType: "order", EntityID: sampleUUID,
+				Changes: map[string]any{"status": 201, "actor_role": "sales"}},
+		} {
+			if err := st.Insert(context.Background(), e); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+		}
+		svc := (&Service{repo: st, log: testLogger()}).WithEntityBranchResolvers(
+			map[string]EntityBranchResolver{
+				"order": stubEntityBranchResolver{branch: map[string]string{sampleUUID: home}},
+			})
+		return NewHandler(svc, testLogger()), st
+	}
+	call := func(h *Handler, caller guards.StaffCaller) []Entry {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/transaction/order/"+sampleUUID, nil)
+		req.SetPathValue("entityType", "order")
+		req.SetPathValue("entityId", sampleUUID)
+		rr := httptest.NewRecorder()
+		h.reopen(rr, req, caller)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("reopen status %d, want 200", rr.Code)
+		}
+		var got []Entry
+		if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode reopen body %q: %v", rr.Body.String(), err)
+		}
+		return got
+	}
+
+	h, st := newHandlerStore()
+	got := call(h, guards.StaffCaller{StaffAuthority: identity.StaffAuthority{
+		RoleID: "r", Tier: identity.TierFrontline, Scope: identity.ScopeBranch, Branches: []string{home}}})
+	if st.unfenced || !st.fenced {
+		t.Errorf("scoped caller must reach the fenced read, got unfenced=%v fenced=%v", st.unfenced, st.fenced)
+	}
+	if len(got) != 2 {
+		t.Errorf("scoped caller got %d rows, want 2 (their branch's row + the branch-less coarse row)", len(got))
+	}
+	for _, e := range got {
+		if e.BranchID == away {
+			t.Errorf("scoped caller leaked the out-of-branch row: action %q branch %q", e.Action, e.BranchID)
+		}
+	}
+
+	h2, st2 := newHandlerStore()
+	got2 := call(h2, guards.StaffCaller{StaffAuthority: identity.StaffAuthority{
+		RoleID: "r", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}})
+	if !st2.unfenced || st2.fenced {
+		t.Errorf("global caller must reach the unfenced read, got unfenced=%v fenced=%v", st2.unfenced, st2.fenced)
+	}
+	if len(got2) != 3 {
+		t.Errorf("global caller got %d rows, want 3 (the full cross-branch trail)", len(got2))
 	}
 }
 

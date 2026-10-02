@@ -155,6 +155,14 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	quote.NewAutomationHandler(quoteAutomation).WithUserLinker(link).RegisterAutomationRoutes(r, g)
 	quoteStaffHandler.RegisterAvailabilityRoutes(r, g)
 
+	// HH-180: the audit reopen fence resolves an entity's owning branch through its owner. The two
+	// owners the counter trail reads are wired here; every other entity type fails closed for a
+	// scoped caller (an empty trail), the ruling recorded in docs/BLOCKERS.md.
+	auditSvc.WithEntityBranchResolvers(map[string]audit.EntityBranchResolver{
+		"order": auditOrderBranchResolver{repo: orderRepo},
+		"quote": auditQuoteBranchResolver{repo: quoteRepo},
+	})
+
 	return &moneySpine{
 		glSvc:           glSvc,
 		inventorySvc:    inventorySvc,
