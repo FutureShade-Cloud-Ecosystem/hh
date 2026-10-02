@@ -53,6 +53,7 @@ import {
   accountTypeTag, // rev 6 (A): the account-type tag in counter words
   tenderLabel, // POS restructure: the chosen tender in counter words, for the collapsed card
   fulfilmentLabel, // and how the material leaves, for the pre-tender read-back
+  ringTaxWords, // the pre-ring tax-and-total rows' words (row 661), unit-pinned in ring-words.test.mjs
   decideAdd, // DIB-DUPLINE: merge into the existing line, or append and say why
   addOutcomeMessage, // DIB-DUPLINE: what the counter is told about the add
   echoAddMessage, // DIB-553 (bounce 2): and what it is told about the add it SWALLOWED
@@ -3350,19 +3351,11 @@ export class HosPosTerminal extends LitElement {
     return this.hasPricedLine() ? money(cents) : '(not priced)';
   }
 
-  /**
-   * The words the tax-and-total row carries before the ring: the ring states
-   * both figures, so the till names the ring instead of computing them (row
-   * 661). An applied relief's engine-assessed rate is a server-stated fact
-   * (the relief dialog's outcome), so it may be NAMED here, never multiplied
-   * into a figure.
-   */
-  private ringTaxWords(): string {
-    if (this.reliefRateBps === null) return 'added at the ring';
-    const bps = this.reliefRateBps;
-    const pct = bps % 100 === 0 ? String(bps / 100) : (bps / 100).toFixed(2);
-    return `relief assessed at ${pct}%: added at the ring`;
-  }
+  // The tax-and-total rows' words are the pure helper ringTaxWords (in
+  // _pos.ts, unit-pinned in ring-words.test.mjs): the ring states both
+  // figures, so the till names the ring, and an applied relief's
+  // engine-assessed rate is NAMED there, never multiplied into a figure
+  // (row 661).
 
   // A deposit rides only an unpaid-at-ring posture: Charge Account tender or a COD sale.
  // HH note: the reference parsed the typed deposit through a float; the house rule converts
@@ -5622,7 +5615,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
               : nothing}
             <div class="totals">
               <div class="trow"><span>Subtotal</span><span class="num">${this.moneyOrMarker(this.subtotal())}</span></div>
-              <div class="trow ringwords" data-testid="pos-ring-words"><span>Tax and total</span><span>${this.ringTaxWords()}</span></div>
+              <div class="trow ringwords" data-testid="pos-ring-words"><span>Tax and total</span><span>${ringTaxWords(this.reliefRateBps)}</span></div>
             </div>
           </section>
 
@@ -6029,7 +6022,7 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
       <div class="rbrow"><span>${fulfilmentLabel(this.saleType)}</span><span></span></div>
       ${this.requestedDate ? html`<div class="rbrow"><span>Requested</span><span>${this.requestedDate}</span></div>` : nothing}
       <div class="rbrow"><span>Subtotal</span><span class="m">${this.moneyOrMarker(this.subtotal())}</span></div>
-      <div class="rbrow" data-testid="readback-ring-words"><span>Tax and total</span><span class="m">${this.ringTaxWords()}</span></div>
+      <div class="rbrow" data-testid="readback-ring-words"><span>Tax and total</span><span class="m">${ringTaxWords(this.reliefRateBps)}</span></div>
       <div class="rbrow"><span>${tenderLabel(this.payMethod || 'CASH')}</span><span></span></div>
       ${/* "how much am I saving?": the client's words for the thing customers always ask. Server
          arithmetic, summed per line; absent entirely when there is nothing to claim. */ ''}

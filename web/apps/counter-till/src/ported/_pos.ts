@@ -116,6 +116,19 @@ const SALE_TYPE_LABELS: Record<string, string> = {
   COD: 'COD',
 };
 
+/**
+ * The pre-ring tax-and-total row's words (decision log row 661): the ring
+ * states both figures, so the till names the ring instead of computing them.
+ * An applied relief's engine-assessed rate (the relief dialog's server
+ * outcome) may be NAMED here, never multiplied into a figure; the percent
+ * spelling formats basis points, not money.
+ */
+export function ringTaxWords(reliefRateBps: number | null): string {
+  if (reliefRateBps === null) return 'added at the ring';
+  const pct = reliefRateBps % 100 === 0 ? String(reliefRateBps / 100) : (reliefRateBps / 100).toFixed(2);
+  return `relief assessed at ${pct}%: added at the ring`;
+}
+
 export function fulfilmentLabel(saleType: string): string {
   return SALE_TYPE_LABELS[saleType] ?? (saleType || 'Collect now');
 }
