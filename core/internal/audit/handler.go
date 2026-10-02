@@ -106,8 +106,9 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, _ guards.StaffCall
 // payloads) are stripped before the response leaves the server (US-B1), so a frontline client never
 // receives them. The caller's authority fences the trail to their branch reach (HH-180): the staff
 // gate proves the caller is staff, not that they may reach THIS entity's trail, so the read runs
-// through ReopenTransactionFor, a scoped caller sees only their branches' rows plus branch-less
-// ones, and a fully out-of-branch entity answers an empty trail, never a refusal.
+// through ReopenTransactionFor, which holds a scoped caller to the entity's owning branch first
+// (resolved through the entity owner's resolver; entity types without one fail closed) and to their
+// branches' rows second, and an out-of-reach entity answers an empty trail, never a refusal.
 func (h *Handler) reopen(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	// Validate {entityId} before it reaches the `entity_id = $2::uuid` cast (same 22P02→503 class as
 	// get()). entityType is a plain `entity_type = $1` text comparison, so it needs no validation.

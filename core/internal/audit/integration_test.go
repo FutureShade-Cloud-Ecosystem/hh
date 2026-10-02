@@ -449,22 +449,30 @@ func TestIntegration_DIB25_OrderCoarseAndRecorderColocated(t *testing.T) {
 
 // HH-180, the operator reopen read is branch fenced. The route's staff gate proves the caller is
 // staff, not that they may reach THIS trail (the same gap the order edit history closes with
-// CanAccessBranch), and the rows carry their own branch (0013 branch_id), so the fence is computed
-// from the rows: a scoped caller sees only rows in branches their grants reach plus branch-less rows
-// (the coarse middleware rows carry no branch), a global caller keeps the full trail, and a scoped
-// caller reading a fully out-of-branch entity answers an EMPTY trail, never a refusal, so the route
-// stays no existence oracle. The masking projection is untouched by the fence and proven separately
-// (I3 above); every row that does come back still goes through projectForOperator on the way out.
+// CanAccessBranch). Round 2 added the entity gate: the fence resolves the entity's owning branch
+// through its owner's resolver FIRST (the stub here stands where cmd/core adapts the order and
+// quote repositories), because most semantic writers, order and quote edits among them, write
+// branch-less rows, so the rows' own branch_id can never carry the fence alone (the round 1 gap a
+// reviewer proved with a production-shaped probe). A scoped caller reaches rows only for an entity
+// their grants reach, then still sees only rows in branches their grants reach plus branch-less
+// rows (the coarse middleware rows carry no branch); a global caller keeps the full trail; an
+// out-of-reach entity, an unresolvable one and an entity type with no resolver all answer an EMPTY
+// trail, never a refusal, so the route stays no existence oracle. The masking projection is
+// untouched by the fence and proven separately (I3 above); every row that does come back still goes
+// through projectForOperator on the way out.
 func TestIntegration_HH180_ReopenBranchFence(t *testing.T) {
 	repo := realRepo(t)
+	home := newUUID() // the branch the scoped caller is granted
+	away := newUUID() // a branch the scoped caller cannot reach
+	// The owner seam's double, standing where cmd/core wires the order and quote repositories.
+	resolvers := func(owners map[string]string) map[string]EntityBranchResolver {
+		return map[string]EntityBranchResolver{"order": stubEntityBranchResolver{branch: owners}}
+	}
 	svc := NewService(repo, testLogger())
 	h := NewHandler(svc, testLogger())
 	reqID := newUUID()
 	cleanupReq(t, repo, reqID)
 	ctx := withRequestID(context.Background(), reqID)
-
-	home := newUUID() // the branch the scoped caller is granted
-	away := newUUID() // a branch the scoped caller cannot reach
 
 	seed := func(entityID, branch, field string) {
 		t.Helper()
@@ -474,6 +482,18 @@ func TestIntegration_HH180_ReopenBranchFence(t *testing.T) {
 			Changes: map[string]any{"field": field, "line_no": 1, "before": "1000", "after": "1250"},
 		}); err != nil {
 			t.Fatalf("insert %s row: %v", field, err)
+		}
+	}
+	// seedUnstamped writes the production shape of the semantic writers the fence must hold even
+	// though the row itself carries no branch (order/edit.go and its siblings stamp nothing).
+	seedUnstamped := func(entityType, entityID, field string) {
+		t.Helper()
+		if err := repo.Insert(ctx, Entry{
+			Action: ActOrderChanged, EntityType: entityType, EntityID: entityID, ActorID: intActor,
+			RequestID: reqID,
+			Changes:   map[string]any{"field": field, "line_no": 1, "before": "1000", "after": "1250"},
+		}); err != nil {
+			t.Fatalf("insert unstamped %s row: %v", field, err)
 		}
 	}
 	// One order whose price-edit trail spans both branches, plus the branch-less coarse POST row every
@@ -490,10 +510,26 @@ func TestIntegration_HH180_ReopenBranchFence(t *testing.T) {
 	// An away-branch-only order: the granted caller's fully out-of-branch read.
 	awayOnly := newUUID()
 	seed(awayOnly, away, "unit_price_cents")
+	// The round 1 gap, pinned: two entities whose price-edit rows are UNSTAMPED (the production
+	// shape), one owned by each branch. The entity gate alone decides who reads them.
+	unstampedAway := newUUID()
+	seedUnstamped("order", unstampedAway, "unit_price_cents")
+	unstampedHome := newUUID()
+	seedUnstamped("order", unstampedHome, "unit_price_cents")
+	// An entity type with no resolver (only order and quote are wired in the composition): the row
+	// exists, a scoped caller is answered an empty trail all the same.
+	unresolvedType := newUUID()
+	seedUnstamped("payment", unresolvedType, "amount_cents")
+	// The owner map every scoped leg resolves through, attached once: the handler holds the same
+	// service pointer the composition wires its adapters onto.
+	owners := map[string]string{
+		shared: home, awayOnly: away, unstampedAway: away, unstampedHome: home,
+	}
+	svc.WithEntityBranchResolvers(resolvers(owners))
 
-	call := func(caller guards.StaffCaller, entityID string) ([]Entry, int) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/transaction/order/"+entityID, nil)
-		req.SetPathValue("entityType", "order")
+	call := func(caller guards.StaffCaller, entityType, entityID string) ([]Entry, int) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/transaction/"+entityType+"/"+entityID, nil)
+		req.SetPathValue("entityType", entityType)
 		req.SetPathValue("entityId", entityID)
 		rr := httptest.NewRecorder()
 		h.reopen(rr, req, caller)
@@ -515,7 +551,7 @@ func TestIntegration_HH180_ReopenBranchFence(t *testing.T) {
 
 	// Same-branch caller: their branch's rows plus the branch-less coarse row, never the other
 	// branch's. Two rows, the home edit and the coarse POST.
-	got, code := call(scoped, shared)
+	got, code := call(scoped, "order", shared)
 	if code != http.StatusOK {
 		t.Fatalf("scoped caller: status %d, want 200", code)
 	}
@@ -529,7 +565,7 @@ func TestIntegration_HH180_ReopenBranchFence(t *testing.T) {
 	}
 
 	// Global caller: the full trail, all three rows.
-	got, code = call(global, shared)
+	got, code = call(global, "order", shared)
 	if code != http.StatusOK {
 		t.Fatalf("global caller: status %d, want 200", code)
 	}
@@ -538,11 +574,46 @@ func TestIntegration_HH180_ReopenBranchFence(t *testing.T) {
 	}
 
 	// Fully out-of-branch read: an empty trail answers, never a refusal and never the rows.
-	got, code = call(scoped, awayOnly)
+	got, code = call(scoped, "order", awayOnly)
 	if code != http.StatusOK {
 		t.Fatalf("out-of-branch read: status %d, want 200 with an empty trail", code)
 	}
 	if len(got) != 0 {
 		t.Errorf("out-of-branch read returned %d rows, want 0 (empty trail, never the other branch's)", len(got))
+	}
+
+	// The round 1 gap, both ways: an UNSTAMPED price-edit row (the production shape, no branch on
+	// the row itself) is held by the entity gate alone. The away-owned entity leaks nothing to the
+	// granted caller, and the home-owned one still serves its own branch's operator.
+	got, code = call(scoped, "order", unstampedAway)
+	if code != http.StatusOK {
+		t.Fatalf("unstamped away read: status %d, want 200 with an empty trail", code)
+	}
+	if len(got) != 0 {
+		t.Errorf("unstamped away read returned %d rows, want 0 (the entity gate holds the branch-less row): %+v", len(got), got)
+	}
+	got, code = call(scoped, "order", unstampedHome)
+	if code != http.StatusOK {
+		t.Fatalf("unstamped home read: status %d, want 200", code)
+	}
+	if len(got) != 1 {
+		t.Errorf("unstamped home read returned %d rows, want 1 (their own branch's branch-less trail)", len(got))
+	}
+
+	// An entity type with no resolver: the scoped caller is answered an empty trail even though the
+	// row exists and carries no branch; the global caller still reads it.
+	got, code = call(scoped, "payment", unresolvedType)
+	if code != http.StatusOK {
+		t.Fatalf("unresolved type read: status %d, want 200 with an empty trail", code)
+	}
+	if len(got) != 0 {
+		t.Errorf("unresolved type read returned %d rows, want 0 (fail closed without a resolver)", len(got))
+	}
+	got, code = call(global, "payment", unresolvedType)
+	if code != http.StatusOK {
+		t.Fatalf("unresolved type, global: status %d, want 200", code)
+	}
+	if len(got) != 1 {
+		t.Errorf("unresolved type, global: got %d rows, want 1 (the global authority keeps the full trail)", len(got))
 	}
 }
