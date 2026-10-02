@@ -405,13 +405,26 @@ function shotDir(testInfo: TestInfo): string {
 }
 
 /**
- * The page is at rest: fonts are in, and no placeholder of a read still in
- * flight ("Reading ...", "Loading ...") is on the screen, shadow roots
- * included. A shot of a half loaded screen shows nothing of its claim.
+ * The page is at rest: the fonts are in, the ported surface's own in-flight
+ * words are off the screen (the demo roles word while the cards load, the
+ * products word while the grid loads, the receipt word while a print read
+ * runs; the surface shows no word of its own while its other reads are in
+ * flight), the reads are quiet (nothing the page has fired is still in
+ * flight), and a mounted till shows its loaded chrome: the flow stepper, and
+ * the session bar's own answer, the open dot or the Open Session button. A
+ * shot of a half loaded screen shows nothing of its claim.
  */
 export async function settle(page: Page): Promise<void> {
-  await expect(page.getByText(/\b(Reading|Loading)\b/)).toHaveCount(0);
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  await expect(page.getByText(/\bLoading\b/)).toHaveCount(0);
+  await page.waitForLoadState("networkidle");
+  const till = page.locator("hos-pos-flow-steps");
+  if ((await till.count()) > 0) {
+    await expect(till).toBeVisible();
+    await expect(
+      page.getByTestId("session-dot").or(page.getByRole("button", { name: "Open Session" })),
+    ).toBeVisible();
+  }
 }
 
 /**
@@ -465,7 +478,8 @@ export async function apiPicture(page: Page, bearer: string, path: string): Prom
  * One screenshot made of several pictures stacked top to bottom, each a real
  * capture of the product (a region of the till, a staff read as the browser
  * shows it): the shot for a claim whose proof lives in more than one place,
- * so the one named file shows all of it.
+ * so the one named file shows all of it. The page settles first, the same
+ * rule the single shot holds.
  */
 export async function shotParts(
   page: Page,
@@ -473,6 +487,7 @@ export async function shotParts(
   testInfo: TestInfo,
   parts: Buffer[],
 ): Promise<void> {
+  await settle(page);
   const composer = await page.context().newPage();
   await composer.setViewportSize({ width: 1280, height: 800 });
   const images = parts
