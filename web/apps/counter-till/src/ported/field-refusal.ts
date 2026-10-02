@@ -20,9 +20,9 @@
 
 /** A refusal, split into the control it belongs to and the words to show. */
 export interface FieldRefusal {
- /** The knob the sentence is about, or '' when it names none. */
+  /** The knob the sentence is about, or '' when it names none. */
   field: string;
- /** The sentence, verbatim, with the internal module prefix removed. */
+  /** The sentence, verbatim, with the internal module prefix removed. */
   sentence: string;
 }
 

@@ -206,7 +206,7 @@ test('FLOOR (3): Item | Qty | Unit | Price | Total as SEPARATE columns, trash ic
 test('FLOOR (9): the weight cell renders through the pure honesty table (em-dash, never a guess)', () => {
   assert.match(terminalSrc, /data-testid="pos-line-weight"/, 'every LINES row carries the weight cell');
   assert.match(terminalSrc, /lineWeightLbs\(l\.qty, l\.uom, facts\)/, 'the cell derives through the pure fn');
-  assert.match(terminalSrc, /w === null \? ':' : formatLbs\(w\)/, 'absent weight is an em-dash');
+  assert.match(terminalSrc, /w === null \? '\(none\)' : formatLbs\(w\)/, 'absent weight gets the explicit blank word');
 });
 
 test('FLOOR (10): the margin column exists ONLY on present-and-unhidden data, and the eye persists via the workspace', () => {

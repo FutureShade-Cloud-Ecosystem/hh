@@ -2,14 +2,20 @@
 // just this run's report:
 //
 //   1. No money arithmetic in the app: the plan's scan over the app's source
-//      prints nothing outside the one named money helper. The app formats
-//      what the core computed, through that one helper, and computes nothing.
+//      prints nothing outside the named display and parse helpers. The app
+//      formats what the core computed, through the named helpers, and
+//      computes nothing. The scan reads both spellings of a cents figure, the
+//      snake_case the wire carries and the camelCase the ported surface's
+//      classes carry, beside any arithmetic operator (the review's P1-1: a
+//      `savingCents * qty` must not hide from the snake_case spelling), and
+//      the operator must have a left operand so a display negation passed to
+//      a formatter is not mistaken for arithmetic.
 //   2. No card number path: the till has no card number field and loads no
 //      card tokenization script; the card tender sends the fixed demo token.
 //
 // This spec reads the same source tree the greps walk, with the same intent:
-// a hit anywhere outside src/money.ts for the first scan, or anywhere at all
-// for the second, is a failure naming the file.
+// a hit anywhere outside the named helpers for the first scan, or anywhere at
+// all for the second, is a failure naming the file.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -17,6 +23,12 @@ import { expect, test } from "@playwright/test";
 
 const SRC = fileURLToPath(new URL("../src", import.meta.url));
 const MONEY_HELPER = "money.ts";
+// The named display and parse helpers, the one place integer cents become a
+// readable amount (and the one place a typed amount becomes cents, through
+// the decimal string). Their internals divide by one hundred to format; that
+// is the formatting, not a figure decided, so the arithmetic scan walks
+// everything else and these two files are named here, exhaustively.
+const NAMED_HELPERS = [join(SRC, MONEY_HELPER), join(SRC, "ported", "_money-format.ts")];
 
 function walkSources(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -27,22 +39,43 @@ function walkSources(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-test("the money scan prints nothing outside the one named money helper", () => {
-  const scan = /_cents\s*[-+*/]|[-+*/]\s*[A-Za-z_.]*_cents/;
+test("the money scan prints nothing outside the named display and parse helpers", () => {
+  // Three shapes, all of them a cents-named operand beside arithmetic:
+  //   the operand before the operator (`savingCents * qty`),
+  //   times and divided after a binary operand (`q * unit_price_cents`),
+  //   and a binary minus after a binary operand (`total - taxCents`), where
+  //   the identifier may not be the bare kebab suffix of an attribute name
+  //   and a key shape (`- cents:`) is not arithmetic. A unary minus passed to
+  //   a formatter (`fmtCents(-state.remainingCents)`) is display shaping of a
+  //   figure the seam answered, not a figure decided, so the minus wants a
+  //   binary left operand.
+  const scan =
+    /[a-zA-Z_$.]*[cC]ents\s*[-+*/]|[a-zA-Z0-9_$)\]]\s*[*/]\s*[a-zA-Z_$.]*[cC]ents\b|[a-zA-Z0-9_$)\]]\s*-\s*(?![cC]ents\b)[a-zA-Z_$.]*[cC]ents\b\s*[^:]/;
+  // String literals hold words, not computations, so quoted spans come off
+  // the line before the scan (an attribute named 'total-cents' is a name).
+
   const offenders: string[] = [];
   const scanned: string[] = [];
   for (const file of walkSources(SRC)) {
+    if (NAMED_HELPERS.includes(file)) continue;
     scanned.push(file);
-    const hits = readFileSync(file, "utf8").split("\n").filter((line) => scan.test(line));
+    const hits = readFileSync(file, "utf8")
+      .split("\n")
+      .map((line) => line.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, '""'))
+      .filter((line) => scan.test(line));
     if (hits.length === 0) continue;
     offenders.push(`${file}: ${hits.join(" | ")}`);
   }
-  // The stronger standard the comment claims: the helper itself is scanned
-  // with the rest and finds nothing, because it formats integers and parses
-  // one typed string, and computes none of it. The walk must have covered the
-  // helper for that claim to mean anything.
+  // The exclusion is exactly the two named helpers and nothing else: a third
+  // file that divides figures by hand must face the scan, not join the list.
+  expect(NAMED_HELPERS).toHaveLength(2);
+  expect(NAMED_HELPERS.some((file) => file.endsWith(MONEY_HELPER))).toBe(true);
+  expect(NAMED_HELPERS.some((file) => file.endsWith("_money-format.ts"))).toBe(true);
+  // The walk covers the app's own views and the ported tree both: the claim
+  // is about the tree, so the walk must be seen to reach it.
+  expect(scanned.some((file) => file.endsWith(MONEY_HELPER))).toBe(false);
+  expect(scanned.length).toBeGreaterThan(20);
   expect(offenders).toEqual([]);
-  expect(scanned.some((file) => file.endsWith(MONEY_HELPER))).toBe(true);
 });
 
 test("the card scan prints nothing: no card number path, no tokenizer, no loader", () => {

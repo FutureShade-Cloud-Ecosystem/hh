@@ -26,9 +26,9 @@ export interface QuickAction {
   title: string;
  /** Shell unit key (e.g. 'sales'): the frozen deep-link contract, not a second router. */
   unit: string;
- /** Shell module key (e.g. 'pos'). */
+  /** Shell module key (e.g. 'pos'). */
   screen: string;
- /** What the destination surface is asked to do on arrival (e.g. 'pos.new_ticket'). */
+  /** What the destination surface is asked to do on arrival (e.g. 'pos.new_ticket'). */
   intent: string;
   lead?: string;
 }

@@ -47,8 +47,8 @@ export async function printReceipt(
   return printReceiptInto(openWindow(), receiptHtml);
 }
 
-/** The default opener: a blank same-origin window the fetched document is written into. */
-export function openBlankWindow(): ReceiptWindow | null {
-  if (typeof window === 'undefined') return null;
-  return window.open('', '_blank') as unknown as ReceiptWindow | null;
-}
+// HH note: the reference opened the blank window by hand here; the host owns the window
+// surgery around printing, so the opener is a seam (ports.ts, named in CLOSURE.md), same
+// signature, same injected shape in printReceipt.
+import { openBlankWindow } from './ports.js';
+export { openBlankWindow };

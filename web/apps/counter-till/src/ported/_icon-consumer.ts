@@ -166,17 +166,27 @@ export function unitIcon(unit: string): TileIcon {
  * weight; nothing else in src may open an icon `<svg>` tag.
  */
 export function drawIcon(icon: TileIcon, size = 20): SVGTemplateResult {
-  // HH note: the reference bound the size attributes here. This app's template
-  // fence allows bound values only on a small attribute allow list (width and
-  // height are not on it), so the icon opens from a per-size static branch
-  // instead: the same rendered element, one static branch per size the surface
-  // asks for (12, 19 and the 20 default).
+   // HH note: the reference bound the size attributes here. This app's template
+   // fence allows bound values only on a small attribute allow list (width and
+   // height are not on it), so the icon opens from a per-size static branch
+   // instead: one static branch per size the surface asks for (12, 14, 16, 19,
+   // 20 and 29, the 20 also the default), each rendering the reference's
+   // element at its own true size.
   const paths = icon.paths.map((d) => svg`<path d="${d}" />`);
   if (size === 12) {
     return svg`<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths}</svg>`;
   }
+  if (size === 14) {
+    return svg`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths}</svg>`;
+  }
+  if (size === 16) {
+    return svg`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths}</svg>`;
+  }
   if (size === 19) {
     return svg`<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths}</svg>`;
+  }
+  if (size === 29) {
+    return svg`<svg width="29" height="29" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths}</svg>`;
   }
   return svg`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths}</svg>`;
 }

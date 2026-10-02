@@ -58,29 +58,29 @@ export class HosPosProductGrid extends LitElement {
  /** The cashier's home branch: highlighted in the stock glance. */
   @property() homeBranchId = '';
 
- /**
- * DIB-488 / D-096: the dealer-level quick-chip toggle. When false the category chip row is ABSENT
+  /**
+   * DIB-488 / D-096: the dealer-level quick-chip toggle. When false the category chip row is ABSENT
  *: not present-but-empty, not an error: because some dealers with huge catalogues find it
- * useless. Any category filter is ignored while the row is off, so a previously-clicked chip can
- * never keep filtering invisibly. Defaults true: every existing mount is unchanged.
- */
+   * useless. Any category filter is ignored while the row is off, so a previously-clicked chip can
+   * never keep filtering invisibly. Defaults true: every existing mount is unchanged.
+   */
   @property({ type: Boolean, attribute: 'show-chips' }) showChips = true;
 
- /**
- * DIB-488: the LINES workspace keeps the ticket front and center, so once the sale is underway
+  /**
+   * DIB-488: the LINES workspace keeps the ticket front and center, so once the sale is underway
  * the browse grid folds away behind a "Browse products" affordance (search results always show:
- * a typed query is an explicit ask). The terminal sets this from sale state; the grid keeps only
- * the operator's own pin. Defaults false: every existing mount is unchanged.
- */
+   * a typed query is an explicit ask). The terminal sets this from sale state; the grid keeps only
+   * the operator's own pin. Defaults false: every existing mount is unchanged.
+   */
   @property({ type: Boolean, attribute: 'auto-collapse' }) autoCollapse = false;
 
- /**
+  /**
  * DIB-488 rev 3 (0167): how the results paint: 'CARDS' (the existing product-card grid,
- * untouched) or 'ROWS' (one product per dense row: name · SKU · category tag · list price ·
+   * untouched) or 'ROWS' (one product per dense row: name · SKU · category tag · list price ·
  * per-branch stock inline). Same data, same behaviors: search, chips, scan feedback and the
- * click-to-price-&-add action are identical; ONLY the shape changes. Defaults 'CARDS', so every
- * existing mount is unchanged; anything that is not the literal 'ROWS' stays on cards.
- */
+   * click-to-price-&-add action are identical; ONLY the shape changes. Defaults 'CARDS', so every
+   * existing mount is unchanged; anything that is not the literal 'ROWS' stays on cards.
+   */
   @property() presentation = 'CARDS';
 
  /** rows(): the presentation gate: hardened so garbage off a wire can only mean cards. */
@@ -88,53 +88,53 @@ export class HosPosProductGrid extends LitElement {
     return this.presentation === 'ROWS';
   }
 
- /**
- * rev 8 (item 1): the UNIFIED smart field. When the host mounts the unified scan box, the grid
+  /**
+   * rev 8 (item 1): the UNIFIED smart field. When the host mounts the unified scan box, the grid
  * stops rendering its OWN search input and takes the term from here instead: null (the
  * default) keeps the internal input, so every other mount is untouched. Every search behavior:
  * debounce, sequencing, chips interplay, the live region, the roving results: is byte-identical:
- * the property feeds the SAME onQuery() the internal input fed.
- */
+   * the property feeds the SAME onQuery() the internal input fed.
+   */
   @property({ attribute: false }) externalTerm: string | null = null;
 
- /**
- * rev 8 (item 4): the dealer's CURATED single-row chip set (pos_policy.quick_chip_set, derived
- * from top sellers until curated). Empty = the full auto-derived chip row exactly as before.
- * When present: ★ Favorites leads, the curated categories follow on ONE row (no wrapping), and
- * the full category list stays reachable through the "All categories" browse affordance.
- */
+  /**
+   * rev 8 (item 4): the dealer's CURATED single-row chip set (pos_policy.quick_chip_set, derived
+   * from top sellers until curated). Empty = the full auto-derived chip row exactly as before.
+   * When present: ★ Favorites leads, the curated categories follow on ONE row (no wrapping), and
+   * the full category list stays reachable through the "All categories" browse affordance.
+   */
   @property({ attribute: false }) curated: string[] = [];
 
- /**
+  /**
  * DIB-553 (bounce 2): the ticket's change counter, handed down by the terminal.
- *
- * The echo guard is surface state; the ticket is the terminal's. Without this, a click followed
- * by a cart the terminal emptied underneath the surface left the guard still holding a press
- * whose line was gone, and the next click on the same product added NOTHING. The terminal bumps
- * this on every cart change that is not the add itself; this surface forgets its last activation
- * when it moves.
- */
+   *
+   * The echo guard is surface state; the ticket is the terminal's. Without this, a click followed
+   * by a cart the terminal emptied underneath the surface left the guard still holding a press
+   * whose line was gone, and the next click on the same product added NOTHING. The terminal bumps
+   * this on every cart change that is not the add itself; this surface forgets its last activation
+   * when it moves.
+   */
   @property({ type: Number, attribute: false }) ticketEpoch = 0;
 
  /** rev 8: the ★ Favorites chip's state: filters browse to the catalogue's featured products. */
   @state() private favoritesOn = false;
 
- /** rev 8: the browse affordance opened the FULL category list over the curated row. */
+  /** rev 8: the browse affordance opened the FULL category list over the curated row. */
   @state() private allChipsOpen = false;
 
   protected willUpdate(changed: Map<string, unknown>): void {
- // The unified field's term drives the same door the internal input drove. Guarded on real
- // change so unrelated renders never re-issue a search.
+    // The unified field's term drives the same door the internal input drove. Guarded on real
+    // change so unrelated renders never re-issue a search.
     if (changed.has('externalTerm') && this.externalTerm !== null && this.externalTerm !== this.query) {
       this.onQuery(this.externalTerm);
     }
- // DIB-553 (bounce 2) / D6 (round 3): the ticket moved under us, so the press this guard is
+    // DIB-553 (bounce 2) / D6 (round 3): the ticket moved under us, so the press this guard is
  // holding may be protecting a line that is gone. Unconditional: AddOnce.ticketAt owns the
- // comparison, because `if (false && changed.has('ticketEpoch'))` here left 3311 tests green.
+    // comparison, because `if (false && changed.has('ticketEpoch'))` here left 3311 tests green.
     this.adder.ticketAt(this.ticketEpoch);
   }
 
- /** The operator explicitly opened (pinned) the browse grid while autoCollapse is on. */
+  /** The operator explicitly opened (pinned) the browse grid while autoCollapse is on. */
   @state() private browsePinned = false;
 
   @state() private products: PosProduct[] = [];
@@ -149,7 +149,7 @@ export class HosPosProductGrid extends LitElement {
   @state() private hits: CounterHit[] = [];
   @state() private searching = false;
   @state() private searchError = '';
- /** Debounce handle, and the sequence token that makes late responses droppable. */
+  /** Debounce handle, and the sequence token that makes late responses droppable. */
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
   private searchSeq = 0;
 
@@ -210,7 +210,7 @@ export class HosPosProductGrid extends LitElement {
     .chips[hidden] {
       display: none;
     }
- /* an inline-flex centred row keeps the button the exact height the words
+    /* an inline-flex centred row keeps the button the exact height the words
       line box always gave it, the drawn glyph beside them centred (PR 55 review round; the
       quick-action-bar precedent) */
     .chip {
@@ -230,7 +230,7 @@ export class HosPosProductGrid extends LitElement {
       color: var(--hos-stone-amber-text);
       border-color: var(--hos-stone-amber);
     }
- /* DIB-258: was a fixed 2-up grid, which wasted horizontal space on the wide counter displays
+    /* DIB-258: was a fixed 2-up grid, which wasted horizontal space on the wide counter displays
        and buried commonly-sold products below the fold. auto-fill + minmax lets the grid pack as
        many ~180px tiles as the viewport allows: typically 4-5 across on a wide screen: while
        still collapsing to 2 (and to 1 on the narrowest) so nothing overflows on a small terminal.
@@ -251,7 +251,7 @@ export class HosPosProductGrid extends LitElement {
     .card:hover {
       border-color: var(--hos-stone-amber);
     }
- /* Ship-review a11y: visible keyboard focus for the now-focusable product tile. */
+    /* Ship-review a11y: visible keyboard focus for the now-focusable product tile. */
     .card:focus-visible {
       outline: 2px solid var(--hos-stone-amber-text);
       outline-offset: 2px;
@@ -371,7 +371,7 @@ export class HosPosProductGrid extends LitElement {
       display: flex;
       flex-direction: column;
       gap: 6px;
- /* DIB-512: the rows list is a size container so the wrap rule below can key off the PANEL
+      /* DIB-512: the rows list is a size container so the wrap rule below can key off the PANEL
          width instead of the viewport. */
       container-type: inline-size;
     }
@@ -426,7 +426,7 @@ export class HosPosProductGrid extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
     }
- /* DIB-512 · the tag columns yield BEFORE the price wraps: a long name/category used to push
+    /* DIB-512 · the tag columns yield BEFORE the price wraps: a long name/category used to push
        the money cluster to a second line, so the price edge went ragged row to row. Name and tags
        truncate with an ellipsis; the price column below is fixed-width and flush right. */
     .rowitem .cat,
@@ -492,7 +492,7 @@ export class HosPosProductGrid extends LitElement {
       color: var(--hos-safety-red);
       font-size: 13px;
     }
- /* rev 5: visually hidden, still in the accessibility tree (the classic clip idiom). */
+    /* rev 5: visually hidden, still in the accessibility tree (the classic clip idiom). */
     .visclip {
       position: absolute;
       width: 1px;
@@ -513,21 +513,21 @@ export class HosPosProductGrid extends LitElement {
   }
 
  // ── rev 6 (item K): ROVING TABINDEX over the result set: the commander-approved opinion #8.
- // The lookup results were 30+ sequential tab stops standing between the two panels; the result
- // set is now ONE stop (Arrow keys move within, Home/End jump, Tab leaves). Managed imperatively:
+  // The lookup results were 30+ sequential tab stops standing between the two panels; the result
+  // set is now ONE stop (Arrow keys move within, Home/End jump, Tab leaves). Managed imperatively:
  // the templates keep their static tabindex="0" (each item IS a focusable button: the SC 2.1.1
- // floor), and this pass parks every item but the roving one at -1 after each render. Enter/Space
- // activation stays on the items themselves, untouched.
+  // floor), and this pass parks every item but the roving one at -1 after each render. Enter/Space
+  // activation stays on the items themselves, untouched.
 
  /** The roving index over the visible result items. Plain field: never paints on its own. */
   private roveIdx = 0;
 
- /** Every visible result item (hit/browse × card/row share the two classes), in DOM order. */
+  /** Every visible result item (hit/browse × card/row share the two classes), in DOM order. */
   private resultItems(): HTMLElement[] {
     return [...this.renderRoot.querySelectorAll<HTMLElement>('.card[role="button"], .rowitem[role="button"]')];
   }
 
- /** Re-park the tab stops: exactly one item (the roving one, clamped) keeps tabindex 0. */
+  /** Re-park the tab stops: exactly one item (the roving one, clamped) keeps tabindex 0. */
   private applyRoving(): void {
     const items = this.resultItems();
     if (items.length === 0) return;
@@ -542,7 +542,7 @@ export class HosPosProductGrid extends LitElement {
     this.applyRoving(); // every render may add/replace items: re-park the stops
   }
 
- /** A click / programmatic focus landing on an item adopts it as the roving stop. */
+  /** A click / programmatic focus landing on an item adopts it as the roving stop. */
   private onResultsFocusin = (e: Event): void => {
     const items = this.resultItems();
     const i = items.indexOf(e.target as HTMLElement);
@@ -552,7 +552,7 @@ export class HosPosProductGrid extends LitElement {
     }
   };
 
- /** Arrows move within the set (Right/Down next, Left/Up previous), Home/End jump; Tab leaves. */
+  /** Arrows move within the set (Right/Down next, Left/Up previous), Home/End jump; Tab leaves. */
   private onResultsKeydown = (e: KeyboardEvent): void => {
     let delta = 0;
     let absolute = -1;
@@ -590,12 +590,12 @@ export class HosPosProductGrid extends LitElement {
     this.error = '';
     try {
       this.products = await listProducts();
- // rev 5: the LIST response already carries the retail anchor and per-branch on-hand for
+      // rev 5: the LIST response already carries the retail anchor and per-branch on-hand for
  // EVERY row (product.Service.List enrichment: the same source the counter-search hits
- // show). The old path ignored the price entirely ("click to price & add" on every browse
- // tile, with `this.prices` dead state) and burned one stock-glance round trip per product
+      // show). The old path ignored the price entirely ("click to price & add" on every browse
+      // tile, with `this.prices` dead state) and burned one stock-glance round trip per product
  // capped at an arbitrary 24: beyond which tiles silently showed no stock at all. Rows
- // with no anchor are simply absent from the map: no price claim (never a fake zero).
+      // with no anchor are simply absent from the map: no price claim (never a fake zero).
       const prices: Record<string, CardPrice> = {};
       const stock: Record<string, Record<string, number>> = {};
       for (const p of this.products) {
@@ -621,14 +621,14 @@ export class HosPosProductGrid extends LitElement {
     return [...set].sort();
   }
 
- // browseList is the NO-QUERY grid: the catalogue, optionally narrowed by the category chips. This
- // is the browse path, and it stays client-side because it is a fixed, already-downloaded set.
+  // browseList is the NO-QUERY grid: the catalogue, optionally narrowed by the category chips. This
+  // is the browse path, and it stays client-side because it is a fixed, already-downloaded set.
  // DIB-488: with the chip row configured OFF the category filter is ignored outright: a filter
- // with no visible control is a trap, not a feature.
+  // with no visible control is a trap, not a feature.
   private browseList(): PosProduct[] {
  // rev 8 (item 4): the ★ Favorites chip narrows browse to the catalogue's featured products:
- // a filter exactly like the category chips (and exclusive with them; picking either clears
- // the other). Only meaningful while the chip row is on.
+    // a filter exactly like the category chips (and exclusive with them; picking either clears
+    // the other). Only meaningful while the chip row is on.
     if (this.showChips && this.favoritesOn) {
       return this.products.filter((p) => p.is_featured === true);
     }
@@ -636,7 +636,7 @@ export class HosPosProductGrid extends LitElement {
     return this.products.filter((p) => !cat || p.application === cat);
   }
 
- /** DIB-488: the browse grid is folded away (LINES workspace, sale underway, no explicit ask). */
+  /** DIB-488: the browse grid is folded away (LINES workspace, sale underway, no explicit ask). */
   private browseCollapsed(): boolean {
     return this.autoCollapse && !this.browsePinned && !this.searchMode() && (!this.showChips || this.category === '');
   }
@@ -646,16 +646,16 @@ export class HosPosProductGrid extends LitElement {
     if (this.searchTimer !== null) clearTimeout(this.searchTimer);
   }
 
- // onQuery debounces the server search. A term under two characters is not sent at all: one
+  // onQuery debounces the server search. A term under two characters is not sent at all: one
  // keystroke matches almost everything, so the result is noise the cashier reads past: and it is
- // the most expensive query of the lot.
+  // the most expensive query of the lot.
   private onQuery(value: string): void {
     this.query = value;
     if (this.searchTimer !== null) clearTimeout(this.searchTimer);
     const term = value.trim();
     if (term.length < 2) {
- // Cancel in flight AND clear: bumping the token means any response still on the wire for the
- // longer term is dropped when it lands, so an emptied box never repopulates itself.
+      // Cancel in flight AND clear: bumping the token means any response still on the wire for the
+      // longer term is dropped when it lands, so an emptied box never repopulates itself.
       this.searchSeq++;
       this.hits = [];
       this.searching = false;
@@ -677,7 +677,7 @@ export class HosPosProductGrid extends LitElement {
       if (seq !== this.searchSeq) return;
       this.hits = [];
  // rev 5: err.message here is the transport's internal string ('search 500'): a cashier
- // needs a sentence with a next step, not a status code.
+      // needs a sentence with a next step, not a status code.
       void err;
       this.searchError = 'Search isn’t responding: try again, or scan the barcode.';
     } finally {
@@ -685,16 +685,16 @@ export class HosPosProductGrid extends LitElement {
     }
   }
 
- /**
+  /**
  * DIB-553: the second half of a double-click is not a second sale: the same rule every other add
- * surface uses, from the same module, because all three dispatch the same event from a real
- * <button> and a habit of double-clicking rang up two units on any of them. Measured before the
- * guard: one double-click put the product on the ticket at quantity 2.
- *
- * ONE instance for BOTH of this component's add paths (a server search hit and a browse tile),
- * deliberately: they are two renderings of the same catalogue, the same product can be on both at
- * once, and a gesture that crosses between them is still one gesture.
- */
+   * surface uses, from the same module, because all three dispatch the same event from a real
+   * <button> and a habit of double-clicking rang up two units on any of them. Measured before the
+   * guard: one double-click put the product on the ticket at quantity 2.
+   *
+   * ONE instance for BOTH of this component's add paths (a server search hit and a browse tile),
+   * deliberately: they are two renderings of the same catalogue, the same product can be on both at
+   * once, and a gesture that crosses between them is still one gesture.
+   */
   private readonly adder = new AddOnce();
 
   private addHit(h: CounterHit): void {
@@ -719,12 +719,12 @@ export class HosPosProductGrid extends LitElement {
     </div>`;
   }
 
- /**
+  /**
  * rev 6 (item I): the ROW view's column-aligned branch stock: every row prints every branch in
- * the same order on equal-width tracks, with an honest ":" where that branch has no read, so the
+ * the same order on equal-width tracks, with the explicit "(no read)" mark where that branch has no read, so the
  * numbers align down the list. A product with NO stock read at all still renders nothing:
- * absent data is not an error and not a stock claim (the card views keep the old inline cluster).
- */
+   * absent data is not an error and not a stock claim (the card views keep the old inline cluster).
+   */
   private renderStockCols(onHand: Record<string, number> | undefined) {
     if (!onHand || Object.keys(onHand).length === 0) return nothing;
     return html`<div class="stock cols">
@@ -732,7 +732,7 @@ export class HosPosProductGrid extends LitElement {
         const qty = onHand[b.id];
         return html`<span class="b ${b.id === this.homeBranchId ? 'home' : ''}">
           ${branchName(b.id)}
-          ${qty === undefined ? html`<span class="none">:</span>` : html`<span class="qty">${qty}</span>`}
+          ${qty === undefined ? html`<span class="none">(no read)</span>` : html`<span class="qty">${qty}</span>`}
         </span>`;
       })}
     </div>`;
@@ -779,12 +779,12 @@ export class HosPosProductGrid extends LitElement {
     this.category = '';
   }
 
- /**
- * rev 8 (item 4): the chip row. With a CURATED set: ★ Favorites + the short curated categories
+  /**
+   * rev 8 (item 4): the chip row. With a CURATED set: ★ Favorites + the short curated categories
  * on ONE row (nowrap: the curated row never wraps), and an "All categories" affordance that
- * opens the FULL auto-derived list (the pre-rev-8 row, wrapping as before) so nothing became
- * unreachable. Without a curated set: the full row exactly as before.
- */
+   * opens the FULL auto-derived list (the pre-rev-8 row, wrapping as before) so nothing became
+   * unreachable. Without a curated set: the full row exactly as before.
+   */
   private renderChips(cats: string[]) {
     const hasFavs = this.products.some((p) => p.is_featured === true);
     const curated = this.curated.filter((c) => cats.includes(c));
@@ -826,7 +826,7 @@ export class HosPosProductGrid extends LitElement {
     </div>`;
   }
 
- /** rev 8: the ★ Favorites chip (only offered when the catalogue actually flags favorites). */
+  /** rev 8: the ★ Favorites chip (only offered when the catalogue actually flags favorites). */
   private renderFavChip() {
     return html`<button
       class="chip fav ${this.favoritesOn ? 'active' : ''}"
@@ -839,7 +839,7 @@ export class HosPosProductGrid extends LitElement {
     </button>`;
   }
 
- /** searchMode: a term of two or more characters puts the pane in server-search mode. */
+  /** searchMode: a term of two or more characters puts the pane in server-search mode. */
   private searchMode(): boolean {
     return this.query.trim().length >= 2;
   }
@@ -854,16 +854,16 @@ export class HosPosProductGrid extends LitElement {
     return `${n} result${n === 1 ? '' : 's'} for “${this.query.trim()}”.`;
   }
 
- // renderHits is the ranked server result list. Each row shows WHY it matched, because a search
+  // renderHits is the ranked server result list. Each row shows WHY it matched, because a search
  // that surfaces a row for a reason the cashier cannot see is a search they stop trusting: and the
- // alias arm in particular ("patio stone" finding a Slab) looks like a bug until it is labelled.
+  // alias arm in particular ("patio stone" finding a Slab) looks like a bug until it is labelled.
  // DIB-488 rev 3: the ROWS presentation reshapes the same hits: same add action, same match
  // label, same stock read: while the card grid below stays exactly as it was.
   private renderHits() {
     if (this.searchError) return html`<p class="err" role="alert">${this.searchError}</p>`;
     if (this.hits.length === 0) {
  // rev 6 (item I): the centered no-results state with a NEXT STEP: a flat one-liner at the
- // top-left read as the pane breaking; this reads as an answer with somewhere to go.
+      // top-left read as the pane breaking; this reads as an answer with somewhere to go.
       return html`<div class="muted noresults" data-testid="pos-search-empty">
         ${this.searching
           ? 'Searching…'
@@ -884,7 +884,7 @@ export class HosPosProductGrid extends LitElement {
           class="card hit"
           role="button"
           tabindex="0"
-          aria-label=${tip}
+          title=${tip}
           data-sku=${h.sku}
           @click=${() => this.addHit(h)}
           @keydown=${(e: KeyboardEvent) => {
@@ -916,12 +916,12 @@ export class HosPosProductGrid extends LitElement {
     </div>`;
   }
 
- /**
+  /**
  * DIB-488 rev 3: the search hits as dense listed rows: name · SKU · category tag · why-it-
- * matched · list price · per-branch stock inline. The SAME data and the SAME click-to-price-&-add
- * action as the hit cards (Enter/Space included); only the presentation differs, so every
- * data-testid the cards carry rides the rows too.
- */
+   * matched · list price · per-branch stock inline. The SAME data and the SAME click-to-price-&-add
+   * action as the hit cards (Enter/Space included); only the presentation differs, so every
+   * data-testid the cards carry rides the rows too.
+   */
   private renderHitRows() {
     return html`<div
       class="rows"
@@ -935,7 +935,7 @@ export class HosPosProductGrid extends LitElement {
           class="rowitem hit"
           role="button"
           tabindex="0"
-          aria-label=${tip}
+          title=${tip}
           data-sku=${h.sku}
           @click=${() => this.addHit(h)}
           @keydown=${(e: KeyboardEvent) => {
@@ -981,7 +981,7 @@ export class HosPosProductGrid extends LitElement {
 
   private renderBrowse() {
  // DIB-488: folded away: one quiet affordance back in. Not an empty state and not an error;
- // the ticket owns the space and the operator asked for it to.
+    // the ticket owns the space and the operator asked for it to.
     if (this.browseCollapsed()) {
       return html`<button class="browsetoggle" data-testid="pos-browse-open" @click=${() => (this.browsePinned = true)}>
         Browse products
@@ -1005,27 +1005,27 @@ export class HosPosProductGrid extends LitElement {
     `;
   }
 
- /**
+  /**
  * WAVE 2 · finding 20d: THE BROWSE TILES DO NOT SPECULATE ABOUT PICTURES.
- *
- * Measured: eleven `404 /api/v1/products/<id>/image` every single time Browse opens, at 1920 and
- * at 1024, one per visible tile. hos-product-thumb catches the error and paints its stone-stack
+   *
+   * Measured: eleven `404 /api/v1/products/<id>/image` every single time Browse opens, at 1920 and
+   * at 1024, one per visible tile. hos-product-thumb catches the error and paints its stone-stack
  * placeholder, so nothing LOOKS broken: but the browser logs every failed image load as a
- * console error regardless, and the walkthrough harness's expected-refusal filter only exempts a
- * 401/403, which meant this surface could not produce a clean console ledger for any run that
- * opened Browse. The counter's own backend states the rule: counter_search.go's HasImage exists
- * "so the UI skips a request that would 404".
- *
- * THE SEARCH SIDE ALREADY OBEYS IT (`.hasImage=${h.has_image}` on both hit renderers) because
- * the counter-search wire carries the flag. The product LIST does not carry it yet, so the two
+   * console error regardless, and the walkthrough harness's expected-refusal filter only exempts a
+   * 401/403, which meant this surface could not produce a clean console ledger for any run that
+   * opened Browse. The counter's own backend states the rule: counter_search.go's HasImage exists
+   * "so the UI skips a request that would 404".
+   *
+   * THE SEARCH SIDE ALREADY OBEYS IT (`.hasImage=${h.has_image}` on both hit renderers) because
+   * the counter-search wire carries the flag. The product LIST does not carry it yet, so the two
  * browse renderers below pass `p.has_image ?? false`: "ask only when the wire has said yes".
- * That is a real trade and it is the honest side of it: on this dealer's catalogue no product
- * has a thumbnail, so the pixels are identical (the placeholder either way) and the eleven
- * console errors are gone; a product that DOES get a picture still shows it everywhere the wire
- * reports it, including the search results a clerk uses to find one specific product. The `??`
+   * That is a real trade and it is the honest side of it: on this dealer's catalogue no product
+   * has a thumbnail, so the pixels are identical (the placeholder either way) and the eleven
+   * console errors are gone; a product that DOES get a picture still shows it everywhere the wire
+   * reports it, including the search results a clerk uses to find one specific product. The `??`
  * is the self-healing half: the day `/api/v1/products` emits has_image (backend, and outside
- * this lane) the browse grid starts painting thumbnails with no further change here.
- */
+   * this lane) the browse grid starts painting thumbnails with no further change here.
+   */
  /** DIB-488 rev 3: the browse catalogue as dense rows (same list, same add path as the cards). */
   private renderBrowseRows() {
     return html`<div class="rows" @keydown=${this.onResultsKeydown} @focusin=${this.onResultsFocusin}>
@@ -1036,7 +1036,7 @@ export class HosPosProductGrid extends LitElement {
           class="rowitem"
           role="button"
           tabindex="0"
-          aria-label=${tip}
+          title=${tip}
           @click=${() => this.add(p)}
           @keydown=${(e: KeyboardEvent) => {
             if (e.key === 'Enter' || e.key === ' ') {
@@ -1058,14 +1058,14 @@ export class HosPosProductGrid extends LitElement {
     </div>`;
   }
 
- /**
- * The CARDS-presentation browse grid. rev 6 (item H, the commander-approved opinion #3): the
+  /**
+   * The CARDS-presentation browse grid. rev 6 (item H, the commander-approved opinion #3): the
  * browse tiles now wear the SEARCH-HIT anatomy: thumbnail + name/SKU in the hitrow, then the
- * small caps line (the CATEGORY, standing where a hit's match-reason stands; the match slot is
+   * small caps line (the CATEGORY, standing where a hit's match-reason stands; the match slot is
  * empty on browse because nothing was matched), then price, then stock: so the two result
- * surfaces read as one tile system instead of two. Same add path, same tooltip, same SC 2.1.1
- * real-button posture as before.
- */
+   * surfaces read as one tile system instead of two. Same add path, same tooltip, same SC 2.1.1
+   * real-button posture as before.
+   */
   private renderBrowseGrid() {
     return html`
       <div class="grid" @keydown=${this.onResultsKeydown} @focusin=${this.onResultsFocusin}>
@@ -1076,7 +1076,7 @@ export class HosPosProductGrid extends LitElement {
             class="card"
             role="button"
             tabindex="0"
-            aria-label=${tip}
+            title=${tip}
             @click=${() => this.add(p)}
             @keydown=${(e: KeyboardEvent) => {
               if (e.key === 'Enter' || e.key === ' ') {

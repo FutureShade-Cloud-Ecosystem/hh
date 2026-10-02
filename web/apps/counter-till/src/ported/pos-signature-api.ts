@@ -31,7 +31,7 @@ export async function captureTypedSignature(
     }),
   });
   if (!res.ok) {
- // The server's refusals are the operator-facing text (blank name, missing affirmative, unknown
+    // The server's refusals are the operator-facing text (blank name, missing affirmative, unknown
  // purpose): surface them verbatim rather than a status code.
     let message = `signature ${res.status}`;
     try {

@@ -87,15 +87,15 @@ export const emptyStateStyles = [
   }
 
  /* A BOX, not a bare red line: see the file header.
- *
+   *
  * WAVE 8: THE TWIN TAKES THE TOKEN AND THE ANCHOR KEEPS THE LITERAL, deliberately.
  * --hos-measure was EXTRACTED from the.hos-blank rule above, and _layout-contract.test.mjs pins
- * the pair so that re-tuning either half fails loudly with a sentence about the layout contract.
+   * the pair so that re-tuning either half fails loudly with a sentence about the layout contract.
  * That makes.hos-blank the ANCHOR, and an anchor that reads its value back out of the thing it
- * anchors proves nothing. This rule has no such job: it was simply a second copy of the same
+   * anchors proves nothing. This rule has no such job: it was simply a second copy of the same
  * number: the "the twin had drifted" failure inventory-on-hand.ts:144 records about its own
  * pair: and a second copy is exactly what a token is for. Zero pixels move: both resolve 62ch
- * against a 13px font, measured at 528.7px on the live stack at 1920. */
+   * against a 13px font, measured at 528.7px on the live stack at 1920. */
   .hos-fault {
     border: 1px solid var(--hos-safety-red);
     background: color-mix(in srgb, var(--hos-safety-red) 12%, transparent);
@@ -172,7 +172,7 @@ export const emptyStateStyles = [
 export function emptyState(title: string, body: string, hint?: string, tight = false): TemplateResult {
   if (tight) {
     return html`
-      <div class="hos-blank" aria-label=${body}>
+      <div class="hos-blank" title=${body}>
         <h4>${title}</h4>
       </div>
     `;

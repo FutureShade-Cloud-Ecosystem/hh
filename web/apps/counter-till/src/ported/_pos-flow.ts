@@ -26,7 +26,7 @@ export interface FlowStep {
   id: FlowStepId;
   n: 1 | 2 | 3 | 4;
   label: string;
- /** The sale data satisfies this step (a check mark, never a lock). */
+  /** The sale data satisfies this step (a check mark, never a lock). */
   complete: boolean;
  /** The step the session's attention is on: see deriveFlow. */
   current: boolean;
@@ -37,17 +37,17 @@ export interface FlowStep {
  * holds: nothing here is a stepper's own bookkeeping.
  */
 export interface SaleSessionFacts {
- /** Cart lines on the ticket. */
+  /** Cart lines on the ticket. */
   lineCount: number;
- /** An account customer is on the sale. */
+  /** An account customer is on the sale. */
   customerSelected: boolean;
- /**
- * The operator explicitly chose the walk-in / cash-customer posture. Walk-in is also the
+  /**
+   * The operator explicitly chose the walk-in / cash-customer posture. Walk-in is also the
  * terminal's DEFAULT posture, and a default is not a decision: the step reads complete only when
- * someone actually resolved the question (picked an account, or confirmed walk-in).
- */
+   * someone actually resolved the question (picked an account, or confirmed walk-in).
+   */
   walkInConfirmed: boolean;
- /** The chosen tender ('' until one of the payment tiles is picked). */
+  /** The chosen tender ('' until one of the payment tiles is picked). */
   payMethod: string;
  /** The ring committed: a sold ticket satisfies every step by definition. */
   rungDone: boolean;

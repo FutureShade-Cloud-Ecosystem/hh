@@ -21,11 +21,11 @@
 export const INTENT_EVENT = 'hos-quick-action-intent';
 
 export interface PendingIntent {
- /** The module tab the intent is addressed to, e.g. 'pos'. */
+  /** The module tab the intent is addressed to, e.g. 'pos'. */
   module: string;
- /** What to do, e.g. 'pos.new_ticket'. */
+  /** What to do, e.g. 'pos.new_ticket'. */
   intent: string;
- /** The action that published it, for diagnosis and for a destination that handles several. */
+  /** The action that published it, for diagnosis and for a destination that handles several. */
   actionId: string;
 }
 

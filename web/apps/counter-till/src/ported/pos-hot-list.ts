@@ -49,15 +49,15 @@ export class HosPosHotList extends LitElement {
  /** The account on the sale: the tiles wear THEIR price. '' is the walk-in case. */
   @property({ attribute: 'customer-id' }) customerId = '';
 
- /**
+  /**
  * DIB-553 (bounce 2): the ticket's change counter, handed down by the terminal.
- *
- * The echo guard is surface state; the ticket is the terminal's. Without this, a click followed
- * by a cart the terminal emptied underneath the surface left the guard still holding a press
- * whose line was gone, and the next click on the same product added NOTHING. The terminal bumps
- * this on every cart change that is not the add itself; this surface forgets its last activation
- * when it moves.
- */
+   *
+   * The echo guard is surface state; the ticket is the terminal's. Without this, a click followed
+   * by a cart the terminal emptied underneath the surface left the guard still holding a press
+   * whose line was gone, and the next click on the same product added NOTHING. The terminal bumps
+   * this on every cart change that is not the add itself; this surface forgets its last activation
+   * when it moves.
+   */
   @property({ type: Number, attribute: false }) ticketEpoch = 0;
 
 
@@ -105,7 +105,7 @@ export class HosPosHotList extends LitElement {
       .crumbs .sep {
         opacity: 0.6;
       }
- /* Big targets. A tile is meant for a gloved thumb on a shop-floor panel, so the floor is
+      /* Big targets. A tile is meant for a gloved thumb on a shop-floor panel, so the floor is
          generous and the grid reflows rather than shrinking the tiles. */
       .grid {
         display: grid;
@@ -158,7 +158,7 @@ export class HosPosHotList extends LitElement {
         font-size: 10px;
         font-weight: 600;
       }
- /* The Back tile is a way out, not a product: quiet clothes, and it never wears a photo. */
+      /* The Back tile is a way out, not a product: quiet clothes, and it never wears a photo. */
       .tile.back {
         justify-content: center;
         align-items: center;
@@ -200,7 +200,7 @@ export class HosPosHotList extends LitElement {
 
   protected updated(changed: Map<string, unknown>): void {
  // A customer arriving re-prices the tiles: showing an account's price is only worth doing if
- // it follows the account.
+    // it follows the account.
     if (changed.has('customerId') || changed.has('branchId')) void this.load();
   }
 
@@ -212,8 +212,8 @@ export class HosPosHotList extends LitElement {
       if (seq !== this.seq) return;
       this.items = items;
       this.failed = false;
- // A curated set that changed under a drilled-in operator must not strand them on a level
- // that no longer has anything in it.
+      // A curated set that changed under a drilled-in operator must not strand them on a level
+      // that no longer has anything in it.
       if (!pathExists(items, this.path)) this.path = HOT_ROOT;
     } catch {
       if (seq !== this.seq) return;
@@ -224,17 +224,17 @@ export class HosPosHotList extends LitElement {
     }
   }
 
- /**
- * ONE TAB STOP for the whole grid (the house roving rule for grids and rails). Arrows move
- * within it; Tab passes over it to the ticket. A grid of thirteen tap targets that each took a
- * Tab stop would put the ticket thirteen presses away from the search field, which is precisely
- * the "sixty Tab stops to the Cash tile" defect this codebase already fixed once.
- *
- * The tiles reflow with the viewport, so the grid is walked as a RAIL rather than by row and
- * column: forward is Right or Down, back is Left or Up. Guessing a column count from CSS would
- * be a lie at some width, and a keyboard user who cannot predict where Down goes has no
- * navigation at all.
- */
+  /**
+   * ONE TAB STOP for the whole grid (the house roving rule for grids and rails). Arrows move
+   * within it; Tab passes over it to the ticket. A grid of thirteen tap targets that each took a
+   * Tab stop would put the ticket thirteen presses away from the search field, which is precisely
+   * the "sixty Tab stops to the Cash tile" defect this codebase already fixed once.
+   *
+   * The tiles reflow with the viewport, so the grid is walked as a RAIL rather than by row and
+   * column: forward is Right or Down, back is Left or Up. Guessing a column count from CSS would
+   * be a lie at some width, and a keyboard user who cannot predict where Down goes has no
+   * navigation at all.
+   */
   private onGridKey(e: KeyboardEvent): void {
     const tiles = this.renderRoot.querySelectorAll<HTMLElement>('.tile');
     if (tiles.length === 0) return;
@@ -262,7 +262,7 @@ export class HosPosHotList extends LitElement {
     tiles[next]?.focus({ preventScroll: true });
   }
 
- /** A mouse click or a Tab into the grid moves the roving stop to whatever was reached. */
+  /** A mouse click or a Tab into the grid moves the roving stop to whatever was reached. */
   private onGridFocus(e: FocusEvent): void {
     const tiles = [...this.renderRoot.querySelectorAll<HTMLElement>('.tile')];
     const i = tiles.indexOf(e.target as HTMLElement);
@@ -275,16 +275,16 @@ export class HosPosHotList extends LitElement {
     void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>('.tile')?.focus({ preventScroll: true }));
   }
 
- /**
- * DIB-553: the second half of a double-click is not a second sale. The rule, the state, the
- * clock and the dispatch all live in _pos-add-dedupe.ts, so this component has no decision of
+  /**
+   * DIB-553: the second half of a double-click is not a second sale. The rule, the state, the
+   * clock and the dispatch all live in _pos-add-dedupe.ts, so this component has no decision of
  * its own to get wrong: and no expression of its own for a `false &&` to switch off with the
- * source text left intact, which is how the first cut of this guard survived being disabled.
- */
+   * source text left intact, which is how the first cut of this guard survived being disabled.
+   */
   private readonly adder = new AddOnce();
 
  // DIB-553 (bounce 2) / D6 (round 3): unconditional by design: AddOnce.ticketAt owns the
- // "has the ticket moved?" comparison, so there is no expression here to short-circuit.
+  // "has the ticket moved?" comparison, so there is no expression here to short-circuit.
   protected willUpdate(): void {
     this.adder.ticketAt(this.ticketEpoch);
   }
@@ -307,7 +307,7 @@ export class HosPosHotList extends LitElement {
     const tiles = hotTiles(this.items, this.path, HOT_LEVEL_MAX);
     if (tiles.length === 0) {
  // Empty is never an error: and a yard that has not curated and has not rung anything yet is
- // an ordinary first day, not a fault. role="status", one calm line, and the way forward.
+      // an ordinary first day, not a fault. role="status", one calm line, and the way forward.
       return html`<div class="empty" role="status" data-testid="hot-empty">
         <b>${this.failed ? 'Hot list paused' : 'No hot list yet'}</b>
         <span
@@ -363,7 +363,7 @@ export class HosPosHotList extends LitElement {
       return html`<button
         class="tile"
         data-testid="hot-group"
-        aria-label=${t.label}
+        title=${t.label}
         tabindex=${this.roveIdx === i ? '0' : '-1'}
         @click=${() => this.go(drillInto(this.path, t.label))}
       >
@@ -382,7 +382,7 @@ export class HosPosHotList extends LitElement {
     return html`<button
       class="tile"
       data-testid="hot-item"
-      aria-label=${p.sku}
+      title=${p.sku}
       tabindex=${this.roveIdx === i ? '0' : '-1'}
       @click=${() => this.add(p)}
     >

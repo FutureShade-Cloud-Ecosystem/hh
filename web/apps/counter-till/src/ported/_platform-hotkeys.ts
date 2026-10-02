@@ -72,12 +72,12 @@ export interface PlatformKey {
 export interface PlatformRosterView {
   surface: string;
   keys: PlatformKey[];
- /**
- * The DEALER OVERRIDE in force above this roster, on this surface. Item 4c: a platform binding
- * that lands on a key the dealer already gave to a different action is a key with two meanings
- * across one deployment, and until this arrived nothing on either screen could say so. Empty for
+  /**
+   * The DEALER OVERRIDE in force above this roster, on this surface. Item 4c: a platform binding
+   * that lands on a key the dealer already gave to a different action is a key with two meanings
+   * across one deployment, and until this arrived nothing on either screen could say so. Empty for
  * app.shell, always: the server's platform_hotkeys_effective.go argues why.
- */
+   */
   dealer: PlatformKey[];
 }
 
@@ -91,14 +91,14 @@ export interface ReservedKey {
 /** The GET /api/v1/platform/hotkeys answer, normalised. */
 export interface PlatformHotkeyView {
   rosters: PlatformRosterView[];
- /** The SERVER's answer to "may this caller change the roster". Never computed here. */
+  /** The SERVER's answer to "may this caller change the roster". Never computed here. */
   canEdit: boolean;
- /**
- * The shell's own hardcoded keys, SERVED rather than mirrored here. The chord grammars are
+  /**
+   * The shell's own hardcoded keys, SERVED rather than mirrored here. The chord grammars are
  * mirrored on both sides on purpose: each side must be able to refuse before the round trip:
- * but this list is a fact about the shell with only one owner, and a hand-copied array in a
- * settings screen would be the copy that drifts the day a third hardcoded key is added.
- */
+   * but this list is a fact about the shell with only one owner, and a hand-copied array in a
+   * settings screen would be the copy that drifts the day a third hardcoded key is added.
+   */
   reserved: ReservedKey[];
 }
 
@@ -169,9 +169,9 @@ export function asPlatformView(body: unknown): PlatformHotkeyView {
     rosters.push({
       surface,
       keys: asKeyRows(hit?.keys),
- // A payload from a build older than item 4c has no `dealer` at all, and the honest reading of
+      // A payload from a build older than item 4c has no `dealer` at all, and the honest reading of
  // that is "this server cannot tell me about the tier above": which normalises to EMPTY and
- // costs the screen only the cross-tier refusal, never the screen.
+      // costs the screen only the cross-tier refusal, never the screen.
       dealer: asKeyRows(hit?.dealer),
     });
   }
@@ -183,8 +183,8 @@ export function asPlatformView(body: unknown): PlatformHotkeyView {
       .filter((r) => typeof r.binding === 'string' && (r.binding as string) !== '')
       .map((r) => ({
         binding: r.binding as string,
- // A reserved key with no words is still reserved. The fallback is a phrase and not an id,
- // because it is going straight into a refusal a person reads.
+        // A reserved key with no words is still reserved. The fallback is a phrase and not an id,
+        // because it is going straight into a refusal a person reads.
         holds: typeof r.holds === 'string' && r.holds ? (r.holds as string) : 'belongs to the app itself',
       })),
   };
@@ -341,11 +341,11 @@ export interface KeyVerdict {
 
 /** Everything the verdict needs about the world outside the row being edited. */
 export interface EffectiveContext {
- /** The roster being edited, action → chord. This tier, this surface. */
+  /** The roster being edited, action → chord. This tier, this surface. */
   draft: Record<string, string>;
- /** The dealer override in force above this surface, if any. */
+  /** The dealer override in force above this surface, if any. */
   dealer?: readonly PlatformKey[];
- /** The keys the shell hardcodes, from the server. */
+  /** The keys the shell hardcodes, from the server. */
   reserved?: readonly ReservedKey[];
  /** The OTHER substrate's roster: for the warning, never for a refusal. */
   other?: readonly PlatformKey[];

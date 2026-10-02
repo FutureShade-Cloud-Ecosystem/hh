@@ -80,44 +80,44 @@ const ACTION_KIND = 'action';
 export class HosPosCounterSettings extends LitElement {
   @property({ attribute: 'branch-id' }) branchId = '';
 
- /** The roster being edited, action -> chord. Seeded from the dealer's rows, else the defaults. */
+  /** The roster being edited, action -> chord. Seeded from the dealer's rows, else the defaults. */
   @state() private keys: Record<string, string> = {};
- /** Which action is waiting for a keystroke, or ''. */
+  /** Which action is waiting for a keystroke, or ''. */
   @state() private capturing = '';
- /** The curated tile set, in board order (lowercased SKUs). */
+  /** The curated tile set, in board order (lowercased SKUs). */
   @state() private tiles: string[] = [];
- /** The dealer's panel defaults for the chosen profile. */
+  /** The dealer's panel defaults for the chosen profile. */
   @state() private panels: Record<string, boolean> = {};
- /** Every active product, for the tile picker and the thumbnails. */
+  /** Every active product, for the tile picker and the thumbnails. */
   @state() private catalogue: PosProduct[] = [];
   @state() private profile: Profile = 'counter';
   @state() private busy = false;
   @state() private error = '';
   @state() private notice = '';
- /** The collision or bad-chord refusal, shown at the moment of pressing. */
+  /** The collision or bad-chord refusal, shown at the moment of pressing. */
   @state() private keyRefusal = '';
- /**
- * ITEM 4c · the cross-substrate NOTE. A key this dealer is binding at the till that the app
+  /**
+   * ITEM 4c · the cross-substrate NOTE. A key this dealer is binding at the till that the app
  * shell also uses somewhere else: which works, on purpose (the till listens in the capture phase
- * and stops the event; the shell listens in bubble), and would otherwise look like a mistake an
- * administrator ought to go and undo.
- *
- * SEPARATE FROM keyRefusal AND NOT A FLAG ON IT: a refusal means the key was not taken, this means
- * it was. One slot would become one role attribute, and `role="alert"` on “this worked” is how a
- * screen teaches people to ignore alerts.
- */
+   * and stops the event; the shell listens in bubble), and would otherwise look like a mistake an
+   * administrator ought to go and undo.
+   *
+   * SEPARATE FROM keyRefusal AND NOT A FLAG ON IT: a refusal means the key was not taken, this means
+   * it was. One slot would become one role attribute, and `role="alert"` on “this worked” is how a
+   * screen teaches people to ignore alerts.
+   */
   @state() private keyNote = '';
- /**
- * The platform view behind that note and behind the reserved-key refusal. Held whole rather than
+  /**
+   * The platform view behind that note and behind the reserved-key refusal. Held whole rather than
  * reduced to a draft on read, because the two tiers this screen must not collide with: the shell's
  * roster and the keys the shell hardcodes: are on the same payload the platform roster arrives on.
- */
+   */
   @state() private platformView: PlatformHotkeyView | null = null;
  /** Which tiles have had a photo written this session: the thumb cache buster. */
   @state() private photoStamp: Record<string, number> = {};
- /** The dealer's counter-RULE change history (pos_policy), newest first. */
+  /** The dealer's counter-RULE change history (pos_policy), newest first. */
   @state() private history: PolicyChangeRow[] = [];
- /** The server's own sentence when the history read failed; '' means it did not. */
+  /** The server's own sentence when the history read failed; '' means it did not. */
   @state() private historyFault = '';
 
   static styles = [
@@ -127,7 +127,7 @@ export class HosPosCounterSettings extends LitElement {
         display: block;
         font-family: var(--hos-font-ui);
         color: var(--hos-text);
- /* ── THE SCALE, RETUNED TO LAND ON THE APP'S STEPS ────────────────────────────────────
+        /* ── THE SCALE, RETUNED TO LAND ON THE APP'S STEPS ────────────────────────────────────
            These were 0.95 / 0.83 / 0.72rem, which at a 16px root are 15.2 / 13.28 / 11.52px:
            three sizes that agree with nothing else this screen composes with. Measured on the live
            stack, the overlay rendered SIX distinct font sizes against a budget of four
@@ -147,7 +147,7 @@ export class HosPosCounterSettings extends LitElement {
         --cs-caption: 0.75rem;
         font-size: var(--cs-body);
       }
- /* The shared history is the last piece of the scale above, and it is the only one this file
+      /* The shared history is the last piece of the scale above, and it is the only one this file
          can reach: --sh-caption/--sh-body are declared on ITS :host as 12/14px, and a normal
          declaration from the outer tree beats a :host one, so the panel adopts this screen's steps
          without settings-history.ts having to know which screen it is standing in. */
@@ -155,7 +155,7 @@ export class HosPosCounterSettings extends LitElement {
         --sh-caption: var(--cs-caption);
         --sh-body: var(--cs-body);
       }
- /* ── THE FORM'S COLUMNS (wave-1 layout contract) ──────────────────────────────────────────
+      /* ── THE FORM'S COLUMNS (wave-1 layout contract) ──────────────────────────────────────────
          This screen is a FORM, and the contract's rule for a form is that it owes the width it is
          given a column count. It used to be handed a 760px column by pos-terminal.ts's .cspanel and
          stacked five boxes down it: a tile row measured 734px on the live stack at every width
@@ -185,7 +185,7 @@ export class HosPosCounterSettings extends LitElement {
         gap: var(--hos-space-5);
         align-items: start;
       }
- /* Four things take the whole width rather than a track. The tile board is the seven-column row
+      /* Four things take the whole width rather than a track. The tile board is the seven-column row
          argued above; the history is a table of old values, and a table squeezed into a third of the
          panel is a table that scrolls sideways inside a form: the one thing the contract's
          acceptance clause forbids outright. The save's outcome lines go with them because a
@@ -202,7 +202,7 @@ export class HosPosCounterSettings extends LitElement {
         border-radius: var(--hos-radius-card);
         background: var(--hos-deep-earth);
         padding: 12px;
- /* The stack's 10px margin became the grid's gap. Leaving both would have put 30px between
+        /* The stack's 10px margin became the grid's gap. Leaving both would have put 30px between
            the rows of a grid whose columns are 20px apart, which reads as a layout bug rather than
            as rhythm. */
         margin-bottom: 0;
@@ -224,7 +224,7 @@ export class HosPosCounterSettings extends LitElement {
         height: 20px;
         padding: 0;
         line-height: 1;
- /* row 523: one circle. The button's border is gone; the drawn mark's circle is the
+        /* row 523: one circle. The button's border is gone; the drawn mark's circle is the
            ring, at the button's size, so the hit area is unchanged */
         border: none;
         background: transparent;
@@ -250,7 +250,7 @@ export class HosPosCounterSettings extends LitElement {
         border-radius: var(--hos-radius-control);
         color: var(--hos-text);
       }
- /* One row per bound action: what it does, the cap, the control that changes it. */
+      /* One row per bound action: what it does, the cap, the control that changes it. */
       .krow {
         display: grid;
         grid-template-columns: 1fr auto auto;
@@ -288,7 +288,7 @@ export class HosPosCounterSettings extends LitElement {
         color: var(--hos-text);
         cursor: pointer;
       }
- /* vertical-align: middle on the drawn glyph keeps the icon on the
+      /* vertical-align: middle on the drawn glyph keeps the icon on the
       text middle and the line box the character left behind, so the button keeps its exact
       height (PR 55 review round; the quick-action-bar precedent centers, this keeps the box) */
       button.q svg {
@@ -303,7 +303,7 @@ export class HosPosCounterSettings extends LitElement {
         color: var(--hos-stone-amber-text);
         background: color-mix(in srgb, var(--hos-stone-amber) 12%, transparent);
       }
- /* The one gold per panel: the save. */
+      /* The one gold per panel: the save. */
       button.go {
         font: inherit;
         font-size: var(--cs-body);
@@ -384,7 +384,7 @@ export class HosPosCounterSettings extends LitElement {
         color: var(--hos-success);
         margin-top: 8px;
       }
- /* The cross-substrate note. Dim ink, not red: the key is bound and nothing failed. */
+      /* The cross-substrate note. Dim ink, not red: the key is bound and nothing failed. */
       .hint {
         color: var(--hos-text-dim);
         font-size: var(--cs-caption);
@@ -408,7 +408,7 @@ export class HosPosCounterSettings extends LitElement {
     super.disconnectedCallback();
   }
 
- // ── reads ────────────────────────────────────────────────────────────────────────────────────
+  // ── reads ────────────────────────────────────────────────────────────────────────────────────
 
   private async load(): Promise<void> {
     this.error = '';
@@ -430,26 +430,26 @@ export class HosPosCounterSettings extends LitElement {
     }
   }
 
- /**
+  /**
  * The PLATFORM roster for this counter: what this dealer inherits when they have curated nothing.
- *
- * D-111 made this read necessary. Before it, an uncurated dealer's rows were shown from
- * BISTRACK_ROSTER, a constant in this bundle, which was true because the level beneath the dealer
- * WAS that constant. It is now a table a platform operator edits, so showing the constant would
- * show an administrator keys their counter is not actually using, and would make "Reset to
- * platform" a button whose destination is not what the screen displays afterwards.
- *
- * An unreadable platform roster answers EMPTY rather than throwing, and rosterFrom then falls to
+   *
+   * D-111 made this read necessary. Before it, an uncurated dealer's rows were shown from
+   * BISTRACK_ROSTER, a constant in this bundle, which was true because the level beneath the dealer
+   * WAS that constant. It is now a table a platform operator edits, so showing the constant would
+   * show an administrator keys their counter is not actually using, and would make "Reset to
+   * platform" a button whose destination is not what the screen displays afterwards.
+   *
+   * An unreadable platform roster answers EMPTY rather than throwing, and rosterFrom then falls to
  * the shipped BisTrack list: the same degrade the server takes, for the same reason: a settings
- * screen that will not open because a second read timed out is worse than one showing the floor.
- */
+   * screen that will not open because a second read timed out is worse than one showing the floor.
+   */
   private async platformKeys(): Promise<Record<string, string>> {
     try {
       const res = await api('/api/v1/platform/hotkeys');
       if (!res.ok) return {};
       const view = asPlatformView(await res.json());
- // Kept whole for the press-time checks. An unread view leaves them silent, never wrong: the
- // same-roster collision below has never needed it and still does not.
+      // Kept whole for the press-time checks. An unread view leaves them silent, never wrong: the
+      // same-roster collision below has never needed it and still does not.
       this.platformView = view;
       return draftFrom(rosterFor(view, PLATFORM_COUNTER_SURFACE));
     } catch {
@@ -457,21 +457,21 @@ export class HosPosCounterSettings extends LitElement {
     }
   }
 
- /**
+  /**
  * The COUNTER RULES change history: who moved a pos_policy knob, and what it was before.
- *
- * ── WHY IT IS ON THIS SCREEN AND NOT NEXT TO AN EDITOR ────────────────────────────────────────
- *
- * Because there is no editor. pos_policy has been dealer-configurable over the API and by nobody
- * else since it shipped, which is precisely the accountability gap this panel closes: the two
- * knobs that decide who may receive a dealer's margin and a customer's past-due balance could be
- * moved with no record of who moved them. Counter settings is where an administrator already comes
+   *
+   * ── WHY IT IS ON THIS SCREEN AND NOT NEXT TO AN EDITOR ────────────────────────────────────────
+   *
+   * Because there is no editor. pos_policy has been dealer-configurable over the API and by nobody
+   * else since it shipped, which is precisely the accountability gap this panel closes: the two
+   * knobs that decide who may receive a dealer's margin and a customer's past-due balance could be
+   * moved with no record of who moved them. Counter settings is where an administrator already comes
  * to configure the counter, so it is where the record of counter configuration belongs: and when
- * the typed-policy editor does land, the trail is already here rather than starting from empty.
- *
- * A FAILURE NEVER BLOCKS THE SCREEN. It lands in the disclosure's own fault box with a retry; the
- * keys, tiles and panels above it stay editable.
- */
+   * the typed-policy editor does land, the trail is already here rather than starting from empty.
+   *
+   * A FAILURE NEVER BLOCKS THE SCREEN. It lands in the disclosure's own fault box with a retry; the
+   * keys, tiles and panels above it stay editable.
+   */
   private async loadHistory(): Promise<void> {
     this.historyFault = '';
     try {
@@ -489,7 +489,7 @@ export class HosPosCounterSettings extends LitElement {
     }
   }
 
- /** The catalogue behind the tile picker and the tile rows. A failure leaves the picker empty. */
+  /** The catalogue behind the tile picker and the tile rows. A failure leaves the picker empty. */
   private async loadCatalogue(): Promise<void> {
     try {
       this.catalogue = (await listProducts()).filter((p) => p.is_active);
@@ -502,14 +502,14 @@ export class HosPosCounterSettings extends LitElement {
     return this.catalogue.find((p) => p.sku.toLowerCase() === sku.toLowerCase());
   }
 
- // ── the keys ─────────────────────────────────────────────────────────────────────────────────
+  // ── the keys ─────────────────────────────────────────────────────────────────────────────────
 
- /**
- * Arm the capture for one action. The listener goes on the WINDOW in the capture phase for the
- * same reason the counter's own does: an F-key pressed with focus anywhere must reach it, and
- * nothing downstream (the shell's dealer map included) may act on a keystroke that is being
- * recorded rather than obeyed.
- */
+  /**
+   * Arm the capture for one action. The listener goes on the WINDOW in the capture phase for the
+   * same reason the counter's own does: an F-key pressed with focus anywhere must reach it, and
+   * nothing downstream (the shell's dealer map included) may act on a keystroke that is being
+   * recorded rather than obeyed.
+   */
   private startCapture(action: string): void {
     this.stopCapture();
     this.capturing = action;
@@ -544,10 +544,10 @@ export class HosPosCounterSettings extends LitElement {
       this.keyRefusal = 'That combination cannot be bound. Use a function key, or Ctrl or Alt with a letter.';
       return;
     }
- // ITEM 4c · THE KEYS THE SHELL OWNS OUTRIGHT, first, because they are not a collision to be
+    // ITEM 4c · THE KEYS THE SHELL OWNS OUTRIGHT, first, because they are not a collision to be
  // negotiated: no tier holds them and no tier can free them, so naming another action would be
- // an offer this screen cannot honour. Silent until the platform read lands, which is the same
- // degrade the roster read takes: this screen must open whether or not a second read answered.
+    // an offer this screen cannot honour. Silent until the platform read lands, which is the same
+    // degrade the roster read takes: this screen must open whether or not a second read answered.
     const shellHeld = effectiveVerdict(PLATFORM_COUNTER_SURFACE, action, chord, {
       draft: {},
       reserved: reservedOf(this.platformView),
@@ -558,17 +558,17 @@ export class HosPosCounterSettings extends LitElement {
     }
     const clash = collisionFor(this.rosterDraft(), action, chord);
     if (clash) {
- // THE COLLISION, BEFORE THE SAVE. Named by the action it would break, so the way forward is
- // obvious: free that key first, or pick another one.
+      // THE COLLISION, BEFORE THE SAVE. Named by the action it would break, so the way forward is
+      // obvious: free that key first, or pick another one.
       this.keyRefusal = `${keycap(chord)} already runs ${HOTKEY_LABELS[clash] ?? clash}. Change that one first, or pick another key.`;
       return;
     }
     this.keys = { ...this.keys, [action]: chord };
     this.keyRefusal = '';
- // ITEM 4c · THE OTHER SUBSTRATE, WARNED ABOUT AND NEVER REFUSED. F2, F4 and F9 are claimed on
- // both rosters on the shipped default and that is deliberate. An administrator who saw no word
- // about it would either not know, or would find out from a counter person; one who saw a REFUSAL
- // would be blocked from the roster this product ships with.
+    // ITEM 4c · THE OTHER SUBSTRATE, WARNED ABOUT AND NEVER REFUSED. F2, F4 and F9 are claimed on
+    // both rosters on the shipped default and that is deliberate. An administrator who saw no word
+    // about it would either not know, or would find out from a counter person; one who saw a REFUSAL
+    // would be blocked from the roster this product ships with.
     const shared = effectiveVerdict(PLATFORM_COUNTER_SURFACE, action, chord, {
       draft: {},
       other: rosterFor(this.platformView, otherSurface(PLATFORM_COUNTER_SURFACE)),
@@ -580,12 +580,12 @@ export class HosPosCounterSettings extends LitElement {
     );
   };
 
- /** The draft roster as the collision check reads it. */
+  /** The draft roster as the collision check reads it. */
   private rosterDraft(): PosHotkey[] {
     return HOTKEY_ORDER.filter((a) => this.keys[a]).map((a) => ({ action: a, key: this.keys[a] }));
   }
 
- /** One action, reset to nothing. An action with no key simply draws no keycap on the legend. */
+  /** One action, reset to nothing. An action with no key simply draws no keycap on the legend. */
   private clearKey(action: string): void {
     const next = { ...this.keys };
     delete next[action];
@@ -594,24 +594,24 @@ export class HosPosCounterSettings extends LitElement {
     this.keyNote = '';
   }
 
- /**
+  /**
  * Back to the PLATFORM roster, in one action: and it is a DELETE, not a redraft.
- *
- * WHY THIS CHANGED SHAPE UNDER D-111. It used to write BISTRACK_ROSTER into the local draft and
- * leave the administrator to press Save, which WROTE those values into the dealer's own level.
- * That looked like a reset and was the opposite of one: after it, this dealer was permanently
- * curated with what were really defaults, and no level beneath them could ever answer again.
- * Harmless while the level beneath was a constant in source; fatal now that a platform operator
- * can change it, because the whole promise of the platform tier is that a dealer who has not
- * overridden inherits the change live.
- *
+   *
+   * WHY THIS CHANGED SHAPE UNDER D-111. It used to write BISTRACK_ROSTER into the local draft and
+   * leave the administrator to press Save, which WROTE those values into the dealer's own level.
+   * That looked like a reset and was the opposite of one: after it, this dealer was permanently
+   * curated with what were really defaults, and no level beneath them could ever answer again.
+   * Harmless while the level beneath was a constant in source; fatal now that a platform operator
+   * can change it, because the whole promise of the platform tier is that a dealer who has not
+   * overridden inherits the change live.
+   *
  * So reset means what it means everywhere else in this substrate: DELETE the dealer's rows and
- * let the level below answer. The kit's role-items DELETE is scoped to the `action` kind, so the
- * hot list and the panel defaults on this same surface are untouched.
- *
- * The re-read afterwards is what puts the platform roster on the screen, so an administrator sees
- * what they have just inherited rather than being told about it.
- */
+   * let the level below answer. The kit's role-items DELETE is scoped to the `action` kind, so the
+   * hot list and the panel defaults on this same surface are untouched.
+   *
+   * The re-read afterwards is what puts the platform roster on the screen, so an administrator sees
+   * what they have just inherited rather than being told about it.
+   */
   private async resetKeys(): Promise<void> {
     if (this.busy) return;
     this.busy = true;
@@ -651,7 +651,7 @@ export class HosPosCounterSettings extends LitElement {
     await this.put(items, `Keys saved for the ${this.profile} shape: live at every till on the next sale.`);
   }
 
- // ── the hot list ─────────────────────────────────────────────────────────────────────────────
+  // ── the hot list ─────────────────────────────────────────────────────────────────────────────
 
   private moveTile(sku: string, dir: -1 | 1): void {
     const next = [...this.tiles];
@@ -684,14 +684,14 @@ export class HosPosCounterSettings extends LitElement {
     }));
     if (items.length === 0) {
  // An empty curated set is not a statement: the counter would fall straight back to the
- // derived board and the admin would think the save failed.
+      // derived board and the admin would think the save failed.
       this.error = 'Add at least one tile, or leave the board to fill itself from what the yard sells.';
       return;
     }
     await this.put(items, `Hot list saved for the ${this.profile} shape: the counter opens on it now.`);
   }
 
- /** The photo for one tile. Manager-gated server-side; the refusal arrives in words. */
+  /** The photo for one tile. Manager-gated server-side; the refusal arrives in words. */
   private async setPhoto(product: PosProduct, file: File): Promise<void> {
     this.busy = true;
     this.error = '';
@@ -730,7 +730,7 @@ export class HosPosCounterSettings extends LitElement {
     }
   }
 
- // ── the panels ───────────────────────────────────────────────────────────────────────────────
+  // ── the panels ───────────────────────────────────────────────────────────────────────────────
 
   private async savePanels(): Promise<void> {
     const items: SurfaceItem[] = COUNTER_PANELS.map((id, i) => ({
@@ -742,12 +742,12 @@ export class HosPosCounterSettings extends LitElement {
     await this.put(items, `Starting view saved for the ${this.profile} shape.`);
   }
 
- // ── the one write ────────────────────────────────────────────────────────────────────────────
+  // ── the one write ────────────────────────────────────────────────────────────────────────────
 
- /**
- * Every save is the same admin-gated PUT. The kit replaces only the KINDS present in the body, so
- * saving the keys cannot silently erase the board and saving the board cannot erase the keys.
- */
+  /**
+   * Every save is the same admin-gated PUT. The kit replaces only the KINDS present in the body, so
+   * saving the keys cannot silently erase the board and saving the board cannot erase the keys.
+   */
   private async put(items: SurfaceItem[], done: string): Promise<void> {
     if (this.busy) return;
     this.busy = true;
@@ -772,7 +772,7 @@ export class HosPosCounterSettings extends LitElement {
     }
   }
 
- // ── render ───────────────────────────────────────────────────────────────────────────────────
+  // ── render ───────────────────────────────────────────────────────────────────────────────────
 
   render() {
     return html`<div data-testid="pos-counter-settings">
@@ -803,9 +803,9 @@ export class HosPosCounterSettings extends LitElement {
           @change=${(e: Event) => {
             this.profile = (e.target as HTMLSelectElement).value as Profile;
             this.notice = '';
- // AND RE-READ. Changing the job shape used to change only what the next SAVE was
- // addressed to; the rows on screen stayed the caller's own, so an admin picked "yard",
- // saw the counter's keys, and saved those onto the yard.
+            // AND RE-READ. Changing the job shape used to change only what the next SAVE was
+            // addressed to; the rows on screen stayed the caller's own, so an admin picked "yard",
+            // saw the counter's keys, and saved those onto the yard.
             void this.load();
           }}
         >
@@ -876,8 +876,8 @@ export class HosPosCounterSettings extends LitElement {
           <span
             class="cap ${owned ? 'host' : ''} ${chord ? '' : 'none'}"
             data-testid=${`cs-cap-${action}`}
-            aria-label=${owned ? 'The browser also uses this key. Any extra modifier gives it back.' : ''}
-            >${chord ? keycap(chord) : ':'}</span
+            title=${owned ? 'The browser also uses this key. Any extra modifier gives it back.' : ''}
+            >${chord ? keycap(chord) : '(not set)'}</span
           >
           <span>
             <button
@@ -1022,7 +1022,7 @@ export class HosPosCounterSettings extends LitElement {
         <span style="flex:1; min-width:0">
           <label class="f" for="cs-add">Add a tile</label>
           <select id="cs-add" data-testid="cs-tile-add" style="width:100%">
-            <option value="">:</option>
+            <option value="">(not set)</option>
             ${this.pickerGroups().map(
               (g) => html`<optgroup label=${g.label}>
                 ${g.items.map((p) => html`<option value=${p.sku.toLowerCase()}>${p.name} · ${p.sku}</option>`)}
@@ -1053,7 +1053,7 @@ export class HosPosCounterSettings extends LitElement {
     </div>`;
   }
 
- /** The picker, grouped by the same facet the board's first level groups by. */
+  /** The picker, grouped by the same facet the board's first level groups by. */
   private pickerGroups(): { label: string; items: PosProduct[] }[] {
     const chosen = new Set(this.tiles);
     const groups = new Map<string, PosProduct[]>();

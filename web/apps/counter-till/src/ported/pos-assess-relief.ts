@@ -7,14 +7,12 @@ import './pos-signature.js';
 import { focusRing } from './styles/focus-ring.js';
 import { ModalFocus } from './modal-focus.js';
 import { taxReasonWord } from './tax-api.js';
+import { plainDollars } from './_money-format.js';
 
-// HH note: display formatting of a server-computed figure, kept local: the app's
-// format-scan reserves the shared formatter's name for files importing it by its
-// own path (src/money.ts), which a ported file cannot spell. The polish work item
-// converges the display formatters (CLOSURE.md names it).
-function reliefDollars(cents: number): string {
-  return (cents / 100).toFixed(2);
-}
+// HH note: display formatting of a server-computed figure, through the ported
+// surface's named display helper (CLOSURE.md names it); the local wrapper the
+// port first carried is gone, so the division spelling lives only in
+// _money-format.ts.
 
 /**
  * A-19 "Assess tax relief" dialog (US-A19-06). A neutral, per-transaction workflow offered to any
@@ -29,8 +27,8 @@ export class HosPosRelief extends LitElement {
   @property() orderId = '';
   @property({ type: Number }) subtotalCents = 0;
 
- // E6: parent-mounted, so connected IS open. Escape abandons an assessment that has not been
- // submitted, which is the same outcome as the Cancel button and the scrim click already give.
+  // E6: parent-mounted, so connected IS open. Escape abandons an assessment that has not been
+  // submitted, which is the same outcome as the Cancel button and the scrim click already give.
   readonly modalFocus = new ModalFocus(this, {
     container: () => this.renderRoot.querySelector<HTMLElement>('.hos-dialog'),
     onEscape: () => this.close(),
@@ -56,7 +54,7 @@ export class HosPosRelief extends LitElement {
     .hos-dialog {
       position: fixed;
       inset: 0;
- /* THE TOKEN. A scrim's opacity is a judgement about the page behind it, and that page is a
+      /* THE TOKEN. A scrim's opacity is a judgement about the page behind it, and that page is a
          different colour in each of three themes: so a hand-rolled black is tuned for one of them
          and wrong in the other two. Over the near-black loud page a 55% black barely reads as a
          layer, which is the whole job of a scrim. */
@@ -277,9 +275,9 @@ export class HosPosRelief extends LitElement {
                   <span class="pct">${o.outcome}</span>
                   <span class="reason"> · ${taxReasonWord(o.reason_code)}</span>
                   <div class="num">
-                    Full HST ${reliefDollars(o.full_hst_cents)} · On-credit
-                    ${reliefDollars(o.on_credit_cents)} · Collect
-                    ${reliefDollars(o.net_collected_cents)}
+                    Full HST ${plainDollars(o.full_hst_cents)} · On-credit
+                    ${plainDollars(o.on_credit_cents)} · Collect
+                    ${plainDollars(o.net_collected_cents)}
                   </div>
                   ${o.requires_evidence && !o.evidence_satisfied
                     ? html`<div class="gate">

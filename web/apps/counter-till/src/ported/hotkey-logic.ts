@@ -60,7 +60,7 @@ export interface HotkeyAction {
   kind: HotkeyActionKind;
   unit: NavUnitKey;
   module?: NavModuleKey;
- /** Published on the quick-action intent channel BEFORE navigating, exactly as DIB-434 does. */
+  /** Published on the quick-action intent channel BEFORE navigating, exactly as DIB-434 does. */
   intent?: string;
 }
 
@@ -78,8 +78,8 @@ export const INTENT_CATALOGUE_FOCUS_SEARCH = 'catalogue.focus_search';
  * expect this list and the seed rows to change together when the official list lands.
  */
 export const HOTKEY_ACTIONS: Record<string, HotkeyAction> = {
- // The client's example, verbatim: jump to the till and start a fresh sale. It reuses DIB-434's
- // intent, so the POS guard for a live ticket (Continue / Park) protects a hotkey press exactly
+  // The client's example, verbatim: jump to the till and start a fresh sale. It reuses DIB-434's
+  // intent, so the POS guard for a live ticket (Continue / Park) protects a hotkey press exactly
  // as it protects the "+ Sale" click: same instruction, same destination, same guard.
   'sale.cash.new': {
     id: 'sale.cash.new',
@@ -89,21 +89,21 @@ export const HOTKEY_ACTIONS: Record<string, HotkeyAction> = {
     module: 'pos',
     intent: INTENT_POS_NEW_TICKET,
   },
- // D-111 · 'sale.pay' USED TO BE HERE, AND IS DELIBERATELY GONE. It was UNION-TRAIN11's entry for
+  // D-111 · 'sale.pay' USED TO BE HERE, AND IS DELIBERATELY GONE. It was UNION-TRAIN11's entry for
  // the concept's "F8 Pay". Pay belongs to the COUNTER roster and only to it: F12, by the client's
  // own BisTrack ruling (R1): and while this map ALSO knew a pay key, the till's
- // Complete-sale button could and did advertise the wrong one: R1 moved the counter to F12 and
- // left the shell's F8 in place, so the chip named a key that is deliberately unbound. Retiring
- // the action here means no second surface can ever advertise a stale pay key again. Migration
- // 0191 removes the seeded 0171 row in the same commit.
- //
+  // Complete-sale button could and did advertise the wrong one: R1 moved the counter to F12 and
+  // left the shell's F8 in place, so the chip named a key that is deliberately unbound. Retiring
+  // the action here means no second surface can ever advertise a stale pay key again. Migration
+  // 0191 removes the seeded 0171 row in the same commit.
+  //
  // The pos.pay INTENT CHANNEL SURVIVES UNTOUCHED: pos-terminal.ts still consumes
- // INTENT_POS_PAY on both of its intent paths. Only the shell's publisher of it is gone, because
- // a shell hotkey was the only thing that ever published it.
- //
- // F8 IS LEFT UNBOUND, NOT REBOUND, at every shipped default on both maps. An unbound key teaches
- // nothing; a rebound one teaches a trained hand the wrong action.
- //
+  // INTENT_POS_PAY on both of its intent paths. Only the shell's publisher of it is gone, because
+  // a shell hotkey was the only thing that ever published it.
+  //
+  // F8 IS LEFT UNBOUND, NOT REBOUND, at every shipped default on both maps. An unbound key teaches
+  // nothing; a rebound one teaches a trained hand the wrong action.
+  //
  // A second copy of the Sales app: DIB-457's explicit duplication, from the keyboard.
   'sales.tab.new': {
     id: 'sales.tab.new',
@@ -111,8 +111,8 @@ export const HOTKEY_ACTIONS: Record<string, HotkeyAction> = {
     kind: 'new-tab',
     unit: 'sales',
   },
- // The fastest write-up surface shipped today. Flagged in NOTES: the destination is a placeholder
- // until the client's list says what "quick order" opens.
+  // The fastest write-up surface shipped today. Flagged in NOTES: the destination is a placeholder
+  // until the client's list says what "quick order" opens.
   'order.quick.open': {
     id: 'order.quick.open',
     label: 'Open the order write-up screen',
@@ -120,7 +120,7 @@ export const HOTKEY_ACTIONS: Record<string, HotkeyAction> = {
     unit: 'sales',
     module: 'quotes',
   },
- // Product lookup with the cursor already in the search box (the catalogue consumes the intent).
+  // Product lookup with the cursor already in the search box (the catalogue consumes the intent).
   'search.focus': {
     id: 'search.focus',
     label: 'Search the product list',
@@ -129,7 +129,7 @@ export const HOTKEY_ACTIONS: Record<string, HotkeyAction> = {
     module: 'catalogue',
     intent: INTENT_CATALOGUE_FOCUS_SEARCH,
   },
- // The assistant panel.
+  // The assistant panel.
   'assist.open': {
     id: 'assist.open',
     label: 'Open the assistant',

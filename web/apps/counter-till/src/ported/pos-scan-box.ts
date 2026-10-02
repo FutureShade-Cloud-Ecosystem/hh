@@ -30,57 +30,57 @@ import { enterMissOutcome } from './_pos-rev8.js'; // rev 8: the scanner-vs-typi
  */
 @customElement('hos-pos-scan-box')
 export class HosPosScanBox extends LitElement {
- /** Branch for the on-hand shown on the resolved hit. */
+  /** Branch for the on-hand shown on the resolved hit. */
   @property({ attribute: 'branch-id' }) branchId = '';
- /** When true the box grabs focus on first render (the counter's default posture). */
+  /** When true the box grabs focus on first render (the counter's default posture). */
   @property({ type: Boolean, attribute: 'autofocus-scan' }) autofocusScan = false;
- /**
- * DIB-488: render the Add button as the workspace's PRIMARY action (gold fill). The scan bar is
- * the head of the items panel in the counter workspace, and the concept's hierarchy makes its add
- * the loudest control there. Off by default so every other mount is untouched.
- */
+  /**
+   * DIB-488: render the Add button as the workspace's PRIMARY action (gold fill). The scan bar is
+   * the head of the items panel in the counter workspace, and the concept's hierarchy makes its add
+   * the loudest control there. Off by default so every other mount is untouched.
+   */
   @property({ type: Boolean, attribute: 'primary-add' }) primaryAdd = false;
 
- /**
+  /**
  * rev 8 (item 1): the UNIFIED smart field: one box that is BOTH the scan box and the search
- * box. Off by default (every other mount keeps the plain scan box). In unified mode:
- *
- * typing every keystroke is forwarded (`pos-term-changed`) so the host feeds it to the
+   * box. Off by default (every other mount keeps the plain scan box). In unified mode:
+   *
+   * typing every keystroke is forwarded (`pos-term-changed`) so the host feeds it to the
  * live search: debounce, chips interplay and the roving grid all live THERE,
- * untouched; this box adds nothing but the forwarding.
+   * untouched; this box adds nothing but the forwarding.
  * Enter tries the EXACT resolve first (barcode, then exact SKU: resolveScan, the same
- * server door as before). A hit commits instantly: same event, same confirmation
- * line, same clear + refocus (the whole scan contract stands verbatim). A MISS asks
- * the pure classifier (enterMissOutcome): a scanner burst keeps the LOUD
- * unknown-code answer; a typed entry falls through quietly to the search results
- * already on screen.
- *
+   * server door as before). A hit commits instantly: same event, same confirmation
+   * line, same clear + refocus (the whole scan contract stands verbatim). A MISS asks
+   * the pure classifier (enterMissOutcome): a scanner burst keeps the LOUD
+   * unknown-code answer; a typed entry falls through quietly to the search results
+   * already on screen.
+   *
  * The old two-box world is one property away: nothing about the plain mode changed.
- */
+   */
   @property({ type: Boolean, attribute: 'unified' }) unified = false;
 
- /**
- * DIB-506 fix pass: OPT-IN deferred outcome. On the POS ring a resolve IS the add (the line
- * lands client-side in the same gesture), so "Added …" on resolution is the truth. On the quote
+  /**
+   * DIB-506 fix pass: OPT-IN deferred outcome. On the POS ring a resolve IS the add (the line
+   * lands client-side in the same gesture), so "Added …" on resolution is the truth. On the quote
  * work area the add is a server POST that can be REFUSED (margin floor, frozen status): there,
- * "Added" on resolution is a lie the cashier acts on. With this flag the box stays silent on a
- * successful resolve and the HOST speaks the actual add outcome through announce(). Off by
- * default: every existing mount (all of POS) is byte-identical.
- */
+   * "Added" on resolution is a lie the cashier acts on. With this flag the box stays silent on a
+   * successful resolve and the HOST speaks the actual add outcome through announce(). Off by
+   * default: every existing mount (all of POS) is byte-identical.
+   */
   @property({ type: Boolean, attribute: 'defer-outcome' }) deferOutcome = false;
 
- /** announce lets the host speak an add OUTCOME in the box's own message line (see deferOutcome). */
+  /** announce lets the host speak an add OUTCOME in the box's own message line (see deferOutcome). */
   announce(msg: string, kind: 'ok' | 'warn' | 'err'): void {
     this.msg = msg;
     this.msgKind = kind;
   }
 
- /**
+  /**
  * commitDone: the host took the term's top hit (pos-term-commit-top), so the field behaves
- * exactly as it does after a successful scan: cleared, the search stood down, announced, and the
- * caret back in the box for the next item. Same ending for both muscles is the whole point of a
- * unified field.
- */
+   * exactly as it does after a successful scan: cleared, the search stood down, announced, and the
+   * caret back in the box for the next item. Same ending for both muscles is the whole point of a
+   * unified field.
+   */
   commitDone(msg: string): void {
     this.code = '';
     this.msg = msg;
@@ -111,7 +111,7 @@ export class HosPosScanBox extends LitElement {
         gap: 8px;
         align-items: center;
       }
- /* DIB-512 · the visible label said what the placeholder already says ("Scan / Search" beside
+      /* DIB-512 · the visible label said what the placeholder already says ("Scan / Search" beside
          "Scan barcode or search product / SKU": the same instruction twice). Visually hidden, still
          the input's accessible name (the classic clip idiom); the placeholder carries the eye. */
       label {
@@ -200,7 +200,7 @@ export class HosPosScanBox extends LitElement {
  /** focusInput returns the caret to the scan box: called after every resolve and by the parent. */
   focusInput(): void {
     const el = this.renderRoot?.querySelector('input');
- // Guarded: the terminal calls this from a keyboard shortcut that can fire before first render.
+    // Guarded: the terminal calls this from a keyboard shortcut that can fire before first render.
     try {
       el?.focus();
       el?.select();
@@ -209,12 +209,12 @@ export class HosPosScanBox extends LitElement {
     }
   }
 
- /**
- * rev 8: one input door for both modes. Records the inter-key gap (the burst classifier's food),
+  /**
+   * rev 8: one input door for both modes. Records the inter-key gap (the burst classifier's food),
  * updates the code, and: unified only: forwards the term so the host drives the live search.
- * The forwarding is the ENTIRE search integration on this side: debounce/sequencing stay in the
- * grid, byte-identical to the two-box world.
- */
+   * The forwarding is the ENTIRE search integration on this side: debounce/sequencing stay in the
+   * grid, byte-identical to the two-box world.
+   */
   private onInput(e: Event): void {
     const value = (e.target as HTMLInputElement).value;
     const now = Date.now();
@@ -228,19 +228,19 @@ export class HosPosScanBox extends LitElement {
     if (this.unified) this.emitTerm(value);
   }
 
- /**
- * ArrowDown walks OUT of the field and into the result list (the host owns the list, so the host
- * is told rather than reached into). Only in unified mode, and only downward: ArrowUp inside a
- * text field is a caret gesture the browser owns, and stealing it would break the one thing a
+  /**
+   * ArrowDown walks OUT of the field and into the result list (the host owns the list, so the host
+   * is told rather than reached into). Only in unified mode, and only downward: ArrowUp inside a
+   * text field is a caret gesture the browser owns, and stealing it would break the one thing a
  * counter person does most in this box: correcting a typo.
- */
+   */
   private onFieldKey(e: KeyboardEvent): void {
     if (!this.unified || e.key !== 'ArrowDown') return;
     e.preventDefault();
     this.dispatchEvent(new CustomEvent('pos-term-enter-list', { bubbles: true, composed: true }));
   }
 
- /** rev 8: tell the host what the unified field holds (the host feeds the grid's live search). */
+  /** rev 8: tell the host what the unified field holds (the host feeds the grid's live search). */
   private emitTerm(term: string): void {
     this.dispatchEvent(new CustomEvent('pos-term-changed', { detail: { term }, bubbles: true, composed: true }));
   }
@@ -258,15 +258,15 @@ export class HosPosScanBox extends LitElement {
     try {
       const hit = await resolveScan(code, this.branchId);
       if (!hit) {
- // rev 8 (unified): a MISSED Enter is two different moments. A scanner burst keeps the
+        // rev 8 (unified): a MISSED Enter is two different moments. A scanner burst keeps the
  // scan box's LOUD contract below. A typed entry falls through QUIETLY: the live search
- // results (already on screen from the forwarded term) are the answer, and shouting
- // "no product" over them would call a working search broken.
+        // results (already on screen from the forwarded term) are the answer, and shouting
+        // "no product" over them would call a working search broken.
         if (this.unified && enterMissOutcome(gaps, code.length) === 'fall-through-to-search') {
- // THE CLIENT'S ASK: "Enter takes the top hit." The box does not know what the top hit is
+          // THE CLIENT'S ASK: "Enter takes the top hit." The box does not know what the top hit is
  //: the results list does: so it hands the moment to the host and the host commits.
- // A host that has no hit to give simply leaves the term standing, which is the pre-
- // existing quiet fall-through and still the right answer for a term nothing matches.
+          // A host that has no hit to give simply leaves the term standing, which is the pre-
+          // existing quiet fall-through and still the right answer for a term nothing matches.
           this.dispatchEvent(
             new CustomEvent('pos-term-commit-top', {
               detail: { term: code },
@@ -276,8 +276,8 @@ export class HosPosScanBox extends LitElement {
           );
           return; // the term stays in the box and in the search: the results panel answers
         }
- // Loud, specific, and the code stays visible in the message so the cashier can compare it to
- // the label they just shot.
+        // Loud, specific, and the code stays visible in the message so the cashier can compare it to
+        // the label they just shot.
         this.msg = `No product for ${code}: check the label or search by name.`;
         this.msgKind = 'warn';
         this.code = '';
@@ -292,21 +292,21 @@ export class HosPosScanBox extends LitElement {
         }),
       );
       if (!this.deferOutcome) {
- // The POS contract, untouched: on the ring, resolution IS the add.
+        // The POS contract, untouched: on the ring, resolution IS the add.
         this.msg = `Added ${hit.name} · ${hit.sku}`;
         this.msgKind = 'ok';
       }
       this.code = '';
       if (this.unified) this.emitTerm(''); // the commit ends the search: results stand down
     } catch (err) {
- // NOT "unknown barcode": a network or auth failure must never read as a bad label, or the
- // cashier will spend the outage re-shooting a perfectly good product.
+      // NOT "unknown barcode": a network or auth failure must never read as a bad label, or the
+      // cashier will spend the outage re-shooting a perfectly good product.
       this.msg = err instanceof Error ? `Scan failed: ${err.message}` : 'Scan failed.';
       this.msgKind = 'err';
     } finally {
       this.busy = false;
- // The gun is already pointed at the next item. WAIT for the re-render: busy=false only
- // un-disables the input on the next update, and focus() on a disabled input is a silent
+      // The gun is already pointed at the next item. WAIT for the re-render: busy=false only
+      // un-disables the input on the next update, and focus() on a disabled input is a silent
  // no-op: which is exactly how consecutive scanning was losing focus after every add.
       void this.updateComplete.then(() => this.focusInput());
     }

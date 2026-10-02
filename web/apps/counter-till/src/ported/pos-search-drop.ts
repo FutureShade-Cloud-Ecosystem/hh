@@ -41,24 +41,24 @@ import { AddOnce } from './_pos-add-dedupe.js';
  */
 @customElement('hos-pos-search-drop')
 export class HosPosSearchDrop extends LitElement {
- /** Branch whose stock and prices the rows show. */
+  /** Branch whose stock and prices the rows show. */
   @property({ attribute: 'branch-id' }) branchId = '';
  /** The account on the sale: '' is the ordinary walk-in case, priced at retail. */
   @property({ attribute: 'customer-id' }) customerId = '';
- /** The live term, forwarded from the one scan/search field. */
+  /** The live term, forwarded from the one scan/search field. */
   @property() term = '';
- /** How many rows to show. Dealer-tunable from the terminal; the client asked for "about five". */
+  /** How many rows to show. Dealer-tunable from the terminal; the client asked for "about five". */
   @property({ type: Number }) rows = DROP_ROWS;
 
- /**
+  /**
  * DIB-553 (bounce 2): the ticket's change counter, handed down by the terminal.
- *
- * The echo guard is surface state; the ticket is the terminal's. Without this, a click followed
- * by a cart the terminal emptied underneath the surface left the guard still holding a press
- * whose line was gone, and the next click on the same product added NOTHING. The terminal bumps
- * this on every cart change that is not the add itself; this surface forgets its last activation
- * when it moves.
- */
+   *
+   * The echo guard is surface state; the ticket is the terminal's. Without this, a click followed
+   * by a cart the terminal emptied underneath the surface left the guard still holding a press
+   * whose line was gone, and the next click on the same product added NOTHING. The terminal bumps
+   * this on every cart change that is not the add itself; this surface forgets its last activation
+   * when it moves.
+   */
   @property({ type: Number, attribute: false }) ticketEpoch = 0;
 
 
@@ -76,7 +76,7 @@ export class HosPosSearchDrop extends LitElement {
     return dropView(this.hits, this.rows).top;
   }
 
- /** Add the top hit, if there is one. Returns whether anything was added. */
+  /** Add the top hit, if there is one. Returns whether anything was added. */
   commitTop(): boolean {
     const top = this.topHit();
     if (!top) return false;
@@ -84,7 +84,7 @@ export class HosPosSearchDrop extends LitElement {
     return true;
   }
 
- /** Walk into the list from the field (the terminal forwards ArrowDown out of the scan box). */
+  /** Walk into the list from the field (the terminal forwards ArrowDown out of the scan box). */
   focusFirstRow(): boolean {
     if (this.hits.length === 0) return false;
     this.roveIdx = 0;
@@ -149,7 +149,7 @@ export class HosPosSearchDrop extends LitElement {
       .meta .sku {
         font-family: var(--hos-font-mono);
       }
- /* The money column has a fixed floor and is right-aligned, so five prices form one edge
+      /* The money column has a fixed floor and is right-aligned, so five prices form one edge
          instead of five (the DIB-512 finding, held here from the start). */
       .price {
         text-align: right;
@@ -226,7 +226,7 @@ export class HosPosSearchDrop extends LitElement {
   protected updated(changed: Map<string, unknown>): void {
     if (changed.has('term') || changed.has('branchId')) this.schedule();
  // A customer arriving (or leaving) re-prices what is already on screen: the whole point of
- // showing the account's price is that it changes when the account does.
+    // showing the account's price is that it changes when the account does.
     if (changed.has('customerId') && this.hits.length > 0) void this.loadPrices(this.hits);
   }
 
@@ -269,11 +269,11 @@ export class HosPosSearchDrop extends LitElement {
     }
   }
 
- /**
- * The price picture for the rows on screen. Best-effort by design: a pricing outage leaves the
- * rows priceless rather than blank, because a clerk can still add a product and see the ticket
+  /**
+   * The price picture for the rows on screen. Best-effort by design: a pricing outage leaves the
+   * rows priceless rather than blank, because a clerk can still add a product and see the ticket
  * price it: an empty result list would have hidden products that exist.
- */
+   */
   private async loadPrices(hits: CounterHit[]): Promise<void> {
     const shown = dropView(hits, this.rows).rows;
     if (shown.length === 0) {
@@ -296,21 +296,21 @@ export class HosPosSearchDrop extends LitElement {
     }
   }
 
- /**
+  /**
  * DIB-553 (bounce 2): THE THIRD ADD SURFACE, and the one that takes the money.
- *
- * These rows are the counter's DEFAULT way in: the terminal's own comment calls the dropdown
- * "the default surface … a glance" and puts the browse grid behind a <details>. The first cut of
- * the echo guard fixed the hot list and the browse grid and left this one alone, so one
+   *
+   * These rows are the counter's DEFAULT way in: the terminal's own comment calls the dropdown
+   * "the default surface … a glance" and puts the browse grid behind a <details>. The first cut of
+   * the echo guard fixed the hot list and the browse grid and left this one alone, so one
  * double-click on a search row still sold TWO units: measured on the live till at 1440:
- * { row: "Red Mulch DBS-MUL-RED", lines: 1, qty: [2] }. Same rule, same module, same state
- * object, so there is nowhere for a third copy to drift.
- */
+   * { row: "Red Mulch DBS-MUL-RED", lines: 1, qty: [2] }. Same rule, same module, same state
+   * object, so there is nowhere for a third copy to drift.
+   */
   private readonly adder = new AddOnce();
 
- // DIB-553 (bounce 2) / D6 (round 3): the ticket moved under us, so the press this guard is
+  // DIB-553 (bounce 2) / D6 (round 3): the ticket moved under us, so the press this guard is
  // holding may be protecting a line that is gone. The COMPARISON lives in AddOnce.ticketAt: this
- // component deliberately holds no condition of its own for a `false &&` to switch off.
+  // component deliberately holds no condition of its own for a `false &&` to switch off.
   protected willUpdate(): void {
     this.adder.ticketAt(this.ticketEpoch);
   }
@@ -346,7 +346,7 @@ export class HosPosSearchDrop extends LitElement {
     }
     if (v.rows.length === 0) {
  // Empty is never an error, and a search that found nothing is not a fault: role="status".
- // D-107 shape: what is missing, what that means, the way forward, in one calm line.
+      // D-107 shape: what is missing, what that means, the way forward, in one calm line.
       return html`<div class="drop">
         <div class="empty" role="status" data-testid="drop-empty">
           <b>${this.failed ? 'Search paused' : 'No match'}</b>
@@ -397,15 +397,15 @@ export class HosPosSearchDrop extends LitElement {
     </button>`;
   }
 
- /**
- * The row's price picture: what this customer pays, retail struck beside it when they are paying
- * less, the saving, and any bulk break they have not reached. Every figure comes off the server's
+  /**
+   * The row's price picture: what this customer pays, retail struck beside it when they are paying
+   * less, the saving, and any bulk break they have not reached. Every figure comes off the server's
  * quote: see _pos-searchdrop.pricePicture for which parts may be claimed when.
- */
+   */
   private renderPrice(h: CounterHit) {
     const p = pricePicture(this.quotes[h.product_id]);
     if (p.unpriceable) {
- // Never CA$0.00, and never a blank cell that reads as a missing column: the row says it will
+      // Never CA$0.00, and never a blank cell that reads as a missing column: the row says it will
  // price on the ticket, which is true: addProduct resolves the line server-side.
       return html`<span class="price"><span class="none">prices on add</span></span>`;
     }

@@ -308,6 +308,16 @@ export function depositCentsFromTyped(raw: string): number {
 
 /**
  * One line's contribution to what the ticket saves against retail, as the
+ * server priced it: the per-line saving times that line's quantity. The
+ * multiplication is money arithmetic, so the host owns it, exactly as it owns
+ * the footer's summed figure (sumLineSavingCents, below).
+ */
+export function perLineSavingCents(savingCents: number, qty: number): number {
+  return unwired('perLineSavingCents');
+}
+
+/**
+ * One line's contribution to what the ticket saves against retail, as the
  * server priced it: the per-line saving times the quantity, summed by the
  * host because the multiplication is money arithmetic.
  */
@@ -376,6 +386,34 @@ export function writePanelLayoutRaw(key: string, value: string): void {
 /** Forget the layout under this key; the next read returns the default tiling. */
 export function clearPanelLayoutRaw(key: string): void {
   return unwired('clearPanelLayoutRaw');
+}
+
+/**
+ * The catalogue's active products, as the POS module's list route answers.
+ * The reference fetched this route with a bare browser call that carried no
+ * bearer and no organisation header; in HH every ported request rides the
+ * host's one authed helper, so the seam carries the list whole.
+ */
+export function listProducts(): Promise<import('./pos-api.js').PosProduct[]> {
+  return unwired('listProducts');
+}
+
+/**
+ * Put one product's photo bytes: a multipart PUT the host composes, so the
+ * session token and the organisation header travel the host's way and are
+ * never attached by hand inside the ported code.
+ */
+export function putProductImage(productId: string, file: File): Promise<Response> {
+  return unwired('putProductImage');
+}
+
+/**
+ * The receipt window opener. The reference opened a blank same-origin window
+ * here by hand; window surgery around printing is the host's, like the write
+ * itself (printReceiptInto).
+ */
+export function openBlankWindow(): import('./receipt-print-logic.js').ReceiptWindow | null {
+  return unwired('openBlankWindow');
 }
 
 // ---------------------------------------------------------------------------

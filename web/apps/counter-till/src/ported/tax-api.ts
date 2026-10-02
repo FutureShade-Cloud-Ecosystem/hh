@@ -155,7 +155,7 @@ async function unwrap<T>(res: Response): Promise<T> {
       const b = (await res.json()) as { error?: string };
       if (b.error) msg = b.error;
     } catch {
- /* keep status */
+      /* keep status */
     }
     throw new Error(msg);
   }

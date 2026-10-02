@@ -26,19 +26,19 @@ import { canPark, guardMessage, quickStartMode, type LiveTicket } from './quick-
  */
 @customElement('hos-quick-start-guard')
 export class HosQuickStartGuard extends LitElement {
- /** The live ticket the guard is protecting. */
+  /** The live ticket the guard is protecting. */
   @property({ attribute: false }) ticket: LiveTicket = {
     lineCount: 0,
     hasCustomer: false,
     hasOtherWork: false,
   };
 
- /** True while the park request is in flight (the button is doing something on the server). */
+  /** True while the park request is in flight (the button is doing something on the server). */
   @property({ type: Boolean }) busy = false;
 
  // E6: parent-mounted: the terminal renders this element only while the guard is up, so
- // "connected" IS "open". Escape means CONTINUE (the safe answer): dismissing this dialog must
- // leave the till exactly as it was, which is the entire point of the guard.
+  // "connected" IS "open". Escape means CONTINUE (the safe answer): dismissing this dialog must
+  // leave the till exactly as it was, which is the entire point of the guard.
   readonly modalFocus = new ModalFocus(this, {
     container: () => this.renderRoot.querySelector<HTMLElement>('.hos-dialog'),
     onEscape: () => this.emit('quick-start-continue'),
@@ -106,7 +106,7 @@ export class HosQuickStartGuard extends LitElement {
       button:hover {
         border-color: var(--hos-stone-amber);
       }
- /* The primary is CONTINUE, not the destructive-adjacent one. The guard exists because the
+      /* The primary is CONTINUE, not the destructive-adjacent one. The guard exists because the
          click that got here may have been a mistake made from a screen where this till was not
          even visible, so the default answer is "leave it alone". */
       button.primary {
@@ -139,8 +139,8 @@ export class HosQuickStartGuard extends LitElement {
         aria-label="A ticket is already open on this till"
         tabindex="-1"
         @click=${(e: Event) => {
- // Scrim click = Continue, matching Escape. A stray click outside the card must never be
- // read as consent to touch the ticket.
+          // Scrim click = Continue, matching Escape. A stray click outside the card must never be
+          // read as consent to touch the ticket.
           if (e.target === e.currentTarget) this.emit('quick-start-continue');
         }}
       >

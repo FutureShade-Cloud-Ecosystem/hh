@@ -55,14 +55,14 @@ export class HosPosPanels extends LitElement {
  /** The four steps, already derived by the terminal (deriveFlow): number, label, complete. */
   @property({ attribute: false }) steps: FlowStep[] = [];
 
- /** Which panel the operator is working in. Drives the focus ring and the hotkey target. */
+  /** Which panel the operator is working in. Drives the focus ring and the hotkey target. */
   @property() active: FlowStepId | '' = '';
 
   @state() private boxes: PanelLayout | null = null;
   @state() private stack: FlowStepId[] = [...PANEL_ORDER];
   @state() private area: PanelArea = { w: 0, h: 0 };
 
- /** The gesture in flight. Null between gestures; never persisted. */
+  /** The gesture in flight. Null between gestures; never persisted. */
   private drag: {
     id: FlowStepId;
     pointerId: number;
@@ -78,7 +78,7 @@ export class HosPosPanels extends LitElement {
     focusRing,
     css`
     :host { display: block; }
- /* The panel surface scrolls rather than squeezing: a person who drags a panel past the edge of
+    /* The panel surface scrolls rather than squeezing: a person who drags a panel past the edge of
        a big layout meant to put it there, and a surface that silently re-tiled under them would be
        taking the arrangement back. */
     .surface {
@@ -114,7 +114,7 @@ export class HosPosPanels extends LitElement {
       background: var(--hos-slate-warm);
       border: 1px solid var(--hos-line);
       border-radius: var(--hos-radius-card);
- /* Clipped so a panel's own content cannot paint over its neighbour; the BODY scrolls. */
+      /* Clipped so a panel's own content cannot paint over its neighbour; the BODY scrolls. */
       overflow: hidden;
     }
     .panel.active { border-color: var(--hos-stone-amber); }
@@ -175,7 +175,7 @@ export class HosPosPanels extends LitElement {
       overflow: auto;
       padding: 10px;
     }
- /* The edges are AT the border, not outside it: a handle at -3px sits outside a clipped box and
+    /* The edges are AT the border, not outside it: a handle at -3px sits outside a clipped box and
        cannot be hit at all: the floating assistant shipped exactly that bug once. */
     .e { position: absolute; touch-action: none; }
     .e-r { top: 0; right: 0; width: 6px; height: 100%; cursor: ew-resize; }
@@ -191,8 +191,8 @@ export class HosPosPanels extends LitElement {
     super.connectedCallback();
     const stored = readPanels();
     this.stack = normalizeOrder(stored?.order);
- // The boxes wait for a real area: normalising against {0,0} would clamp every panel to one
- // corner and then STORE that on the first gesture. First measure, then place.
+    // The boxes wait for a real area: normalising against {0,0} would clamp every panel to one
+    // corner and then STORE that on the first gesture. First measure, then place.
     this.pendingBoxes = stored?.boxes ?? null;
   }
 
@@ -207,8 +207,8 @@ export class HosPosPanels extends LitElement {
       if (area.w <= 0 || area.h <= 0) return;
       const first = !this.boxes;
       this.area = area;
- // A resize RE-CLAMPS but never re-tiles: the arrangement is the person's, and a window
- // dragged narrower should bring panels back into reach, not throw the layout away.
+      // A resize RE-CLAMPS but never re-tiles: the arrangement is the person's, and a window
+      // dragged narrower should bring panels back into reach, not throw the layout away.
       this.boxes = first ? normalizeLayout(this.pendingBoxes, area) : normalizeLayout(this.boxes, area);
       if (first) this.pendingBoxes = null;
     };
@@ -232,7 +232,7 @@ export class HosPosPanels extends LitElement {
     this.dispatchEvent(new CustomEvent('pos-panel-focus', { detail: { step: id }, bubbles: true, composed: true }));
   }
 
- // ── pointer ──────────────────────────────────────────────────────────────────────────────────
+  // ── pointer ──────────────────────────────────────────────────────────────────────────────────
   private onDown(e: PointerEvent, id: FlowStepId, edges: PanelEdges | null): void {
     if (e.button !== 0 || !this.boxes) return;
     const target = e.currentTarget as HTMLElement;
@@ -257,11 +257,11 @@ export class HosPosPanels extends LitElement {
     this.save();
   };
 
- /**
- * The keyboard path, which is not optional: a counter runs on muscle memory and a panel that can
- * only be placed with a pointer is a panel a keyboard user cannot place at all. Arrows move the
- * focused panel, Alt+Arrows size it, Shift takes the coarse step.
- */
+  /**
+   * The keyboard path, which is not optional: a counter runs on muscle memory and a panel that can
+   * only be placed with a pointer is a panel a keyboard user cannot place at all. Arrows move the
+   * focused panel, Alt+Arrows size it, Shift takes the coarse step.
+   */
   private onHeadKey(e: KeyboardEvent, id: FlowStepId): void {
     if (!this.boxes) return;
     const dir: Record<string, [number, number]> = {

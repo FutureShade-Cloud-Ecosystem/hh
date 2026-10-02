@@ -49,7 +49,7 @@ function priceMoney(cents: number): string {
 
 @customElement('hos-price-breakdown')
 export class HosPriceBreakdown extends LitElement {
- /** A resolved breakdown to render directly (e.g. from a quote line). */
+  /** A resolved breakdown to render directly (e.g. from a quote line). */
   @property({ attribute: false }) breakdown: PriceBreakdown | null = null;
 
  /** Inspector inputs: set these and call resolve() (or click "Resolve"). */
@@ -136,7 +136,7 @@ export class HosPriceBreakdown extends LitElement {
   `,
   ];
 
- /** Read-only resolve against the live engine. */
+  /** Read-only resolve against the live engine. */
   async resolve(): Promise<void> {
     this.loading = true;
     this.error = '';

@@ -161,7 +161,7 @@ export function scrollPlan(
   const cardTop = top;
   const cardBottom = top + height;
   if (height + margin * 2 > viewportHeight) {
- // Taller than the window: nothing shows all of it, so show its head.
+    // Taller than the window: nothing shows all of it, so show its head.
     return Math.max(0, cardTop - margin);
   }
   if (cardTop >= viewTop + margin && cardBottom <= viewBottom - margin) return null; // already whole

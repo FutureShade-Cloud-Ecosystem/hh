@@ -34,7 +34,7 @@ export function parseCompactDate(raw: string): string | null {
   if (iso) {
     return isRealYmd(+iso[1], +iso[2], +iso[3]) ? s : null;
   }
- // Compact numeric entry: strip any separators, then require exactly 8 digits (YYYYMMDD).
+  // Compact numeric entry: strip any separators, then require exactly 8 digits (YYYYMMDD).
   const digits = s.replace(/\D/g, '');
   if (digits.length !== 8) return null;
   const y = digits.slice(0, 4);

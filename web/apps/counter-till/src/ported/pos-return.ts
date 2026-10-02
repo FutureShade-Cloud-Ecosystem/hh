@@ -26,7 +26,7 @@ export class HosPosReturn extends LitElement {
   @property({ type: String }) tillSessionId = '';
 
  // E6: parent-mounted, so connected IS open. Escape is safe at every step of this dialog:
- // nothing is written until the refund is submitted, and the terminal re-opens it clean.
+  // nothing is written until the refund is submitted, and the terminal re-opens it clean.
   readonly modalFocus = new ModalFocus(this, {
     container: () => this.renderRoot.querySelector<HTMLElement>('.hos-dialog'),
     onEscape: () => this.close(),
@@ -45,7 +45,7 @@ export class HosPosReturn extends LitElement {
   @state() private busy = false;
   @state() private error = '';
   @state() private done: ReturnResult | null = null;
- // The idempotency key is minted once per attempted return and retried VERBATIM (replay-safe).
+  // The idempotency key is minted once per attempted return and retried VERBATIM (replay-safe).
   private idemKey = newIdempotencyKey();
 
   static styles = [
@@ -249,7 +249,7 @@ export class HosPosReturn extends LitElement {
       this.lookup = lk;
       this.qty = {};
       this.reasons = {};
- // Card refunds are only possible against the original CARD capture.
+      // Card refunds are only possible against the original CARD capture.
       if (this.refundMethod === 'CARD' && !lk.card_refundable) this.refundMethod = 'CASH';
     } catch (e) {
       this.error = e instanceof Error ? e.message : 'lookup failed';
@@ -375,7 +375,7 @@ export class HosPosReturn extends LitElement {
                               [ln.order_line_id]: (e.target as HTMLSelectElement).value,
                             })}
                         >
-                          <option value="">:</option>
+                          <option value="">(not set)</option>
                           <option value="DAMAGED">Damaged</option>
                           <option value="WRONG_ITEM">Wrong item</option>
                           <option value="SURPLUS">Surplus / over-ordered</option>

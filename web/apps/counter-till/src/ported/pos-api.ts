@@ -16,27 +16,27 @@ export interface PosProduct {
   sold_by: string;
   base_uom: string; // stocking unit: the sell-UoM fallback when sold_by is unset
   is_active: boolean;
- // ── rev 5: the LIST read already enriches every row with the retail anchor + per-branch
+  // ── rev 5: the LIST read already enriches every row with the retail anchor + per-branch
  // on-hand (product.Service.List → enrichRows). The browse grid was ignoring both: its price
- // slot rendered the "click to price & add" placeholder on every tile and its stock glances
- // stopped at an arbitrary 24-product cap. All three fields are optional and absent-is-honest:
- // no anchor → no price claim, no stock read → no stock claim.
+  // slot rendered the "click to price & add" placeholder on every tile and its stock glances
+  // stopped at an arbitrary 24-product cap. All three fields are optional and absent-is-honest:
+  // no anchor → no price claim, no stock read → no stock claim.
   list_price_cents?: number;
   list_price_uom?: string;
   on_hand_by_branch?: Record<string, number>;
  // rev 8 (item 4): the LIST read has always emitted the featured flag: the ★ Favorites chip
- // finally consumes it. Optional/absent-is-honest like the rev-5 trio above.
+  // finally consumes it. Optional/absent-is-honest like the rev-5 trio above.
   is_featured?: boolean;
- /**
- * Whether a thumbnail exists for this product. WAVE 2 · finding 20d.
- *
- * The counter SEARCH carries this (CounterHit.has_image), and counter_search.go says why in its
- * own words: "HasImage lets the UI render a thumbnail without first issuing a request that 404s".
+  /**
+   * Whether a thumbnail exists for this product. WAVE 2 · finding 20d.
+   *
+   * The counter SEARCH carries this (CounterHit.has_image), and counter_search.go says why in its
+   * own words: "HasImage lets the UI render a thumbnail without first issuing a request that 404s".
  * Quick picks and add-on suggestions carry it too. The product LIST: the read that fills the
  * browse grid: does not emit it yet, which is why the field is optional here and why the browse
- * tiles do not speculate (see pos-product-grid.ts). The day the list read emits it, this
- * consumes it and the browse grid starts showing pictures with no further change.
- */
+   * tiles do not speculate (see pos-product-grid.ts). The day the list read emits it, this
+   * consumes it and the browse grid starts showing pictures with no further change.
+   */
   has_image?: boolean;
 }
 
@@ -67,13 +67,13 @@ export interface SaleResult {
   tax_reason_code: string;
   status: string;
   replayed: boolean;
- // ── DIB-488 rev 6 ── item D facts echoed back (sold panel + audit trail), item F change due.
+  // ── DIB-488 rev 6 ── item D facts echoed back (sold panel + audit trail), item F change due.
   po_job_ref?: string;
   salesperson_id?: string;
   salesperson_name?: string;
   cash_tendered_cents?: number;
   change_due_cents?: number;
- // ── DIB-488 rev 8 (item 11) ── the JOB facts echoed back (sold panel + replay-verbatim).
+  // ── DIB-488 rev 8 (item 11) ── the JOB facts echoed back (sold panel + replay-verbatim).
   job_address?: string;
   job_reference?: string;
 }
@@ -94,16 +94,16 @@ export interface ReliefOutcome {
 
 export interface StockGlance {
   product_id: string;
- /** branch_id → AVAILABLE (on-hand − reserved), in the product's BASE unit. */
+  /** branch_id → AVAILABLE (on-hand − reserved), in the product's BASE unit. */
   on_hand: Record<string, number>;
- // ── DIB-488 unit meta: lets the counter speak the number in the item's SELL unit ──
+  // ── DIB-488 unit meta: lets the counter speak the number in the item's SELL unit ──
   base_uom?: string;
   sell_uom?: string;
  /** Base units per ONE sell unit (product_uoms). 0/absent = no conversion on file: do not divide. */
   sell_factor?: number;
- /** branch_id → authored low threshold (0117 reorder point), base units. Absent = none authored. */
+  /** branch_id → authored low threshold (0117 reorder point), base units. Absent = none authored. */
   low_base?: Record<string, number>;
- /** rev 8 (item 9): kg per BASE unit (products.weight_per_unit_kg). Absent = no weight on file. */
+  /** rev 8 (item 9): kg per BASE unit (products.weight_per_unit_kg). Absent = no weight on file. */
   weight_kg_per_base?: number;
 }
 
@@ -113,11 +113,10 @@ export function money(cents: number): string {
   return `CA$${centsAmount(cents)}`; // LOCAL STOPGAP
 }
 
-export async function listProducts(): Promise<PosProduct[]> {
-  const res = await fetch('/api/v1/products?active=true');
-  if (!res.ok) throw new Error(`products ${res.status}`);
-  return (await res.json()) as PosProduct[];
-}
+// HH note: the reference fetched the catalogue here with a bare browser call, no bearer and no
+// organisation header and silent when the boundary is unwired. The list rides the host seam now
+// (ports.ts, named in CLOSURE.md), same signature, same parsed shape.
+export { listProducts } from './ports.js';
 
 export async function resolveLine(input: {
   product_id: string;
@@ -178,14 +177,14 @@ export interface SalePost {
   offline?: boolean;
   deposit_cents?: number; // unpaid-at-ring only (Charge Account / COD)
   deposit_method?: string;
- // ── DIB-488 rev 6 ── item D (optional More-options facts) + item F (cash tendered, only sent
- // when it covers the total). All three ride the ring BODY, so stableRingKey's fingerprint
- // (JSON.stringify of the payload) re-mints the idempotency key naturally when any of them change.
+  // ── DIB-488 rev 6 ── item D (optional More-options facts) + item F (cash tendered, only sent
+  // when it covers the total). All three ride the ring BODY, so stableRingKey's fingerprint
+  // (JSON.stringify of the payload) re-mints the idempotency key naturally when any of them change.
   po_job_ref?: string;
   salesperson_id?: string;
   cash_tendered_cents?: number;
- // ── DIB-488 rev 8 (item 11) ── the JOB fields ride the body the same way, so stableRingKey's
- // fingerprint re-mints the idempotency key naturally when either changes.
+  // ── DIB-488 rev 8 (item 11) ── the JOB fields ride the body the same way, so stableRingKey's
+  // fingerprint re-mints the idempotency key naturally when either changes.
   job_address?: string;
   job_reference?: string;
   lines: SaleLineInput[];
@@ -206,7 +205,7 @@ export async function createSale(body: SalePost): Promise<{ ok: true; sale: Sale
   try {
     parsed = (await res.json()) as typeof parsed;
   } catch {
- /* non-JSON body */
+    /* non-JSON body */
   }
   return { ok: false, err: { status: res.status, error: parsed.error ?? 'sale_failed', policy: parsed.policy, line: parsed.line } };
 }
@@ -285,23 +284,23 @@ export interface PosPolicy {
   branch_id: string;
   cod_enabled: boolean;
   notes: string;
- // ── DIB-488 / D-096 dealer-level workspace preferences (0165) ──
- /** Default items presentation: 'LINES' (compact thumbnail rows) | 'CARDS' (tap-tile grid). */
+  // ── DIB-488 / D-096 dealer-level workspace preferences (0165) ──
+  /** Default items presentation: 'LINES' (compact thumbnail rows) | 'CARDS' (tap-tile grid). */
   line_presentation?: string;
- /** Whether the quick category chip row renders at all. */
+  /** Whether the quick category chip row renders at all. */
   quick_chips_enabled?: boolean;
  // ── DIB-488 rev 2 dealer-level workspace DEFAULTS (0166): written via the admin policy PUT ──
- /** Default share (%) of the workspace given to the inventory-lookup panel (20-80). */
+  /** Default share (%) of the workspace given to the inventory-lookup panel (20-80). */
   workspace_split_pct?: number;
- /** Default panel arrangement: 'LOOKUP_LEFT' | 'SALE_LEFT'. */
+  /** Default panel arrangement: 'LOOKUP_LEFT' | 'SALE_LEFT'. */
   workspace_arrangement?: string;
- // ── DIB-488 rev 3 (0167): the lookup-results presentation default ──
- /** How the inventory-lookup results paint: 'CARDS' (product-card grid) | 'ROWS' (dense list). */
+  // ── DIB-488 rev 3 (0167): the lookup-results presentation default ──
+  /** How the inventory-lookup results paint: 'CARDS' (product-card grid) | 'ROWS' (dense list). */
   lookup_presentation?: string;
- // ── DIB-488 rev 8 (0170) ──
- /** Who receives margin/profit in POS payloads: 'MANAGER_UP' | 'ALL_STAFF' | 'HIDDEN'. */
+  // ── DIB-488 rev 8 (0170) ──
+  /** Who receives margin/profit in POS payloads: 'MANAGER_UP' | 'ALL_STAFF' | 'HIDDEN'. */
   margin_visibility?: string;
- /** The curated single-row chip categories (item 4); derived from top sellers when un-curated. */
+  /** The curated single-row chip categories (item 4); derived from top sellers when un-curated. */
   quick_chip_set?: string[];
 }
 
@@ -340,7 +339,7 @@ export async function putWorkspacePrefs(body: {
   lookup_collapsed: boolean;
   sale_collapsed: boolean;
   lookup_presentation: string;
- /** rev 8 (0170): optional so every earlier caller still typechecks; the server defaults false. */
+  /** rev 8 (0170): optional so every earlier caller still typechecks; the server defaults false. */
   margin_hidden?: boolean;
 }): Promise<WorkspacePrefsRow> {
   const res = await api('/api/v1/pos/workspace', { method: 'PUT', body: JSON.stringify(body) });
@@ -461,7 +460,7 @@ export async function createReturn(body: {
       const b = (await res.json()) as { error?: string };
       if (b.error) msg = b.error;
     } catch {
- /* non-JSON body */
+      /* non-JSON body */
     }
     throw new Error(msg);
   }
@@ -547,7 +546,7 @@ async function requestJson<T>(res: Response, what: string): Promise<T> {
       const b = (await res.json()) as { error?: string };
       if (b.error) msg = b.error;
     } catch {
- /* non-JSON body */
+      /* non-JSON body */
     }
     throw new Error(msg);
   }
@@ -591,7 +590,7 @@ export interface CounterHit {
   base_uom: string;
   sold_by?: string;
   has_image: boolean;
- /** EXACT | SKU_PREFIX | NAME_PREFIX | NAME | DESCRIPTION | ALIAS | FUZZY */
+  /** EXACT | SKU_PREFIX | NAME_PREFIX | NAME | DESCRIPTION | ALIAS | FUZZY */
   match_reason: string;
   on_hand_branch?: number;
   on_hand_by_branch?: Record<string, number>;
@@ -864,16 +863,9 @@ export async function getSale(id: string): Promise<SaleView> {
  * a JSON header would make every upload a 415. The Authorization header is added the same way
  * api() adds it, from the same stored token.
  */
-export async function putProductImage(productId: string, file: File): Promise<Response> {
-  const headers: Record<string, string> = { 'Content-Type': file.type || 'image/png' };
-  const token = getSessionToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
-  return fetch(`/api/v1/products/${encodeURIComponent(productId)}/image?alt=${encodeURIComponent(file.name)}`, {
-    method: 'PUT',
-    headers,
-    body: file,
-  });
-}
+// HH note: the reference composed this multipart PUT by hand and attached the raw session token
+// itself. The host composes the upload now (ports.ts, named in CLOSURE.md), same signature.
+export { putProductImage } from './ports.js';
 
 export async function deleteProductImage(productId: string): Promise<Response> {
   return api(`/api/v1/products/${encodeURIComponent(productId)}/image`, { method: 'DELETE' });

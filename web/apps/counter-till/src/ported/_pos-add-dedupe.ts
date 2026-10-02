@@ -87,9 +87,9 @@ export const NO_LAST_ADD: LastAdd = { id: '', at: 0 };
 export function isEchoAdd(last: LastAdd, id: string, now: number, window = ADD_DEDUPE_MS): boolean {
   if (!id || !last.id || id !== last.id) return false;
   const gap = now - last.at;
- // A clock that went BACKWARDS (a system time change, a test handing an older instant) must not be
- // read as "0ms ago" and swallow a real press: only a gap that is genuinely inside the window is
- // an echo.
+  // A clock that went BACKWARDS (a system time change, a test handing an older instant) must not be
+  // read as "0ms ago" and swallow a real press: only a gap that is genuinely inside the window is
+  // an echo.
   if (gap < 0) return false;
   return gap < window;
 }
@@ -143,15 +143,15 @@ export const ADD_ECHO_EVENT = 'pos-add-echo';
  */
 export class AddOnce {
   private last: LastAdd = NO_LAST_ADD;
- /** The ticket generation the held activation belongs to. -1 = this surface has not been told yet. */
+  /** The ticket generation the held activation belongs to. -1 = this surface has not been told yet. */
   private epoch = -1;
 
- /**
- * Dispatch this activation, unless it is the echo of the one before it.
- *
- * Returns `true` when `pos-add-product` went out, `false` when the press was swallowed (and
- * `pos-add-echo` went out instead, so the swallow is never silent).
- */
+  /**
+   * Dispatch this activation, unless it is the echo of the one before it.
+   *
+   * Returns `true` when `pos-add-product` went out, `false` when the press was swallowed (and
+   * `pos-add-echo` went out instead, so the swallow is never silent).
+   */
   add(host: EventTarget, id: string, product: unknown, now: number = Date.now()): boolean {
     if (isEchoAdd(this.last, id, now)) {
       host.dispatchEvent(
@@ -170,47 +170,47 @@ export class AddOnce {
     return true;
   }
 
- /**
- * The ticket changed underneath this surface, so the line this guard is protecting may not be
+  /**
+   * The ticket changed underneath this surface, so the line this guard is protecting may not be
  * there any more: forget the last activation.
- *
- * WHY (the scoping smell the refuter labelled, now closed): `last` is surface state and the cart
+   *
+   * WHY (the scoping smell the refuter labelled, now closed): `last` is surface state and the cart
  * is the terminal's. Driving the component directly: click, then `term.cart = []`, then click:
- * produced ZERO lines, because the guard was still holding a press whose line no longer existed.
- * New Sale and Park re-render enough to reset it in practice; "in practice" is not a rule. The
- * terminal now passes a `ticketEpoch` that it bumps on every cart change that is NOT the add
- * itself (New Sale, remove line, edit quantity, resume a parked ticket, apply a pop-out
- * snapshot), and each surface calls this when it changes. Reprice is deliberately NOT one of
- * them: reprice runs inside addProduct, so bumping there would cancel the guard on the very
- * gesture it exists for.
- */
+   * produced ZERO lines, because the guard was still holding a press whose line no longer existed.
+   * New Sale and Park re-render enough to reset it in practice; "in practice" is not a rule. The
+   * terminal now passes a `ticketEpoch` that it bumps on every cart change that is NOT the add
+   * itself (New Sale, remove line, edit quantity, resume a parked ticket, apply a pop-out
+   * snapshot), and each surface calls this when it changes. Reprice is deliberately NOT one of
+   * them: reprice runs inside addProduct, so bumping there would cancel the guard on the very
+   * gesture it exists for.
+   */
   reset(): void {
     this.last = NO_LAST_ADD;
   }
 
- /**
- * The ticket this surface is guarding, as the terminal currently understands it.
- *
+  /**
+   * The ticket this surface is guarding, as the terminal currently understands it.
+   *
  * WHY THE COMPARISON MOVED IN HERE (round 3, D6 again: and the bounce was right).
- * Round 2's hand-in said "no component holds an expression a `false &&` can switch off", and
- * every one of the three guarded surfaces held exactly one:
- *
- * if (changed.has('ticketEpoch')) this.adder.reset();
- *
- * Mutated to `if (false && changed.has('ticketEpoch'))`, all 3311 frontend tests stayed green,
+   * Round 2's hand-in said "no component holds an expression a `false &&` can switch off", and
+   * every one of the three guarded surfaces held exactly one:
+   *
+   * if (changed.has('ticketEpoch')) this.adder.reset();
+   *
+   * Mutated to `if (false && changed.has('ticketEpoch'))`, all 3311 frontend tests stayed green,
  * because the census defended that line with `assert.match(code, /this\.adder\.reset\(\)/)`:
- * a regex `false &&` satisfies perfectly. And it is not an equivalent mutant: measured, a re-add
- * at a 121ms gap after the line was removed LANDS at baseline and is SWALLOWED under the
- * mutation. A real press lost to a stale latch, one line downstream of where D6 was closed.
- *
- * So the comparison is here, where a driven clock and a real EventTarget can reach it, and the
- * components call this unconditionally. They now genuinely hold no expression to short-circuit:
- * the only mutation left to them is DELETING the call, which is structural, which the tree-walk
- * in _pos-add-dedupe.test.mjs sees and the browser probe measures.
- *
+   * a regex `false &&` satisfies perfectly. And it is not an equivalent mutant: measured, a re-add
+   * at a 121ms gap after the line was removed LANDS at baseline and is SWALLOWED under the
+   * mutation. A real press lost to a stale latch, one line downstream of where D6 was closed.
+   *
+   * So the comparison is here, where a driven clock and a real EventTarget can reach it, and the
+   * components call this unconditionally. They now genuinely hold no expression to short-circuit:
+   * the only mutation left to them is DELETING the call, which is structural, which the tree-walk
+   * in _pos-add-dedupe.test.mjs sees and the browser probe measures.
+   *
  * Idempotent on purpose: `willUpdate` runs on every render, and only a CHANGED generation is a
- * ticket that moved. A surface's first sighting resets nothing that exists.
- */
+   * ticket that moved. A surface's first sighting resets nothing that exists.
+   */
   ticketAt(epoch: number): void {
     if (epoch === this.epoch) return;
     this.epoch = epoch;

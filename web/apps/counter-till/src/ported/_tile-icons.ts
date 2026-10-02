@@ -46,9 +46,9 @@
 
 /** One icon: the path commands that draw it, and the word a text alternative would use. */
 export interface TileIcon {
- /** SVG path `d` strings, drawn in order, stroked in currentColor. Frozen: geometry the
- * registry hands out is read-only by contract (the generated registry deep-freezes every
- * array, and a consumer must never bend a shared drawing after load). */
+  /** SVG path `d` strings, drawn in order, stroked in currentColor. Frozen: geometry the
+   * registry hands out is read-only by contract (the generated registry deep-freezes every
+   * array, and a consumer must never bend a shared drawing after load). */
   paths: readonly string[];
 }
 
@@ -59,7 +59,7 @@ export interface TileIcon {
  * icon and drops a tile back to the fallback.
  */
 export const TILE_ICONS: Record<string, TileIcon> = {
- // ── provider tiles ────────────────────────────────────────────────────────────────────────────
+  // ── provider tiles ────────────────────────────────────────────────────────────────────────────
  // Today's sales: a till receipt with a torn foot.
   'sales.today': {
     paths: ['M6 3.5h12v17l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4z', 'M9 8h6', 'M9 12h6'],
@@ -105,7 +105,7 @@ export const TILE_ICONS: Record<string, TileIcon> = {
     paths: ['M2.5 6h19v12h-19z', 'M9.6 12a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0-4.8 0', 'M5.5 9v6', 'M18.5 9v6'],
   },
 
- // ── shell cards (app-shell.ts DashboardMetric ids) ────────────────────────────────────────────
+  // ── shell cards (app-shell.ts DashboardMetric ids) ────────────────────────────────────────────
  // Pending approvals: a decision stamped.
   approvals: {
     paths: ['M5 4.5h14v15H5z', 'M8.5 12l2.4 2.5 4.6-5'],
@@ -119,25 +119,25 @@ export const TILE_ICONS: Record<string, TileIcon> = {
     paths: ['M2.5 12h4.2l2.3-6 3.6 12 2.4-6h6.5'],
   },
 
- // ── visualization shapes ──────────────────────────────────────────────────────────────────────
- // A composed chart wears the mark of WHAT IT DRAWS, not of the module it measures: on a band of
- // charts the useful distinction at a glance is bars-versus-proportion-versus-figures, and the
- // module is already the first word of the tile's label.
+  // ── visualization shapes ──────────────────────────────────────────────────────────────────────
+  // A composed chart wears the mark of WHAT IT DRAWS, not of the module it measures: on a band of
+  // charts the useful distinction at a glance is bars-versus-proportion-versus-figures, and the
+  // module is already the first word of the tile's label.
   'viz.time_series': { paths: ['M3.5 19.5V4', 'M3.5 19.5H21', 'M6.5 16l4-5 3.5 3 5-7'] },
   'viz.breakdown': { paths: ['M3.5 19.5V4', 'M3.5 19.5H21', 'M6.5 19.5v-5', 'M11 19.5v-9', 'M15.5 19.5v-6', 'M20 19.5v-11'] },
   'viz.single_value': { paths: ['M4 6.5h16', 'M4 12h9', 'M4 17.5h13'] },
   'viz.distribution': { paths: ['M3.5 8.5h17v7h-17z', 'M10 8.5v7', 'M14.5 8.5v7'] },
- // The three SHIPPED shapes of the curated metric catalog. `bar` reuses the breakdown mark and
+  // The three SHIPPED shapes of the curated metric catalog. `bar` reuses the breakdown mark and
  // `split` the distribution mark rather than drawing two more nearly-identical glyphs: one visual
- // weight for the whole system is the rule, and two icons for one idea is how that erodes.
+  // weight for the whole system is the rule, and two icons for one idea is how that erodes.
   'viz.bar': { paths: ['M3.5 19.5V4', 'M3.5 19.5H21', 'M6.5 19.5v-5', 'M11 19.5v-9', 'M15.5 19.5v-6', 'M20 19.5v-11'] },
   'viz.split': { paths: ['M3.5 8.5h17v7h-17z', 'M10 8.5v7', 'M14.5 8.5v7'] },
   'viz.list': { paths: ['M4 6.5h16', 'M4 12h9', 'M4 17.5h13'] },
 
- // ── the neutral fallback ──────────────────────────────────────────────────────────────────────
- // An id nobody mapped still gets an ICON, never a codepoint and never an empty box: a plain
- // rounded square. Deliberately dull, so an unmapped tile is visible to whoever added it without
- // ever being illegible to the person using the dashboard.
+  // ── the neutral fallback ──────────────────────────────────────────────────────────────────────
+  // An id nobody mapped still gets an ICON, never a codepoint and never an empty box: a plain
+  // rounded square. Deliberately dull, so an unmapped tile is visible to whoever added it without
+  // ever being illegible to the person using the dashboard.
   _fallback: { paths: ['M5 5.5h14v13H5z'] },
 };
 
@@ -168,12 +168,12 @@ export function tileIcon(id: string): TileIcon {
     const shape = id.split(':')[2] ?? '';
     return TILE_ICONS[`viz.${shape}`] ?? TILE_ICONS[FALLBACK_ICON_ID];
   }
- // A COMPOSED chart id is `viz.<metric>-<dimension>-<shape>` (the curated metric catalog's stored
- // key, _viz-tile.composeId). The shape is the last dash-separated part, and it is what decides
+  // A COMPOSED chart id is `viz.<metric>-<dimension>-<shape>` (the curated metric catalog's stored
+  // key, _viz-tile.composeId). The shape is the last dash-separated part, and it is what decides
  // the icon: the same rule as the colon form above, over the id shape the substrate actually
- // stores. A composed id whose shape this build does not draw falls back like anything else.
- // (These two constructed keys always begin `viz.`, which no Object.prototype member does, so a
- // plain index cannot resolve an inherited name here.)
+  // stores. A composed id whose shape this build does not draw falls back like anything else.
+  // (These two constructed keys always begin `viz.`, which no Object.prototype member does, so a
+  // plain index cannot resolve an inherited name here.)
   if (id.startsWith('viz.') && id.includes('-')) {
     const shape = id.slice(id.lastIndexOf('-') + 1);
     return TILE_ICONS[`viz.${shape}`] ?? TILE_ICONS[FALLBACK_ICON_ID];

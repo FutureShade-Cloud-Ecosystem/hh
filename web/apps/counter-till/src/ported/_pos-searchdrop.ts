@@ -30,11 +30,11 @@ export const MIN_TERM = 2;
 
 /** What the dropdown renders for a given answer. */
 export interface DropView {
- /** The rows actually shown (never more than `cap`). */
+  /** The rows actually shown (never more than `cap`). */
   rows: CounterHit[];
- /** How many matches were left off the end. 0 renders nothing. */
+  /** How many matches were left off the end. 0 renders nothing. */
   overflow: number;
- /** The hit Enter commits. Null when there is nothing to commit. */
+  /** The hit Enter commits. Null when there is nothing to commit. */
   top: CounterHit | null;
 }
 
@@ -111,16 +111,16 @@ export interface CounterQuote {
 export interface PricePicture {
  /** Nothing can be said: render no price at all (never CA$0.00). */
   unpriceable: boolean;
- /** The customer's own price. */
+  /** The customer's own price. */
   customerCents: number;
- /** Retail, shown STRUCK only when the customer is actually paying less than it. */
+  /** Retail, shown STRUCK only when the customer is actually paying less than it. */
   retailCents: number;
   showRetail: boolean;
  /** The saving against retail: the number Ryan Rood says customers always ask for. */
   savingCents: number;
   savingBps: number;
   showSaving: boolean;
- /** Which rule produced the saving, in the server's word (CONTRACT / BULK / PROMO / …). */
+  /** Which rule produced the saving, in the server's word (CONTRACT / BULK / PROMO / …). */
   basis: string;
  /** A bulk break the customer has NOT reached: an offer to make, never a price already given. */
   showBreak: boolean;

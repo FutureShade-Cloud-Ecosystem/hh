@@ -44,7 +44,7 @@ import { legendKeys, type PosHotkey, type HotkeyState } from './_pos-hotkeys.js'
  */
 @customElement('hos-pos-hotkey-legend')
 export class HosPosHotkeyLegend extends LitElement {
- /** The dealer's roster, resolved server-side. */
+  /** The dealer's roster, resolved server-side. */
   @property({ attribute: false }) roster: PosHotkey[] = [];
  /** The sale facts availability derives from: the same ones the controls disable on. */
   @property({ attribute: false }) state: HotkeyState = {
@@ -108,14 +108,14 @@ export class HosPosHotkeyLegend extends LitElement {
     .k.off .cap {
       color: var(--hos-text-dim);
     }
- /* A key the browser also owns wears a dotted cap: the dealer chose it, the escape rule (any
+    /* A key the browser also owns wears a dotted cap: the dealer chose it, the escape rule (any
        extra modifier falls through) still applies, and the mark is how a counter person knows. */
     .k.host .cap {
       border-style: dashed;
     }
  /* The one control on the bar. Quiet: it is an exit, not an action: and it is the only thing
        here that takes pointer events back from the pass-through host. */
- /* It sits immediately after the last keycap, NOT flushed right. The shell's Feedback pill lives
+    /* It sits immediately after the last keycap, NOT flushed right. The shell's Feedback pill lives
        in the bottom-right corner and would sit on top of a right-flushed control at a touch width:
        an exit you cannot reach is worse than no exit. Beside the keys it is also beside the thing it
        dismisses, which is where a person looks for it. */

@@ -22,15 +22,15 @@
 
 /** The glance facts for ONE branch, as the terminal caches them per product. */
 export interface StockFacts {
- /** AVAILABLE at the branch, base units. undefined = the glance has no answer here. */
+  /** AVAILABLE at the branch, base units. undefined = the glance has no answer here. */
   availableBase: number | undefined;
- /** The dealer's authored low threshold (reorder point) at the branch, base units. undefined = none authored. */
+  /** The dealer's authored low threshold (reorder point) at the branch, base units. undefined = none authored. */
   lowBase: number | undefined;
- /** Stocking base unit ('' when the meta hasn't loaded). */
+  /** Stocking base unit ('' when the meta hasn't loaded). */
   baseUom: string;
- /** Declared sell unit ('' when the meta hasn't loaded). */
+  /** Declared sell unit ('' when the meta hasn't loaded). */
   sellUom: string;
- /** Base units per ONE sell unit. 0 = no conversion on file. */
+  /** Base units per ONE sell unit. 0 = no conversion on file. */
   sellFactor: number;
 }
 
@@ -39,7 +39,7 @@ export type StockTone = 'ok' | 'low' | 'out';
 
 export interface StockStatus {
   tone: StockTone;
- /** The whole rendered sentence. */
+  /** The whole rendered sentence. */
   label: string;
 }
 
@@ -71,7 +71,7 @@ export function stockStatus(f: StockFacts): StockStatus | null {
   if (f.availableBase <= 0) {
     return { tone: 'out', label: 'Out of stock at this branch' };
   }
- // Speak the sell unit when convertible; else the base unit, honestly labelled.
+  // Speak the sell unit when convertible; else the base unit, honestly labelled.
   const sell = f.sellUom && f.sellUom !== f.baseUom ? availableInSellUnit(f.availableBase, f.sellFactor) : f.availableBase;
   const qty = sell === null ? f.availableBase : sell;
   const uom = sell === null ? f.baseUom : f.sellUom || f.baseUom;

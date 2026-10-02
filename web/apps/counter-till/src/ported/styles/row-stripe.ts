@@ -47,12 +47,12 @@ import { css } from 'lit';
  * in the loud block; no literal may appear in this file.
  */
 export const rowStripe = css`
- /*
+  /*
  * The resting row. This declares "transparent": which is what an un-styled row already is: and
- * it is here on purpose rather than as a no-op: it gives the pair a second half, so a surface
- * that wants a different resting row has to overwrite a NAMED token instead of quietly adding a
- * background nobody can find. Both halves of the stripe are one thing you can grep for.
- */
+   * it is here on purpose rather than as a no-op: it gives the pair a second half, so a surface
+   * that wants a different resting row has to overwrite a NAMED token instead of quietly adding a
+   * background nobody can find. Both halves of the stripe are one thing you can grep for.
+   */
   :where(tbody > tr) {
     background: var(--hos-row);
   }

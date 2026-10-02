@@ -74,17 +74,17 @@ export function ringErrorMessage(err: { status: number; error: string }): string
 
 /** What the counter is told, and what it is allowed to claim. */
 export interface SaleConfirmation {
- /** The one-line verdict, big and unmissable. */
+  /** The one-line verdict, big and unmissable. */
   headline: string;
  /** True only when money actually landed: drives the success styling, not the mere existence of a sale. */
   settled: boolean;
- /** The label over the headline amount: what that number IS. */
+  /** The label over the headline amount: what that number IS. */
   amountLabel: string;
- /** The amount the clerk says out loud, in cents. */
+  /** The amount the clerk says out loud, in cents. */
   amountCents: number;
- /** Still owed, in cents. 0 on a settled sale. */
+  /** Still owed, in cents. 0 on a settled sale. */
   balanceCents: number;
- /** How it was settled, in counter words. */
+  /** How it was settled, in counter words. */
   tenderLabel: string;
  /** The qualifying sentence under the figures: empty when there is nothing to qualify. */
   note: string;
@@ -142,21 +142,21 @@ export function saleConfirmation(sale: {
   const deposit = sale.deposit_cents ?? 0;
   const paidInFull = !!sale.payment_id && deposit === 0;
   const isCOD = sale.sale_type === 'COD';
- // A ring retried over a flaky counter connection returns the ORIGINAL sale rather than making a
- // second one. Saying so is the whole point of the ticket: the clerk who pressed Cash twice needs
- // to know the second press did not take a second payment.
+  // A ring retried over a flaky counter connection returns the ORIGINAL sale rather than making a
+  // second one. Saying so is the whole point of the ticket: the clerk who pressed Cash twice needs
+  // to know the second press did not take a second payment.
   const note = sale.replayed
     ? 'This ring was retried: the sale above is the original, not a second one.'
     : isCOD && !paidInFull
       ? 'Goods are held until this is paid.'
       : '';
 
- // DIB-512 · one word per surface. The old card said its one fact three ways at once ("Paid in
+  // DIB-512 · one word per surface. The old card said its one fact three ways at once ("Paid in
  // full" + label "Paid" + a Status row "PAID", under a pill "COMMITTED"): the critique's exact
- // duplicate-fact finding. The headline now carries the outcome in ONE counter word; the amount
- // label survives ONLY where it is load-bearing (an unsettled sale's number is the BALANCE, not
+  // duplicate-fact finding. The headline now carries the outcome in ONE counter word; the amount
+  // label survives ONLY where it is load-bearing (an unsettled sale's number is the BALANCE, not
  // the total: that distinction stays spoken). A settled sale's big number needs no caption:
- // 'Paid' above it already says what it is.
+  // 'Paid' above it already says what it is.
   if (paidInFull) {
     return {
       headline: 'Paid',
@@ -349,13 +349,13 @@ export function humanizeRingError(msg: string): string {
     if (pattern.test(stripped)) return sentence;
   }
 
- // THE FLOOR. Everything above is a sentence somebody wrote for this screen. Anything else is a
+  // THE FLOOR. Everything above is a sentence somebody wrote for this screen. Anything else is a
  // server message we have not read, and the honest default is to show it: a clerk who can see
- // "a split tender may carry at most 6 legs" can act on it, and hiding that behind a generic
- // sentence would be the worse defect. But a message still carrying a column name, a constraint
- // value or a key is not a sentence, and passing it through is how DIB-485 happened. Those get the
- // generic line instead, which says the one thing that is always true and always useful: the sale
- // did not go through, and nothing was rung.
+  // "a split tender may carry at most 6 legs" can act on it, and hiding that behind a generic
+  // sentence would be the worse defect. But a message still carrying a column name, a constraint
+  // value or a key is not a sentence, and passing it through is how DIB-485 happened. Those get the
+  // generic line instead, which says the one thing that is always true and always useful: the sale
+  // did not go through, and nothing was rung.
   if (INTERNAL_VOCABULARY.test(stripped)) {
     return 'That did not go through, and nothing was rung: check the sale and try again.';
   }
@@ -436,24 +436,24 @@ export function sameUom(a: string, b: string): boolean {
 
 /** Why an add appended instead of merging: the terminal turns this into the on-screen outcome. */
 export type AppendReason =
- /** The product is not on the ticket at all. Nothing to say: the new line IS the outcome. */
+  /** The product is not on the ticket at all. Nothing to say: the new line IS the outcome. */
   | 'new-product'
- /** The product is on the ticket, but in a different sell unit. Two units, two lines. */
+  /** The product is on the ticket, but in a different sell unit. Two units, two lines. */
   | 'different-uom'
- /** The product is on the ticket, but that line carries the clerk's own line-level work. */
+  /** The product is on the ticket, but that line carries the clerk's own line-level work. */
   | 'line-state';
 
 export interface AddDecision {
   action: 'merge' | 'append';
- /** The merged line's index, or -1 on an append. */
+  /** The merged line's index, or -1 on an append. */
   index: number;
- /** The target line's quantity BEFORE the add (0 on an append). */
+  /** The target line's quantity BEFORE the add (0 on an append). */
   fromQty: number;
- /** The quantity the affected line carries AFTER the add (the added qty on an append). */
+  /** The quantity the affected line carries AFTER the add (the added qty on an append). */
   toQty: number;
- /** On an append: why. On a merge: 'merged'. */
+  /** On an append: why. On a merge: 'merged'. */
   reason: AppendReason | 'merged';
- /** On a 'different-uom' append: the unit the existing line is in (for the outcome line). */
+  /** On a 'different-uom' append: the unit the existing line is in (for the outcome line). */
   blockedByUom?: string;
 }
 
@@ -649,7 +649,7 @@ export function repriceAnswerIsCurrent(
  * makes impossible to give by omission.
  */
 export type PriceFieldOwner =
- /** The engine computed it; a current answer is authoritative and overwrites. */
+  /** The engine computed it; a current answer is authoritative and overwrites. */
   | 'engine'
  /** The person at the till owns it. A pricing answer NEVER writes it: that is the money defect. */
   | 'operator';
