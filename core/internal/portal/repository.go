@@ -317,7 +317,8 @@ func (r *Repository) ConsumePasswordReset(ctx context.Context, tokenHash string,
 	return userID, nil
 }
 
-// RevokeSessions revokes the user's other live sessions after a credential change. The
+// RevokeSessions consumes the user's outstanding password-reset tokens after a credential change (it
+// revokes no session: HH-197). The
 // contractor portal uses stateless 12h JWTs with no server-side session table, so "revoke"
 // here invalidates the user's outstanding password-reset tokens, closing the window where a
 // leaked reset link could be replayed after the password already changed. Live JWT

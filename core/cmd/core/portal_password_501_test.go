@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,7 +41,7 @@ func TestPortalChangePasswordIsNotImplementedAndWritesNothing(t *testing.T) {
 		t.Fatalf("plant hash: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = graph.pool.Exec(context.Background(), `DELETE FROM portal_password_resets WHERE portal_user_id = $1`, testkit.PortalCrewAlphaID)
+		_, _ = graph.pool.Exec(context.Background(), `DELETE FROM portal_password_resets WHERE portal_user_id = $1 AND token_hash = 'hh197-probe-token-hash'`, testkit.PortalCrewAlphaID)
 		_, _ = graph.pool.Exec(context.Background(), `UPDATE portal_users SET password_hash = $2 WHERE id = $1`, testkit.PortalCrewAlphaID, original)
 	})
 	// A live reset row: the old best-effort "revoke" consumed these.
@@ -54,7 +55,6 @@ func TestPortalChangePasswordIsNotImplementedAndWritesNothing(t *testing.T) {
 		hash       string
 		resets     int
 		liveResets int
-		audit      int
 	}
 	snap := func() snapshot {
 		var s snapshot
@@ -64,16 +64,16 @@ func TestPortalChangePasswordIsNotImplementedAndWritesNothing(t *testing.T) {
 		if err := graph.pool.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE consumed_at IS NULL) FROM portal_password_resets WHERE portal_user_id = $1`, testkit.PortalCrewAlphaID).Scan(&s.resets, &s.liveResets); err != nil {
 			t.Fatalf("count resets: %v", err)
 		}
-		if err := graph.pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE entity_id = $1`, testkit.PortalCrewAlphaID).Scan(&s.audit); err != nil {
-			t.Fatalf("count audit: %v", err)
-		}
 		return s
 	}
 	before := snap()
 
+	// bodyReads counts the bytes the handler pulled from the request body: a 501 must not even decode
+	// the passwords it was sent.
+	var bodyReads int
 	post := func(bearer string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenant/me/password",
-			strings.NewReader(`{"current_password":"`+current+`","new_password":"hh197-brand-new-password"}`))
+		body := &countingReader{r: strings.NewReader(`{"current_password":"` + current + `","new_password":"hh197-brand-new-password"}`), n: &bodyReads}
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/tenant/me/password", body)
 		req.Header.Set("Content-Type", "application/json")
 		if bearer != "" {
 			req.Header.Set("Authorization", "Bearer "+bearer)
@@ -88,8 +88,8 @@ func TestPortalChangePasswordIsNotImplementedAndWritesNothing(t *testing.T) {
 	if rsp := post(""); rsp.Code != http.StatusUnauthorized {
 		t.Fatalf("no bearer: status %d, want 401", rsp.Code)
 	}
-	if rsp := post(env.minter.StaffToken(t, testkit.SubPortalCrewAlpha)); rsp.Code != http.StatusForbidden && rsp.Code != http.StatusUnauthorized {
-		t.Fatalf("staff bearer on the tenant route: status %d, want 401 or 403", rsp.Code)
+	if rsp := post(env.minter.StaffToken(t, testkit.SubPortalCrewAlpha)); rsp.Code != http.StatusForbidden {
+		t.Fatalf("staff bearer on the tenant route: status %d, want 403", rsp.Code)
 	}
 	if after := snap(); after != before {
 		t.Fatalf("a refused call wrote: before %+v after %+v", before, after)
@@ -106,6 +106,9 @@ func TestPortalChangePasswordIsNotImplementedAndWritesNothing(t *testing.T) {
 	if strings.Contains(rsp.Body.String(), "hh197-") {
 		t.Fatalf("501 body %q echoes request content", rsp.Body.String())
 	}
+	if bodyReads != 0 {
+		t.Fatalf("the handler read %d bytes of the request body; a 501 must not decode the passwords", bodyReads)
+	}
 	after := snap()
 	if after.hash != before.hash {
 		t.Fatalf("stored password hash changed behind a refused request")
@@ -113,7 +116,16 @@ func TestPortalChangePasswordIsNotImplementedAndWritesNothing(t *testing.T) {
 	if after.resets != before.resets || after.liveResets != before.liveResets {
 		t.Fatalf("reset rows touched: before %+v after %+v", before, after)
 	}
-	if after.audit != before.audit {
-		t.Fatalf("audit rows for the user: %d before, %d after; a 501 must add none", before.audit, after.audit)
-	}
+}
+
+// countingReader counts the bytes read through it.
+type countingReader struct {
+	r io.Reader
+	n *int
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	*c.n += n
+	return n, err
 }

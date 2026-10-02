@@ -10,7 +10,8 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
-// registerSettingsRoutes wires self-service profile + password change. Any authenticated
+// registerSettingsRoutes wires self-service profile + the password-change route (which answers 501
+// until HH-4.2, see changePassword). Any authenticated
 // user may reach these (h.authn, token required, no capability), since they act only on
 // the caller's own record.
 func (h *Handler) registerSettingsRoutes(r httpx.Registrar, g *guards.Guards) {
