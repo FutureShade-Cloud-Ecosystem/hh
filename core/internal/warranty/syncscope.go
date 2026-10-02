@@ -31,20 +31,20 @@ const claimsColumns = `c.id::text, c.claim_no::text, c.branch_id::text, COALESCE
 
 // claimRow is the wire shape of one cached claim row.
 type claimRow struct {
-	ID             string     `json:"id"`
-	ClaimNo        string     `json:"claim_no"`
-	BranchID       string     `json:"branch_id"`
-	CustomerID     string     `json:"customer_id"`
-	VendorID       string     `json:"vendor_id"`
-	OwnerID        string     `json:"owner_id"`
-	Phase          string     `json:"phase"`
-	Source         string     `json:"source"`
-	ExpectedCents  int64      `json:"expected_cents"`
-	RealizedCents  int64      `json:"realized_cents"`
-	OpenedAt       time.Time  `json:"opened_at"`
-	ClosedAt       *time.Time `json:"closed_at"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	ID            string     `json:"id"`
+	ClaimNo       string     `json:"claim_no"`
+	BranchID      string     `json:"branch_id"`
+	CustomerID    string     `json:"customer_id"`
+	VendorID      string     `json:"vendor_id"`
+	OwnerID       string     `json:"owner_id"`
+	Phase         string     `json:"phase"`
+	Source        string     `json:"source"`
+	ExpectedCents int64      `json:"expected_cents"`
+	RealizedCents int64      `json:"realized_cents"`
+	OpenedAt      time.Time  `json:"opened_at"`
+	ClosedAt      *time.Time `json:"closed_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 // scanClaimRow reads the 16-target row and projects it.

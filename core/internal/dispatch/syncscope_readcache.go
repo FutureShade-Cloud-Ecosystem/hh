@@ -27,15 +27,15 @@ const trucksColumns = `t.id::text, t.branch_id::text, t.code::text, t.name, t.tr
 
 // truckRow is the wire shape of one cached truck row.
 type truckRow struct {
-	ID          string    `json:"id"`
-	BranchID    string    `json:"branch_id"`
-	Code        string    `json:"code"`
-	Name        string    `json:"name"`
-	TruckType   string    `json:"truck_type"`
-	CapacityKg  *string   `json:"capacity_kg"`
-	IsActive    bool      `json:"is_active"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID         string    `json:"id"`
+	BranchID   string    `json:"branch_id"`
+	Code       string    `json:"code"`
+	Name       string    `json:"name"`
+	TruckType  string    `json:"truck_type"`
+	CapacityKg *string   `json:"capacity_kg"`
+	IsActive   bool      `json:"is_active"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // scanTruckRow reads the 11-target row and projects it.

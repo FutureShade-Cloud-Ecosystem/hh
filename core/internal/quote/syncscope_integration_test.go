@@ -145,9 +145,9 @@ func syncKit(f *syncFixture) syncharness.Kit {
 		Store:  f.store,
 		Create: func(id string) map[string]any {
 			fields := map[string]any{
-				"customer_id":  testkit.TenantAlphaID,
-				"branch_id":    testkit.BranchNorthAID,
-				"valid_until":  time.Now().UTC().AddDate(0, 0, 30).Format("2006-01-02"),
+				"customer_id": testkit.TenantAlphaID,
+				"branch_id":   testkit.BranchNorthAID,
+				"valid_until": time.Now().UTC().AddDate(0, 0, 30).Format("2006-01-02"),
 			}
 			if id != "" {
 				fields["id"] = id
@@ -380,7 +380,7 @@ func TestInternalWalkthrough(t *testing.T) {
 	deskID, _, err := f.repo.CreateQuote(ctx, QuoteCreate{
 		CustomerID: testkit.TenantAlphaID, BranchID: testkit.BranchNorthAID,
 		ValidUntil: time.Now().UTC().AddDate(0, 0, 30).Format("2006-01-02"),
-		CreatedBy:   testkit.UserInsideSalesID,
+		CreatedBy:  testkit.UserInsideSalesID,
 	})
 	if err != nil {
 		t.Fatalf("desk create: %v", err)
@@ -479,7 +479,7 @@ VALUES ($1::uuid, $2::uuid, 4321)`, batchID, walkProduct); err != nil {
 	expiredID, _, err := f.repo.CreateQuote(ctx, QuoteCreate{
 		CustomerID: testkit.TenantAlphaID, BranchID: testkit.BranchNorthAID,
 		ValidUntil: time.Now().UTC().AddDate(0, 0, -3).Format("2006-01-02"),
-		CreatedBy:   testkit.UserInsideSalesID,
+		CreatedBy:  testkit.UserInsideSalesID,
 	})
 	if err != nil {
 		t.Fatalf("expired create: %v", err)

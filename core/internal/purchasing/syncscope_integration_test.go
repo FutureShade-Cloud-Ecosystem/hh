@@ -139,9 +139,9 @@ func poSyncKit(f *poSyncFixture) syncharness.Kit {
 		Scope: f.info, Filter: f.filter, Store: f.store,
 		Create: func(id string) map[string]any {
 			fields := map[string]any{
-				"vendor_id":    f.vendor,
-				"branch_id":    testkit.BranchNorthAID,
-				"expected_at":  poSyncDate(3),
+				"vendor_id":   f.vendor,
+				"branch_id":   testkit.BranchNorthAID,
+				"expected_at": poSyncDate(3),
 			}
 			if id != "" {
 				fields["id"] = id

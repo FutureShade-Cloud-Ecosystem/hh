@@ -778,10 +778,10 @@ func TestResolve_Surcharge_NeverLiftsTheTierPrice(t *testing.T) {
 	}
 }
 
-// - F4b: a quantity DISCOUNT break REPLACES the resolved price when strictly cheaper (D1),
-//    and holds when the standing price already beats it. The pairing that pins the fix:
-//    a break the tier beats answers the TIER price (37937, the stacking answer, is the bug), and
-//    the same break against a weaker standing price REPLACES it off the anchor. -
+//   - F4b: a quantity DISCOUNT break REPLACES the resolved price when strictly cheaper (D1),
+//     and holds when the standing price already beats it. The pairing that pins the fix:
+//     a break the tier beats answers the TIER price (37937, the stacking answer, is the bug), and
+//     the same break against a weaker standing price REPLACES it off the anchor. -
 func TestResolve_QuantityDiscountBreak_ReplacesNotStacks(t *testing.T) {
 	st := &fakeStore{
 		listPrice: &ListPrice{"blu60", 48700, "SF"},
@@ -834,10 +834,10 @@ func TestResolve_AbsOffBreak_ReplacesAndClamps(t *testing.T) {
 	}
 }
 
-// - THE D1 EXIT CASES (HH-184): a line crossing a break prices AT the break, a line below it
-//   keeps the rule and tier price, and an account no break reaches is untouched. The crossing
-//   case is the one stacking answers differently: 10000 × 0.95 × 0.90 = 8550 is the bug this
-//   fixes; 9000, the break's own single price off the anchor, is the decision. -
+//   - THE D1 EXIT CASES (HH-184): a line crossing a break prices AT the break, a line below it
+//     keeps the rule and tier price, and an account no break reaches is untouched. The crossing
+//     case is the one stacking answers differently: 10000 × 0.95 × 0.90 = 8550 is the bug this
+//     fixes; 9000, the break's own single price off the anchor, is the decision. -
 func TestResolve_LineCrossingABreakPricesAtTheBreak(t *testing.T) {
 	rules := []Rule{{ID: "r-def", Scope: ScopeTierDefault, CustomerType: "CONTRACTOR", CalcType: CalcPctOffList, DiscountBps: p64(500), PriceUOM: "EA", Priority: 10, IsActive: true, DetailText: "Contractor, default: 5% off"}}
 	breaks := []QuantityBreak{{
@@ -864,10 +864,10 @@ func TestResolve_LineCrossingABreakPricesAtTheBreak(t *testing.T) {
 	}
 }
 
-// - P1: NO ANCHOR, NO CONTEST. An ABSOLUTE base with no list price (or a zero one) gives the
-//   matched break nothing to price from: the standing override price holds (never the 0 the zero
-//   anchor priced), and a surcharge tier is structurally out of the win branch, so the surcharge
-//   amount alone is never a price. Both arms assert against the wrong answers. -
+//   - P1: NO ANCHOR, NO CONTEST. An ABSOLUTE base with no list price (or a zero one) gives the
+//     matched break nothing to price from: the standing override price holds (never the 0 the zero
+//     anchor priced), and a surcharge tier is structurally out of the win branch, so the surcharge
+//     amount alone is never a price. Both arms assert against the wrong answers. -
 func TestResolve_BreakWithoutAnAnchor_DoesNotCompete(t *testing.T) {
 	override := &Override{ID: "ov1", CustomerID: "abc", CategoryID: "pavers", CalcType: CalcAbsolute, PriceCents: p64(5000), PriceUOM: "SF"}
 	breaks := []QuantityBreak{{
@@ -903,8 +903,8 @@ func TestResolve_BreakWithoutAnAnchor_DoesNotCompete(t *testing.T) {
 	}
 }
 
-// - The seeded schedules' 0 bps floor band (QB1 and QB2 both carry one below the first
-//   threshold) matches every small line and offers nothing: it appends no not-applied note. -
+//   - The seeded schedules' 0 bps floor band (QB1 and QB2 both carry one below the first
+//     threshold) matches every small line and offers nothing: it appends no not-applied note. -
 func TestResolve_ZeroBandBelowTheThresholdNotesNothing(t *testing.T) {
 	st := &fakeStore{
 		listPrice: &ListPrice{"blu60", 48700, "SF"},
