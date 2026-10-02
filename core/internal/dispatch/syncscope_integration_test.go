@@ -126,8 +126,11 @@ func linkedSyncUser(pool *pgxpool.Pool) syncLinker {
 	}
 }
 
-// syncIntAudit maps the engine's entries onto the audit module, the
-// same mapping cmd/core's syncAuditSeam carries.
+// syncIntAudit maps the engine's entries onto the audit module's rows
+// for the scope and op legs only. It records no actor (actor_id empty,
+// no actor_subject): the actor mapping is cmd/core's syncAuditSeam
+// alone, proven by the composition test in cmd/core
+// (sync_audit_wire_test.go).
 type syncIntAudit struct{ svc *audit.Service }
 
 func (a syncIntAudit) RecordSync(ctx context.Context, e sync.AuditEntry) error {
