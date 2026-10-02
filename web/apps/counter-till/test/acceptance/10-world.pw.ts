@@ -6,13 +6,14 @@
 // past the counter's walls and refuses the clerk, the other branch's sale is
 // refused at this counter, the seeded card sale carries no card reference, and
 // the world's newest rows are dated to the moment the box was rebuilt.
-import { expect, test } from "@playwright/test";
 import {
+  expect,
   KINGSTON_ID,
   SEEDED,
   TRENTON_ID,
   houseDay,
   houseDaysAgo,
+  test,
   marginPercent,
   mint,
   openDrawer,

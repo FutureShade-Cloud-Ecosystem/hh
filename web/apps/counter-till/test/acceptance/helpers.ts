@@ -4,7 +4,7 @@
 // (mirrored here so the test never imports the app's own code), the staff
 // reads the assertions compare the screen against, and the screenshot helper
 // that names every screen of the story.
-import { expect, type Page, type TestInfo } from "@playwright/test";
+import { expect, test as base, type Page, type TestInfo } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -405,19 +405,61 @@ function shotDir(testInfo: TestInfo): string {
 }
 
 /**
+ * The page's own requests, counted from the page's making: every request the
+ * page fires raises the count, and only its finish or its failure lowers it,
+ * so a read still in flight is a count above zero however many times the
+ * page has already gone idle. The harness's page fixture installs the
+ * counter, so every page a spec is handed is counted from birth, and settle
+ * waits on the count rather than on a load state (a load state of the
+ * document is recorded once and answers every later call from that record,
+ * which is no wait at all in the path every till shot takes: the cards page
+ * goes idle while the mint paces the tap, so the till's own reads fire after
+ * the only idle the document will ever report).
+ */
+type InFlight = { count: number };
+const inFlight = new WeakMap<Page, InFlight>();
+
+function trackInFlight(page: Page): void {
+  if (inFlight.has(page)) return;
+  const state: InFlight = { count: 0 };
+  inFlight.set(page, state);
+  page.on("request", () => {
+    state.count += 1;
+  });
+  page.on("requestfinished", () => {
+    state.count = Math.max(0, state.count - 1);
+  });
+  page.on("requestfailed", () => {
+    state.count = Math.max(0, state.count - 1);
+  });
+}
+
+/** The harness's own test: the pages it hands a spec carry the counter. */
+export const test = base.extend<{ page: Page }>({
+  page: async ({ page }, use) => {
+    trackInFlight(page);
+    await use(page);
+  },
+});
+
+export { expect };
+
+/**
  * The page is at rest: the fonts are in, the ported surface's own in-flight
  * words are off the screen (the demo roles word while the cards load, the
  * products word while the grid loads, the receipt word while a print read
  * runs; the surface shows no word of its own while its other reads are in
- * flight), the reads are quiet (nothing the page has fired is still in
- * flight), and a mounted till shows its loaded chrome: the flow stepper, and
+ * flight), the reads are quiet (the page's own request count has drained to
+ * zero), and a mounted till shows its loaded chrome: the flow stepper, and
  * the session bar's own answer, the open dot or the Open Session button. A
  * shot of a half loaded screen shows nothing of its claim.
  */
 export async function settle(page: Page): Promise<void> {
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
   await expect(page.getByText(/\bLoading\b/)).toHaveCount(0);
-  await page.waitForLoadState("networkidle");
+  await expect
+    .poll(() => inFlight.get(page)?.count ?? 0, { intervals: [100], timeout: 15_000 })
+    .toBe(0);
   const till = page.locator("hos-pos-flow-steps");
   if ((await till.count()) > 0) {
     await expect(till).toBeVisible();

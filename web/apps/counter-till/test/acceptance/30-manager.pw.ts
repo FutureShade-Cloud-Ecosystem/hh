@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
 import {
+  expect,
   SEEDED,
   TOP_BAR_CLIP,
   TRENTON_ID,
@@ -18,6 +18,7 @@ import {
   ring,
   ringCash,
   searchAndAdd,
+  test,
   setQuantity,
   shot,
   shotParts,

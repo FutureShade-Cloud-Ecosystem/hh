@@ -4,8 +4,7 @@
 // pre restart bearer (CT_PRIOR_TOKEN, minted by the exit script before the
 // restart) is dead, the till is nobody's, and a fresh sign in works. This is
 // the proof behind the testers' page's "a restart signs everyone out".
-import { expect, test } from "@playwright/test";
-import { TRENTON_ID, apiPicture, shotParts, signIn, staffGet } from "./helpers.js";
+import { TRENTON_ID, apiPicture, expect, shotParts, signIn, staffGet, test } from "./helpers.js";
 
 test("the pre restart bearer is refused, and a fresh sign in works", async ({ page }, testInfo) => {
   const prior = process.env.CT_PRIOR_TOKEN ?? "";

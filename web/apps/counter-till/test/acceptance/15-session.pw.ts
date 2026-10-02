@@ -5,8 +5,7 @@
 // through the core's own close flow, signs in on the closed drawer (what a
 // clean box holds), and presses the button: the request it sends carries the
 // reference's own float, and the till then shows the session open.
-import { expect, test } from "@playwright/test";
-import { TRENTON_ID, expectedCash, mint, paceMint, staffGet, staffPost } from "./helpers.js";
+import { TRENTON_ID, expect, expectedCash, mint, paceMint, staffGet, staffPost, test } from "./helpers.js";
 
 const OPEN_PATH = `/api/v1/till/sessions/open?branch_id=${TRENTON_ID}&station=MAIN`;
 

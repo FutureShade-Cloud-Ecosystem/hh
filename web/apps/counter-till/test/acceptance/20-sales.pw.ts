@@ -5,8 +5,9 @@
 // Driven against the demo image's own app and core; every figure the screen
 // shows is held against what the core answers through its own reads, and a
 // screenshot names every screen.
-import { expect, test, type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import {
+  expect,
   SEEDED,
   SEEDED_IDS,
   TOP_BAR_CLIP,
@@ -28,6 +29,7 @@ import {
   ring,
   ringCash,
   searchAndAdd,
+  test,
   setQuantity,
   settle,
   shot,
@@ -57,7 +59,7 @@ test("the way in: two cards, the eleven coming roles untapped, and the banner", 
   await shot(page, "sales-01-way-in", testInfo);
 });
 
-test("the drawer: the branch's MAIN counter drawer, found or opened on first use", async ({
+test("the drawer: the branch's MAIN counter drawer, found open with the till's own float", async ({
   page,
 }, testInfo) => {
   await signIn(page, "Sales");
