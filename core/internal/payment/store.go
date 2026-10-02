@@ -388,9 +388,12 @@ func (s *Service) freshestCreds(processor string, creds map[string]string) map[s
 
 // flushRotation writes whatever the ledger holds through the pool, best-effort, and KEEPS the entry
 // until the write succeeds (the round 2 review's ask: a failed write is retried by a later flush
-// instead of dropping the fresh key silently). The entry clears only when this flush's write landed
-// and no newer rotation replaced it meanwhile. Called by the flusher goroutine and directly by the
-// tests.
+// instead of dropping the fresh key silently). The write goes through the store DIRECTLY, never
+// through resealOnPool: the pool carrier's clear is processor-wide, and a landing flush must never
+// clear an entry a NEWER rotation replaced meanwhile (the round 4 review's P2: the flush read set A,
+// a second rotation held B, and a processor-wide clear from A's landing wiped B, losing the fresh key
+// the rail needs; the pointer compare below is the guard, and it is the ONLY clear on this path).
+// Called by the flusher goroutine and directly by the tests.
 func (s *Service) flushRotation(ctx context.Context) {
 	s.rotMu.Lock()
 	pend := s.rotPend
@@ -398,10 +401,12 @@ func (s *Service) flushRotation(ctx context.Context) {
 	if pend == nil {
 		return
 	}
-	if err := s.resealOnPool(ctx, pend.processor, pend.creds); err != nil {
-		slog.Warn("payment: the rotation write-back failed; the fresh credentials stay pending and a later flush retries them",
-			"processor", pend.processor, "err", err)
-		return
+	if rs, ok := s.cfg.(credsReencryptor); ok {
+		if err := rs.reencryptActiveCreds(ctx, pend.processor, pend.creds); err != nil {
+			slog.Warn("payment: the rotation write-back failed; the fresh credentials stay pending and a later flush retries them",
+				"processor", pend.processor, "err", err)
+			return
+		}
 	}
 	s.rotMu.Lock()
 	if s.rotPend == pend {
@@ -503,10 +508,12 @@ func (s *Service) RefundTx(ctx context.Context, tx pgx.Tx, in RefundInput) (Refu
 // resealOnPool is the write-back carrier for the pool-shaped Charge and
 // Refund, the behavior those entry points have always had. Its error surfaces to the caller
 // (the shared bodies ignore it, exactly as the write-back always was: best-effort); the flusher
-// is the one caller that reads it, to keep the ledger entry alive for a retry. A successful write
-// clears any pending entry for the same processor: the row now carries this set (or something
-// newer), and a sitting entry must not shadow the row the next read sees (the round 3 review's
-// note: with the overlay handing copies, a stale entry would outlive the pool path's own landing).
+// writes through the store directly and NEVER through this carrier, because this clear is
+// processor-wide and a landing flush must not clear a newer rotation's entry (the round 4 review's
+// P2; the flusher's own pointer compare is its guard). A successful write clears any pending entry
+// for the same processor: the row now carries this set (or something newer), and a sitting entry
+// must not shadow the row the next read sees (the round 3 review's note: with the overlay handing
+// copies, a stale entry would outlive the pool path's own landing).
 func (s *Service) resealOnPool(ctx context.Context, processor string, creds map[string]string) error {
 	if rs, ok := s.cfg.(credsReencryptor); ok {
 		if err := rs.reencryptActiveCreds(ctx, processor, creds); err != nil {

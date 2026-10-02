@@ -30,7 +30,9 @@ type fakeResolver struct {
 	txReencrypt   int
 	reencProc     string
 	reencCreds    map[string]string
-	failReencrypt int // while above zero, reencryptActiveCreds fails and decrements (the retry leg)
+	failReencrypt int  // while above zero, reencryptActiveCreds fails and decrements (the retry leg)
+	parkReencrypt bool // while true, reencryptActiveCreds parks until parkRelease closes (the mid-write window legs)
+	parkRelease   chan struct{}
 }
 
 // answer is the shared body: a fixed row plus a fresh creds copy.
@@ -61,14 +63,22 @@ func (f *fakeResolver) activeConfigTx(_ context.Context, _ pgx.Tx) (activeCfg, m
 
 func (f *fakeResolver) reencryptActiveCreds(_ context.Context, processor string, creds map[string]string) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.reencryptCall++
-	if f.failReencrypt > 0 {
+	fail := f.failReencrypt > 0
+	if fail {
 		f.failReencrypt--
+	} else {
+		f.reencProc = processor
+		f.reencCreds = creds
+	}
+	park := f.parkReencrypt
+	f.mu.Unlock()
+	if park {
+		<-f.parkRelease // the write is mid-flight: a rotation can land beside it (the round 4 P2 legs)
+	}
+	if fail {
 		return errors.New("reencrypt failed: the store is draining (the retry leg's scripted failure)")
 	}
-	f.reencProc = processor
-	f.reencCreds = creds
 	return nil
 }
 
@@ -114,6 +124,19 @@ func (p *spyProcessor) Refund(context.Context, map[string]string, string, string
 
 func validInput() ChargeInput {
 	return ChargeInput{AmountCents: 12500, PaymentToken: "tok_runtest_4242", IdempotencyKey: "client-uuid", CardType: "CREDIT"}
+}
+
+// waitFor polls cond until it holds or the leg fails, bounded: the mid-write window legs need to
+// observe a parked goroutine's progress without sleeping a fixed span.
+func waitFor(t *testing.T, cond func() bool, what string) {
+	t.Helper()
+	for i := 0; i < 5000; i++ {
+		if cond() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
 }
 
 // T12, Charge before any active config returns ErrNoConfig (US-RP01/02).
@@ -480,6 +503,125 @@ func TestService_FlushRotation_RetriesUntilItLands(t *testing.T) {
 	svc.rotMu.Unlock()
 	if !cleared {
 		t.Fatal("the landed retry must clear the entry")
+	}
+}
+
+// A landing flush must not clear an entry a NEWER rotation replaced (the round 4 review's P2: the flush
+// read set A, a second rotation held B, and the flush's clear wiped B, losing the fresh key). The flush's
+// write is parked mid-flight while the second rotation lands beside it; the pointer compare is the only
+// clear on the flush path, so B survives A's landing, the next charge presents B, and B's own flush lands
+// and clears.
+func TestService_FlushRotation_LandingMustNotClearANewerRotation(t *testing.T) {
+	fr := &fakeResolver{
+		cfg:           activeCfg{Processor: "run_payments", MerchantID: "MID-1"},
+		creds:         map[string]string{"api_key": "expired"},
+		parkReencrypt: true,
+		parkRelease:   make(chan struct{}),
+	}
+	rotateA := &spyProcessor{res: ChargeResult{ProcessorRef: "rp_a", Status: "captured"}, mutateKey: "freshA"}
+	svc := &Service{cfg: fr, proc: rotateA}
+	svc.startFlusher = func() {}
+	if _, err := svc.ChargeTx(context.Background(), nil, validInput()); err != nil {
+		t.Fatalf("ChargeTx (rotating to A): %v", err)
+	}
+	// The first flush reads A and parks inside the write.
+	done := make(chan struct{})
+	go func() { defer close(done); svc.flushRotation(context.Background()) }()
+	waitFor(t, func() bool {
+		fr.mu.Lock()
+		defer fr.mu.Unlock()
+		return fr.reencryptCall >= 1
+	}, "the first flush's write to start")
+	// A second rotation holds B while A's write is still in flight.
+	rotateB := &spyProcessor{res: ChargeResult{ProcessorRef: "rp_b", Status: "captured"}, mutateKey: "freshB"}
+	svc.proc = rotateB
+	if _, err := svc.ChargeTx(context.Background(), nil, validInput()); err != nil {
+		t.Fatalf("ChargeTx (rotating to B beside the in-flight flush): %v", err)
+	}
+	// A's write lands now.
+	close(fr.parkRelease)
+	<-done
+	svc.rotMu.Lock()
+	pend := svc.rotPend
+	svc.rotMu.Unlock()
+	if pend == nil || pend.creds["api_key"] != "freshB" {
+		t.Fatalf("the older flush's landing cleared the newer rotation: pend = %+v, want the freshB entry to survive", pend)
+	}
+	// The next charge presents B (the surviving entry's overlay), never the row's stale key.
+	see := &spyProcessor{res: ChargeResult{ProcessorRef: "rp_see", Status: "captured"}}
+	svc.proc = see
+	if _, err := svc.Charge(context.Background(), validInput()); err != nil {
+		t.Fatalf("Charge (reading beside the surviving entry): %v", err)
+	}
+	if see.gotKey != "freshB" {
+		t.Fatalf("the charge presented api_key %q, want freshB (the newer entry's overlay)", see.gotKey)
+	}
+	// B's own flush lands and clears.
+	svc.flushRotation(context.Background())
+	fr.mu.Lock()
+	creds := fr.reencCreds
+	fr.mu.Unlock()
+	if creds["api_key"] != "freshB" {
+		t.Fatalf("the second flush wrote wrong facts: %v", creds)
+	}
+	svc.rotMu.Lock()
+	cleared := svc.rotPend == nil
+	svc.rotMu.Unlock()
+	if !cleared {
+		t.Fatal("the newer rotation's own landed flush must clear it")
+	}
+}
+
+// The pool path's own landing clears the superseded entry (the clear's real good, the round 4 review's
+// P2-2: nothing pinned it): a pending entry from a carried rotation must not outlive the pool charge's
+// write of a fresher set, or the next read would overlay the stale entry over the row the pool just
+// landed.
+func TestService_PoolLandingClearsTheSupersededEntry(t *testing.T) {
+	fr := &fakeResolver{
+		cfg:   activeCfg{Processor: "run_payments", MerchantID: "MID-1"},
+		creds: map[string]string{"api_key": "expired"},
+	}
+	rotateA := &spyProcessor{res: ChargeResult{ProcessorRef: "rp_a", Status: "captured"}, mutateKey: "freshA"}
+	svc := &Service{cfg: fr, proc: rotateA}
+	svc.startFlusher = func() {}
+	if _, err := svc.ChargeTx(context.Background(), nil, validInput()); err != nil {
+		t.Fatalf("ChargeTx (rotating to A): %v", err)
+	}
+	svc.rotMu.Lock()
+	pendKey := ""
+	if svc.rotPend != nil {
+		pendKey = svc.rotPend.creds["api_key"]
+	}
+	svc.rotMu.Unlock()
+	if pendKey != "freshA" {
+		t.Fatalf("the carried rotation's entry = %q, want freshA before the pool landing", pendKey)
+	}
+	// The pool charge rotates again and its own reseal lands the fresher set on the row.
+	rotateB := &spyProcessor{res: ChargeResult{ProcessorRef: "rp_b", Status: "captured"}, mutateKey: "freshB"}
+	svc.proc = rotateB
+	if _, err := svc.Charge(context.Background(), validInput()); err != nil {
+		t.Fatalf("Charge (the pool landing): %v", err)
+	}
+	fr.mu.Lock()
+	landed := fr.reencCreds["api_key"]
+	fr.mu.Unlock()
+	if landed != "freshB" {
+		t.Fatalf("the pool landing wrote %q, want freshB", landed)
+	}
+	svc.rotMu.Lock()
+	cleared := svc.rotPend == nil
+	svc.rotMu.Unlock()
+	if !cleared {
+		t.Fatal("the pool path's own landing must clear the superseded entry")
+	}
+	// With the entry cleared the next charge presents the row's own answer, never the dead overlay.
+	see := &spyProcessor{res: ChargeResult{ProcessorRef: "rp_see", Status: "captured"}}
+	svc.proc = see
+	if _, err := svc.Charge(context.Background(), validInput()); err != nil {
+		t.Fatalf("Charge (reading after the pool landing): %v", err)
+	}
+	if see.gotKey != "expired" {
+		t.Fatalf("the charge presented api_key %q, want the row's own answer (no stale entry may shadow the landed row)", see.gotKey)
 	}
 }
 
