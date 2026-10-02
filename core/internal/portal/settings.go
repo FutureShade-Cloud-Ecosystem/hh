@@ -10,9 +10,10 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
-// registerSettingsRoutes wires self-service profile + password change. Any authenticated
-// user may reach these (h.authn, token required, no capability), since they act only on
-// the caller's own record.
+// registerSettingsRoutes wires self-service profile + the password-change route (which answers 501
+// until HH-4.2, see changePassword). Any tenant caller may reach these (g.RequireTenant: a tenant
+// bearer and a portal account that is not inactive, no capability; a staff bearer is refused), since
+// they act only on the caller's own record.
 func (h *Handler) registerSettingsRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/tenant/me", g.RequireTenant(h.tenant(h.getMe)))
 	r.Handle("PUT /api/v1/tenant/me", g.RequireTenant(h.tenant(h.updateMe)))
@@ -96,22 +97,14 @@ func (h *Handler) updateMe(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, u)
 }
 
-// changePassword sets a new password after verifying the current one; success revokes the
-// account's other sessions (§4.6 review #2).
-func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		CurrentPassword string `json:"current_password"`
-		NewPassword     string `json:"new_password"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(&req); err != nil {
-		httpx.Error(w, http.StatusBadRequest, "invalid_json")
-		return
-	}
-	if err := h.svc.ChangePassword(r.Context(), callerFrom(r.Context()), req.CurrentPassword, req.NewPassword); err != nil {
-		h.writeAccountErr(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+// changePassword answers 501 until HH-4.2 routes password changes through Appwrite (HH-197).
+// Appwrite issues every session (D38), so the legacy hash this route used to check and
+// replace is read only by the unregistered login and reset paths: a 200 here changed
+// nothing that signs anyone in and revoked no session, a false assurance for a contractor
+// who suspects compromise. It reads no body (the passwords are sensitive; a 501 must not
+// even decode them) and writes nothing. Service.ChangePassword stays for HH-4.2.
+func (h *Handler) changePassword(w http.ResponseWriter, _ *http.Request) {
+	httpx.NotImplemented(w, "changing your password here is not available yet")
 }
 
 // normalizePrefs validates the notification_prefs payload: an absent/empty value becomes
