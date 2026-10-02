@@ -9,8 +9,10 @@
 # repository's main tree (MAIN_REF, default origin/main) read through git
 # archive, which already holds the demo image machinery and the core, plus
 # this branch's counter till app directory (the ported POS surface main does
-# not hold yet). The union assembles in the scratch directory (SCRATCH);
-# nothing is ever written into the checkout.
+# not hold yet) and this branch's core directory (the receipt formats work,
+# row 666: the core's own printing package changed on this branch). The
+# union assembles in the scratch directory (SCRATCH); nothing is ever
+# written into the checkout.
 #
 # Needs: docker, node (22, the version CI names: the stub suite's TypeScript
 # import fails under 20), npm, bun, and network access to pull the base
@@ -93,7 +95,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "== the union context from main's tree and this branch's app directory"
+echo "== the union context from main's tree and this branch's app and core directories"
 git rev-parse --verify -q "$MAIN_REF^{commit}" >/dev/null || { fail "$MAIN_REF does not resolve (run git fetch)"; exit 1; }
 rm -rf "$SCRATCH/context"
 mkdir -p "$SCRATCH/context"
@@ -102,14 +104,25 @@ git archive "$MAIN_REF" | tar -x -C "$SCRATCH/context"
 rm -rf "$SCRATCH/context/$APP"
 mkdir -p "$SCRATCH/context/$APP"
 tar -C "$APP" --exclude=node_modules --exclude=dist --exclude=test-results --exclude=acceptance-screens -cf - . | tar -C "$SCRATCH/context/$APP" -xf -
-pass "the union context assembles ($MAIN_REF with this branch's app directory)"
+# The receipt formats item (row 666) changes the CORE, so the union overlays
+# this branch's core tree the same way the app directory is overlaid: the
+# image's core build and the acceptance box then run this branch's receipt
+# routes, not main's. MAIN_REF's behaviour is unchanged: it stays the base
+# the overlays land on.
+rm -rf "$SCRATCH/context/core"
+mkdir -p "$SCRATCH/context/core"
+# The same exclusion discipline the app overlay keeps: untracked build
+# artifacts under core/ (the contract tools' installed node_modules, a stray
+# probe file) never ride into the image's build context.
+tar -C core --exclude=node_modules --exclude=dist --exclude=test-results --exclude=acceptance-screens -cf - . | tar -C "$SCRATCH/context/core" -xf -
+pass "the union context assembles ($MAIN_REF with this branch's app and core directories)"
 
 echo "== building the image"
 docker build -f "$SCRATCH/context/deploy/demo/Dockerfile" -t "$IMAGE" "$SCRATCH/context" >/dev/null || {
 	fail "the image build failed"
 	exit 1
 }
-pass "the image builds from main's tree and this branch's app"
+pass "the image builds from main's tree and this branch's app and core"
 
 echo "== the throwaway Postgres"
 docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET" >/dev/null

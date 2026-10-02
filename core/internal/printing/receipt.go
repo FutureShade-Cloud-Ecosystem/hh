@@ -8,6 +8,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 )
 
 // receiptStore is the receipt's read seam (satisfied by *Repository). Kept separate from queueStore
@@ -126,6 +127,33 @@ func (s *ReceiptService) Receipt(ctx context.Context, id string) (Receipt, error
 		return Receipt{}, err
 	}
 
+	// The cash facts the committed sale itself states: the change due is the core's one derivation
+	// from the order's own cash-tendered figure (pos repository.go reads the same column for the
+	// replay).
+	changeDue := int64(0)
+	if sale.CashTenderedCents > 0 {
+		changeDue = sale.CashTenderedCents - sale.TotalCents
+	}
+	// THE DEPOSIT IS THE PLAIN UNPAID-AT-RING RING'S OWN (the review's P2-1). pos refuses a
+	// deposit on a split (a split settles the sale itself), so the only sale the word Deposit
+	// names is the plain ACCOUNT or COD ring taken with one. A split with an account leg also
+	// leaves money captured in the ring's transaction and a balance behind it: its legs print as
+	// tenders and its remainder as the balance, and neither is a deposit. A settled sale shows
+	// its payments as tenders, an unsettled account shows its balance alone.
+	unpaidAtRing := sale.Tender == pos.TenderAccount || sale.SaleType == pos.SaleCOD
+	deposit := int64(0)
+	if sale.BalanceCents > 0 && !sale.SplitTender && unpaidAtRing {
+		deposit = sale.DepositCents
+	}
+	// THE WALK-IN IS THE COUNTER'S OWN WORD (the visual read's G3): the house's canonical walk-in
+	// account (0029's seed, the row pos's ResolveWalkIn resolves by account_no) carries a
+	// data-protection placeholder for a name, and a customer holding the paper must read the
+	// counter's word, not a privacy artifact. Yielding the name lets the template speak the
+	// walk-in word; a named account keeps its name.
+	if strings.EqualFold(sale.CustomerAcct, walkInAccountNo) {
+		sale.CustomerName = ""
+	}
+
 	rec := Receipt{
 		OrgName:           head.OrgName,
 		BranchName:        head.Name,
@@ -145,6 +173,8 @@ func (s *ReceiptService) Receipt(ctx context.Context, id string) (Receipt, error
 		TaxCents:          sale.TaxCents,
 		TotalCents:        sale.TotalCents,
 		BalanceCents:      sale.BalanceCents,
+		ChangeDueCents:    changeDue,
+		DepositCents:      deposit,
 		TaxLabel:          hstLabel(head.HSTRateBps),
 		ReprintCount:      priorPrints,
 		PrintedAt:         s.now(),
@@ -174,6 +204,11 @@ func (s *ReceiptService) Receipt(ctx context.Context, id string) (Receipt, error
 	})
 	return rec, nil
 }
+
+// walkInAccountNo is the house's canonical walk-in account number (0029's seed; pos's
+// ResolveWalkIn resolves walk-ins by it). Printing reads the word for the paper, it never writes
+// the account.
+const walkInAccountNo = "WALK-IN"
 
 // callerScope flattens a StaffContext into the (global, branchIDs) pair the branch-scoped resolution
 // takes, the order module's callerBranchScope, same shape.
@@ -250,6 +285,17 @@ type Receipt struct {
 	TotalCents    int64
 	BalanceCents  int64
 	TaxLabel      string // "HST (13%)", the rate comes from system_settings, never a literal
+
+	// ChangeDueCents is the cash over-tender's change (tendered minus total), read from the
+	// committed sale's own cash-tendered fact (orders.metadata), the ring's own derivation. It is
+	// rendered only when it applies: a sale tendered exact or tendered by card carries no row.
+	ChangeDueCents int64
+	// DepositCents is the deposit the ring itself took on a plain unpaid-at-ring sale (ACCOUNT or
+	// COD, no split: pos refuses a deposit on a split), read beside the invoice's balance from the
+	// committed rows. It is rendered only there: a settled sale shows its payments as tenders, an
+	// unsettled account sale shows its balance alone, and a split's captured legs are tenders, its
+	// remainder the balance, never a deposit.
+	DepositCents int64
 
 	// ReprintCount is how many times this receipt was ALREADY printed before this fetch. 0 → the
 	// original; >0 → the REPRINT marker renders. It is counted from print_queue, so it survives a

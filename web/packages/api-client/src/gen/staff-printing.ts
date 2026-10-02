@@ -10,12 +10,14 @@ import { ApiClient, type ApiCallOptions } from "../http.js";
 export async function printingGetReceipt(
   client: ApiClient,
   id: string | number,
+  opts?: { format?: "roll" | "page" },
   call?: ApiCallOptions
 ): Promise<Result<string>> {
   return client.request<string>({
     method: "GET",
     path: "/api/v1/pos/sales/{id}/receipt",
     pathParams: { id },
+    query: opts,
     textResponse: true,
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,

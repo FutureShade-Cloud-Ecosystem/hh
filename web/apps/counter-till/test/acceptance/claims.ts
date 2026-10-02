@@ -37,13 +37,14 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     { file: "20-sales.pw.ts", test: "a sale: lines priced by the engine, no price field, and the margin column refuses the clerk" },
     { file: "30-manager.pw.ts", test: "a sale: the same engine prices, the manager's margin column, no price field" },
   ],
-  // P3-10 (the comprehensive train review): the margin surface follows the
-  // policy word /pos/policy answers (this box: MANAGER_UP), while the glance's
-  // own serving rule stays the core's. The world leg holds the glance half,
-  // the manager leg holds the allowed surface, and the clerk leg holds the
-  // refusal.
+  // P3-10 (the comprehensive train review), with row 651's flip: the margin
+  // surface follows the policy word /pos/policy answers (this box: MANAGER_UP)
+  // and the glance honours the same word server-side since the hardening
+  // train, so the clerk's glance answers the empty document. The world leg
+  // holds both halves of the word, the manager leg holds the allowed surface,
+  // and the clerk leg holds the refusal.
   "margin-policy": [
-    { file: "10-world.pw.ts", test: "the clerk's margin glance answers: the configuration names who sees cost and margin" },
+    { file: "10-world.pw.ts", test: "the clerk's margin glance is refused, the manager's answers: the policy word names who sees cost and margin" },
     { file: "30-manager.pw.ts", test: "a sale: the same engine prices, the manager's margin column, no price field" },
     { file: "20-sales.pw.ts", test: "a sale: lines priced by the engine, no price field, and the margin column refuses the clerk" },
   ],

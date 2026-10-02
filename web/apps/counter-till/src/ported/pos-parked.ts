@@ -18,10 +18,12 @@ import { ModalFocus } from './modal-focus.js';
 export class HosPosParked extends LitElement {
   @property({ type: String }) branchId = '';
 
-  // DIB-247: the park-time display snapshots (customer + total) the terminal captured, keyed by
-  // ticket id. The server list carries only customer_id and no prices, so this is where a row's
-  // customer NAME and TOTAL come from. A cold entry (parked in a prior session) falls back to the
-  // account/walk-in label and the "(not priced)" marker.
+  // DIB-247: the park-time display snapshots (customer + the priced lines'
+  // subtotal) the terminal captured, keyed by ticket id. The server list
+  // carries only customer_id and no prices, so this is where a row's
+  // customer NAME and FIGURE come from. A cold entry (parked in a prior
+  // session) falls back to the account/walk-in label and the "(not priced)"
+  // marker.
   @property({ attribute: false }) info: ReadonlyMap<string, ParkedInfo> = new Map();
   /**
    * How many lines are on the ticket the resume is about to discard (D17, round 3).
@@ -244,21 +246,22 @@ export class HosPosParked extends LitElement {
         ${this.tickets.length === 0
           ? html`<div class="empty">No parked tickets.</div>`
           : this.tickets.map((t) => {
-              // DIB-247: identify each ticket by WHO it's for and HOW MUCH: both come from the
-              // terminal's park-time snapshot (the server row carries neither the name nor a
-              // price). The snapshot total is the park-time estimate, so it carries the estimate
-              // mark like every other pre-ring figure; a cold snapshot degrades to the
+              // DIB-247: identify each ticket by WHO it's for and HOW MUCH: both come from
+              // the terminal's park-time snapshot (the server row carries neither the name
+              // nor a price). The snapshot figure is the park-time SUBTOTAL of the priced
+              // lines (row 661: the till computed no total to snapshot), so the row NAMES
+              // it a subtotal and carries no estimate mark; a cold snapshot degrades to the
               // account/walk-in label and the "(not priced)" marker.
               const snap = this.info.get(t.id);
               const who = snap?.customer?.name || (t.customer_id ? 'Account customer' : 'Walk-in');
-              const total = snap && snap.totalCents !== null ? `${money(snap.totalCents)} (est.)` : '(not priced)';
+              const figure = snap && snap.subtotalCents !== null ? `subtotal ${money(snap.subtotalCents)}` : '(not priced)';
               return html`<div class="ticket">
                 <div>
                   <div class="tno">${t.ticket_no}</div>
                   <div class="who">${who}</div>
                   <div class="meta">
-                    ${t.lines.length} line${t.lines.length === 1 ? '' : 's'}${total
-                      ? html` · <span class="mtot">${total}</span>`
+                    ${t.lines.length} line${t.lines.length === 1 ? '' : 's'}${figure
+                      ? html` · <span class="mtot">${figure}</span>`
                       : nothing}
                     · ${this.age(t.created_at)}
                   </div>

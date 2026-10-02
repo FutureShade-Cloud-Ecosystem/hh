@@ -13,12 +13,13 @@ import type { CartLine } from './pos-api.js';
 import { balanceAfterDepositCents } from './ports.js';
 
 // One parked ticket's client-side display snapshot, captured in parkCurrent() before the order
-// is reset. `customer` is the full account (or null for walk-in); `totalCents` is the ticket
-// total at park time (the server stores no prices, so this is the only place it survives).
+// is reset. `customer` is the full account (or null for walk-in); `subtotalCents` is the ticket's
+// SUBTOTAL of priced lines at park time (row 661: the till computes no total to snapshot; the
+// server stores no prices, so this is the only place the figure survives).
 export interface ParkedInfo {
   customer: PosCustomer | null;
-  /** The ticket's estimated total at park time; null when a line was price pending (no figure is kept). */
-  totalCents: number | null;
+  /** The ticket's priced-lines subtotal at park time; null when a line was price pending (no figure is kept). */
+  subtotalCents: number | null;
 }
 
 /**
@@ -115,6 +116,19 @@ const SALE_TYPE_LABELS: Record<string, string> = {
   COD: 'COD',
 };
 
+/**
+ * The pre-ring tax-and-total row's words (decision log row 661): the ring
+ * states both figures, so the till names the ring instead of computing them.
+ * An applied relief's engine-assessed rate (the relief dialog's server
+ * outcome) may be NAMED here, never multiplied into a figure; the percent
+ * spelling formats basis points, not money.
+ */
+export function ringTaxWords(reliefRateBps: number | null): string {
+  if (reliefRateBps === null) return 'added at the ring';
+  const pct = reliefRateBps % 100 === 0 ? String(reliefRateBps / 100) : (reliefRateBps / 100).toFixed(2);
+  return `relief assessed at ${pct}%: added at the ring`;
+}
+
 export function fulfilmentLabel(saleType: string): string {
   return SALE_TYPE_LABELS[saleType] ?? (saleType || 'Collect now');
 }
@@ -139,10 +153,23 @@ export function saleConfirmation(sale: {
   payment_id?: string;
   deposit_cents?: number;
   replayed?: boolean;
+  split_tender?: boolean;
+  tenders?: Array<{ method: string }>;
 }): SaleConfirmation {
   const deposit = sale.deposit_cents ?? 0;
   const paidInFull = !!sale.payment_id && deposit === 0;
   const isCOD = sale.sale_type === 'COD';
+  // The visual read's G4: a split settled across two rails confirmed under ONE leg's word, the
+  // screen understating the other leg's money. A split names itself and names its legs, in the
+  // tiles' own words, in the order the legs were submitted, each rail said once. An answer that
+  // names the split but lists no legs falls back to the sale's own tender word.
+  const legs = sale.split_tender === true ? sale.tenders ?? [] : [];
+  const legWords: string[] = [];
+  for (const leg of legs) {
+    const word = tenderLabel(leg.method);
+    if (!legWords.includes(word)) legWords.push(word);
+  }
+  const tenderWords = legWords.length >= 1 ? `Split: ${legWords.join(' and ')}` : tenderLabel(sale.tender);
   // A ring retried over a flaky counter connection returns the ORIGINAL sale rather than making a
   // second one. Saying so is the whole point of the ticket: the clerk who pressed Cash twice needs
   // to know the second press did not take a second payment.
@@ -165,7 +192,7 @@ export function saleConfirmation(sale: {
       amountLabel: '',
       amountCents: sale.total_cents,
       balanceCents: 0,
-      tenderLabel: tenderLabel(sale.tender),
+      tenderLabel: tenderWords,
       note,
     };
   }
@@ -182,7 +209,7 @@ export function saleConfirmation(sale: {
       amountLabel: 'Balance due (derived)',
       amountCents: balance,
       balanceCents: balance,
-      tenderLabel: tenderLabel(sale.tender),
+      tenderLabel: tenderWords,
       note,
     };
   }
@@ -192,7 +219,7 @@ export function saleConfirmation(sale: {
     amountLabel: 'Balance due',
     amountCents: sale.total_cents,
     balanceCents: sale.total_cents,
-    tenderLabel: tenderLabel(sale.tender),
+    tenderLabel: tenderWords,
     note,
   };
 }
