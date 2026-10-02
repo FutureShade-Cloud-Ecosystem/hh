@@ -88,17 +88,22 @@ SELECT ps.order_id::text, o.order_no, COALESCE(ps.invoice_id::text,''), COALESCE
 
 // -- credit-gate + pricing reads -------------------------------------------
 
-func (r *Repository) ReadCustomer(ctx context.Context, customerID string) (customerRec, error) {
-	if r.pool == nil {
-		return customerRec{}, errNoPool
-	}
-	const q = `
+// readCustomerQuery is one customer's credit facts: the terms, the limit and
+// the running balance (the latest customer_transactions balance_after). The
+// pool read and the open-transaction twin (ReadCustomerTx) share it, the
+// findReturnByKeyQuery pattern.
+const readCustomerQuery = `
 SELECT c.id::text, c.customer_type, c.payment_terms_days, c.credit_limit_cents,
        COALESCE((SELECT t.balance_after FROM customer_transactions t
                   WHERE t.customer_id = c.id ORDER BY t.occurred_at DESC LIMIT 1), 0)
   FROM customers c WHERE c.id = $1`
+
+func (r *Repository) ReadCustomer(ctx context.Context, customerID string) (customerRec, error) {
+	if r.pool == nil {
+		return customerRec{}, errNoPool
+	}
 	var c customerRec
-	err := r.pool.QueryRow(ctx, q, customerID).Scan(
+	err := r.pool.QueryRow(ctx, readCustomerQuery, customerID).Scan(
 		&c.ID, &c.CustomerType, &c.PaymentTermsDays, &c.CreditLimitCents, &c.OpenBalanceCents,
 	)
 	return c, err
