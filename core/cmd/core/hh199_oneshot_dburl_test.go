@@ -157,6 +157,10 @@ func hh199RunRole(t *testing.T, role string, roleArgs []string, set map[string]s
 	args := append(append(append([]string{}, prefix...), hh199CoreBin, role), roleArgs...)
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Env = hh199Env(set)
+	// The package directory on purpose: migrate globs db/migrations
+	// relative to the working directory, and from here the glob finds
+	// nothing, so even a leg that somehow reaches a live database cannot
+	// apply a migration to it.
 	cmd.Dir = "."
 	out, err := cmd.CombinedOutput()
 	code := 0
@@ -279,7 +283,12 @@ func TestHH199FallbackProceedsOnLegacyURLAndPrintsItsTarget(t *testing.T) {
 // DSN carrying a password never leaks it anywhere in the output, and the
 // target line carries no query string. CORE_DATABASE_URL alone points
 // this leg, which is also the resolver's core-only path: the preferred
-// name set by itself proceeds and prints its own target.
+// name set by itself proceeds and prints its own target. The leg runs
+// isolated because it leaves DATABASE_URL unset, and on a tree without
+// the fix that is exactly the silent fall back to the localhost default:
+// isolated, the fall back reaches only the namespace's dead loopback and
+// no real database, while the unfixed error still names the default it
+// silently chose.
 func TestHH199PrintedTargetNamesHostAndDatabaseNeverTheSecrets(t *testing.T) {
 	for _, tc := range []struct {
 		role string
@@ -294,7 +303,7 @@ func TestHH199PrintedTargetNamesHostAndDatabaseNeverTheSecrets(t *testing.T) {
 			out, _ := hh199RunRole(t, tc.role, tc.args, map[string]string{
 				"CORE_DATABASE_URL": "postgres://hh199operator:print-leg-secret@" + sink.addr +
 					"/printdb?sslmode=disable&application_name=hh199",
-			}, false)
+			}, true)
 			line := hh199TargetLine(out)
 			if line == "" {
 				t.Fatalf("the role printed no database target; output:\n%s", out)
