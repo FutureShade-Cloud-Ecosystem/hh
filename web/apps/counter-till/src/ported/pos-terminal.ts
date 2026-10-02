@@ -1520,7 +1520,10 @@ export class HosPosTerminal extends LitElement {
        instruction, and the reason there is no media query here. */
     .fulfil {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+      /* UI-3 (visual GAP 9): 112px, not 132px, so all four choices (Collect now, Will-call, Delivery,
+         COD) share one row at the Panels layout's default panel width (about 535px inside); the
+         tile's gap and side padding below tighten with it so the longest label still fits. */
+      grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
       gap: 8px;
     }
  /* rev 8 (item 6): all four options as ICON TILES: inline currentColor SVG (the rev-6
@@ -1531,7 +1534,7 @@ export class HosPosTerminal extends LitElement {
       flex-direction: row;
       align-items: center;
       justify-content: center;
-      gap: 8px;
+      gap: 6px;
       min-height: 40px;
       background: var(--hos-deep-earth);
       border: 1px solid var(--hos-line);
@@ -1540,7 +1543,7 @@ export class HosPosTerminal extends LitElement {
       font-family: inherit;
       font-size: 13px;
       font-weight: 600;
-      padding: 8px 10px;
+      padding: 8px 6px;
       cursor: pointer;
     }
     .fulfil button svg {
