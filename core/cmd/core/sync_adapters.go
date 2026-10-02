@@ -16,11 +16,11 @@ import (
 
 // syncAuditSeam satisfies sync.AuditRecorder over the carried audit
 // service. The actor resolves through the staff linker exactly as the
-// coarse middleware row's actor does (the linked ERP users.id, empty when
-// no row links), and the entry's legs ride the allowlisted Extra keys the
-// audit service's sync block pins (scope, op, client_id,
-// conflict_policy): code-shaped values only, nothing a client typed
-// free-hand.
+// coarse middleware row's actor does (the linked ERP users.id); when no
+// row links, the platform subject rides the allowlisted actor_subject key
+// instead. The entry's other legs ride the Extra keys the audit service's
+// sync block pins (scope, op, client_id, conflict_policy): code-shaped
+// values only, nothing a client typed free-hand.
 type syncAuditSeam struct {
 	svc  audit.Recorder
 	link identity.UserIDLinker
@@ -28,11 +28,17 @@ type syncAuditSeam struct {
 
 // RecordSync maps one engine entry onto one audit row.
 func (a syncAuditSeam) RecordSync(ctx context.Context, e sync.AuditEntry) error {
-	actor := ""
+	actor, subject := "", ""
 	if a.link != nil && e.Actor != "" {
 		if uid, ok := a.link(ctx, e.Actor); ok {
 			actor = uid
 		}
+	}
+	if actor == "" {
+		// No linked users.id (a tenant caller): the uuid actor column stays
+		// empty and the platform subject rides the allowlisted actor_subject
+		// key, so the trail still names who pushed.
+		subject = e.Actor
 	}
 	extra := map[string]any{
 		"scope":     e.Scope,
@@ -42,6 +48,9 @@ func (a syncAuditSeam) RecordSync(ctx context.Context, e sync.AuditEntry) error 
 	}
 	if e.ConflictPolicy != "" {
 		extra["conflict_policy"] = e.ConflictPolicy
+	}
+	if subject != "" {
+		extra["actor_subject"] = subject
 	}
 	return a.svc.Record(ctx, audit.SensitiveAccess{
 		Action:     e.Action,

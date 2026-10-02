@@ -151,85 +151,85 @@ func (e *Engine) Push(ctx context.Context, info ScopeInfo, f ScopeFilter, ops []
 // was rejected.
 func (e *Engine) pushOne(ctx context.Context, store Store, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation) (apigen.SyncPushResult, error) {
 	if err := validOp(op); err != nil {
-		return e.auditRejected(ctx, info, op, "", err), nil
+		return e.auditRejected(ctx, info, f, op, "", err), nil
 	}
 	// Dedup first, before any conflict evaluation: an operation that
 	// already applied under this key is finished, and a replay must not
 	// re-litigate a row that moved after it landed.
 	row, applied, err := store.FindApplied(ctx, f, op.ClientId)
 	if err != nil {
-		return e.classified(ctx, info, op, "", err)
+		return e.classified(ctx, info, f, op, "", err)
 	}
 	if applied {
 		res := apigen.SyncPushResult{ClientId: op.ClientId, Status: resultApplied, Seq: &row.Seq}
-		e.record(ctx, info, op, row.ID, resultApplied, "")
+		e.record(ctx, info, f, op, row.ID, resultApplied, "")
 		return res, nil
 	}
 	switch op.Op {
 	case opCreate:
 		created, err := store.Create(ctx, f, op.ClientId, op.Payload)
 		if err != nil {
-			return e.classified(ctx, info, op, "", err)
+			return e.classified(ctx, info, f, op, "", err)
 		}
 		res := apigen.SyncPushResult{ClientId: op.ClientId, Status: resultApplied, Seq: &created.Seq}
-		e.record(ctx, info, op, created.ID, resultApplied, "")
+		e.record(ctx, info, f, op, created.ID, resultApplied, "")
 		return res, nil
 	case opUpdate:
 		id, _ := op.Payload["id"].(string)
 		row, ok, err := store.Load(ctx, f, id)
 		if err != nil {
-			return e.classified(ctx, info, op, id, err)
+			return e.classified(ctx, info, f, op, id, err)
 		}
 		if !ok {
-			return e.auditRejected(ctx, info, op, id, ErrRowNotFound), nil
+			return e.auditRejected(ctx, info, f, op, id, ErrRowNotFound), nil
 		}
 		if stale(op, row) {
 			return e.resolveStale(ctx, store, info, f, op, row, id)
 		}
 		written, err := store.Write(ctx, f, id, op.ClientId, op.Payload)
 		if err != nil {
-			return e.classified(ctx, info, op, id, err)
+			return e.classified(ctx, info, f, op, id, err)
 		}
 		res := apigen.SyncPushResult{ClientId: op.ClientId, Status: resultApplied, Seq: &written.Seq}
-		e.record(ctx, info, op, id, resultApplied, "")
+		e.record(ctx, info, f, op, id, resultApplied, "")
 		return res, nil
 	case opDelete:
 		id, _ := op.Payload["id"].(string)
 		row, ok, err := store.Load(ctx, f, id)
 		if err != nil {
-			return e.classified(ctx, info, op, id, err)
+			return e.classified(ctx, info, f, op, id, err)
 		}
 		if !ok {
-			return e.auditRejected(ctx, info, op, id, ErrRowNotFound), nil
+			return e.auditRejected(ctx, info, f, op, id, ErrRowNotFound), nil
 		}
 		if row.Deleted {
 			// Already tombstoned: the delete's effect stands, and the
 			// result reports the tombstone's seq rather than allocating
 			// a second one for the same fact.
 			res := apigen.SyncPushResult{ClientId: op.ClientId, Status: resultApplied, Seq: &row.Seq}
-			e.record(ctx, info, op, id, resultApplied, "")
+			e.record(ctx, info, f, op, id, resultApplied, "")
 			return res, nil
 		}
 		deleted, err := store.Delete(ctx, f, id, op.ClientId)
 		if err != nil {
-			return e.classified(ctx, info, op, id, err)
+			return e.classified(ctx, info, f, op, id, err)
 		}
 		res := apigen.SyncPushResult{ClientId: op.ClientId, Status: resultApplied, Seq: &deleted.Seq}
-		e.record(ctx, info, op, id, resultApplied, "")
+		e.record(ctx, info, f, op, id, resultApplied, "")
 		return res, nil
 	}
 	// validOp pinned the op vocabulary; this arm is unreachable by
 	// construction and fails closed.
-	return e.auditRejected(ctx, info, op, "", fmt.Errorf("sync: unknown op %q", op.Op)), nil
+	return e.auditRejected(ctx, info, f, op, "", fmt.Errorf("sync: unknown op %q", op.Op)), nil
 }
 
 // classified sorts one store error: the seam's declared refusals are the
 // operation's rejected result (the module's own words travelling
 // verbatim), anything else is an operational fault that fails the whole
 // push.
-func (e *Engine) classified(ctx context.Context, info ScopeInfo, op apigen.SyncPushOperation, id string, err error) (apigen.SyncPushResult, error) {
+func (e *Engine) classified(ctx context.Context, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation, id string, err error) (apigen.SyncPushResult, error) {
 	if errors.Is(err, ErrRowNotFound) || errors.Is(err, ErrRowExists) || errors.Is(err, ErrOpRefused) {
-		return e.auditRejected(ctx, info, op, id, err), nil
+		return e.auditRejected(ctx, info, f, op, id, err), nil
 	}
 	return apigen.SyncPushResult{}, err
 }
@@ -267,7 +267,7 @@ func (e *Engine) resolveStale(ctx context.Context, store Store, info ScopeInfo, 
 				Applied:     &out.Applied,
 			},
 		}
-		e.record(ctx, info, op, id, resultConflict, string(out.Policy))
+		e.record(ctx, info, f, op, id, resultConflict, string(out.Policy))
 		return res, nil
 	}
 	// The merge writes: the declared fields land on the row (the server
@@ -276,7 +276,7 @@ func (e *Engine) resolveStale(ctx context.Context, store Store, info ScopeInfo, 
 	// state with applied true.
 	written, err := store.Write(ctx, f, id, op.ClientId, out.MergedFields)
 	if err != nil {
-		return e.classified(ctx, info, op, id, err)
+		return e.classified(ctx, info, f, op, id, err)
 	}
 	applied := out.Applied
 	res := apigen.SyncPushResult{
@@ -290,7 +290,7 @@ func (e *Engine) resolveStale(ctx context.Context, store Store, info ScopeInfo, 
 			Applied:     &applied,
 		},
 	}
-	e.record(ctx, info, op, id, resultApplied, string(out.Policy))
+	e.record(ctx, info, f, op, id, resultApplied, string(out.Policy))
 	return res, nil
 }
 
@@ -298,24 +298,24 @@ func (e *Engine) resolveStale(ctx context.Context, store Store, info ScopeInfo, 
 // result; policy is the envelope's policy leg when the result carries one,
 // empty for a plain applied operation. Audit is an index, never a
 // precondition (the tasks module's own recorded doctrine).
-func (e *Engine) record(ctx context.Context, info ScopeInfo, op apigen.SyncPushOperation, entityID, outcome, policy string) {
+func (e *Engine) record(ctx context.Context, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation, entityID, outcome, policy string) {
 	if e.audit == nil {
 		return
 	}
 	e.audit.record(ctx, AuditEntry{
 		Action: "SYNC_PUSH", Scope: info.Name, Op: op.Op,
-		ClientID: op.ClientId, EntityID: entityID, Outcome: outcome, ConflictPolicy: policy,
+		ClientID: op.ClientId, EntityID: entityID, Actor: f.Actor, Outcome: outcome, ConflictPolicy: policy,
 	})
 }
 
 // auditRejected builds one rejected result and its audit row, the message
 // travelling verbatim (module prefixes strip at the one door every
 // envelope leaves through).
-func (e *Engine) auditRejected(ctx context.Context, info ScopeInfo, op apigen.SyncPushOperation, entityID string, err error) apigen.SyncPushResult {
+func (e *Engine) auditRejected(ctx context.Context, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation, entityID string, err error) apigen.SyncPushResult {
 	if e.audit != nil {
 		e.audit.record(ctx, AuditEntry{
 			Action: "SYNC_PUSH", Scope: info.Name, Op: op.Op,
-			ClientID: op.ClientId, EntityID: entityID, Outcome: resultRejected,
+			ClientID: op.ClientId, EntityID: entityID, Actor: f.Actor, Outcome: resultRejected,
 		})
 	}
 	msg := err.Error()
