@@ -635,32 +635,34 @@ func TestActorSubjectExtraKey_AllowlistedAndAdminOnly(t *testing.T) {
 	}
 }
 
-// HH-193: the cleartext detector on a realistic tenant subject. Subjects are the platform JWT sub:
-// Appwrite user ids (20 hex chars from unique(), or a custom id up to 36 of [a-zA-Z0-9._-]) and the
-// fixture shapes. A subject with no 7-digit run passes verbatim; a hex id that happens to hold a
-// run of 7 or more decimal digits is replaced by "[redacted]" (pinned here as the known behavior,
-// reported as a finding rather than widened around).
-func TestActorSubjectExtraKey_RealisticSubjectsThroughRedaction(t *testing.T) {
+// HH-193: the cleartext detector on realistic tenant subjects. Subjects are the platform JWT sub
+// (Appwrite user ids: 20 hex chars, or a custom id up to 36 of [a-zA-Z0-9._-], plus the fixture
+// shapes). The sync adapter separator-encodes the subject in groups of six joined by colons before
+// it reaches the chokepoint, the house precedent (ADR 0022), so no digit run of 7 can form; the
+// encoded form of a subject that holds such a run survives verbatim. The chokepoint itself is
+// unchanged: the raw run is still redacted.
+func TestActorSubjectExtraKey_EncodedSubjectsSurviveRedaction(t *testing.T) {
 	for _, sub := range []string{
-		"fxportal-absent",
-		"b3-platform-user-1",
-		"66f1a2b3c4d5e6f7a8b9",
-		"de110000-0000-4000-9000-000000000001",
+		"fxport:al-abs:ent",
+		"b3-pla:tform-:user-1",
+		"66f1a2:b3c4d5:e6f7a8:b9",
+		"651234:5678a1:b2c3d4:e5", // the encoded form of the raw subject 6512345678a1b2c3d4e5
+		"de1100:00-000:0-400:0-900:0-000:000000:01",
 	} {
 		e := recordOne(t, SensitiveAccess{
 			Action: "SYNC_PUSH", EntityType: "sync.pick_tasks", EntityID: sampleUUID,
 			Extra: map[string]any{"actor_subject": sub},
 		})
 		if e.Changes["actor_subject"] != sub {
-			t.Errorf("subject %q mangled to %v", sub, e.Changes["actor_subject"])
+			t.Errorf("encoded subject %q mangled to %v", sub, e.Changes["actor_subject"])
 		}
 	}
-	e := recordOne(t, SensitiveAccess{
+	raw := recordOne(t, SensitiveAccess{
 		Action: "SYNC_PUSH", EntityType: "sync.pick_tasks", EntityID: sampleUUID,
 		Extra: map[string]any{"actor_subject": "6512345678a1b2c3d4e5"},
 	})
-	if e.Changes["actor_subject"] != "[redacted]" {
-		t.Errorf("a subject holding a 7-digit run: got %v, pinned behavior is [redacted]", e.Changes["actor_subject"])
+	if raw.Changes["actor_subject"] != "[redacted]" {
+		t.Errorf("the chokepoint must stay untouched: a raw digit-run subject got %v", raw.Changes["actor_subject"])
 	}
 }
 

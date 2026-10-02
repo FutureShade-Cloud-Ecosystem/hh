@@ -8,6 +8,9 @@ package main
 
 import (
 	"context"
+	"math/rand"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -33,7 +36,7 @@ func TestSyncAuditSeamActorResolution(t *testing.T) {
 		name, actor, wantID, wantSubject string
 	}{
 		{"staff links to users.id", "fxstaff-any", staffUser, ""},
-		{"tenant keeps its subject", "fxportal-alpha", "", "fxportal-alpha"},
+		{"tenant keeps its subject, separator-encoded", "fxportal-alpha", "", "fxport:al-alp:ha"},
 		{"no actor records neither", "", "", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -53,5 +56,43 @@ func TestSyncAuditSeamActorResolution(t *testing.T) {
 				t.Fatalf("actor_id %q subject %q, want %q and %q", a.ActorID, subject, c.wantID, c.wantSubject)
 			}
 		})
+	}
+}
+
+// digitRun7 is the audit chokepoint's redaction trigger: seven or more
+// consecutive decimal digits.
+var digitRun7 = regexp.MustCompile(`[0-9]{7,}`)
+
+// A subject the cleartext detector would redact raw (a hex id holding a
+// digit run) must leave the adapter encoded so that no run survives, and
+// stay lossless: stripping the colons returns the subject exactly.
+func TestSyncAuditSeamSubjectEncodingNeverTripsTheDetector(t *testing.T) {
+	rng := rand.New(rand.NewSource(193))
+	const hexdigits = "0123456789abcdef"
+	const idChars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ._-"
+	gen := func(alphabet string, n int) string {
+		var b strings.Builder
+		for i := 0; i < n; i++ {
+			b.WriteByte(alphabet[rng.Intn(len(alphabet))])
+		}
+		return b.String()
+	}
+	subjects := []string{"6512345678a1b2c3d4e5", strings.Repeat("9", 36), "12345678901234567890"}
+	for i := 0; i < 300; i++ {
+		subjects = append(subjects, gen(hexdigits, 20), gen(idChars, 36), gen(hexdigits, 36))
+	}
+	for _, sub := range subjects {
+		rec := &syncRecorderDouble{}
+		seam := syncAuditSeam{svc: rec, link: func(context.Context, string) (string, bool) { return "", false }}
+		if err := seam.RecordSync(context.Background(), sync.AuditEntry{Action: "SYNC_PUSH", Scope: "orders", Op: "delete", ClientID: "c", Outcome: "applied", Actor: sub}); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := rec.got[0].Extra["actor_subject"].(string)
+		if digitRun7.MatchString(got) {
+			t.Fatalf("subject %q encodes to %q, which still holds a 7-digit run", sub, got)
+		}
+		if strings.ReplaceAll(got, ":", "") != sub {
+			t.Fatalf("subject %q encodes to %q, not reversible by stripping colons", sub, got)
+		}
 	}
 }
