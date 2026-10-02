@@ -347,13 +347,16 @@ export async function tapRoleCard(page: Page, role: Role): Promise<void> {
         .waitFor({ state: "visible", timeout: SIGN_ANSWER_MS })
         .then(() => "refused" as const, () => "stalled" as const),
     ]);
-    if (answer === "in") return;
+    if (answer === "in") break;
     if (answer !== "refused" || attempt >= REFUSAL_RETRIES) break;
     await page.waitForTimeout(WINDOW_PASS_MS);
   }
-  // The retries are spent, or neither signal ever came: hold the success
-  // signal's own expect, so the failure names what the run waited for, and
-  // the page snapshot carries the refusal words when they are on it.
+  // Every ending holds the role's text, success included: the belt wraps the
+  // assertion the specs held before it, it never replaces it (the closed
+  // drawer spec's sign-in kept its own text expect through the round that
+  // extracted this helper). A stalled answer or a spent retry fails here
+  // honestly, naming what the run waited for, with the page snapshot
+  // carrying the refusal words when they are on it.
   await expect(signedIn).toHaveText(role);
 }
 
