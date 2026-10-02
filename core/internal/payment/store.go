@@ -114,6 +114,20 @@ func (s *Store) Status(ctx context.Context) (configured bool, merchantID, proces
 	return true, merchantID, processor, currency, nil
 }
 
+// activeConfigQuery is the active payment_config row plus its sealed creds.
+// The pool read and the open-transaction twin (activeConfigTx) share it, the
+// readCustomerQuery pattern: one SELECT, two carriers.
+const activeConfigQuery = `
+SELECT processor, merchant_id, currency, base_url, mdr_bps, surcharge_enabled,
+       surcharge_card_types, eft_enabled, credentials_ciphertext, key_version
+  FROM payment_config WHERE status='active' ORDER BY created_at DESC LIMIT 1`
+
+// reencryptActiveCredsQuery re-seals the active row's credentials. The pool
+// write and its open-transaction twin (reencryptActiveCredsTx) share it.
+const reencryptActiveCredsQuery = `
+UPDATE payment_config SET credentials_ciphertext=$1, key_version=$2, updated_at=now()
+  WHERE processor=$3 AND status='active'`
+
 // activeConfig loads the active row + DECRYPTS creds IN-MEMORY ONLY (never logged, never returned out).
 func (s *Store) activeConfig(ctx context.Context) (cfg activeCfg, creds map[string]string, err error) {
 	if s.pool == nil {
@@ -121,10 +135,7 @@ func (s *Store) activeConfig(ctx context.Context) (cfg activeCfg, creds map[stri
 	}
 	var ct []byte
 	var kv int
-	err = s.pool.QueryRow(ctx,
-		`SELECT processor, merchant_id, currency, base_url, mdr_bps, surcharge_enabled,
-		        surcharge_card_types, eft_enabled, credentials_ciphertext, key_version
-		   FROM payment_config WHERE status='active' ORDER BY created_at DESC LIMIT 1`).
+	err = s.pool.QueryRow(ctx, activeConfigQuery).
 		Scan(&cfg.Processor, &cfg.MerchantID, &cfg.Currency, &cfg.BaseURL, &cfg.MDRBps, &cfg.Surcharge,
 			&cfg.SurchargeCardTypes, &cfg.EFTEnabled, &ct, &kv)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -133,17 +144,47 @@ func (s *Store) activeConfig(ctx context.Context) (cfg activeCfg, creds map[stri
 	if err != nil {
 		return activeCfg{}, nil, err
 	}
+	return s.openActiveCreds(cfg, ct, kv)
+}
+
+// activeConfigTx is activeConfig's open-transaction twin: the config read
+// for a caller INSIDE its own database transaction rides that transaction
+// (tx.QueryRow), never the pool. The pos Return transaction holds a
+// connection and the per-sale advisory lock while it reverses the card; a
+// pool read there would have the lock holder wait for a second connection
+// every other connection is a Return waiter that needs the holder's lock,
+// deadlocking a full pool until the caller's context ends (the
+// FindReturnByKeyTx discipline).
+func (s *Store) activeConfigTx(ctx context.Context, tx pgx.Tx) (cfg activeCfg, creds map[string]string, err error) {
+	var ct []byte
+	var kv int
+	err = tx.QueryRow(ctx, activeConfigQuery).
+		Scan(&cfg.Processor, &cfg.MerchantID, &cfg.Currency, &cfg.BaseURL, &cfg.MDRBps, &cfg.Surcharge,
+			&cfg.SurchargeCardTypes, &cfg.EFTEnabled, &ct, &kv)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return activeCfg{}, nil, ErrNoConfig
+	}
+	if err != nil {
+		return activeCfg{}, nil, err
+	}
+	return s.openActiveCreds(cfg, ct, kv)
+}
+
+// openActiveCreds is the read's shared tail: open the sealed creds
+// in-memory (never logged, never returned out) and thread the resolved
+// host/currency so the live client can read them.
+func (s *Store) openActiveCreds(cfg activeCfg, ct []byte, kv int) (activeCfg, map[string]string, error) {
 	plain, err := s.vault.Decrypt(ct, kv)
 	if err != nil {
 		return activeCfg{}, nil, err
 	}
+	var creds map[string]string
 	if err := json.Unmarshal(plain, &creds); err != nil {
 		return activeCfg{}, nil, err
 	}
 	if creds == nil {
 		creds = map[string]string{}
 	}
-	// Thread the resolved host/currency into the creds map so the live client can read them.
 	if cfg.BaseURL != "" {
 		creds["base_url"] = cfg.BaseURL
 	}
@@ -151,6 +192,16 @@ func (s *Store) activeConfig(ctx context.Context) (cfg activeCfg, creds map[stri
 		creds["currency"] = cfg.Currency
 	}
 	return cfg, creds, nil
+}
+
+// sealCreds is the write's shared head: strip the injected non-secret keys
+// and seal the credential set.
+func (s *Store) sealCreds(creds map[string]string) ([]byte, int, error) {
+	plain, err := json.Marshal(credentialKeys(creds))
+	if err != nil {
+		return nil, 0, err
+	}
+	return s.vault.Encrypt(plain)
 }
 
 // reencryptActiveCreds re-seals the rotating credential set (after the live client refreshed an
@@ -163,18 +214,27 @@ func (s *Store) reencryptActiveCreds(ctx context.Context, processor string, cred
 	if processor == "" {
 		processor = "run_payments"
 	}
-	plain, err := json.Marshal(credentialKeys(creds))
+	ct, kv, err := s.sealCreds(creds)
 	if err != nil {
 		return err
 	}
-	ct, kv, err := s.vault.Encrypt(plain)
+	_, err = s.pool.Exec(ctx, reencryptActiveCredsQuery, ct, kv, processor)
+	return err
+}
+
+// reencryptActiveCredsTx is the re-seal on the caller's open transaction,
+// the twin the in-transaction refund path's rotation write-back rides: no
+// pool use is reachable from inside the Return transaction (see
+// activeConfigTx for why a pool read or write there deadlocks a full pool).
+func (s *Store) reencryptActiveCredsTx(ctx context.Context, tx pgx.Tx, processor string, creds map[string]string) error {
+	if processor == "" {
+		processor = "run_payments"
+	}
+	ct, kv, err := s.sealCreds(creds)
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx,
-		`UPDATE payment_config SET credentials_ciphertext=$1, key_version=$2, updated_at=now()
-		   WHERE processor=$3 AND status='active'`,
-		ct, kv, processor)
+	_, err = tx.Exec(ctx, reencryptActiveCredsQuery, ct, kv, processor)
 	return err
 }
 
@@ -183,13 +243,24 @@ func (s *Store) reencryptActiveCreds(ctx context.Context, processor string, cred
 // lets the pure Charge gateway call be unit-tested without a database, the internal/pricing pattern.)
 type configResolver interface {
 	activeConfig(ctx context.Context) (activeCfg, map[string]string, error)
+	// activeConfigTx is the open-transaction twin: the config read for a
+	// caller INSIDE its own database transaction rides that transaction,
+	// never the pool. The pos Return transaction holds a connection and the
+	// per-sale advisory lock; a pool read there would have the lock holder
+	// wait for a second connection every other connection is a Return
+	// waiter that needs the holder's lock (the FindReturnByKeyTx
+	// discipline).
+	activeConfigTx(ctx context.Context, tx pgx.Tx) (activeCfg, map[string]string, error)
 }
 
 // credsReencryptor is an OPTIONAL capability a resolver may implement: re-seal the active config's
 // rotating creds after the live client refreshes an expired api_key (ARCH_DELTA §2.11). *Store
 // implements it; the DB-free fake does not, so unit tests never need a database for the charge path.
+// The tx twin exists so a refund running INSIDE the caller's transaction can write back a rotation
+// on that same transaction, never through the pool (the activeConfigTx discipline on the write side).
 type credsReencryptor interface {
 	reencryptActiveCreds(ctx context.Context, processor string, creds map[string]string) error
+	reencryptActiveCredsTx(ctx context.Context, tx pgx.Tx, processor string, creds map[string]string) error
 }
 
 // Service is the till-facing seam. It holds the config resolver + the active Processor.
@@ -244,11 +315,53 @@ func (s *Service) Charge(ctx context.Context, in ChargeInput) (ChargeReceipt, er
 // the REFUNDED row from the receipt). It loads the active config, decrypts creds in-memory, injects
 // the idempotency key call-scoped, dispatches Processor.Refund against the ORIGINAL capture's
 // processor ref, and returns a RefundReceipt. A rotated api_key is re-sealed exactly as in Charge.
+// Callers holding no database transaction call THIS entry point; the pos Return transaction's
+// reversal goes through RefundTx.
 func (s *Service) Refund(ctx context.Context, in RefundInput) (RefundReceipt, error) {
 	cfg, creds, err := s.cfg.activeConfig(ctx)
 	if err != nil {
 		return RefundReceipt{}, err
 	}
+	return s.refund(ctx, cfg, creds, in, s.resealOnPool)
+}
+
+// RefundTx is Refund on the caller's open transaction. The pos Return
+// transaction holds one connection and the per-sale advisory lock while it
+// reverses the card: the config read here rides THAT transaction
+// (activeConfigTx) and the rotation write-back, if it ever fires, rides it
+// too, because a pool read there would have the lock holder wait for a
+// second connection every other connection is a Return waiter that needs
+// the holder's lock, deadlocking a full pool until the caller's context
+// ends (the FindReturnByKeyTx discipline). No pool use is reachable from
+// this path at all.
+func (s *Service) RefundTx(ctx context.Context, tx pgx.Tx, in RefundInput) (RefundReceipt, error) {
+	cfg, creds, err := s.cfg.activeConfigTx(ctx, tx)
+	if err != nil {
+		return RefundReceipt{}, err
+	}
+	return s.refund(ctx, cfg, creds, in, func(ctx context.Context, processor string, creds map[string]string) error {
+		if rs, ok := s.cfg.(credsReencryptor); ok {
+			_ = rs.reencryptActiveCredsTx(ctx, tx, processor, creds)
+		}
+		return nil
+	})
+}
+
+// resealOnPool is the write-back carrier for the pool-shaped Refund, the
+// behavior Refund has always had.
+func (s *Service) resealOnPool(ctx context.Context, processor string, creds map[string]string) error {
+	if rs, ok := s.cfg.(credsReencryptor); ok {
+		_ = rs.reencryptActiveCreds(ctx, processor, creds)
+	}
+	return nil
+}
+
+// refund is the shared body: dispatch Processor.Refund against the ORIGINAL
+// capture's processor ref and return the receipt. reseal is the rotation
+// write-back's carrier, the pool or the caller's transaction, chosen by the
+// entry point (its error is ignored exactly as the write-back always was:
+// best-effort, the processor's answer is the receipt).
+func (s *Service) refund(ctx context.Context, cfg activeCfg, creds map[string]string, in RefundInput, reseal func(context.Context, string, map[string]string) error) (RefundReceipt, error) {
 	if in.ProcessorRef == "" || in.AmountCents <= 0 {
 		return RefundReceipt{}, errBadRefund
 	}
@@ -256,9 +369,7 @@ func (s *Service) Refund(ctx context.Context, in RefundInput) (RefundReceipt, er
 	creds["__idem"] = in.IdempotencyKey // call-scoped; not persisted
 	res, refundErr := s.proc.Refund(ctx, creds, cfg.MerchantID, in.ProcessorRef, in.AmountCents)
 	if creds["api_key"] != prevKey && creds["api_key"] != "" {
-		if rs, ok := s.cfg.(credsReencryptor); ok {
-			_ = rs.reencryptActiveCreds(ctx, cfg.Processor, creds)
-		}
+		_ = reseal(ctx, cfg.Processor, creds)
 	}
 	rcpt := RefundReceipt{Processor: cfg.Processor, ProcessorRef: res.ProcessorRef, Status: res.Status}
 	if refundErr != nil {

@@ -381,7 +381,12 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 			}
 			refundPaymentID = res.PaymentID
 		case RefundCard:
-			refundRef, err := s.cardRefund.RefundCard(ctx, oc.GatewayRef, total, returnNo, "refund:"+in.IdempotencyKey)
+			// The reversal rides THIS transaction (the CardRefunder seam's
+			// discipline): a pool read while the Return transaction holds a
+			// connection has the per-sale lock's holder wait for a second
+			// connection every other connection is a Return waiter that needs
+			// the holder's lock, deadlocking a full pool.
+			refundRef, err := s.cardRefund.RefundCard(ctx, tx, oc.GatewayRef, total, returnNo, "refund:"+in.IdempotencyKey)
 			if err != nil {
 				return clientErr(http.StatusBadGateway, "pos: card refund failed, %s", err.Error())
 			}

@@ -45,17 +45,18 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
+	"github.com/jackc/pgx/v5"
 )
 
 // cardRailAdapter mirrors cmd/core's posCardRefunderAdapter over a real
-// payment.Service: the same call into Service.Refund and the same receipt
+// payment.Service: the same call into Service.RefundTx and the same receipt
 // handling, the reversal's own processor ref returned and the decrypted
 // creds never crossing into pos. The production rail shape, which the rig's
 // counting fake is not.
 type cardRailAdapter struct{ svc *payment.Service }
 
-func (a cardRailAdapter) RefundCard(ctx context.Context, gatewayRef string, amountCents int64, reference, idempotencyKey string) (string, error) {
-	rcpt, err := a.svc.Refund(ctx, payment.RefundInput{
+func (a cardRailAdapter) RefundCard(ctx context.Context, tx pgx.Tx, gatewayRef string, amountCents int64, reference, idempotencyKey string) (string, error) {
+	rcpt, err := a.svc.RefundTx(ctx, tx, payment.RefundInput{
 		AmountCents:    amountCents,
 		ProcessorRef:   gatewayRef,
 		Reference:      reference,

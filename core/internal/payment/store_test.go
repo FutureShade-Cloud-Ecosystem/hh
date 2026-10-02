@@ -4,26 +4,32 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // -- DB-free fakes (the internal/pricing service-test pattern) --------------
 
 // fakeResolver implements configResolver (and the optional credsReencryptor) without a database, so
 // the pure Charge gateway call is unit-testable. It hands Charge a FRESH copy of creds each call so
-// in-place rotation by the processor is observable.
+// in-place rotation by the processor is observable. The tx twins are counted apart from the pool
+// reads and writes: the in-transaction refund must resolve and re-seal through them and never
+// through the pool shapes.
 type fakeResolver struct {
 	cfg   activeCfg
 	creds map[string]string
 	err   error
 
 	calls         int
+	txCalls       int
 	reencryptCall int
+	txReencrypt   int
 	reencProc     string
 	reencCreds    map[string]string
 }
 
-func (f *fakeResolver) activeConfig(_ context.Context) (activeCfg, map[string]string, error) {
-	f.calls++
+// answer is the shared body: a fixed row plus a fresh creds copy.
+func (f *fakeResolver) answer() (activeCfg, map[string]string, error) {
 	if f.err != nil {
 		return activeCfg{}, nil, f.err
 	}
@@ -34,8 +40,25 @@ func (f *fakeResolver) activeConfig(_ context.Context) (activeCfg, map[string]st
 	return f.cfg, cp, nil
 }
 
+func (f *fakeResolver) activeConfig(_ context.Context) (activeCfg, map[string]string, error) {
+	f.calls++
+	return f.answer()
+}
+
+func (f *fakeResolver) activeConfigTx(_ context.Context, _ pgx.Tx) (activeCfg, map[string]string, error) {
+	f.txCalls++
+	return f.answer()
+}
+
 func (f *fakeResolver) reencryptActiveCreds(_ context.Context, processor string, creds map[string]string) error {
 	f.reencryptCall++
+	f.reencProc = processor
+	f.reencCreds = creds
+	return nil
+}
+
+func (f *fakeResolver) reencryptActiveCredsTx(_ context.Context, _ pgx.Tx, processor string, creds map[string]string) error {
+	f.txReencrypt++
 	f.reencProc = processor
 	f.reencCreds = creds
 	return nil
@@ -174,6 +197,109 @@ func TestService_Charge_ReencryptsRotatedCreds(t *testing.T) {
 	}
 	if fr.reencCreds["api_key"] != "fresh" {
 		t.Fatalf("re-encrypted api_key = %q, want fresh", fr.reencCreds["api_key"])
+	}
+}
+
+// spyRefunder records what Service.Refund dispatched and answers a fixed result; it can simulate the
+// live client rotating an expiring api_key in place, the shape the write-back twin exists for.
+type spyRefunder struct {
+	calls     int
+	gotMID    string
+	gotRef    string
+	gotCents  int64
+	gotIdem   string
+	mutateKey string
+	res       RefundResult
+}
+
+func (p *spyRefunder) Name() string { return "spy" }
+func (p *spyRefunder) Charge(context.Context, map[string]string, string, int64, string) (ChargeResult, error) {
+	return ChargeResult{}, ErrNotImplemented
+}
+func (p *spyRefunder) Refund(_ context.Context, creds map[string]string, mid, ref string, amount int64) (RefundResult, error) {
+	p.calls++
+	p.gotMID, p.gotRef, p.gotCents, p.gotIdem = mid, ref, amount, creds["__idem"]
+	if p.mutateKey != "" {
+		creds["api_key"] = p.mutateKey
+	}
+	return p.res, nil
+}
+
+// The tx refund resolves the config ON the caller's transaction, exactly
+// once, and never through the pool: the pos Return transaction holds a
+// connection and the per-sale advisory lock while the reversal runs, and a
+// pool read there would deadlock a full pool of Return waiters needing the
+// holder's lock (the FindReturnByKeyTx discipline, one package deeper).
+func TestService_RefundTx_RidesTheTransaction(t *testing.T) {
+	fr := &fakeResolver{
+		cfg:   activeCfg{Processor: "run_payments", MerchantID: "MID-1"},
+		creds: map[string]string{"api_key": "k"},
+	}
+	sp := &spyRefunder{res: RefundResult{ProcessorRef: "rp_ref_x", Status: "refunded"}}
+	svc := &Service{cfg: fr, proc: sp}
+	rcpt, err := svc.RefundTx(context.Background(), nil, RefundInput{AmountCents: 12500, ProcessorRef: "rp_sim_captured", IdempotencyKey: "refund-key"})
+	if err != nil {
+		t.Fatalf("RefundTx: %v", err)
+	}
+	if rcpt.Status != "refunded" || rcpt.ProcessorRef != "rp_ref_x" || rcpt.Processor != "run_payments" {
+		t.Fatalf("receipt = %+v, want run_payments/refunded/rp_ref_x", rcpt)
+	}
+	if fr.txCalls != 1 {
+		t.Fatalf("activeConfigTx calls = %d, want exactly 1 (the config read rides the transaction)", fr.txCalls)
+	}
+	if fr.calls != 0 {
+		t.Fatalf("activeConfig calls = %d, want 0: an in-transaction refund must never read through the pool", fr.calls)
+	}
+	if sp.calls != 1 || sp.gotRef != "rp_sim_captured" || sp.gotCents != 12500 || sp.gotMID != "MID-1" || sp.gotIdem != "refund-key" {
+		t.Fatalf("processor dispatched wrong args: %+v", sp)
+	}
+}
+
+// The pool-shaped Refund still resolves through activeConfig, exactly as it
+// always has: its callers hold no transaction, the pool is the right carrier
+// for them.
+func TestService_Refund_ReadsThroughThePool(t *testing.T) {
+	fr := &fakeResolver{
+		cfg:   activeCfg{Processor: "run_payments", MerchantID: "MID-1"},
+		creds: map[string]string{"api_key": "k"},
+	}
+	sp := &spyRefunder{res: RefundResult{ProcessorRef: "rp_ref_x", Status: "refunded"}}
+	svc := &Service{cfg: fr, proc: sp}
+	if _, err := svc.Refund(context.Background(), RefundInput{AmountCents: 12500, ProcessorRef: "rp_sim_captured", IdempotencyKey: "refund-key"}); err != nil {
+		t.Fatalf("Refund: %v", err)
+	}
+	if fr.calls != 1 {
+		t.Fatalf("activeConfig calls = %d, want exactly 1", fr.calls)
+	}
+	if fr.txCalls != 0 {
+		t.Fatalf("activeConfigTx calls = %d, want 0: the pool caller holds no transaction to ride", fr.txCalls)
+	}
+}
+
+// The rotation write-back on the tx refund rides the transaction too. It is
+// unreachable on the refund path today (no Processor mutates creds during
+// Refund), and that is exactly why it is pinned here: the tx twin must
+// already be the carrier the day a live client starts refreshing in Refund,
+// so the write-back cannot come back as a pool write inside the Return
+// transaction.
+func TestService_RefundTx_WriteBackRidesTheTransaction(t *testing.T) {
+	fr := &fakeResolver{
+		cfg:   activeCfg{Processor: "run_payments", MerchantID: "MID-1"},
+		creds: map[string]string{"api_key": "expired"},
+	}
+	sp := &spyRefunder{res: RefundResult{ProcessorRef: "rp_ref_x", Status: "refunded"}, mutateKey: "fresh"}
+	svc := &Service{cfg: fr, proc: sp}
+	if _, err := svc.RefundTx(context.Background(), nil, RefundInput{AmountCents: 12500, ProcessorRef: "rp_sim_captured", IdempotencyKey: "refund-key"}); err != nil {
+		t.Fatalf("RefundTx: %v", err)
+	}
+	if fr.txReencrypt != 1 {
+		t.Fatalf("reencryptActiveCredsTx calls = %d, want 1: the write-back rides the caller's transaction", fr.txReencrypt)
+	}
+	if fr.reencryptCall != 0 {
+		t.Fatalf("reencryptActiveCreds calls = %d, want 0: a pool write inside the caller's transaction is the stall", fr.reencryptCall)
+	}
+	if fr.reencProc != "run_payments" || fr.reencCreds["api_key"] != "fresh" {
+		t.Fatalf("write-back kept wrong facts: processor %q creds %v", fr.reencProc, fr.reencCreds)
 	}
 }
 

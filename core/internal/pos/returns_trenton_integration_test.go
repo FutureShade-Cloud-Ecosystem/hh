@@ -68,6 +68,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -123,10 +124,12 @@ func newSaleKeys() saleKeys {
 	return saleKeys{trenton: next(), kingston: next(), small: next(), manager: next(), tiny: next()}
 }
 
-// countingCards is the card rail the refusals must never reach.
+// countingCards is the card rail the refusals must never reach. The tx
+// parameter is the CardRefunder seam's discipline: the rail rides the
+// caller's Return transaction, and this fake does nothing with it but count.
 type countingCards struct{ calls int }
 
-func (c *countingCards) RefundCard(context.Context, string, int64, string, string) (string, error) {
+func (c *countingCards) RefundCard(context.Context, pgx.Tx, string, int64, string, string) (string, error) {
 	c.calls++
 	return "rp_should_never_happen", nil
 }

@@ -7,15 +7,23 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
 
-// fakeCfg is a config store returning a fixed active row (no database, no vault).
+// fakeCfg is a config store returning a fixed active row (no database, no vault). The tx twin answers
+// the same row: the fake has one world, the tx shape exists so the service's in-transaction reads stay
+// tx-bound.
 type fakeCfg struct {
 	cfg activeCfg
 	err error
 }
 
 func (f fakeCfg) activeConfig(context.Context) (activeCfg, map[string]string, error) {
+	return f.cfg, map[string]string{"api_key": "test-only"}, f.err
+}
+
+func (f fakeCfg) activeConfigTx(context.Context, pgx.Tx) (activeCfg, map[string]string, error) {
 	return f.cfg, map[string]string{"api_key": "test-only"}, f.err
 }
 
