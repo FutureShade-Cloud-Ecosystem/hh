@@ -11,6 +11,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -385,14 +386,27 @@ SELECT cr.rep_user_id::text, COALESCE(u.display_name,''), count(*)::int, sum(cr.
 // window was frozen more than once the artefact could mean any of the matches and the caller must
 // treat the set as a whole; no match at all returns the empty set, which the caller also reads as
 // consolidated, global only, fail closed.
+//
+// Malformed linkage fails SAFE and in agreement with the list: a rep that is not a uuid or a window
+// that is not a pair of dates can match no period, so the answer is the empty set (consolidated,
+// global only) rather than a bind error here and a quiet skip on the list side.
 func (r *Repository) CommissionArtefactScopes(ctx context.Context, repUserID, periodStart, periodEnd string) ([]string, error) {
 	if r.pool == nil {
 		return nil, ErrNoDatabase
 	}
+	if _, err := uuid.Parse(repUserID); err != nil {
+		return nil, nil
+	}
+	if _, err := time.Parse(DateLayout, periodStart); err != nil {
+		return nil, nil
+	}
+	if _, err := time.Parse(DateLayout, periodEnd); err != nil {
+		return nil, nil
+	}
 	rows, err := r.pool.Query(ctx, `
 SELECT DISTINCT COALESCE(cr.branch_id::text, '')
   FROM commission_runs cr
- WHERE cr.rep_user_id = NULLIF($1, '')::uuid
+ WHERE cr.rep_user_id = $1::uuid
    AND cr.period_start = $2::date
    AND cr.period_end = $3::date`, repUserID, periodStart, periodEnd)
 	if err != nil {

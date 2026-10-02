@@ -213,7 +213,11 @@ SELECT id, kind, template_code, params, branch_id::text, row_count, totals, html
 //	            linkage, no period id, so the predicate asks the frozen periods that linkage
 //	            matches: at least one must sit inside the reach and none may sit outside it (a
 //	            consolidated match, branch NULL, is outside every reach). No match at all fails the
-//	            EXISTS and the artefact reads as consolidated: global only, fail closed.
+//	            EXISTS and the artefact reads as consolidated: global only, fail closed. The
+//	            linkage is compared with the COLUMNS rendered to text (to_char for the dates, so
+//	            the comparison does not depend on the session DateStyle) rather than the params
+//	            values cast to uuid and date, so a malformed row simply matches nothing instead of
+//	            erroring the whole list, the same safe skip the single read performs.
 //
 // A NULL parameter is the global caller's whole list; an empty array answers no rows. This is the
 // same ruling artefactScopes and artefactReadable make for the single read, stated in SQL.
@@ -235,16 +239,16 @@ SELECT r.id, r.kind, r.template_code, COALESCE(t.name, ''), r.params, r.branch_i
         AND r.params->>'branch_id' IS NULL
         AND EXISTS (SELECT 1
                       FROM commission_runs cr
-                     WHERE cr.rep_user_id = NULLIF(r.params->>'rep_user_id', '')::uuid
-                       AND cr.period_start = (r.params->>'period_start')::date
-                       AND cr.period_end   = (r.params->>'period_end')::date
-                       AND cr.branch_id = ANY($2::uuid[]))
+                     WHERE cr.rep_user_id::text = NULLIF(r.params->>'rep_user_id', '')
+                       AND to_char(cr.period_start, 'YYYY-MM-DD') = r.params->>'period_start'
+                       AND to_char(cr.period_end, 'YYYY-MM-DD') = r.params->>'period_end'
+                       AND cr.branch_id::text = ANY($2::text[]))
         AND NOT EXISTS (SELECT 1
                           FROM commission_runs cr
-                         WHERE cr.rep_user_id = NULLIF(r.params->>'rep_user_id', '')::uuid
-                           AND cr.period_start = (r.params->>'period_start')::date
-                           AND cr.period_end   = (r.params->>'period_end')::date
-                           AND (cr.branch_id IS NULL OR NOT (cr.branch_id = ANY($2::uuid[]))))))
+                         WHERE cr.rep_user_id::text = NULLIF(r.params->>'rep_user_id', '')
+                           AND to_char(cr.period_start, 'YYYY-MM-DD') = r.params->>'period_start'
+                           AND to_char(cr.period_end, 'YYYY-MM-DD') = r.params->>'period_end'
+                           AND (cr.branch_id IS NULL OR NOT (cr.branch_id::text = ANY($2::text[]))))))
  ORDER BY r.created_at DESC
  LIMIT $1`, limit, reach.filter())
 	if err != nil {
