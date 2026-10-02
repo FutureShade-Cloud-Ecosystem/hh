@@ -583,6 +583,8 @@ test("a line the account's price cannot answer reads price pending through ordin
   await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
   const polymeric = page.getByTestId("pos-line-row").filter({ hasText: "Polymeric Locking Sand" });
   await expect(polymeric.locator(".lprice")).toHaveText("price pending");
+  // The total cell says the same word every other surface does.
+  await expect(polymeric.locator(".ltot")).toHaveText("(not priced)");
 
   // An ordinary act on the OTHER line reprices that line and leaves the
   // unanswered one saying so.
@@ -1100,6 +1102,25 @@ test("a ticket parked with a line price pending lists no total", async ({ page }
   const ticket = parkedDialog.locator(".ticket").first();
   await expect(ticket).toContainText("(not priced)");
   await expect(ticket).not.toContainText("CA$");
+});
+
+test("a parked ticket this window holds no price memory for lists the same marker, never a bare line count", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  // A new window: the park-time snapshot lives in the first window's memory only.
+  await signIn(page, "Sales");
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const tickets = page.locator("hos-pos-parked .hos-dialog .ticket");
+  await expect(tickets.first()).toBeVisible();
+  const count = await tickets.count();
+  for (let i = 0; i < count; i += 1) {
+    await expect(tickets.nth(i)).toContainText("(not priced)");
+    await expect(tickets.nth(i)).not.toContainText("CA$");
+  }
 });
 
 test("the top bar is on the till's compact scale: about 48px, small chrome buttons, the banner on one line", async ({

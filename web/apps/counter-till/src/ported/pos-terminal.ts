@@ -6337,7 +6337,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
              rev 5's honesty stands: an unresolved price says "price pending", never CA$0.00. */ ''}
           ${l.priceMissing
             ? html`<div class="lprice">price pending</div>
-                <div class="ltot">(none)</div>`
+                <div class="ltot">(not priced)</div>`
             : html`<div class="lprice" title=${l.priceUom && l.priceUom !== l.uom ? `Priced per ${l.priceUom}` : 'Unit price'}>
                   ${money(l.unitPriceCents)}${l.priceUom && l.priceUom !== l.uom ? ` / ${l.priceUom}` : ''}
                 </div>
