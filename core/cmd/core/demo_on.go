@@ -87,6 +87,7 @@ type demoServeConfig struct {
 	staffAudience  string
 	tenantAudience string
 	tokenTTL       time.Duration
+	listenAddr     string
 }
 
 func loadDemoServeConfig(getenv func(string) string) (demoServeConfig, error) {
@@ -109,10 +110,15 @@ func loadDemoServeConfig(getenv func(string) string) (demoServeConfig, error) {
 	if staff == tenant {
 		return demoServeConfig{}, errors.New("staff and tenant audience values must differ")
 	}
+	addr, err := resolveListenAddr(getenv)
+	if err != nil {
+		return demoServeConfig{}, err
+	}
 	cfg := demoServeConfig{
 		databaseURL:    databaseURL,
 		staffAudience:  staff,
 		tenantAudience: tenant,
+		listenAddr:     addr,
 	}
 	if raw := strings.TrimSpace(getenv(issuer.TokenTTLVar)); raw != "" {
 		d, err := time.ParseDuration(raw)
@@ -177,14 +183,8 @@ func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)
 	// healthz: the same live database ping the default build serves.
 	mux.Handle("GET /healthz", healthzHandler(graph.pool.Ping, graph.tops.bistrackSvc.HealthStatus()))
 
-	addr, err := listenAddr(getenv)
-	if err != nil {
-		return err
-	}
-	slog.Info("serve listen address", "addr", addr)
-
 	srv := &http.Server{
-		Addr:              addr,
+		Addr:              graph.listenAddr,
 		Handler:           otelhttp.Wrap(nil)(auditWrap(mux, graph)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -380,6 +380,6 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 
 	return &appGraph{
 		cfg: cfg, log: log, pool: pool, verify: verifier, link: linkedUserID(pool), g: g,
-		money: money, ops: ops, tops: tops, smsBelt: belt, demoMint: iss.Mint,
+		money: money, ops: ops, tops: tops, smsBelt: belt, demoMint: iss.Mint, listenAddr: demoCfg.listenAddr,
 	}, nil
 }

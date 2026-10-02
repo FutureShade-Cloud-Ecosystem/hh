@@ -27,6 +27,13 @@ func TestLoadServeConfigHonoursPort(t *testing.T) {
 		{"port negative refused", "-5", unset, "", true},
 		{"port empty reads as unset", "", unset, ":8080", false},
 		{"port blank reads as unset", "  ", unset, ":8080", false},
+		{"port with surrounding whitespace", " 8081\t", unset, ":8081", false},
+		{"port 65536 refused", "65536", unset, "", true},
+		{"port plus sign refused", "+80", unset, "", true},
+		{"port leading zeros within five digits", "08080", unset, ":8080", false},
+		{"port long run of leading zeros refused", "0000000080", unset, "", true},
+		{"port non ASCII digits refused", "\u0668\u0660\u0668\u0660", unset, "", true},
+		{"port with a separator refused", "8_080", unset, "", true},
 		{"listen addr alone", unset, "127.0.0.1:9000", "127.0.0.1:9000", false},
 		{"listen addr beats port", "8081", "127.0.0.1:9000", "127.0.0.1:9000", false},
 		{"listen addr beats a junk port", "abc", "127.0.0.1:9000", "127.0.0.1:9000", false},
@@ -60,5 +67,19 @@ func TestLoadServeConfigHonoursPort(t *testing.T) {
 				t.Fatalf("listenAddr = %q, want %q", cfg.listenAddr, tc.want)
 			}
 		})
+	}
+}
+
+// The refusal echoes the operator's text, so a long wrong value is cut to a short prefix.
+func TestResolveListenAddrBoundsTheEchoedValue(t *testing.T) {
+	long := strings.Repeat("9", 5000)
+	_, err := resolveListenAddr(func(k string) string {
+		if k == "PORT" {
+			return long
+		}
+		return ""
+	})
+	if err == nil || len(err.Error()) > 200 || !strings.Contains(err.Error(), "PORT") {
+		t.Fatalf("a 5000 character PORT gave %v, want a short refusal naming PORT", err)
 	}
 }

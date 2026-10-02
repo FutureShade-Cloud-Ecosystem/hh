@@ -131,7 +131,7 @@ func (c Config) DemoEnabled() bool {
 
 func Load() Config {
 	return Config{
-		Port:            intEnv("PORT", 8080), // no consumer: serve resolves PORT from the raw value (cmd/core resolveListenAddr)
+		Port:            intEnv("PORT", 8080),
 		DatabaseURL:     strEnv("DATABASE_URL", "postgres://hardscape:hardscape@localhost:5435/hardscapeos?sslmode=disable"),
 		NATSURL:         strEnv("NATS_URL", ""),
 		JWKSURL:         strEnv("JWKS_URL", ""),
