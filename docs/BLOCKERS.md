@@ -1059,3 +1059,18 @@ users rows and grants the populate plants.
   phrase gate accept that waits for W2's mint; and the app holds a till past
   the token's expiry with nothing to re-check it against until W7's first
   core call. W5, W9, W2 and W7 hold the closures, per the plan.
+
+## HH hardening, HH-180 (audit reopen fence): entity types without an owner resolver fail closed on the reopen route
+
+The reopen route `GET /api/v1/audit/transaction/{entityType}/{entityId}` fences a scoped caller
+through the entity's owning branch, resolved by narrow owner adapters wired at the composition
+root (order and quote are wired today). An entity type with no adapter (payment, invoice,
+pos_policy, ar_policy, and every other type the writers mint) answers an empty trail for every
+scoped caller, fail closed; a global caller keeps the full trail. Wiring another owner is a
+follow-up for its owning lane: one adapter over the owner's branch read plus one line in
+wire_money.go. Related, same root cause, pre-existing on main: the policy trails are admin or
+manager gated at their own surfaces while the reopen route is staff gated, so before this change
+any staffer could read them through the route, and the pos_policy and ar_policy rows are
+branch-less besides. The durable fix is the semantic writers stamping `branch_id` on their rows
+(roughly 55 sites across modules, pos and till included), which is not this lane's to make: pos
+and till are the Counter Till lane's.
