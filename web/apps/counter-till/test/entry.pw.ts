@@ -55,6 +55,30 @@ test("the entry page shows the two demo role cards and the eleven coming roles",
   }
 });
 
+test("the entry stage wears the till's own cards: a card names what it opens, focus rings it, and the page holds at phone width", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const sales = page.getByRole("button", { name: "Sales", exact: true });
+  await expect(sales).toBeVisible();
+  // The card says what the role opens, beside a mark from the ported registry.
+  await expect(sales).toContainText("The counter sale flow.");
+  await expect(sales.locator("svg")).toHaveCount(1);
+  // Focus lands the surface's focus ring on the card: keyboard Entry reaches it.
+  await sales.focus();
+  await expect(sales).toBeFocused();
+  await expect(sales).toHaveCSS("outline-style", "solid");
+  await expect(sales).toHaveCSS("outline-width", "2px");
+  // The stage holds at phone width: no horizontal overflow at 390.
+  const overflow = await page.evaluate(() => {
+    const scroller = document.scrollingElement;
+    if (scroller === null) return 0;
+    return scroller.scrollWidth - scroller.clientWidth;
+  });
+  expect(overflow).toBeLessThanOrEqual(0);
+  const manager = page.getByRole("button", { name: "Sales manager", exact: true });
+  await expect(manager).toContainText("The counter plus approvals and margins.");
+});
+
 test("tapping Sales lands on the till with the Demo banner and Sales", async ({ page }) => {
   await page.goto("/");
   const mint = page.waitForResponse((response) => response.url().endsWith("/api/v1/demo/session"));
