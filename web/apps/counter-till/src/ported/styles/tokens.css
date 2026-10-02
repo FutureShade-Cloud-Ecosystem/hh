@@ -31,6 +31,8 @@
   --hos-deep-earth: var(--hh-page);
   --hos-slate-warm: var(--hh-card);
   --hos-line: var(--hh-line);
+  /* The boundary a non-filled control is seen by (WCAG 1.4.11, 3:1 in both themes); --hos-line is a hairline. */
+  --hos-control-line: var(--hh-control-line);
   --hos-text: var(--hh-text);
   --hos-text-dim: var(--hh-text-dim);
 

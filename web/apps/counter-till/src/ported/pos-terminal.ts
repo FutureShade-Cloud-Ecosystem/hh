@@ -2053,7 +2053,7 @@ export class HosPosTerminal extends LitElement {
       width: 100%;
       background: var(--hos-deep-earth);
       color: var(--hos-text);
-      border: 1px solid var(--hos-line);
+      border: 1px solid var(--hos-control-line);
       border-radius: var(--hos-radius-control);
       padding: 8px 10px;
       font-size: 13px;

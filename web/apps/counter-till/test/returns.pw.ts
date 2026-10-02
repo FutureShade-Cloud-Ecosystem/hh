@@ -327,3 +327,43 @@ test("an unknown sale number is refused in words and lays out nothing", async ({
   await expect(page.getByTestId("returns-sale")).toHaveCount(0);
   await expect(page.getByTestId("refund-refusal")).toHaveCount(0);
 });
+
+// WCAG 1.4.11: a non-filled control's boundary clears 3:1 against what it sits on, in both
+// themes. The hairline (--hh-line) does not; the design system's control line does.
+for (const scheme of ["dark", "light"] as const) {
+  test(`the desk's find input keeps the control boundary at 3:1 (${scheme})`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await signIn(page, "Sales");
+    const input = page.getByLabel("Sale number");
+    await expect(input).toBeVisible();
+    const read = await input.evaluate((el) => {
+      const rgb = (css: string): number[] => (css.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+      const lum = (c: number[]): number => {
+        const [r, g, b] = c.map((v) => {
+          const s = v / 255;
+          return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const ratio = (a: number[], b: number[]): number => {
+        const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+        return (hi + 0.05) / (lo + 0.05);
+      };
+      const resolve = (token: string): number[] => {
+        const probe = document.createElement("div");
+        probe.style.color = `var(${token})`;
+        document.body.appendChild(probe);
+        const out = rgb(getComputedStyle(probe).color);
+        probe.remove();
+        return out;
+      };
+      const border = rgb(getComputedStyle(el).borderTopColor);
+      return {
+        isControlLine: border.join() === resolve("--hh-control-line").join(),
+        onCard: ratio(border, resolve("--hh-card")),
+      };
+    });
+    expect(read.isControlLine).toBe(true);
+    expect(read.onCard).toBeGreaterThanOrEqual(3);
+  });
+}

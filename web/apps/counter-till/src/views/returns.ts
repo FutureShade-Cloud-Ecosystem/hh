@@ -75,7 +75,7 @@ export const returnsStyles = css`
     font-size: 13px;
     color: var(--hos-text);
     background: var(--hos-deep-earth);
-    border: 1px solid var(--hos-line);
+    border: 1px solid var(--hh-control-line);
     border-radius: var(--hos-radius-control);
     padding: var(--hh-s-8) var(--hh-s-12);
     min-height: 44px;
@@ -123,7 +123,7 @@ export const returnsStyles = css`
     font-size: 13px;
     color: var(--hos-text);
     background: var(--hos-deep-earth);
-    border: 1px solid var(--hos-line);
+    border: 1px solid var(--hh-control-line);
     border-radius: var(--hos-radius-control);
     padding: var(--hh-s-8) var(--hh-s-12);
     width: 5em;
@@ -160,7 +160,7 @@ export const returnsStyles = css`
     font-size: 13px;
     color: var(--hos-text);
     background: var(--hos-deep-earth);
-    border: 1px solid var(--hos-line);
+    border: 1px solid var(--hh-control-line);
     border-radius: var(--hos-radius-control);
     padding: var(--hh-s-8) var(--hh-s-12);
     min-height: 44px;
