@@ -182,14 +182,24 @@ export function mint(page: Page, flow: string): Promise<string> {
       await paceMintOffPage();
       const phrase = process.env.CT_GATE_PHRASE ?? "";
       const base = process.env.CT_IMAGE_URL ?? "http://127.0.0.1:5801";
-      const answer = await fetch(new URL("/api/v1/demo/session", base), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Basic ${Buffer.from(`demo:${phrase}`).toString("base64")}`,
-        },
-        body: JSON.stringify({ flow }),
-      });
+      const ask = () =>
+        fetch(new URL("/api/v1/demo/session", base), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Basic ${Buffer.from(`demo:${phrase}`).toString("base64")}`,
+          },
+          body: JSON.stringify({ flow }),
+        });
+      let answer = await ask();
+      if (answer.status === 429) {
+        // The same belt the page side holds: the box refused a burst and
+        // spent nothing, its own instruction is to let the window pass, so
+        // the mint waits the fixed thirty one seconds and asks once more,
+        // failing honestly if the refusal stands.
+        await new Promise((resolve) => setTimeout(resolve, WINDOW_PASS_MS));
+        answer = await ask();
+      }
       expect(answer.ok).toBe(true);
       const body = (await answer.json()) as { token?: string };
       expect(typeof body.token).toBe("string");
@@ -288,6 +298,66 @@ export async function openStep(page: Page, step: Step): Promise<void> {
 }
 
 /**
+ * The words the entry page states when the box refuses a sign-in (the status
+ * line under the cards, where the app renders the mint's refusal): the
+ * signal the belt watches for beside the success signal.
+ */
+const REFUSAL_WORDS = "Demo sign-in refused";
+
+/**
+ * The wait between a refused tap and the next one: the box's own instruction
+ * is "let the window pass and tap the card again", and its window is thirty
+ * seconds, so the belt waits a fixed thirty one. A refusal spends nothing on
+ * the box, so the wait is the whole cost of the retry: it is the human pace
+ * the guard assumes, not a bypass.
+ */
+const WINDOW_PASS_MS = 31_000;
+
+/** How long the watch holds for either signal before it calls the answer stalled. */
+const SIGN_ANSWER_MS = 15_000;
+
+/** A refused sign-in is retried at most this often before the run fails honestly. */
+const REFUSAL_RETRIES = 2;
+
+/**
+ * Tap one role card on the entry page and wait for the sign-in to land: the
+ * shared move of every entry-page sign-in (signIn, and the closed drawer
+ * spec's own tap before its press), the pace, the tap, and then the watch.
+ * The watch is a belt, not an assertion: the till either renders the
+ * signed-in chrome or the entry page states the refusal, and the refusal
+ * words name the box's window, not a broken till. The belt waits the window
+ * out and taps again, at most twice, so one refused sign-in recovers in
+ * place instead of failing its test and restarting the worker (a restart
+ * drops every spec file's mint memo and injects the very burst the guard
+ * refuses; that cascade is what once left the world's drawer closed and the
+ * run's later screens timed out on the session dot).
+ */
+export async function tapRoleCard(page: Page, role: Role): Promise<void> {
+  const card = page.getByRole("button", { name: role, exact: true });
+  const signedIn = page.getByTestId("signed-in-role");
+  const refusal = page.getByRole("status").filter({ hasText: REFUSAL_WORDS });
+  for (let attempt = 0; ; attempt += 1) {
+    await paceMint(page);
+    await card.click();
+    const answer = await Promise.race([
+      signedIn
+        .waitFor({ state: "visible", timeout: SIGN_ANSWER_MS })
+        .then(() => "in" as const, () => "stalled" as const),
+      refusal
+        .waitFor({ state: "visible", timeout: SIGN_ANSWER_MS })
+        .then(() => "refused" as const, () => "stalled" as const),
+    ]);
+    if (answer === "in") return;
+    if (answer !== "refused" || attempt >= REFUSAL_RETRIES) break;
+    await page.waitForTimeout(WINDOW_PASS_MS);
+  }
+  // The retries are spent, or neither signal ever came: hold the success
+  // signal's own expect, so the failure names what the run waited for, and
+  // the page snapshot carries the refusal words when they are on it.
+  await expect(signedIn).toHaveText(role);
+}
+
+/**
  * Tap a role card and wait until the till answers under that role's name and
  * has loaded: the session bar's open dot (the drawer the till finds open)
  * use), the page's context line naming the invented dealer and the branch,
@@ -296,8 +366,7 @@ export async function openStep(page: Page, step: Step): Promise<void> {
 export async function signIn(page: Page, role: Role): Promise<void> {
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
-  await paceMint(page);
-  await page.getByRole("button", { name: role, exact: true }).click();
+  await tapRoleCard(page, role);
   await expect(page.getByTestId("signed-in-role")).toHaveText(role);
   await expect(page.getByTestId("session-dot")).toContainText("Open", { timeout: 15_000 });
   await expect(page.getByTestId("pagectx")).toContainText(DEMO_DEALER);
