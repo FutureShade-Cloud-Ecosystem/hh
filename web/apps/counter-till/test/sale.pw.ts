@@ -589,11 +589,19 @@ test("a line the account's price cannot answer reads price pending through ordin
     page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" }).locator(".ltot"),
   ).toHaveText("CA$12.00");
   await expect(polymeric.locator(".lprice")).toHaveText("price pending");
-  // The summary sums the priced lines only: CA$12.00, never a zero for the
-  // line that has no answer.
+  // A pending line beside a priced one keeps the whole summary on the marker:
+  // no figure (CA$12.00 for the priced line alone, or any sum) is stated while
+  // a line has no answer. The ring button and the change preview say the same.
   await openStep(page, "payment");
   const totals = page.getByTestId("pos-totals-card");
-  await expect(totals).toContainText("CA$12.00");
+  await expect(totals).toContainText("(not priced)");
+  await expect(totals).not.toContainText("CA$12.00");
+  await expect(page.getByTestId("pos-complete-sale")).toContainText("(not priced)");
+  await expect(page.getByTestId("pos-complete-sale")).not.toContainText("CA$");
+  await page.getByTestId("cash-tendered").fill("20");
+  await expect(page.getByTestId("cash-change-preview")).toContainText("(not priced)");
+  await expect(page.getByTestId("cash-change-preview")).not.toContainText("CA$");
+  await page.getByTestId("cash-tendered").fill("");
   await openStep(page, "items");
 
   // The recovery: the account is picked, and the re-price answers at the
@@ -619,6 +627,10 @@ test("a line the account's price cannot answer reads price pending through ordin
   await expect(polymeric.locator(".lprice")).toHaveText("CA$11.48");
   await expect(polymeric.locator(".ltot")).toHaveText("CA$22.96");
   await expect(page.getByTestId("pos-line-row").filter({ hasText: "price pending" })).toHaveCount(0);
+  // Every line priced: the figures return, the estimate mark on the ring.
+  await openStep(page, "payment");
+  await expect(totals).not.toContainText("(not priced)");
+  await expect(page.getByTestId("pos-complete-sale")).toContainText("(est.)");
 });
 
 test("a pricing answer that arrives for a stale line state is dropped: the newest answer owns the line", async ({
