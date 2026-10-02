@@ -60,14 +60,25 @@ func TestIntegrationARReminder_NoTransportIsNotADeliveredSendOrAFlag(t *testing.
 		t.Fatalf("seed customer: %v", err)
 	}
 	// ar_ap_contacts, ar_reminder_sends (and its events) and ar_paper_path_flags all cascade from
-	// customers, so one delete unwinds the whole rig.
+	// customers; the invoices are deleted first (below), then the customer.
 	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM invoices WHERE customer_id = $1::uuid`, customerID)
 		_, _ = pool.Exec(context.Background(), `DELETE FROM customers WHERE id = $1::uuid`, customerID)
 	})
 
 	// THE UNWIRED DEFAULT: no sender injected, the same default the service ships when nothing is
 	// passed, which is also what the composition root now names in words at wire_tops. The nil
 	// sender is UnwiredSender, so every send below is recorded and marked FAILED.
+	// An open invoice, because a send to an account with nothing due is refused (HH-195): this test
+	// is about the transport, so the account owes something.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
+		                      doc_type, source_kind, closes_order)
+		VALUES ('INV-185-'||$1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE - 10, CURRENT_DATE - 10,
+		        10000, 0, 10000, 10000, now(), 'INVOICE', 'ORDER', FALSE)`, suffix, customerID, branchID); err != nil {
+		t.Fatalf("seed open invoice: %v", err)
+	}
 	landing := NewARLandingService(repo)
 	svc := NewARReminderService(repo, landing, nil, "https://dibbits.example")
 	if _, err := svc.TagAPContact(ctx, APContact{CustomerID: customerID, Name: "AP Desk", Email: "ap@hh185.example"}, ""); err != nil {

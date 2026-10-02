@@ -47,6 +47,7 @@ var (
 // inventory test until someone classes it, which is how a new provider
 // fails the build instead of shipping a wire out of the demo box.
 var demoEnvAllowNames = []string{
+	"ALLOW_DEV_DEFAULT_DB",
 	"ALLOW_SEED",
 	"APP_ENV",
 	"DATABASE_URL",
@@ -83,6 +84,7 @@ var demoEnvAllowPrefixes = []string{
 // every name on it must be classed: denied on the demo box, allowed on
 // it, or the card processor's own rule.
 var envInventoryFixture = []string{
+	"ALLOW_DEV_DEFAULT_DB",
 	"ALLOW_SEED",
 	"APP_ENV",
 	"BISTRACK_API_KEY",

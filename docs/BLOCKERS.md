@@ -1313,3 +1313,5 @@ follow-up: CI sets `APP_ENV=dev` on the one seed step in `.github/workflows/ci.y
 step), then seed refuses `cfg.EnvUnset`. Demoseed runs in-process from tests and has no dev guard
 in `demoseed_main.go`, so it is out of that follow-up's scope. Owner: the platform lane or the
 principal.
+
+HH-199 closed the two-names trap recorded above: the one-shot roles (migrate, seed, demoseed) now read CORE_DATABASE_URL with DATABASE_URL as the fallback, refuse a set-and-differing pair before any connection, and print the target host and database name before acting; the localhost dev default is reachable only behind ALLOW_DEV_DEFAULT_DB=true.

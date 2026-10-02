@@ -120,6 +120,29 @@ func TestBuildCards_TotalsAndOrder(t *testing.T) {
 	}
 }
 
+// TestBuildCards_NetsACreditMemoAsExposure pins what the landing cards do with a credit memo (a
+// negative open balance): it is netted into its bucket's total and counted as a document, and a
+// credit-only account is still an account on its card. HH-195 changed the escalation QUEUE to skip
+// credit memos; the cards are deliberately untouched, so a change here must be a decision.
+func TestBuildCards_NetsACreditMemoAsExposure(t *testing.T) {
+	asOf := arDay(2026, 8, 27)
+	invs := []OpenInvoice{
+		{InvoiceID: "i1", CustomerID: "c1", CustomerName: "One", DueDate: asOf.AddDate(0, 0, -5), BalanceCents: 1000_00},
+		{InvoiceID: "m1", CustomerID: "c1", CustomerName: "One", DueDate: asOf.AddDate(0, 0, -5), BalanceCents: -300_00},
+		{InvoiceID: "m2", CustomerID: "c2", CustomerName: "Two", DueDate: asOf.AddDate(0, 0, -5), BalanceCents: -50_00},
+	}
+	var late *LandingCard
+	cards := BuildCards(invs, testPolicy(), asOf)
+	for i := range cards {
+		if cards[i].Invoices > 0 {
+			late = &cards[i]
+		}
+	}
+	if late == nil || late.Invoices != 3 || late.Accounts != 2 || late.TotalCents != 650_00 {
+		t.Fatalf("card with the book = %+v, want 3 documents / 2 accounts / 65000 cents (the memos net into exposure)", late)
+	}
+}
+
 // TestBuildCards_RangesAreReadable pins the from/to days each card carries, because the card's
 // subtitle is derived from them and an off-by-one there is a number a customer will read back.
 func TestBuildCards_RangesAreReadable(t *testing.T) {
@@ -152,6 +175,26 @@ func TestBuildEscalation_RollsUpPerAccount(t *testing.T) {
 	}
 	if !e.OnHold {
 		t.Fatal("the queue must carry the hold, or somebody phones an account the counter has already stopped")
+	}
+}
+
+// TestBuildEscalation_SkipsCreditMemos (HH-195): a credit memo (a negative open balance) is money owed
+// TO the customer, never a call to make. A credit-only account is absent from the queue, and a memo
+// never lends an account its age, its count or its balance. Unit level on purpose: the integration
+// suite that also covers it is on the CI job's red list.
+func TestBuildEscalation_SkipsCreditMemos(t *testing.T) {
+	asOf := arDay(2026, 8, 27)
+	invs := []OpenInvoice{
+		{InvoiceID: "m1", CustomerID: "c2", CustomerName: "CreditOnly", DueDate: asOf.AddDate(0, 0, -150), BalanceCents: -50_00},
+		{InvoiceID: "m2", CustomerID: "c3", CustomerName: "Mixed", DueDate: asOf.AddDate(0, 0, -200), BalanceCents: -30_00},
+		{InvoiceID: "i3", CustomerID: "c3", CustomerName: "Mixed", DueDate: asOf.AddDate(0, 0, -120), BalanceCents: 80_00},
+	}
+	q := BuildEscalation(invs, testPolicy(), asOf, nil)
+	if len(q) != 1 || q[0].CustomerID != "c3" {
+		t.Fatalf("queue = %+v, want only the mixed account (a credit-only account is not a call to make)", q)
+	}
+	if q[0].Invoices != 1 || q[0].BalanceCents != 80_00 || q[0].OldestDays != 120 {
+		t.Fatalf("mixed entry = %+v, want 1 invoice / 8000 cents / oldest 120 (the memo lends nothing)", q[0])
 	}
 }
 

@@ -13,8 +13,11 @@ package billing
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 )
 
 // -- a fake that satisfies both landing and reminder stores -------------------------------------
@@ -397,6 +400,31 @@ func TestSend_WritesTheRecordAndTheTrackingURLs(t *testing.T) {
 				t.Fatalf("customer-facing copy %q carries %q", s, banned)
 			}
 		}
+	}
+}
+
+// TestSend_RefusesWhenNoDocumentQualifies (HH-195): when the reminder context names no document (the
+// account owes nothing, or the named one is a credit memo, paid, unknown or another account's), the
+// send is refused with a 422 before any row is written and nothing is sent. Unit level on purpose: the
+// integration suite that also covers it is on the CI job's red list.
+func TestSend_RefusesWhenNoDocumentQualifies(t *testing.T) {
+	now := arDay(2026, 8, 27)
+	f := newFakeARStore()
+	f.apContact = &APContact{CustomerID: "c1", Email: "ap@rood.example"}
+	f.ctxRow = ReminderContext{CustomerID: "c1"} // no InvoiceNo: nothing qualified
+	sender := &recordingSender{}
+
+	_, err := sendService(f, sender, now).Send(context.Background(),
+		SendReminderInput{CustomerID: "c1", Channel: ChannelEmail}, "u1")
+	var se *settings.StatusError
+	if !errors.As(err, &se) || se.Status != http.StatusUnprocessableEntity {
+		t.Fatalf("err = %v, want a 422 refusal", err)
+	}
+	if len(f.sends) != 0 {
+		t.Fatalf("%d rows written for a refused send, want none", len(f.sends))
+	}
+	if len(sender.sent) != 0 {
+		t.Fatalf("%d messages sent for a refused send, want none", len(sender.sent))
 	}
 }
 

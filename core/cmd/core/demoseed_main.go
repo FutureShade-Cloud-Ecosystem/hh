@@ -34,10 +34,10 @@ import (
 // demoseedRole is the demoseed subcommand's entrypoint (the pin's
 // cmd/demoseed main, folded here with its behaviour unchanged).
 func demoseedRole(args []string, out *os.File, getenv func(string) string) error {
-	return run(args, out)
+	return run(args, out, getenv)
 }
 
-func run(args []string, out *os.File) error {
+func run(args []string, out *os.File, getenv func(string) string) error {
 	fs := flag.NewFlagSet("demoseed", flag.ContinueOnError)
 	doApply := fs.Bool("apply", false, "write the missing rows (without this the command only prints its plan)")
 	// -plan HAD NO FLAG, AND THIS FILE'S OWN HEADER DOCUMENTS IT. `demoseed -plan`, the invocation
@@ -61,6 +61,17 @@ func run(args []string, out *os.File) error {
 	log := logging.New(cfg.Env)
 	ctx := context.Background()
 
+	// The target comes from the one-shot resolver, not config.Load:
+	// HH-199's rule (oneshot_db.go), refused before anything here runs
+	// and printed before the connection is attempted, on both the -plan
+	// and -apply paths (the connection below is the first thing either
+	// path does with a database). cfg still supplies Env and
+	// PaymentVaultKey.
+	dsn, err := resolveOneshotDatabaseURL(getenv)
+	if err != nil {
+		return fmt.Errorf("demoseed: %w", err)
+	}
+
 	// THE INJECTED CLOCK. Read exactly once, here, and threaded through the plan as a value. Nothing
 	// downstream of this line calls time.Now(): two runs pinned to the same -now produce byte-identical
 	// rows, which is what makes "run it twice and compare the counts" a real proof rather than a
@@ -74,7 +85,8 @@ func run(args []string, out *os.File) error {
 		now = t.UTC()
 	}
 
-	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	printOneshotDatabaseTarget(out, "demoseed", dsn)
+	pool, err := db.Connect(ctx, dsn)
 	if err != nil {
 		return fmt.Errorf("demoseed: cannot connect: %w", err)
 	}
@@ -118,7 +130,7 @@ func run(args []string, out *os.File) error {
 
 	fmt.Fprintf(out, "demoseed %s\n", demoMarker)
 	fmt.Fprintf(out, "  clock          %s\n", now.Format(time.RFC3339))
-	fmt.Fprintf(out, "  database       %s\n", redactDSN(cfg.DatabaseURL))
+	fmt.Fprintf(out, "  database       %s\n", redactDSN(dsn))
 	fmt.Fprintf(out, "  branches       %s\n", branchLine(branches))
 	fmt.Fprintf(out, "  demo logins    %s\n", personaLine(personas))
 	fmt.Fprintf(out, "  POD sealing    %s\n", sealMode(keyed))

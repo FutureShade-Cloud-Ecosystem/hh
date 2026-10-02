@@ -217,8 +217,15 @@ paths:
       tags: [tenant-auth]
       summary: Change the caller's password after verifying the current one
       description: >-
-        Success revokes the account's other sessions. A wrong current
-        password is a 403.
+        Currently always answers 501 and changes nothing: the legacy password
+        this route checked and replaced is read only by sign-in paths that are
+        not served, because the platform issues every session, so a 200 here
+        would change nothing that signs anyone in and revoke no session. It
+        reads no body. The 200, the 400 for a rejected body and the 403 for a
+        wrong current password describe the route once password changes go
+        through the platform (HH-4.2) and are not reachable today; the
+        guard's answers (400 for an X-Org header, 401 with no tenant bearer or
+        an inactive account, 403 for a staff bearer) still are.
       x-role: tenant
       security: [{ TenantBearer: [] }]
       requestBody:
@@ -237,6 +244,13 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "501":
+          description: >-
+            Changing the password here is not available yet; nothing is
+            changed and no session is revoked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   # --- tenant-team: users and invites (manage_users) --------------------------
   /api/v1/tenant/users:
