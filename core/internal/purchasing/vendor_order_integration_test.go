@@ -12,8 +12,12 @@ package purchasing
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
@@ -299,6 +303,118 @@ func TestIntegration_Item5_TheOrderGoesToTheOneTaggedDeskOrIsRefusedInWords(t *t
 	after, _ := h.svc.ListPOSends(h.ctx, po.ID)
 	if len(after) != 1 || after[0].RecipientKind != RecipientVendorContact {
 		t.Fatalf("untagging changed the story of a send that already happened: %+v", after)
+	}
+}
+
+// HH-181: the send replay is keyed to ITS ORDER and answered AFTER the branch fence. The key index is
+// global in the database (one idempotency key, one send, across every order), so a key held by another
+// order must be refused as a collision in the 409 shape this route already speaks, and a key must never
+// be an answer for a caller the branch fence refuses.
+func TestIntegration_Item5_TheSendReplayIsKeyedToItsOrderAndFencedByBranch(t *testing.T) {
+	h := item5Harness(t)
+	product := h.newProduct(t, "hh181-key")
+	first := h.orderedPO(t, product, 10, 100)
+	second := h.orderedPO(t, product, 10, 100)
+	if _, err := h.svc.SetVendorContact(h.ctx, VendorContact{
+		VendorID: h.vendor, Name: "Orders desk", Email: "orders@vendor.example"}); err != nil {
+		t.Fatalf("tag: %v", err)
+	}
+
+	key := fmt.Sprintf("hh181-%d", time.Now().UnixNano())
+	got, err := h.svc.SendPO(h.ctx, first.ID, SendPORequest{IdempotencyKey: key})
+	if err != nil {
+		t.Fatalf("first send: %v", err)
+	}
+	// (a) THE IDENTICAL RETRY OF THE SAME ORDER is still one order, the behavior this route promises.
+	again, err := h.svc.SendPO(h.ctx, first.ID, SendPORequest{IdempotencyKey: key})
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if again.ID != got.ID {
+		t.Fatalf("the retry minted a second send: %s vs %s", again.ID, got.ID)
+	}
+
+	// (b) THE SAME KEY ON A SECOND ORDER is a collision, answered with the existing 409 shape. The
+	// second order is never sent and the caller is never handed the first order's record.
+	sent, err := h.svc.SendPO(h.ctx, second.ID, SendPORequest{IdempotencyKey: key})
+	var ce clientError
+	if !errors.As(err, &ce) || ce.status != http.StatusConflict {
+		t.Fatalf("the second order under a held key = (%+v, %v), want the 409 collision classification", sent, err)
+	}
+	if sent.ID == got.ID || sent.POID == first.ID {
+		t.Fatalf("the collision answered with the first order's record: %+v", sent)
+	}
+	if rows, _ := h.svc.ListPOSends(h.ctx, second.ID); len(rows) != 0 {
+		t.Fatalf("the refused send left %d rows on the second order", len(rows))
+	}
+
+	// (c) A CALLER WITH NO GRANT ON THE ORDER'S BRANCH is answered by the fence, never by the replay,
+	// even with a real key in hand.
+	outsider := NewService(NewRepository(h.pool)).
+		withCaller(scopedCaller(h.user, branchKGN))
+	if _, err := outsider.SendPO(h.ctx, first.ID, SendPORequest{IdempotencyKey: key}); !errors.Is(err, errForbidden) {
+		t.Fatalf("a Kingston-scoped caller quoting a Trenton order's key = %v, want the 403 fence", err)
+	}
+}
+
+// HH-181 round 2 (P2): two concurrent FIRST sends of one order can both miss the replay read (the
+// double click the route exists for); the winner's insert takes the global key index and the loser's
+// trips it. The loser must be answered with the winner's row, the replay a serial retry would have
+// gotten, because the key belongs to THIS order. Driven straight at the repository because that is
+// where the arm lives: through the service, the replay read would answer first and the arm never fire.
+func TestIntegration_Item5_TheLoserOfTwoConcurrentFirstSendsIsAReplayNotAFalseCollision(t *testing.T) {
+	h := item5Harness(t)
+	product := h.newProduct(t, "hh181-race")
+	po := h.orderedPO(t, product, 10, 100)
+	other := h.orderedPO(t, product, 10, 100)
+	if _, err := h.svc.SetVendorContact(h.ctx, VendorContact{
+		VendorID: h.vendor, Name: "Orders desk", Email: "orders@vendor.example"}); err != nil {
+		t.Fatalf("tag: %v", err)
+	}
+
+	key := fmt.Sprintf("hh181-race-%d", time.Now().UnixNano())
+	winner, err := h.svc.SendPO(h.ctx, po.ID, SendPORequest{IdempotencyKey: key})
+	if err != nil {
+		t.Fatalf("first send: %v", err)
+	}
+
+	// THE LOSER: its replay read missed the winner's uncommitted row, so it arrived at the insert.
+	repo := NewRepository(h.pool)
+	loser, replayed, err := repo.InsertPOSend(h.ctx, POSend{
+		POID: po.ID, Channel: ChannelEmail, Recipient: winner.Recipient,
+		RecipientKind: winner.RecipientKind, Status: SendQueued, Provider: "unwired",
+		DocumentName: winner.DocumentName, DocumentBytes: winner.DocumentBytes, IdempotencyKey: key,
+	}, h.user)
+	if err != nil {
+		t.Fatalf("the concurrent retry was refused: %v, the key belongs to THIS order and the refusal names another", err)
+	}
+	if !replayed {
+		t.Fatal("the concurrent retry claims it inserted a row, the loser must be answered as the replay it is")
+	}
+	if loser.ID != winner.ID || loser.POID != po.ID {
+		t.Fatalf("the concurrent retry minted %+v beside the winner's row %s", loser, winner.ID)
+	}
+	// One order, one row: the loser added nothing.
+	if rows, _ := h.svc.ListPOSends(h.ctx, po.ID); len(rows) != 1 {
+		t.Fatalf("%d send rows for one order and one key", len(rows))
+	}
+
+	// THE NEGATIVE CONTROL, same seam: the same key under a SECOND order is still the 409 collision,
+	// so the arm above cannot have become "every violation is a replay".
+	_, replayed, err = repo.InsertPOSend(h.ctx, POSend{
+		POID: other.ID, Channel: ChannelEmail, Recipient: winner.Recipient,
+		RecipientKind: winner.RecipientKind, Status: SendQueued, Provider: "unwired",
+		DocumentName: winner.DocumentName, DocumentBytes: winner.DocumentBytes, IdempotencyKey: key,
+	}, h.user)
+	var ce clientError
+	if !errors.As(err, &ce) || ce.status != http.StatusConflict {
+		t.Fatalf("a second order under a held key at the seam = %v, want the 409 collision classification", err)
+	}
+	if replayed {
+		t.Fatal("a cross-order key collision was answered as a replay of this order's send")
+	}
+	if rows, _ := h.svc.ListPOSends(h.ctx, other.ID); len(rows) != 0 {
+		t.Fatalf("the refused insert left %d rows on the second order", len(rows))
 	}
 }
 
