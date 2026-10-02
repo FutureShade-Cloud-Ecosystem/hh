@@ -112,9 +112,18 @@ func TestWACLock_ReceiptVsLandedCost_NoLostUpdate(t *testing.T) {
 		// Perpetual subledger value MUST equal every contribution, no lost update leaked value.
 		finalAvg := branchCost(t, pool, p)
 		finalOH := onHand(t, pool, p)
-		gotValue := round(float64(finalAvg) * finalOH)
-		initValue := round(float64(startAvg) * startOnHand)
-		receiptValue := round(recvQty * float64(recvUnit))
+		gotValue, err := qtyTimesCents(finalOH, finalAvg)
+		if err != nil {
+			t.Fatalf("iter %d: final value: %v", i, err)
+		}
+		initValue, err := qtyTimesCents(startOnHand, startAvg)
+		if err != nil {
+			t.Fatalf("iter %d: init value: %v", i, err)
+		}
+		receiptValue, err := qtyTimesCents(recvQty, recvUnit)
+		if err != nil {
+			t.Fatalf("iter %d: receipt value: %v", i, err)
+		}
 		wantValue := initValue + receiptValue + freight
 		if gotValue != wantValue {
 			t.Fatalf("iter %d: perpetual value = %d (avg %d × oh %.0f), want %d "+
@@ -127,8 +136,8 @@ func TestWACLock_ReceiptVsLandedCost_NoLostUpdate(t *testing.T) {
 			t.Fatalf("iter %d: on-hand = %.4f, want %.4f", i, finalOH, wantOH)
 		}
 		// And the final WAC must be a valid SEQUENTIAL result: receipt-then-capitalize OR capitalize-then-receipt.
-		wantR2C := seqReceiptThenCapitalize(startOnHand, startAvg, recvQty, recvUnit, freight)
-		wantC2R := seqCapitalizeThenReceipt(startOnHand, startAvg, recvQty, recvUnit, freight)
+		wantR2C := seqReceiptThenCapitalize(t, startOnHand, startAvg, recvQty, recvUnit, freight)
+		wantC2R := seqCapitalizeThenReceipt(t, startOnHand, startAvg, recvQty, recvUnit, freight)
 		if finalAvg != wantR2C && finalAvg != wantC2R {
 			t.Fatalf("iter %d: final WAC %d is neither serial order (R→C=%d, C→R=%d), not serialized",
 				i, finalAvg, wantR2C, wantC2R)
@@ -137,16 +146,56 @@ func TestWACLock_ReceiptVsLandedCost_NoLostUpdate(t *testing.T) {
 }
 
 // seqReceiptThenCapitalize is the WAC when the receipt commits first, then the freight capitalizes over the grown on-hand.
-func seqReceiptThenCapitalize(oh float64, avg int64, recvQty float64, recvUnit, freight int64) int64 {
-	afterReceipt := round((oh*float64(avg) + recvQty*float64(recvUnit)) / (oh + recvQty))
+// The oracle mirrors the module's exact integer arithmetic (HH-183), so the serial orders it predicts are the ones
+// the service can actually produce.
+func seqReceiptThenCapitalize(t *testing.T, oh float64, avg int64, recvQty float64, recvUnit, freight int64) int64 {
+	t.Helper()
+	ohVal, err := qtyTimesCents(oh, avg)
+	if err != nil {
+		t.Fatalf("seq r2c oh value: %v", err)
+	}
+	recvVal, err := qtyTimesCents(recvQty, recvUnit)
+	if err != nil {
+		t.Fatalf("seq r2c receipt value: %v", err)
+	}
+	afterReceipt, err := centsDivQty(ohVal+recvVal, oh+recvQty)
+	if err != nil {
+		t.Fatalf("seq r2c after-receipt avg: %v", err)
+	}
 	newOH := oh + recvQty
-	oldVal := round(float64(afterReceipt) * newOH)
-	return round(float64(oldVal+freight) / newOH)
+	oldVal, err := qtyTimesCents(newOH, afterReceipt)
+	if err != nil {
+		t.Fatalf("seq r2c grown value: %v", err)
+	}
+	afterFreight, err := centsDivQty(oldVal+freight, newOH)
+	if err != nil {
+		t.Fatalf("seq r2c after-freight avg: %v", err)
+	}
+	return afterFreight
 }
 
 // seqCapitalizeThenReceipt is the WAC when the freight capitalizes first (over the original on-hand), then the receipt blends in.
-func seqCapitalizeThenReceipt(oh float64, avg int64, recvQty float64, recvUnit, freight int64) int64 {
-	oldVal := round(float64(avg) * oh)
-	afterCap := round(float64(oldVal+freight) / oh)
-	return round((oh*float64(afterCap) + recvQty*float64(recvUnit)) / (oh + recvQty))
+func seqCapitalizeThenReceipt(t *testing.T, oh float64, avg int64, recvQty float64, recvUnit, freight int64) int64 {
+	t.Helper()
+	oldVal, err := qtyTimesCents(oh, avg)
+	if err != nil {
+		t.Fatalf("seq c2r oh value: %v", err)
+	}
+	afterCap, err := centsDivQty(oldVal+freight, oh)
+	if err != nil {
+		t.Fatalf("seq c2r after-freight avg: %v", err)
+	}
+	capVal, err := qtyTimesCents(oh, afterCap)
+	if err != nil {
+		t.Fatalf("seq c2r capitalized value: %v", err)
+	}
+	recvVal, err := qtyTimesCents(recvQty, recvUnit)
+	if err != nil {
+		t.Fatalf("seq c2r receipt value: %v", err)
+	}
+	blended, err := centsDivQty(capVal+recvVal, oh+recvQty)
+	if err != nil {
+		t.Fatalf("seq c2r blended avg: %v", err)
+	}
+	return blended
 }
