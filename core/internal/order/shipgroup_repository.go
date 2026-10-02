@@ -29,10 +29,43 @@ var _ shipStore = (*Repository)(nil)
 // pattern) so every existing service fake keeps compiling.
 type shipStore interface {
 	ShipmentPlan(ctx context.Context, orderID string) (ShipmentPlan, error)
+	ShipmentGroup(ctx context.Context, groupID string) (ShipmentGroup, string, error)
 	ReplaceShipmentPlan(ctx context.Context, orderID, actorID string, groups []ShipmentGroupInput) error
-	TransitionShipmentGroup(ctx context.Context, groupID, target string, allowedFrom []string) (ShipmentGroup, string, error)
+	TransitionShipmentGroup(ctx context.Context, groupID, target string, allowedFrom []string) (ShipmentGroup, error)
 	SetInvoicePolicy(ctx context.Context, orderID, policy string) error
 	OrderHasInvoice(ctx context.Context, orderID string) (bool, error)
+}
+
+// ShipmentGroup loads one group joined to its ORDER's branch, with no write. shipment_groups
+// carries no branch of its own (0126), the order is where the fence lives. This is the load the
+// service gates the caller's reach on BEFORE transitioning (HH-182): the load-first check is the
+// shape every other decision surface in this module uses (loadChangeForDecision), and it is what
+// keeps a refused cross-branch call from committing the move it just denied.
+func (r *Repository) ShipmentGroup(ctx context.Context, groupID string) (ShipmentGroup, string, error) {
+	if r.pool == nil {
+		return ShipmentGroup{}, "", errNoDB
+	}
+	var g ShipmentGroup
+	var branchID string
+	err := r.pool.QueryRow(ctx, `
+		SELECT g.id::text, g.order_id::text, g.group_no, g.label, g.status,
+		       COALESCE(to_char(g.requested_date,'YYYY-MM-DD'),''),
+		       COALESCE(g.delivery_stop_id::text,''),
+		       COALESCE(to_char(g.dispatched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),''),
+		       COALESCE(to_char(g.completed_at  AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),''),
+		       o.branch_id::text
+		  FROM shipment_groups g JOIN orders o ON o.id = g.order_id
+		 WHERE g.id = $1`, groupID).
+		Scan(&g.ID, &g.OrderID, &g.GroupNo, &g.Label, &g.Status, &g.RequestedDate,
+			&g.DeliveryStopID, &g.DispatchedAt, &g.CompletedAt, &branchID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ShipmentGroup{}, "", ErrGroupNotFound
+		}
+		return ShipmentGroup{}, "", fmt.Errorf("read shipment group: %w", err)
+	}
+	g.Lines = []ShipmentGroupLine{}
+	return g, branchID, nil
 }
 
 // ShipmentPlan reads an order's whole multi-ship view: groups, their lines decorated with the order
@@ -268,11 +301,13 @@ func (r *Repository) ReplaceShipmentPlan(ctx context.Context, orderID, actorID s
 	return nil
 }
 
-// TransitionShipmentGroup moves one group, guarded on its current status inside the statement.
-// Returns the group and its order's branch so the service can apply the branch check.
-func (r *Repository) TransitionShipmentGroup(ctx context.Context, groupID, target string, allowedFrom []string) (ShipmentGroup, string, error) {
+// TransitionShipmentGroup moves one group, guarded on its current status inside the statement. The
+// service has ALREADY fenced the caller's branch reach on the ShipmentGroup load (HH-182); the
+// status predicate stays in the UPDATE as the backstop against a concurrent move between that load
+// and this write, which is the one window a service-side ladder check can never close.
+func (r *Repository) TransitionShipmentGroup(ctx context.Context, groupID, target string, allowedFrom []string) (ShipmentGroup, error) {
 	if r.pool == nil {
-		return ShipmentGroup{}, "", errNoDB
+		return ShipmentGroup{}, errNoDB
 	}
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE shipment_groups
@@ -282,36 +317,24 @@ func (r *Repository) TransitionShipmentGroup(ctx context.Context, groupID, targe
 		       updated_at = now()
 		 WHERE id = $1 AND status = ANY($3)`, groupID, target, allowedFrom)
 	if err != nil {
-		return ShipmentGroup{}, "", fmt.Errorf("transition shipment group: %w", err)
+		return ShipmentGroup{}, fmt.Errorf("transition shipment group: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		var exists bool
 		if err := r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM shipment_groups WHERE id=$1)`, groupID).
 			Scan(&exists); err != nil {
-			return ShipmentGroup{}, "", err
+			return ShipmentGroup{}, err
 		}
 		if !exists {
-			return ShipmentGroup{}, "", ErrGroupNotFound
+			return ShipmentGroup{}, ErrGroupNotFound
 		}
-		return ShipmentGroup{}, "", ErrGroupIllegalTransition
+		return ShipmentGroup{}, ErrGroupIllegalTransition
 	}
-	var g ShipmentGroup
-	var branchID string
-	if err := r.pool.QueryRow(ctx, `
-		SELECT g.id::text, g.order_id::text, g.group_no, g.label, g.status,
-		       COALESCE(to_char(g.requested_date,'YYYY-MM-DD'),''),
-		       COALESCE(g.delivery_stop_id::text,''),
-		       COALESCE(to_char(g.dispatched_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),''),
-		       COALESCE(to_char(g.completed_at  AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),''),
-		       o.branch_id::text
-		  FROM shipment_groups g JOIN orders o ON o.id = g.order_id
-		 WHERE g.id = $1`, groupID).
-		Scan(&g.ID, &g.OrderID, &g.GroupNo, &g.Label, &g.Status, &g.RequestedDate,
-			&g.DeliveryStopID, &g.DispatchedAt, &g.CompletedAt, &branchID); err != nil {
-		return ShipmentGroup{}, "", fmt.Errorf("read shipment group: %w", err)
+	g, _, err := r.ShipmentGroup(ctx, groupID)
+	if err != nil {
+		return ShipmentGroup{}, err
 	}
-	g.Lines = []ShipmentGroupLine{}
-	return g, branchID, nil
+	return g, nil
 }
 
 // SetInvoicePolicy writes the per-order invoicing ruling.

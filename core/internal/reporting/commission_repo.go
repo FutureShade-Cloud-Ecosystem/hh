@@ -8,15 +8,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
 // -- rules --------------------------------------------------------------------
 
-// ListCommissionRules reads rules, optionally for one rep, newest scope first.
-func (r *Repository) ListCommissionRules(ctx context.Context, repUserID string) ([]CommissionRule, error) {
+// ListCommissionRules reads rules, optionally for one rep, newest scope first, held to the caller's
+// reach. The branch predicate keeps a rule with NO branch visible to a scoped caller on purpose: an
+// empty branch is chooseRule's wildcard, in force at every branch including the caller's, so it is
+// part of the arithmetic their own fenced preview performs. A rule naming a branch outside the reach
+// is that branch's pay decision and does not surface.
+func (r *Repository) ListCommissionRules(ctx context.Context, repUserID string, reach branchReach) ([]CommissionRule, error) {
 	if r.pool == nil {
 		return nil, ErrNoDatabase
 	}
@@ -29,7 +35,8 @@ SELECT cr.id::text, cr.rep_user_id::text, COALESCE(u.display_name,''), cr.basis,
   LEFT JOIN users u ON u.id = cr.rep_user_id
   LEFT JOIN product_categories pc ON pc.id = cr.category_id
  WHERE ($1::uuid IS NULL OR cr.rep_user_id = $1::uuid)
- ORDER BY u.display_name, cr.effective_from DESC`, nullUUID(repUserID))
+   AND ($2::uuid[] IS NULL OR cr.branch_id IS NULL OR cr.branch_id = ANY($2::uuid[]))
+ ORDER BY u.display_name, cr.effective_from DESC`, nullUUID(repUserID), reach.filter())
 	if err != nil {
 		return nil, fmt.Errorf("list commission rules: %w", err)
 	}
@@ -252,8 +259,10 @@ VALUES ($1::uuid, NULLIF($2,'')::uuid, NULLIF($3,'')::uuid, $4, NULLIF($5,'')::d
 	return out, nil
 }
 
-// ListCommissionRuns reads frozen periods in a window.
-func (r *Repository) ListCommissionRuns(ctx context.Context, from, to time.Time, repUserID string) ([]CommissionPeriod, error) {
+// ListCommissionRuns reads frozen periods in a window, fenced to the caller's branch reach with
+// ($4::uuid[] IS NULL OR cr.branch_id = ANY($4::uuid[])). A consolidated period (branch NULL) never
+// matches ANY(), the same global-only ruling the single read makes.
+func (r *Repository) ListCommissionRuns(ctx context.Context, from, to time.Time, repUserID string, reach branchReach) ([]CommissionPeriod, error) {
 	if r.pool == nil {
 		return nil, ErrNoDatabase
 	}
@@ -265,7 +274,8 @@ SELECT cr.id::text, cr.rep_user_id::text, COALESCE(u.display_name,''), cr.period
   LEFT JOIN users u ON u.id = cr.rep_user_id
  WHERE cr.period_start >= $1::date AND cr.period_end <= $2::date
    AND ($3::uuid IS NULL OR cr.rep_user_id = $3::uuid)
- ORDER BY cr.period_start DESC, u.display_name`, from, to, nullUUID(repUserID))
+   AND ($4::uuid[] IS NULL OR cr.branch_id = ANY($4::uuid[]))
+ ORDER BY cr.period_start DESC, u.display_name`, from, to, nullUUID(repUserID), reach.filter())
 	if err != nil {
 		return nil, fmt.Errorf("list commission runs: %w", err)
 	}
@@ -338,8 +348,10 @@ SELECT COALESCE(invoice_id::text,''), COALESCE(invoice_line_id::text,''), invoic
 	return p, rows.Err()
 }
 
-// AccrualRegister sums frozen, unposted runs per rep in a window.
-func (r *Repository) AccrualRegister(ctx context.Context, from, to time.Time) ([]AccrualLine, error) {
+// AccrualRegister sums frozen, unposted runs per rep in a window, fenced to the caller's branch
+// reach: a scoped caller's register owes their branches' periods alone, and a consolidated period
+// (branch NULL) never matches ANY(), it is the whole company's pay and answers to a global caller.
+func (r *Repository) AccrualRegister(ctx context.Context, from, to time.Time, reach branchReach) ([]AccrualLine, error) {
 	if r.pool == nil {
 		return nil, ErrNoDatabase
 	}
@@ -349,8 +361,9 @@ SELECT cr.rep_user_id::text, COALESCE(u.display_name,''), count(*)::int, sum(cr.
   LEFT JOIN users u ON u.id = cr.rep_user_id
  WHERE cr.period_start >= $1::date AND cr.period_end <= $2::date
    AND cr.gl_journal_id IS NULL
+   AND ($3::uuid[] IS NULL OR cr.branch_id = ANY($3::uuid[]))
  GROUP BY 1, 2
- ORDER BY 4 DESC, 2`, from, to)
+ ORDER BY 4 DESC, 2`, from, to, reach.filter())
 	if err != nil {
 		return nil, fmt.Errorf("commission accrual register: %w", err)
 	}
@@ -363,6 +376,57 @@ SELECT cr.rep_user_id::text, COALESCE(u.display_name,''), count(*)::int, sum(cr.
 		}
 		out = append(out, a)
 	}
+	return out, rows.Err()
+}
+
+// CommissionArtefactScopes reads the branch scope of a COMMISSION artefact's data: the branches of
+// every frozen period matching the (rep, window) linkage the artefact row carries in params. A
+// period with no branch comes back as "" and reads as consolidated. The artefact row names no period
+// id (params carries rep_user_id, period_start and period_end, nothing else), so when the same
+// window was frozen more than once the artefact could mean any of the matches and the caller must
+// treat the set as a whole; no match at all returns the empty set, which the caller also reads as
+// consolidated, global only, fail closed.
+//
+// Malformed linkage fails SAFE and in agreement with the list: a rep that is not a uuid or a window
+// that is not a pair of dates can match no period, so the answer is the empty set (consolidated,
+// global only) rather than a bind error here and a quiet skip on the list side.
+func (r *Repository) CommissionArtefactScopes(ctx context.Context, repUserID, periodStart, periodEnd string) ([]string, error) {
+	if r.pool == nil {
+		return nil, ErrNoDatabase
+	}
+	if _, err := uuid.Parse(repUserID); err != nil {
+		return nil, nil
+	}
+	if _, err := time.Parse(DateLayout, periodStart); err != nil {
+		return nil, nil
+	}
+	if _, err := time.Parse(DateLayout, periodEnd); err != nil {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+SELECT DISTINCT COALESCE(cr.branch_id::text, '')
+  FROM commission_runs cr
+ WHERE cr.rep_user_id = $1::uuid
+   AND cr.period_start = $2::date
+   AND cr.period_end = $3::date`, repUserID, periodStart, periodEnd)
+	if err != nil {
+		return nil, fmt.Errorf("commission artefact scope: %w", err)
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	var out []string
+	for rows.Next() {
+		var b string
+		if err := rows.Scan(&b); err != nil {
+			return nil, fmt.Errorf("scan commission artefact scope: %w", err)
+		}
+		if !seen[b] {
+			seen[b] = true
+			out = append(out, b)
+		}
+	}
+	// Sorted so the scope set, and any assertion on it, does not depend on row order.
+	sort.Strings(out)
 	return out, rows.Err()
 }
 

@@ -110,12 +110,21 @@ func ProjectedPosition(availableBase, inTransitBase, onOrderBase float64) float6
 // DIB-461's single-line read). The SQL computes the same numbers so that its ORDER BY and LIMIT
 // operate on the real ranking; this is what the caller actually gets, and
 // TestIntegration_Shortfall_SQLAndGoAgree pins the two together.
-func (s *ShortfallRow) Derive() {
+//
+// The suggested value is exact integer arithmetic on the DECIMAL(19,4) grain (HH-183): a suggested
+// quantity beyond that grain (or a value beyond integer cents) returns an error rather than a
+// rounded guess at what saying yes costs.
+func (s *ShortfallRow) Derive() error {
 	s.AvailableBase = AvailableBase(s.OnHandBase, s.ReservedBase)
 	s.ProjectedBase = ProjectedPosition(s.AvailableBase, s.InTransitBase, s.OnOrderBase)
 	s.ShortBase = s.ReorderPointBase - s.ProjectedBase
 	s.SuggestedQtyBase = SuggestQty(s.ReorderPointBase, s.ProjectedBase, s.ReorderQtyBase, s.OrderMultipleBase)
-	s.SuggestedValueCents = round(s.SuggestedQtyBase * float64(s.AvgCostCents))
+	v, err := qtyTimesCents(s.SuggestedQtyBase, s.AvgCostCents)
+	if err != nil {
+		return err
+	}
+	s.SuggestedValueCents = v
+	return nil
 }
 
 // SuggestQty computes the replenishment suggestion for a short line: enough to clear the reorder

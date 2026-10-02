@@ -102,6 +102,68 @@ func (s *Service) authorizeBranch(ctx context.Context, branchID string) (identit
 	return c, nil
 }
 
+// branchReach is a caller's branch authority projected onto a LIST read: every branch for a global
+// caller, the granted branches for a scoped one. reporting's own copy of the shape purchasing,
+// inventory and payments each keep, by the codebase's zero-trust convention: a module must not be able
+// to accept another module's authority object by accident.
+type branchReach struct {
+	global    bool
+	branchIDs []string
+}
+
+// filter renders the reach for the ($n::uuid[] IS NULL OR branch_id = ANY($n::uuid[])) predicate a
+// fenced list read uses. nil means SQL NULL, the predicate short-circuits true, and a global caller
+// keeps the whole list. A scoped caller with no grants binds an EMPTY array, and = ANY('{}') is false
+// for every row, so the fence fails closed rather than open.
+//
+// The nil normalisation is load-bearing for the ZERO value as well as the built reach: pgx binds a
+// nil slice as SQL NULL, which is the global arm, so a branchReach that reached a query uninitialised
+// would read every row in every branch. Empty is the honest binding for no branches, and it is what
+// the zero value means.
+func (r branchReach) filter() any {
+	if r.global {
+		return nil
+	}
+	if r.branchIDs == nil {
+		return []string{}
+	}
+	return r.branchIDs
+}
+
+// reachOf projects the caller onto a list read. Unlike authorizeBranch it refuses nothing: a read has
+// a truthful answer for every caller, which is the rows inside their reach, and an empty list is that
+// answer for a scoped caller with no grants.
+func (s *Service) reachOf(ctx context.Context) (branchReach, error) {
+	c, err := s.caller(ctx)
+	if err != nil {
+		return branchReach{}, err
+	}
+	if c.Scope == identity.ScopeGlobal {
+		return branchReach{global: true}, nil
+	}
+	ids := make([]string, 0, len(c.Branches))
+	for id, granted := range c.Branches {
+		if granted {
+			ids = append(ids, id)
+		}
+	}
+	// Sorted so the SQL parameter, and therefore the query plan, does not depend on Go's randomised
+	// map iteration order.
+	sort.Strings(ids)
+	return branchReach{branchIDs: ids}, nil
+}
+
+// canReadBranch answers whether this caller may read ONE artefact scoped to branchID. An empty branch
+// is a consolidated artefact, the whole company's numbers, and answers to a GLOBAL caller alone, the
+// same ruling authorizeBranch makes for a run. A caller outside the branch gets NOT FOUND rather than
+// forbidden: a 403 confirms the artefact exists, and whether it exists is branch information too.
+func canReadBranch(c identity.StaffContext, branchID string) bool {
+	if branchID == "" {
+		return c.Scope == identity.ScopeGlobal
+	}
+	return c.CanAccessBranch(branchID)
+}
+
 // -- catalogue ----------------------------------------------------------------
 
 // Categories returns the runnable catalogue, grouped, in nav order. Any authenticated staff member may
@@ -247,20 +309,78 @@ func (s *Service) resolvePrintBranch(c identity.StaffContext, paramBranch, expli
 	return ""
 }
 
-// Runs lists recent artefacts; Run reads one.
+// Runs lists recent artefacts, held to the caller's branch reach. A global caller keeps the whole
+// list; a scoped caller sees their branches' artefacts alone, and a consolidated artefact (no branch)
+// never appears for them because its numbers are the whole company's.
 func (s *Service) Runs(ctx context.Context, limit int) ([]Run, error) {
-	if _, err := s.caller(ctx); err != nil {
+	reach, err := s.reachOf(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return s.repo.ListRuns(ctx, limit)
+	return s.repo.ListRuns(ctx, limit, reach)
 }
 
-// RunArtefact reads one persisted artefact by id.
+// RunArtefact reads one persisted artefact by id, behind the branch fence. The fence is on the DATA
+// the artefact carries (artefactScopes below), never on run.BranchID, which is only where the paper
+// came out: print_queue.branch_id is NOT NULL, so even a consolidated report is printed AT a branch,
+// and fencing on the printer would hand a scoped manager the whole company's numbers. A refusal is
+// NOT FOUND rather than forbidden, so the id itself does not confirm the artefact exists.
 func (s *Service) RunArtefact(ctx context.Context, id string) (Run, error) {
-	if _, err := s.caller(ctx); err != nil {
+	c, err := s.caller(ctx)
+	if err != nil {
 		return Run{}, err
 	}
-	return s.repo.GetRun(ctx, id)
+	run, err := s.repo.GetRun(ctx, id)
+	if err != nil {
+		return Run{}, err
+	}
+	if c.Scope == identity.ScopeGlobal {
+		return run, nil // a global caller reads everything, the scope need not be derived
+	}
+	scopes, err := s.artefactScopes(ctx, run)
+	if err != nil {
+		return Run{}, err
+	}
+	if !artefactReadable(c, scopes) {
+		return Run{}, ErrNotFound
+	}
+	return run, nil
+}
+
+// artefactScopes returns the BRANCH SCOPE of the data an artefact carries, as a set the reader must
+// be inside entirely. It is deliberately not run.BranchID (the print branch, see RunArtefact):
+//
+//	STAMPED     params.branch_id, for a TEMPLATE artefact (the report's own branch parameter, empty
+//	            or absent meaning the consolidated report) and for a COMMISSION artefact printed
+//	            since the stamp exists (the period's own branch, empty meaning the consolidated
+//	            period). The stamp is the artefact's own claim of what it holds, so a twin freeze of
+//	            the same rep and window elsewhere changes nothing.
+//	UNSTAMPED   a COMMISSION artefact printed before the stamp exists carries only the
+//	            (rep, window) linkage, no period id, so the scope is the branches of every frozen
+//	            period the linkage matches and the reader must be inside all of them; no match at
+//	            all (the periods are gone) is the genuinely underivable case and reads as
+//	            consolidated: global only, fail closed.
+func (s *Service) artefactScopes(ctx context.Context, run Run) ([]string, error) {
+	branch, stamped := run.Params["branch_id"]
+	if stamped || run.Kind != RunKindCommission {
+		return []string{branch}, nil
+	}
+	return s.repo.CommissionArtefactScopes(ctx,
+		run.Params["rep_user_id"], run.Params["period_start"], run.Params["period_end"])
+}
+
+// artefactReadable answers the fence for one artefact against its scope set: every branch of the
+// data must be readable, and the empty set (underivable) reads as consolidated, global only.
+func artefactReadable(c identity.StaffContext, scopes []string) bool {
+	if len(scopes) == 0 {
+		scopes = []string{""}
+	}
+	for _, b := range scopes {
+		if !canReadBranch(c, b) {
+			return false
+		}
+	}
+	return true
 }
 
 // -- saved views --------------------------------------------------------------

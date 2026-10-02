@@ -144,11 +144,14 @@ func TestCapitalizeLanded_Sweep(t *testing.T) {
 
 // subledgerDelta is the perpetual inventory value change the W5 gl_tieout / W6 B1 report measures against GL
 // 1200 for this product: round(upserted-avg × on-hand) − round(prior-avg × on-hand). It reads the WAC BACK from
-// the store after capitalize upserts it, so it sees exactly what the ledger will later reconcile against.
-func subledgerDelta(f *fakeStore, product, branch string, priorAvg int64) int64 {
+// the store after capitalize upserts it, so it sees exactly what the ledger will later reconcile against. The
+// valuation is PREDICTED by the oracle's own statement of the report's ROUND (hh183_blend_oracle_test.go), not
+// computed with the service helpers under test: a mirror cannot catch a change, it agrees with one.
+func subledgerDelta(t *testing.T, f *fakeStore, product, branch string, priorAvg int64) int64 {
+	t.Helper()
 	onHand := f.onhand[key(product, branch)]
 	newAvg := f.cost[key(product, branch)]
-	return round(float64(newAvg)*onHand) - round(float64(priorAvg)*onHand)
+	return oracleValue(t, onHand, newAvg) - oracleValue(t, onHand, priorAvg)
 }
 
 // TestCapitalizeLanded_TiesGL1200ToSubledger is the load-bearing DIB-189 regression the balance-only tests miss.
@@ -193,7 +196,7 @@ func TestCapitalizeLanded_TiesGL1200ToSubledger(t *testing.T) {
 			t.Fatalf("%+v: capitalizeLanded: %v", c, err)
 		}
 		// THE TIE: the GL 1200 debit (absorbed) must equal the realized subledger value change to the cent.
-		if got := subledgerDelta(f, product, branch, c.oldAvg); got != absorbed {
+		if got := subledgerDelta(t, f, product, branch, c.oldAvg); got != absorbed {
 			t.Errorf("%+v: GL1200=%d != subledger delta=%d (upserted avg=%d, on-hand=%.4g), ledger out of tie",
 				c, absorbed, got, f.cost[key(product, branch)], c.onHand)
 		}
@@ -227,7 +230,7 @@ func TestCapitalizeLanded_TieSweep(t *testing.T) {
 				if err != nil {
 					t.Fatalf("onHand=%.2f oldAvg=%d alloc=%d: %v", onHand, oldAvg, alloc, err)
 				}
-				if got := subledgerDelta(f, product, branch, oldAvg); got != absorbed {
+				if got := subledgerDelta(t, f, product, branch, oldAvg); got != absorbed {
 					t.Fatalf("onHand=%.2f oldAvg=%d alloc=%d: GL1200=%d != subledger delta=%d (out of tie)",
 						onHand, oldAvg, alloc, absorbed, got)
 				}
@@ -345,7 +348,7 @@ func TestCapitalizeLanded_VoidAfterSaleNeverNegativeWAC(t *testing.T) {
 		}
 		// (b) GL 1200 (the reversal's returned absorbed) must equal the realized subledger delta at void time,
 		// so the void-after-sale ledger stays tied to the perpetual subledger.
-		if got := subledgerDelta(f, product, branch, priorAvg); got != reversed {
+		if got := subledgerDelta(t, f, product, branch, priorAvg); got != reversed {
 			t.Errorf("%+v: void GL1200=%d != subledger delta=%d (upserted avg=%d, on-hand=%.4g), out of tie",
 				c, reversed, got, f.cost[key(product, branch)], c.soldOnHand)
 		}
@@ -503,7 +506,10 @@ func TestRestoreLandedCost_VoidAfterSaleNeverNegativeAndTies(t *testing.T) {
 		// A sale drains on-hand between Apply and Void.
 		f.onhand[key(product, branch)] = c.soldOnHand
 		priorAvg := f.cost[key(product, branch)]
-		curValue := round(float64(priorAvg) * c.soldOnHand)
+		curValue, err := qtyTimesCents(c.soldOnHand, priorAvg)
+		if err != nil {
+			t.Fatalf("%+v: curValue: %v", c, err)
+		}
 
 		reversed, err := s.restoreLandedCost(ctx, nil, product, branch, snapAvg, absorbed)
 		if err != nil {
@@ -516,7 +522,11 @@ func TestRestoreLandedCost_VoidAfterSaleNeverNegativeAndTies(t *testing.T) {
 		}
 		// (b) The reversal delta equals the realized subledger change of the upserted newAvg over the CURRENT on-hand,
 		// and never drains more than the value in stock (never over-reverses).
-		wantDelta := round(float64(gotWAC)*c.soldOnHand) - curValue
+		wantWACValue, err := qtyTimesCents(c.soldOnHand, gotWAC)
+		if err != nil {
+			t.Fatalf("%+v: wantWACValue: %v", c, err)
+		}
+		wantDelta := wantWACValue - curValue
 		if reversed != wantDelta {
 			t.Errorf("%+v: reversal delta=%d != realized subledger delta=%d (CR1200 out of tie)", c, reversed, wantDelta)
 		}
