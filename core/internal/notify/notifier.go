@@ -48,27 +48,44 @@ type Notifier interface {
 	Send(ctx context.Context, m Message) error
 }
 
-// LogNotifier is the DEV/stub transport: it has no inbox, so it writes the message, link
-// included, to the structured log, which IS the delivery channel in development (the same
-// pattern as a console "magic link"). It is NOT for production: Live() is false and main
+// LogNotifier is the DEV/stub transport: it has no inbox, so in development it writes the
+// message, link included, to the structured log, which IS the delivery channel there (the
+// same pattern as a console "magic link"). It is NOT for production: Live() is false and main
 // warns when it runs outside dev. A real provider must replace it before invite/reset mail
-// goes to actual contractors. Because it logs the body (which can carry a one-time token),
-// it must never be the active notifier in a non-dev environment.
-type LogNotifier struct{ log *slog.Logger }
+// goes to actual contractors. The body can carry a one-time token, so it is logged only when
+// the boot path enabled bodies (WithBodies, set from the config's environment being dev);
+// otherwise only recipient-free metadata (channel and body length) is written, at any level.
+type LogNotifier struct {
+	log    *slog.Logger
+	bodies bool
+}
 
-// NewLogNotifier builds the dev log transport.
+// NewLogNotifier builds the log transport with bodies off, the safe default.
 func NewLogNotifier(log *slog.Logger) *LogNotifier { return &LogNotifier{log: log} }
+
+// WithBodies sets whether Send writes the recipient, subject and full body. The boot path
+// passes true only in dev.
+func (n *LogNotifier) WithBodies(on bool) *LogNotifier {
+	n.bodies = on
+	return n
+}
 
 func (n *LogNotifier) Name() string { return "log" }
 func (n *LogNotifier) Live() bool   { return false }
 
-// Send records the message to the log. Channel/recipient/subject at Info; the full body
-// (the dev "inbox", including any link) at Info too, since in dev the log is the only way to
-// retrieve the link. This is precisely why Live() is false and prod refuses this notifier.
+// Send records the message to the log. With bodies on (dev) it writes channel, recipient,
+// subject and body, since there the log is the only way to retrieve a link. With bodies off
+// it writes the channel and the body length only: never the body, link, token or recipient.
 func (n *LogNotifier) Send(_ context.Context, m Message) error {
-	if n.log != nil {
+	if n.log == nil {
+		return nil
+	}
+	if n.bodies {
 		n.log.Info("notify: deliver (dev log stub, not a real send)",
 			"channel", string(m.Channel), "to", m.To, "subject", m.Subject, "body", m.Body)
+		return nil
 	}
+	n.log.Info("notify: not delivered (log stub, body withheld outside dev)",
+		"channel", string(m.Channel), "body_len", len(m.Body))
 	return nil
 }
