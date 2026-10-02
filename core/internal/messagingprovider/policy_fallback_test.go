@@ -1,6 +1,10 @@
 package messagingprovider
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 // policy_fallback_test.go, HH-202: a policy variable that falls back to its default must say so.
 //
@@ -108,5 +112,49 @@ func TestPolicyFromEnv_RecordsWindowPairReplacement(t *testing.T) {
 		if got["SMS_WINDOW_START_MIN"] != tc.start || got["SMS_WINDOW_END_MIN"] != tc.end || len(got) != 2 {
 			t.Fatalf("%s-%s recorded %+v, want both window variables with the values read", tc.start, tc.end, p.Fallbacks())
 		}
+	}
+}
+
+func fallbackVars(p *SendPolicy) []string {
+	var out []string
+	for _, f := range p.Fallbacks() {
+		out = append(out, f.Var)
+	}
+	return out
+}
+
+// A variable that fails to parse AND sits in a pair NewQuietHours then discards is recorded once, and
+// the list is ordered by variable name. Asserted on the slice itself: folding it into a map would hide
+// a duplicate by construction.
+func TestPolicyFromEnv_RecordsEachVariableOnceInNameOrder(t *testing.T) {
+	for _, tc := range []struct {
+		start, end, rate string
+		want             []string
+	}{
+		{"abc", "9999", "", []string{"SMS_WINDOW_END_MIN", "SMS_WINDOW_START_MIN"}},
+		{"-5", "480", "", []string{"SMS_WINDOW_END_MIN", "SMS_WINDOW_START_MIN"}},
+		{"9999", "abc", "0", []string{"SMS_RATE_PER_MIN", "SMS_WINDOW_END_MIN", "SMS_WINDOW_START_MIN"}},
+	} {
+		t.Setenv("SMS_WINDOW_START_MIN", tc.start)
+		t.Setenv("SMS_WINDOW_END_MIN", tc.end)
+		t.Setenv("SMS_RATE_PER_MIN", tc.rate)
+		got := fallbackVars(PolicyFromEnv())
+		if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+			t.Fatalf("start %q end %q rate %q recorded %v, want %v (each once, ordered by name)",
+				tc.start, tc.end, tc.rate, got, tc.want)
+		}
+	}
+}
+
+// The echoed operator text is bounded: a long wrong paste is cut to a short prefix, never a whole line.
+func TestPolicyFromEnv_BoundsTheEchoedValue(t *testing.T) {
+	long := strings.Repeat("x", 5000)
+	t.Setenv("SMS_WINDOW_START_MIN", "")
+	t.Setenv("SMS_WINDOW_END_MIN", "")
+	t.Setenv("SMS_RATE_PER_MIN", long)
+	fbs := PolicyFromEnv().Fallbacks()
+	if len(fbs) != 1 || len(fbs[0].Value) > maxFallbackValue+3 {
+		t.Fatalf("a 5000 byte value was recorded as %d bytes (%d fallbacks), want one fallback cut to a short prefix",
+			len(fbs[0].Value), len(fbs))
 	}
 }

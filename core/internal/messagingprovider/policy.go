@@ -3,6 +3,7 @@ package messagingprovider
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -88,20 +89,21 @@ func PolicyFromEnv() *SendPolicy {
 		WithWindow(win).
 		WithRate(intEnv("SMS_RATE_PER_MIN", DefaultRatePerMinute, 1, r))
 	p.zoneErr = zerr
+	sort.Slice(r.fbs, func(i, j int) bool { return r.fbs[i].Var < r.fbs[j].Var })
 	p.fallbacks = r.fbs
 	return p
 }
 
 // PolicyFallback is one SMS_* policy variable whose value was refused and replaced by its default.
-// Value is the text read from the environment (a plain number or the junk the operator typed, never
-// a secret), Default is the number applied instead.
+// Value is the text read from the environment (a plain number or the junk the operator typed),
+// cut to a short prefix so a wrong paste is never echoed whole; Default is the number applied instead.
 type PolicyFallback struct {
 	Var     string
 	Value   string
 	Default int
 }
 
-// Fallbacks reports every policy variable that fell back to its default, in a stable order, so the
+// Fallbacks reports every policy variable that fell back to its default, ordered by variable name, so the
 // boot path can log one warning each. Empty when the environment was unset or fully valid.
 func (p *SendPolicy) Fallbacks() []PolicyFallback {
 	return append([]PolicyFallback(nil), p.fallbacks...)
@@ -114,7 +116,14 @@ type policyRead struct {
 	fbs []PolicyFallback
 }
 
+// maxFallbackValue bounds the operator text a fallback echoes, so a wrong paste cannot become an
+// unbounded log line or carry a long secret out whole.
+const maxFallbackValue = 32
+
 func (r *policyRead) fellBack(k string, def int, v string) {
+	if rs := []rune(v); len(rs) > maxFallbackValue {
+		v = string(rs[:maxFallbackValue]) + "..."
+	}
 	r.fbs = append(r.fbs, PolicyFallback{Var: k, Value: v, Default: def})
 }
 

@@ -94,8 +94,11 @@ func buildSmsBelt(pool *pgxpool.Pool, log *slog.Logger) *smsBelt {
 		log.Warn("sms: send-window timezone fell back to the business default", "err", zerr)
 	}
 	for _, fb := range smsPolicy.Fallbacks() {
-		log.Warn("sms: policy variable fell back to its default; the value was refused (zero is not a pause)",
-			"var", fb.Var, "value", fb.Value, "default", fb.Default)
+		msg := "sms: policy variable fell back to its default; the value was refused"
+		if fb.Var == "SMS_RATE_PER_MIN" {
+			msg += " (zero is not a pause)"
+		}
+		log.Warn(msg, "var", fb.Var, "value", fb.Value, "default", fb.Default)
 	}
 	smsOutbox.WithSendPolicy(smsPolicy).WithLogger(log)
 	return &smsBelt{notifier: smsNotifier, outbox: smsOutbox, resolver: smsResolver, prefs: smsPrefs, policySet: true}
