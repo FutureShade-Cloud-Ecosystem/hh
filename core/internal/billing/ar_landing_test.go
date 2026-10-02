@@ -178,6 +178,26 @@ func TestBuildEscalation_RollsUpPerAccount(t *testing.T) {
 	}
 }
 
+// TestBuildEscalation_SkipsCreditMemos (HH-195): a credit memo (a negative open balance) is money owed
+// TO the customer, never a call to make. A credit-only account is absent from the queue, and a memo
+// never lends an account its age, its count or its balance. Unit level on purpose: the integration
+// suite that also covers it is on the CI job's red list.
+func TestBuildEscalation_SkipsCreditMemos(t *testing.T) {
+	asOf := arDay(2026, 8, 27)
+	invs := []OpenInvoice{
+		{InvoiceID: "m1", CustomerID: "c2", CustomerName: "CreditOnly", DueDate: asOf.AddDate(0, 0, -150), BalanceCents: -50_00},
+		{InvoiceID: "m2", CustomerID: "c3", CustomerName: "Mixed", DueDate: asOf.AddDate(0, 0, -200), BalanceCents: -30_00},
+		{InvoiceID: "i3", CustomerID: "c3", CustomerName: "Mixed", DueDate: asOf.AddDate(0, 0, -120), BalanceCents: 80_00},
+	}
+	q := BuildEscalation(invs, testPolicy(), asOf, nil)
+	if len(q) != 1 || q[0].CustomerID != "c3" {
+		t.Fatalf("queue = %+v, want only the mixed account (a credit-only account is not a call to make)", q)
+	}
+	if q[0].Invoices != 1 || q[0].BalanceCents != 80_00 || q[0].OldestDays != 120 {
+		t.Fatalf("mixed entry = %+v, want 1 invoice / 8000 cents / oldest 120 (the memo lends nothing)", q[0])
+	}
+}
+
 func TestBuildEscalation_EmptyBookIsEmptyQueueNotNil(t *testing.T) {
 	asOf := arDay(2026, 8, 27)
 	if q := BuildEscalation(nil, testPolicy(), asOf, nil); len(q) != 0 {
