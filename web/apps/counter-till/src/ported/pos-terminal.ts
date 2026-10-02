@@ -2167,6 +2167,30 @@ export class HosPosTerminal extends LitElement {
     }
  /* DIB-244: the explicit destructive "Clear sale" affordance; red text sets it apart from the
        neutral utility buttons so it reads as "empty the whole ticket in one step". */
+    /* UI-3 (visual GAP 8): the margin eye is an outlined control like its neighbours, not the UA's
+       grey square; it sits at the row's far end with a fixed footprint. */
+    .saleutil .eye {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      margin-left: auto;
+      padding: 0;
+      background: transparent;
+      border: 1px solid var(--hos-line);
+      border-radius: var(--hos-radius-control);
+      color: var(--hos-text-dim);
+      cursor: pointer;
+    }
+    .saleutil .eye:hover {
+      border-color: var(--hos-stone-amber);
+      color: var(--hos-stone-amber-text);
+    }
+    .saleutil .eye[aria-pressed='true'] {
+      border-color: var(--hos-stone-amber);
+      color: var(--hos-stone-amber-text);
+    }
     .util button.clear {
       color: var(--hos-safety-red);
       border-color: color-mix(in srgb, var(--hos-safety-red) 40%, var(--hos-line));
@@ -5729,20 +5753,6 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
          the role-gated data is actually PRESENT: there is nothing to hide otherwise, and the
          role gate itself is server-side (the payload omits the fields; this is counter privacy,
          not security). */ ''}
-      ${this.marginPresent()
-        ? html`<button
-            class="eye"
-            data-testid="margin-eye"
-            aria-pressed=${this.wsMarginHidden ? 'true' : 'false'}
-            title=${this.wsMarginHidden ? 'Show margin and est. profit' : 'Hide margin and est. profit (counter privacy)'}
-            aria-label=${this.wsMarginHidden ? 'Show margin' : 'Hide margin'}
-            @click=${() => this.wsToggleMarginHidden()}
-          >
-            ${this.wsMarginHidden
-              ? html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 3l18 18M10.6 10.7a2.6 2.6 0 003.7 3.7M6.6 6.8C4.5 8 3 9.9 2 12c1.8 3.7 5.5 6 10 6 1.6 0 3.1-.3 4.4-.9M9.9 4.2C10.6 4.1 11.3 4 12 4c4.5 0 8.2 2.3 10 8-.5 1.1-1.2 2.1-2 3"></path></svg>`
-              : html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M2 12c1.8-5.7 5.5-8 10-8s8.2 2.3 10 8c-1.8 3.7-5.5 6-10 6S3.8 15.7 2 12z"></path><circle cx="12" cy="12" r="2.6"></circle></svg>`}
-          </button>`
-        : nothing}
 ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id input used to
    render below the CTA on EVERY sale (empty included). What earns the always-on row:
    Park / Parked (the mid-rush pair) and: only while the order holds something to
@@ -5780,6 +5790,22 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
             </div>
             ${this.renderOrderOpenRow()}
           </details>
+          ${/* UI-3 (visual GAP 8): the eye rides the END of the utility row, so it appearing when the
+             first priced line lands never moves Park ticket; it is an outlined control, as the reference's. */ ''}
+          ${this.marginPresent()
+            ? html`<button
+                class="eye"
+                data-testid="margin-eye"
+                aria-pressed=${this.wsMarginHidden ? 'true' : 'false'}
+                title=${this.wsMarginHidden ? 'Show margin and est. profit' : 'Hide margin and est. profit (counter privacy)'}
+                aria-label=${this.wsMarginHidden ? 'Show margin' : 'Hide margin'}
+                @click=${() => this.wsToggleMarginHidden()}
+              >
+                ${this.wsMarginHidden
+                  ? html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 3l18 18M10.6 10.7a2.6 2.6 0 003.7 3.7M6.6 6.8C4.5 8 3 9.9 2 12c1.8 3.7 5.5 6 10 6 1.6 0 3.1-.3 4.4-.9M9.9 4.2C10.6 4.1 11.3 4 12 4c4.5 0 8.2 2.3 10 8-.5 1.1-1.2 2.1-2 3"></path></svg>`
+                  : html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M2 12c1.8-5.7 5.5-8 10-8s8.2 2.3 10 8c-1.8 3.7-5.5 6-10 6S3.8 15.7 2 12z"></path><circle cx="12" cy="12" r="2.6"></circle></svg>`}
+              </button>`
+            : nothing}
           ${this.utilMsg
             ? html`<div class="banner ${this.utilTone}" role="${this.utilTone === 'bad' ? 'alert' : 'status'}">${this.utilMsg}</div>`
             : nothing}
