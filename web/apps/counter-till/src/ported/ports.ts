@@ -849,7 +849,7 @@ export function printReceiptInto(
     };
   }
   try {
-    const blob = new Blob([receiptHtml], { type: 'text/html' });
+    const blob = new Blob([receiptHtml], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     win.addEventListener('load', () => {
       if (typeof win.focus === 'function') win.focus();

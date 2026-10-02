@@ -2642,7 +2642,11 @@ export class HosPosTerminal extends LitElement {
       const res = await api('/api/v1/payments/config');
       if (!res.ok) return; // leave '': no badge rather than a wrong one
       const body = (await res.json()) as { configured: boolean; simulated: boolean };
-      this.cardRail = !body.configured ? 'unconfigured' : body.simulated ? 'test' : 'live';
+ // HH note: the simulated word is value driven on simulated ALONE (the
+ // reviewed rule): a rail that answers simulated true says test whatever it
+ // says about configured, because the notice must render exactly when the
+ // value is true and claim nothing when it is not.
+      this.cardRail = body.simulated === true ? 'test' : body.configured ? 'live' : 'unconfigured';
     } catch {
  /* status is cosmetic: the sale path reports real errors itself */
     }
@@ -6346,7 +6350,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
            answers simulated true, on a card sale's confirmation: the reviewed rule, carried onto
            this surface's own confirmation panel (the tender step carries the same word as its
            TEST MODE badge). A rail that answers false, or answers nothing, claims nothing. */ ''}
-        ${sale.tender === 'CARD' && this.cardRail === 'test'
+        ${(sale.tender === 'CARD' || sale.tenders?.some((leg) => leg.method === 'CARD')) && this.cardRail === 'test'
           ? html`<div class="f" data-testid="sold-simulated-notice"><span class="k">Card</span><span class="v">Simulated card: no card was charged</span></div>`
           : nothing}
         ${(sale.deposit_cents ?? 0) > 0

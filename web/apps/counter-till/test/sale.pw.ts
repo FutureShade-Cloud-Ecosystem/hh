@@ -97,10 +97,21 @@ async function pickAccount(page: Page, search: string, name: string): Promise<vo
   const row = page.locator("button.row").filter({ hasText: name }).first();
   await expect(row).toBeVisible();
   await row.click();
-  // The pick advances the flow to Items; the account's facts live on the
-  // customer step's card, so open it again to read them.
-  await openStep(page, "customer");
-  await expect(page.getByTestId("customer-card")).toContainText(name);
+  // The pick advances the flow toward Items; the account's facts live on the
+  // customer step's card, so open it again and read them. The advance can
+  // land after the first open (the pick reprices the ticket first), so the
+  // open is retried until the card is readable.
+  const card = page.getByTestId("customer-card");
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await openStep(page, "customer");
+    try {
+      await expect(card).toContainText(name, { timeout: 700 });
+      return;
+    } catch {
+      // the advance closed the step again: open it once more
+    }
+  }
+  await expect(card).toContainText(name);
 }
 
 test("a walk-in cash sale of three lines rings, and the sale read equals every figure on the confirmation", async ({
@@ -318,6 +329,18 @@ test("an account sale for C02 rings on the account, with its facts beside the na
   const read = await getSale(page, bearer, sale.order_id as string);
   expect(read.tender).toBe("ACCOUNT");
   expect(read.invoice_no).toBe(sale.invoice_no);
+
+  // The receipt document, printed from the confirmation: the account it was
+  // sold to, the invoice, the figures.
+  const receiptPage = page.context().waitForEvent("page");
+  await sold.getByTestId("sold-print").click();
+  const printed = await receiptPage;
+  await expect(printed.getByText(`Counter sale ${sale.order_no} · invoice ${sale.invoice_no}`)).toBeVisible();
+  await expect(printed.getByText("Sold to Fenwick Builders Ltd (C02)")).toBeVisible();
+  await expect(
+    printed.getByText(`Total ${dollars(read.total_cents as number).replace("$", "")} · ACCOUNT`),
+  ).toBeVisible();
+  await printed.close();
 });
 
 test("an account on hold is refused in the reviewed words, and nothing commits", async ({ page }) => {
@@ -472,9 +495,15 @@ test("the detached layout works: the pick persists on the workspace row, and the
   await other.close();
 
   // Back to the standard counter: the linear flow is the other mode, and the
-  // pick back is the same gesture.
+  // pick back is the same gesture. The save is debounced, so the wait is
+  // armed before the pick: the row carries the stepper choice when this page
+  // closes, and the tests after this one mount the linear flow.
   await page.getByTestId("pos-view").click();
+  const savedBack = page.waitForRequest(
+    (request) => request.method() === "PUT" && request.url().includes("/api/v1/pos/workspace"),
+  );
   await page.getByTestId("pos-layout-stepper").click();
+  await savedBack;
   await expect(page.getByTestId("pos-flow-column")).toBeVisible();
 });
 
@@ -495,4 +524,166 @@ test("the pop-out opens the till on a second window, signed in as the same role"
   await expect(second.getByTestId("pagectx")).toContainText("Trenton Yard");
   await expect(second.getByTestId("signed-in-role")).toHaveText("Sales");
   await second.close();
+});
+
+test("a line the account's price cannot answer reads price pending through ordinary acts, never a zero", async ({
+  page,
+}) => {
+  // The account's price read is held where the route stands for the polymeric
+  // sand, until the account is picked and a re-price is asked again: the
+  // honest pending word through every ordinary act, and a subtotal over the
+  // priced lines only.
+  let refusePolymer = true;
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    const body = route.request().postDataJSON() as { product_id?: string };
+    if (refusePolymer && body.product_id === "p-polymer-sand") {
+      await route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: "line could not be priced by the engine" }) });
+      return;
+    }
+    await route.fallback();
+  });
+
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
+  const polymeric = page.getByTestId("pos-line-row").filter({ hasText: "Polymeric Locking Sand" });
+  await expect(polymeric.locator(".lprice")).toHaveText("price pending");
+
+  // An ordinary act on the OTHER line reprices that line and leaves the
+  // unanswered one saying so.
+  const hollandQty = page.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
+  await hollandQty.fill("3");
+  await hollandQty.blur();
+  await expect(
+    page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" }).locator(".ltot"),
+  ).toHaveText("CA$12.00");
+  await expect(polymeric.locator(".lprice")).toHaveText("price pending");
+  // The summary sums the priced lines only: CA$12.00, never a zero for the
+  // line that has no answer.
+  await openStep(page, "payment");
+  const totals = page.getByTestId("pos-totals-card");
+  await expect(totals).toContainText("CA$12.00");
+  await openStep(page, "items");
+
+  // The recovery: the account is picked, and the re-price answers at the
+  // account's rule.
+  await openStep(page, "customer");
+  const accountPicked = page.waitForRequest(
+    (request) =>
+      request.url().includes("/api/v1/pos/counter-prices") &&
+      (request.postData() ?? "").includes("c-maple-ridge"),
+  );
+  await pickAccount(page, "C01", "Maple Ridge Contracting");
+  await accountPicked;
+  refusePolymer = false;
+  // The pick's own reprices land first, so the edit below is the newest ask
+  // and no re-render writes the input back mid-edit.
+  await page.waitForTimeout(800);
+  await openStep(page, "items");
+  const polymericQty = page.getByRole("textbox", { name: "Quantity: Polymeric Locking Sand" });
+  await polymericQty.fill("2");
+  await polymericQty.blur();
+  // Two bags at the account's rule price: the unit column carries the rule
+  // price (CA$11.48), the line's total the picked quantity's answer.
+  await expect(polymeric.locator(".lprice")).toHaveText("CA$11.48");
+  await expect(polymeric.locator(".ltot")).toHaveText("CA$22.96");
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "price pending" })).toHaveCount(0);
+});
+
+test("a pricing answer that arrives for a stale line state is dropped: the newest answer owns the line", async ({
+  page,
+}) => {
+  // The first price ask is held where the route stands; the quantity changes
+  // while it is in flight (a second ask answers), and when the held answer is
+  // finally released its figures are about a ticket that no longer exists.
+  let releaseFirst: (() => void) | undefined;
+  let heldOne = true;
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    const body = route.request().postDataJSON() as { product_id?: string };
+    if (heldOne && body.product_id === "p-holland-60") {
+      heldOne = false;
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+    }
+    await route.fallback();
+  });
+
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  const holland = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
+  const hollandQty = page.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
+  await hollandQty.fill("3");
+  await hollandQty.blur();
+  await expect(holland.locator(".ltot")).toHaveText("CA$12.00");
+
+  releaseFirst?.();
+  // The stale answer (priced for one unit) landed on nothing: the line still
+  // carries the newest answer's figures.
+  await page.waitForTimeout(600);
+  await expect(holland.locator(".lprice")).toHaveText("CA$4.00");
+  await expect(holland.locator(".ltot")).toHaveText("CA$12.00");
+});
+
+test("a parked ticket survives the hand-over: the next login at the branch sees it and resumes it, priced fresh", async ({
+  page,
+}) => {
+  // The first counter person parks C01's pavers and leaves.
+  await signIn(page, "Sales");
+  await pickAccount(page, "C01", "Maple Ridge Contracting");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+
+  // The next login at the same counter is a second person at the same branch:
+  // the parked rail is the branch's, so the ticket is there, and the row has
+  // left it once resumed. The resumed ticket prices fresh through the engine
+  // (the new tab's display memory is cold, so the ticket resumes for the
+  // walk-in and the line reads retail until an account is picked).
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await signIn(page, "Sales manager");
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  await expect(parkedDialog.getByText("PARK-9001")).toHaveCount(0);
+  await parkedDialog.getByRole("button", { name: "Resume" }).first().click();
+  // The resumed ticket lands on the customer step (the cold cache resumed it
+  // for the walk-in); the line is the Items step's.
+  await openStep(page, "items");
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" })).toHaveCount(1);
+  await expect(
+    page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" }).locator(".lprice"),
+  ).toHaveText("CA$4.00");
+  await expect(parkedDialog).toHaveCount(0);
+});
+
+test("a resume over lines on the counter asks first: declining leaves everything where it was", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  // Park a second ticket, so the rail holds something to resume.
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
+
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  // The counter's lines are work: the rail asks before it consumes the
+  // ticket. Declining keeps the counter's line and the parked ticket both.
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await parkedDialog.getByRole("button", { name: "Resume" }).first().click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
+  await expect(parkedDialog).toBeVisible();
+  await expect(parkedDialog.getByRole("button", { name: "Resume" }).first()).toBeEnabled();
+  // The acceptance: the ask said what accepting means (the counter's lines go
+  // with it), so the parked ticket replaces them knowingly: the Holland line
+  // is back, the polymeric one went with the counter's draft.
+  page.once("dialog", (dialog) => dialog.accept());
+  await parkedDialog.getByRole("button", { name: "Resume" }).first().click();
+  await openStep(page, "items");
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" })).toHaveCount(1);
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Polymeric Locking Sand" })).toHaveCount(0);
 });

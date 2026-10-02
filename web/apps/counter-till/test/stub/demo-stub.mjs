@@ -1470,7 +1470,71 @@ const server = createServer(async (request, response) => {
       let changeDue;
       let paymentId;
       let gatewayRef;
-      if (tender === "CASH") {
+      // The split settlement (the contract's tenders, 2 to 6 legs): the legs
+      // must sum exactly to the sale's total, every leg names a rail, a card
+      // leg carries the terminal's token, and an account leg needs an account
+      // (the credit gate runs below, on the whole sale). The single-tender
+      // arms below answer every other ring.
+      const legs = Array.isArray(parsed.tenders) ? parsed.tenders : null;
+      if (legs !== null) {
+        if (legs.length < 2 || legs.length > 6) {
+          respondJson(response, 400, { error: "a split settlement carries two to six legs" });
+          return;
+        }
+        if (customer.id === "" && legs.some((leg) => leg?.method === "ACCOUNT")) {
+          respondJson(response, 400, { error: "the walk-in has no account to bill" });
+          return;
+        }
+        if (legs.some((leg) => leg?.method === "ACCOUNT")) {
+          // The credit gate, before any money moves, on the whole sale: a
+          // hold is a hard stop, and so is a total that would carry the
+          // account past its limit.
+          if (customer.on_hold === true) {
+            const blocked = creditBlocked("COD_CONSTRAINT");
+            respondJson(response, blocked.status, blocked.body);
+            return;
+          }
+          if (customer.open_balance_cents + total > customer.credit_limit_cents) {
+            const blocked = creditBlocked("CREDIT_LIMIT_EXCEEDED");
+            respondJson(response, blocked.status, blocked.body);
+            return;
+          }
+          customer.open_balance_cents += total;
+        }
+        let sum = 0;
+        for (const [index, leg] of legs.entries()) {
+          const method = leg?.method;
+          const amount = leg?.amount_cents;
+          if (!["CASH", "CARD", "CHEQUE", "ACCOUNT"].includes(method)) {
+            respondJson(response, 400, { error: `leg ${index + 1} does not name a rail` });
+            return;
+          }
+          if (!Number.isInteger(amount) || amount <= 0) {
+            respondJson(response, 400, { error: `leg ${index + 1} carries no amount` });
+            return;
+          }
+          if (method === "CARD" && typeof leg.payment_token !== "string") {
+            respondJson(response, 400, { error: "a card leg carries the terminal's token, never a card number" });
+            return;
+          }
+          sum += amount;
+        }
+        if (sum !== total) {
+          respondJson(response, 400, { error: "the legs do not sum exactly to the sale's total" });
+          return;
+        }
+        legs.forEach((leg, index) => {
+          const legPaymentId = nextDocNo("pay");
+          if (index === 0) paymentId = legPaymentId;
+          tenders.push({
+            seq: index + 1,
+            method: leg.method,
+            amount_cents: leg.amount_cents,
+            payment_id: legPaymentId,
+            ...(leg.method === "CARD" ? { gateway_ref: `rp_sim_${docCounter + 1}` } : {}),
+          });
+        });
+      } else if (tender === "CASH") {
         // The contract's own rule: cash_tendered_cents 0 (or absent) means not
         // entered, and the sale rings for the exact total. A typed figure that
         // falls short is refused; one that covers names the change due.
@@ -1520,12 +1584,23 @@ const server = createServer(async (request, response) => {
         return;
       }
       const orderId = uuidFromCounter(4000 + sales.size + 1);
+      // The sale's tender word: with a split settlement the contract says the
+      // body's tender field is ignored, so the row derives one word from the
+      // legs (the confirmation's own vocabulary) instead of storing ''.
+      const saleTender =
+        legs !== null
+          ? legs.some((leg) => leg.method === "ACCOUNT")
+            ? "ACCOUNT"
+            : legs.some((leg) => leg.method === "CARD")
+              ? "CARD"
+              : "CASH"
+          : tender;
       const sale = {
         order_id: orderId,
         order_no: nextDocNo("ORD"),
         invoice_id: uuidFromCounter(5000 + sales.size + 1),
         invoice_no: nextDocNo("INV"),
-        tender,
+        tender: saleTender,
         sale_type: typeof parsed.sale_type === "string" ? parsed.sale_type : "COLLECT_NOW",
         branch_id: branchId,
         customer_id: customer.id,
@@ -1848,6 +1923,7 @@ const server = createServer(async (request, response) => {
       respondJson(response, 403, { error: "that sale is not one your grant reaches" });
       return;
     }
+    const customer = CUSTOMERS.find((c) => c.id === sale.customer_id);
     const rows = sale.lines
       .map(
         (line) =>
@@ -1856,15 +1932,21 @@ const server = createServer(async (request, response) => {
           ).toFixed(2)}</td></tr>`,
       )
       .join("");
+    // The simulated word rides any sale that touched the simulated rail: a
+    // CARD tender or a split with a card leg.
+    const touchedCardRail =
+      sale.tender === "CARD" ||
+      (Array.isArray(sale.tenders) && sale.tenders.some((leg) => leg.method === "CARD"));
     const receiptDocument = `<!doctype html><html><head><title>${sale.order_no}</title></head><body>
 <h1>Hardscape House</h1>
 <p>Counter sale ${sale.order_no} · invoice ${sale.invoice_no}</p>
+${customer ? `<p>Sold to ${customer.name} (${customer.account_no})</p>` : ""}
 <table>${rows}</table>
 <p>Subtotal ${(sale.subtotal_cents / 100).toFixed(2)} · tax ${(sale.tax_cents / 100).toFixed(2)}</p>
 <p>Total ${(sale.total_cents / 100).toFixed(2)} · ${sale.tender}</p>
-${sale.tender === "CARD" ? `<p>Simulated card: no card was charged</p>` : ""}
+${touchedCardRail ? `<p>Simulated card: no card was charged</p>` : ""}
 </body></html>`;
-    response.writeHead(200, { "content-type": "text/html" });
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(receiptDocument);
     return;
   }

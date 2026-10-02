@@ -73,6 +73,10 @@ export interface SaleResult {
   salesperson_name?: string;
   cash_tendered_cents?: number;
   change_due_cents?: number;
+ // HH note: the settled legs of a split sale, in the contract's own shape
+ // (PosTenderLeg): the confirmation's simulated-card word reads these, since
+ // a split with a card leg touched the rail just as a CARD tender did.
+  tenders?: { seq: number; method: string; amount_cents: number; payment_id?: string; gateway_ref?: string }[];
   // ── DIB-488 rev 8 (item 11) ── the JOB facts echoed back (sold panel + replay-verbatim).
   job_address?: string;
   job_reference?: string;
