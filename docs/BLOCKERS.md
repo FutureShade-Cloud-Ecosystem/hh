@@ -1196,3 +1196,29 @@ above is never edited.
   reproducing standalone will see green; reproduce inside a full run of
   the job's shape, or believe the entry and waste the work.
 
+## HH hardening, HH-191 round 3: the round 2 correction above, corrected (four verified runs)
+
+The round 2 review ran sync four ways and the clause above is wrong in
+one part, which this append corrects (the entry and the round 2 append
+stand untouched):
+
+- The "on a used and on a fresh gate alike" claim is false for a gate
+  used by the job's own scoped run. On such a gate standalone sync is
+  RED with the same 23-row failure (59 pass); it is green only on a
+  gate that sync alone has used, fresh or reused. The stray payment rows
+  (24 rows counted after the scoped run) are left by packages INSIDE
+  the green scoped set, not by the red packages and not by suite order
+  as such. An owner reproducing on the job's own gate after a green run
+  will see red for the same reason the job does.
+- The full unscoped run's failure list is longer than the round 2
+  append says: TestGapPaymentsLegs (gap_scopes_integration_test.go:753)
+  and the walkthrough leg (:878), and TestGapInvoicesLegs (:519) with
+  them.
+- The dispatch freight-raise 403s do not go through a bearer: those
+  legs send no HTTP request at all. The harness
+  (freightraise_integration_test.go:177) calls identity.DecideApproval
+  directly and maps the error to a status, so "read 403 with a bearer
+  present" above misstates the mechanism. The conclusion stands: a
+  second cause the bearer repair will not close.
+
+

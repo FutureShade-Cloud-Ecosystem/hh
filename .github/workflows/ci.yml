@@ -369,25 +369,28 @@ jobs:
           # HH_B3_TEST_DATABASE_URL stays unset because the demo job sets
           # it for untagged legs this job does not repeat; HH_B4_ stays
           # unset for the reason the demo job explains at length. KIT_
-          # variables are set by no job at all: the kit's own test file
-          # runs nowhere in ci, the same gap on main this defect's entry
-          # does not open.
+          # variables are set by no job at all, so the kit's one
+          # database-backed proof skips everywhere (its untagged file
+          # runs in the ci and demo jobs; only that proof gates on
+          # KIT_TEST_DATABASE_URL).
         run: |
           set -euo pipefail
           # The suite's recorded-red packages stay out of this run, each
-          # with its verified failure and its owning lane named in
-          # docs/BLOCKERS.md (the HH-191 entry and its round 2
-          # correction): nothing in the list is this job's regression,
-          # every one of them is red on main against the same databases
-          # this job builds. Read the correction before working from the
-          # entry: the gl package carries two red tests, not one; the
-          # dispatch package has a 403 class beside the bearer 401s; and
-          # the sync package is red only in suite order, green standalone
-          # on a fresh gate of this shape, so reproduce it inside a full
-          # run, not alone. A package rejoins the run when its lane lands
-          # the fix and drops its line here; the vet step above keeps
-          # every excluded package compiling under the tag in the
-          # meantime.
+          # with its verified failure and its owning lane to find in
+          # docs/BLOCKERS.md (the HH-191 entry, its round 2 correction
+          # and the round 3 correction after it): nothing in the list is
+          # this job's regression, every one of them is red on main
+          # against the same databases this job builds. Read the
+          # corrections before working from the entry: the gl package
+          # carries two red tests, not one; the dispatch package has a
+          # 403 class beside the bearer 401s; and the sync package is
+          # green only on a gate sync alone has used (on the job's own
+          # gate after a green run it is red with the same 23-row
+          # failure it is excluded for), so reproduce it on a fresh gate
+          # or inside a full run, never on the job's spent gate. A
+          # package rejoins the run when its lane lands the fix and
+          # drops its line here; the vet step above keeps every excluded
+          # package compiling under the tag in the meantime.
           red='internal/(assist/adapters|billing|compliance|dispatch|gl|messaging|sync|tour)$'
           # -p 1 for the same reason the ci job's untagged run carries
           # it: the module packages share the gate database, and
