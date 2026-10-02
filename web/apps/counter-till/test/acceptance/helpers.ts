@@ -154,9 +154,9 @@ function holdMintAt(at: number): void {
  * reservations serialize onto the file, then the caller sleeps to the slot.
  * A held value far ahead of now is a stale or corrupted file (a clock that
  * stepped back, a hand edited file, a reservation whose mint never
- * happened), not a pace: past one window plus one spacing ahead the held
- * value is discarded and the pace restarts from now. One spacing ahead is
- * the most an honest reservation ever writes.
+ * happened), not a pace: a held value more than one window ahead of now is
+ * discarded and the pace restarts from now. One spacing ahead is the most
+ * an honest reservation ever writes.
  */
 function reserveMintSlot(): number {
   const now = Date.now();
@@ -318,8 +318,8 @@ export async function openStep(page: Page, step: Step): Promise<void> {
  * The status line's prefix is no good to the belt: the app prints it for
  * every failed mint, whatever the reason, and a wait cures only the box's
  * window refusal. The watch holds the narrower words, so the belt retries
- * the one refusal a wait can cure and every other failed mint fails
- * through to the expect without spending its waits.
+ * the one refusal a wait can cure; every other failed mint fails through
+ * to the text expect, its answer watch spent, no window wait.
  */
 const REFUSAL_WORDS = "too many sign-in attempts";
 
@@ -346,7 +346,8 @@ const REFUSAL_RETRIES = 2;
  * signed-in chrome or the entry page states a refusal, and the watched words
  * are the window refusal's own, so the belt waits and taps again only for
  * the one refusal a wait can cure, at most twice. Any other failed mint
- * fails through to the text expect with no waits spent. The belt exists so
+ * reads as a stall: the answer watch runs out, then the text expect fails
+ * honestly, and no window wait is spent on it. The belt exists so
  * one refused sign-in recovers in place instead of failing its test and
  * restarting the worker (a restart drops every spec file's mint memo and
  * injects the very burst the guard refuses; that cascade is what once left
