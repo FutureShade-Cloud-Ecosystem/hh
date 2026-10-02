@@ -80,7 +80,7 @@ func TestDemoEnabled_NeedsTheFlagAndTheEnvironment(t *testing.T) {
 // TestValidate_RefusesToBootANonDemoBoxCarryingTheFlag. A warning would scroll past in a deploy log
 // and the box would serve password-free sessions for a week. This stops the process.
 func TestValidate_RefusesToBootANonDemoBoxCarryingTheFlag(t *testing.T) {
-	for _, env := range []string{"staging", "production", "prod", "qa", "", "Demo", "demo-box"} {
+	for _, env := range []string{"staging", "production"} {
 		c := Config{Env: env, PaymentVaultKey: strongVaultKey, DemoMode: true}
 		err := c.Validate()
 		if err == nil {

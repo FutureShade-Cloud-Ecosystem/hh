@@ -153,6 +153,12 @@ var badBaseURLs = []string{
 	"https:///portal.html", "https://:8443",
 	"https://user:pw-sentinel@erp.example.com", "https://user@erp.example.com",
 	"https://erp.example.com/?q=sentinel", "https://erp.example.com/#frag-sentinel", "https://erp.example.com/?",
+	// round 3: bare 0x labels, non-ASCII spellings of localhost and 127.0.0.1, junk hosts and ports
+	"https://127.0.0x.1", "https://0x7f.0x.0x.1", "https://127.0x.1",
+	"https://localhost\u3002", "https://127\u30020\u30020\u30021", "https://\uff4c\uff4f\uff43\uff41\uff4c\uff48\uff4f\uff53\uff54",
+	"https://local\u00adhost", "https://local\u200bhost", "https://erp.exam\u00e9ple.com",
+	"https://localhost..", "https://..", "https://-", "https://h:", "https://erp.example.com:0", "https://erp.example.com:65536",
+	"https://erp.example.com/a b", "https://erp.example.com/a\u00a0b", "https://erp.example.com/a\u0085b", "https://erp.example.com/a\u2028b",
 	"https://erp.example.com ", " https://erp.example.com", "https://erp.example.com/\x00", "https://erp.example.com/a\nb",
 }
 
@@ -190,12 +196,28 @@ func TestValidate_BaseURLAcceptsOrdinaryHosts(t *testing.T) {
 	for _, raw := range []string{
 		"https://erp.example.com", "https://erp.example.com/", "https://pro.example.com/portal.html",
 		"https://erp.example.com:8443", "https://203.0.113.7", "https://10.0.0.5", "https://100.64.48.69",
-		"https://[2001:db8::1]", "https://staging", "https://erp.internal", "https://box.local", "https://xn--e1afmkfd.example",
+		"https://[2001:db8::1]", "https://staging", "https://erp.example.com:65535", "https://erp.example.com/base/path", "https://erp.internal", "https://box.local", "https://xn--e1afmkfd.example", "https://name.local/portal.html", "https://0x.example.com",
 	} {
 		c := validNonDev()
 		c.PortalBaseURL, c.StaffBaseURL = raw, raw
 		if err := c.Validate(); err != nil {
 			t.Errorf("%q must pass: %v", raw, err)
+		}
+	}
+}
+
+// A mistyped APP_ENV is refused by the allowlist even with DEMO_MODE on, and is not echoed.
+func TestValidate_AppEnvAllowlistWinsOverDemoModeAndDoesNotEcho(t *testing.T) {
+	for _, env := range []string{"prod", "stagin", "Production", "qa", "demo-box"} {
+		c := validNonDev()
+		c.Env, c.DemoMode = env, true
+		err := c.Validate()
+		if err == nil {
+			t.Errorf("APP_ENV %q with DEMO_MODE must be refused", env)
+			continue
+		}
+		if !strings.Contains(err.Error(), "accepted values") || strings.Contains(err.Error(), fmt.Sprintf("%q", env)) {
+			t.Errorf("APP_ENV %q with DEMO_MODE: want the allowlist refusal without an echo, got %q", env, err)
 		}
 	}
 }
