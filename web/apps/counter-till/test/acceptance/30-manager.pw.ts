@@ -48,7 +48,7 @@ test("the drawer: the same shared counter drawer the clerk found", async ({ page
   // The same drawer the clerk found, and the core's Z report holds its float.
   const bearer = await mint(page, "sales-manager");
   const drawerId = await openDrawer(page, bearer);
-  expect(await openingFloat(page, bearer, drawerId)).toBe(20000);
+  expect(await openingFloat(page, bearer, drawerId)).toBe(30000);
   await shot(page, "manager-02-drawer", testInfo, { clip: TOP_BAR_CLIP });
 });
 

@@ -185,7 +185,14 @@ export async function staffPost(
   return { status: answer.status(), body: (await answer.json()) as Record<string, unknown> };
 }
 
-/** The drawer the counter shares: found or opened on first use. */
+/**
+ * The drawer the counter shares: found or opened on first use. The opening
+ * float is the reference's own: hardscapeos_dibbits app/src/pos-terminal.ts
+ * line 2650 (master at 87d7941b) sends float_cents 30000 on its Open Session
+ * press, and the ported surface keeps it (src/ported/pos-terminal.ts,
+ * openSession), so the API's open carries the same 30000 and the suite
+ * asserts one truth.
+ */
 export async function openDrawer(page: Page, bearer: string): Promise<string> {
   const lookup = await staffGet(
     page,
@@ -196,7 +203,7 @@ export async function openDrawer(page: Page, bearer: string): Promise<string> {
   const opened = await staffPost(page, bearer, "/api/v1/till/sessions", {
     branch_id: TRENTON_ID,
     station: "MAIN",
-    float_cents: 20000,
+    float_cents: 30000,
     opening_denominations: [],
   });
   return opened.body.id as string;

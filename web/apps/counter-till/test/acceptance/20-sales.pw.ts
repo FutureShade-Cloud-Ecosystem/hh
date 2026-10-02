@@ -66,10 +66,11 @@ test("the drawer: the branch's MAIN counter drawer, found or opened on first use
   await expect(page.getByTestId("pagectx")).toContainText("Hardscape House (demo), Trenton");
   await expect(page.getByTestId("session-dot")).toContainText("Open");
   // The surface carries no float figure, so the core's own Z report holds it:
-  // MAIN is open with the float the till opens it with, $200.00.
+  // MAIN is open with the float the till opens it with, $300.00, the
+  // reference's own float (see openDrawer).
   const bearer = await mint(page, "sales");
   const drawerId = await openDrawer(page, bearer);
-  expect(await openingFloat(page, bearer, drawerId)).toBe(20000);
+  expect(await openingFloat(page, bearer, drawerId)).toBe(30000);
   await shot(page, "sales-02-drawer", testInfo, { clip: TOP_BAR_CLIP });
 });
 
