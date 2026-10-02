@@ -344,8 +344,11 @@ paths:
       tags: [tenant-team]
       summary: Invite a person to the account under a role
       description: >-
-        The create response is the only place the raw invite token appears;
-        delivery is out of band. A duplicate email is a 409.
+        Currently always answers 501 and creates nothing: no invite row, no
+        token and no message is produced, because an invite can be neither
+        delivered nor accepted until the sign-in work (HH-4.2) lands. The 201
+        and 409 responses below describe the route once it is enabled and are
+        not reachable today.
       x-role: capability:manage_users
       security: [{ TenantBearer: [] }]
       requestBody:
@@ -367,8 +370,8 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "501":
           description: >-
-            Inviting crew members is not available yet; no invite is created
-            and nothing is sent
+            Inviting users is not available yet; no invite is created and
+            nothing is sent
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

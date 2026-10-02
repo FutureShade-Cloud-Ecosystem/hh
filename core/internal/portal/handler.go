@@ -268,7 +268,7 @@ func (h *Handler) listInvites(w http.ResponseWriter, r *http.Request) {
 // on), so creating the row would only leave a pending invite nobody can redeem. It
 // creates no row, emits no outbox event and mints no token. Listing stays served.
 func (h *Handler) createInvite(w http.ResponseWriter, _ *http.Request) {
-	httpx.Error(w, http.StatusNotImplemented, "inviting crew members is not available yet")
+	httpx.NotImplemented(w, "inviting users is not available yet")
 }
 
 func (h *Handler) updateRole(w http.ResponseWriter, r *http.Request) {
