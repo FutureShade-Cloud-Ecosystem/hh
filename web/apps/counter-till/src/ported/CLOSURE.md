@@ -2,11 +2,22 @@ DOC-ID: COUNTER-TILL-PORTED-CLOSURE-r1
 
 # The POS surface port: the closure map
 
+WIRED (the second UI parity work item): the surface is mounted. `ports.ts` is
+implemented over the host (the api seam carries the demo org and bearer and
+the two contract shape adaptations, the session facts read the demo mint's
+own IdentityUser block, the money seams answer over core-stated figures, the
+layout store is tab memory and the print choreography the host's, each named
+in the file); the terminal renders as the app's one surface after the entry
+cards, in both its modes. The two test halves this file left with the
+reference have come home: `_pos-add-census.test.mjs` (this tree's own
+add-path census) and `_pos-hotkeys-roster.test.mjs` (the fallback roster
+re-pinned against HH's core hotkeys file), beside `ports-money.test.mjs`
+(the split and money seam cases against the implementations).
+
 The reference is `hardscapeos_dibbits` `master` at 87d7941b, read only at
 `counter-till/ref-master/`. This directory carries the ported surface code of
 `app/src/pos-terminal.ts`'s full import closure, file names mirrored, each file
-opening with its provenance line. Nothing here is mounted yet: the wiring work
-item imports it and implements `ports.ts`. The reference's components render
+opening with its provenance line. The reference's components render
 through the `--hos-*` custom properties, so the port brings the reference's
 token sheet rebased onto the HH design system (see Styles below).
 

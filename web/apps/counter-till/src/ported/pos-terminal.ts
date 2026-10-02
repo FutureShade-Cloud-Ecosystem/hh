@@ -3380,7 +3380,13 @@ export class HosPosTerminal extends LitElement {
           state: 'error',
           msg:
             res.err.error === 'credit_blocked'
-              ? 'Over credit limit: manager approval required (routed to Approvals).'
+ // HH note: the credit gate's word is the one refusal this surface translates,
+ // in HH's own reviewed sentence: the gate refused the account sale, cash and
+ // card still work, and accounts receivable owns the release or override. The
+ // reference routed to its approvals rail; HH's rule keeps the words the
+ // counter reviewed (row 481's till has no margin floor, and the credit gate
+ // speaks for itself).
+              ? 'This account cannot carry this sale on account: the credit gate refused it (over the limit, or on a hold). Cash or card still works, and accounts receivable can release or override a hold.'
               : `Line ${res.err.line ?? ''} below margin floor: manager approval required.`,
         };
         return;
@@ -6333,6 +6339,13 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
         <div class="f"><span class="k">Sale</span><span class="v">${sale.order_no}</span></div>
         <div class="f"><span class="k">Invoice</span><span class="v">${sale.invoice_no}</span></div>
         <div class="f"><span class="k">Tender</span><span class="v">${c.tenderLabel}</span></div>
+        ${/* HH note: the simulated card notice rides the rail's own status value, exactly when it
+           answers simulated true, on a card sale's confirmation: the reviewed rule, carried onto
+           this surface's own confirmation panel (the tender step carries the same word as its
+           TEST MODE badge). A rail that answers false, or answers nothing, claims nothing. */ ''}
+        ${sale.tender === 'CARD' && this.cardRail === 'test'
+          ? html`<div class="f" data-testid="sold-simulated-notice"><span class="k">Card</span><span class="v">Simulated card: no card was charged</span></div>`
+          : nothing}
         ${(sale.deposit_cents ?? 0) > 0
           ? html`<div class="f"><span class="k">Deposit</span><span class="v">${money(sale.deposit_cents ?? 0)}</span></div>`
           : nothing}

@@ -268,7 +268,14 @@ export async function api(path: string, init: RequestInit = {}): Promise<Respons
   if (pathOnly === "/api/v1/pos/parked" && (init.method ?? "GET") === "GET" && response.ok) {
     try {
       const parsed: unknown = await response.json();
-      return new Response(JSON.stringify(parsed), {
+      const rows =
+        parsed !== null &&
+        typeof parsed === "object" &&
+        !Array.isArray(parsed) &&
+        Array.isArray((parsed as Record<string, unknown>)["items"])
+          ? ((parsed as Record<string, unknown>)["items"] as unknown[])
+          : parsed;
+      return new Response(JSON.stringify(rows), {
         status: response.status,
         statusText: response.statusText,
         headers: { "Content-Type": "application/json" },

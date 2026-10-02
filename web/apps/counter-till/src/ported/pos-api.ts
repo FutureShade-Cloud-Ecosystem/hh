@@ -114,7 +114,11 @@ export function money(cents: number): string {
 }
 
 export async function listProducts(): Promise<PosProduct[]> {
-  const res = await fetch('/api/v1/products?active=true');
+ // HH note: the reference fetched this read bare of credentials (its core
+ // answered the catalogue ungated). HH's contract gates the catalogue read
+ // like every staff read, so the ask rides the ported surface's one authed
+ // door (api, in ports.ts) exactly as the counter's other reads do.
+  const res = await api('/api/v1/products?active=true');
   if (!res.ok) throw new Error(`products ${res.status}`);
   return (await res.json()) as PosProduct[];
 }
