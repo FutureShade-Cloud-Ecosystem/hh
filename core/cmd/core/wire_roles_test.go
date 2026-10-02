@@ -12,9 +12,11 @@ package main
 // the composition suites' gate variable, skip politely when absent), the
 // REAL wiring functions loadRoleConfig and wireTillRules build the pos
 // service the serve role builds, and that service answers the two questions
-// the rows name: the margin glance for the clerk (X3, the configuration's
-// list decides) and the 300.00 refusal (X7, the configuration's amount),
-// the audit trail holding the refusal row.
+// the rows name: the margin glance for the clerk under the served policy
+// (the configuration's list considers the clerk, and the policy's
+// MANAGER_UP default holds the answer at the server, the byte-absent {})
+// and the 300.00 refusal (X7, the configuration's amount), the audit trail
+// holding the refusal row.
 
 import (
 	"bytes"
@@ -56,10 +58,12 @@ func containsStr(haystack, needle string) bool {
 // composition path (registerRoutes, the one composition point the binary
 // wires, through the same harness the parity and x-role suites use) over
 // the fixture database, and asserts the built surface answers the rows'
-// two questions: the margin glance for the clerk (X3, the configuration's
-// list decides) and the 300.00 refusal (X7, the configuration's amount,
-// the approver roles named in the contract's body), the audit trail
-// holding the refusal row.
+// two questions: the margin glance for the clerk under the served policy
+// (the configuration's list considers the clerk, and the policy's
+// MANAGER_UP default holds the answer at the server, the byte-absent {},
+// the margin glance policy ruling) and the 300.00 refusal (X7, the
+// configuration's amount, the approver roles named in the contract's
+// body), the audit trail holding the refusal row.
 func TestTillRules_WiredCompositionRefusesAndShows(t *testing.T) {
 	env := newCompEnv(t)
 	rec, graph := registeredSurface(t, env)
@@ -112,9 +116,14 @@ func TestTillRules_WiredCompositionRefusesAndShows(t *testing.T) {
 		return rsp.Code, out
 	}
 
-	// X3 at the composition: the glance answers margin for the clerk,
-	// because the configuration's list names the role. The bytes went
-	// through the REAL registerRoutes, the wiring the serve role runs.
+	// X3 at the composition under the margin glance policy ruling: the
+	// configuration's list still considers the clerk, and the served
+	// policy's word is MANAGER_UP (the 0170 column default the fixture
+	// database carries), so the clerk's glance is the byte-absent {}: the
+	// policy holds the answer at the server. This rig has the one login
+	// (the clerk), so the leg pins the served word beside the answer. The
+	// bytes went through the REAL registerRoutes, the wiring the serve
+	// role runs.
 	code, glance := do(t, http.MethodPost, "/api/v1/pos/margin-glance", map[string]any{
 		"branch_id": testkit.BranchNorthAID, "customer_type": "RETAIL",
 		"lines": []map[string]any{{"product_id": testkit.ProductID, "qty_entered": 10, "uom_entered": "EA"}},
@@ -122,12 +131,15 @@ func TestTillRules_WiredCompositionRefusesAndShows(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("the wired glance must answer the clerk, got %d: %v", code, glance)
 	}
-	lines, isSlice := glance["lines"].([]any)
-	if !isSlice || len(lines) == 0 {
-		t.Fatalf("the wired glance must carry margin for the configured clerk: %v", glance)
+	if len(glance) != 0 {
+		t.Fatalf("under the served MANAGER_UP policy the clerk's wired glance must be the byte-absent {}, got: %v", glance)
 	}
-	if lines[0].(map[string]any)["margin_bps"] == nil {
-		t.Fatalf("margin_bps must be present for the configured clerk: %v", lines[0])
+	code, served := do(t, http.MethodGet, "/api/v1/pos/policy?branch_id="+testkit.BranchNorthAID, nil)
+	if code != http.StatusOK {
+		t.Fatalf("the wired policy read must answer the clerk, got %d: %v", code, served)
+	}
+	if served["margin_visibility"] != "MANAGER_UP" {
+		t.Fatalf("the served policy must name MANAGER_UP, the word the clerk's byte-absent glance hangs off, got: %v", served["margin_visibility"])
 	}
 
 	// X7 at the composition: the 300.00 return is refused with the
