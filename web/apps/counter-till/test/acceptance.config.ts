@@ -21,6 +21,15 @@ export default defineConfig({
   // belong to the default config and its own web servers.
   testDir: ".",
   testMatch: "acceptance/*.pw.ts",
+  // The test budget is written here, not inherited: the worst honest test
+  // carries its own work (the work fits the suite's old 30000ms default, kept
+  // as the work allowance), at most three paces (the parked sales spec signs
+  // in three times: three spacings of 10000ms, 30000ms), and the belt's worst
+  // recovery should a refusal actually fire (two window waits of 31000ms,
+  // 62000ms; the retry taps after a wait pace for nothing). The sum is
+  // 122000ms, and the budget rounds it up to 150000ms so a staging box's
+  // slower round trips spend the margin, not the test.
+  timeout: 150_000,
   workers: 1,
   use: {
     baseURL,

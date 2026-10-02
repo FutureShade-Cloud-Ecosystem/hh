@@ -23,6 +23,7 @@
 //   POST /api/v1/pos/parked                 -> PosParkedTicket
 //   GET  /api/v1/pos/parked                 -> PosParkedTicketPage
 //   POST /api/v1/pos/parked/{id}/resume     -> PosParkedTicket
+//   DELETE /api/v1/pos/parked/{id}          -> PosParkedDiscard
 //   GET  /api/v1/pos/returns/lookup         -> PosReturnLookup
 //   POST /api/v1/pos/returns                -> PosReturn (409 PosRefundApprovalRequired)
 //   GET  /api/v1/pos/policy                 -> PosPolicy
@@ -1835,6 +1836,25 @@ const server = createServer(async (request, response) => {
     }
     ticket.status = "RESUMED";
     respondJson(response, 200, ticket);
+    return;
+  }
+
+  // Discard a parked ticket: the contract's acknowledgement shape
+  // (PosParkedDiscard), fenced to the caller's own branch like the resume,
+  // and out of the branch's parked list from then on.
+  const discardMatch = path.match(/^\/api\/v1\/pos\/parked\/([^/]+)$/);
+  if (request.method === "DELETE" && discardMatch !== null) {
+    const ticket = parked.get(discardMatch[1]) ?? null;
+    if (ticket === null) {
+      respondJson(response, 404, { error: "no such parked ticket" });
+      return;
+    }
+    if (ticket.branch_id !== callerBranch) {
+      respondJson(response, 403, { error: "that parked ticket is not one your grant reaches" });
+      return;
+    }
+    ticket.status = "DISCARDED";
+    respondJson(response, 200, { status: "DISCARDED" });
     return;
   }
 

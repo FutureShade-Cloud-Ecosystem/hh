@@ -50,6 +50,18 @@ export class HosPosParked extends LitElement {
   @state() private tickets: ParkedTicket[] = [];
   @state() private busyId = '';
   @state() private error = '';
+  // A read's own failure, kept apart from `error` (the word a resume or a
+  // discard has to say): a failed read must raise its banner, a good read
+  // must lower it, and neither side may erase or be erased by the other.
+  // Both speak through the same role="alert" strip, the action's word first.
+  @state() private loadError = '';
+  // Ordering guard for the reads below. Two reads of one open dialog are
+  // routinely in flight at once (the open read and a host triggered reload
+  // that lands under it), so whichever read resolves last may be the stale
+  // one: only the read holding the newest reserved token may write, and a
+  // superseded read discards its answer instead of putting the rail back on
+  // the old list.
+  private readSeq = 0;
 
   static styles = [
     focusRing,
@@ -179,14 +191,34 @@ export class HosPosParked extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
-    void this.load();
+    void this.reload();
   }
 
-  private async load(): Promise<void> {
+  /**
+   * The branch's parked list, read again on demand. The dialog reads exactly
+   * once on open (the reference's own shape, hardscapeos_dibbits master
+   * 87d7941b app/src/pos-parked.ts), so a list change landing under the open
+   * dialog left it frozen at the stale rows until close and reopen. The host
+   * calls this when its own parked-list read lands (pos-terminal's
+   * refreshParkedCount, which fires when the branch's list changes: park,
+   * resume and dialog close through the terminal, and this rail's own
+   * discard, announced), so a change landing while the dialog is open
+   * converges it within one read: no polling loop, no contract change.
+   */
+  async reload(): Promise<void> {
+    const token = ++this.readSeq;
     try {
-      this.tickets = await listParked(this.branchId);
+      const tickets = await listParked(this.branchId);
+      if (token === this.readSeq) {
+        this.tickets = tickets;
+        // A good read lowers its own failure's word: the banner a refused
+        // reload raised must not outlive the reload that answered.
+        this.loadError = '';
+      }
     } catch (e) {
-      this.error = e instanceof Error ? e.message : 'failed to load parked tickets';
+      if (token === this.readSeq) {
+        this.loadError = e instanceof Error ? e.message : 'failed to load parked tickets';
+      }
     }
   }
 
@@ -218,7 +250,7 @@ export class HosPosParked extends LitElement {
       );
     } catch (e) {
       this.error = e instanceof Error ? e.message : 'resume failed';
-      void this.load(); // a concurrent resume/discard: refresh the list
+      void this.reload(); // a concurrent resume/discard: refresh the list
     } finally {
       this.busyId = '';
     }
@@ -229,7 +261,11 @@ export class HosPosParked extends LitElement {
     this.error = '';
     try {
       await discardParked(t.id);
-      await this.load();
+      await this.reload();
+      // The list changed without the terminal acting: announce it the way
+      // close and resume are announced, so the host's count read moves the
+      // button with the list while this rail stays open.
+      this.dispatchEvent(new CustomEvent('pos-parked-discard', { bubbles: true, composed: true }));
     } catch (e) {
       this.error = e instanceof Error ? e.message : 'discard failed';
     } finally {
@@ -242,7 +278,9 @@ export class HosPosParked extends LitElement {
       <div class="card">
         <h2>Parked tickets</h2>
         <p class="sub">Saved carts for this branch: resumed lines re-price live through the engine.</p>
-        ${this.error ? html`<div class="banner bad" role="alert">${this.error}</div>` : nothing}
+        ${(this.error || this.loadError)
+          ? html`<div class="banner bad" role="alert">${this.error || this.loadError}</div>`
+          : nothing}
         ${this.tickets.length === 0
           ? html`<div class="empty">No parked tickets.</div>`
           : this.tickets.map((t) => {

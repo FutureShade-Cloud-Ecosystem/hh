@@ -5,7 +5,7 @@
 // through the core's own close flow, signs in on the closed drawer (what a
 // clean box holds), and presses the button: the request it sends carries the
 // reference's own float, and the till then shows the session open.
-import { TRENTON_ID, expect, expectedCash, mint, paceMint, staffGet, staffPost, test } from "./helpers.js";
+import { TRENTON_ID, expect, expectedCash, mint, staffGet, staffPost, tapRoleCard, test } from "./helpers.js";
 
 const OPEN_PATH = `/api/v1/till/sessions/open?branch_id=${TRENTON_ID}&station=MAIN`;
 
@@ -36,9 +36,7 @@ test("the closed drawer: the till's own Open Session button opens MAIN with the 
   // button and no session dot (the hydrate read answers no open session).
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
-  await paceMint(page);
-  await page.getByRole("button", { name: "Sales", exact: true }).click();
-  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
+  await tapRoleCard(page, "Sales");
   await expect(page.getByRole("button", { name: "Open Session" })).toBeVisible();
   await expect(page.getByTestId("session-dot")).toHaveCount(0);
 
