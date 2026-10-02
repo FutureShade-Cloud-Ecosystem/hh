@@ -506,7 +506,7 @@ export class CounterTillApp extends HHElement {
         data-action="theme"
         data-testid="theme-control"
         aria-label=${themeControlLabel(choice)}
-        title=${themeControlLabel(choice)}
+        title="Cycle the theme: Auto, Light, Dark"
       >
         Theme: ${THEME_LABEL[choice]}
       </button>
