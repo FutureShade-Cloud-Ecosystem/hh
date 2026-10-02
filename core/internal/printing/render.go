@@ -6,6 +6,8 @@ import (
 	"html/template"
 	"strconv"
 	"strings"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 )
 
 // RenderReceiptHTML renders the receipt as a self-contained print document.
@@ -52,9 +54,36 @@ func Money(cents int64) string {
 // Qty renders a quantity without trailing-zero noise ("10" not "10.000000").
 func Qty(q float64) string { return strconv.FormatFloat(q, 'f', -1, 64) }
 
+// saleTypeWords maps a pos sale type (core/internal/pos/model.go) to the plain words the receipt
+// prints: the customer's paper carries words, not domain constants. The cases are keyed on pos's
+// own constants so the vocabulary cannot drift. The words make no payment claim (an ACCOUNT tender
+// can ride any sale type, the tender rows are what say how it was paid) and no time-relative claim
+// (a reprint must read as true as the first copy). An unknown value passes through verbatim:
+// nothing is hidden, nothing is guessed. Empty never reaches here, the template's if stands.
+func saleTypeWords(saleType string) string {
+	switch saleType {
+	case pos.SaleCollectNow:
+		// counter pickup: stock issues and the order fulfils at ring, the goods leave with the customer
+		return "Collected at the counter"
+	case pos.SaleCollectLater:
+		// will-call: no stock moves at ring, the goods stay for a later pickup
+		return "Held for later collection"
+	case pos.SaleDelivered:
+		// the fulfilment mode, named: never a claim the delivery already happened
+		return "Delivery"
+	case pos.SaleCOD:
+		// a payment posture, not a fulfilment: the invoice is FINALIZED at ring (its number is on
+		// this same paper) and fulfilment is locked until paid, so both halves are facts of the ring
+		return "Invoice issued, held until paid"
+	default:
+		return saleType
+	}
+}
+
 var receiptTmpl = template.Must(template.New("receipt").Funcs(template.FuncMap{
-	"money": Money,
-	"qty":   Qty,
+	"money":     Money,
+	"qty":       Qty,
+	"saleWords": saleTypeWords,
 }).Parse(`<!doctype html>
 <html lang="en">
 <head>
@@ -119,7 +148,7 @@ var receiptTmpl = template.Must(template.New("receipt").Funcs(template.FuncMap{
 
   <div>
     {{if .CustomerName}}<div>Customer: {{.CustomerName}}{{if .CustomerAccountNo}} ({{.CustomerAccountNo}}){{end}}</div>{{end}}
-    {{if .SaleType}}<div class="muted">{{.SaleType}}</div>{{end}}
+    {{if .SaleType}}<div class="muted">{{saleWords .SaleType}}</div>{{end}}
     {{if .CashierRef}}<div class="muted">Served by {{.CashierRef}}</div>{{end}}
   </div>
 
