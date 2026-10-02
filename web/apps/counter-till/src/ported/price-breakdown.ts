@@ -2,6 +2,7 @@
 
 import { LitElement, css, html, nothing } from 'lit';
 import { centsAmount } from './_money-format.js';
+import { belowFloorWords } from './_price-breakdown-words.js';
 import { customElement, property, state } from 'lit/decorators.js';
 import { api } from './ports.js';
 import { priceSourceWord } from './pricing-words-logic.js';
@@ -212,13 +213,7 @@ export class HosPriceBreakdown extends LitElement {
                 <span>${b.detail}</span>
               </div>
               ${b.blocked
-                ? html`<div class="blocked">
-                    ${b.detail || 'Below the configured margin floor: manager approval required'}${this
-                      .marginFiguresVisible && b.margin_bps !== undefined && b.floor_bps !== undefined
-                      ? html` (margin ${centsAmount(b.margin_bps)}% &lt; floor
-                          ${centsAmount(b.floor_bps)}%)`
-                      : nothing}
-                  </div>`
+                ? html`<div class="blocked">${belowFloorWords(b, this.marginFiguresVisible)}</div>`
                 : nothing}
             `
           : html`<div class="label">no breakdown: set inputs and resolve</div>`}
