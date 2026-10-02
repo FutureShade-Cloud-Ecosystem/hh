@@ -1013,7 +1013,7 @@ test("the chrome sits above the surface: the demo banner is in the first viewpor
   await second.close();
 });
 
-test("End Session is closed on the mount: aria-disabled, grey, focusable, its reason on screen, and no complete call is made", async ({
+test("End Session is closed on the mount: aria-disabled, grey, focusable, its reason beside the control, and no complete call is made", async ({
   page,
 }) => {
   await signIn(page, "Sales manager");
@@ -1047,18 +1047,29 @@ test("End Session is closed on the mount: aria-disabled, grey, focusable, its re
   await expect(description).toHaveText(reason);
   await expect(page.locator("#till-message")).toHaveCount(0);
   await expect(button).toHaveAccessibleDescription(reason);
-  // Focus alone puts the reason on screen, in the till's own message line, in a neutral notice style
-  // (not the success green), and the message line does not announce it a second time.
+  // Focus alone puts the reason on screen BESIDE THE CONTROL (ui3 visual GAP 1: the foot message
+  // line answered about 680px away, half under the hotkey bar with the Items step open), in a
+  // neutral notice style (not the success green), and the notice does not announce on focus.
   await button.focus();
   await expect(button).toBeFocused();
-  const message = page.locator("#till-message");
-  await expect(message).toBeVisible();
-  await expect(message).toHaveText(reason);
-  await expect(message).toHaveClass(/\bnote\b/);
-  await expect(message).not.toHaveClass(/\b(ok|bad)\b/);
-  await expect(message).not.toHaveAttribute("role", /.*/);
-  const border = await message.evaluate((el) => getComputedStyle(el).borderTopColor);
-  const success = await message.evaluate((el) => {
+  const notice = page.getByTestId("end-session-notice");
+  await expect(notice).toBeVisible();
+  await expect(notice).toHaveText(reason);
+  await expect(notice).not.toHaveAttribute("role", /.*/);
+  // Beside its control: right-aligned to the button, just under the bar, so the whole notice sits
+  // in the page's first band and no hotkey bar or fold can cover it.
+  const box = await notice.boundingBox();
+  const btnBox = await button.boundingBox();
+  expect(box).not.toBeNull();
+  expect(btnBox).not.toBeNull();
+  const noticeRight = (box?.x ?? 0) + (box?.width ?? 0);
+  const buttonRight = (btnBox?.x ?? 0) + (btnBox?.width ?? 0);
+  expect(Math.abs(noticeRight - buttonRight)).toBeLessThanOrEqual(2);
+  expect((box?.y ?? 0)).toBeGreaterThanOrEqual((btnBox?.y ?? 0) + (btnBox?.height ?? 0));
+  expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThan(300);
+  // Neutral palette: the edge is the control line, never the success green.
+  const border = await notice.evaluate((el) => getComputedStyle(el).borderTopColor);
+  const success = await notice.evaluate((el) => {
     const probe = document.createElement("div");
     probe.style.color = "var(--hos-success)";
     document.body.appendChild(probe);
@@ -1073,9 +1084,11 @@ test("End Session is closed on the mount: aria-disabled, grey, focusable, its re
   await button.click({ force: true });
   await page.waitForLoadState("networkidle");
   await expect(page.getByTestId("session-dot")).toContainText("Open");
-  await expect(message).toHaveText(reason);
-  // A press is the one announcement: the line becomes a status then.
-  await expect(message).toHaveAttribute("role", "status");
+  await expect(notice).toHaveText(reason);
+  // A press is the one announcement: the notice becomes a status then, and the
+  // foot message line carries nothing of it.
+  await expect(notice).toHaveAttribute("role", "status");
+  await expect(page.locator("#till-message")).toHaveCount(0);
   expect(completeCalls).toEqual([]);
 });
 

@@ -28,12 +28,17 @@ Z report, sign-off) that this release does not carry, so the button stays
 visible but closed: `aria-disabled="true"` (so it takes focus), grey and
 unfilled, named "End Session", with the reason on its title; the button
 points with `aria-describedby` at its own always-present visually hidden
-description (the reason), and a press or focus also shows the reason as text
-in the till's own message line, in a neutral notice style (not the success
-green) that is announced once (on a press; focus leaves the speaking to the
-description) ("Ending the session needs the blind count,
-the Z report and a manager's sign-off; the drawer close is not on this
-surface yet."), and it makes no request. Porting the close flow is the
+description (the reason), and a press or focus also shows the reason as a
+notice beside the control (anchored under the button in the top bar, in the
+same neutral notice style, not the success green) that is announced once
+(on a press; focus leaves the speaking to the description) ("Ending the
+session needs the blind count, the Z report and a manager's sign-off; the
+drawer close is not on this surface yet."), and it makes no request. The
+notice's place was moved for the ui3 visual round c review (its GAP 1): the
+till's foot message line put the answer about 680px from the button, half
+under the hotkey bar with the Items step open, so the reason now renders in
+the bar's own popover band and every other message keeps the foot line.
+Porting the close flow is the
 work that opens it; the stub carries no complete route.
 
 Open gap: the printed receipt does not carry the simulated word. The receipt

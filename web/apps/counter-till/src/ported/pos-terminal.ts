@@ -557,12 +557,20 @@ export class HosPosTerminal extends LitElement {
   /** A 'note' is announced only when asked for (a press), never on focus, where the closed control's own
    *  description already speaks: one announcement, not two. */
   @state() private utilLive = false;
+  /**
+   * UI-3 (visual GAP 1): where the utility message renders. The End Session reason belongs beside
+   * its control in the top bar (a press answered about 680px away at the foot of the flow, its
+   * lower edge under the hotkey bar with the Items step open); every other message keeps the foot
+   * line. One state machine either way, so the next message still replaces the notice.
+   */
+  @state() private utilWhere: 'foot' | 'session' = 'foot';
 
   /** One door for the utility banner: message + tone together, so a fault can never wear green. */
-  private setUtil(msg: string, tone: 'ok' | 'bad' | 'note' = 'ok', live = true): void {
+  private setUtil(msg: string, tone: 'ok' | 'bad' | 'note' = 'ok', live = true, where: 'foot' | 'session' = 'foot'): void {
     this.utilMsg = msg;
     this.utilTone = tone;
     this.utilLive = live;
+    this.utilWhere = where;
   }
   // ── DIB-434 ── the in-progress guard's own state. `quickGuard` is the dialog's open flag; it is
   // set ONLY when quickStartNeedsGuard() says the till holds something to lose, so an empty
@@ -2259,6 +2267,24 @@ export class HosPosTerminal extends LitElement {
       background: var(--hos-slate-warm);
       border: 1px solid var(--hos-line);
       color: var(--hos-text);
+    }
+    /* UI-3 (visual GAP 1): the End Session notice rides the same note palette, anchored under its
+       control like the bar's other popovers, at the popover scale, so the bar's height never moves
+       and the words sit in the page's first band in both themes. */
+    .esnotice {
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      z-index: var(--hos-z-modal);
+      width: 320px;
+      background: var(--hos-slate-warm);
+      border: 1px solid var(--hos-line);
+      border-radius: var(--hos-radius-card);
+      box-shadow: var(--hos-elev-1);
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--hos-text);
+      text-align: left;
     }
     /* Visually hidden, still in the accessibility tree: a description a closed control points at. */
     .srdesc {
@@ -4602,15 +4628,30 @@ export class HosPosTerminal extends LitElement {
             ? html`<span class="sessiondot" data-testid="session-dot" title="Till session open: elapsed ${this.elapsed}">
                   <span class="dot" aria-hidden="true"></span> Open
                 </span>
-                <button
-                  class="topbtn"
-                  data-testid="end-session"
-                  aria-disabled="true"
-                  aria-describedby="end-session-reason"
-                  title=${this.endSessionClosedReason}
-                  @click=${() => this.setUtil(this.endSessionClosedReason, 'note', true)}
-                  @focus=${() => this.setUtil(this.endSessionClosedReason, 'note', false)}
-                >End Session</button>
+                <span class="helpwrap">
+                  <button
+                    class="topbtn"
+                    data-testid="end-session"
+                    aria-disabled="true"
+                    aria-describedby="end-session-reason"
+                    title=${this.endSessionClosedReason}
+                    @click=${() => this.setUtil(this.endSessionClosedReason, 'note', true, 'session')}
+                    @focus=${() => this.setUtil(this.endSessionClosedReason, 'note', false, 'session')}
+                  >End Session</button>
+                  ${/* UI-3 (visual GAP 1): the reason renders beside its control, anchored under the
+                       button like the bar's other popovers, in the note palette (never the success
+                       green), so a press answers where the hand is: the foot line sat at the flow's
+                       end, half under the hotkey bar. The status region arrives only on a press
+                       (announced once, polite); focus shows it silently, per the recorded ruling. */ ''}
+                  ${this.utilMsg !== '' && this.utilWhere === 'session'
+                    ? html`<span
+                        data-testid="end-session-notice"
+                        class="esnotice"
+                        role="${ifDefined(this.utilLive ? 'status' : undefined)}"
+                        >${this.utilMsg}</span
+                      >`
+                    : nothing}
+                </span>
                 <span id="end-session-reason" class="srdesc" data-testid="end-session-reason">${this.endSessionClosedReason}</span>`
             : html`<button class="topbtn" @click=${this.openSession}>Open Session</button>`}
           ${/* COUNTER VIEW (R1/R2, the user half). The way back from a dismissed legend
@@ -5871,7 +5912,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
                   : html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M2 12c1.8-5.7 5.5-8 10-8s8.2 2.3 10 8c-1.8 3.7-5.5 6-10 6S3.8 15.7 2 12z"></path><circle cx="12" cy="12" r="2.6"></circle></svg>`}
               </button>`
             : nothing}
-          ${this.utilMsg
+          ${this.utilMsg && this.utilWhere === 'foot'
             ? html`<div id="till-message" class="banner ${this.utilTone}" role="${ifDefined(this.utilTone === 'bad' ? 'alert' : this.utilTone === 'note' && !this.utilLive ? undefined : 'status')}">${this.utilMsg}</div>`
             : nothing}
 
