@@ -22,7 +22,7 @@ import (
 // conflict_policy): code-shaped values only, nothing a client typed
 // free-hand.
 type syncAuditSeam struct {
-	svc  *audit.Service
+	svc  audit.Recorder
 	link identity.UserIDLinker
 }
 

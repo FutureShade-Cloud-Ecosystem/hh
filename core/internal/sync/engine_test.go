@@ -661,3 +661,47 @@ func (a *auditRecorderDouble) sawReviewMarker(entityID string) bool {
 	}
 	return false
 }
+
+// HH-193: every SYNC_PUSH row carries the caller, applied and rejected alike, for a staff and a
+// tenant (contractor) caller, and so does the manual policy's review marker.
+func TestEngineAuditRowsCarryTheActor(t *testing.T) {
+	staff := ScopeFilter{OrgID: testFilter.OrgID, Actor: "fxstaff-any"}
+	tenant := ScopeFilter{OrgID: testFilter.OrgID, TenantID: "7e000000-0000-4000-8000-000000000001", Tenant: true, Actor: "fxportal-alpha"}
+	for _, c := range []struct {
+		name string
+		f    ScopeFilter
+	}{{"staff", staff}, {"tenant", tenant}} {
+		t.Run(c.name, func(t *testing.T) {
+			e, _, info, _ := newEngineFixture(t, PolicyServerWins)
+			marker := &auditRecorderDouble{}
+			e.WithAudit(marker, nil)
+			resp, err := e.Push(context.Background(), info, c.f, []apigen.SyncPushOperation{
+				{ClientId: key(1), Op: "create", Payload: map[string]any{"id": rowID(1)}},
+				{ClientId: key(2), Op: "delete", Payload: map[string]any{"id": rowID(1)}},
+				{ClientId: key(3), Op: "update", Payload: map[string]any{"id": rowID(9)}},
+				{ClientId: "not-a-uuid", Op: "create", Payload: map[string]any{"id": rowID(2)}},
+			})
+			if err != nil {
+				t.Fatalf("push: %v", err)
+			}
+			if resp.Results[2].Status != "rejected" || resp.Results[3].Status != "rejected" {
+				t.Fatalf("setup: %+v", resp.Results)
+			}
+			rows := marker.snapshot()
+			if len(rows) != 4 {
+				t.Fatalf("%d audit rows, want 4", len(rows))
+			}
+			for _, r := range rows {
+				if r.Action != "SYNC_PUSH" || r.Actor != c.f.Actor {
+					t.Errorf("row %s/%s (%s) actor %q, want %q", r.Action, r.Op, r.Outcome, r.Actor, c.f.Actor)
+				}
+			}
+		})
+	}
+}
+
+func (a *auditRecorderDouble) snapshot() []AuditEntry {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]AuditEntry(nil), a.entries...)
+}
