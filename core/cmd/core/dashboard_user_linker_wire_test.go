@@ -29,9 +29,15 @@ package main
 // The caller world is the migration-planted one (a branch from 0003) plus
 // a users row linking the kit's staff subject, exactly the W0 harness
 // shape the card rail wiring test uses. Rows the legs write or plant are
-// cleaned with the test, so a shared scratch database survives the run;
-// the tests gate on HH_CORE_TEST_DATABASE_URL like the other composition
+// cleaned with the test, except the users rows, which stay like the card
+// rail kit's (they are inert, keyed by the kit's fixed subjects, and the
+// planting is idempotent); a shared scratch database survives the run.
+// The tests gate on HH_CORE_TEST_DATABASE_URL like the other composition
 // suites.
+//
+// The profile-editor half: a role default saved through PUT
+// /api/v1/dashboard/profiles/{profile} stores the editor's linked users.id
+// in updated_by, which stays NULL when the stamp carries no linked id.
 
 import (
 	"context"
@@ -179,9 +185,19 @@ func TestDashboardUserLinkerWiring_MySavesReachTheStore(t *testing.T) {
 	rec := driveJSON(t, mux, sg, http.MethodPut, "/api/v1/dashboard/layout", map[string]any{
 		"tiles": []map[string]any{{"tile_id": dashboard.TileSalesToday, "position": 0, "visible": true}},
 	})
+	// Errorf, not Fatalf: the widget leg below is independent, so one run
+	// on a fold without the linker shows BOTH refusals.
 	if rec.Code != http.StatusOK {
-		t.Fatalf("save my tile layout = %d (%s), want 200: the staffer's own save was refused",
+		t.Errorf("save my tile layout = %d (%s), want 200: the staffer's own save was refused",
 			rec.Code, rec.Body.String())
+	}
+	var tiles int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM dashboard_user_tiles WHERE user_id = $1::uuid`, userID).Scan(&tiles); err != nil {
+		t.Fatalf("read back my tiles: %v", err)
+	}
+	if tiles != 1 {
+		t.Errorf("my tile layout rows for the linked user = %d, want 1: the save must land under the linked users.id", tiles)
 	}
 
 	// MY widget layout: the same stamp's other half. The body is drawn
@@ -219,8 +235,16 @@ func TestDashboardUserLinkerWiring_MySavesReachTheStore(t *testing.T) {
 	}
 	if rec := driveJSON(t, mux, sg, http.MethodPut, "/api/v1/dashboard/widgets",
 		map[string]any{"widgets": []map[string]any{widget}}); rec.Code != http.StatusOK {
-		t.Fatalf("save my widget layout = %d (%s), want 200: the staffer's own save was refused",
+		t.Errorf("save my widget layout = %d (%s), want 200: the staffer's own save was refused",
 			rec.Code, rec.Body.String())
+	}
+	var widgets int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM dashboard_user_widgets WHERE user_id = $1::uuid`, userID).Scan(&widgets); err != nil {
+		t.Fatalf("read back my widgets: %v", err)
+	}
+	if widgets != 1 {
+		t.Errorf("my widget rows for the linked user = %d, want 1: the save must land under the linked users.id", widgets)
 	}
 }
 
@@ -261,7 +285,95 @@ func TestDashboardUserLinkerWiring_NeedsFourEyesSkipsTheManagersOwnRequest(t *te
 	// Four-eyes: the manager's own request is not waiting on them, so the
 	// approvals row stays absent.
 	if n := needsApprovalsCount(t, mux, sg); n >= 0 {
-		t.Fatalf("the Needs queue counts %d approval(s) waiting on the manager, want none: the manager's own PENDING request is their own ask, and the four-eyes skip needs the linked id on the stamp",
+		t.Errorf("the Needs queue counts %d approval(s) waiting on the manager, want none: the manager's own PENDING request is their own ask, and the four-eyes skip needs the linked id on the stamp",
 			n)
+	}
+
+	// The standing positive control: ANOTHER user's pending request on the
+	// same rail does wait on the manager, so the absence above is the
+	// four-eyes skip and not an unwired or blind approvals source.
+	var otherID string
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO users (email, display_name, platform_user_id, status)
+		 VALUES ('fxother-189@dashboard.invalid', 'Dashboard Other', 'fx189-other-subject', 'ACTIVE')
+		 ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name
+		 RETURNING id::text`).Scan(&otherID); err != nil {
+		t.Fatalf("plant the other requester: %v", err)
+	}
+	other, err := rail.CreateApproval(context.Background(), otherID, branchID, staffcontext.PolicyMargin,
+		"HH-189 fixture: another user's pending request", "")
+	if err != nil {
+		t.Fatalf("plant the other user's pending approval: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM permission_approval_requests WHERE id = $1`, other.ID)
+	})
+	if n := needsApprovalsCount(t, mux, sg); n != 1 {
+		t.Errorf("the Needs queue counts %d approval(s) with one other user's pending request, want 1: the source must see requests that do wait on the manager", n)
+	}
+}
+
+// TestDashboardUserLinkerWiring_ProfileEditorStampsTheEditor, HH-189: the
+// role-default editor records WHO saved the default. Without the linked id
+// the stamp carries no user and updated_by stays NULL.
+func TestDashboardUserLinkerWiring_ProfileEditorStampsTheEditor(t *testing.T) {
+	pool := wiringPool(t)
+	userID, _ := plantDashboardCaller(t, pool)
+	ctx := context.Background()
+	profile := dashboard.Profiles[0]
+
+	// The profile's default rows are migration-seeded; a save replaces them
+	// wholesale, so snapshot them and put them back with the test.
+	type saved struct {
+		tile      string
+		position  int
+		visible   bool
+		updatedBy *string
+	}
+	var before []saved
+	rows, err := pool.Query(ctx,
+		`SELECT tile_id, position, visible, updated_by::text FROM dashboard_profile_tiles WHERE profile = $1`, profile)
+	if err != nil {
+		t.Fatalf("snapshot profile defaults: %v", err)
+	}
+	for rows.Next() {
+		var r saved
+		if err := rows.Scan(&r.tile, &r.position, &r.visible, &r.updatedBy); err != nil {
+			t.Fatalf("scan profile defaults: %v", err)
+		}
+		before = append(before, r)
+	}
+	rows.Close()
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM dashboard_profile_tiles WHERE profile = $1`, profile)
+		for _, r := range before {
+			_, _ = pool.Exec(ctx,
+				`INSERT INTO dashboard_profile_tiles (profile, tile_id, position, visible, updated_by, updated_at)
+				 VALUES ($1, $2, $3, $4, $5::uuid, now())`, profile, r.tile, r.position, r.visible, r.updatedBy)
+		}
+	})
+
+	sg := testkit.NewStaffGuards(t)
+	sg.SetAuthority(identity.StaffAuthority{RoleID: "general_manager", Tier: 1, Scope: identity.ScopeGlobal})
+	mux := dashFold(t, pool, sg)
+
+	rec := driveJSON(t, mux, sg, http.MethodPut, "/api/v1/dashboard/profiles/"+profile, map[string]any{
+		"tiles": []map[string]any{{"tile_id": dashboard.TileSalesToday, "position": 0, "visible": true}},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save the %s role default = %d (%s), want 200", profile, rec.Code, rec.Body.String())
+	}
+	var by *string
+	if err := pool.QueryRow(ctx,
+		`SELECT updated_by::text FROM dashboard_profile_tiles WHERE profile = $1 LIMIT 1`, profile).Scan(&by); err != nil {
+		t.Fatalf("read back the role default: %v", err)
+	}
+	if by == nil || *by != userID {
+		got := "NULL"
+		if by != nil {
+			got = *by
+		}
+		t.Errorf("the role default's updated_by = %s, want the editor's linked users.id %s", got, userID)
 	}
 }
