@@ -27,6 +27,15 @@ package reporting
 // meaning consolidated; and, for a COMMISSION artefact, the branches of the frozen periods its
 // (rep, window) linkage matches, because the artefact row names no period id. Where that scope is
 // genuinely underivable the artefact reads as consolidated, global only, fail closed.
+//
+// ROUND 3, the artefact's scope is its OWN, not its neighbourhood's. The (rep, window) linkage can
+// only say "some period of this rep and window", so every branch freezing the same window (an
+// ordinary month-end for a rep who sells at two branches) widened the scope until an honest reader's
+// own statement fell out of their reach. A commission artefact is now STAMPED with its period's
+// branch at print time (params is JSONB, no migration) and answers its stamp alone; rows printed
+// before the stamp exists keep the linkage derivation as the fallback, with its ambiguity. Malformed
+// rows, which the service never writes, must fail safe and AGREE between the list and the single
+// read: skipped from the list, not found on the read.
 
 import (
 	"context"
@@ -650,5 +659,205 @@ func TestIntegration_BranchFence_ConsolidatedCommissionArtefactPrintedAtABranchI
 	}
 	if !runListHas(globalList, consolidatedArtefact.ID) {
 		t.Error("a global caller's artefact list lost the consolidated commission artefact")
+	}
+}
+
+// TestIntegration_BranchFence_TwinFreezeDoesNotHideAnHonestReader, round 3: the (rep, window)
+// linkage can only say "some period of this rep and window", and every branch freezing the same
+// window widened it until an honest reader's own statement fell out of their reach. The artefact is
+// stamped with its period's branch at print time, so a twin freeze elsewhere changes nothing. The
+// reviewer's probe pose exactly: the twin freezes with zero sales of its own, which the compute path
+// accepts, because a rep with an active rule and no sales must still appear with a zero.
+func TestIntegration_BranchFence_TwinFreezeDoesNotHideAnHonestReader(t *testing.T) {
+	pool := intPool(t)
+	f := newFixture(t, pool)
+	global := globalSvc(t, pool)
+	kingston := scopedSvc(t, pool, kingstonBranch)
+	trenton := scopedSvc(t, pool, trentonBranch)
+	both := grantsSvc(t, pool, map[string]bool{kingstonBranch: true, trentonBranch: true})
+	ctx := context.Background()
+	from, to := window()
+
+	repK, _ := twoUsers(t, pool)
+	f.commissionRule(repK, BasisRevenue, 500, "", "", from)
+	prod := f.product("PAV1", "Paver", f.category("pavers"))
+	kgnPeriod := freezeAt(t, f, global, repK, kingstonBranch, 20_000, prod, from, to)
+
+	printStatement := func(svc *Service, periodID string) Run {
+		t.Helper()
+		run, err := svc.PrintCommissionRun(ctx, periodID, "")
+		if err != nil {
+			t.Fatalf("printing the period's statement: %v", err)
+		}
+		f.del(`UPDATE report_runs SET print_job_id = NULL WHERE id=$1::uuid`, run.ID)
+		f.del(`DELETE FROM print_queue WHERE id=$1::uuid`, run.PrintJobID)
+		f.del(`DELETE FROM report_runs WHERE id=$1::uuid`, run.ID)
+		return run
+	}
+
+	// The Kingston statement, printed by the Kingston manager while theirs is the only period of
+	// this rep and window.
+	kgnArtefact := printStatement(kingston, kgnPeriod.RunID)
+	if _, err := kingston.RunArtefact(ctx, kgnArtefact.ID); err != nil {
+		t.Errorf("a Kingston manager was refused their OWN statement: %v", err)
+	}
+
+	// Month-end at Trenton: the Trenton manager freezes the SAME rep and window at Trenton, with no
+	// Trenton sales, and prints their own statement too. Both freezes are ordinary operator acts.
+	trtPeriod, err := trenton.ComputeAndFreeze(ctx, repK, from, to, trentonBranch)
+	if err != nil {
+		t.Fatalf("the twin freeze failed, and it is an ordinary month-end act: %v", err)
+	}
+	f.del(`DELETE FROM commission_run_lines WHERE run_id=$1::uuid`, trtPeriod.RunID)
+	f.del(`DELETE FROM commission_runs WHERE id=$1::uuid`, trtPeriod.RunID)
+	if trtPeriod.SaleCount != 0 {
+		t.Fatalf("the twin period froze %d sales, the probe pose needs zero", trtPeriod.SaleCount)
+	}
+	trtArtefact := printStatement(trenton, trtPeriod.RunID)
+
+	// Each branch keeps reading its OWN statement, on the single read and on the list.
+	if _, err := kingston.RunArtefact(ctx, kgnArtefact.ID); err != nil {
+		t.Errorf("a Kingston manager lost their OWN statement to a Trenton freeze of the same window: %v", err)
+	}
+	if _, err := trenton.RunArtefact(ctx, trtArtefact.ID); err != nil {
+		t.Errorf("a Trenton manager lost their OWN statement to the Kingston period it twins: %v", err)
+	}
+	// And neither reaches across.
+	if _, err := kingston.RunArtefact(ctx, trtArtefact.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a Kingston manager read Trenton's statement (err=%v)", err)
+	}
+	if _, err := trenton.RunArtefact(ctx, kgnArtefact.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a Trenton manager read Kingston's statement (err=%v)", err)
+	}
+	kingstonList, err := kingston.Runs(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runListHas(kingstonList, kgnArtefact.ID) {
+		t.Error("a Kingston manager's artefact list lost their OWN statement to a twin freeze")
+	}
+	if runListHas(kingstonList, trtArtefact.ID) {
+		t.Error("a Kingston manager's artefact list contains Trenton's statement")
+	}
+	trentonList, err := trenton.Runs(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runListHas(trentonList, trtArtefact.ID) {
+		t.Error("a Trenton manager's artefact list lost their OWN statement")
+	}
+	// A caller granted both branches reads both, and so does a global caller.
+	for _, id := range []string{kgnArtefact.ID, trtArtefact.ID} {
+		if _, err := both.RunArtefact(ctx, id); err != nil {
+			t.Errorf("a both-branches caller was refused a statement inside their reach (%s): %v", id, err)
+		}
+		if _, err := global.RunArtefact(ctx, id); err != nil {
+			t.Errorf("a global caller was refused a statement (%s): %v", id, err)
+		}
+	}
+}
+
+// TestIntegration_BranchFence_ConsolidatedTwinDoesNotHideABranchStatement, round 3: a global
+// restatement of the whole window, frozen consolidated, must not take the branch statements of that
+// window away from the branches they belong to, and must not leave them readable by global callers
+// alone either: the statement printed from the branch period keeps that period's scope.
+func TestIntegration_BranchFence_ConsolidatedTwinDoesNotHideABranchStatement(t *testing.T) {
+	pool := intPool(t)
+	f := newFixture(t, pool)
+	global := globalSvc(t, pool)
+	kingston := scopedSvc(t, pool, kingstonBranch)
+	both := grantsSvc(t, pool, map[string]bool{kingstonBranch: true, trentonBranch: true})
+	ctx := context.Background()
+	from, to := window()
+
+	repK, _ := twoUsers(t, pool)
+	f.commissionRule(repK, BasisRevenue, 500, "", "", from)
+	prod := f.product("PAV1", "Paver", f.category("pavers"))
+	kgnPeriod := freezeAt(t, f, global, repK, kingstonBranch, 20_000, prod, from, to)
+
+	run, err := kingston.PrintCommissionRun(ctx, kgnPeriod.RunID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.del(`UPDATE report_runs SET print_job_id = NULL WHERE id=$1::uuid`, run.ID)
+	f.del(`DELETE FROM print_queue WHERE id=$1::uuid`, run.PrintJobID)
+	f.del(`DELETE FROM report_runs WHERE id=$1::uuid`, run.ID)
+
+	// The consolidated restatement of the same rep and window, a global-only act.
+	consolidated, err := global.ComputeAndFreeze(ctx, repK, from, to, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.del(`DELETE FROM commission_run_lines WHERE run_id=$1::uuid`, consolidated.RunID)
+	f.del(`DELETE FROM commission_runs WHERE id=$1::uuid`, consolidated.RunID)
+
+	if _, err := kingston.RunArtefact(ctx, run.ID); err != nil {
+		t.Errorf("a Kingston manager lost their OWN statement to a consolidated restatement of the "+
+			"window: %v", err)
+	}
+	if _, err := both.RunArtefact(ctx, run.ID); err != nil {
+		t.Errorf("a both-branches caller lost a branch statement to a consolidated twin: %v", err)
+	}
+	kingstonList, err := kingston.Runs(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runListHas(kingstonList, run.ID) {
+		t.Error("a Kingston manager's artefact list lost their OWN statement to a consolidated twin")
+	}
+	if _, err := global.RunArtefact(ctx, run.ID); err != nil {
+		t.Errorf("a global caller was refused the statement: %v", err)
+	}
+}
+
+// TestIntegration_BranchFence_MalformedArtefactRowsFailSafeAndAgree, round 3: neither row is
+// writable through the service, both are hand-planted corruption, and the two read paths must treat
+// them the SAME safe way: skipped from the scoped list (a corrupt row is not a reason to blank a
+// reader's screen with an error) and not found on the scoped single read. A global caller keeps
+// both: fail closed for the scoped, not deleted for the leadership.
+func TestIntegration_BranchFence_MalformedArtefactRowsFailSafeAndAgree(t *testing.T) {
+	pool := intPool(t)
+	f := newFixture(t, pool)
+	global := globalSvc(t, pool)
+	kingston := scopedSvc(t, pool, kingstonBranch)
+	ctx := context.Background()
+
+	// A TEMPLATE row whose branch parameter is not a uuid.
+	badTemplate := f.newID()
+	f.del(`DELETE FROM report_runs WHERE id=$1::uuid`, badTemplate)
+	f.exec(`INSERT INTO report_runs (id, kind, template_code, params, branch_id)
+	        VALUES ($1::uuid, 'TEMPLATE', 'sales_by_day', '{"branch_id":"not-a-uuid"}'::jsonb, $2::uuid)`,
+		badTemplate, kingstonBranch)
+
+	// A COMMISSION row with no linkage keys at all.
+	badCommission := f.newID()
+	f.del(`DELETE FROM report_runs WHERE id=$1::uuid`, badCommission)
+	f.exec(`INSERT INTO report_runs (id, kind, template_code, params, branch_id)
+	        VALUES ($1::uuid, 'COMMISSION', 'commission_period', '{}'::jsonb, $2::uuid)`,
+		badCommission, kingstonBranch)
+
+	runs, err := kingston.Runs(ctx, 200)
+	if err != nil {
+		t.Fatalf("a malformed artefact row broke the whole scoped list: %v", err)
+	}
+	if runListHas(runs, badTemplate) || runListHas(runs, badCommission) {
+		t.Error("a scoped caller's artefact list contains a malformed row, it must be skipped")
+	}
+	for _, id := range []string{badTemplate, badCommission} {
+		if _, err := kingston.RunArtefact(ctx, id); !errors.Is(err, ErrNotFound) {
+			t.Errorf("the scoped single read of a malformed row answered %v, want not found (id=%s)", err, id)
+		}
+	}
+	globalList, err := global.Runs(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{badTemplate, badCommission} {
+		if !runListHas(globalList, id) {
+			t.Errorf("a global caller's artefact list lost a malformed row (%s), fail closed is not deletion", id)
+		}
+		if _, err := global.RunArtefact(ctx, id); err != nil {
+			t.Errorf("a global caller was refused a malformed row (%s): %v", id, err)
+		}
 	}
 }
