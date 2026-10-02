@@ -125,10 +125,12 @@ func w6bAREscalation(svc *billing.ARLandingService) dashboard.NeedsFunc {
 // -- dispatch · the load board's own quick cards ------------------------------------------------
 // Counts.Unassigned and Counts.Due, from the SAME read the board renders, so a queue row and the
 // lane it links to cannot disagree. That is the whole promise countQuickCards was written for.
+// The day is the dealer's (HouseDay), never the process zone's, so the evening after the UTC
+// rollover still reads today's board.
 func w6bLoadBoard(pool *pgxpool.Pool, svc *dispatch.Service, dueToCommit bool) dashboard.NeedsFunc {
 	return func(ctx context.Context, sc dashboard.Scope) (dashboard.NeedsMeasure, error) {
 		n := 0
-		day := sc.Now.Format("2006-01-02")
+		day := dashboard.HouseDay(sc.Now)
 		for _, b := range w6bBranches(ctx, pool, sc) {
 			view, err := svc.LoadBoard(ctx, b, day)
 			if err != nil {
