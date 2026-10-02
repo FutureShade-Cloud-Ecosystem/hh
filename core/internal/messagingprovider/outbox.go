@@ -228,15 +228,20 @@ func (o *Outbox) processOne(ctx context.Context, settle func(context.Context, no
 			    payload = '{}'::jsonb
 			WHERE event_id = $1`, e.EventID)
 	case dispositionDead:
-		// A DEAD notice is as terminal as a published one, and its payload carries the same phone
-		// number, and on the quote topics the live share link, a bearer credential for the public
-		// quote view and accept routes. It is redacted unconditionally rather than by the settle
-		// flag (HH-188): a topic no handler was ever registered for has no secret marking to
-		// consult, and that unwired path is exactly the one that must never park a token at rest.
-		// The topic and last_error stay for the operator.
+		// A DEAD notice is as terminal as a published one, and the same sensitive keys leave with
+		// it: the share link (a bearer credential for the public quote view and accept routes), the
+		// recipient's number and address. The redaction is SELECTIVE, unlike the published row's
+		// full clear: a dead row is the operator's only trace of what failed, and several topics'
+		// enqueue returns no event id, so clearing the whole payload would leave an anonymous dead
+		// letter nobody can trace to an order or a quote (the round 1 review's P2). The keys are
+		// removed blindly of topic: every payload type in this module carries its reference under
+		// its own name and its secrets under these three, and a topic no handler was ever
+		// registered for has no secret marking to consult, yet that unwired path is exactly the
+		// one that must never park a token at rest. The topic and last_error stay.
 		_, err = tx.Exec(ctx, `
 			UPDATE sms_outbox
-			SET status = 'DEAD', attempts = attempts + 1, last_error = $2, payload = '{}'::jsonb
+			SET status = 'DEAD', attempts = attempts + 1, last_error = $2,
+			    payload = payload - 'to' - 'share_url' - 'email'
 			WHERE event_id = $1`, e.EventID, st.LastError)
 	default:
 		_, err = tx.Exec(ctx, `
