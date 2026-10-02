@@ -109,8 +109,47 @@ export class CounterTillApp extends HHElement {
         border-bottom: 1px solid var(--hh-line);
         margin: 0 calc(-1 * var(--hh-s-20)) var(--hh-s-16);
       }
+      /* UI-3 (visual NOTE 3): the bar is on the till's own compact scale: a bar of about 48px
+         (the reference shell bar's), the till's small-chrome button face and type size, and a
+         one-line banner that stays visible and legible. The design system's 44px control floor
+         is for the entry page; this bar's controls take the till's chrome role. */
+      main.on-till {
+        padding-top: 0;
+      }
+      .surfacebar {
+        min-height: 48px;
+        padding: var(--hh-s-8) var(--hh-s-20);
+        margin-bottom: var(--hh-s-8);
+        gap: var(--hh-s-12);
+      }
+      .surfacebar .signed-in {
+        margin: 0;
+        gap: var(--hh-s-8);
+      }
+      .surfacebar .role-name {
+        font-size: 13px;
+      }
+      .surfacebar button {
+        min-height: 0;
+        padding: 7px 12px;
+        font-size: 11px;
+        line-height: normal;
+        color: var(--hh-text-dim);
+      }
+      .surfacebar button:hover:not(:disabled) {
+        border-color: var(--hh-accent-text);
+        color: var(--hh-accent-text);
+      }
       .surfacebar .demo-banner {
         margin: 0;
+        padding: var(--hh-s-4) var(--hh-s-12);
+        align-items: center;
+        gap: var(--hh-s-8);
+      }
+      .surfacebar .demo-banner .word,
+      .surfacebar .demo-banner .copy {
+        font-size: 12px;
+        line-height: 1.3;
       }
       .chrome-row {
         margin: var(--hh-s-16) 0 0;
@@ -546,7 +585,7 @@ export class CounterTillApp extends HHElement {
               </div>
             </header>
           `}
-      <main>
+      <main class=${this.#surface === "terminal" ? "on-till" : ""}>
         ${this.#surface === "terminal"
           ? html`
               <h2 class="visually-hidden">Till</h2>

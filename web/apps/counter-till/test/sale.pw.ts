@@ -1058,3 +1058,29 @@ test("a ticket parked with a line price pending lists no total", async ({ page }
   await expect(ticket).toContainText("(not priced)");
   await expect(ticket).not.toContainText("CA$");
 });
+
+test("the top bar is on the till's compact scale: about 48px, small chrome buttons, the banner on one line", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page, "Sales");
+  const measured = await page.evaluate(() => {
+    const root = document.querySelector("ct-app-root")?.shadowRoot;
+    const height = (selector: string): number => root?.querySelector(selector)?.getBoundingClientRect().height ?? -1;
+    const theme = root?.querySelector("[data-testid=theme-control]");
+    return {
+      bar: height(".surfacebar"),
+      banner: height(".demo-banner"),
+      theme: height("[data-testid=theme-control]"),
+      themeFont: theme === null || theme === undefined ? "" : getComputedStyle(theme).fontSize,
+    };
+  });
+  expect(measured.bar).toBeLessThanOrEqual(56);
+  expect(measured.bar).toBeGreaterThanOrEqual(44);
+  expect(measured.theme).toBeLessThan(40);
+  expect(measured.themeFont).toBe("11px");
+  expect(measured.banner).toBeLessThan(32);
+  // The banner stays visible and legible.
+  await expect(page.getByRole("note")).toBeVisible();
+  await expect(page.getByRole("note")).toContainText("Everything on this box is invented demo data");
+});
