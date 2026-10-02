@@ -10,6 +10,10 @@
 //
 //   /snap/bin/node --import ./src/_ts-js-loader.mjs harness/serve.mjs
 //   then open http://127.0.0.1:4173/  (?theme=light, ?brand=hh-pro)
+//
+//   HARNESS_PORT=0 asks the kernel for a genuinely free port: the occupied
+//   port guard has nothing to probe, and the announce line carries the port
+//   the kernel actually assigned.
 
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
@@ -40,10 +44,19 @@ function assertPortFree(port) {
 }
 
 async function main() {
-  await assertPortFree(PORT);
+  // Port 0 cannot be occupied: it asks the kernel to assign a genuinely free
+  // port, so the guard below has nothing to probe and is skipped. The port
+  // the kernel actually assigned is read back from the listening socket in
+  // the listen callback and is what the self-check fetches and the announce
+  // line carries.
+  if (PORT !== 0) {
+    await assertPortFree(PORT);
+  }
+
+  let bound = PORT;
 
   const server = createServer((req, res) => {
-    const url = new URL(req.url ?? '/', `http://${HOST}:${PORT}`);
+    const url = new URL(req.url ?? '/', `http://${HOST}:${bound}`);
     if (url.pathname === '/tokens.css') {
       res.writeHead(200, { 'content-type': 'text/css; charset=utf-8' });
       res.end(readFileSync(join(here, '..', 'src', 'tokens.css')));
@@ -72,17 +85,20 @@ async function main() {
 
   await new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(PORT, HOST, () => resolve());
+    server.listen(PORT, HOST, () => {
+      bound = server.address().port;
+      resolve();
+    });
   });
 
   // The self-check: fetch our own page and prove it is ours before announcing.
-  const page = await fetch(`http://${HOST}:${PORT}/`).then((r) => r.text());
+  const page = await fetch(`http://${HOST}:${bound}/`).then((r) => r.text());
   if (!page.includes(`<title>${HARNESS_TITLE}</title>`)) {
     console.error('the server answered, but not with this harness; refusing to announce it');
     process.exit(1);
   }
 
-  console.log(`@hardscapehouse/design-system harness on http://${HOST}:${PORT}/`);
+  console.log(`@hardscapehouse/design-system harness on http://${HOST}:${bound}/`);
   console.log('variants: /?theme=light  /?brand=hh-pro  /?theme=light&brand=hh-pro');
 }
 

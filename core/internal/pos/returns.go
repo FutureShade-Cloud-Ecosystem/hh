@@ -159,6 +159,11 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 	// caller's own decision, whoever's credential arrived (the lead's
 	// P2-B ruling: within the amount the header is inert, never consulted).
 	approvedHere := false
+	// replayedHere records that the in-transaction idempotency re-check
+	// found the key already committed (the same-key duplicate that waited on
+	// the per-sale lock while its twin committed): the answer is the
+	// twin's replay, no completion audit row, no rail.
+	replayedHere := false
 	if !in.internalRail {
 		if s.roles == nil {
 			return Return{}, errRoleConfigUnwired()
@@ -194,6 +199,39 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 	var out Return
 
 	err = s.store.RunInTx(ctx, func(tx pgx.Tx) error {
+		// Serialize every return of the sale before any line lock: the line
+		// locks below serialize only returns of the SAME line, two concurrent
+		// returns of DIFFERENT lines of one sale would each read the prior
+		// sum before the other commits and both slip under the refund
+		// approval amount. Every Return takes it, the A-06 portal rail
+		// included: its committed rows must count in later sums too. The
+		// lock is transaction-scoped, released at commit or rollback.
+		if err := s.store.LockSaleForReturn(ctx, tx, oc.OrderID); err != nil {
+			return err
+		}
+		// A same-key duplicate that arrived while its twin held the lock
+		// passed the pre-transaction replay check before either row existed.
+		// The lock has now serialized them, so whatever is committed under
+		// this key is final: the duplicate answers it here as the replay,
+		// the same shape as the pre-transaction check (the cached return,
+		// judged against its own sale by the branch wall), committing this
+		// now-empty transaction with no gate, no rail and no audit row.
+		// Without the re-check the duplicate's own gate would read its
+		// twin's committed row into the prior sum and answer a false
+		// refusal (or trip the over-return guard) for a return that
+		// committed. The re-check reads ON the transaction (replayIfAllowedTx):
+		// a pool read while this transaction holds a connection would
+		// deadlock a full pool of Returns waiting on the sale's lock.
+		cached, found, rerr := s.replayIfAllowedTx(ctx, tx, in.IdempotencyKey, caller)
+		if rerr != nil {
+			return rerr
+		}
+		if found {
+			out = cached
+			replayedHere = true
+			return nil
+		}
+
 		// 1. Lock + guard every requested line, derive its refund money/tax.
 		lines := make([]returnLineRow, 0, len(in.Lines))
 		var subtotal, taxTotal int64
@@ -255,13 +293,19 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		}
 		total := subtotal + taxTotal
 
-		// The refund rule reads the dealer's configuration (X7): a return
-		// above the configured amount from a role not on the approvers list
-		// is refused HERE, after every line is guarded and before any write
-		// and any rail, so the refusal commits nothing and touches nobody.
-		// At or under the amount no approver is ever asked. The A-06 portal
-		// rail skips this gate: the queue's own decision already approved
-		// that request, and the counter rule is not a second veto over it.
+		// The refund rule reads the dealer's configuration (X7) and counts
+		// every return against the same sale together: the sale's earlier
+		// committed returns, read inside this transaction after the per-sale
+		// lock above so the prior total is exact, ride the comparison, and
+		// the gate judges the CUMULATIVE. A return above the configured
+		// amount from a role not on the approvers list is refused HERE,
+		// after every line is guarded and before any write and any rail, so
+		// the refusal commits nothing and touches nobody; returns each under
+		// the amount can no longer walk a sale out of the drawer one
+		// approved-sized slice at a time. At or under the amount no approver
+		// is ever asked. The A-06 portal rail skips this gate: the queue's
+		// own decision already approved that request, and the counter rule
+		// is not a second veto over it.
 		//
 		// The manager's credential at the clerk's till (row 482): the same
 		// return carried again with the approver's credential in its header
@@ -269,7 +313,12 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		// in the pre-transaction resolution (approver.go); anything short of
 		// that leaves the standing refusal in place.
 		if !in.internalRail {
-			refusal, refused := s.refundApprovalRefusal(total, caller)
+			prior, err := s.store.SumCommittedReturnTotalsTx(ctx, tx, oc.OrderID)
+			if err != nil {
+				return err
+			}
+			cumulative := prior + total
+			refusal, refused := s.refundApprovalRefusal(cumulative, total, caller)
 			// Above the amount, a presented credential must qualify,
 			// whoever carried it (the lead's P2-B ruling): a failed
 			// judgment refuses on its own family, a credential that does
@@ -277,7 +326,7 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 			// amount and the configured approvers, never null and never
 			// zero. Within the amount nothing here stirs: the header is
 			// inert.
-			if credentialJudged && total > s.roles.RefundAmountWithoutApprovalCents() {
+			if credentialJudged && cumulative > s.roles.RefundAmountWithoutApprovalCents() {
 				if judgeErr != nil {
 					return judgeErr
 				}
@@ -430,6 +479,11 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		}
 		return Return{}, err
 	}
+	// The in-transaction duplicate answered its twin's replay: the twin's
+	// own completion row already exists, this answer writes none.
+	if replayedHere {
+		return out, nil
+	}
 
 	completed := audit.SensitiveAccess{
 		Action: audit.ActReturnCompleted, EntityType: "pos.return", EntityID: out.ReturnID,
@@ -481,6 +535,32 @@ func (s *Service) replayIfAllowed(ctx context.Context, key string, caller identi
 	return cached, true, nil
 }
 
+// replayIfAllowedTx is replayIfAllowed on the open Return transaction: the
+// in-transaction same-key re-check reads through the transaction's own
+// connection, never through the pool. A Return transaction holds one
+// connection while it waits on the per-sale advisory lock; a pool read
+// there would have the lock holder wait for a second connection every
+// other connection is a waiter that needs the holder's lock, and a full
+// pool deadlocks until the context ends.
+func (s *Service) replayIfAllowedTx(ctx context.Context, tx pgx.Tx, key string, caller identity.StaffContext) (Return, bool, error) {
+	cached, found, err := s.store.FindReturnByKeyTx(ctx, tx, key)
+	if err != nil || !found {
+		return Return{}, false, err
+	}
+	oc, found, err := s.store.ReturnOrderContextTx(ctx, tx, cached.OrderID, "")
+	if err != nil {
+		return Return{}, false, err
+	}
+	if !found {
+		return Return{}, false, errReturnNotFound
+	}
+	if err := requireBranchReach(caller, oc.BranchID); err != nil {
+		return Return{}, false, err
+	}
+	cached.Replayed = true
+	return cached, true, nil
+}
+
 // standingRefusalFor builds the contract's refusal for one computed
 // return: the configured threshold and the configured approver roles,
 // never null and never zero, whatever the refund's own total (the lead's
@@ -494,14 +574,22 @@ func (s *Service) standingRefusalFor(totalCents int64) ErrRefundApprovalRequired
 }
 
 // refundMayNeedApproval answers, from the sale's lines without locks,
-// whether the requested return COULD land above the configured amount: the
-// sum over the requested lines of their original totals and tax, which
-// over-approximates every remaining refund. A false answer makes the
-// credential header inert (nothing needs authorization, nothing is
-// consulted); a true one is only a prospect, the transaction's own total
-// decides. An unreadable read judges the credential: fail closed.
+// whether the requested return COULD land the sale's CUMULATIVE refunds
+// above the configured amount: the sale's earlier committed returns (the
+// pool read) plus the sum over the requested lines of their original totals
+// and tax, which over-approximates every remaining refund. A false answer
+// makes the credential header inert (nothing needs authorization, nothing
+// is consulted) and stays trustworthy: if the prior committed total plus
+// the requested lines' original totals sits at or under the amount, the
+// cumulative cannot cross it. A true one is only a prospect, the
+// transaction's own cumulative decides. An unreadable read judges the
+// credential: fail closed.
 func (s *Service) refundMayNeedApproval(ctx context.Context, oc returnOrderCtx, in ReturnInput) bool {
 	lines, err := s.store.ListReturnableLines(ctx, oc.OrderID)
+	if err != nil {
+		return true
+	}
+	prior, err := s.store.SumCommittedReturnTotals(ctx, oc.OrderID)
 	if err != nil {
 		return true
 	}
@@ -515,19 +603,24 @@ func (s *Service) refundMayNeedApproval(ctx context.Context, oc returnOrderCtx, 
 			prospective += v.LineTotalCents + v.TaxCents
 		}
 	}
-	return prospective > s.roles.RefundAmountWithoutApprovalCents()
+	return prior+prospective > s.roles.RefundAmountWithoutApprovalCents()
 }
 
 // refundApprovalRefusal answers the configured approval rule (X7) for one
-// computed return total: ok false when the total sits at or under the
-// amount, or when the caller's role holds the approval. The caller has
-// already refused a service built with no configuration (the nil gate
-// fails closed); the configured amount is integer cents and the comparison
-// is integer against integer; a role outside the configuration's
-// vocabulary is on no approvers list, fail closed.
-func (s *Service) refundApprovalRefusal(totalCents int64, caller identity.StaffContext) (ErrRefundApprovalRequired, bool) {
+// return against its sale's running total: ok false when the CUMULATIVE of
+// the sale's earlier committed returns and this return sits at or under the
+// amount, or when the caller's role holds the approval. The refusal names
+// the configured amount and the configured approver roles, and RefundCents
+// is the NEW return's own total, the money asked for at the counter, never
+// the cumulative: the audit row's amount_cents keeps meaning the money
+// asked for, refused at the counter. The caller has already refused a
+// service built with no configuration (the nil gate fails closed); the
+// configured amount is integer cents and the comparison is integer against
+// integer; a role outside the configuration's vocabulary is on no approvers
+// list, fail closed.
+func (s *Service) refundApprovalRefusal(cumulativeCents, newTotalCents int64, caller identity.StaffContext) (ErrRefundApprovalRequired, bool) {
 	amount := s.roles.RefundAmountWithoutApprovalCents()
-	if totalCents <= amount {
+	if cumulativeCents <= amount {
 		return ErrRefundApprovalRequired{}, false
 	}
 	approved := false
@@ -542,7 +635,7 @@ func (s *Service) refundApprovalRefusal(totalCents int64, caller identity.StaffC
 	return ErrRefundApprovalRequired{
 		AmountCents: amount,
 		Approvers:   s.roles.RefundApprovers(),
-		RefundCents: totalCents,
+		RefundCents: newTotalCents,
 	}, true
 }
 
