@@ -282,10 +282,106 @@ jobs:
           DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_base?sslmode=disable
           HH_CORE_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_core_gate?sslmode=disable
         run: go test -tags demo ./... -count=1 -p 1
-      # The integration tag suite (the demoseed composition legs) is not
-      # run here, on purpose: its fixture globs the migration set at a path
-      # that stopped existing when the demoseed command folded into
-      # cmd/core (core/migrations against the real core/db/migrations), so
-      # the suite cannot pass anywhere as committed. Recorded in
-      # docs/BLOCKERS.md for the lane that owns the file; its CI leg
-      # returns with the one-line glob fix.
+      # The integration tag suite runs in its own job beside this one
+      # (HH-191): the composition fixture's migration glob, the break
+      # that kept the suite out of this job, is fixed there, along with
+      # the printing and reporting breaks the S1 reviews recorded. The
+      # packages the suite cannot yet carry are recorded in
+      # docs/BLOCKERS.md and named inside that job's test step; the rest
+      # of the suite runs there, on its own scratch databases.
+
+  # The integration tag suite, the leg the note above promised once the
+  # composition fixture's glob was fixed: the modules' database legs
+  # (tenant, invariant, gl, pricing, inventory, order, the sync harness,
+  # reporting, printing, warranty) plus the demoseed composition legs,
+  # none of which ran in ci before HH-191. The module legs read
+  # DATABASE_URL, and their fixtures assume the migrated-and-seeded
+  # shape: a dozen suites read the catalogue, branches and users the
+  # seed role plants, and fail or skip without them, so the gate
+  # database is migrated from zero and then seeded. The composition legs
+  # read HH_CORE_TEST_DATABASE_URL on a database of their own, migrated
+  # only: the composition kit plants fixture branches and fixture users
+  # that persist beside the migration-planted rows for the rest of the
+  # run, and the module legs' database must reflect the migrations and
+  # the seed alone (the tree keeps the same separation everywhere: the
+  # demo world leg's gate comment states it). The demoseed legs need no
+  # gate database at all: each builds one from zero off the DATABASE_URL
+  # server, which the service allows.
+  #
+  # Like the demo job, this job's first runs are read by the lead, not
+  # relied on.
+  integration:
+    name: integration tag suite on a migrated and seeded database
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5599:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      BASE: postgres://postgres:postgres@127.0.0.1:5599
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+      - name: Vet the integration tag shape
+        # Repository-wide under the tag, which includes every package
+        # the suite step below leaves out: one stray field in one
+        # integration file keeps every package from compiling under the
+        # tag (the printing receipt legs' CostCents break did exactly
+        # that, invisible to a ci that never built the tag).
+        working-directory: core
+        run: go vet -tags integration ./...
+      - name: Create, migrate and seed the suite's two scratch databases
+        working-directory: core
+        run: |
+          set -euo pipefail
+          psql "$BASE/postgres?sslmode=disable" -v ON_ERROR_STOP=1 \
+            -c 'CREATE DATABASE integration_gate' \
+            -c 'CREATE DATABASE integration_core_gate'
+          # The module gate is seeded and the composition gate is not,
+          # on purpose: the module suites' fixtures read the dibbits
+          # catalogue and demo users the seed plants, while the
+          # composition kit builds its own fixture world beside the
+          # migrations and must not sit inside the seed's.
+          DATABASE_URL="$BASE/integration_gate?sslmode=disable" go run ./cmd/core migrate
+          DATABASE_URL="$BASE/integration_gate?sslmode=disable" go run ./cmd/core seed
+          DATABASE_URL="$BASE/integration_core_gate?sslmode=disable" go run ./cmd/core migrate
+      - name: Integration tag suite with the gate variables set
+        working-directory: core
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/integration_gate?sslmode=disable
+          HH_CORE_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/integration_core_gate?sslmode=disable
+          # HH_TILL_DEMO_TEST_DATABASE_URL stays unset, on purpose: the
+          # demo world proof gates on its own throwaway Postgres and its
+          # legs skip politely without it.
+          # KIT_, HH_B3_ and HH_B4_TEST_DATABASE_URL stay unset as in
+          # the demo job: they gate untagged legs that job already runs
+          # (HH_B4's deliberate omission is explained there).
+        run: |
+          set -euo pipefail
+          # The suite's recorded-red packages stay out of this run, each
+          # with its verified failure and its owner in docs/BLOCKERS.md
+          # (the HH-191 entry): nothing in the list is this job's
+          # regression, every one of them is red on main against the
+          # same databases this job builds. A package rejoins the run
+          # when its lane lands the fix and drops its line here; the vet
+          # step above keeps every excluded package compiling under the
+          # tag in the meantime.
+          red='internal/(assist/adapters|billing|compliance|dispatch|gl|messaging|sync|tour)$'
+          # -p 1 for the same reason the ci job's untagged run carries
+          # it: the module packages share the gate database, and
+          # serialized packages cannot race one another's fixture
+          # cleanups.
+          go test -tags integration -p 1 -count=1 \
+            $(go list ./... | grep -Ev "/$red")
