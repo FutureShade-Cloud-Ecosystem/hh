@@ -49,15 +49,16 @@ func plantCatalogueStock(t *testing.T, pool *pgxpool.Pool, branchID string) (sto
 		return id
 	}
 	stocked, unstocked = plant("stocked"), plant("unstocked")
+	// Registered straight after the products exist, so a failed stock insert below cannot strand them.
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM stock_balances WHERE product_id = $1`, stocked)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM products WHERE id = ANY($1::uuid[])`, []string{stocked, unstocked})
+	})
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO stock_balances (product_id, location_id, branch_id, on_hand_base) VALUES ($1, $2, $2, 25)`,
 		stocked, branchID); err != nil {
 		t.Fatalf("plant stock balance: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM stock_balances WHERE product_id = $1`, stocked)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM products WHERE id = ANY($1::uuid[])`, []string{stocked, unstocked})
-	})
 	return stocked, unstocked, tag
 }
 
@@ -85,6 +86,13 @@ func listCatalogueIDs(t *testing.T, mux *http.ServeMux, query url.Values) []stri
 	return ids
 }
 
+// catalogueStatus drives the registered GET /api/v1/products and returns only the status code.
+func catalogueStatus(mux *http.ServeMux, query url.Values) int {
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/products?"+query.Encode(), nil))
+	return rec.Code
+}
+
 func sameIDs(got []string, want ...string) bool {
 	sort.Strings(want)
 	if len(got) != len(want) {
@@ -100,9 +108,13 @@ func sameIDs(got []string, want ...string) bool {
 
 func TestCatalogueInStockWiring_FilterAnswersTheStockedProductOnly(t *testing.T) {
 	pool := wiringPool(t)
-	var branchID string
+	// Two migration-planted branches: the first holds the stock, the second never does.
+	var branchID, otherBranchID string
 	if err := pool.QueryRow(context.Background(), `SELECT id::text FROM locations ORDER BY id LIMIT 1`).Scan(&branchID); err != nil {
 		t.Fatalf("no migration-planted branch: %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `SELECT id::text FROM locations WHERE id::text <> $1 ORDER BY id LIMIT 1`, branchID).Scan(&otherBranchID); err != nil {
+		t.Fatalf("no second migration-planted branch: %v", err)
 	}
 	stocked, unstocked, tag := plantCatalogueStock(t, pool, branchID)
 
@@ -121,5 +133,23 @@ func TestCatalogueInStockWiring_FilterAnswersTheStockedProductOnly(t *testing.T)
 	off := url.Values{"q": {tag}, "branch_id": {branchID}}
 	if got := listCatalogueIDs(t, mux, off); !sameIDs(got, stocked, unstocked) {
 		t.Fatalf("filter off answered %v, want both planted products [%s %s]", got, stocked, unstocked)
+	}
+
+	// Another branch holds none of it: the filter is scoped to the branch asked for.
+	other := url.Values{"q": {tag}, "in_stock_only": {"true"}, "branch_id": {otherBranchID}}
+	if got := listCatalogueIDs(t, mux, other); len(got) != 0 {
+		t.Fatalf("in_stock_only=true at a branch with no stock answered %v, want nothing", got)
+	}
+
+	// No branch asked for: in stock at any branch, so the stocked product answers.
+	anywhere := url.Values{"q": {tag}, "in_stock_only": {"true"}}
+	if got := listCatalogueIDs(t, mux, anywhere); !sameIDs(got, stocked) {
+		t.Fatalf("in_stock_only=true with no branch answered %v, want exactly the stocked product [%s]", got, stocked)
+	}
+
+	// The branch text lands on a uuid column on an unauthenticated route: a malformed one is a 400, not a 500.
+	bad := url.Values{"q": {tag}, "in_stock_only": {"true"}, "branch_id": {"not-a-uuid"}}
+	if code := catalogueStatus(mux, bad); code != http.StatusBadRequest {
+		t.Fatalf("in_stock_only=true with a malformed branch_id = %d, want 400", code)
 	}
 }
