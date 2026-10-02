@@ -120,6 +120,66 @@ func TestMarginGlance_Configured_BothKnobsMustAllow(t *testing.T) {
 	}
 }
 
+// The policy is the EFFECTIVE row: a branch override beats the org
+// default, the same resolution the policy read serves, so the same caller
+// can carry margin at one branch and the byte-absent glance at another.
+func TestMarginGlance_Configured_BranchOverrideBeatsTheOrgDefault(t *testing.T) {
+	h := newHarness()
+	h.svc = h.svc.WithRoleConfig(defaultConfig(t))
+	h.store.branchCosts = map[string]int64{"prod-paver": 60}
+	// A listed frontline caller whose grants reach both branches, so the
+	// same caller can be judged at each.
+	bothBranchClerk := identity.StaffContext{UserID: "u-sales-2", RoleCode: "INSIDE_SALES",
+		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
+	bothBranchManager := identity.StaffContext{UserID: "u-mgr-2", RoleCode: "SALES_MANAGER",
+		Tier: identity.TierManager, Scope: identity.ScopeGlobal}
+	atKingston := MarginGlanceInput{BranchID: "branch-kgt", CustomerType: "RETAIL",
+		Lines: []LineInput{{ProductID: "prod-paver", QtyEntered: 10, UOMEntered: "SF"}}}
+
+	// Org default MANAGER_UP, a Trenton override ALL_STAFF: the clerk's
+	// glance carries margin at the override branch and is byte-absent at a
+	// branch the org default governs.
+	h.store.policies[""] = PosPolicy{MarginVisibility: MarginVisibilityManagerUp}
+	h.store.policies["branch-trt"] = PosPolicy{BranchID: "branch-trt", MarginVisibility: MarginVisibilityAllStaff}
+	h.caller = bothBranchClerk
+	out, err := h.svc.MarginGlance(context.Background(), marginInputAtBranch())
+	if err != nil {
+		t.Fatalf("glance as the clerk at the override branch: %v", err)
+	}
+	if len(out.Lines) != 1 || out.Lines[0].MarginBps == nil {
+		t.Fatalf("the ALL_STAFF override must carry margin to the listed clerk at its branch: %+v", out)
+	}
+	out, err = h.svc.MarginGlance(context.Background(), atKingston)
+	if err != nil {
+		t.Fatalf("glance as the clerk at the org-default branch: %v", err)
+	}
+	raw, _ := json.Marshal(out)
+	if string(raw) != "{}" {
+		t.Fatalf("the org default MANAGER_UP must hold the glance from the clerk at the other branch: %s", raw)
+	}
+
+	// The mirror: org default ALL_STAFF, a Trenton override HIDDEN hides a
+	// listed manager at that branch only.
+	h.store.policies[""] = PosPolicy{MarginVisibility: MarginVisibilityAllStaff}
+	h.store.policies["branch-trt"] = PosPolicy{BranchID: "branch-trt", MarginVisibility: MarginVisibilityHidden}
+	h.caller = bothBranchManager
+	out, err = h.svc.MarginGlance(context.Background(), marginInputAtBranch())
+	if err != nil {
+		t.Fatalf("glance as the manager at the override branch: %v", err)
+	}
+	raw, _ = json.Marshal(out)
+	if string(raw) != "{}" {
+		t.Fatalf("the HIDDEN override must hide the glance from a listed manager at its branch: %s", raw)
+	}
+	out, err = h.svc.MarginGlance(context.Background(), atKingston)
+	if err != nil {
+		t.Fatalf("glance as the manager at the org-default branch: %v", err)
+	}
+	if len(out.Lines) != 1 || out.Lines[0].MarginBps == nil {
+		t.Fatalf("the org default ALL_STAFF must carry margin to the listed manager at the other branch: %+v", out)
+	}
+}
+
 // HIDDEN is the dealer switching the surface off: nobody receives margin, a
 // listed manager included.
 func TestMarginGlance_Configured_HiddenHidesEvenAListedManager(t *testing.T) {
