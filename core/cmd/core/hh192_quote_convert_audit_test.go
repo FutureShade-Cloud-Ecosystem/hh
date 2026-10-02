@@ -31,16 +31,12 @@ func TestComposition_HH192QuoteConvert_BothDoorsSeedTheCreationRow(t *testing.T)
 
 	// The conversion's credit gate reads the customer's limit; the fixture's alpha account has none
 	// (COD), so give it room for the run and put the limit back.
-	var stashedLimit int64
-	if err := graph.pool.QueryRow(ctx, `SELECT credit_limit_cents FROM customers WHERE id = $1::uuid`, testkit.TenantAlphaID).Scan(&stashedLimit); err != nil {
-		t.Fatalf("read credit limit: %v", err)
-	}
 	if _, err := graph.pool.Exec(ctx, `UPDATE customers SET credit_limit_cents = 100000000 WHERE id = $1::uuid`, testkit.TenantAlphaID); err != nil {
 		t.Fatalf("raise credit limit: %v", err)
 	}
 	t.Cleanup(func() {
-		if _, err := graph.pool.Exec(context.Background(), `UPDATE customers SET credit_limit_cents = $2 WHERE id = $1::uuid`, testkit.TenantAlphaID, stashedLimit); err != nil {
-			t.Errorf("restore credit limit to %d: %v: the shared fixture account is left raised", stashedLimit, err)
+		if _, err := graph.pool.Exec(context.Background(), `UPDATE customers SET credit_limit_cents = 0 WHERE id = $1::uuid`, testkit.TenantAlphaID); err != nil {
+			t.Errorf("restore credit limit to the fixture's 0: %v: the shared fixture account is left raised", err)
 		}
 	})
 
@@ -68,6 +64,7 @@ func TestComposition_HH192QuoteConvert_BothDoorsSeedTheCreationRow(t *testing.T)
 	t.Cleanup(func() {
 		bg := context.Background()
 		step := func(what, stmt string, args ...any) {
+			t.Helper()
 			if _, err := graph.pool.Exec(bg, stmt, args...); err != nil {
 				t.Errorf("cleanup %s: %v", what, err)
 			}
@@ -75,6 +72,19 @@ func TestComposition_HH192QuoteConvert_BothDoorsSeedTheCreationRow(t *testing.T)
 		for _, id := range orderIDs {
 			step("order audit rows", `DELETE FROM audit_log WHERE entity_type = 'order' AND entity_id = $1`, id)
 		}
+		// Each conversion hard-reserves its line and adds the hold to stock_balances.qty_reserved,
+		// the number availability reads. Unwind that projection first, then delete the holds:
+		// deleting the reservations first would strand qty_reserved (the w5a integration tests'
+		// cleanup does the same).
+		step("order qty_reserved projection", `
+			UPDATE stock_balances sb
+			   SET qty_reserved = GREATEST(sb.qty_reserved - h.held, 0)
+			  FROM (SELECT product_id, location_id, SUM(qty_base) AS held
+			          FROM stock_reservations
+			         WHERE source_type = 'order' AND source_ref_id = ANY($1::uuid[])
+			           AND status = 'ACTIVE' AND hold_mode = 'HARD'
+			         GROUP BY product_id, location_id) h
+			 WHERE sb.product_id = h.product_id AND sb.location_id = h.location_id`, orderIDs)
 		// Each conversion hard-reserves its line against the order; leave none behind or a reused
 		// database loses the fixture product's available stock on every run.
 		step("order stock reservations", `DELETE FROM stock_reservations WHERE source_type = 'order' AND source_ref_id = ANY($1::uuid[])`, orderIDs)
@@ -99,14 +109,19 @@ func TestComposition_HH192QuoteConvert_BothDoorsSeedTheCreationRow(t *testing.T)
 	convert := func(path, token string, staff bool, want int) string {
 		t.Helper()
 		rsp := do(http.MethodPost, path, token, staff)
+		// Record the order the moment an answer names one, before any check can fail, so a
+		// half-failed conversion is still cleaned up.
+		var res quote.ConvertResult
+		decodeErr := json.Unmarshal(rsp.Body.Bytes(), &res)
+		if res.OrderID != "" {
+			orderIDs = append(orderIDs, res.OrderID)
+		}
 		if rsp.Code != want {
 			t.Fatalf("POST %s = %d, want %d (body %s)", path, rsp.Code, want, rsp.Body.String())
 		}
-		var res quote.ConvertResult
-		if err := json.Unmarshal(rsp.Body.Bytes(), &res); err != nil || res.OrderID == "" {
-			t.Fatalf("decode convert answer: %v (body %s)", err, rsp.Body.String())
+		if decodeErr != nil || res.OrderID == "" {
+			t.Fatalf("decode convert answer: %v (body %s)", decodeErr, rsp.Body.String())
 		}
-		orderIDs = append(orderIDs, res.OrderID)
 		return res.OrderID
 	}
 	history := func(orderID string) order.OrderHistory {
