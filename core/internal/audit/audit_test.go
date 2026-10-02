@@ -607,6 +607,65 @@ func TestOrderStatusExtraKeys_AllowlistedAndOperatorVisible(t *testing.T) {
 	}
 }
 
+// HH-193: the sync rows' actor_subject key (a tenant caller's platform subject, recorded because
+// audit_log.actor_id is a uuid column a text subject cannot ride) must survive the allowlist, stay
+// OUT of the operator-safe projection, and appear only where the caller put it.
+func TestActorSubjectExtraKey_AllowlistedAndAdminOnly(t *testing.T) {
+	const subject = "fxportal-absent"
+	e := recordOne(t, SensitiveAccess{
+		Action: "SYNC_PUSH", EntityType: "sync.pick_tasks", EntityID: sampleUUID,
+		Extra: map[string]any{"scope": "pick_tasks", "actor_subject": subject},
+	})
+	if e.Changes["actor_subject"] != subject {
+		t.Fatalf("actor_subject must survive the allowlist: %+v", e.Changes)
+	}
+	if e.ActorID != "" {
+		t.Fatalf("actor_subject must never populate the uuid actor column: %q", e.ActorID)
+	}
+	if _, ok := projectForOperator(e).Changes["actor_subject"]; ok {
+		t.Error("actor_subject must not reach the operator-safe view")
+	}
+	// A row that did not carry the key never grows one.
+	plain := recordOne(t, SensitiveAccess{
+		Action: "SYNC_PUSH", EntityType: "sync.pick_tasks", EntityID: sampleUUID,
+		Extra: map[string]any{"scope": "pick_tasks"},
+	})
+	if _, ok := plain.Changes["actor_subject"]; ok {
+		t.Errorf("actor_subject leaked onto a row that did not carry it: %+v", plain.Changes)
+	}
+}
+
+// HH-193: the cleartext detector on realistic tenant subjects. Subjects are the platform JWT sub
+// (Appwrite user ids: 20 hex chars, or a custom id up to 36 of [a-zA-Z0-9._-], plus the fixture
+// shapes). The sync adapter separator-encodes the subject in groups of six joined by colons before
+// it reaches the chokepoint, the house precedent (ADR 0022), so no digit run of 7 can form; the
+// encoded form of a subject that holds such a run survives verbatim. The chokepoint itself is
+// unchanged: the raw run is still redacted.
+func TestActorSubjectExtraKey_EncodedSubjectsSurviveRedaction(t *testing.T) {
+	for _, sub := range []string{
+		"fxport:al-abs:ent",
+		"b3-pla:tform-:user-1",
+		"66f1a2:b3c4d5:e6f7a8:b9",
+		"651234:5678a1:b2c3d4:e5", // the encoded form of the raw subject 6512345678a1b2c3d4e5
+		"de1100:00-000:0-400:0-900:0-000:000000:01",
+	} {
+		e := recordOne(t, SensitiveAccess{
+			Action: "SYNC_PUSH", EntityType: "sync.pick_tasks", EntityID: sampleUUID,
+			Extra: map[string]any{"actor_subject": sub},
+		})
+		if e.Changes["actor_subject"] != sub {
+			t.Errorf("encoded subject %q mangled to %v", sub, e.Changes["actor_subject"])
+		}
+	}
+	raw := recordOne(t, SensitiveAccess{
+		Action: "SYNC_PUSH", EntityType: "sync.pick_tasks", EntityID: sampleUUID,
+		Extra: map[string]any{"actor_subject": "6512345678a1b2c3d4e5"},
+	})
+	if raw.Changes["actor_subject"] != "[redacted]" {
+		t.Errorf("the chokepoint must stay untouched: a raw digit-run subject got %v", raw.Changes["actor_subject"])
+	}
+}
+
 // listCallStore records whether List reached the store, so the handler-validation regression can
 // prove a malformed actor_id / since is rejected BEFORE the query (the query would otherwise blow
 // up on the ::uuid / ::timestamptz cast and surface as a 503).

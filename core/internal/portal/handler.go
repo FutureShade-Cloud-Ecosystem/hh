@@ -262,18 +262,13 @@ func (h *Handler) listInvites(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, invites)
 }
 
-func (h *Handler) createInvite(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Email, Role string }
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(&req); err != nil {
-		httpx.Error(w, http.StatusBadRequest, "invalid_json")
-		return
-	}
-	inv, err := h.svc.Invite(r.Context(), callerFrom(r.Context()), req.Email, req.Role)
-	if err != nil {
-		h.writeErr(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusCreated, inv)
+// createInvite answers 501 until HH-4.2 lands (HH-196). An invite created here can
+// never be delivered (no live notifier is wired) or accepted (the accept route is
+// unregistered, and AcceptInvite does not write the platform link the resolvers key
+// on), so creating the row would only leave a pending invite nobody can redeem. It
+// creates no row, emits no outbox event and mints no token. Listing stays served.
+func (h *Handler) createInvite(w http.ResponseWriter, _ *http.Request) {
+	httpx.NotImplemented(w, "inviting users is not available yet")
 }
 
 func (h *Handler) updateRole(w http.ResponseWriter, r *http.Request) {

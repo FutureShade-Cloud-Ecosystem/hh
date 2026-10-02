@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -146,11 +147,12 @@ func loadServeConfig(getenv func(string) string) (serveConfig, error) {
 		appwriteURL:    getenv("CORE_APPWRITE_ENDPOINT"),
 		appwriteProj:   getenv("CORE_APPWRITE_PROJECT"),
 		appwriteKey:    getenv("CORE_APPWRITE_API_KEY"),
-		listenAddr:     getenv("CORE_LISTEN_ADDR"),
 	}
-	if cfg.listenAddr == "" {
-		cfg.listenAddr = ":8080"
+	addr, err := resolveListenAddr(getenv)
+	if err != nil {
+		return serveConfig{}, err
 	}
+	cfg.listenAddr = addr
 	for env, dst := range map[string]*time.Duration{
 		"CORE_JWKS_CACHE_TTL":     &cfg.jwksCacheTTL,
 		"CORE_JWKS_REFRESH_FLOOR": &cfg.refreshFloor,
@@ -186,6 +188,9 @@ type appGraph struct {
 	ops     *operationsSpine
 	tops    *topsSpine
 	smsBelt *smsBelt
+	// listenAddr is the address serve binds, resolved ONCE at config load (HH-200): serve and the demo
+	// serve read it from the graph, never from the environment a second time.
+	listenAddr string
 	// demoMint is the demo build's session mint over the in-memory demo
 	// issuer, set only by demo_on.go's wiring; the default build's graph
 	// carries nil and mints nothing (test support and the demo session
@@ -372,7 +377,7 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 
 	return &appGraph{
 		cfg: cfg, log: log, pool: pool, verify: verifier, link: linkedUserID(pool), g: g,
-		money: money, ops: ops, tops: tops, smsBelt: belt,
+		money: money, ops: ops, tops: tops, smsBelt: belt, listenAddr: auth.listenAddr,
 	}, nil
 }
 
@@ -421,13 +426,11 @@ func serve(getenv func(string) string) error {
 	// gate fails honestly when the database is down.
 	mux.Handle("GET /healthz", healthzHandler(graph.pool.Ping, graph.tops.bistrackSvc.HealthStatus()))
 
-	srv := &http.Server{
-		Addr: listenAddr(getenv),
-		// A-21 records every mutating /api request, outside the authz
-		// wrapping (the pin's Handler order: the audit middleware wraps the
-		// whole mux, the otel middleware wraps from outside it).
-		Handler:           otelhttp.Wrap(nil)(auditWrap(mux, graph)),
-		ReadHeaderTimeout: 10 * time.Second,
+	// A-21 records every mutating /api request, outside the authz wrapping (the pin's Handler
+	// order: the audit middleware wraps the whole mux, the otel middleware wraps from outside it).
+	srv, err := newServer(graph, otelhttp.Wrap(nil)(auditWrap(mux, graph)))
+	if err != nil {
+		return err
 	}
 	errCh := make(chan error, 1)
 	go func() {
@@ -450,13 +453,52 @@ func serve(getenv func(string) string) error {
 	return nil
 }
 
-// listenAddr resolves the listen address the same way the serve config
-// does (the default :8080).
-func listenAddr(getenv func(string) string) string {
-	if v := strings.TrimSpace(getenv("CORE_LISTEN_ADDR")); v != "" {
-		return v
+// newServer builds the HTTP server both serve builds run, binding the address resolved at config
+// load and carried on the graph. An empty address is refused: http.Server would bind ":80"
+// silently, so a graph constructor that forgot the field must fail loudly, not listen on port 80.
+func newServer(graph *appGraph, handler http.Handler) (*http.Server, error) {
+	if graph.listenAddr == "" {
+		return nil, errors.New("serve: no listen address was resolved at config load")
 	}
-	return ":8080"
+	return &http.Server{
+		Addr:              graph.listenAddr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+	}, nil
+}
+
+// resolveListenAddr is the listen address rule, run once at config load by the default
+// build (loadServeConfig) and by the demo build (loadDemoServeConfig), so a bad PORT is
+// refused before the database is touched in both: CORE_LISTEN_ADDR wins when
+// set; otherwise PORT (the platform's injected port) gives ":<port>"; with
+// neither set the address is ":8080". A PORT that is set but not a whole
+// number from 1 to 65535 is refused by name, never ignored: the shared
+// config's intEnv falls back to a default on junk, and a service listening
+// somewhere the platform did not point is unreachable with no error. Empty
+// reads as unset, as for CORE_LISTEN_ADDR.
+func resolveListenAddr(getenv func(string) string) (string, error) {
+	if v := strings.TrimSpace(getenv("CORE_LISTEN_ADDR")); v != "" {
+		return v, nil
+	}
+	raw := strings.TrimSpace(getenv("PORT"))
+	if raw == "" {
+		return ":8080", nil
+	}
+	// ASCII digits only, at most five of them: no sign, no separators, no other scripts' digits,
+	// no long run of leading zeros. A platform probe that substitutes the raw value into a URL must
+	// read the same number this resolver does.
+	n := -1
+	if len(raw) <= 5 && strings.Trim(raw, "0123456789") == "" {
+		n, _ = strconv.Atoi(raw)
+	}
+	if n < 1 || n > 65535 {
+		shown := raw
+		if rs := []rune(shown); len(rs) > 32 {
+			shown = string(rs[:32]) + "..."
+		}
+		return "", fmt.Errorf("PORT must be a whole number from 1 to 65535 (digits only), got %q", shown)
+	}
+	return ":" + strconv.Itoa(n), nil
 }
 
 // auditWrap applies the A-21 recording middleware (every mutating /api

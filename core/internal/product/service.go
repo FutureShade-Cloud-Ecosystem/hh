@@ -120,6 +120,11 @@ func (s *Service) resolveInStock(ctx context.Context, f Filter) ([]string, error
 	if !f.InStockOnly {
 		return nil, nil
 	}
+	// branch_id is the caller's own query text and lands on a uuid column: a malformed one is a
+	// client error (400), not a database error (500) on this unauthenticated route.
+	if f.BranchID != "" && !looksLikeUUID(f.BranchID) {
+		return nil, badReq("branch_id must be a branch uuid")
+	}
 	if s.stock == nil {
 		return []string{}, nil
 	}

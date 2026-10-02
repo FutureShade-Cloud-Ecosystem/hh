@@ -655,7 +655,7 @@ func TestM4_QSearchNarrows(t *testing.T) {
 func TestM4_InStockOnly_ExcludesZeroStock(t *testing.T) {
 	stock := &fakeStock{ids: []string{"1", "3"}} // id 2 is out of stock
 	svc := NewService(m4Store()).WithStock(stock)
-	got, err := svc.List(context.Background(), Filter{InStockOnly: true, BranchID: "branch-trt"})
+	got, err := svc.List(context.Background(), Filter{InStockOnly: true, BranchID: "3ef10000-0000-4000-8000-000000000011"})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -667,8 +667,27 @@ func TestM4_InStockOnly_ExcludesZeroStock(t *testing.T) {
 			t.Fatal("zero-stock product id 2 leaked past in_stock_only")
 		}
 	}
-	if stock.branchArg != "branch-trt" {
-		t.Fatalf("branch scope = %q, want branch-trt", stock.branchArg)
+	if stock.branchArg != "3ef10000-0000-4000-8000-000000000011" {
+		t.Fatalf("branch scope = %q, want the branch asked for", stock.branchArg)
+	}
+}
+
+// TestInStockOnly_MalformedBranchIsABadRequest, HH-190: the branch text lands on a uuid column, so a
+// malformed one is a client error answered before the reader is asked, never a database error.
+func TestInStockOnly_MalformedBranchIsABadRequest(t *testing.T) {
+	stock := &fakeStock{ids: []string{"1"}}
+	svc := NewService(m4Store()).WithStock(stock)
+	_, err := svc.List(context.Background(), Filter{InStockOnly: true, BranchID: "not-a-uuid"})
+	var bre badRequestError
+	if !errors.As(err, &bre) {
+		t.Fatalf("List with a malformed branch_id = %v, want a badRequestError", err)
+	}
+	if stock.branchArg != "" {
+		t.Fatalf("the reader was asked for branch %q despite the malformed id", stock.branchArg)
+	}
+	// With the filter off the branch text is not read, so it is not judged.
+	if _, err := svc.List(context.Background(), Filter{BranchID: "not-a-uuid"}); err != nil {
+		t.Fatalf("filter off with a malformed branch_id = %v, want no error", err)
 	}
 }
 

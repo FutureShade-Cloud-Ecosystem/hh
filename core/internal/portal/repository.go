@@ -317,11 +317,10 @@ func (r *Repository) ConsumePasswordReset(ctx context.Context, tokenHash string,
 	return userID, nil
 }
 
-// RevokeSessions revokes the user's other live sessions after a credential change. The
-// contractor portal uses stateless 12h JWTs with no server-side session table, so "revoke"
-// here invalidates the user's outstanding password-reset tokens, closing the window where a
-// leaked reset link could be replayed after the password already changed. Live JWT
-// invalidation itself is bounded by the token TTL (documented limitation). Best-effort: a
+// RevokeSessions consumes the user's outstanding password-reset tokens after a credential change (it
+// revokes no session: the platform issues every session, HH-197). It closes the window where a leaked
+// reset link could be replayed after the password already changed. The legacy design note that live
+// JWT invalidation is bounded by the token TTL describes the unserved portal login path. Best-effort: a
 // no-op (zero rows) is success.
 func (r *Repository) RevokeSessions(ctx context.Context, userID string) error {
 	if r.pool == nil {

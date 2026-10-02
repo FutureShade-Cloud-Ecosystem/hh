@@ -93,6 +93,13 @@ func buildSmsBelt(pool *pgxpool.Pool, log *slog.Logger) *smsBelt {
 	if zerr := smsPolicy.ZoneError(); zerr != nil {
 		log.Warn("sms: send-window timezone fell back to the business default", "err", zerr)
 	}
+	for _, fb := range smsPolicy.Fallbacks() {
+		msg := "sms: policy variable fell back to its default; the value was refused"
+		if fb.Var == "SMS_RATE_PER_MIN" {
+			msg += " (zero is not a pause)"
+		}
+		log.Warn(msg, "var", fb.Var, "value", fb.Value, "default", fb.Default)
+	}
 	smsOutbox.WithSendPolicy(smsPolicy).WithLogger(log)
 	return &smsBelt{notifier: smsNotifier, outbox: smsOutbox, resolver: smsResolver, prefs: smsPrefs, policySet: true}
 }
@@ -186,7 +193,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithCustomers(customerSvc).
 		WithBilling(billingSvc).
 		WithOrders(orderSvc).
-		WithQuotes(quote.NewService(quoteRepo)).
+		WithQuotes(quote.NewService(quoteRepo).WithAudit(auditSvc)).
 		WithPayments(portalPaySvc).
 		WithProcurement(procurementSvc).
 		WithProducts(productSvc).
@@ -430,7 +437,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	} else {
 		log.Warn("dashboard: no database - every tile will render its unwired em-dash")
 	}
-	dashboardHandler := dashboard.NewHandler(dashboardSvc, log)
+	dashboardHandler := dashboard.NewHandler(dashboardSvc, log).WithUserLinker(link)
 	dashboardHandler.RegisterRoutes(r, g)
 	dashboardHandler.RegisterVizRoutes(r, g)
 	if pool != nil {
@@ -578,7 +585,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithUserLinker(link).RegisterRoutes(r, g)
 
 	// The dev log stub outside dev is a loud warning, the pin's posture.
-	notifier := notify.NewLogNotifier(log)
+	notifier := notify.NewLogNotifier(log).WithBodies(cfg.Env == "dev")
 	if cfg.Env != "dev" && !notifier.Live() {
 		log.Warn("notify: running on the dev log stub outside dev - invite/reset email is NOT delivered; wire a live provider before onboarding go-live", "env", cfg.Env)
 	}

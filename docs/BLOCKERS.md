@@ -1289,3 +1289,27 @@ and till are the Counter Till lane's.
 declared Touches, so the break is recorded here for the owning lane; the same
 command is one of this lane's exit checks and cannot pass repository-wide
 until the field mismatch is reconciled.
+
+## HH hardening, HH-194 (AR register CSV export): the register list read still pages by offset and total
+
+The export now reads every row of its filter in one statement (`RegisterFilter.All`), one snapshot, so a
+write landing mid-export cannot shift a row. The list read itself still pages by offset and a counted
+total and ignores `cursor`, against the cursor rule in `core/api/CONVENTIONS.md` (never offset, never
+total). Moving it to the cursor helpers changes the register's contract and repository, so it is recorded
+here for the billing lane rather than made inside this one-handler fix. Two further facts for that lane:
+the export holds the whole file in memory and has no row ceiling (neither is timed), and the export
+neither declares nor reads the `issued_from` and `issued_to` filters the list read takes, so a
+date-filtered screen exports every date.
+## HH-198 (config validation): `core seed` still reads an unset APP_ENV as dev
+
+`core/cmd/core/roles_oneshot.go` (the seed role, the `cfg.Env != "dev"` check near line 107) runs
+with `APP_ENV` unset or empty because `config.Load` resolves it to `dev`, so `core seed` on a box
+with the variable forgotten still plants the Tier-1 global admins with the demo password. This
+lane did not change it on purpose: the one-shot roles (migrate, seed, demoseed) read an unset
+`APP_ENV` as dev so CI, reviewers and local developers can run them without setting it. Serve and
+worker, which call `Validate`, now refuse an unset `APP_ENV` (`Config.EnvUnset`). Proposed
+follow-up: CI sets `APP_ENV=dev` on the one seed step in `.github/workflows/ci.yml` (the
+`go run ./cmd/core seed` line in the integration job, around line 359; there is no demoseed
+step), then seed refuses `cfg.EnvUnset`. Demoseed runs in-process from tests and has no dev guard
+in `demoseed_main.go`, so it is out of that follow-up's scope. Owner: the platform lane or the
+principal.

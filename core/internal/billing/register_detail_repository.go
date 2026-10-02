@@ -76,7 +76,7 @@ func (r *Repository) DetailLines(ctx context.Context, invoiceID string) ([]Detai
 		`SELECT il.line_no, COALESCE(il.product_id::text,''), COALESCE(p.sku::text,''),
 		        EXISTS (SELECT 1 FROM product_images pi WHERE pi.product_id = il.product_id AND pi.sort_order = 0),
 		        il.description, il.qty_entered::text, il.uom_entered::text,
-		        il.unit_price_cents, il.line_total_cents
+		        il.unit_price_cents, il.price_uom::text, il.line_total_cents
 		   FROM invoice_lines il
 		   LEFT JOIN products p ON p.id = il.product_id
 		  WHERE il.invoice_id = $1::uuid
@@ -90,7 +90,7 @@ func (r *Repository) DetailLines(ctx context.Context, invoiceID string) ([]Detai
 		var l DetailLine
 		var hasImage bool
 		if err := rows.Scan(&l.LineNo, &l.ProductID, &l.SKU, &hasImage, &l.Description,
-			&l.QtyEntered, &l.UOMEntered, &l.UnitPriceCents, &l.LineTotalCents); err != nil {
+			&l.QtyEntered, &l.UOMEntered, &l.UnitPriceCents, &l.PriceUOM, &l.LineTotalCents); err != nil {
 			return nil, fmt.Errorf("billing: scan invoice line: %w", err)
 		}
 		if hasImage {

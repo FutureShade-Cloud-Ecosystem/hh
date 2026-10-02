@@ -209,18 +209,22 @@ func (h *RegisterHandler) export(w http.ResponseWriter, r *http.Request, caller 
 		CustomerID:  q.Get("customer_id"),
 		Salesperson: q.Get("salesperson_id"),
 		ShowCredits: q.Get("show_credits") == "1" || q.Get("show_credits") == "true",
-		Limit:       200,
+		// Every row of the view in one statement: the repository caps one page, and the export is
+		// promised to carry the whole view. One statement is one snapshot, so a payment landing
+		// mid-export cannot shift a row between pages (an offset walk could skip or repeat one).
+		All: true,
 	}
 	page, err := h.svc.Register(r.Context(), f)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
 	}
+	items := page.Items
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="receivables.csv"`)
 	var b strings.Builder
 	b.WriteString("Invoice,Customer,Account,Order,Customer PO,Issued,Due,Status,Days overdue,Total,Balance\n")
-	for _, v := range page.Items {
+	for _, v := range items {
 		b.WriteString(strings.Join([]string{
 			csvCell(v.InvoiceNo), csvCell(v.CustomerName), csvCell(v.AccountNo),
 			csvCell(v.OrderNo), csvCell(v.CustomerPO),

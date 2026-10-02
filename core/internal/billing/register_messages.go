@@ -168,7 +168,7 @@ func renderInvoiceHTML(d InvoiceDetail, branchName string) string {
 	for _, l := range d.Lines {
 		b.WriteString(`<tr><td>` + esc(l.SKU) + `</td><td>` + esc(l.Description) + `</td>` +
 			`<td class="n">` + esc(trimQty(l.QtyEntered)) + `</td><td>` + esc(l.UOMEntered) + `</td>` +
-			`<td class="n">` + money(l.UnitPriceCents) + `</td>` +
+			`<td class="n">` + esc(unitPriceLabel(l)) + `</td>` +
 			`<td class="n">` + money(l.LineTotalCents) + `</td></tr>`)
 	}
 	b.WriteString(`</tbody></table>`)
@@ -206,4 +206,14 @@ func trimQty(q string) string {
 	}
 	q = strings.TrimRight(q, "0")
 	return strings.TrimSuffix(q, ".")
+}
+
+// unitPriceLabel is the unit price as printed: when the line was priced in a different unit from the
+// one it was sold in (priced per SF, sold in PC), the price unit is named, otherwise a per-SF figure
+// beside a quantity in pieces reads as a per-piece price.
+func unitPriceLabel(l DetailLine) string {
+	if l.PriceUOM == "" || strings.EqualFold(l.PriceUOM, l.UOMEntered) {
+		return money(l.UnitPriceCents)
+	}
+	return money(l.UnitPriceCents) + " / " + l.PriceUOM
 }

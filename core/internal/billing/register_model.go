@@ -167,6 +167,10 @@ type RegisterFilter struct {
 	ShowCredits bool
 	Limit       int
 	Offset      int
+	// All reads every row of the filter in ONE statement (the export): Limit and Offset are then
+	// ignored, and the rows come from a single snapshot, so a payment landing mid-read cannot shift a
+	// row between pages. Only the export sets it; the list read is always paged.
+	All bool
 }
 
 // RegisterPage is the register read's answer.
@@ -192,6 +196,9 @@ type DetailLine struct {
 	QtyEntered     string `json:"qty_entered"`
 	UOMEntered     string `json:"uom_entered"`
 	UnitPriceCents int64  `json:"unit_price_cents"`
+	// PriceUOM is the unit the unit price is per. It feeds the printed document only (json "-"):
+	// putting it on the wire is an API contract change that is not this struct's to make.
+	PriceUOM       string `json:"-"`
 	LineTotalCents int64  `json:"line_total_cents"`
 }
 

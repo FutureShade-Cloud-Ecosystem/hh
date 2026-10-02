@@ -55,9 +55,8 @@ type portalStore interface {
 	// ConsumePasswordReset atomically validates + spends a reset token (single-use) and
 	// returns its user id. errInvalidToken for any invalid/expired/already-used token.
 	ConsumePasswordReset(ctx context.Context, tokenHash string, now time.Time) (string, error)
-	// RevokeSessions revokes the user's other live sessions after a credential change.
-	// In this stateless-JWT design it invalidates the user's outstanding reset tokens
-	// (best-effort); see the repository note for the TTL-bounded limitation.
+	// RevokeSessions consumes the user's outstanding reset tokens after a credential change
+	// (best-effort). It revokes no session: the platform issues every session (HH-197).
 	RevokeSessions(ctx context.Context, userID string) error
 }
 
@@ -239,7 +238,8 @@ func (s *Service) UpdateProfile(ctx context.Context, caller PortalContext, name 
 }
 
 // ChangePassword verifies the caller's current password, then sets a new one and revokes
-// the account's other sessions (§4.6 review #2). The current-password check runs against
+// the account's reset tokens (§4.6 review #2). NOT SERVED: the route answers 501 until HH-4.2 (HH-197),
+// because the platform issues every session and this hash is read only by unserved paths. The current-password check runs against
 // the freshly loaded hash, never the token. A wrong current password → errWrongPassword;
 // a too-short new password → a bad request.
 func (s *Service) ChangePassword(ctx context.Context, caller PortalContext, current, next string) error {
