@@ -647,21 +647,24 @@ export function ticketTotalCents(subtotalCents: number, taxCents: number): numbe
 
 /**
  * One line's contribution to what the ticket saves against retail, as the
- * server priced it: the per-line saving times that line's quantity. The
- * multiplication is money arithmetic, so the host owns it, exactly as it owns
- * the footer's summed figure (sumLineSavingCents, below). A value the engine
- * did not answer contributes nothing rather than a guess.
+ * server priced it: the per-line saving times that line's quantity, rounded
+ * to the whole cent. The multiplication is money arithmetic, so the host owns
+ * it, exactly as it owns the footer's summed figure (sumLineSavingCents,
+ * below). A value the engine did not answer contributes nothing rather than a
+ * guess.
  */
 export function perLineSavingCents(savingCents: number, qty: number): number {
   if (!Number.isFinite(savingCents) || !Number.isFinite(qty)) return 0;
-  return savingCents * qty;
+  return Math.round(savingCents * qty);
 }
 
 /**
  * One line's contribution to what the ticket saves against retail, as the
- * server priced it: the per-line saving times the quantity, summed. A line
- * the engine could not answer contributes nothing: it does not contribute a
- * guess, and it does not blank the total for the lines that DID answer.
+ * server priced it: the per-line saving times the quantity, each line's
+ * product rounded to the whole cent as it sums (the reference's per-line
+ * discipline). A line the engine could not answer contributes nothing: it
+ * does not contribute a guess, and it does not blank the total for the lines
+ * that DID answer.
  */
 export function sumLineSavingCents(
   entries: readonly { saving_cents: number; qty: number }[],
@@ -669,7 +672,7 @@ export function sumLineSavingCents(
   let sum = 0;
   for (const entry of entries) {
     const per = entry.saving_cents;
-    if (Number.isFinite(per) && Number.isFinite(entry.qty)) sum += per * entry.qty;
+    if (Number.isFinite(per) && Number.isFinite(entry.qty)) sum += Math.round(per * entry.qty);
   }
   return sum;
 }

@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import {
   MAX_SPLIT_LEGS,
   autoFillRemainder,
+  perLineSavingCents,
   availableCreditCents,
   balanceAfterDepositCents,
   cartSubtotalCents,
@@ -222,6 +223,22 @@ test('sumLineSavingCents multiplies per line and sums, skipping what the engine 
   assert.equal(sumLineSavingCents([{ saving_cents: 72, qty: 3 }, { saving_cents: 140, qty: 2 }]), 496);
   assert.equal(sumLineSavingCents([{ saving_cents: NaN, qty: 3 }, { saving_cents: 140, qty: 2 }]), 280);
   assert.equal(sumLineSavingCents([]), 0);
+});
+
+test('a fractional quantity leaves integer cents: each line rounds as it sums', () => {
+  // One third of a CA$0.72 saving is 24 cents once rounded, never 24.000...,
+  // and the formatter never sees a fraction.
+  assert.equal(perLineSavingCents(72, 1 / 3), 24);
+  // Two half-quantity lines round per line (13 and 13), not once at the end
+  // (which would answer 26 from 12.5 and 12.5): the reference's discipline.
+  assert.equal(
+    sumLineSavingCents([{ saving_cents: 25, qty: 0.5 }, { saving_cents: 25, qty: 0.5 }]),
+    26,
+  );
+  // The same rule on the read-back's per-line word.
+  assert.equal(perLineSavingCents(25, 0.5), 13);
+  // A figure the engine left out is still nothing.
+  assert.equal(perLineSavingCents(NaN, 2), 0);
 });
 
 test('balanceAfterDepositCents answers the balance, never below zero', () => {
