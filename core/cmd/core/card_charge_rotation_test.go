@@ -50,15 +50,19 @@ const rotFlushWaitBudget = 35 * time.Second
 // old key mints the fresh key, any later refresh of the old key is refused
 // (the exchange already happened), the first charge under the fresh key
 // declines (so the sale carrying the rotation rolls back), and every later
-// charge under the fresh key approves.
+// charge under the fresh key approves. The leg reads the recorded charge
+// keys and refresh counts back, so the no-second-refresh claim is asserted,
+// not implied.
 type rotatingRunHost struct {
-	mu           sync.Mutex
-	refreshed    bool
-	freshCharges int
-	chargeKeys   []string
+	mu             sync.Mutex
+	refreshed      bool
+	refreshCalls   int
+	refreshRefused int
+	freshCharges   int
+	chargeKeys     []string
 }
 
-func newRotatingRunHost(t *testing.T) *httptest.Server {
+func newRotatingRunHost(t *testing.T) (*httptest.Server, *rotatingRunHost) {
 	t.Helper()
 	h := &rotatingRunHost{}
 	mux := http.NewServeMux()
@@ -93,11 +97,16 @@ func newRotatingRunHost(t *testing.T) *httptest.Server {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		h.mu.Lock()
+		h.refreshCalls++
 		done := h.refreshed
 		h.refreshed = true
+		refuse := body.Token != rotOldKey || done
+		if refuse {
+			h.refreshRefused++
+		}
 		h.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		if body.Token != rotOldKey || done {
+		if refuse {
 			w.WriteHeader(http.StatusGone)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "token already exchanged"})
 			return
@@ -106,7 +115,14 @@ func newRotatingRunHost(t *testing.T) *httptest.Server {
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, h
+}
+
+// rotationHostFacts reads the host's recorded facts under its lock.
+func rotationHostFacts(h *rotatingRunHost) (keys []string, served, refused int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.chargeKeys...), h.refreshCalls - h.refreshRefused, h.refreshRefused
 }
 
 // rotCiphertext reads the active planted row's sealed credentials, the
@@ -127,10 +143,10 @@ func rotCiphertext(t *testing.T, pool *pgxpool.Pool) []byte {
 // key through the pool after the rollback, and sale 2 rings COMMITTED
 // under the fresh key without any second refresh.
 func TestCardRailWiring_RotationSurvivesARolledBackSale(t *testing.T) {
-	host := newRotatingRunHost(t)
+	hostSrv, host := newRotatingRunHost(t)
 	t.Setenv("APP_ENV", "dev")
 	t.Setenv("HOS_CARD_PROCESSOR", "run")
-	t.Setenv("HOS_CARD_BASE_URL", host.URL)
+	t.Setenv("HOS_CARD_BASE_URL", hostSrv.URL)
 
 	pool := wiringOneConnPool(t)
 	key := wiringRailDB(t, pool, map[string]string{"api_key": rotOldKey})
@@ -202,5 +218,22 @@ func TestCardRailWiring_RotationSurvivesARolledBackSale(t *testing.T) {
 	}
 	if sale.Status != "COMMITTED" || sale.GatewayRef != "rot_app_1" {
 		t.Fatalf("sale 2 = %+v, want COMMITTED with the approval ref", sale)
+	}
+
+	// The host's own record (round 2's P3 4): sale 1 presented the old key, was refreshed once, and
+	// its retried charge presented the fresh key; sale 2 presented the fresh key with NO second
+	// refresh of the already exchanged old one. The no-second-refresh claim is asserted, not implied.
+	keys, served, refused := rotationHostFacts(host)
+	want := []string{rotOldKey, rotFreshKey, rotFreshKey}
+	if len(keys) != len(want) {
+		t.Fatalf("the host saw %d charges (%v), want %d (%v): the shape of the two-sale rotation changed", len(keys), keys, len(want), want)
+	}
+	for i := range want {
+		if keys[i] != want[i] {
+			t.Fatalf("charge %d presented %q, want %q (keys %v)", i+1, keys[i], want[i], keys)
+		}
+	}
+	if served != 1 || refused != 0 {
+		t.Fatalf("refreshs served = %d, refused = %d, want exactly one served and none refused: a second refresh means the rotation was lost and retried", served, refused)
 	}
 }

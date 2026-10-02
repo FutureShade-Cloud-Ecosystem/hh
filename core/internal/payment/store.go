@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -266,13 +267,14 @@ type credsReencryptor interface {
 }
 
 // Service is the till-facing seam. It holds the config resolver + the active Processor, plus the
-// rotation ledger (see holdRotation).
+// rotation ledger (see holdRotation) and the flusher starter (see launchRotationFlusher).
 type Service struct {
 	cfg  configResolver
 	proc Processor
 
-	rotMu   sync.Mutex
-	rotPend *rotatedCreds
+	rotMu        sync.Mutex
+	rotPend      *rotatedCreds
+	startFlusher func()
 }
 
 // rotatedCreds is one credential rotation observed during an in-transaction charge: the processor
@@ -289,7 +291,11 @@ type rotatedCreds struct {
 const rotationFlushWindow = 30 * time.Second
 
 // NewService wires the config store + the active Processor (RunPaymentsStub by default).
-func NewService(store *Store, proc Processor) *Service { return &Service{cfg: store, proc: proc} }
+func NewService(store *Store, proc Processor) *Service {
+	s := &Service{cfg: store, proc: proc}
+	s.startFlusher = s.startRotationFlusherGoroutine
+	return s
+}
 
 // Simulated reports whether the wired Processor is the deterministic stub (card TEST MODE, no live
 // gateway call). Surfaced on the config-status endpoint so the POS UI can label the card rail honestly;
@@ -312,7 +318,7 @@ func (s *Service) Charge(ctx context.Context, in ChargeInput) (ChargeReceipt, er
 	if err != nil {
 		return ChargeReceipt{}, err
 	}
-	return s.charge(ctx, cfg, creds, in, s.resealOnPool)
+	return s.charge(ctx, cfg, s.freshestCreds(cfg.Processor, creds), in, s.resealOnPool)
 }
 
 // ChargeTx is Charge on the caller's open transaction. The pos Sale
@@ -326,18 +332,21 @@ func (s *Service) Charge(ctx context.Context, in ChargeInput) (ChargeReceipt, er
 // refund side's: a credential rotation must survive a rolled-back sale
 // (the processor has already exchanged the old key, so losing the fresh
 // one can lock the rail out), so the carrier records the rotation in the
-// ledger and a flusher writes it through the POOL once the caller's
-// transaction has released its connection (on a one-connection pool that
-// is the moment the ring ends, commit or rollback alike; the flusher
-// never waits on the transaction and the transaction never waits on the
-// flusher, so the class discipline holds: no pool use is reachable from
-// inside the transaction's own call stack).
+// ledger and a flusher goroutine writes it through the pool. The flusher
+// never runs inside the transaction's call stack, so no pool use is
+// reachable from it; on a one-connection pool the flush's acquire waits
+// for the ring to release the only connection (the write lands after the
+// ring ends, commit or rollback alike), while on a wider pool the flush
+// may run on a second connection while the ring is still closing. Until
+// the flush lands, the read side overlays the pending rotation
+// (freshestCreds), so no charge presents a key the processor has already
+// exchanged.
 func (s *Service) ChargeTx(ctx context.Context, tx pgx.Tx, in ChargeInput) (ChargeReceipt, error) {
 	cfg, creds, err := s.cfg.activeConfigTx(ctx, tx)
 	if err != nil {
 		return ChargeReceipt{}, err
 	}
-	return s.charge(ctx, cfg, creds, in, s.carryRotationOutOfTheTransaction)
+	return s.charge(ctx, cfg, s.freshestCreds(cfg.Processor, creds), in, s.carryRotationOutOfTheTransaction)
 }
 
 // holdRotation records the freshest rotated credential set in the ledger. Synchronous, pool-free and
@@ -352,32 +361,74 @@ func (s *Service) holdRotation(processor string, creds map[string]string) {
 	s.rotMu.Unlock()
 }
 
-// flushRotation writes whatever the ledger holds through the pool, best-effort (the write-back's
-// error was always ignored: the processor's answer is the receipt). Called by the flusher goroutine
-// and directly by the tests.
+// freshestCreds overlays the pending rotation on the row's credentials. While a carried rotation's
+// flush is still in flight the row still answers the stale key, and the processor has already
+// exchanged that key, so a charge reading the row in the gap would present a dead credential and the
+// rail would refuse the refresh (the round 2 review's probe: the sale straight after a rotating
+// declined sale failed once on a multi-connection pool). The ledger's snapshot is the complete fresh
+// set the dispatch path held, so it replaces the row's answer outright; a nil ledger or a different
+// processor's entry leaves the row's answer alone.
+func (s *Service) freshestCreds(processor string, creds map[string]string) map[string]string {
+	s.rotMu.Lock()
+	defer s.rotMu.Unlock()
+	if s.rotPend == nil || s.rotPend.processor != processor {
+		return creds
+	}
+	return s.rotPend.creds
+}
+
+// flushRotation writes whatever the ledger holds through the pool, best-effort, and KEEPS the entry
+// until the write succeeds (the round 2 review's ask: a failed write is retried by a later flush
+// instead of dropping the fresh key silently). The entry clears only when this flush's write landed
+// and no newer rotation replaced it meanwhile. Called by the flusher goroutine and directly by the
+// tests.
 func (s *Service) flushRotation(ctx context.Context) {
 	s.rotMu.Lock()
 	pend := s.rotPend
-	s.rotPend = nil
 	s.rotMu.Unlock()
 	if pend == nil {
 		return
 	}
-	_ = s.resealOnPool(ctx, pend.processor, pend.creds)
+	if err := s.resealOnPool(ctx, pend.processor, pend.creds); err != nil {
+		slog.Warn("payment: the rotation write-back failed; the fresh credentials stay pending and a later flush retries them",
+			"processor", pend.processor, "err", err)
+		return
+	}
+	s.rotMu.Lock()
+	if s.rotPend == pend {
+		s.rotPend = nil
+	}
+	s.rotMu.Unlock()
 }
 
 // carryRotationOutOfTheTransaction is the write-back carrier for ChargeTx: it records the rotation in
-// the ledger and starts the flusher. The flusher's pool acquire blocks while the caller's transaction
-// holds every connection, which is exactly the ordering the semantics need (the write lands after the
-// ring ends, so a rollback cannot discard it), and its window is bounded.
+// the ledger and starts the flusher. The flusher's window bounds its wait for a free connection (on a
+// one-connection pool that is the ring releasing its connection, so the write lands after the ring
+// ends and a rollback cannot discard it).
 func (s *Service) carryRotationOutOfTheTransaction(ctx context.Context, processor string, creds map[string]string) error {
 	s.holdRotation(processor, creds)
+	s.launchRotationFlusher()
+	return nil
+}
+
+// launchRotationFlusher starts one flusher for the freshest carried rotation. It goes through the
+// startFlusher field so a test can hold the flusher and observe the carrier's synchronous half
+// deterministically: the production goroutine can be scheduled between ChargeTx returning and the
+// test's first read, erasing the very state a leg asserts (the round 2 review's P2).
+func (s *Service) launchRotationFlusher() {
+	if s.startFlusher != nil {
+		s.startFlusher()
+		return
+	}
+	s.startRotationFlusherGoroutine()
+}
+
+func (s *Service) startRotationFlusherGoroutine() {
 	go func() {
 		fctx, cancel := context.WithTimeout(context.Background(), rotationFlushWindow)
 		defer cancel()
 		s.flushRotation(fctx)
 	}()
-	return nil
 }
 
 // charge is the shared body: dispatch Processor.Charge and return the
@@ -441,10 +492,12 @@ func (s *Service) RefundTx(ctx context.Context, tx pgx.Tx, in RefundInput) (Refu
 }
 
 // resealOnPool is the write-back carrier for the pool-shaped Charge and
-// Refund, the behavior those entry points have always had.
+// Refund, the behavior those entry points have always had. Its error surfaces to the caller
+// (the shared bodies ignore it, exactly as the write-back always was: best-effort); the flusher
+// is the one caller that reads it, to keep the ledger entry alive for a retry.
 func (s *Service) resealOnPool(ctx context.Context, processor string, creds map[string]string) error {
 	if rs, ok := s.cfg.(credsReencryptor); ok {
-		_ = rs.reencryptActiveCreds(ctx, processor, creds)
+		return rs.reencryptActiveCreds(ctx, processor, creds)
 	}
 	return nil
 }
