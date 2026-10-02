@@ -6428,9 +6428,13 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           <div class="lweight" data-testid="pos-line-weight" title=${w === null ? 'No weight on file for this item' : 'Line weight: quantity × unit weight'}>
             ${w === null ? '(none)' : formatLbs(w)}
           </div>
+          ${/* ui3 visual GAP 2: one rule, both windows agree. The margin glance derives its figures
+               from the server's own prices, so on a pickup whose prices never answer it still
+               returns a percentage for the line: while the line's price has not answered, the cell
+               reads the marker, never a stale or derived figure (the building window's rule). */ ''}
           ${m
             ? html`<div class="lmargin" data-testid="pos-line-margin" title="Gross margin: computed server-side">
-                ${mb === undefined ? '(none)' : formatMargin(mb)}
+                ${mb === undefined || l.priceMissing ? '(none)' : formatMargin(mb)}
               </div>`
             : nothing}
           <button class="rm" @click=${() => this.removeLine(i)} title="Remove line" aria-label="Remove ${l.product.name}">

@@ -1225,6 +1225,44 @@ test("a parked ticket this window holds no price memory for lists the same marke
   }
 });
 
+test("a pickup whose prices never answer reads the margin marker, never a figure", async ({ page }) => {
+  // Every price the engine would answer is refused for this whole page, so the
+  // pickup's lines stay price pending (a window with no price memory).
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    await route.fulfill({
+      status: 422,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "line could not be priced by the engine" }),
+    });
+  });
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  // A fresh window picks the ticket up. The margin glance still answers (it
+  // derives its figures from the server's own prices), so the margin column IS
+  // on screen, and the building window's rule must hold there too: a line
+  // whose price has not answered reads the marker in its margin cell, never a
+  // percentage beside (not priced).
+  await signIn(page, "Sales");
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  await parkedDialog.getByRole("button", { name: "Resume" }).first().click();
+  await openStep(page, "items");
+  const rows = page.getByTestId("pos-line-row");
+  await expect(rows).toHaveCount(2);
+  for (let index = 0; index < 2; index += 1) {
+    await expect(rows.nth(index)).toContainText("(not priced)");
+  }
+  const margins = page.getByTestId("pos-line-margin");
+  await expect(margins).toHaveCount(2);
+  for (let index = 0; index < 2; index += 1) {
+    await expect(margins.nth(index)).toHaveText("(none)");
+  }
+});
+
 test("the top bar is on the till's compact scale: about 48px, small chrome buttons, the banner on one line", async ({
   page,
 }) => {
