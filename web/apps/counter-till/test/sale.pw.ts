@@ -1907,6 +1907,63 @@ test("a park landing while the parked dialog is open converges the open dialog's
   ).toBeVisible();
 });
 
+test("a stale parked-list read that answers last writes nothing: the open dialog keeps the newest list", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+
+  // Hold the park POST (the park commits only when released), and take the
+  // dialog's first list read without answering it: its response is fetched
+  // now, from the uncommitted world, and delivered last, after the newer
+  // reads have answered. Two reads of the same dialog are then in flight at
+  // once, and the stale one resolves last: whatever writes last wins unless
+  // the dialog orders its own reads.
+  let releasePark: () => void = () => undefined;
+  const parkGate = new Promise<void>((resolve) => {
+    releasePark = resolve;
+  });
+  let deliverStale: (() => Promise<void>) | null = null;
+  let heldFirstRead = false;
+  await page.route((url) => url.pathname === "/api/v1/pos/parked", async (route) => {
+    if (route.request().method() === "POST") {
+      await parkGate;
+      await route.continue();
+      return;
+    }
+    if (route.request().method() === "GET" && !heldFirstRead) {
+      heldFirstRead = true;
+      const stale = await route.fetch(); // answered now, from the old world
+      deliverStale = async () => {
+        await route.fulfill({ response: stale }); // delivered last
+      };
+      return;
+    }
+    await route.continue();
+  });
+
+  const parkPost = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" && response.url().includes("/api/v1/pos/parked"),
+  );
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  expect(heldFirstRead).toBe(true);
+
+  releasePark();
+  const created = (await (await parkPost).json()) as { ticket_no: string };
+  // The reads issued after the park answer with the committed world: the open
+  // dialog converges on the just-parked ticket.
+  await expect(parkedDialog.getByText(created.ticket_no)).toBeVisible({ timeout: 10_000 });
+
+  // The stale read, answered before the park committed, lands last: the
+  // newest list must still be the one on screen.
+  await deliverStale?.();
+  await expect(parkedDialog.getByText(created.ticket_no)).toBeVisible({ timeout: 10_000 });
+});
+
 test("the top bar is on the till's compact scale: about 48px, small chrome buttons, the banner on one line", async ({
   page,
 }) => {

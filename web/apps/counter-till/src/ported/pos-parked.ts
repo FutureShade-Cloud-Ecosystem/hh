@@ -50,6 +50,13 @@ export class HosPosParked extends LitElement {
   @state() private tickets: ParkedTicket[] = [];
   @state() private busyId = '';
   @state() private error = '';
+  // Ordering guard for the reads below. Two reads of one open dialog are
+  // routinely in flight at once (the open read and a host triggered reload
+  // that lands under it), so whichever read resolves last may be the stale
+  // one: only the read holding the newest reserved token may write, and a
+  // superseded read discards its answer instead of putting the rail back on
+  // the old list.
+  private readSeq = 0;
 
   static styles = [
     focusRing,
@@ -193,10 +200,14 @@ export class HosPosParked extends LitElement {
    * rail within one read: no polling loop, no contract change.
    */
   async reload(): Promise<void> {
+    const token = ++this.readSeq;
     try {
-      this.tickets = await listParked(this.branchId);
+      const tickets = await listParked(this.branchId);
+      if (token === this.readSeq) this.tickets = tickets;
     } catch (e) {
-      this.error = e instanceof Error ? e.message : 'failed to load parked tickets';
+      if (token === this.readSeq) {
+        this.error = e instanceof Error ? e.message : 'failed to load parked tickets';
+      }
     }
   }
 
