@@ -578,7 +578,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithUserLinker(link).RegisterRoutes(r, g)
 
 	// The dev log stub outside dev is a loud warning, the pin's posture.
-	notifier := notify.NewLogNotifier(log)
+	notifier := notify.NewLogNotifier(log).WithBodies(cfg.Env == "dev")
 	if cfg.Env != "dev" && !notifier.Live() {
 		log.Warn("notify: running on the dev log stub outside dev - invite/reset email is NOT delivered; wire a live provider before onboarding go-live", "env", cfg.Env)
 	}

@@ -365,6 +365,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "501":
+          description: >-
+            Inviting crew members is not available yet; no invite is created
+            and nothing is sent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   # --- tenant-dashboard --------------------------------------------------------
   /api/v1/tenant/dashboard:
