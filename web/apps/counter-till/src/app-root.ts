@@ -94,6 +94,26 @@ export class CounterTillApp extends HHElement {
       .surface {
         margin: 0 calc(-1 * var(--hh-s-20));
       }
+      /* The mounted surface's shell bar: HH's content (the demo banner, the
+         role, the pop-out, sign out) in the reference's own top-bar place,
+         above the till, so the carried demo marker is on screen while a sale
+         is rung. */
+      .surfacebar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--hh-s-16);
+        flex-wrap: wrap;
+        padding: var(--hh-s-12) var(--hh-s-20);
+        border-bottom: 1px solid var(--hh-line);
+        margin: 0 calc(-1 * var(--hh-s-20)) var(--hh-s-16);
+      }
+      .surfacebar .demo-banner {
+        margin: 0;
+      }
+      .chrome-row {
+        margin: var(--hh-s-16) 0 0;
+      }
       .visually-hidden {
         position: absolute;
         width: 1px;
@@ -498,10 +518,7 @@ export class CounterTillApp extends HHElement {
         ${this.#surface === "terminal"
           ? html`
               <h2 class="visually-hidden">Till</h2>
-              <div class="surface">
-                <hos-pos-terminal></hos-pos-terminal>
-              </div>
-              <div class="chrome-row">
+              <div class="surfacebar">
                 ${demoPresent ? demoBanner() : nothing}
                 <p class="signed-in">
                   <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
@@ -518,6 +535,9 @@ export class CounterTillApp extends HHElement {
                     Sign out
                   </button>
                 </p>
+              </div>
+              <div class="surface">
+                <hos-pos-terminal></hos-pos-terminal>
               </div>
               ${this.#chromeMessage === null ? nothing : html`<p class="notice" role="status">${this.#chromeMessage}</p>`}
               ${renderReturns(this.#returns)}
