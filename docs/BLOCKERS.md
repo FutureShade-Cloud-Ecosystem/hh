@@ -1430,4 +1430,9 @@ clerk's SERVER side glance now refuses too, while these two legs still hold
 the old expectation ("the glance itself still answers the clerk
 server-side"). The two legs' home is the margin surface this lane is
 expressly out of scope of; the owner (or the principal) rules whether the
-legs follow the ruling or the demo box's policy word changes.
+legs follow the ruling or the demo box's policy word changes. CLOSED inside
+the receipts stack: the base branch till/margin-glance-flip flips the legs
+to the ruling (the surface follows the policy word, and the clerk's glance
+is the byte-absent answer the policy names), and the exit test on the stack
+head runs green, so the row's question is answered and the routing here is
+overtaken by the base's own round 2 closure.
