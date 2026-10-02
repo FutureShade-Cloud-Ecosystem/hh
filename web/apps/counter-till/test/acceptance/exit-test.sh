@@ -295,10 +295,14 @@ fi
 cd "$APP" >/dev/null
 
 echo "== the two source scans and the sink scan"
-if grep -rnE '_cents[[:space:]]*[-+*/]|[-+*/][[:space:]]*[A-Za-z_.]*_cents' src >/dev/null 2>&1; then
-	fail "the money scan printed something"
+# The money scan is the one rule test/scans.pw.ts holds (ruling 14: the named
+# display helper and the seam file ports.ts are the boundary; tests and the
+# closure prose are not scanned the way the source is). It is called here, not
+# restated, so there is no second divergent grep.
+if CI=true npx --no-install playwright test test/scans.pw.ts -g "the money scan" >/dev/null 2>&1; then
+	pass "the money scan prints nothing (test/scans.pw.ts, the one rule)"
 else
-	pass "the money scan prints nothing"
+	fail "the money scan printed something"
 fi
 if grep -rniE 'card_?number|tokeniz|runner\.js' src >/dev/null 2>&1; then
 	fail "the card scan printed something"
