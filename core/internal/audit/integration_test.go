@@ -4,7 +4,8 @@
 // Postgres 16 that `make reset` provisions, writing to the existing audit_log (migration 0013).
 // Run with: make test-integration (after make migrate). They prove the end-to-end coarse trail (I1),
 // the reopen + masking projection (I3/I4), the FN-evidence masked view (I5), the viewer filters +
-// limit clamp (I6), and the cross-row request_id correlation that persists through the DB (I8).
+// limit clamp (I6), the cross-row request_id correlation that persists through the DB (I8), and the
+// reopen read's branch fence (HH-180).
 //
 // Every row written here is tagged with a per-run request_id (and a unique entity_id) so cleanup is
 // targeted and the suite is reentrant. I2 (RBAC 403 for lower tiers) and I7 (hash-chain) are out of
@@ -14,6 +15,7 @@ package audit
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,6 +24,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 )
 
 // realRepo builds a DB-backed Repo, skipping (locally) or failing (CI) when no DB is reachable.
@@ -439,5 +444,176 @@ func TestIntegration_DIB25_OrderCoarseAndRecorderColocated(t *testing.T) {
 	if trail[1].Changes["old_status"] != "CONFIRMED" || trail[1].Changes["new_status"] != "PICKING" {
 		t.Errorf("status transition = %v->%v, want CONFIRMED->PICKING",
 			trail[1].Changes["old_status"], trail[1].Changes["new_status"])
+	}
+}
+
+// HH-180, the operator reopen read is branch fenced. The route's staff gate proves the caller is
+// staff, not that they may reach THIS trail (the same gap the order edit history closes with
+// CanAccessBranch). Round 2 added the entity gate: the fence resolves the entity's owning branch
+// through its owner's resolver FIRST (the stub here stands where cmd/core adapts the order and
+// quote repositories), because most semantic writers, order and quote edits among them, write
+// branch-less rows, so the rows' own branch_id can never carry the fence alone (the round 1 gap a
+// reviewer proved with a production-shaped probe). A scoped caller reaches rows only for an entity
+// their grants reach, then still sees only rows in branches their grants reach plus branch-less
+// rows (the coarse middleware rows carry no branch); a global caller keeps the full trail; an
+// out-of-reach entity, an unresolvable one and an entity type with no resolver all answer an EMPTY
+// trail, never a refusal, so the route stays no existence oracle. The masking projection is
+// untouched by the fence and proven separately (I3 above); every row that does come back still goes
+// through projectForOperator on the way out.
+func TestIntegration_HH180_ReopenBranchFence(t *testing.T) {
+	repo := realRepo(t)
+	home := newUUID() // the branch the scoped caller is granted
+	away := newUUID() // a branch the scoped caller cannot reach
+	// The owner seam's double, standing where cmd/core wires the order and quote repositories.
+	resolvers := func(owners map[string]string) map[string]EntityBranchResolver {
+		return map[string]EntityBranchResolver{"order": stubEntityBranchResolver{branch: owners}}
+	}
+	svc := NewService(repo, testLogger())
+	h := NewHandler(svc, testLogger())
+	reqID := newUUID()
+	cleanupReq(t, repo, reqID)
+	ctx := withRequestID(context.Background(), reqID)
+
+	seed := func(entityID, branch, field string) {
+		t.Helper()
+		if err := repo.Insert(ctx, Entry{
+			Action: ActOrderChanged, EntityType: "order", EntityID: entityID, ActorID: intActor,
+			BranchID: branch, RequestID: reqID,
+			Changes: map[string]any{"field": field, "line_no": 1, "before": "1000", "after": "1250"},
+		}); err != nil {
+			t.Fatalf("insert %s row: %v", field, err)
+		}
+	}
+	// seedUnstamped writes the production shape of the semantic writers the fence must hold even
+	// though the row itself carries no branch (order/edit.go and its siblings stamp nothing).
+	seedUnstamped := func(entityType, entityID, field string) {
+		t.Helper()
+		if err := repo.Insert(ctx, Entry{
+			Action: ActOrderChanged, EntityType: entityType, EntityID: entityID, ActorID: intActor,
+			RequestID: reqID,
+			Changes:   map[string]any{"field": field, "line_no": 1, "before": "1000", "after": "1250"},
+		}); err != nil {
+			t.Fatalf("insert unstamped %s row: %v", field, err)
+		}
+	}
+	// One order whose price-edit trail spans both branches, plus the branch-less coarse POST row every
+	// order also carries: one entity id, so the only variable across the legs below is the caller.
+	shared := newUUID()
+	seed(shared, home, "unit_price_cents")
+	seed(shared, away, "line_total_cents")
+	if err := repo.Insert(ctx, Entry{
+		Action: ActHTTPPost, EntityType: "order", EntityID: shared, ActorID: intActor,
+		RequestID: reqID, Changes: map[string]any{"method": "POST", "status": 201, "actor_role": "sales"},
+	}); err != nil {
+		t.Fatalf("insert coarse row: %v", err)
+	}
+	// An away-branch-only order: the granted caller's fully out-of-branch read.
+	awayOnly := newUUID()
+	seed(awayOnly, away, "unit_price_cents")
+	// The round 1 gap, pinned: two entities whose price-edit rows are UNSTAMPED (the production
+	// shape), one owned by each branch. The entity gate alone decides who reads them.
+	unstampedAway := newUUID()
+	seedUnstamped("order", unstampedAway, "unit_price_cents")
+	unstampedHome := newUUID()
+	seedUnstamped("order", unstampedHome, "unit_price_cents")
+	// An entity type with no resolver (only order and quote are wired in the composition): the row
+	// exists, a scoped caller is answered an empty trail all the same.
+	unresolvedType := newUUID()
+	seedUnstamped("payment", unresolvedType, "amount_cents")
+	// The owner map every scoped leg resolves through, attached once: the handler holds the same
+	// service pointer the composition wires its adapters onto.
+	owners := map[string]string{
+		shared: home, awayOnly: away, unstampedAway: away, unstampedHome: home,
+	}
+	svc.WithEntityBranchResolvers(resolvers(owners))
+
+	call := func(caller guards.StaffCaller, entityType, entityID string) ([]Entry, int) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/transaction/"+entityType+"/"+entityID, nil)
+		req.SetPathValue("entityType", entityType)
+		req.SetPathValue("entityId", entityID)
+		rr := httptest.NewRecorder()
+		h.reopen(rr, req, caller)
+		var got []Entry
+		if rr.Code == http.StatusOK {
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode reopen body %q: %v", rr.Body.String(), err)
+			}
+		}
+		return got, rr.Code
+	}
+	scoped := guards.StaffCaller{StaffAuthority: identity.StaffAuthority{
+		RoleID: "int-test-role", Tier: identity.TierFrontline,
+		Scope: identity.ScopeBranch, Branches: []string{home},
+	}}
+	global := guards.StaffCaller{StaffAuthority: identity.StaffAuthority{
+		RoleID: "int-test-role", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal,
+	}}
+
+	// Same-branch caller: their branch's rows plus the branch-less coarse row, never the other
+	// branch's. Two rows, the home edit and the coarse POST.
+	got, code := call(scoped, "order", shared)
+	if code != http.StatusOK {
+		t.Fatalf("scoped caller: status %d, want 200", code)
+	}
+	if len(got) != 2 {
+		t.Errorf("scoped caller got %d rows, want 2 (their branch's edit + the branch-less coarse row): %+v", len(got), got)
+	}
+	for _, e := range got {
+		if e.BranchID == away {
+			t.Errorf("scoped caller leaked the other branch's row: action %q branch %q", e.Action, e.BranchID)
+		}
+	}
+
+	// Global caller: the full trail, all three rows.
+	got, code = call(global, "order", shared)
+	if code != http.StatusOK {
+		t.Fatalf("global caller: status %d, want 200", code)
+	}
+	if len(got) != 3 {
+		t.Errorf("global caller got %d rows, want 3 (the full cross-branch trail): %+v", len(got), got)
+	}
+
+	// Fully out-of-branch read: an empty trail answers, never a refusal and never the rows.
+	got, code = call(scoped, "order", awayOnly)
+	if code != http.StatusOK {
+		t.Fatalf("out-of-branch read: status %d, want 200 with an empty trail", code)
+	}
+	if len(got) != 0 {
+		t.Errorf("out-of-branch read returned %d rows, want 0 (empty trail, never the other branch's)", len(got))
+	}
+
+	// The round 1 gap, both ways: an UNSTAMPED price-edit row (the production shape, no branch on
+	// the row itself) is held by the entity gate alone. The away-owned entity leaks nothing to the
+	// granted caller, and the home-owned one still serves its own branch's operator.
+	got, code = call(scoped, "order", unstampedAway)
+	if code != http.StatusOK {
+		t.Fatalf("unstamped away read: status %d, want 200 with an empty trail", code)
+	}
+	if len(got) != 0 {
+		t.Errorf("unstamped away read returned %d rows, want 0 (the entity gate holds the branch-less row): %+v", len(got), got)
+	}
+	got, code = call(scoped, "order", unstampedHome)
+	if code != http.StatusOK {
+		t.Fatalf("unstamped home read: status %d, want 200", code)
+	}
+	if len(got) != 1 {
+		t.Errorf("unstamped home read returned %d rows, want 1 (their own branch's branch-less trail)", len(got))
+	}
+
+	// An entity type with no resolver: the scoped caller is answered an empty trail even though the
+	// row exists and carries no branch; the global caller still reads it.
+	got, code = call(scoped, "payment", unresolvedType)
+	if code != http.StatusOK {
+		t.Fatalf("unresolved type read: status %d, want 200 with an empty trail", code)
+	}
+	if len(got) != 0 {
+		t.Errorf("unresolved type read returned %d rows, want 0 (fail closed without a resolver)", len(got))
+	}
+	got, code = call(global, "payment", unresolvedType)
+	if code != http.StatusOK {
+		t.Fatalf("unresolved type, global: status %d, want 200", code)
+	}
+	if len(got) != 1 {
+		t.Errorf("unresolved type, global: got %d rows, want 1 (the global authority keeps the full trail)", len(got))
 	}
 }
