@@ -142,13 +142,16 @@ func (a posRestockAdapter) RestockForReturnTx(ctx context.Context, tx pgx.Tx, in
 	})
 }
 
-// posCardRefunderAdapter satisfies pos.CardRefunder over payment.Service.Refund, the creds-free
+// posCardRefunderAdapter satisfies pos.CardRefunder over payment.Service.RefundTx, the creds-free
 // reversal rail (the cardChargerAdapter mirror): pos passes the ORIGINAL capture's gateway_ref and gets
-// the reversal's own processor ref back; creds stay inside RUN-PAY.
+// the reversal's own processor ref back; creds stay inside RUN-PAY. The pos Return transaction passes
+// STRAIGHT THROUGH: the config read and the rotation write-back ride the caller's transaction, the only
+// shape inside a transaction that holds a connection and the per-sale lock, where a pool read would
+// deadlock a full pool of Return waiters needing the holder's lock.
 type posCardRefunderAdapter struct{ svc *payment.Service }
 
-func (a posCardRefunderAdapter) RefundCard(ctx context.Context, gatewayRef string, amountCents int64, reference, idempotencyKey string) (string, error) {
-	rcpt, err := a.svc.Refund(ctx, payment.RefundInput{
+func (a posCardRefunderAdapter) RefundCard(ctx context.Context, tx pgx.Tx, gatewayRef string, amountCents int64, reference, idempotencyKey string) (string, error) {
+	rcpt, err := a.svc.RefundTx(ctx, tx, payment.RefundInput{
 		AmountCents:    amountCents,
 		ProcessorRef:   gatewayRef,
 		Reference:      reference,

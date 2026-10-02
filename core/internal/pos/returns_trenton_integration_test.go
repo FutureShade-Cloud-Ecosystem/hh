@@ -68,6 +68,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -123,10 +124,12 @@ func newSaleKeys() saleKeys {
 	return saleKeys{trenton: next(), kingston: next(), small: next(), manager: next(), tiny: next()}
 }
 
-// countingCards is the card rail the refusals must never reach.
+// countingCards is the card rail the refusals must never reach. The tx
+// parameter is the CardRefunder seam's discipline: the rail rides the
+// caller's Return transaction, and this fake does nothing with it but count.
 type countingCards struct{ calls int }
 
-func (c *countingCards) RefundCard(context.Context, string, int64, string, string) (string, error) {
+func (c *countingCards) RefundCard(context.Context, pgx.Tx, string, int64, string, string) (string, error) {
 	c.calls++
 	return "rp_should_never_happen", nil
 }
@@ -294,6 +297,15 @@ func newTrentonStack(t *testing.T) *trentonStack {
 // DSN to prove the return path never needs a second connection while a
 // Return transaction holds one.
 func newTrentonStackOnPool(t *testing.T, pool *pgxpool.Pool) *trentonStack {
+	return newTrentonStackOnPoolWithRail(t, pool, nil)
+}
+
+// newTrentonStackOnPoolWithRail is newTrentonStackOnPool with the card rail
+// the caller chooses: nil keeps the rig's counting fake (the wall legs'
+// rail, counted through s.cards), a non-nil rail is wired in its place and
+// no counting fake is built at all, so s.cards keeps its one meaning: the
+// fake the rig wired, nil when another rail rides instead.
+func newTrentonStackOnPoolWithRail(t *testing.T, pool *pgxpool.Pool, rail CardRefunder) *trentonStack {
 	t.Helper()
 	buildWorld(t, pool)
 	ctx := context.Background()
@@ -334,7 +346,11 @@ func newTrentonStackOnPool(t *testing.T, pool *pgxpool.Pool) *trentonStack {
 	if err != nil {
 		t.Fatalf("roleconfig.Default: %v", err)
 	}
-	cards := &countingCards{}
+	var cards *countingCards
+	if rail == nil {
+		cards = &countingCards{}
+		rail = cards
+	}
 	cat := product.NewService(product.NewRepository(pool))
 	priceSvc := pricing.NewService(pricing.NewRepository(pool)).
 		WithCategoryResolver(cat).
@@ -346,7 +362,7 @@ func newTrentonStackOnPool(t *testing.T, pool *pgxpool.Pool) *trentonStack {
 		WithLineResolver(priceSvc).
 		WithTenderTaker(tillSvc).
 		WithCreditGate(NewIdentityCreditGate()).
-		WithCardRefunder(cards).
+		WithCardRefunder(rail).
 		WithAudit(auditSvc).
 		WithRoleConfig(cfg).
 		WithApproverSource(g).
