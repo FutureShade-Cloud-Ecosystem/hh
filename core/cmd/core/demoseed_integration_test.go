@@ -11,7 +11,7 @@
 // the result meaningless.
 //
 //	Run: DATABASE_URL='postgres://hardscape:hardscape@127.0.0.1:5432/hardscapeos?sslmode=disable' \
-//	     go test -tags integration ./cmd/demoseed/... -count=1
+//	     go test -tags integration ./cmd/core/ -count=1
 package main
 
 import (
@@ -436,7 +436,7 @@ func freshMigratedDB(t *testing.T, suffix string) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 
-	files, err := filepath.Glob(filepath.Join("..", "..", "migrations", "*.sql"))
+	files, err := filepath.Glob(filepath.Join("..", "..", "db", "migrations", "*.sql"))
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no migrations found (err=%v)", err)
 	}

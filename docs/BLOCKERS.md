@@ -1079,6 +1079,191 @@ the assertions stop pinning the human title, or the seed carries it.
 Recorded so the HH-179 checks can be read honestly: every other test in
 the reporting integration suite passes on the HH-179 branch.
 
+## HH hardening, defect HH-191: the integration tag suite's recorded-red packages, what ci cannot run yet (each with its verified failure against a freshly built database)
+
+HH-191 puts the integration tag suite into ci. Four of the suite's
+breaks are fixed on the HH-191 branch (the demoseed composition
+fixture's migration glob, the printing receipt legs' dropped LineInput
+field, the reporting surface legs' seeded-title pins, and the warranty
+seed-coherence legs' migration path, the same fold break as the
+composition fixture's). Running the rest of the suite against the
+databases this repository's own commands build (cmd/core migrate, then
+cmd/core seed for the module gate; migrate alone for the composition
+gate) leaves the eight packages below red on main and on the HH-191
+branch alike: none of it is HH-191's change, all of it predates the
+suite entering ci, which is the defect's own point. The new integration
+job runs the suite over everything else and leaves exactly these
+packages out, each named in the job's test step. A fix owner takes the
+package, lands the fix, and drops the package's line from the job.
+
+- internal/billing, TestIntegration_Billing_ListInvoices_TenantFenceFilterAndPaging
+  (repository_integration_test.go:211). The invoice list's cursor
+  predicate is the row comparison (issue_date, invoice_no) <
+  (cursor_date, cursor_no), whose tiebreak direction contradicts the
+  ordering the same query documents (issue_date DESC, invoice_no ASC):
+  on the cursor's own date the comparison keeps only invoice_no values
+  BELOW the cursor's, so the walk silently drops every later invoice_no
+  on that date and hands back the older date's row (the failing page
+  returns F2 where F1 is wanted). Proven with two rows in psql: the
+  shipped predicate returns the older row alone; the direction-correct
+  keyset (issue_date < cursor, or issue_date = cursor and invoice_no >
+  cursor) returns both, in order. A production fix in the billing
+  repository, so it stays with the owning lane rather than riding a
+  ci-defect branch.
+- internal/compliance, TestIntegration_Compliance_HTTPSurface_ServesAndIsManagerGated
+  (calendar_integration_test.go:267): every request answers 401
+  "Missing or invalid credentials". The suite wires the kit's real
+  Guards (testkit.NewStaffGuards plus SetAuthority) but never mints or
+  sends the bearer the gate requires (sg.Bearer and the Authorization
+  header); the guards-swap fold's shape, which these legs were never
+  re-run against.
+- internal/dispatch, the wire fence and freight-raise legs
+  (integration_test.go, freightraise_integration_test.go): the same
+  bearer-less 401 class (testMux wires the kit's Guards and a
+  UserLinker but sends no Authorization header), so legs asserting 403,
+  404 and 200 all read 401.
+- internal/gl, TestIntegration_ListJournals_SourceRefID_HandlerGate
+  (handler_sourcerefid_live_integration_test.go:90): the filtered page
+  carries the one matching journal while the envelope reports total=0;
+  the count and the page disagree about the source_ref_id filter.
+- internal/messaging, TestIntegration_PaymentFacts_ResolveTheOrderThroughAllocations
+  (payment_rules_integration_test.go:215): the assertion wants branch
+  names that read as cities, while migration 0003 plants the dealer
+  display names (the city inside a longer company name), so the pinned
+  shape cannot hold on any database built from this repository's
+  migrations. The same family as the reporting seeded-title pins (the
+  HH-179 entry above): either the assertion pins what 0003 plants, or
+  the seed carries the city names; the owning lane's call.
+- internal/assist/adapters, TestIntegration_AScopedUserCannotReachAnotherBranch
+  (integration_test.go:274): the same family and the same migration
+  0003 names: the stock lookup's branch row is asserted against the
+  city-shaped name.
+- internal/sync, the gap and tie-out legs (gap_scopes_integration_test.go,
+  bistrack_tieout_demo_seed_integration_test.go): the BisTrack tie-out
+  wants its own demo world's ERP side (every account reads zero against
+  the BisTrack figures on the shared gate), and the gap legs' shape
+  assertions read rows beyond their own (23 keyed payment rows where
+  the leg wants exactly its one). The suite wants a scratch world of
+  its own rather than the shared migrated-and-seeded gate; the owning
+  lane shapes it.
+- internal/tour, the surface legs (integration_test.go:191, 340, 406,
+  469): every call answers 503 with "authorization dependencies
+  unavailable", and the off-state GET answers 503 where 200 is wanted;
+  the tour surface's authorization dependencies and on-state are not
+  wired by the harness the way the assertions expect.
+
+Two working notes for the owners, both observed while proving the job.
+First, a dozen module suites' fixtures read the catalogue, branches and
+users the seed role plants, so any gate database for this suite must be
+migrated and then seeded (plainly migrated databases fail or skip those
+suites). Second, in the unscoped run the composition kit's fixture
+branches (FXNA, FXNB, FXSA) were left on the shared module gate after
+the red packages' legs ran, and internal/inventory's four-bucket test
+(a branch with no stock must still appear) counted five branches where
+it wants the two the migrations plant; with the recorded-red packages
+out of the run the bleed is gone and inventory is green. Which red
+package's cleanup discards the error is not pinned down here; it is
+part of the bearer-class repairs above.
+
+## HH hardening, HH-191 round 2: corrections to the recorded-red entry above, from its review
+
+The round 1 review of the HH-191 pull request re-ran all eight packages
+against a database built the way the integration job builds it. Three of
+the entry's diagnoses above are wrong or incomplete, and an owner working
+from them would mis-repair. This append corrects the record; the entry
+above is never edited.
+
+- The BisTrack tie-out leg named under internal/sync is internal/gl's
+  failure: bistrack_tieout_demo_seed_integration_test.go lives in
+  core/internal/gl. The gl package carries TWO red tests, the recorded
+  filtered-page one (handler_sourcerefid_live_integration_test.go:90,
+  total=0 while the page carries the matching journal) and the tie-out
+  (bistrack_tieout_demo_seed_integration_test.go:72). Fixing only the
+  recorded one and dropping the gl line turns the integration job red.
+- The dispatch diagnosis above says every leg reads the bearer-less 401.
+  That covers the fence legs, but the three freight-raise legs read 403
+  with a bearer present (freightraise_integration_test.go:464, 483, 535;
+  a general manager is refused where the leg expects admission), a second
+  cause the bearer repair will not close, and two further legs die at
+  setup with "testMux needs a staff-stamped context"
+  (integration_test.go:715, 1000). The dispatch owner inherits three
+  classes, not one.
+- The sync package is red only in suite order. Standalone on a fresh
+  job-shaped gate it passes (61 legs, on a used and on a fresh gate
+  alike); inside the job's full run it fails the gap legs
+  (gap_scopes_integration_test.go:753, 23 keyed payment rows where the
+  leg wants exactly its one, and the walkthrough leg with it). An owner
+  reproducing standalone will see green; reproduce inside a full run of
+  the job's shape, or believe the entry and waste the work.
+
+## HH hardening, HH-191 round 3: the round 2 correction above, corrected (four verified runs)
+
+The round 2 review ran sync four ways and the clause above is wrong in
+one part, which this append corrects (the entry and the round 2 append
+stand untouched):
+
+- The "on a used and on a fresh gate alike" claim is false for a gate
+  used by the job's own scoped run. On such a gate standalone sync is
+  RED with the same 23-row failure (59 pass); it is green only on a
+  gate that sync alone has used, fresh or reused. The stray payment rows
+  (24 rows counted after the scoped run) are left by packages INSIDE
+  the green scoped set, not by the red packages and not by suite order
+  as such. An owner reproducing on the job's own gate after a green run
+  will see red for the same reason the job does.
+- The full unscoped run's failure list is longer than the round 2
+  append says: TestGapPaymentsLegs (gap_scopes_integration_test.go:753)
+  and the walkthrough leg (:878), and TestGapInvoicesLegs (:519) with
+  them.
+- The dispatch freight-raise 403s do not go through a bearer: those
+  legs send no HTTP request at all. The harness
+  (freightraise_integration_test.go:177) calls identity.DecideApproval
+  directly and maps the error to a status, so "read 403 with a bearer
+  present" above misstates the mechanism. The conclusion stands: a
+  second cause the bearer repair will not close.
+
+
+## HH hardening, defect HH-186: the shared dev instance's migration ledger holds a numbering epoch that diverges from main (recorded, D39 territory)
+
+The dev Postgres instance the lane was given (the default DATABASE_URL in
+core/internal/config, the hardscapeos database on the local port 5435)
+carries a schema_migrations ledger from a numbering epoch that differs
+from current main's chain: its rows name a_saved_sort at 0213,
+purchasing_delivery_method at 0214 and pos_counter_layout at 0220, where
+main's chain numbers the same content 0216, 0217 and 0223, and the
+epoch's ledger has no rows for main's 0214_new_entities_and_pricing or
+0215_identity_audit. Because the ledger is keyed by whole filename, a
+migrate run from current main against that instance applies main's
+0214, 0215 and 0216 for real and then fails at main's 0217 with
+"column delivery_method of relation purchasing_pos already exists" (the
+epoch's own 0214 added it). One such run happened from the HH-186
+worktree before the divergence was understood: the instance now also
+records main's 0214 through 0216 in its ledger, 0215 having inserted its
+staff_role and contractor role-map rows. The instance's schema content
+matches its objects either way; no production system and no scratch
+database of this lane was affected (HH-186's own integration legs run
+against a scratch database built from main's chain, which migrates
+cleanly end to end). D39 already assigns the two runners'
+applied-history mechanisms to HH-3.7 to report before HH-5; this entry
+records that the shared dev instance is itself the live example, and
+that rebuilding it from main's chain (rather than patching its ledger)
+is the clean remedy. Lane work should keep using scratch databases.
+
+## HH hardening, HH-186 round 2: the incident's cause, named after the review (the entry above stands)
+
+The round 1 review is right that the entry above records the damage and
+the remedy but not the cause, and the cause is the recurring trap: the
+run set CORE_DATABASE_URL and called the migrate role, which reads
+DATABASE_URL (core/cmd/core/roles_oneshot.go, through the config default
+at core/internal/config/config.go), so the variable the operator set was
+never read and the shared default stood in silently. Nothing refused,
+nothing logged a different target than the one hit: the migrate role does
+not print its target, so the first visible failure is the migration
+error on someone else's ledger. This is defect HH-199's exact class (the
+two names for the database URL), and the trap will recur until that
+defect's fix lands: one-shot roles reading CORE_DATABASE_URL with no
+default and refusing when unset. Until then: always export DATABASE_URL,
+never only CORE_DATABASE_URL, when running the migrate or seed roles
+by hand, and give them a scratch database's URL in full.
 ## HH hardening, HH-180 (audit reopen fence): entity types without an owner resolver fail closed on the reopen route
 
 The reopen route `GET /api/v1/audit/transaction/{entityType}/{entityId}` fences a scoped caller
