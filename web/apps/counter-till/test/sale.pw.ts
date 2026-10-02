@@ -805,6 +805,10 @@ test("the split state is a status band, not a disabled button", async ({ page })
   const band = page.getByTestId("cta-split-state");
   await expect(band).toBeVisible();
   await expect(band).toContainText("Split: compose the legs below");
+  // The explanation is visible text, not a hover title only.
+  await expect(page.getByTestId("cta-split-why")).toBeVisible();
+  await expect(page.getByTestId("cta-split-why")).toContainText("legs must add up");
+  await expect(band).not.toHaveAttribute("title", /.*/);
   // A statement, not a control: no button, no disabled state to fake.
   expect(await band.evaluate((el) => el.tagName)).not.toBe("BUTTON");
   await expect(band).toHaveAttribute("role", "status");
@@ -1110,6 +1114,7 @@ test("the margin eye keeps one name with aria-pressed, and hover does not look p
   await expect(eye).toBeVisible();
   await expect(eye).toHaveAttribute("aria-label", "Hide margin and est. profit");
   await expect(eye).toHaveAttribute("aria-pressed", "false");
+  await expect(eye).toHaveAttribute("title", /^Hide margin/);
   const bg = () => eye.evaluate((el) => getComputedStyle(el).backgroundColor);
   await eye.hover();
   const hovered = await bg();
@@ -1117,6 +1122,8 @@ test("the margin eye keeps one name with aria-pressed, and hover does not look p
   await expect(eye).toHaveAttribute("aria-pressed", "true");
   // The name does not flip against the state (a pressed "Show margin" would read backwards).
   await expect(eye).toHaveAttribute("aria-label", "Hide margin and est. profit");
+  // The hover title follows the state: pressed means hidden, so it says how to show.
+  await expect(eye).toHaveAttribute("title", /hidden: press to show/);
   await page.mouse.move(0, 0);
   expect(await bg()).not.toBe(hovered);
 });

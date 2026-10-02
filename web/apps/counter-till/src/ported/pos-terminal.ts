@@ -1725,6 +1725,12 @@ export class HosPosTerminal extends LitElement {
       padding: 14px 10px;
       text-align: center;
     }
+    .split-band .band-why {
+      display: block;
+      margin-top: 4px;
+      font-size: 12px;
+      font-weight: 400;
+    }
     /* UNION-TRAIN11 · the counter's pay key worn as a keycap on the CTA (see payKeycap()).
        Gold-on-gold: the chip borrows the CTA's own ink (D-078: the ONLY ink gold may carry), so
        every CTA state (hover included) keeps the pair legal with zero new colours. */
@@ -5554,9 +5560,11 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                   class="split-band"
                   role="status"
                   data-testid="cta-split-state"
-                  title="A split is composed before it is committed: the legs must add up first, and the panel below rings it."
                 >
                   Split: compose the legs below
+                  <span class="band-why" data-testid="cta-split-why"
+                    >The legs must add up to the total first; the panel below rings the split.</span
+                  >
                 </p>`}
 
           ${this.showSplit
@@ -5854,7 +5862,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
                 class="eye"
                 data-testid="margin-eye"
                 aria-pressed=${this.wsMarginHidden ? 'true' : 'false'}
-                title="Hide margin and est. profit (counter privacy)"
+                title=${this.wsMarginHidden ? 'Margin and est. profit are hidden: press to show them (counter privacy)' : 'Hide margin and est. profit (counter privacy)'}
                 aria-label="Hide margin and est. profit"
                 @click=${() => this.wsToggleMarginHidden()}
               >
