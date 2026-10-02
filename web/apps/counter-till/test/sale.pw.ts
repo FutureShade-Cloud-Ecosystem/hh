@@ -2003,6 +2003,59 @@ test("a discard inside the open parked dialog moves the button's count while the
   ).toBeVisible({ timeout: 10_000 });
 });
 
+test("a failed reload's error banner does not outlive the next good reload", async ({ page }) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  // Park once with the dialog closed, then put one line back on the counter:
+  // the second park lands under the open dialog (F9 parks through the rail),
+  // and the third needs its own line, scanned straight onto the counter while
+  // the rail is up (the scan box adds on an exact sku's Enter, no pick click,
+  // so nothing under the rail's scrim needs a click).
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  await searchAndAdd(page, "edge", "Edge Restraint 8 ft");
+
+  // Refuse exactly the read the first park under the dialog triggers (the
+  // host's convergence reload, the dialog's open read and the count read
+  // answering before it); every later read answers.
+  let reads = 0;
+  await page.route((url) => url.pathname === "/api/v1/pos/parked", async (route) => {
+    if (route.request().method() === "GET") {
+      reads += 1;
+      if (reads === 3) {
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "reload refused once" }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+
+  // The park lands, the host's reload read is refused: the banner is up.
+  await page.keyboard.press("F9");
+  const banner = parkedDialog.locator(".banner.bad");
+  await expect(banner).toBeVisible({ timeout: 10_000 });
+  await expect(banner).toContainText("parked 500");
+
+  // Scan one more line onto the counter and park again under the open rail:
+  // this reload answers. The banner the refused read raised must not outlive
+  // the good one, and the rail stays open and honest underneath it.
+  const field = page.getByTestId("pos-scan-input");
+  await field.fill("EDG-08");
+  await field.press("Enter");
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Edge Restraint 8 ft" })).toHaveCount(1);
+  await page.keyboard.press("F9");
+  await expect(banner).toBeHidden({ timeout: 10_000 });
+  await expect(parkedDialog).toBeVisible();
+});
+
 test("the top bar is on the till's compact scale: about 48px, small chrome buttons, the banner on one line", async ({
   page,
 }) => {

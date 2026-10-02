@@ -50,6 +50,11 @@ export class HosPosParked extends LitElement {
   @state() private tickets: ParkedTicket[] = [];
   @state() private busyId = '';
   @state() private error = '';
+  // A read's own failure, kept apart from `error` (the word a resume or a
+  // discard has to say): a failed read must raise its banner, a good read
+  // must lower it, and neither side may erase or be erased by the other.
+  // Both speak through the same role="alert" strip, the action's word first.
+  @state() private loadError = '';
   // Ordering guard for the reads below. Two reads of one open dialog are
   // routinely in flight at once (the open read and a host triggered reload
   // that lands under it), so whichever read resolves last may be the stale
@@ -204,10 +209,15 @@ export class HosPosParked extends LitElement {
     const token = ++this.readSeq;
     try {
       const tickets = await listParked(this.branchId);
-      if (token === this.readSeq) this.tickets = tickets;
+      if (token === this.readSeq) {
+        this.tickets = tickets;
+        // A good read lowers its own failure's word: the banner a refused
+        // reload raised must not outlive the reload that answered.
+        this.loadError = '';
+      }
     } catch (e) {
       if (token === this.readSeq) {
-        this.error = e instanceof Error ? e.message : 'failed to load parked tickets';
+        this.loadError = e instanceof Error ? e.message : 'failed to load parked tickets';
       }
     }
   }
@@ -268,7 +278,9 @@ export class HosPosParked extends LitElement {
       <div class="card">
         <h2>Parked tickets</h2>
         <p class="sub">Saved carts for this branch: resumed lines re-price live through the engine.</p>
-        ${this.error ? html`<div class="banner bad" role="alert">${this.error}</div>` : nothing}
+        ${(this.error || this.loadError)
+          ? html`<div class="banner bad" role="alert">${this.error || this.loadError}</div>`
+          : nothing}
         ${this.tickets.length === 0
           ? html`<div class="empty">No parked tickets.</div>`
           : this.tickets.map((t) => {
