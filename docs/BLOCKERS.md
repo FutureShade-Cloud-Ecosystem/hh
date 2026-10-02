@@ -1093,3 +1093,14 @@ any staffer could read them through the route, and the pos_policy and ar_policy 
 branch-less besides. The durable fix is the semantic writers stamping `branch_id` on their rows
 (roughly 55 sites across modules, pos and till included), which is not this lane's to make: pos
 and till are the Counter Till lane's.
+## HH hardening, HH-181 (PO send replay): go vet with the integration tag fails on main outside this lane's Touches
+
+`go vet -tags integration ./...` fails on a clean checkout of origin/main at
+4f08060 and keeps failing with this lane's commits applied:
+`core/internal/printing/receipt_integration_test.go` names `CostCents` on
+`pos.LineInput`, a field that struct no longer carries. The untagged
+`go vet ./...` passes because the integration build excludes that file.
+`core/internal/pos/` and the printing integration test are outside this lane's
+declared Touches, so the break is recorded here for the owning lane; the same
+command is one of this lane's exit checks and cannot pass repository-wide
+until the field mismatch is reconciled.

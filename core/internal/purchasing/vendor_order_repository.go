@@ -245,10 +245,12 @@ func scanPOSend(row pgx.Row) (POSend, error) {
 }
 
 // InsertPOSend writes the send row BEFORE the transport is called. See SendPO for why the order is
-// not negotiable.
-func (r *Repository) InsertPOSend(ctx context.Context, in POSend, actorID string) (POSend, error) {
+// not negotiable. The second return says whether the row is a REPLAY (the loser of two concurrent
+// first sends of one order): a replay inserted nothing and the caller must answer it as the serial
+// replay, skipping the transport, the mark and the po.sent record.
+func (r *Repository) InsertPOSend(ctx context.Context, in POSend, actorID string) (POSend, bool, error) {
 	if r.pool == nil {
-		return POSend{}, errNoDB
+		return POSend{}, false, errNoDB
 	}
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO purchasing_po_sends
@@ -259,10 +261,27 @@ func (r *Repository) InsertPOSend(ctx context.Context, in POSend, actorID string
 		in.POID, in.Channel, in.Recipient, in.RecipientKind, in.FallbackReason,
 		in.Status, in.Provider, in.DocumentName, in.DocumentBytes, in.IdempotencyKey, actorID)
 	out, err := scanPOSend(row)
-	if err != nil {
-		return POSend{}, fmt.Errorf("purchasing: record po send: %w", err)
+	// The key index is GLOBAL, so this violation means the key is held by another order's send, with
+	// one exception (HH-181 round 2): two concurrent FIRST sends of ONE order, the double click this
+	// route exists for, can both miss the replay read, and the loser's insert loses the race for the
+	// key. Re-read scoped to THIS order before claiming anything: the winner's row found here is the
+	// replay a serial retry would have gotten, a read that comes back empty is the cross-order
+	// collision the 409 names, and a read that itself failed is returned, never guessed past.
+	if isUniqueViolation(err) {
+		prior, found, rerr := r.FindPOSendByKey(ctx, in.IdempotencyKey, in.POID)
+		if rerr != nil {
+			return POSend{}, false, rerr
+		}
+		if found {
+			return prior, true, nil
+		}
+		return POSend{}, false, conflict("purchasing: idempotency key %q already belongs to a send for another order, a new order needs a new key",
+			in.IdempotencyKey)
 	}
-	return out, nil
+	if err != nil {
+		return POSend{}, false, fmt.Errorf("purchasing: record po send: %w", err)
+	}
+	return out, false, nil
 }
 
 // MarkPOSendResult finalises the row with what the transport said. On this deployment that is
@@ -280,8 +299,10 @@ func (r *Repository) MarkPOSendResult(ctx context.Context, id, status, provider,
 	return nil
 }
 
-// FindPOSendByKey is the idempotency read: an identical retry reuses its row.
-func (r *Repository) FindPOSendByKey(ctx context.Context, key string) (POSend, bool, error) {
+// FindPOSendByKey is the idempotency read: an identical retry reuses its row. The read is keyed to THIS
+// order because the key index is global (one idempotency key, one send, across every order), so a key
+// held by another order is a collision the insert refuses, not a replay this read may hand back.
+func (r *Repository) FindPOSendByKey(ctx context.Context, key, poID string) (POSend, bool, error) {
 	if r.pool == nil {
 		return POSend{}, false, errNoDB
 	}
@@ -289,7 +310,7 @@ func (r *Repository) FindPOSendByKey(ctx context.Context, key string) (POSend, b
 		return POSend{}, false, nil
 	}
 	out, err := scanPOSend(r.pool.QueryRow(ctx,
-		`SELECT `+poSendCols+` FROM purchasing_po_sends WHERE idempotency_key = $1`, key))
+		`SELECT `+poSendCols+` FROM purchasing_po_sends WHERE idempotency_key = $1 AND po_id = $2::uuid`, key, poID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return POSend{}, false, nil
 	}
