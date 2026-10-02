@@ -367,3 +367,25 @@ for (const scheme of ["dark", "light"] as const) {
     expect(read.onCard).toBeGreaterThanOrEqual(3);
   });
 }
+
+// The one disabled rule in both themes: no fill, no fade (grey ink on a transparent button), on the
+// returns desk's Find sale and the Items step's Add, the two controls that wore a fill or a fade.
+for (const scheme of ["dark", "light"] as const) {
+  test(`disabled Find sale and Add share the till's disabled rule (${scheme})`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await signIn(page, "Sales");
+    const find = page.getByRole("button", { name: "Find sale" });
+    await expect(find).toBeDisabled();
+    const head = page.getByTestId("step-head-items");
+    if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
+    const add = page.getByRole("button", { name: "Add", exact: true });
+    await expect(add).toBeDisabled();
+    for (const button of [find, add]) {
+      const shape = await button.evaluate((node) => {
+        const style = getComputedStyle(node);
+        return { background: style.backgroundColor, opacity: style.opacity, cursor: style.cursor };
+      });
+      expect(shape).toEqual({ background: "rgba(0, 0, 0, 0)", opacity: "1", cursor: "not-allowed" });
+    }
+  });
+}

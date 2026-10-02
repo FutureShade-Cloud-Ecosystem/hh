@@ -158,9 +158,15 @@ export class HosPosScanBox extends LitElement {
         border-color: var(--hos-stone-amber);
         color: var(--hos-stone-amber-text);
       }
-      button:disabled {
-        opacity: 0.5;
-        cursor: default;
+      /* UI-3 (visual NOTE 4): the one disabled rule, as the Complete sale button's: no fill, grey
+         ink and line, no fade. The primary posture (gold fill) must drop its fill too. */
+      button:disabled,
+      button.primary:disabled {
+        background: transparent;
+        border-color: var(--hos-line);
+        color: var(--hos-text-dim);
+        opacity: 1;
+        cursor: not-allowed;
       }
  /* DIB-488: the primary-add posture: brand gold FILL carrying ONLY the near-black gold ink
          (the D-078 gold rule), hover to the gold hover fill. Same ink on hover: the fill family

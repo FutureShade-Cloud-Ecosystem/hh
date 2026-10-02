@@ -55,6 +55,16 @@ export const returnsStyles = css`
   .returns .btn-secondary {
     font-size: 13px;
   }
+  /* UI-3 (visual NOTE 4): the one disabled rule the till uses (Complete sale): no fill, grey ink
+     and line, no fade, in both themes; not the design system's pale fill. */
+  .returns button:disabled,
+  .returns button:disabled:hover {
+    background: transparent;
+    border-color: var(--hos-line);
+    color: var(--hos-text-dim);
+    opacity: 1;
+    cursor: not-allowed;
+  }
   .find-row {
     display: flex;
     align-items: end;
