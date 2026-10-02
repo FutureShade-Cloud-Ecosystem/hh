@@ -350,17 +350,20 @@ func (s *Service) RunArtefact(ctx context.Context, id string) (Run, error) {
 // artefactScopes returns the BRANCH SCOPE of the data an artefact carries, as a set the reader must
 // be inside entirely. It is deliberately not run.BranchID (the print branch, see RunArtefact):
 //
-//	TEMPLATE    the report's own branch parameter, params.branch_id. Empty or absent is the
-//	            consolidated report, the whole company's numbers.
-//	COMMISSION  the artefact row names no period id; params carries the (rep, window) linkage its
-//	            print rendered and nothing else, so the scope is the branches of every frozen period
-//	            that linkage matches. The same window can be frozen more than once (branch scoped and
-//	            consolidated), the row cannot say which one it rendered, and the reader has to be
-//	            inside all of them. No match at all (the periods are gone) is the genuinely
-//	            underivable case and reads as consolidated: global only, fail closed.
+//	STAMPED     params.branch_id, for a TEMPLATE artefact (the report's own branch parameter, empty
+//	            or absent meaning the consolidated report) and for a COMMISSION artefact printed
+//	            since the stamp exists (the period's own branch, empty meaning the consolidated
+//	            period). The stamp is the artefact's own claim of what it holds, so a twin freeze of
+//	            the same rep and window elsewhere changes nothing.
+//	UNSTAMPED   a COMMISSION artefact printed before the stamp exists carries only the
+//	            (rep, window) linkage, no period id, so the scope is the branches of every frozen
+//	            period the linkage matches and the reader must be inside all of them; no match at
+//	            all (the periods are gone) is the genuinely underivable case and reads as
+//	            consolidated: global only, fail closed.
 func (s *Service) artefactScopes(ctx context.Context, run Run) ([]string, error) {
-	if run.Kind != RunKindCommission {
-		return []string{run.Params["branch_id"]}, nil
+	branch, stamped := run.Params["branch_id"]
+	if stamped || run.Kind != RunKindCommission {
+		return []string{branch}, nil
 	}
 	return s.repo.CommissionArtefactScopes(ctx,
 		run.Params["rep_user_id"], run.Params["period_start"], run.Params["period_end"])

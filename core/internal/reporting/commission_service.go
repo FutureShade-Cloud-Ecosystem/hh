@@ -315,6 +315,16 @@ func (s *Service) PrintCommissionRun(ctx context.Context, id, printBranchID stri
 	body = strings.Replace(body, "</table>",
 		`</table><p style="margin-top:14px;font-size:11px;color:#444">`+AccrualNote+`</p>`, 1)
 
+	// The artefact is STAMPED with its period's branch at print time. params is JSONB, so this is a
+	// row-shape change with no migration, and it is what makes the artefact's scope its OWN: the
+	// (rep, window) linkage in params can only say "some period of this rep and window", so once
+	// another branch freezes the same window, an ordinary month-end for a rep who sells at two
+	// branches, the linkage could mean either period and an honest reader's own statement would fall
+	// out of their reach. A stamped artefact answers its stamp; rows printed before the stamp exists
+	// keep the linkage derivation, with its ambiguity, as the fallback. Stamped AFTER renderHTML on
+	// purpose: the printed document is unchanged, the stamp is fence metadata, not copy.
+	res.Params["branch_id"] = p.BranchID
+
 	run, err := s.repo.InsertRunWithPrintJob(ctx, Run{
 		Kind:         RunKindCommission,
 		TemplateCode: "commission_period",

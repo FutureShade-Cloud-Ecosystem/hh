@@ -203,13 +203,17 @@ SELECT id, kind, template_code, params, branch_id::text, row_count, totals, html
 // only the print branch (paper comes out of a printer that lives somewhere, so even a consolidated
 // report is printed AT a branch):
 //
-//	TEMPLATE    params.branch_id is the report's own branch; NULLIF drops the consolidated rows,
-//	            which stay global-only exactly as the single read rules them.
-//	COMMISSION  the row carries no period id, only the (rep, window) linkage in params, so the
-//	            predicate asks the frozen periods that linkage matches: at least one must sit inside
-//	            the reach and none may sit outside it (a consolidated match, branch NULL, is outside
-//	            every reach). No match at all fails the EXISTS and the artefact reads as
-//	            consolidated: global only, fail closed.
+//	STAMPED     params.branch_id is the artefact's own claim of what it holds: the report's own
+//	            branch parameter for a TEMPLATE row, the period's branch for a COMMISSION row
+//	            printed since the stamp exists. The comparison is TEXT against the granted branch
+//	            ids, the exact equality the single read's map lookup performs, so a malformed value
+//	            simply matches nothing instead of erroring the whole list, and an absent or empty
+//	            value (consolidated) matches no grant either.
+//	UNSTAMPED   a COMMISSION row printed before the stamp exists carries only the (rep, window)
+//	            linkage, no period id, so the predicate asks the frozen periods that linkage
+//	            matches: at least one must sit inside the reach and none may sit outside it (a
+//	            consolidated match, branch NULL, is outside every reach). No match at all fails the
+//	            EXISTS and the artefact reads as consolidated: global only, fail closed.
 //
 // A NULL parameter is the global caller's whole list; an empty array answers no rows. This is the
 // same ruling artefactScopes and artefactReadable make for the single read, stated in SQL.
@@ -225,10 +229,10 @@ SELECT r.id, r.kind, r.template_code, COALESCE(t.name, ''), r.params, r.branch_i
        r.row_count, r.totals, r.print_job_id::text, r.run_by::text, r.created_at
   FROM report_runs r
   LEFT JOIN report_templates t ON t.code = r.template_code
- WHERE ($2::uuid[] IS NULL
-    OR (r.kind = 'TEMPLATE'
-        AND NULLIF(r.params->>'branch_id', '')::uuid = ANY($2::uuid[]))
+ WHERE ($2::text[] IS NULL
+    OR (r.params->>'branch_id' = ANY($2::text[]))
     OR (r.kind = 'COMMISSION'
+        AND r.params->>'branch_id' IS NULL
         AND EXISTS (SELECT 1
                       FROM commission_runs cr
                      WHERE cr.rep_user_id = NULLIF(r.params->>'rep_user_id', '')::uuid
