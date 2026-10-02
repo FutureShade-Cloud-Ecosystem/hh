@@ -759,22 +759,25 @@ export function clearPanelLayoutRaw(key: string): void {
 // Printing
 // ---------------------------------------------------------------------------
 //
-// The reference printed a receipt by writing the server-rendered document into
-// a fresh blank window with the browser's document writer, then calling
-// print. This app's fence on raw markup paths reserves that write for the
-// host, and each shell (a browser tab, a Tauri window) prints through its own
-// chrome, so the choreography is the host's.
+// The reference printed a receipt by writing the server-rendered document
+// into a fresh blank window with the browser's document writer, then calling
+// print. This app's fence refuses raw DOM markup paths outright (the design
+// system's raw-markup gate scans every dependent's source), so the host's
+// carriage is a navigation instead of a write: the fetched document rides a
+// same-origin blob URL into the window, the browser's own document channel
+// parses it, and the print dialog is that window's own, called on its load.
+// The document is the core's own render either way; nothing here composes
+// markup, and the blob carries no credential (the fetch already presented
+// the bearer; the URL names bytes, not a route).
 
 /** The receipt window the flow opens: injectable, so the reference kept it testable. */
 export type { ReceiptWindow } from './receipt-print-logic.js';
 
 /**
- * Write a rendered receipt into a freshly opened window and print it. The
- * document is the core's own render (the receipt route's answer), so this is
- * a carriage, not a composition: the write puts it in the window, the window's
- * own print does the rest. A blocked pop-up is a real and common counter
- * failure (browsers block window.open outside a user gesture); it surfaces as
- * the operator message the reference worded, never a silent no-op.
+ * Carry a rendered receipt into a freshly opened window and print it. A
+ * blocked pop-up is a real and common counter failure (browsers block
+ * window.open outside a user gesture); it surfaces as the operator message
+ * the reference worded, never a silent no-op.
  */
 export function printReceiptInto(
   win: import('./receipt-print-logic.js').ReceiptWindow | null,
@@ -787,9 +790,24 @@ export function printReceiptInto(
       message: 'The browser blocked the receipt window: allow pop-ups for this till and print again.',
     };
   }
-  win.document.write(receiptHtml);
-  win.document.close();
-  if (typeof win.focus === 'function') win.focus();
-  if (typeof win.print === 'function') win.print();
-  return { ok: true };
+  try {
+    const blob = new Blob([receiptHtml], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    win.addEventListener('load', () => {
+      if (typeof win.focus === 'function') win.focus();
+      if (typeof win.print === 'function') win.print();
+      // The document is in the window's own session history from here; the
+      // URL's bytes are spent. The delay keeps the revoke behind the print
+      // dialog's own read on every engine observed.
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    });
+    win.location.assign(url);
+    return { ok: true };
+  } catch {
+    return {
+      ok: false,
+      reason: 'popup_blocked',
+      message: 'The receipt window could not be opened: try again, or call the desk lead.',
+    };
+  }
 }

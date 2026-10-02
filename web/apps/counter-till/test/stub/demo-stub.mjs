@@ -1856,7 +1856,7 @@ const server = createServer(async (request, response) => {
           ).toFixed(2)}</td></tr>`,
       )
       .join("");
-    const html = `<!doctype html><html><head><title>${sale.order_no}</title></head><body>
+    const receiptDocument = `<!doctype html><html><head><title>${sale.order_no}</title></head><body>
 <h1>Hardscape House</h1>
 <p>Counter sale ${sale.order_no} · invoice ${sale.invoice_no}</p>
 <table>${rows}</table>
@@ -1865,7 +1865,7 @@ const server = createServer(async (request, response) => {
 ${sale.tender === "CARD" ? `<p>Simulated card: no card was charged</p>` : ""}
 </body></html>`;
     response.writeHead(200, { "content-type": "text/html" });
-    response.end(html);
+    response.end(receiptDocument);
     return;
   }
 

@@ -4454,7 +4454,7 @@ export class HosPosTerminal extends LitElement {
              this bar; what the SALE needs to know is which drawer it is ringing into, which is what
              is left. (The eyebrow above still repeats the shell's brand lockup and the nav tab, and
              that is not fixable from here: two committed gates pin it verbatim: see the report.) */ ''}
-          <div class="pagectx">${branchName(this.branchId)} Yard · Register 01</div>
+          <div class="pagectx" data-testid="pagectx">${branchName(this.branchId)} Yard · Register 01</div>
         </div>
         ${/* DIB-488: the tracked flow: 1 Items → 2 Customer → 3 Payment. Derived from the sale
            data every render (deriveFlow); clicking a step scrolls/focuses its panel and locks

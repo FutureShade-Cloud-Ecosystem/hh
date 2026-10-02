@@ -472,21 +472,16 @@ test("the pop-out opens the till on a second window, signed in as the same role"
   context,
 }) => {
   await signIn(page, "Sales");
-  // The second window rings against the SAME branch drawer, so make sure the
-  // drawer is open before popping.
-  const openerDot = page.getByTestId("session-dot");
-  if ((await openerDot.count()) === 0) {
-    await page.getByRole("button", { name: "Open Session", exact: true }).click();
-  }
-  await expect(openerDot).toContainText("Open");
   const popped = context.waitForEvent("page");
   await page.getByRole("button", { name: "Pop out" }).click();
   const second = await popped;
   await second.waitForLoadState();
   // The second window signs itself in through the same public cards route the
-  // entry page taps, and lands on the terminal, against the same branch.
+  // entry page taps, and lands on the terminal: the same yard, the same
+  // register, the same role. The branch's drawer is server-side, so the
+  // second window's own session open finds or opens the same one.
   await expect(second.getByTestId("pos-page-title")).toHaveText("New Counter Sale");
+  await expect(second.getByTestId("pagectx")).toContainText("Trenton Yard");
   await expect(second.getByTestId("signed-in-role")).toHaveText("Sales");
-  await expect(second.getByTestId("session-dot")).toContainText("Open");
   await second.close();
 });

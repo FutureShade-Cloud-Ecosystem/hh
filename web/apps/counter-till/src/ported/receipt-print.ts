@@ -47,7 +47,7 @@ export async function printReceipt(
   return printReceiptInto(openWindow(), receiptHtml);
 }
 
-/** The default opener: a blank same-origin window the fetched document is written into. */
+/** The default opener: a blank same-origin window the fetched document is navigated into. */
 export function openBlankWindow(): ReceiptWindow | null {
   if (typeof window === 'undefined') return null;
   return window.open('', '_blank') as unknown as ReceiptWindow | null;

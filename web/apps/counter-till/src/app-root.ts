@@ -240,7 +240,9 @@ export class CounterTillApp extends HHElement {
     // would dial).
     const popped = new URLSearchParams(window.location.search).get("popout");
     if (typeof popped === "string" && popped !== "") {
-      void this.#chooseFlow(popped);
+      // The same tap a person would make: the flow table answers first (its
+      // label is the role's name in the chrome), then the flow runs.
+      void this.#loadFlows().then(() => this.#chooseFlow(popped));
     }
   }
 
