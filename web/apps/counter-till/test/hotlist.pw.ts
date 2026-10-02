@@ -46,3 +46,17 @@ test("the browse grid carries the curated category chips and the Favorites chip"
   await expect(page.getByText("Retaining Wall Stone, Standard").first()).toBeVisible();
   await expect(page.getByText("Clear Stone").first()).toHaveCount(0);
 });
+
+// The stub always answers a filled hot list, so the empty note is held by
+// answering the quick-picks read with no items for this one page (the contract's
+// own shape, with the list empty).
+test("with no hot list, the empty note is rendered", async ({ page }) => {
+  await page.route("**/api/v1/pos/quick-picks*", async (route) => {
+    const real = await route.fetch();
+    const body = (await real.json()) as Record<string, unknown>;
+    await route.fulfill({ response: real, json: { ...body, items: [] } });
+  });
+  await signInToItems(page);
+  await expect(page.getByTestId("hot-empty")).toContainText("No hot list yet");
+  await expect(page.getByTestId("hot-group")).toHaveCount(0);
+});

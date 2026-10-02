@@ -2208,9 +2208,12 @@ export class HosPosTerminal extends LitElement {
       border-color: var(--hos-stone-amber);
       color: var(--hos-stone-amber-text);
     }
+    /* One name with aria-pressed (pressed means the margin is hidden). Pressed is a filled tint
+       so a hovered eye (outline only) never reads as pressed; the glyph change carries it too. */
     .saleutil .eye[aria-pressed='true'] {
       border-color: var(--hos-stone-amber);
       color: var(--hos-stone-amber-text);
+      background: color-mix(in srgb, var(--hos-stone-amber) 16%, transparent);
     }
     .util button.clear {
       color: var(--hos-safety-red);
@@ -5815,8 +5818,8 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
                 class="eye"
                 data-testid="margin-eye"
                 aria-pressed=${this.wsMarginHidden ? 'true' : 'false'}
-                title=${this.wsMarginHidden ? 'Show margin and est. profit' : 'Hide margin and est. profit (counter privacy)'}
-                aria-label=${this.wsMarginHidden ? 'Show margin' : 'Hide margin'}
+                title="Hide margin and est. profit (counter privacy)"
+                aria-label="Hide margin and est. profit"
                 @click=${() => this.wsToggleMarginHidden()}
               >
                 ${this.wsMarginHidden

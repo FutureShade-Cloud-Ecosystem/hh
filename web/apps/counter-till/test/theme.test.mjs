@@ -3,7 +3,7 @@
 // sheet is the tokens' own default, so it is the absence of the attribute.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { themeAfter, themeAttribute, themeControlLabel } from "../src/theme.js";
+import { themeAfter, themeAttribute, themeControlLabel, themeStatusText } from "../src/theme.js";
 
 test("the cycle visits Auto, Light and Dark and returns to Auto", () => {
   assert.equal(themeAfter("auto"), "light");
@@ -21,4 +21,10 @@ test("Auto follows the system's light setting; Light and Dark pin it", () => {
 test("the control's name says what is on and what the press brings", () => {
   assert.equal(themeControlLabel("auto"), "Theme: Auto. Press for Light.");
   assert.equal(themeControlLabel("dark"), "Theme: Dark. Press for Auto.");
+});
+
+test("a press announces the state that took effect", () => {
+  assert.equal(themeStatusText("light"), "Theme is now Light.");
+  assert.equal(themeStatusText("dark"), "Theme is now Dark.");
+  assert.equal(themeStatusText("auto"), "Theme is now Auto, following the system.");
 });

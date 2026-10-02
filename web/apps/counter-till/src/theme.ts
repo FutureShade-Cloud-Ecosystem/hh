@@ -43,6 +43,11 @@ export function themeControlLabel(choice: ThemeChoice): string {
   return `Theme: ${THEME_LABEL[choice]}. Press for ${THEME_LABEL[themeAfter(choice)]}.`;
 }
 
+/** The polite status a press announces: the state that took effect. */
+export function themeStatusText(choice: ThemeChoice): string {
+  return choice === "auto" ? "Theme is now Auto, following the system." : `Theme is now ${THEME_LABEL[choice]}.`;
+}
+
 const LIGHT_QUERY = "(prefers-color-scheme: light)";
 
 /** Holds the choice, applies it to the document root, and follows the system while Auto. */

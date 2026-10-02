@@ -37,7 +37,7 @@ import {
   type BranchRef,
 } from "./till-client.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
-import { THEME_LABEL, ThemeController, themeControlLabel } from "./theme.js";
+import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 import { entryStyles, renderEntry, type FlowsState } from "./views/entry.js";
 import { ReturnsFlow } from "./returns/flow.js";
 import { OneTimeCredential } from "./returns/approval.js";
@@ -136,6 +136,8 @@ export class CounterTillApp extends HHElement {
   readonly #tillClient: TillClient;
   /** The theme choice: Auto follows the system, Light and Dark pin it; tab memory only (see theme.ts). */
   readonly #theme = new ThemeController(() => this.requestUpdate());
+  /** What a screen reader hears after a Theme press: focus stays on the button, so the new name is not re-read. */
+  #themeStatus = "";
   #flowsState: FlowsState = { kind: "loading" };
   /** The one flows read this element makes; the pop-out's tap waits for it. */
   #flowsLoaded: Promise<void> = Promise.resolve();
@@ -318,6 +320,7 @@ export class CounterTillApp extends HHElement {
     }
     if (control.getAttribute("data-action") === "theme") {
       this.#theme.cycle();
+      this.#themeStatus = themeStatusText(this.#theme.choice);
     }
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
@@ -521,6 +524,7 @@ export class CounterTillApp extends HHElement {
       this.#surface === "terminal" ||
       (this.#flowsState.kind === "ready" && this.#flowsState.flows.length > 0);
     return html`
+      <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
       ${this.#surface === "terminal"
         ? nothing
         : html`

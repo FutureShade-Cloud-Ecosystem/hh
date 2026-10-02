@@ -958,3 +958,50 @@ test("a sale rung at the till is found by the returns desk right after it commit
   await expect(page.getByTestId("returns").getByText("Holland Stone 60 mm")).toBeVisible();
   await expect(page.getByText("sold 1, returned 0")).toBeVisible();
 });
+
+test("the margin eye keeps one name with aria-pressed, and hover does not look pressed", async ({ page }) => {
+  await signIn(page, "Sales");
+  await ensureSession(page);
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  const eye = page.getByTestId("margin-eye");
+  await expect(eye).toBeVisible();
+  await expect(eye).toHaveAttribute("aria-label", "Hide margin and est. profit");
+  await expect(eye).toHaveAttribute("aria-pressed", "false");
+  const bg = () => eye.evaluate((el) => getComputedStyle(el).backgroundColor);
+  await eye.hover();
+  const hovered = await bg();
+  await eye.click();
+  await expect(eye).toHaveAttribute("aria-pressed", "true");
+  // The name does not flip against the state (a pressed "Show margin" would read backwards).
+  await expect(eye).toHaveAttribute("aria-label", "Hide margin and est. profit");
+  await page.mouse.move(0, 0);
+  expect(await bg()).not.toBe(hovered);
+});
+
+// The COD tile's gate in the UI. The stub always answers COD allowed, so the off side is held by
+// answering the policy read with cod_enabled false for this one page (the contract's own shape).
+test("with COD off by policy, the COD tile reads 'COD: off' and cannot be selected", async ({ page }) => {
+  await page.route("**/api/v1/pos/policy*", async (route) => {
+    const real = await route.fetch();
+    const body = (await real.json()) as Record<string, unknown>;
+    await route.fulfill({ response: real, json: { ...body, cod_enabled: false } });
+  });
+  await signIn(page, "Sales");
+  await ensureSession(page);
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  const tile = page.getByRole("button", { name: /^COD/ });
+  await expect(tile).toBeVisible();
+  await expect(tile).toContainText("COD: off");
+  await expect(tile).toBeDisabled();
+  await expect(tile).toHaveAttribute("title", /disabled by policy/);
+  await expect(tile).toHaveAttribute("aria-pressed", "false");
+});
+
+test("with COD allowed (the stub's default), the COD tile is selectable", async ({ page }) => {
+  await signIn(page, "Sales");
+  await ensureSession(page);
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  const tile = page.getByRole("button", { name: /^COD/ });
+  await expect(tile).toBeEnabled();
+  await expect(tile).not.toContainText("off");
+});
