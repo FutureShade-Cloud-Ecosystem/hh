@@ -430,7 +430,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	} else {
 		log.Warn("dashboard: no database - every tile will render its unwired em-dash")
 	}
-	dashboardHandler := dashboard.NewHandler(dashboardSvc, log)
+	dashboardHandler := dashboard.NewHandler(dashboardSvc, log).WithUserLinker(link)
 	dashboardHandler.RegisterRoutes(r, g)
 	dashboardHandler.RegisterVizRoutes(r, g)
 	if pool != nil {
