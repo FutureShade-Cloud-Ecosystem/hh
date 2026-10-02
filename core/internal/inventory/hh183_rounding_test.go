@@ -54,8 +54,9 @@ func TestReceive_HalfCentProduct_AuditShape_RoundsUp(t *testing.T) {
 	}
 }
 
-// AC: the receipt's WAC re-derivation divides the exact value by the qty, so after receiving
-// 0.29 at 218 cents the branch average is round(218 / 0.29) = 752, not round(217 / 0.29).
+// AC: the receipt's WAC blend rounds ONCE over the whole exact numerator, so the first receipt of
+// 0.29 at 750 onto an empty branch stores exactly the unit cost 750 (the blend degenerates to
+// (scaledRecv x 750) / scaledRecv), not round(round(0.29 x 750) / 0.29).
 func TestReceive_HalfCentProduct_WeightedAverage(t *testing.T) {
 	f := newFakeStore()
 	f.hdr = poHeader{ID: "po-1", PONo: "PO-1", BranchID: "br-1", Status: "SUBMITTED", Currency: "CAD", FxRate: 1}
@@ -64,8 +65,70 @@ func TestReceive_HalfCentProduct_WeightedAverage(t *testing.T) {
 	if _, err := s.applyReceipt(context.Background(), nil, "po-1", nil, ""); err != nil {
 		t.Fatalf("receipt: %v", err)
 	}
-	if got := f.cost[key("p", "br-1")]; got != 752 {
-		t.Fatalf("round(218 / 0.29) = 752 must be the branch average, got %d", got)
+	if got := f.cost[key("p", "br-1")]; got != 750 {
+		t.Fatalf("the first receipt must store exactly the unit cost 750, got %d", got)
+	}
+}
+
+// AC (review round 2, P2 1): the WAC blend keeps every term unrounded and rounds ONCE, so receiving
+// 0.29 at 750 onto an existing 0.29 at 750 averages back to exactly 750 per unit: both terms are
+// 0.29 x 750 = 217.5 cents, 435 cents over 0.58 units. Rounding either term to whole cents first
+// reads 751 (main's shape with the corrected value) or 752 (this fix's first attempt).
+func TestReceive_HalfCentBlend_RoundsOnce(t *testing.T) {
+	f := newFakeStore()
+	f.hdr = poHeader{ID: "po-1", PONo: "PO-1", BranchID: "br-1", Status: "SUBMITTED", Currency: "CAD", FxRate: 1}
+	f.lines = []poLine{{ID: "l1", LineNo: 1, ProductID: "p", UOM: "EA", QtyBase: 0.29, UnitCostCents: 750}}
+	f.onhand[key("p", "br-1")] = 0.29
+	f.cost[key("p", "br-1")] = 750
+	s := svcWith(f)
+	if _, err := s.applyReceipt(context.Background(), nil, "po-1", nil, ""); err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	if got := f.cost[key("p", "br-1")]; got != 750 {
+		t.Fatalf("0.29 at 750 onto 0.29 at 750 must blend to exactly 750, got %d", got)
+	}
+	if len(f.moves) != 1 || f.moves[0].ValueCents != 218 {
+		t.Fatalf("the move value itself still half-rounds to 218, got %+v", f.moves)
+	}
+}
+
+// AC (review round 2, P2 2): a blend whose intermediate sum overflows int64 must never wrap to a
+// negative average. 9,000,000,000 on hand at 900,000,000 cents receiving the same again: each term
+// (8.1e18 cents) fits int64, the sum (1.62e19) does not; the blend runs in big.Int, so the exact
+// average 900,000,000 is representable and must be stored, never the wrapped negative.
+func TestReceive_BlendSumOverflow_NeverWraps(t *testing.T) {
+	f := newFakeStore()
+	f.hdr = poHeader{ID: "po-1", PONo: "PO-1", BranchID: "br-1", Status: "SUBMITTED", Currency: "CAD", FxRate: 1}
+	f.lines = []poLine{{ID: "l1", LineNo: 1, ProductID: "p", UOM: "EA", QtyBase: 9_000_000_000, UnitCostCents: 900_000_000}}
+	f.onhand[key("p", "br-1")] = 9_000_000_000
+	f.cost[key("p", "br-1")] = 900_000_000
+	s := svcWith(f)
+	if _, err := s.applyReceipt(context.Background(), nil, "po-1", nil, ""); err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	if got := f.cost[key("p", "br-1")]; got != 900_000_000 {
+		t.Fatalf("the overflowed blend must store the exact 900000000, never a wrapped value, got %d", got)
+	}
+}
+
+// AC (review round 2, P2 2): a receipt whose GRNI total cannot be represented in int64 cents errors
+// instead of wrapping: two lines of 8.1e18 cents each sum past int64. No negative average may be
+// stored on any path out.
+func TestReceive_TotalValueOverflow_Errs(t *testing.T) {
+	f := newFakeStore()
+	f.hdr = poHeader{ID: "po-1", PONo: "PO-1", BranchID: "br-1", Status: "SUBMITTED", Currency: "CAD", FxRate: 1}
+	f.lines = []poLine{
+		{ID: "l1", LineNo: 1, ProductID: "p1", UOM: "EA", QtyBase: 9_000_000_000, UnitCostCents: 900_000_000},
+		{ID: "l2", LineNo: 2, ProductID: "p2", UOM: "EA", QtyBase: 9_000_000_000, UnitCostCents: 900_000_000},
+	}
+	s := svcWith(f)
+	if _, err := s.applyReceipt(context.Background(), nil, "po-1", nil, ""); err == nil {
+		t.Fatalf("a 1.62e19-cent receipt total must error, it cannot be an int64 of cents")
+	}
+	for k, avg := range f.cost {
+		if avg < 0 {
+			t.Fatalf("stored average %d for %s is negative: a sum overflow wrapped", avg, k)
+		}
 	}
 }
 

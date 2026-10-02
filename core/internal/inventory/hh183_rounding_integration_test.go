@@ -67,8 +67,8 @@ func TestHH183_ReceiptHalfCent_PersistedLegAgreesWithSQLRound(t *testing.T) {
 		t.Errorf("the po.received GRNI value must carry 218, got %d", event.ValueCents)
 	}
 
-	if got := branchCost(t, pool, p); got != 752 {
-		t.Errorf("the branch average must be round(218 / 0.29) = 752, got %d", got)
+	if got := branchCost(t, pool, p); got != 750 {
+		t.Errorf("the branch average must blend to exactly the unit cost 750 (single rounding over the exact numerator), got %d", got)
 	}
 
 	lines, err := svc.ReceivedLinesForPO(ctx, po)
@@ -116,7 +116,7 @@ func branchCostAt(t *testing.T, pool *pgxpool.Pool, productID, branchID string) 
 }
 
 // AC: both legs of a transfer value 0.29 at a 750-cent average at 218, and the destination's WAC
-// is round(218 / 0.29) = 752.
+// is exactly the travelled unit cost 750 (the blend rounds once over the exact numerator).
 func TestHH183_TransferLegs_HalfCentPersisted(t *testing.T) {
 	pool := intPool(t)
 	dib396LeaseShared(t, pool, dib396StockDriftLease)
@@ -163,7 +163,7 @@ func TestHH183_TransferLegs_HalfCentPersisted(t *testing.T) {
 	if recvValue != 218 {
 		t.Errorf("the receive leg must carry 218, got %d", recvValue)
 	}
-	if got := branchCostAt(t, pool, p, branch2); got != 752 {
-		t.Errorf("the destination average must be round(218 / 0.29) = 752, got %d", got)
+	if got := branchCostAt(t, pool, p, branch2); got != 750 {
+		t.Errorf("the destination average must blend to exactly the travelled cost 750 (single rounding over the exact numerator), got %d", got)
 	}
 }
