@@ -394,6 +394,9 @@ func TestReturnRequest_RejectAfterCrashWindow_409_ApproveConverges(t *testing.T)
 	if err != nil {
 		t.Fatalf("simulated crash-window rail commit: %v", err)
 	}
+	if len(h.store.returnLocks) != 1 || h.store.returnLocks[0] != "order-1" {
+		t.Fatalf("the A-06 rail commit must take the per-sale lock too: %v", h.store.returnLocks)
+	}
 	h.store.cachedReturns["rreq:"+rr.ID] = ret // the real repo would find it via ux_pos_returns_idem
 
 	// Rejecting now would record REJECTED on top of committed money, must 409 and tell the operator

@@ -1391,3 +1391,4 @@ merge read it before running anything selector-shaped:
   marks `GET /api/v1/products` `x-role: public` (the catalogue is public
   data), so no credential is needed; the ask rides `api()` anyway, which
   sends the bearer harmlessly and keeps the counter's reads on one door.
+Closed by the refund-sum lane: the refund approval gate judged each return alone, so one sale could walk its whole value out of the drawer in approved-sized slices (the comprehensive review's finding, ruled per the principal); the gate now sums the sale's earlier committed returns with the new one against the configured amount and refuses the crossing return with the contract's 409, the returns of one sale serialized by a transaction-scoped advisory lock, on fix/refund-approval-sums-per-sale.

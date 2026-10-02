@@ -366,22 +366,34 @@ func (r *Repository) TenderActuals(ctx context.Context, sessionID string) (map[s
 	return out, rows.Err()
 }
 
-func (r *Repository) MovementCashTotals(ctx context.Context, sessionID string) (MovementTotals, error) {
+// MovementTotalsByMethod returns the session's drawer movement sums per tender method, following
+// the movement table's own vocabulary (0028): paid in, paid out and dropped, lodgements, per
+// method. A method with no movements is absent; callers read a missing method as zero.
+func (r *Repository) MovementTotalsByMethod(ctx context.Context, sessionID string) (map[string]MovementTotals, error) {
 	if r.pool == nil {
-		return MovementTotals{}, errNoDB
+		return nil, errNoDB
 	}
-	var mt MovementTotals
-	err := r.pool.QueryRow(ctx,
-		`SELECT
+	rows, err := r.pool.Query(ctx,
+		`SELECT method,
 		   COALESCE(SUM(amount_cents) FILTER (WHERE movement_type = 'PAID_IN'), 0),
 		   COALESCE(SUM(amount_cents) FILTER (WHERE movement_type IN ('PAID_OUT', 'DROP')), 0),
 		   COALESCE(SUM(amount_cents) FILTER (WHERE movement_type = 'LODGEMENT'), 0)
-		 FROM till_movements WHERE till_session_id = $1 AND method = 'CASH'`, sessionID,
-	).Scan(&mt.PaidInCash, &mt.PaidOutCash, &mt.LodgementCash)
+		 FROM till_movements WHERE till_session_id = $1
+		 GROUP BY method`, sessionID)
 	if err != nil {
-		return MovementTotals{}, fmt.Errorf("till: movement totals: %w", err)
+		return nil, fmt.Errorf("till: movement totals: %w", err)
 	}
-	return mt, nil
+	defer rows.Close()
+	out := map[string]MovementTotals{}
+	for rows.Next() {
+		var method string
+		var mt MovementTotals
+		if err := rows.Scan(&method, &mt.PaidIn, &mt.PaidOut, &mt.Lodgement); err != nil {
+			return nil, fmt.Errorf("till: scan movement totals: %w", err)
+		}
+		out[method] = mt
+	}
+	return out, rows.Err()
 }
 
 func (r *Repository) UpsertTenderActuals(ctx context.Context, sessionID string, actuals []TenderActual) error {

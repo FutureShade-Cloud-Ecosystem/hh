@@ -27,20 +27,23 @@ package pos
 // refused to the Trenton login for every refund method and the counting
 // card rail sees no call; lowering the configured amount to 100.00 through
 // a validated modified document changes the answer with no code change;
-// the margin glance carries margin for both logins and refuses a branch
-// the caller cannot reach.
+// the margin glance under the seeded MANAGER_UP policy answers the clerk
+// the byte-absent {} and carries the ticket's lines for the manager; the
+// admin policy write flipping the org switch to ALL_STAFF carries the
+// clerk's glance with no code change, the row restored afterwards; and the
+// glance refuses a branch the caller cannot reach.
 //
 // Run (the throwaway container this lane used, removed afterwards):
 //
-//	docker run --name hh-till-l2c-pg -e POSTGRES_USER=hardscape \
+//	docker run --name hh-margingate-pg -e POSTGRES_USER=hardscape \
 //	  -e POSTGRES_PASSWORD=hardscape -e POSTGRES_DB=hardscapeos \
-//	  -p 5594:5432 -d postgres:16
+//	  -p 5599:5432 -d postgres:16
 //	cd core
-//	DATABASE_URL='postgres://hardscape:hardscape@localhost:5594/hardscapeos?sslmode=disable' \
+//	DATABASE_URL='postgres://hardscape:hardscape@localhost:5599/hardscapeos?sslmode=disable' \
 //	  APP_ENV=dev go run ./cmd/core migrate
-//	DATABASE_URL='postgres://hardscape:hardscape@localhost:5594/hardscapeos?sslmode=disable' \
+//	DATABASE_URL='postgres://hardscape:hardscape@localhost:5599/hardscapeos?sslmode=disable' \
 //	  APP_ENV=dev go run ./cmd/core seed
-//	CI=true DATABASE_URL='postgres://hardscape:hardscape@localhost:5594/hardscapeos?sslmode=disable' \
+//	CI=true DATABASE_URL='postgres://hardscape:hardscape@localhost:5599/hardscapeos?sslmode=disable' \
 //	  go test -tags integration ./internal/pos/ -run TestIntegration_Trenton -p 1 -v
 
 import (
@@ -86,10 +89,14 @@ const (
 	kingstonClerkSub = "till-l2c-kclerk"
 	kingstonMgrSub   = "till-l2c-km"
 	elsewhereSub     = "till-l2c-elsewhere"
+	// The org's general manager, the Tier-1 global login the admin-gated
+	// policy write leg drives (RequireAdmin).
+	trentonAdminSub = "till-l2c-admin"
 
 	clerkUserID   = "5d1b0000-0000-4000-9000-0000000000c1"
 	managerUserID = "5d1b0000-0000-4000-9000-0000000000c2"
 	kClerkUserID  = "5d1b0000-0000-4000-9000-0000000000c3"
+	adminUserID   = "5d1b0000-0000-4000-9000-0000000000c5"
 
 	l2cProductID      = "5d1b0000-0000-4000-9000-0000000000d1"
 	l2cProductSKU     = "DBS-TILL-L2C-PAVER"
@@ -190,6 +197,30 @@ func buildWorld(t *testing.T, pool *pgxpool.Pool) {
 				return
 			}
 		}
+		// The general manager, the Tier-1 global login the admin-gated
+		// policy write leg drives. The grant is org-wide: a global role
+		// granted with a branch_id is the resolver's ErrGrantShape data
+		// defect, so this row carries the NULL branch the rule demands (a
+		// global scope reaches every branch without branch grants).
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO users (id, email, display_name, status, platform_user_id, org_id)
+			VALUES ($1::uuid, $2, $3, 'ACTIVE', $4, $5::uuid)
+			ON CONFLICT (id) DO NOTHING`,
+			adminUserID, "till-l2c-admin@hh-demo.invalid", "General manager (till L2C)", trentonAdminSub, orgID); err != nil {
+			worldErr = fmt.Errorf("user %s: %w", trentonAdminSub, err)
+			return
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO staff_role_grant (platform_user_id, role_id, org_id, branch_id)
+			SELECT $1, 'general_manager', $2::uuid, NULL
+			WHERE NOT EXISTS (
+				SELECT 1 FROM staff_role_grant
+				WHERE platform_user_id = $1 AND role_id = 'general_manager' AND org_id = $2::uuid
+				  AND branch_id IS NULL AND deleted_at IS NULL)`,
+			trentonAdminSub, orgID); err != nil {
+			worldErr = fmt.Errorf("admin role grant: %w", err)
+			return
+		}
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO products (id, sku, name, base_uom, price_uom, is_active)
 			VALUES ($1::uuid, $2, 'Till L2C test paver', 'SF', 'SF', TRUE)
@@ -255,8 +286,15 @@ type trentonStack struct {
 }
 
 func newTrentonStack(t *testing.T) *trentonStack {
+	return newTrentonStackOnPool(t, intPool(t))
+}
+
+// newTrentonStackOnPool wires the whole rig over the caller's pool: the
+// parallel-returns deadlock leg builds a second, tiny pool over the same
+// DSN to prove the return path never needs a second connection while a
+// Return transaction holds one.
+func newTrentonStackOnPool(t *testing.T, pool *pgxpool.Pool) *trentonStack {
 	t.Helper()
-	pool := intPool(t)
 	buildWorld(t, pool)
 	ctx := context.Background()
 
@@ -273,6 +311,7 @@ func newTrentonStack(t *testing.T) *trentonStack {
 	harness.Membership.SetMember(trentonMgrSub, demoOrgSlug, true)
 	harness.Membership.SetMember(kingstonClerkSub, demoOrgSlug, true)
 	harness.Membership.SetMember(kingstonMgrSub, demoOrgSlug, true)
+	harness.Membership.SetMember(trentonAdminSub, demoOrgSlug, true)
 	// The elsewhere subject holds membership of another org only: the
 	// from-another-org credential leg.
 	harness.Membership.SetMember(elsewhereSub, testkit.OrgNorthSlug, true)
@@ -762,28 +801,38 @@ func TestIntegration_Trenton_RefundRuleEndToEnd(t *testing.T) {
 		t.Fatalf("the refusal must name the lowered amount: %v", body)
 	}
 
-	// 8. The margin glance carries margin for both logins at Trenton and
-	// refuses Kingston to the Trenton clerk.
+	// 8. The margin glance under the seeded MANAGER_UP policy: the
+	// configuration's list considers Inside Sales, the policy holds the
+	// answer at the server, so the clerk's glance is the byte-absent {}
+	// while the manager's carries the ticket's lines; Kingston is refused
+	// to the Trenton clerk. Then the rig drives the admin policy write
+	// (UpdatePolicy is admin-gated, the route is RequireAdmin): the org
+	// switch flipped to ALL_STAFF carries the clerk's glance with no code
+	// change, and the row is restored to the captured values afterwards.
 	glance := func() map[string]any {
 		return map[string]any{
 			"branch_id": trentonBranchID,
 			"lines":     []map[string]any{{"product_id": l2cProductID, "qty_entered": 10, "uom_entered": "SF"}},
 		}
 	}
-	for _, who := range []string{trentonClerkSub, trentonMgrSub} {
-		rec = s.do(http.MethodPost, "/api/v1/pos/margin-glance", s.bearer(who), "", glance())
-		if rec.Code != http.StatusOK {
-			t.Fatalf("the glance must answer %s, got %d: %s", who, rec.Code, rec.Body.String())
-		}
-		out := s.decodeBody(rec)
-		lines, ok := out["lines"].([]any)
-		if !ok || len(lines) == 0 {
-			t.Fatalf("the glance must carry margin for %s: %v", who, out)
-		}
-		line := lines[0].(map[string]any)
-		if line["margin_bps"] == nil {
-			t.Fatalf("margin_bps must be present for %s: %v", who, line)
-		}
+	rec = s.do(http.MethodPost, "/api/v1/pos/margin-glance", s.bearer(trentonClerkSub), "", glance())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the glance must answer the clerk, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if clerkGlance := s.decodeBody(rec); len(clerkGlance) != 0 {
+		t.Fatalf("under MANAGER_UP the clerk's glance must be the byte-absent {}, got: %v", clerkGlance)
+	}
+	rec = s.do(http.MethodPost, "/api/v1/pos/margin-glance", s.bearer(trentonMgrSub), "", glance())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the glance must answer the manager, got %d: %s", rec.Code, rec.Body.String())
+	}
+	out = s.decodeBody(rec)
+	lines, ok := out["lines"].([]any)
+	if !ok || len(lines) == 0 {
+		t.Fatalf("the glance must carry margin for the manager: %v", out)
+	}
+	if line := lines[0].(map[string]any); line["margin_bps"] == nil {
+		t.Fatalf("margin_bps must be present for the manager: %v", line)
 	}
 	kingstonGlance := map[string]any{
 		"branch_id": kingstonBranchID,
@@ -792,6 +841,84 @@ func TestIntegration_Trenton_RefundRuleEndToEnd(t *testing.T) {
 	rec = s.do(http.MethodPost, "/api/v1/pos/margin-glance", s.bearer(trentonClerkSub), "", kingstonGlance)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("the glance must refuse Kingston to the Trenton clerk, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The org row is captured whole, straight from the table: the GET route
+	// derives an un-curated chip set at read time, and writing that back
+	// would curate it, a change the dealer never made.
+	var codEnabled, chipsEnabled bool
+	var restockingFee, splitPct int
+	var notes, linePres, workspaceArr, lookupPres, marginVis, chips, balanceVis string
+	if err := s.pool.QueryRow(context.Background(), `
+		SELECT cod_enabled, restocking_fee_bps, notes, line_presentation, quick_chips_enabled,
+		       workspace_split_pct, workspace_arrangement, lookup_presentation, margin_visibility,
+		       COALESCE(quick_chip_set, ''), balance_visibility
+		  FROM pos_policy WHERE branch_id IS NULL`).
+		Scan(&codEnabled, &restockingFee, &notes, &linePres, &chipsEnabled, &splitPct,
+			&workspaceArr, &lookupPres, &marginVis, &chips, &balanceVis); err != nil {
+		t.Fatalf("the org policy row is missing: %v", err)
+	}
+	if marginVis != MarginVisibilityManagerUp {
+		t.Fatalf("the seeded org policy is %q, the leg's story hangs off the MANAGER_UP default", marginVis)
+	}
+
+	// The restore is t.Cleanup's job: the cleanup runs on the leg's every
+	// exit path, so a failure between the flip and the end of the test
+	// cannot leave the org row clobbered behind it. The cleanup puts the
+	// WHOLE captured row back through the same admin route and then
+	// compares the whole row against the capture, not the visibility word
+	// alone.
+	t.Cleanup(func() {
+		rsp := s.do(http.MethodPut, "/api/v1/pos/policy", s.bearer(trentonAdminSub), "", PosPolicy{
+			CODEnabled: codEnabled, RestockingFeeBps: restockingFee, Notes: notes,
+			LinePresentation: linePres, QuickChipsEnabled: chipsEnabled,
+			WorkspaceSplitPct: splitPct, WorkspaceArrangement: workspaceArr,
+			LookupPresentation: lookupPres, MarginVisibility: marginVis,
+			QuickChipSet: splitChipSet(chips), BalanceVisibility: balanceVis,
+		})
+		if rsp.Code != http.StatusOK {
+			t.Errorf("the policy restore must answer, got %d: %s", rsp.Code, rsp.Body.String())
+			return
+		}
+		var gotCod, gotChipsEnabled bool
+		var gotFee, gotSplit int
+		var gotNotes, gotLinePres, gotArr, gotLookup, gotVis, gotChips, gotBalance string
+		if err := s.pool.QueryRow(context.Background(), `
+			SELECT cod_enabled, restocking_fee_bps, notes, line_presentation, quick_chips_enabled,
+			       workspace_split_pct, workspace_arrangement, lookup_presentation, margin_visibility,
+			       COALESCE(quick_chip_set, ''), balance_visibility
+			  FROM pos_policy WHERE branch_id IS NULL`).
+			Scan(&gotCod, &gotFee, &gotNotes, &gotLinePres, &gotChipsEnabled, &gotSplit,
+				&gotArr, &gotLookup, &gotVis, &gotChips, &gotBalance); err != nil {
+			t.Errorf("the org policy row went missing: %v", err)
+			return
+		}
+		if gotCod != codEnabled || gotFee != restockingFee || gotNotes != notes ||
+			gotLinePres != linePres || gotChipsEnabled != chipsEnabled || gotSplit != splitPct ||
+			gotArr != workspaceArr || gotLookup != lookupPres || gotVis != marginVis ||
+			gotChips != chips || gotBalance != balanceVis {
+			t.Errorf("the org policy row must be left as it was found: cod=%v fee=%d notes=%q line=%q chipsEnabled=%v split=%d arr=%q lookup=%q vis=%q chips=%q balance=%q",
+				gotCod, gotFee, gotNotes, gotLinePres, gotChipsEnabled, gotSplit,
+				gotArr, gotLookup, gotVis, gotChips, gotBalance)
+		}
+	})
+
+	rec = s.do(http.MethodPut, "/api/v1/pos/policy", s.bearer(trentonAdminSub), "",
+		map[string]any{"branch_id": "", "margin_visibility": MarginVisibilityAllStaff})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the admin policy write must answer, got %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = s.do(http.MethodPost, "/api/v1/pos/margin-glance", s.bearer(trentonClerkSub), "", glance())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the glance must answer the clerk after the flip, got %d: %s", rec.Code, rec.Body.String())
+	}
+	out = s.decodeBody(rec)
+	lines, ok = out["lines"].([]any)
+	if !ok || len(lines) == 0 {
+		t.Fatalf("under ALL_STAFF the clerk's glance must carry margin: %v", out)
+	}
+	if line := lines[0].(map[string]any); line["margin_bps"] == nil {
+		t.Fatalf("margin_bps must be present for the clerk under ALL_STAFF: %v", line)
 	}
 }
 
