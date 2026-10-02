@@ -202,7 +202,10 @@ func (s *Service) ShipTransferWithETA(ctx context.Context, transferID, actorID s
 			return Transfer{}, err
 		}
 
-		value := round(ln.QtyBase * float64(avg))
+		value, err := qtyTimesCents(ln.QtyBase, avg)
+		if err != nil {
+			return Transfer{}, err
+		}
 		moveID, err := s.db().InsertMove(ctx, tx, moveParams{
 			ProductID: ln.ProductID, BranchID: hdr.FromBranchID, FromLocation: hdr.FromBranchID,
 			UOM: ln.UOM, MoveType: MoveTransfer, QtyBase: ln.QtyBase, UnitCostCents: avg,
@@ -294,7 +297,10 @@ func (s *Service) ReceiveTransfer(ctx context.Context, transferID, actorID strin
 		if outstanding <= qtyEpsilon {
 			continue
 		}
-		value := round(outstanding * float64(ln.UnitCostCents))
+		value, err := qtyTimesCents(outstanding, ln.UnitCostCents)
+		if err != nil {
+			return Transfer{}, err
+		}
 
 		// Weighted-average maintenance at the DESTINATION, identical in shape to applyReceipt: take
 		// the (product, branch) advisory lock BEFORE the on-hand + cost reads so a concurrent PO
@@ -316,7 +322,14 @@ func (s *Service) ReceiveTransfer(ctx context.Context, transferID, actorID strin
 		}
 		newAvg := ln.UnitCostCents
 		if denom := base + outstanding; denom > 0 {
-			newAvg = round((base*float64(oldAvg) + float64(value)) / denom)
+			baseValue, err := qtyTimesCents(base, oldAvg)
+			if err != nil {
+				return Transfer{}, err
+			}
+			newAvg, err = centsDivQty(baseValue+value, denom)
+			if err != nil {
+				return Transfer{}, err
+			}
 		}
 		if err := s.db().UpsertBranchCost(ctx, tx, ln.ProductID, hdr.ToBranchID, newAvg); err != nil {
 			return Transfer{}, err

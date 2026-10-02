@@ -115,7 +115,9 @@ func (r *Repository) ShortfallWorklist(ctx context.Context, branchID string, lim
 		// Re-derive from the ONE Go definition. The SQL above computes the same numbers to make the
 		// ORDER BY and LIMIT correct; this call makes replenish.go the source of truth, and
 		// TestIntegration_Shortfall_SQLAndGoAgree pins the two together.
-		s.Derive()
+		if err := s.Derive(); err != nil {
+			return nil, err
+		}
 		out = append(out, s)
 	}
 	return out, rows.Err()

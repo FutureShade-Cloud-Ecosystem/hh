@@ -23,14 +23,6 @@ func nullStr(s string) any {
 // marshalJSON marshals an outbox payload to bytes.
 func marshalJSON(v any) ([]byte, error) { return json.Marshal(v) }
 
-// round rounds a float to the nearest integer cent (half away from zero), matching SQL ROUND().
-func round(f float64) int64 {
-	if f < 0 {
-		return int64(f - 0.5)
-	}
-	return int64(f + 0.5)
-}
-
 // - exact money arithmetic (HH-183) -
 //
 // The stock ledger's values are money: integer cents times a DECIMAL(19,4) quantity, never a float
