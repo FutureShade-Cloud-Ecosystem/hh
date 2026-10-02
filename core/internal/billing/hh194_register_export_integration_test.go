@@ -144,3 +144,18 @@ func TestHH194_FilteredExportCarriesEveryFilteredRow(t *testing.T) {
 		RegisterFilter{CustomerID: f.customerID, Chip: StatusOverdue},
 		hh194Overdue)
 }
+
+// TestHH194_ExportCarriesEveryRowAcrossTheOtherFilters pins the filters the first two legs do not
+// reach: the search box and the credits toggle, each over more rows than one page holds.
+func TestHH194_ExportCarriesEveryRowAcrossTheOtherFilters(t *testing.T) {
+	f := newD510Fixture(t)
+	plantHH194(t, f)
+	assertExportMatchesRegister(t, f,
+		url.Values{"customer_id": {f.customerID}, "q": {f.tag + "-LATE"}},
+		RegisterFilter{CustomerID: f.customerID, Search: f.tag + "-LATE"},
+		hh194Overdue)
+	assertExportMatchesRegister(t, f,
+		url.Values{"customer_id": {f.customerID}, "show_credits": {"1"}},
+		RegisterFilter{CustomerID: f.customerID, ShowCredits: true},
+		hh194Overdue+hh194Future)
+}

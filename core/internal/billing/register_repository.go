@@ -245,12 +245,15 @@ func (r *Repository) RegisterRows(ctx context.Context, asOf time.Time, dueSoonDa
 		return nil, 0, fmt.Errorf("billing: count register: %w", err)
 	}
 
-	limit := f.Limit
-	if limit <= 0 || limit > 200 {
-		limit = 50
+	q := registerSelect + where + registerOrder
+	if !f.All {
+		limit := f.Limit
+		if limit <= 0 || limit > 200 {
+			limit = 50
+		}
+		args = append(args, limit, max0(f.Offset))
+		q += fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args))
 	}
-	args = append(args, limit, max0(f.Offset))
-	q := registerSelect + where + registerOrder + fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args))
 
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
