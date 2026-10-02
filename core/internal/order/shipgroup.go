@@ -378,6 +378,9 @@ func (s *Service) PlanShipment(ctx context.Context, orderIDOrNo string, groups [
 
 // TransitionGroup moves one group along its ladder. A group's status is INDEPENDENT of the order's:
 // truck one may be COMPLETE while truck three is still PLANNED, which is the entire point.
+//
+// AUTHORITY: active IN-BRANCH staff, the branch fence applied on the loaded group's order BEFORE the
+// move runs, so a caller outside the branch is answered not found with nothing committed (HH-182).
 func (s *Service) TransitionGroup(ctx context.Context, groupID, target string) (ShipmentGroup, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
@@ -406,12 +409,21 @@ func (s *Service) TransitionGroup(ctx context.Context, groupID, target string) (
 	if len(allowed) == 0 {
 		return ShipmentGroup{}, ErrGroupIllegalTransition
 	}
-	g, branchID, err := ss.TransitionShipmentGroup(ctx, groupID, target, allowed)
+	// HH-182: fence BEFORE the write. Load the group with its order's branch and gate the caller's
+	// reach first, the loadChangeForDecision shape: a cross-branch caller is answered not found with
+	// nothing committed and nothing revealed (not even the ladder's refusal, which would say the
+	// group exists). The order of the two checks below is load-bearing: run the other way round, the
+	// guarded UPDATE committed the move and stamped the truck before the same fence said 404.
+	g, branchID, err := ss.ShipmentGroup(ctx, groupID)
 	if err != nil {
 		return ShipmentGroup{}, err
 	}
 	if !caller.CanAccessBranch(branchID) {
 		return ShipmentGroup{}, ErrGroupNotFound
+	}
+	g, err = ss.TransitionShipmentGroup(ctx, groupID, target, allowed)
+	if err != nil {
+		return ShipmentGroup{}, err
 	}
 	g.LegalActions = groupLegalActions(g.Status)
 	return g, nil
