@@ -29,8 +29,8 @@
 #   the acceptance run (the eleven screens as each role, the world leg, and
 #     the page's claims held to the ledger) is green, with a screenshot per
 #     screen per role in the untracked acceptance folder, no two of them
-#     byte-identical and each taken on a settled page (no Reading or Loading
-#     placeholder on screen);
+#     byte-identical, none of them a blank page, and each taken on a settled
+#     page (the surface's own in-flight word gone, the reads quiet);
 #   the restart leg: the pre restart bearer is refused and a fresh sign in
 #     works (a restart signs everyone out);
 #   both lanes' existing suites stay green (the stub harness: Playwright and unit);
@@ -83,7 +83,9 @@ cleanup() {
 		docker exec "$PG_NAME" psql -U postgres -q -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" >/dev/null 2>&1 || true
 	done
 	if [ "${KEEP:-0}" != "1" ]; then
-		docker rm -f "$PG_NAME" >/dev/null 2>&1 || true
+		# -v: the postgres image keeps its data in an anonymous volume, and a
+		# plain rm leaves one behind per run.
+		docker rm -f -v "$PG_NAME" >/dev/null 2>&1 || true
 		docker network rm "$NET" >/dev/null 2>&1 || true
 		docker rmi -f "$IMAGE" >/dev/null 2>&1 || true
 		rm -rf "$SCRATCH/context"
@@ -111,7 +113,8 @@ pass "the image builds from main's tree and this branch's app"
 
 echo "== the throwaway Postgres"
 docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET" >/dev/null
-docker rm -f "$PG_NAME" >/dev/null 2>&1 || true
+# -v here too: a plain rm would strand the previous run's anonymous volume.
+docker rm -f -v "$PG_NAME" >/dev/null 2>&1 || true
 docker run -d --name "$PG_NAME" --network "$NET" -p "127.0.0.1:$PG_PORT:5432" \
 	-e POSTGRES_PASSWORD=hardscape postgres:16-alpine >/dev/null
 until docker exec "$PG_NAME" pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
