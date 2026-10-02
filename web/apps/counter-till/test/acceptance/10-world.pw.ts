@@ -121,7 +121,7 @@ test("the account picker answers the branch's demo accounts, every name carrying
   expect(scrubbed.length).toBeGreaterThanOrEqual(1);
 });
 
-test("the clerk's margin glance is refused, the manager's answers: the configuration names who sees cost and margin", async ({
+test("the clerk's margin glance is refused, the manager's answers: the policy word names who sees cost and margin", async ({
   page,
 }) => {
   const bearer = await mint(page, "sales");
