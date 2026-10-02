@@ -3938,7 +3938,7 @@ export class HosPosTerminal extends LitElement {
       // them, so resume can restore this customer and the parked list can show name + figure.
       // Row 661: the figure is the priced lines' SUBTOTAL, the one assembly the till has; the
       // parked list names it as a subtotal, and a pending line keeps no figure at all.
-      this.parkedInfo.set(t.id, { customer: this.customer, totalCents: this.hasPricedLine() ? this.subtotal() : null });
+      this.parkedInfo.set(t.id, { customer: this.customer, subtotalCents: this.hasPricedLine() ? this.subtotal() : null });
       this.newSale();
       this.setUtil(`Parked as ${t.ticket_no}: resume re-prices live.`);
       void this.refreshParkedCount();
