@@ -5157,9 +5157,11 @@ export class HosPosTerminal extends LitElement {
    * not echo a number the operator is already looking at. Closed Payment, and the echo comes back:
    * which is the same source-and-echo rule the old header chip followed, now with a better echo.
    *
-   * Before the ring the echo is the priced lines' SUBTOTAL, the one figure the till assembles
-   * (row 661: no browser-computed tax, no browser-computed total), so it carries no mark: there
-   * is no estimate on the sale surface to mark. After the ring it reads the sale's committed
+   * Before the ring the echo is the priced lines' SUBTOTAL, NAMED as one (row
+   * 661: no browser-computed tax, no browser-computed total): the same slot
+   * reads the server's total after the ring, so the pre-ring figure carries
+   * the word that says it is not that. There is no estimate on the sale
+   * surface to mark. After the ring it reads the sale's committed
    * total, the server's own figure: the slot's meaning is named by the ring state, and both of
    * its figures are assemblies over server-stated lines.
    */
@@ -5172,7 +5174,9 @@ export class HosPosTerminal extends LitElement {
         ? money(this.doneSale().total_cents)
         : this.openStep === 'payment'
           ? ''
-          : this.moneyOrMarker(this.subtotal()),
+          : this.hasPricedLine()
+            ? `subtotal ${money(this.subtotal())}`
+            : '(not priced)',
       // DIB-512 (8) · one word per surface. Before the ring the collapsed Payment card says which
       // tender is CHOSEN; after it, salePillLabel decides the counter word for what the sale
  // actually is ('Paid' / 'On account' / 'COD' / 'Deposit'): never the wire status, which is

@@ -462,7 +462,7 @@ test("the collapsed Items summary carries the priced lines' subtotal before the 
   // figure is the priced lines' own subtotal (the only figure the till
   // assembles), unmarked: there is no estimate on the sale surface to mark.
   await openStep(page, "customer");
-  await expect(page.getByTestId("step-summary-items")).toHaveText("1 item · CA$4.00");
+  await expect(page.getByTestId("step-summary-items")).toHaveText("1 item · subtotal CA$4.00");
   await expect(page.getByTestId("step-summary-items")).not.toContainText("(est.");
 });
 
