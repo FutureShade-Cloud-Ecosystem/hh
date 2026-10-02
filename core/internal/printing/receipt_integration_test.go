@@ -19,6 +19,7 @@ import (
 	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
@@ -372,4 +373,58 @@ func TestIntegration_Receipt_UnknownSaleIsNotFound(t *testing.T) {
 	if _, err := receipts.Receipt(ctx, "not-a-uuid"); err != ErrNotFound {
 		t.Fatalf("a malformed id must be not-found at the boundary, got %v", err)
 	}
+}
+
+// The scan leg: the simulated flag follows the ROW's own gateway ref, not the rail wired today. A
+// CARD row whose ref carries the stub's prefix is a simulated capture and stamps the flag; a CARD
+// row carrying a foreign ref (a live gateway writes its own shapes) must not stamp. The rows here
+// are direct inserts (the bankrec fixture idiom): the flag is the repository's stamping decision
+// over the real row, and that decision is what this leg pins.
+func TestIntegration_Receipt_TenderSimulatedFlagFollowsTheRowRef(t *testing.T) {
+	pool := intPool(t)
+	_, branchID := aPaver(t, pool)
+	insertCard := func(t *testing.T, gatewayRef string) string {
+		t.Helper()
+		id := newUUID()
+		if _, err := pool.Exec(context.Background(),
+			`INSERT INTO payments (id, payment_no, method, amount_cents, status, branch_id, gateway_ref)
+			 VALUES ($1::uuid, $2, 'CARD', 5000, 'RECEIVED', $3::uuid, $4)`,
+			id, "PMT-SIM-"+id[:8], branchID, gatewayRef); err != nil {
+			t.Fatalf("insert card payment: %v", err)
+		}
+		t.Cleanup(func() {
+			_, _ = pool.Exec(context.Background(), `DELETE FROM payments WHERE id = $1::uuid`, id)
+		})
+		return id
+	}
+	repo := NewRepository(pool)
+	ctx := context.Background()
+
+	t.Run("a stub-prefix ref stamps the flag", func(t *testing.T) {
+		id := insertCard(t, payment.StubCaptureRefPrefix+"5f3a91bc")
+		tenders, err := repo.ReadReceiptTenders(ctx, id, "")
+		if err != nil {
+			t.Fatalf("read tenders: %v", err)
+		}
+		if len(tenders) != 1 {
+			t.Fatalf("want the one card row, got %d", len(tenders))
+		}
+		if !tenders[0].Simulated {
+			t.Fatalf("a CARD capture whose gateway ref begins %q must stamp Simulated, the paper must not claim a live charge", payment.StubCaptureRefPrefix)
+		}
+	})
+
+	t.Run("a foreign ref does not stamp", func(t *testing.T) {
+		id := insertCard(t, "ch_live_9f8e2a77")
+		tenders, err := repo.ReadReceiptTenders(ctx, id, "")
+		if err != nil {
+			t.Fatalf("read tenders: %v", err)
+		}
+		if len(tenders) != 1 {
+			t.Fatalf("want the one card row, got %d", len(tenders))
+		}
+		if tenders[0].Simulated {
+			t.Fatal("a CARD capture carrying a foreign gateway ref must NOT stamp Simulated, a live charge is a live charge")
+		}
+	})
 }

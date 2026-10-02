@@ -78,6 +78,65 @@ func TestRenderReceiptHTML_OriginalHasNoReprintMarker(t *testing.T) {
 	}
 }
 
+// The simulated card word: a card sale rung on the demo box's simulated rail must not print paper
+// that reads like a live card charge. The stub mints gateway refs with a recognizable prefix, the
+// repository stamps ReceiptTender.Simulated from the row's own ref, and the template carries the
+// word once, inside the tender line. The guard legs hold the other direction: a live gateway card
+// charge prints no simulated word anywhere, and the word is the ONLY delta between the two
+// documents, so a receipt with no simulated card rows renders byte-identically to the flag-less
+// document.
+func TestRenderReceiptHTML_SimulatedCardWord(t *testing.T) {
+	receipt := func(simulated bool) Receipt {
+		return Receipt{
+			OrderNo:   "#SO-42",
+			TaxLabel:  "HST (13%)",
+			SoldAt:    time.Now(),
+			PrintedAt: time.Now(),
+			Tenders: []ReceiptTender{{
+				Method: "CARD", Label: "CARD · VISA", AmountCents: 13944,
+				Ref:       "PMT-000007",
+				Simulated: simulated,
+			}},
+		}
+	}
+	const word = "Simulated card: nothing reached a processor."
+	const addition = ` <span class="muted">` + word + `</span>`
+
+	simHTML, err := RenderReceiptHTML(receipt(true))
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	liveHTML, err := RenderReceiptHTML(receipt(false))
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	if n := strings.Count(simHTML, word); n != 1 {
+		t.Fatalf("the simulated card sale's receipt must carry the word exactly once, got %d", n)
+	}
+	// Inside the tender line, not a page-level banner: the word belongs to the row it describes.
+	table := strings.Index(simHTML, `<table class="tenders">`)
+	if table < 0 {
+		t.Fatal("the tenders table is missing from the document")
+	}
+	end := strings.Index(simHTML[table:], "</table>") + table
+	at := strings.Index(simHTML, word)
+	if at < table || at > end {
+		t.Fatalf("the word must render inside the tender line, found at %d, the tenders table spans %d..%d", at, table, end)
+	}
+	if !strings.Contains(simHTML, addition) {
+		t.Fatalf("the word must render in the house muted span idiom beside the label, %q not found", addition)
+	}
+	if strings.Contains(liveHTML, "Simulated card") {
+		t.Fatal("a live gateway card charge must print no simulated word anywhere on the receipt")
+	}
+	// The strongest form of "no flag, no word": strip the word span from the simulated document and
+	// the bytes must equal the live document exactly.
+	if strings.Replace(simHTML, addition, "", 1) != liveHTML {
+		t.Fatal("the word must be the only delta: the same receipt without the flag must render byte-identically to the live document")
+	}
+}
+
 // DIB-456 / D-078, the receipt is a printed artifact that leaves the building, so the product mark
 // on it is checked rather than assumed.
 //

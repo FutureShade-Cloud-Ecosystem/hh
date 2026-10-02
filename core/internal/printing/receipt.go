@@ -282,4 +282,11 @@ type ReceiptTender struct {
 	Label       string
 	AmountCents int64
 	Ref         string
+
+	// Simulated marks a CARD tender whose gateway ref carries the payment stub's capture prefix
+	// (payment.StubCaptureRefPrefix): the charge was the deterministic stub's, nothing reached a
+	// processor, and the printed receipt says so beside the label. The flag is stamped from the
+	// row's own ref, so a reprint stays honest even after the box switches rails: the word follows
+	// what actually processed that payment.
+	Simulated bool
 }

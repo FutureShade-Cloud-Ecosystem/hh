@@ -8,6 +8,12 @@ import (
 	"fmt"
 )
 
+// StubCaptureRefPrefix prefixes every capture ref the stub mints. The printed receipt reads it to
+// mark simulated card charges on paper: a CARD payments row whose gateway_ref carries this prefix
+// is a charge that never reached a processor, and the receipt says so beside the tender. A live
+// gateway's adapter writes its own refs, only the stub mints this shape.
+const StubCaptureRefPrefix = "rp_sim_"
+
 // RunPaymentsStub is the DETERMINISTIC stand-in for the Run Payments /api/v1/charge keyed / card-NOT-
 // present call (the gate default; no live network call). It mirrors the VERIFIED A/B/C outcome: a
 // successful charge is the analogue of Run's result=='A' (Approved) → Status="captured", with a
