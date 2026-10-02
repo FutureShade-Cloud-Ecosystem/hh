@@ -30,6 +30,13 @@ session needs the blind count, the Z report and a manager's sign-off; the
 drawer close is not on this surface yet."). Porting the close flow is the
 work that opens it; the stub carries no complete route.
 
+Open gap: the printed receipt does not carry the simulated word. The receipt
+is the core's document (GET /api/v1/pos/sales/{id}/receipt, printing module)
+and says nothing of simulation for a simulated card sale; the till's own
+screens (the confirmation's notice, the rail word) carry it. A core change is
+the principal's to sequence, and the suite no longer asserts the word on the
+stub's receipt text.
+
 One deliberate deviation from the reference, on HH's rule (the visual
 review's blocking zero): the reference's empty draft reads Subtotal CA$0.00,
 HST CA$0.00, Total CA$0.00, and the ring button carries the zero. HH's rule

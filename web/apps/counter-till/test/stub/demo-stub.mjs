@@ -1080,8 +1080,9 @@ const server = createServer(async (request, response) => {
       (typeof orderId === "string" && orderId !== "" && saleFromInput({ order_id: orderId })) ||
       undefined;
     if (sale === undefined) {
-      // A sale this caller's branch does not reach (another branch's sale
-      // among them: the real lookup is branch fenced) is an invisible one.
+      // The real lookup is branch fenced; this stub does NOT check the
+      // caller's branch (known gap, no test relies on it). Only a sale it
+      // does not know answers 404.
       respondJson(response, 404, { error: "no sale with that number answers at this counter" });
       return;
     }
@@ -1973,11 +1974,6 @@ const server = createServer(async (request, response) => {
           ).toFixed(2)}</td></tr>`,
       )
       .join("");
-    // The simulated word rides any sale that touched the simulated rail: a
-    // CARD tender or a split with a card leg.
-    const touchedCardRail =
-      sale.tender === "CARD" ||
-      (Array.isArray(sale.tenders) && sale.tenders.some((leg) => leg.method === "CARD"));
     const receiptDocument = `<!doctype html><html><head><title>${sale.order_no}</title></head><body>
 <h1>Hardscape House</h1>
 <p>Counter sale ${sale.order_no} · invoice ${sale.invoice_no}</p>
@@ -1985,7 +1981,6 @@ ${customer ? `<p>Sold to ${customer.name} (${customer.account_no})</p>` : ""}
 <table>${rows}</table>
 <p>Subtotal ${(sale.subtotal_cents / 100).toFixed(2)} · tax ${(sale.tax_cents / 100).toFixed(2)}</p>
 <p>Total ${(sale.total_cents / 100).toFixed(2)} · ${sale.tender}</p>
-${touchedCardRail ? `<p>Simulated card: no card was charged</p>` : ""}
 </body></html>`;
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(receiptDocument);

@@ -281,11 +281,13 @@ test("a card sale shows the simulated word on the tender and on the confirmation
   const read = await getSale(page, bearer, sale.order_id as string);
   expect(read.tender).toBe("CARD");
 
-  // The receipt document carries the word: the sale touched the simulated rail.
+  // The printed receipt is the core's document and carries no simulated word
+  // (CLOSURE.md names the gap); it opens, and the simulated notice is held by
+  // the till's own screens above.
   const receiptPage = page.context().waitForEvent("page");
   await sold.getByTestId("sold-print").click();
   const printed = await receiptPage;
-  await expect(printed.getByText("Simulated card: no card was charged")).toBeVisible();
+  await expect(printed.getByText("Counter sale")).toBeVisible();
   await printed.close();
 
   // The notice is value driven: the same surface against a status route that
@@ -754,11 +756,12 @@ test("a split with a card leg carries the simulated word on the confirmation and
   const legs = read.tenders as Array<Record<string, unknown>>;
   expect(legs.map((leg) => leg.method)).toEqual(["CASH", "CARD"]);
 
-  // The receipt document carries the word too.
+  // The printed receipt is the core's document; it opens, and the simulated
+  // notice is held by the till's own screens above.
   const receiptPage = page.context().waitForEvent("page");
   await sold.getByTestId("sold-print").click();
   const printed = await receiptPage;
-  await expect(printed.getByText("Simulated card: no card was charged")).toBeVisible();
+  await expect(printed.getByText("Counter sale")).toBeVisible();
   await printed.close();
 });
 
