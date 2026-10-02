@@ -426,13 +426,11 @@ func serve(getenv func(string) string) error {
 	// gate fails honestly when the database is down.
 	mux.Handle("GET /healthz", healthzHandler(graph.pool.Ping, graph.tops.bistrackSvc.HealthStatus()))
 
-	srv := &http.Server{
-		Addr: graph.listenAddr,
-		// A-21 records every mutating /api request, outside the authz
-		// wrapping (the pin's Handler order: the audit middleware wraps the
-		// whole mux, the otel middleware wraps from outside it).
-		Handler:           otelhttp.Wrap(nil)(auditWrap(mux, graph)),
-		ReadHeaderTimeout: 10 * time.Second,
+	// A-21 records every mutating /api request, outside the authz wrapping (the pin's Handler
+	// order: the audit middleware wraps the whole mux, the otel middleware wraps from outside it).
+	srv, err := newServer(graph, otelhttp.Wrap(nil)(auditWrap(mux, graph)))
+	if err != nil {
+		return err
 	}
 	errCh := make(chan error, 1)
 	go func() {
@@ -453,6 +451,20 @@ func serve(getenv func(string) string) error {
 	_ = srv.Shutdown(shutdownCtx)
 	fmt.Println("core: serve: shutdown complete")
 	return nil
+}
+
+// newServer builds the HTTP server both serve builds run, binding the address resolved at config
+// load and carried on the graph. An empty address is refused: http.Server would bind ":80"
+// silently, so a graph constructor that forgot the field must fail loudly, not listen on port 80.
+func newServer(graph *appGraph, handler http.Handler) (*http.Server, error) {
+	if graph.listenAddr == "" {
+		return nil, errors.New("serve: no listen address was resolved at config load")
+	}
+	return &http.Server{
+		Addr:              graph.listenAddr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+	}, nil
 }
 
 // resolveListenAddr is the listen address rule, run once at config load by the default

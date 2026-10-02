@@ -31,17 +31,18 @@ import (
 // path. None of them may start a goroutine, call a loop's Run, build a
 // notify.Dispatcher, or call DrainOnce.
 var serveScopeNames = map[string]bool{
-	"main":            true,
-	"serve":           true,
-	"registerRoutes":  true,
-	"listenAddr":      true,
-	"loadServeConfig": true,
-	"buildSmsBelt":    true,
-	"wireMoney":       true,
-	"wireOperations":  true,
-	"wireTops":        true,
-	"auditWrap":       true,
-	"healthzHandler":  true,
+	"main":              true,
+	"serve":             true,
+	"registerRoutes":    true,
+	"resolveListenAddr": true,
+	"newServer":         true,
+	"loadServeConfig":   true,
+	"buildSmsBelt":      true,
+	"wireMoney":         true,
+	"wireOperations":    true,
+	"wireTops":          true,
+	"auditWrap":         true,
+	"healthzHandler":    true,
 }
 
 // TestServeStartsNoScheduler walks every non-test source file of this

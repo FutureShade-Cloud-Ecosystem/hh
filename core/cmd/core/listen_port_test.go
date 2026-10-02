@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -81,5 +82,19 @@ func TestResolveListenAddrBoundsTheEchoedValue(t *testing.T) {
 	})
 	if err == nil || len(err.Error()) > 200 || !strings.Contains(err.Error(), "PORT") {
 		t.Fatalf("a 5000 character PORT gave %v, want a short refusal naming PORT", err)
+	}
+}
+
+// HH-200: the server both serve builds run binds the address carried on the graph (the default build's
+// bind site is held here, the demo build's by the demo serve test), and an empty address is refused
+// rather than bound as ":80".
+func TestNewServerBindsTheGraphsAddress(t *testing.T) {
+	h := http.NewServeMux()
+	srv, err := newServer(&appGraph{listenAddr: ":9123"}, h)
+	if err != nil || srv.Addr != ":9123" || srv.Handler != h {
+		t.Fatalf("newServer = %+v, %v; want a server on :9123 with the handler", srv, err)
+	}
+	if _, err := newServer(&appGraph{}, h); err == nil {
+		t.Fatal("an empty listen address must be refused, not bound as :80")
 	}
 }
