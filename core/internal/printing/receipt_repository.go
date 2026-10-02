@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -139,7 +140,8 @@ func (r *Repository) ReadReceiptTenders(ctx context.Context, paymentID, invoiceI
 		return nil, errNoPool
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT p.method, p.amount_cents, COALESCE(p.card_type,''), p.payment_no, p.received_at
+		SELECT p.method, p.amount_cents, COALESCE(p.card_type,''), p.payment_no, p.received_at,
+		       COALESCE(p.gateway_ref, '')
 		  FROM payments p
 		 WHERE p.status <> 'VOID'
 		   AND (p.id = NULLIF($1,'')::uuid
@@ -153,9 +155,9 @@ func (r *Repository) ReadReceiptTenders(ctx context.Context, paymentID, invoiceI
 	out := []ReceiptTender{}
 	for rows.Next() {
 		var t ReceiptTender
-		var cardType, paymentNo string
+		var cardType, paymentNo, gatewayRef string
 		var receivedAt time.Time
-		if err := rows.Scan(&t.Method, &t.AmountCents, &cardType, &paymentNo, &receivedAt); err != nil {
+		if err := rows.Scan(&t.Method, &t.AmountCents, &cardType, &paymentNo, &receivedAt, &gatewayRef); err != nil {
 			return nil, err
 		}
 		t.Label = t.Method
@@ -163,6 +165,11 @@ func (r *Repository) ReadReceiptTenders(ctx context.Context, paymentID, invoiceI
 			t.Label = "CARD · " + cardType
 		}
 		t.Ref = paymentNo
+		// The word follows the ROW's own ref: a CARD capture whose gateway ref carries the stub's
+		// prefix never reached a processor, and the receipt says so beside the tender. A live
+		// gateway's adapter writes its own refs, so a live charge stamps nothing, and a reprint
+		// stays honest even after the box switches rails.
+		t.Simulated = t.Method == "CARD" && strings.HasPrefix(gatewayRef, payment.StubCaptureRefPrefix)
 		out = append(out, t)
 	}
 	return out, rows.Err()
