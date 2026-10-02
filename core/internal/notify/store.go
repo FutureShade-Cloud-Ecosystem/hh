@@ -82,9 +82,16 @@ func (s *PgOutboxStore) processOne(ctx context.Context, settle func(context.Cont
 			SET status = 'PUBLISHED', published_at = now(), attempts = attempts + 1, last_error = ''`+payloadSet+`
 			WHERE event_id = $1`, e.EventID)
 	case statusDead:
+		deadSet := ""
+		if st.Redact {
+			// A secret topic's DEAD row drops its payload too (HH-188): terminal is terminal, the
+			// one-time token will never be delivered from this row, and the diagnosis in last_error
+			// is the only part an operator needs.
+			deadSet = ", payload = '{}'::jsonb"
+		}
 		_, err = tx.Exec(ctx, `
 			UPDATE events_outbox
-			SET status = 'DEAD', attempts = attempts + 1, last_error = $2
+			SET status = 'DEAD', attempts = attempts + 1, last_error = $2`+deadSet+`
 			WHERE event_id = $1`, e.EventID, st.LastError)
 	default: // statusPending, transient failure, retry on a later tick
 		_, err = tx.Exec(ctx, `

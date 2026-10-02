@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -76,8 +77,7 @@ func worker(getenv func(string) string) error {
 	// shared dispatcher would race the frozen handler map; sms_outbox is a
 	// disjoint table, and a carrier outage cannot touch a GL journal.
 	smsDispatcher := notify.NewDispatcher(graph.tops.sms.outbox, log)
-	messagingprovider.NewConsumer(graph.tops.sms.notifier, graph.tops.sms.resolver, log).
-		RegisterHandlers(smsDispatcher)
+	registerSmsConsumers(graph.tops.sms, graph.tops.notifier, smsDispatcher, log)
 	go smsDispatcher.Run(ctx)
 
 	// MSG-01 Feature B: the retention sweep (idempotent archival, never a
@@ -165,6 +165,28 @@ func worker(getenv func(string) string) error {
 	<-ctx.Done()
 	fmt.Println("core: worker: shutdown complete")
 	return nil
+}
+
+// registerSmsConsumers registers the sms dispatcher's whole topic set over
+// the shared belt: the worker's one sms wiring point, extracted from the
+// role body so a test can drive the SAME registration set the worker
+// builds rather than a hand copy that would keep passing while the real
+// line drifted (the HH-188 finding).
+func registerSmsConsumers(belt *smsBelt, mail notify.Notifier, d *notify.Dispatcher, log *slog.Logger) {
+	// The Wave 2 registration line, the pin's own and untouched: the AR and
+	// fulfilment notices.
+	messagingprovider.NewConsumer(belt.notifier, belt.resolver, log).
+		RegisterHandlers(d)
+	// The Wave 3 line the pin carried (D37's unchanged-behaviour carry):
+	// the quote share and follow-up topics, registered SECRET because their
+	// payloads carry the share link, a bearer credential for the public
+	// quote view and accept routes, with the portal's mail notifier as the
+	// follow-up cadence's email transport (the dev log stub by default).
+	// Losing this line dead-letters every quote share and follow-up notice
+	// the producers enqueue, with the link still in the row.
+	messagingprovider.NewConsumer(belt.notifier, belt.resolver, log).
+		WithEmailNotifier(mail).
+		RegisterQuoteHandlers(d)
 }
 
 // approvalSourceAdapter satisfies messaging's reconcile-source seam over
