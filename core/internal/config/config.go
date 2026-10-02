@@ -24,6 +24,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // EnvDemo is the APP_ENV a DEMO BOX declares, and it is a value this program had no need of until
@@ -176,8 +177,9 @@ func Load() Config {
 
 // Validate fails closed on insecure configuration. Call it at startup and treat
 // any error as fatal. The dev defaults are accepted ONLY when APP_ENV=dev is set
-// explicitly; an unset APP_ENV is refused, and every other environment (staging,
-// production, typos) must supply the values the remaining checks demand. (The
+// explicitly; an unset APP_ENV is refused, a value that is not exactly dev, staging,
+// production or demo (a typo) is refused outright, and staging, production and demo
+// must supply the values the remaining checks demand. (The
 // two signing-secret clauses this function used to carry left with the HS256
 // world they served: token verification is no longer this package's to
 // configure.)
@@ -188,6 +190,15 @@ func (c Config) Validate() error {
 	// serve) call Validate; the one-shot tools never do.
 	if c.EnvUnset {
 		return fmt.Errorf("APP_ENV is not set: set it explicitly to one of dev, staging, production or demo (an unset value is refused so a missing variable cannot skip the checks)")
+	}
+	// APP_ENV must be exactly one of the four named values, case-sensitive and untrimmed. A
+	// typo such as prod, Production or "dev " would otherwise get the strict checks below but
+	// slip past the ones elsewhere that compare against the literal word production (the card
+	// rail refusals in payment and payments). The bad value is deliberately not echoed.
+	switch c.Env {
+	case "dev", "staging", "production", EnvDemo:
+	default:
+		return fmt.Errorf("APP_ENV is not one of the accepted values: set it exactly (case-sensitive, no spaces) to dev, staging, production or demo")
 	}
 	if c.Env == "dev" {
 		return nil
@@ -204,15 +215,6 @@ func (c Config) Validate() error {
 	// reading of "DEMO_MODE on staging" that is anything but a mistake, so it stops the process.
 	if c.DemoMode && c.Env != EnvDemo {
 		return fmt.Errorf("DEMO_MODE is set but APP_ENV=%q: the demo sign-in is a credential bypass and may run only on a demo box (APP_ENV=%q) or in dev", c.Env, EnvDemo)
-	}
-	// APP_ENV must be exactly one of the four named values, case-sensitive and untrimmed. A
-	// typo such as prod, Production or "dev " would otherwise get the strict checks below but
-	// slip past the ones elsewhere that compare against the literal word production (the card
-	// rail refusals in payment and payments). The bad value is deliberately not echoed.
-	switch c.Env {
-	case "staging", "production", EnvDemo:
-	default:
-		return fmt.Errorf("APP_ENV is not one of the accepted values: set it exactly (case-sensitive, no spaces) to dev, staging, production or demo")
 	}
 	// RUN-PAY vault key: fail closed outside dev. A wrong-length key must not boot a
 	// non-dev box silently encrypting credentials with an ephemeral key it loses on restart.
@@ -233,21 +235,27 @@ func (c Config) Validate() error {
 }
 
 // checkBaseURL requires an absolute https URL with a usable link base. It enforces: https; a
-// host that is not empty, localhost (or *.localhost, with or without a trailing dot), a
-// loopback or unspecified address, an IPv6 zone, or one of the numeric shorthand spellings of
-// an address (127.1, 2130706433, 0x7f.0.0.1, 0177.0.0.1) that the resolver would read as
-// loopback; and no userinfo, query, fragment, space or control character, because links are
-// built by appending a path to this value and every link would carry the rest. POLICY: it does
-// NOT require a public address. Private ranges, tailnet addresses, .local, .internal and
-// single-label hosts pass, since a staging box may sit on a tailnet. The error names the
-// variable and the reason and never the value.
+// host that is ASCII and is not empty, localhost (or *.localhost, with or without a trailing
+// dot), a loopback or unspecified address, an IPv6 zone, a numeric shorthand spelling of an
+// address (127.1, 2130706433, 0x7f.0.0.1, 0177.0.0.1, 127.0.0x.1) that a resolver or browser
+// would read as loopback, an empty or hyphen-edged label, or a port outside 1 to 65535; and no
+// userinfo, query, fragment, whitespace or control character, because every link built from
+// this value would carry them. Non-ASCII hosts are refused outright (their full-width and
+// ideographic-dot spellings normalise to localhost and 127.0.0.1); punycode xn-- hosts are ASCII
+// and pass.
+//
+// IT CHECKS SPELLING ONLY. POLICY: it does not require a public address and it does not
+// resolve anything. Private ranges, tailnet addresses, .local, .internal and single-label hosts
+// pass, since a staging box may sit on a tailnet; so do names that resolve to loopback through a
+// hosts file or public DNS (127.0.0.1.nip.io, localhost.localdomain, ip6-localhost,
+// ip6-loopback, localhost6). The error names the variable and the reason, never the value.
 func checkBaseURL(name, raw string) error {
 	if raw == "" {
 		return fmt.Errorf("%s must be set outside dev: it is the origin that links in messages point at", name)
 	}
 	for _, r := range raw {
-		if r <= 0x20 || r == 0x7f {
-			return fmt.Errorf("%s must not contain spaces or control characters", name)
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return fmt.Errorf("%s must not contain whitespace or control characters", name)
 		}
 	}
 	u, err := url.Parse(raw)
@@ -258,7 +266,20 @@ func checkBaseURL(name, raw string) error {
 		return fmt.Errorf("%s must not carry credentials (userinfo): they would be mailed in every link", name)
 	}
 	if strings.ContainsAny(raw, "?#") {
-		return fmt.Errorf("%s must not carry a query or fragment: links are built by appending a path to it", name)
+		return fmt.Errorf("%s must not carry a query or fragment: it is a base that links are built from", name)
+	}
+	if strings.HasSuffix(u.Host, ":") {
+		return fmt.Errorf("%s must not carry an empty port", name)
+	}
+	if ps := u.Port(); ps != "" {
+		if n, err := strconv.Atoi(ps); err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("%s must carry a port from 1 to 65535 or none", name)
+		}
+	}
+	for i := 0; i < len(u.Hostname()); i++ {
+		if u.Hostname()[i] >= 0x80 {
+			return fmt.Errorf("%s must name an ASCII host (use punycode for an international name)", name)
+		}
 	}
 	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
 	const notLocal = "%s must name a real host outside dev, not an empty, localhost, loopback, unspecified or numeric-shorthand host"
@@ -271,6 +292,11 @@ func checkBaseURL(name, raw string) error {
 		}
 		return nil
 	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return fmt.Errorf("%s must name a well formed host (no empty or hyphen-edged label)", name)
+		}
+	}
 	if numericShorthand(host) {
 		return fmt.Errorf(notLocal, name)
 	}
@@ -278,8 +304,8 @@ func checkBaseURL(name, raw string) error {
 }
 
 // numericShorthand reports whether every dot-separated label is all digits or a 0x-prefixed hex
-// group: the integer and short forms of an IPv4 address that net.ParseIP does not accept but
-// the system resolver does.
+// group (a bare 0x counts, browsers read it as zero): the integer and short forms of an IPv4
+// address that net.ParseIP does not accept but a resolver or browser does.
 func numericShorthand(host string) bool {
 	for _, label := range strings.Split(host, ".") {
 		if label == "" {
@@ -287,11 +313,7 @@ func numericShorthand(host string) bool {
 		}
 		digits := label
 		if strings.HasPrefix(label, "0x") {
-			digits = label[2:]
-			if digits == "" {
-				return false
-			}
-			for _, r := range digits {
+			for _, r := range label[2:] {
 				if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
 					return false
 				}

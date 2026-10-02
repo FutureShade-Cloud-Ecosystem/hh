@@ -1298,5 +1298,8 @@ with the variable forgotten still plants the Tier-1 global admins with the demo 
 lane did not change it on purpose: the one-shot roles (migrate, seed, demoseed) read an unset
 `APP_ENV` as dev so CI, reviewers and local developers can run them without setting it. Serve and
 worker, which call `Validate`, now refuse an unset `APP_ENV` (`Config.EnvUnset`). Proposed
-follow-up: CI sets `APP_ENV=dev` on the seed and demoseed steps in `.github/workflows/ci.yml`,
-then seed refuses `cfg.EnvUnset`. Owner: the platform lane or the principal.
+follow-up: CI sets `APP_ENV=dev` on the one seed step in `.github/workflows/ci.yml` (the
+`go run ./cmd/core seed` line in the integration job, around line 359; there is no demoseed
+step), then seed refuses `cfg.EnvUnset`. Demoseed runs in-process from tests and has no dev guard
+in `demoseed_main.go`, so it is out of that follow-up's scope. Owner: the platform lane or the
+principal.
