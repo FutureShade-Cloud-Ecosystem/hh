@@ -228,6 +228,14 @@ test("a walk-in cash sale of three lines rings, and the sale read equals every f
   // answered on the ring itself.
   expect(sale.cash_tendered_cents).toBe(8000);
   expect(sale.change_due_cents).toBe(8000 - (read.total_cents as number));
+
+  // The collapsed Items card's summary now reads the SERVER's own figure, and
+  // no estimate mark stands beside it: the ring is done, and the browser's
+  // estimate has no business on screen next to the confirmation's committed
+  // total (at any rate other than the stub's the two would disagree).
+  const itemsSummary = page.getByTestId("step-summary-items");
+  await expect(itemsSummary).toHaveText(`3 items · CA${dollars(read.total_cents as number)}`);
+  await expect(itemsSummary).not.toContainText("(est.)");
 });
 
 test("the quantity rung is the quantity on the screen, and the requested date is the house zone's day", async ({
@@ -426,6 +434,16 @@ test("an account on hold is refused in the reviewed words, and nothing commits",
   await expect(page.getByTestId("sold-panel")).toHaveCount(0);
   await openStep(page, "items");
   await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
+});
+
+test("the collapsed Items summary labels its pre-ring figure an estimate", async ({ page }) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  // Another step open: the Items card collapses and its summary speaks. The
+  // figure is the browser's own estimate (the ring is the binding price), so
+  // the line carries the same mark the totals rows and the ring button do.
+  await openStep(page, "customer");
+  await expect(page.getByTestId("step-summary-items")).toHaveText("1 item · CA$4.52 (est.)");
 });
 
 test("a walk-in COD sale is refused in words that are true, and the same sale with an account rings", async ({
@@ -989,6 +1007,27 @@ test("a split with a card leg carries the simulated word on the confirmation and
   await printed.close();
 });
 
+test("the split panel labels its remaining and over figures estimates, and the settled word stays bare", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Split" }).click();
+  const panel = page.getByTestId("pos-split-panel");
+  // The Holland line at retail with tax is CA$4.52. The remainder derives
+  // from the estimated total, so the figure carries the mark the totals rows
+  // carry; the same for a composed-too-much over figure.
+  await panel.getByTestId("split-amount-0").fill("4.00");
+  await expect(page.getByTestId("split-remaining")).toHaveText("CA$0.52 (est.) remaining");
+  await panel.getByTestId("split-amount-1").fill("0.60");
+  await expect(page.getByTestId("split-remaining")).toHaveText("CA$0.08 (est.) over");
+  // Settled exactly carries no mark: the legs are checked against the
+  // server's own total at the ring, so the panel is not estimating there.
+  await panel.getByTestId("split-amount-1").fill("0.52");
+  await expect(page.getByTestId("split-remaining")).toHaveText("Settled exactly");
+});
+
 test("an empty draft shows the blank marker, never a confident zero, in the linear flow", async ({
   page,
 }) => {
@@ -1321,6 +1360,24 @@ test("a ticket parked with a line price pending lists no total", async ({ page }
   const ticket = parkedDialog.locator(".ticket").first();
   await expect(ticket).toContainText("(not priced)");
   await expect(ticket).not.toContainText("CA$");
+});
+
+test("the parked list labels a ticket's snapshot total an estimate", async ({ page }) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  // The row's figure is the park-time snapshot of the estimate (a resumed
+  // ticket reprices through the engine), so the line carries the mark; the
+  // "(not priced)" degradation beside it stays as it was.
+  // The rail lists the branch's tickets in insertion order: the ticket this
+  // story just parked is the rail's last.
+  const ticket = parkedDialog.locator(".ticket").last();
+  await expect(ticket.locator(".mtot")).toHaveText("CA$4.52 (est.)");
+  await expect(ticket.locator(".meta")).toContainText("1 line");
 });
 
 test("a parked ticket this window holds no price memory for lists the same marker, never a bare line count", async ({

@@ -5082,19 +5082,29 @@ export class HosPosTerminal extends LitElement {
   }
 
   /**
- * The facts the COLLAPSED cards summarise (summaryFor, _pos-accordion.ts: pure and tested).
+   * The facts the COLLAPSED cards summarise (summaryFor, _pos-accordion.ts: pure and tested).
    *
-   * `totalLabel` is deliberately withheld while Payment is open: the totals card inside that step
-   * is the running total's SOURCE, and the doctrine's say-it-once rule means the Items summary must
- * not echo a number the operator is already looking at. Closed Payment, and the echo comes back:
+   * `totalLabel` is withheld while Payment is open pre-ring: the totals card inside that step is
+   * the running total's SOURCE, and the doctrine's say-it-once rule means the Items summary must
+   * not echo a number the operator is already looking at. Closed Payment, and the echo comes back:
    * which is the same source-and-echo rule the old header chip followed, now with a better echo.
+   *
+   * The echo is an ESTIMATE before the ring (the browser's own arithmetic; the ring is the binding
+   * price), so it carries the same mark the totals rows and both ring buttons carry. After the ring
+   * the summary stops estimating entirely: it reads the sale's committed total, the server's own
+   * figure, with no mark, so the estimate cannot stand on screen beside the confirmation's
+   * committed figure (and they would disagree at any rate other than the preview's).
    */
   private stepFacts(): StepSummaryFacts {
     return {
       customerName: this.customer ? this.customer.name : '',
       walkInConfirmed: this.walkInConfirmed,
       lineCount: this.cart.length,
-      totalLabel: this.openStep === 'payment' ? '' : this.moneyOrMarker(this.total()),
+      totalLabel: this.ringDone()
+        ? money(this.doneSale().total_cents)
+        : this.openStep === 'payment'
+          ? ''
+          : `${this.moneyOrMarker(this.total())}${this.hasPricedLine() ? ' (est.)' : ''}`,
       // DIB-512 (8) · one word per surface. Before the ring the collapsed Payment card says which
       // tender is CHOSEN; after it, salePillLabel decides the counter word for what the sale
  // actually is ('Paid' / 'On account' / 'COD' / 'Deposit'): never the wire status, which is

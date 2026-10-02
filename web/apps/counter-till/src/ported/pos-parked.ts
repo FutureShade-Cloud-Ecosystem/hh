@@ -244,12 +244,14 @@ export class HosPosParked extends LitElement {
         ${this.tickets.length === 0
           ? html`<div class="empty">No parked tickets.</div>`
           : this.tickets.map((t) => {
- // DIB-247: identify each ticket by WHO it's for and HOW MUCH: both come from the
+              // DIB-247: identify each ticket by WHO it's for and HOW MUCH: both come from the
               // terminal's park-time snapshot (the server row carries neither the name nor a
-              // price). A cold snapshot degrades to the account/walk-in label and the "(not priced)" marker.
+              // price). The snapshot total is the park-time estimate, so it carries the estimate
+              // mark like every other pre-ring figure; a cold snapshot degrades to the
+              // account/walk-in label and the "(not priced)" marker.
               const snap = this.info.get(t.id);
               const who = snap?.customer?.name || (t.customer_id ? 'Account customer' : 'Walk-in');
-              const total = snap && snap.totalCents !== null ? money(snap.totalCents) : '(not priced)';
+              const total = snap && snap.totalCents !== null ? `${money(snap.totalCents)} (est.)` : '(not priced)';
               return html`<div class="ticket">
                 <div>
                   <div class="tno">${t.ticket_no}</div>
