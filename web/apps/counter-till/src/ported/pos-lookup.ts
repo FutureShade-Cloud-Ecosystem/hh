@@ -102,8 +102,11 @@ export class HosPosLookup extends LitElement {
         color: var(--hos-stone-amber-text);
       }
       button:disabled {
-        opacity: 0.5;
-        cursor: default;
+        background: transparent;
+        border-color: var(--hos-line);
+        color: var(--hos-text-dim);
+        opacity: 1;
+        cursor: not-allowed;
       }
       .seg {
         display: inline-flex;

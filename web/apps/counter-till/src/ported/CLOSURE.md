@@ -26,9 +26,12 @@ answers CLOSED, and a drawer that does not balance needs a manager's sign-off
 (row 500). The reference's End Session opened a till-close screen (blind count,
 Z report, sign-off) that this release does not carry, so the button stays
 visible but closed: `aria-disabled="true"` (so it takes focus), grey and
-unfilled, named "End Session", with the reason on its title; a press or focus
-shows the reason as text in the till's own message line, which the button
-points at with `aria-describedby` ("Ending the session needs the blind count,
+unfilled, named "End Session", with the reason on its title; the button
+points with `aria-describedby` at its own always-present visually hidden
+description (the reason), and a press or focus also shows the reason as text
+in the till's own message line, in a neutral notice style (not the success
+green) that is announced once (on a press; focus leaves the speaking to the
+description) ("Ending the session needs the blind count,
 the Z report and a manager's sign-off; the drawer close is not on this
 surface yet."), and it makes no request. Porting the close flow is the
 work that opens it; the stub carries no complete route.
@@ -57,7 +60,9 @@ sale amount carries (est.) once it states a figure, as does the Change due
 preview. The split panel's remaining amount, the parked list's total and the
 Change due preview's choice between a change figure and "Less than the total"
 follow the same marker while any line is price pending (the parked snapshot
-keeps no total for such a ticket). The search drop rows render
+keeps no total for such a ticket); a parked ticket with no price memory in this
+window lists the marker too. While pending the split panel's problem line says
+a price is pending (not "Add a line") and Rest fills no leg. The search drop rows render
 the contract's per-branch stock (`on_hand_branch`) beside the SKU, as the
 reference's rows do; the contract carries the field, so no gap remains.
 
@@ -117,11 +122,15 @@ own commit on `till/ui-3-polish`.
   scale, about 48px, with the till's small-chrome button face and type size and
   a one-line demo banner. The design system's 44px control floor still governs
   the entry page.
-- Disabled controls (visual NOTE 4): the Items Add button and the returns
-  desk's disabled buttons take the one rule Complete sale uses: no fill, grey
-  ink and line, no fade. Still on the older fade rule and not in this pass's
-  list: the split panel's and the lookup sheet's own disabled buttons
-  (`opacity: 0.5`).
+- Disabled controls (visual NOTE 4): every disabled button the till mounts takes the one rule
+  Complete sale uses: no fill, grey ink and line, opacity 1, `not-allowed`. That covers the Items Add
+  button, the returns desk's buttons, the fulfilment tiles (COD off), the payment tiles and tenders
+  buttons, the split panel's and the lookup sheet's buttons, the parked list, the return dialog and the
+  customer picker's create form (a test reads the COD tile, Add, Find sale and End Session), and, edited
+  to the same rule without a test because no path on this mount shows them: the quick-action start
+  guard (`quick-action-start-guard.ts`), the assess-relief dialog (`pos-assess-relief.ts`), the
+  signature pad (`pos-signature.ts`), the counter settings dialog (`pos-counter-settings.ts`) and the
+  fault state's retry button (`empty-state.ts`). Not seen in a browser: those five.
 - Control boundary: the returns desk's inputs and the till's own inputs and
   selects take `--hh-control-line` (3:1 or better in both themes), not the
   hairline, through the `--hos-control-line` alias; a test reads the border.
@@ -352,7 +361,7 @@ formatters, `_pos-rev8.ts` `marginPctLabel`.
   The reference rendered an em dash as its blank mark, which the house
   forbids, so every blank marker now carries a real word: the ticket footer's
   unknown weight reads `(not weighed)` (pinned by the ported test), a pending
-  line's total and a line's absent weight and margin read `(none)`, a branch
+  line's total reads `(not priced)`, a line's absent weight and margin read `(none)`, a branch
   stock cell with no read reads `(no read)`, the returns reason's blank option
   and the tile picker's blank option read `(not set)`, and an unbound keycap
   reads `(not set)`. An earlier pass of this port had collapsed those marks to

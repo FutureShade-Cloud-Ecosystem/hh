@@ -1138,6 +1138,12 @@ test("with COD off by policy, the COD tile reads 'COD: off' and cannot be select
   await expect(tile).toBeDisabled();
   await expect(tile).toHaveAttribute("title", /disabled by policy/);
   await expect(tile).toHaveAttribute("aria-pressed", "false");
+  // The one disabled rule: no fill, grey ink, no fade.
+  const shape = await tile.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { background: style.backgroundColor, opacity: style.opacity, cursor: style.cursor };
+  });
+  expect(shape).toEqual({ background: "rgba(0, 0, 0, 0)", opacity: "1", cursor: "not-allowed" });
 });
 
 test("with COD allowed (the stub's default), the COD tile is selectable", async ({ page }) => {

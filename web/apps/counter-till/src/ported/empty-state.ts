@@ -136,7 +136,10 @@ export const emptyStateStyles = [
     border-color: var(--hos-safety-red);
   }
   .hos-fault button:disabled {
-    opacity: 0.55;
+    background: transparent;
+    border-color: var(--hos-line);
+    color: var(--hos-text-dim);
+    opacity: 1;
     cursor: not-allowed;
   }
 `,

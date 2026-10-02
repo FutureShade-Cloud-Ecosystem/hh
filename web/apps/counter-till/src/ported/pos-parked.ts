@@ -146,7 +146,10 @@ export class HosPosParked extends LitElement {
       border-color: var(--hos-safety-red);
     }
     button:disabled {
-      opacity: 0.45;
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
       cursor: not-allowed;
     }
     .empty {

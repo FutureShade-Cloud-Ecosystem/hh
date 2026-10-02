@@ -1573,7 +1573,10 @@ export class HosPosTerminal extends LitElement {
       background: color-mix(in srgb, var(--hos-stone-amber) 10%, var(--hos-deep-earth));
     }
     .fulfil button:disabled {
-      opacity: 0.45;
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
       cursor: not-allowed;
     }
  /* ── DIB-488 collapsible more-options (native details: no JS state to desync) ── */
@@ -1670,7 +1673,10 @@ export class HosPosTerminal extends LitElement {
       background: color-mix(in srgb, var(--hos-stone-amber) 10%, var(--hos-deep-earth));
     }
     .paytiles button:disabled {
-      opacity: 0.45;
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
       cursor: not-allowed;
     }
     .complete-cta {
@@ -2165,7 +2171,10 @@ export class HosPosTerminal extends LitElement {
       border-color: var(--hos-stone-amber);
     }
     .tenders button:disabled {
-      opacity: 0.45;
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
       cursor: not-allowed;
     }
     .util {
