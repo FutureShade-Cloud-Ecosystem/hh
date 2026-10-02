@@ -20,6 +20,17 @@ Two rulings close reference entries in the mount (lead rulings 15 and 16):
   the credit gate, in HH's reviewed sentence; a price_blocked refusal has no
   arm and would surface as the server's own word, like every other refusal.
 
+One deliberate deviation from the reference, on HH's rule (the visual
+review's blocking zero): the reference's empty draft reads Subtotal CA$0.00,
+HST CA$0.00, Total CA$0.00, and the ring button carries the zero. HH's rule
+is explicit: an empty draft shows a blank marker, never a plausible zero.
+The mounted surface shows the app's own `(not priced)` marker in the totals
+card, the ring button's amount, and the read-back while NO line on the ticket
+is priced, and the figures return the moment one is (the old reviewed till's
+own marker, views/till.ts's line-unpriced word). The search drop rows render
+the contract's per-branch stock (`on_hand_branch`) beside the SKU, as the
+reference's rows do; the contract carries the field, so no gap remains.
+
 One ruled truth about money on the mounted surface (lead ruling 17): HH's
 contract gives the counter no rate (PricingBreakdown carries no tax, and the
 rate table is money-desk), so the surface's pre-ring tax and total are

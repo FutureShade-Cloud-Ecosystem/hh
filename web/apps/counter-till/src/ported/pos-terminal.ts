@@ -123,7 +123,7 @@ import {
 // HH note: the margin word routes through the app's reviewed formatMargin
 // (money.ts, half away from zero): the same core figure reads the same word
 // here as everywhere else in HH (1585 bps is 15.9%, not a float's 15.8%).
-import { formatMargin } from '../money.js';
+import { formatMargin } from "../money.js";
 import {
   clockLabel,
   lineWeightLbs,
@@ -1673,8 +1673,12 @@ export class HosPosTerminal extends LitElement {
       border-color: var(--hos-stone-amber-hover);
       color: var(--hos-stone-amber-ink); /* E6: a theme-stable fill pins its theme-stable ink in the SAME rule */
     }
+    /* HH note: disabled drops its fill and goes grey; fade is not a state. */
     .complete-cta:disabled {
-      opacity: 0.45;
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
       cursor: not-allowed;
     }
     /* UNION-TRAIN11 · the counter's pay key worn as a keycap on the CTA (see payKeycap()).
@@ -2679,8 +2683,27 @@ export class HosPosTerminal extends LitElement {
   // End Session opens the real A-03 close flow (movements → blind count → Z-report → complete);
  // the local chrome resets only once the till actually closes (or the cashier defers: COUNTED
   // sessions can be completed next morning, per the Dibbits SOP).
-  private endSession(): void {
-    this.showTillClose = true;
+ // HH note: the reference's End Session opened its till-close screen
+ // (hos-till-close), a host boundary screen this release does not carry, which
+ // left the button dead. The mount wires the honest minimal path the contract
+ // serves: confirm, complete the session (POST till/sessions/{id}/complete),
+ // and the chrome is honestly back at no-session. A refusal lands in words.
+  private async endSession(): Promise<void> {
+    if (!window.confirm('End the till session? The drawer closes for this register.')) return;
+    try {
+      const res = await api(
+        `/api/v1/till/sessions/${encodeURIComponent(this.tillSessionId)}/complete`,
+        { method: 'POST', body: JSON.stringify({ override_notes: '' }) },
+      );
+      if (!res.ok) {
+        this.setUtil(`The session did not end: the server refused it (${res.status}).`, 'bad');
+        return;
+      }
+      this.onTillClosed();
+      this.setUtil('Session ended: the drawer is closed for this register.');
+    } catch {
+      this.setUtil('The session did not end: the call did not go through. Try again.', 'bad');
+    }
   }
 
   private onTillClosed(): void {
@@ -3130,6 +3153,17 @@ export class HosPosTerminal extends LitElement {
   }
   private total(): number {
     return ticketTotalCents(this.subtotal(), this.tax());
+  }
+ // HH note: an empty draft shows the app's blank marker, never a plausible
+ // zero (the house rule; the reference showed CA$0.00 here, and HH's rule
+ // wins). The figures return the moment a priced line exists; a line whose
+ // price cannot answer keeps the whole summary saying nothing rather than a
+ // confident zero beside a pending word.
+  private hasPricedLine(): boolean {
+    return this.cart.some((l) => !l.priceMissing);
+  }
+  private moneyOrMarker(cents: number): string {
+    return this.hasPricedLine() ? money(cents) : '(not priced)';
   }
 
   // A deposit rides only an unpaid-at-ring posture: Charge Account tender or a COD sale.
@@ -5263,9 +5297,9 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
               ? html`<div class="reliefchip">tax relief: ${this.reliefReason}</div>`
               : nothing}
             <div class="totals">
-              <div class="trow"><span>Subtotal</span><span class="num">${money(this.subtotal())}</span></div>
-              <div class="trow"><span>${this.taxLabel()}</span><span class="num">${money(this.tax())}</span></div>
-              <div class="trow grand"><span>Total (est.)</span><span class="num">${money(this.total())}</span></div>
+              <div class="trow"><span>Subtotal</span><span class="num">${this.moneyOrMarker(this.subtotal())}</span></div>
+              <div class="trow"><span>${this.taxLabel()}</span><span class="num">${this.moneyOrMarker(this.tax())}</span></div>
+              <div class="trow grand"><span>Total (est.)</span><span class="num">${this.moneyOrMarker(this.total())}</span></div>
             </div>
           </section>
 
@@ -5415,8 +5449,8 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                       : this.ringBusy()
                         ? 'Ringing…'
                         : this.tillSessionId === ''
-                          ? `Open session · then complete · ${money(this.total())}`
-                          : `Complete sale · ${money(this.total())}`}
+                          ? `Open session · then complete · ${this.moneyOrMarker(this.total())}`
+                          : `Complete sale · ${this.moneyOrMarker(this.total())}`}
                     ${!this.ringDone() && this.payKeycap()
                       ? html`<span class="keycap" data-testid="pay-hotkey-chip" aria-hidden="true"
                           >${this.payKeycap()}</span
