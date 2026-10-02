@@ -785,10 +785,38 @@ function returnTotal(sale, lines) {
   return total;
 }
 
+// A sale committed at the counter world, shaped for the returns desk's reads
+// (the desk's lookup lines carry the returnable quantities and the per-line
+// figures; the committed sale's own lines carry the same fields).
+function committedSaleAsReturnable(sale) {
+  return {
+    order_id: sale.order_id,
+    order_no: sale.order_no,
+    branch_id: sale.branch_id,
+    customer_id: sale.customer_id,
+    invoice_id: sale.invoice_id,
+    sale_tender: sale.tender,
+    card_refundable: sale.tender === "CARD",
+    // The desk reads the quantity as `qty_sold`; the counter's own line
+    // carries it as the quantity entered.
+    lines: sale.lines.map((line) => ({ ...line, qty_sold: line.qty_entered })),
+  };
+}
+
 function saleFromInput(body) {
   if (typeof body.order_no === "string" && SALES[body.order_no] !== undefined) return SALES[body.order_no];
   if (typeof body.order_id === "string") {
     return Object.values(SALES).find((row) => row.order_id === body.order_id);
+  }
+  // A sale the counter world just rung answers the desk too: the demo world's
+  // two halves are one shop floor for the people standing at it.
+  if (typeof body.order_no === "string") {
+    const committed = sales.get(body.order_no) ?? [...sales.values()].find((row) => row.order_no === body.order_no);
+    if (committed !== undefined) return committedSaleAsReturnable(committed);
+  }
+  if (typeof body.order_id === "string") {
+    const committed = [...sales.values()].find((row) => row.order_id === body.order_id);
+    if (committed !== undefined) return committedSaleAsReturnable(committed);
   }
   return undefined;
 }
@@ -858,7 +886,11 @@ function tillSessionDetail(row) {
   };
 }
 
-function counterHit(product) {
+// The demo world's standing stock per branch: one number, the same read the
+// catalogue list answers, so the counter's own branch shows what it holds.
+const ON_HAND_BY_BRANCH = { [TRENTON_ID]: 120, [KINGSTON_ID]: 80 };
+
+function counterHit(product, branchId) {
   return {
     product_id: product.product_id,
     sku: product.sku,
@@ -868,6 +900,8 @@ function counterHit(product) {
     sold_by: product.sold_by,
     has_image: false,
     match_reason: "NAME",
+    on_hand_branch: ON_HAND_BY_BRANCH[branchId],
+    on_hand_by_branch: ON_HAND_BY_BRANCH,
   };
 }
 
@@ -887,10 +921,7 @@ function productRow(product) {
     is_active: true,
     list_price_cents: product.list_cents,
     list_price_uom: product.sold_by,
-    on_hand_by_branch: {
-      [TRENTON_ID]: 120,
-      [KINGSTON_ID]: 80,
-    },
+    on_hand_by_branch: ON_HAND_BY_BRANCH,
     is_featured: product.sku === "HPV-60",
     has_image: false,
   };
@@ -1045,8 +1076,8 @@ const server = createServer(async (request, response) => {
     const orderNo = url.searchParams.get("order_no");
     const orderId = url.searchParams.get("order_id");
     const sale =
-      (typeof orderNo === "string" && orderNo !== "" && SALES[orderNo]) ||
-      (typeof orderId === "string" && orderId !== "" && Object.values(SALES).find((row) => row.order_id === orderId)) ||
+      (typeof orderNo === "string" && orderNo !== "" && saleFromInput({ order_no: orderNo })) ||
+      (typeof orderId === "string" && orderId !== "" && saleFromInput({ order_id: orderId })) ||
       undefined;
     if (sale === undefined) {
       // A sale this caller's branch does not reach (another branch's sale
@@ -1218,6 +1249,24 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  const completeMatch = path.match(/^\/api\/v1\/till\/sessions\/([^/]+)\/complete$/);
+  if (request.method === "POST" && completeMatch !== null) {
+    const row = [...drawers.values()].find((candidate) => candidate.id === completeMatch[1]) ?? null;
+    if (row === null) {
+      respondJson(response, 404, { error: "no such till session" });
+      return;
+    }
+    if (row.branch_id !== callerBranch) {
+      respondJson(response, 403, { error: "that drawer is not one your grant reaches" });
+      return;
+    }
+    readBody(request, () => {
+      drawers.delete(row.branch_id);
+      respondJson(response, 200, { status: "COMPLETED" });
+    });
+    return;
+  }
+
   const tillSessionMatch = path.match(/^\/api\/v1\/till\/sessions\/([^/]+)$/);
   if (request.method === "GET" && tillSessionMatch !== null) {
     const row = [...drawers.values()].find((candidate) => candidate.id === tillSessionMatch[1]) ?? null;
@@ -1239,12 +1288,15 @@ const server = createServer(async (request, response) => {
       respondJson(response, 200, { items: [] });
       return;
     }
+    // The requested branch is the counter's own (the fence is the caller's
+    // grant); the stock is the contract's own per-branch answer.
+    const requestedBranch = url.searchParams.get("branch_id") ?? callerBranch;
     const items = PRODUCTS.filter(
       (p) =>
         p.sku.toLowerCase().startsWith(q) ||
         p.name.toLowerCase().includes(q) ||
         p.aliases.some((alias) => alias.includes(q)),
-    ).map(counterHit);
+    ).map((p) => counterHit(p, requestedBranch));
     respondJson(response, 200, { items });
     return;
   }
@@ -1454,6 +1506,9 @@ const server = createServer(async (request, response) => {
         subtotal += total;
         outLines.push({
           line_no: index + 1,
+          // The line's own id and its share of the sale's tax: the returns
+          // desk's reads and refund price the lines by them.
+          order_line_id: uuidFromCounter(30000 + sales.size * 10 + index),
           product_id: resolved.product.product_id,
           description: resolved.product.name,
           qty_entered: qty,
@@ -1461,6 +1516,7 @@ const server = createServer(async (request, response) => {
           unit_price_cents: resolved.customer_cents,
           price_uom: resolved.price_uom,
           line_total_cents: total,
+          tax_cents: Math.round((total * HST_RATE_BPS) / 10000),
         });
       }
       const tax = taxCents(subtotal);
@@ -1698,7 +1754,7 @@ const server = createServer(async (request, response) => {
         notes: typeof parsed.notes === "string" ? parsed.notes : "",
         status: "PARKED",
         lines,
-        created_at: "2026-01-01T00:00:00Z",
+        created_at: new Date().toISOString(),
       };
       parked.set(id, ticket);
       respondJson(response, 201, ticket);
@@ -1827,7 +1883,8 @@ const server = createServer(async (request, response) => {
       respondJson(response, 404, { error: "no product answers that code" });
       return;
     }
-    respondJson(response, 200, counterHit(product));
+    const requestedBranch = url.searchParams.get("branch_id") ?? callerBranch;
+    respondJson(response, 200, counterHit(product, requestedBranch));
     return;
   }
 
