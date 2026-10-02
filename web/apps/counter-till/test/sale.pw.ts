@@ -916,10 +916,13 @@ test("a line the account's price cannot answer reads price pending through ordin
   const cta = page.getByTestId("pos-complete-sale");
   await expect(cta).toContainText("subtotal CA$");
   await expect(cta).toContainText("+ tax at the ring");
-  // The exact shape, both session states: nothing can follow the words, so a
-  // total appended to the button's wording fails here (review round 2, R2-P3-1).
+  // The exact shape, both session states: nothing can follow the words but
+  // the pay key's own keycap chip (the roster's word, aria-hidden, never sale
+  // wording), so a total appended to the button's wording still fails here
+  // (review round 2, R2-P3-1). The chip joined the button after the pin was
+  // written; the pattern admits it by shape, not by the roster's choice of key.
   await expect(cta).toHaveText(
-    /^(Open session · then complete|Complete sale) · subtotal (CA\$[\d,]+\.\d{2}|\(not priced\)) \+ tax at the ring$/,
+    /^\s*(Open session · then complete|Complete sale) · subtotal (CA\$[\d,]+\.\d{2}|\(not priced\)) \+ tax at the ring(\s+[A-Za-z0-9+]+)?\s*$/,
   );
   await expect(cta).not.toContainText("(est.");
 });
