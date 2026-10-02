@@ -93,7 +93,11 @@ type MisconfiguredRateError struct {
 }
 
 func (e MisconfiguredRateError) Error() string {
-	return fmt.Sprintf("tax reason %s resolves %d bps, below the %d bps standard in effect, without an evidence gate and without the manual exception: the rate row is misconfigured against the gate map", boundReason(e.ReasonCode), e.RateBps, e.StdBps)
+	// "a standard of" names the threshold each edge measured with: the bind edge the standard resolved
+	// for the date, the admin edge the highest standard row overlapping the row's dates (which a
+	// superseded era can raise above what governs today; the refusal is then the safe direction and
+	// stays until the row is fixed, recorded in the pull request body).
+	return fmt.Sprintf("tax reason %s resolves %d bps, below a standard of %d bps, without an evidence gate and without the manual exception: the rate row is misconfigured against the gate map", boundReason(e.ReasonCode), e.RateBps, e.StdBps)
 }
 
 // UnknownReasonError is the typed refusal for a reason outside the lawful universe: the composition's
