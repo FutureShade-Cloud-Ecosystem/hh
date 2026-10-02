@@ -1923,7 +1923,7 @@ test("a stale parked-list read that answers last writes nothing: the open dialog
   const parkGate = new Promise<void>((resolve) => {
     releasePark = resolve;
   });
-  let deliverStale: (() => Promise<void>) | null = null;
+  const staleDelivery: Array<() => Promise<void>> = [];
   let heldFirstRead = false;
   await page.route((url) => url.pathname === "/api/v1/pos/parked", async (route) => {
     if (route.request().method() === "POST") {
@@ -1934,9 +1934,9 @@ test("a stale parked-list read that answers last writes nothing: the open dialog
     if (route.request().method() === "GET" && !heldFirstRead) {
       heldFirstRead = true;
       const stale = await route.fetch(); // answered now, from the old world
-      deliverStale = async () => {
+      staleDelivery.push(async () => {
         await route.fulfill({ response: stale }); // delivered last
-      };
+      });
       return;
     }
     await route.continue();
@@ -1960,7 +1960,7 @@ test("a stale parked-list read that answers last writes nothing: the open dialog
 
   // The stale read, answered before the park committed, lands last: the
   // newest list must still be the one on screen.
-  await deliverStale?.();
+  for (const deliver of staleDelivery) await deliver();
   await expect(parkedDialog.getByText(created.ticket_no)).toBeVisible({ timeout: 10_000 });
 });
 
