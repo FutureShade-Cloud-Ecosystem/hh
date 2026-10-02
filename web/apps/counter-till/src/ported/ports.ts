@@ -2,11 +2,11 @@
 //
 // The port (see CLOSURE.md for the file-by-file map) stops at the host's edge.
 // Everything here was, in the reference, the app's own api client, session,
-// router, navigation registry, or a neighbouring screen. In HH the host owns
-// those; the next work item implements these seams against the HH api-client,
-// the auth package and the shell. The ported code compiles against these
-// declarations only, and is not mounted yet, so nothing here runs until the
-// wiring item lands.
+// router, navigation registry, or a neighbouring screen. The wiring item
+// implements these seams over the host's own parts: the auth package's custody
+// (the bearer lives in memory in the SessionStore, and this file only reads it
+// through the provider the app root wires in), the demo adapter's minted
+// identity, and the app's one house-day conversion.
 //
 // Two house rules are baked into the shape of this file:
 //
@@ -16,10 +16,13 @@
 //      amount parsed through a float), the computation is left out of the
 //      ported files entirely and reappears here as a host call. Each such seam
 //      carries the reference's signature so the ported call sites stay
-//      shaped as they were.
-//   2. Every seam fails loudly until wired: calling one throws the port
-//      message rather than returning a plausible answer. An honest refusal
-//      beats a quiet zero at a counter.
+//      shaped as they were, and every figure a seam answers is assembled from
+//      figures the core stated.
+//   2. Every seam fails loudly until wired: calling one before the app root
+//      has wired its host throws the port message rather than returning a
+//      plausible answer. An honest refusal beats a quiet zero at a counter.
+
+import { DEMO_CARD_TOKEN, HOUSE_ZONE, houseDayInZone } from "../till-client.js";
 
 /**
  * The port seam every unwired host call raises. The message names the seam so
@@ -30,6 +33,33 @@ function unwired(seam: string): never {
   throw new Error(
     `ported surface: the host seam "${seam}" is not wired yet; see src/ported/ports.ts and CLOSURE.md`,
   );
+}
+
+// ---------------------------------------------------------------------------
+// The host wiring
+// ---------------------------------------------------------------------------
+
+/**
+ * The host the app root hands this file once, at construction. Nothing here
+ * touches custody directly: the header provider is the app's own closure over
+ * its SessionStore, so the bearer never rests in a second place and sign-out
+ * is visible here the moment it happens.
+ */
+export interface PortHost {
+  /** Headers for every api() call: the demo org plus the live bearer. */
+  headers(): Promise<Record<string, string>>;
+  /** The dealer's day in the house zone: the ring's requested-date default. */
+  houseDay(): string;
+}
+
+let host: PortHost | null = null;
+
+/**
+ * Wire the host. Called once by the app root before any ported element mounts;
+ * re-wiring replaces the host wholesale (a fresh app root in a test, say).
+ */
+export function wirePorts(wired: PortHost): void {
+  host = wired;
 }
 
 // ---------------------------------------------------------------------------
@@ -54,30 +84,39 @@ export interface Branch {
 }
 
 /**
- * The authed request helper the whole ported surface talks through: relative
- * path in, bearer token attached, Response out. The host implements it over
- * the HH api-client and its header provider.
+ * The branches the dealer runs, as the login reaches them. Empty until the app
+ * root loads them from the branches route (the one branch this login works),
+ * which happens before the terminal mounts: an honest blank, never a guessed
+ * yard. The list is filled in place so a branch default read at element
+ * construction time sees what the server answered.
  */
-export function api(path: string, init?: RequestInit): Promise<Response> {
-  return unwired('api');
-}
-
-/** The branches the dealer runs. Empty until wired: an honest blank, never a guessed yard. */
 export const BRANCHES: Branch[] = [];
+
+/**
+ * Replace the branch list in place: the ported surface holds the array's
+ * identity (a module constant read at construction), so the host fills the
+ * same array rather than rebinding it.
+ */
+export function setBranches(list: readonly Branch[]): void {
+  BRANCHES.length = 0;
+  for (const row of list) BRANCHES.push({ id: row.id, name: row.name });
+}
 
 /** The branch's name, or a short form of its id when the list does not know it. */
 export function branchName(id: string): string {
-  return unwired('branchName');
+  if (!id) return "";
+  const b = BRANCHES.find((x) => x.id === id);
+  return b ? b.name : id.slice(0, 8);
 }
 
 /** The signed-in user, or null between sessions. */
 export function getCurrentUser(): AuthUser | null {
-  return unwired('getCurrentUser');
+  return unwired("getCurrentUser");
 }
 
 /** Whether the signed-in user clears the platform-admin gate. */
 export function isAdmin(): boolean {
-  return unwired('isAdmin');
+  return unwired("isAdmin");
 }
 
 /**
@@ -85,7 +124,137 @@ export function isAdmin(): boolean {
  * (the reference's pop-out handshake). Never placed in a URL.
  */
 export function getSessionToken(): string {
-  return unwired('getSessionToken');
+  return unwired("getSessionToken");
+}
+
+// ---------------------------------------------------------------------------
+// The data adapter: the ported surface's one request door
+// ---------------------------------------------------------------------------
+
+// The demo card token: the fixed demo token this app sends on a card tender.
+// The reference carried its own simulator's token spelling; the host rewrites
+// any card token the ported surface sends onto the app's own constant, so the
+// wire carries the one token the reviewed rule pins (till-client.ts names it).
+
+/** The paths whose request bodies the adapter enriches to the contract's shape. */
+const RING_PATH = "/api/v1/pos/sales";
+const RESOLVE_PATH = "/api/v1/pricing/resolve";
+
+/**
+ * Fill the ring body's contract-required fields the reference's caller did not
+ * know: cash_sale, the card token, the signature and notes strings, the
+ * offline flag, and the requested date, which is the dealer's day in the house
+ * zone when the surface left it unset (the daily-means-the-dealer's-day rule;
+ * the binding date is still validated server-side). A card token the surface
+ * sends is swapped for the app's own fixed demo token.
+ */
+function enrichRingBody(body: Record<string, unknown>, houseDay: string): Record<string, unknown> {
+  const tender = typeof body["tender"] === "string" ? body["tender"] : "";
+  const deposit = typeof body["deposit_cents"] === "number" ? body["deposit_cents"] : 0;
+  const cardAtRing =
+    (tender === "CARD" && deposit <= 0) ||
+    (deposit > 0 && body["deposit_method"] === "CARD");
+  const token = typeof body["payment_token"] === "string" ? body["payment_token"] : "";
+  const legs = Array.isArray(body["tenders"]) ? body["tenders"] : null;
+  return {
+    ...body,
+    cash_sale: tender === "CASH" && deposit <= 0,
+    payment_token: cardAtRing && token !== "" ? DEMO_CARD_TOKEN : token,
+    signature_ref: typeof body["signature_ref"] === "string" ? body["signature_ref"] : "",
+    notes: typeof body["notes"] === "string" ? body["notes"] : "",
+    offline: body["offline"] === true,
+    requested_date:
+      typeof body["requested_date"] === "string" && body["requested_date"] !== ""
+        ? body["requested_date"]
+        : houseDay,
+    // A split's CARD legs each carry their own token; the same swap applies.
+    ...(legs !== null
+      ? {
+          tenders: legs.map((leg) => {
+            if (leg === null || typeof leg !== "object") return leg;
+            const row = leg as Record<string, unknown>;
+            const legToken = typeof row["payment_token"] === "string" ? row["payment_token"] : "";
+            return legToken !== "" ? { ...row, payment_token: DEMO_CARD_TOKEN } : row;
+          }),
+        }
+      : {}),
+  };
+}
+
+/**
+ * Fill the resolve body's contract-required fields the reference's caller did
+ * not know: the product's category id (the catalogue resolve reads it from the
+ * product server-side when the caller cannot name it), the override flag and
+ * the document reference the quote flow names.
+ */
+function enrichResolveBody(body: Record<string, unknown>): Record<string, unknown> {
+  return {
+    category_id: typeof body["category_id"] === "string" ? body["category_id"] : "",
+    has_approved_override: body["has_approved_override"] === true,
+    doc_ref_type: typeof body["doc_ref_type"] === "string" ? body["doc_ref_type"] : "order",
+    doc_ref_id: typeof body["doc_ref_id"] === "string" ? body["doc_ref_id"] : "",
+    ...body,
+  };
+}
+
+/**
+ * The authed request helper the whole ported surface talks through: relative
+ * path in, the demo org and bearer attached, Response out.
+ *
+ * Two shape adaptations live here, each named where it runs below: the ring
+ * and resolve bodies gain the contract-required fields the reference's callers
+ * did not know, and the parked list is unwrapped from the contract's page
+ * shape to the bare rows the ported panel reads. Everything else is the
+ * contract's own path and shape, byte for byte.
+ */
+export async function api(path: string, init: RequestInit = {}): Promise<Response> {
+  if (host === null) return unwired("api");
+  const headers = new Headers(init.headers);
+  for (const [name, value] of Object.entries(await host.headers())) {
+    headers.set(name, value);
+  }
+  // Default to JSON, but leave FormData bodies alone so the browser sets the
+  // multipart content type with its generated boundary.
+  let body = init.body;
+  if (body !== undefined && !(body instanceof FormData) && typeof body === "string") {
+    headers.set("Content-Type", "application/json");
+    // The body adaptations, parsed and rewritten before anything dials.
+    const pathOnly = path.split("?")[0] ?? path;
+    try {
+      const parsed: unknown = JSON.parse(body);
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const record = parsed as Record<string, unknown>;
+        const adapted =
+          pathOnly === RING_PATH
+            ? enrichRingBody(record, host.houseDay())
+            : pathOnly === RESOLVE_PATH
+              ? enrichResolveBody(record)
+              : record;
+        body = JSON.stringify(adapted);
+      }
+    } catch {
+      // not JSON: send it as it arrived and let the server refuse it
+    }
+  }
+  const response = await fetch(path, { ...init, body, headers });
+  // The parked list arrives in the contract's page shape ({items, limit}); the
+  // ported panel reads the bare rows. Unwrapped here, once, so every ported
+  // call site keeps the reference's own shape: the rows themselves are
+  // untouched, and an answer of any other shape passes through as it came.
+  const pathOnly = path.split("?")[0] ?? path;
+  if (pathOnly === "/api/v1/pos/parked" && (init.method ?? "GET") === "GET" && response.ok) {
+    try {
+      const parsed: unknown = await response.json();
+      return new Response(JSON.stringify(parsed), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch {
+      // a body that cannot be re-read is returned as it is
+    }
+  }
+  return response;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +267,7 @@ export function getSessionToken(): string {
  * shapes are kept so the ported quick-action registry reads as it did.
  */
 export function hashTargetFor(active: string, module?: string): string {
-  return unwired('hashTargetFor');
+  return unwired("hashTargetFor");
 }
 
 /**
@@ -308,8 +477,8 @@ export function depositCentsFromTyped(raw: string): number {
 
 /**
  * One line's contribution to what the ticket saves against retail, as the
- * server priced it: the per-line saving times the quantity, summed by the
- * host because the multiplication is money arithmetic.
+ * server priced it: the per-line saving times the quantity, summed by the host
+ * because the multiplication is money arithmetic.
  */
 export function sumLineSavingCents(
   entries: readonly { saving_cents: number; qty: number }[],
@@ -360,8 +529,7 @@ export function availableCreditCents(customer: {
 // local store, per device, under a versioned key. In HH the host owns
 // persistence (this app's credential sink rule reserves the browser's stores),
 // so the ported panel module asks these seams with the same key and the same
-// raw-string contract; the wiring item picks the backing store, possibly the
-// server-side workspace preferences the surface already saves.
+// raw-string contract; the wiring item picks the backing store.
 
 /** Whatever the device remembers under this key, as the stored string, or null. */
 export function readPanelLayoutRaw(key: string): string | null {
