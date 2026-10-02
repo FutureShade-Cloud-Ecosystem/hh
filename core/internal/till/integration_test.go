@@ -298,6 +298,110 @@ func TestIntegration_CashRefund_PerTenderCashAgreesWithSummary(t *testing.T) {
 	}
 }
 
+// I4c, the cheque movement surface on the real movement table: a cheque lodgement books against its
+// OWN method (0028's vocabulary: PAID_IN/PAID_OUT/DROP/LODGEMENT x CASH/CHEQUE/CARD/EFT/OTHER), so
+// the counted drawer reads CHEQUE expected 0 and variance 0, and the session detail read's cheque
+// row states the same expected the Z report derives.
+func TestIntegration_ChequeMovement_InChequeExpected(t *testing.T) {
+	pool := intPool(t)
+	branchID, userID := seedBranchUser(t, pool)
+	svc := realSvc(pool)
+	cctx := globalCtx(userID)
+
+	sid, err := svc.OpenTill(cctx, OpenTillInput{BranchID: branchID, Station: "ITEST-CHQ", FloatCents: 20000})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { cleanupSession(pool, sid) })
+
+	takeInTx(t, pool, svc, cctx, TenderInput{TillSessionID: sid, Method: MethodCheque, AmountCents: 8000, IdempotencyKey: "itest-chq-sale-" + sid})
+	if err := svc.Lodge(cctx, MovementInput{TillSessionID: sid, MovementType: MovementLodgement, Method: MethodCheque, AmountCents: 8000, Reference: "bag-itest-chq"}); err != nil {
+		t.Fatalf("cheque lodge: %v", err)
+	}
+	if err := svc.CountTill(cctx, CountInput{TillSessionID: sid, Tenders: []TenderActual{
+		{Method: MethodCash, ActualCents: 20000}, {Method: MethodCheque, ActualCents: 0},
+	}}); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+
+	z, err := svc.ZReportFor(cctx, sid)
+	if err != nil {
+		t.Fatalf("zreport: %v", err)
+	}
+	var cheque TenderTotal
+	for _, tt := range z.PerTender {
+		if tt.Method == MethodCheque {
+			cheque = tt
+		}
+	}
+	if cheque.Method != MethodCheque {
+		t.Fatalf("no per-tender CHEQUE line in %+v", z.PerTender)
+	}
+	if cheque.ExpectedCents != 0 || cheque.VarianceCents != 0 {
+		t.Fatalf("cheque expected 0 with the lodgement out and variance 0 on a correctly counted drawer, got expected %d variance %d", cheque.ExpectedCents, cheque.VarianceCents)
+	}
+
+	detail, err := svc.GetSession(cctx, sid)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	for _, tt := range detail.Tenders {
+		if tt.Method == MethodCheque && (tt.ExpectedCents != cheque.ExpectedCents || tt.VarianceCents != 0) {
+			t.Fatalf("detail read cheque expected %d variance %d disagrees with the Z report's expected %d", tt.ExpectedCents, tt.VarianceCents, cheque.ExpectedCents)
+		}
+	}
+}
+
+// I4d, one truth for CASH expected across both reads: the session detail's tenders row states the
+// derived drawer expected the Z report states, not the stored payments-sum snapshot (the round 2
+// review's probe: detail 60000, actual 75000, variance +15000 against the Z report's 75000 and 0).
+func TestIntegration_SessionDetailCashAgreesWithZReport(t *testing.T) {
+	pool := intPool(t)
+	branchID, userID := seedBranchUser(t, pool)
+	svc := realSvc(pool)
+	cctx := globalCtx(userID)
+
+	sid, err := svc.OpenTill(cctx, OpenTillInput{BranchID: branchID, Station: "ITEST-DETAIL", FloatCents: 20000})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { cleanupSession(pool, sid) })
+
+	takeInTx(t, pool, svc, cctx, TenderInput{TillSessionID: sid, Method: MethodCash, AmountCents: 60000, IdempotencyKey: "itest-detail-sale-" + sid})
+	if err := svc.PaidOut(cctx, MovementInput{TillSessionID: sid, MovementType: MovementPaidOut, Method: MethodCash, AmountCents: 5000, Reason: "drop"}); err != nil {
+		t.Fatalf("paid out: %v", err)
+	}
+	if err := svc.CountTill(cctx, CountInput{TillSessionID: sid, Tenders: []TenderActual{{Method: MethodCash, ActualCents: 75000}}}); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+
+	z, err := svc.ZReportFor(cctx, sid)
+	if err != nil {
+		t.Fatalf("zreport: %v", err)
+	}
+	detail, err := svc.GetSession(cctx, sid)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	var detailCash TenderTotal
+	found := false
+	for _, tt := range detail.Tenders {
+		if tt.Method == MethodCash {
+			detailCash = tt
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no tenders row for CASH in the detail read: %+v", detail.Tenders)
+	}
+	if detailCash.ExpectedCents != z.Cash.ExpectedCents {
+		t.Fatalf("detail read cash expected %d disagrees with the Z report's %d", detailCash.ExpectedCents, z.Cash.ExpectedCents)
+	}
+	if detailCash.VarianceCents != 0 {
+		t.Fatalf("detail read cash variance %d, want 0 on a correctly counted drawer", detailCash.VarianceCents)
+	}
+}
+
 // I5, over-threshold complete as a frontline token → 403; as a manager with a note → CLOSED.
 func TestIntegration_ConditionalManagerGate(t *testing.T) {
 	pool := intPool(t)

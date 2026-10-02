@@ -25,10 +25,13 @@ type fakeStore struct {
 	allocations   map[string][]int64
 	movements     map[string][]MovementRow
 	tenderActuals map[string]map[string]int64
-	denoms        map[string][]DenominationCount
-	policies      map[string]TillPolicy
-	seq           int
-	insertCalls   int
+	// tenderSnapshots mirrors the stored till_tender_totals.expected_cents column: the close-time
+	// capture of the payments sums the count's upsert writes (repository.go UpsertTenderActuals).
+	tenderSnapshots map[string]map[string]int64
+	denoms          map[string][]DenominationCount
+	policies        map[string]TillPolicy
+	seq             int
+	insertCalls     int
 
 	// - W5 A-05 fake state -
 	nsfPolicy    NSFPolicy              // the effective policy returned by NSFPolicyFor
@@ -45,19 +48,20 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		sessions:      map[string]*TillSession{},
-		openByDrawer:  map[string]string{},
-		payments:      map[string]*PaymentRow{},
-		paymentByKey:  map[string]string{},
-		allocations:   map[string][]int64{},
-		movements:     map[string][]MovementRow{},
-		tenderActuals: map[string]map[string]int64{},
-		denoms:        map[string][]DenominationCount{},
-		policies:      map[string]TillPolicy{},
-		nsfPolicy:     NSFPolicy{FeeCents: 4500, FeeTaxable: false, FeeAccountCode: "4200", AutoHold: true},
-		nsfByPayment:  map[string]bool{},
-		holds:         map[string]*CreditHold{},
-		activeHold:    map[string]string{},
+		sessions:        map[string]*TillSession{},
+		openByDrawer:    map[string]string{},
+		payments:        map[string]*PaymentRow{},
+		paymentByKey:    map[string]string{},
+		allocations:     map[string][]int64{},
+		movements:       map[string][]MovementRow{},
+		tenderActuals:   map[string]map[string]int64{},
+		tenderSnapshots: map[string]map[string]int64{},
+		denoms:          map[string][]DenominationCount{},
+		policies:        map[string]TillPolicy{},
+		nsfPolicy:       NSFPolicy{FeeCents: 4500, FeeTaxable: false, FeeAccountCode: "4200", AutoHold: true},
+		nsfByPayment:    map[string]bool{},
+		holds:           map[string]*CreditHold{},
+		activeHold:      map[string]string{},
 	}
 }
 
@@ -180,7 +184,8 @@ func (f *fakeStore) OpenSession(_ context.Context, s TillSession, denoms []Denom
 func (f *fakeStore) SessionTenders(_ context.Context, sessionID string) ([]TenderTotal, error) {
 	var out []TenderTotal
 	for method, actual := range f.tenderActuals[sessionID] {
-		out = append(out, TenderTotal{Method: method, ActualCents: actual})
+		exp := f.tenderSnapshots[sessionID][method]
+		out = append(out, TenderTotal{Method: method, ExpectedCents: exp, ActualCents: actual, VarianceCents: actual - exp})
 	}
 	return out, nil
 }
@@ -247,8 +252,20 @@ func (f *fakeStore) UpsertTenderActuals(_ context.Context, sessionID string, act
 	if f.tenderActuals[sessionID] == nil {
 		f.tenderActuals[sessionID] = map[string]int64{}
 	}
+	if f.tenderSnapshots[sessionID] == nil {
+		f.tenderSnapshots[sessionID] = map[string]int64{}
+	}
 	for _, a := range actuals {
 		f.tenderActuals[sessionID][a.Method] = a.ActualCents
+		// The stored snapshot is the close-time capture of the payments sums (the real upsert's
+		// SELECT): Σ RECEIVED payments of this method as of the count.
+		var sum int64
+		for _, p := range f.payments {
+			if p.TillSessionID == sessionID && p.Method == a.Method && p.Status == PaymentReceived {
+				sum += p.AmountCents
+			}
+		}
+		f.tenderSnapshots[sessionID][a.Method] = sum
 	}
 	return nil
 }
@@ -1045,6 +1062,167 @@ func TestZReport_PerTenderCashExpected_AgreesWithCashSummary(t *testing.T) {
 	}
 	if cash := perTenderCash(z); cash.VarianceCents != 0 || cash.ActualCents != z.Cash.CountedCents {
 		t.Fatalf("a perfectly counted drawer shows per-tender CASH variance %d (actual %d), want variance 0 on the counted %d", cash.VarianceCents, cash.ActualCents, z.Cash.CountedCents)
+	}
+}
+
+// Cheques CAN carry drawer movements: the 0028 movement table's own vocabulary is movement_type
+// PAID_IN/PAID_OUT/DROP/LODGEMENT crossed with method CASH/CHEQUE/CARD/EFT/OTHER, the contract
+// accepts a CHEQUE movement, and the movement writer passes the method through. So the CHEQUE
+// line's expected is the drawer's expected cheques: RECEIVED cheque payments + cheque paid in -
+// cheque paid out and dropped - cheque lodgements, with no float (the float is cash in the drawer
+// by definition).
+
+// The round 2 review's probe: a cheque lodgement books against ITS OWN method, so a drawer whose
+// cheque went to the bank counts CHEQUE variance 0, never -lodgement against a payments-only sum.
+func TestZReport_ChequeLodgement_InChequeExpected(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestSvc(store, nil)
+	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
+	sid := openSession(t, store, trenton) // float 20000, cash only
+	store.seedPayment(PaymentRow{Method: MethodCheque, AmountCents: 8000, Status: PaymentReceived, TillSessionID: sid})
+	if err := svc.Lodge(ctx, MovementInput{TillSessionID: sid, MovementType: MovementLodgement, Method: MethodCheque, AmountCents: 8000, Reference: "bag-9"}); err != nil {
+		t.Fatalf("cheque lodge: %v", err)
+	}
+	// The drawer counted exactly right: the cash float is there, the cheque is at the bank.
+	if err := svc.CountTill(ctx, CountInput{TillSessionID: sid, Tenders: []TenderActual{
+		{Method: MethodCash, ActualCents: 20000}, {Method: MethodCheque, ActualCents: 0},
+	}}); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	z, err := svc.ZReportFor(ctx, sid)
+	if err != nil {
+		t.Fatalf("zreport: %v", err)
+	}
+	got := map[string]TenderTotal{}
+	for _, tt := range z.PerTender {
+		got[tt.Method] = tt
+	}
+	if got[MethodCheque].ExpectedCents != 0 { // 8000 received - 8000 lodged
+		t.Fatalf("cheque expected with the lodgement out = 0, got %d", got[MethodCheque].ExpectedCents)
+	}
+	if got[MethodCheque].VarianceCents != 0 {
+		t.Fatalf("a correctly counted drawer shows cheque variance %d, want 0", got[MethodCheque].VarianceCents)
+	}
+	// The movement books against its own method: the cash summary never sees it.
+	if z.Cash.ExpectedCents != 20000 || z.Cash.OverShortCents != 0 {
+		t.Fatalf("cash summary must stay free of cheque movements: %+v", z.Cash)
+	}
+}
+
+// A cheque paid out leaves the drawer like a cash one: the CHEQUE expected drops by it.
+func TestZReport_ChequePaidOut_ReducesChequeExpected(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestSvc(store, nil)
+	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
+	sid := openSession(t, store, trenton)
+	store.seedPayment(PaymentRow{Method: MethodCheque, AmountCents: 8000, Status: PaymentReceived, TillSessionID: sid})
+	if err := svc.PaidOut(ctx, MovementInput{TillSessionID: sid, MovementType: MovementPaidOut, Method: MethodCheque, AmountCents: 3000, Reason: "supplier paid by cheque"}); err != nil {
+		t.Fatalf("cheque paid out: %v", err)
+	}
+	if err := svc.CountTill(ctx, CountInput{TillSessionID: sid, Tenders: []TenderActual{
+		{Method: MethodCash, ActualCents: 20000}, {Method: MethodCheque, ActualCents: 5000},
+	}}); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	z, err := svc.ZReportFor(ctx, sid)
+	if err != nil {
+		t.Fatalf("zreport: %v", err)
+	}
+	for _, tt := range z.PerTender {
+		if tt.Method != MethodCheque {
+			continue
+		}
+		if tt.ExpectedCents != 5000 { // 8000 received - 3000 paid out
+			t.Fatalf("cheque expected after the paid out = 5000, got %d", tt.ExpectedCents)
+		}
+		if tt.VarianceCents != 0 {
+			t.Fatalf("a correctly counted drawer shows cheque variance %d, want 0", tt.VarianceCents)
+		}
+	}
+}
+
+// The CASH line now means the drawer, so it is present whenever the summary states an expected,
+// even with no RECEIVED cash payment and no count yet (the round 2 review's probe: float plus a
+// paid in answered per_tender null beside cash.expected 21000).
+func TestZReport_CashLinePresent_FloatPlusPaidIn(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestSvc(store, nil)
+	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
+	sid := openSession(t, store, trenton) // float 20000
+	if err := svc.PaidIn(ctx, MovementInput{TillSessionID: sid, MovementType: MovementPaidIn, Method: MethodCash, AmountCents: 1000, Reason: "change top-up"}); err != nil {
+		t.Fatalf("paid in: %v", err)
+	}
+	z, err := svc.ZReportFor(ctx, sid)
+	if err != nil {
+		t.Fatalf("zreport: %v", err)
+	}
+	if z.Cash.ExpectedCents != 21000 {
+		t.Fatalf("summary expected = 21000, got %d", z.Cash.ExpectedCents)
+	}
+	var cash *TenderTotal
+	for i := range z.PerTender {
+		if z.PerTender[i].Method == MethodCash {
+			cash = &z.PerTender[i]
+		}
+	}
+	if cash == nil {
+		t.Fatalf("no per-tender CASH line beside a summary expected of %d", z.Cash.ExpectedCents)
+	}
+	if cash.ExpectedCents != z.Cash.ExpectedCents || cash.VarianceCents != -21000 {
+		t.Fatalf("per-tender CASH line wrong: %+v (summary expected %d)", *cash, z.Cash.ExpectedCents)
+	}
+}
+
+// One truth per counted method across BOTH reads: the session detail's tenders row states the same
+// derived expected the Z report states, not the stored payments-sum snapshot (the round 2 review's
+// probe: detail read cash expected 60000, actual 75000, variance +15000 while the Z report gave
+// 75000 and 0 on the same counted drawer).
+func TestSessionDetail_CountedMethods_AgreeWithZReport(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestSvc(store, nil)
+	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
+	sid := openSession(t, store, trenton) // float 20000
+	store.seedPayment(PaymentRow{Method: MethodCash, AmountCents: 60000, Status: PaymentReceived, TillSessionID: sid})
+	store.seedPayment(PaymentRow{Method: MethodCheque, AmountCents: 8000, Status: PaymentReceived, TillSessionID: sid})
+	if err := svc.PaidOut(ctx, MovementInput{TillSessionID: sid, MovementType: MovementPaidOut, Method: MethodCash, AmountCents: 5000, Reason: "drop"}); err != nil {
+		t.Fatalf("paid out: %v", err)
+	}
+	if err := svc.Lodge(ctx, MovementInput{TillSessionID: sid, MovementType: MovementLodgement, Method: MethodCheque, AmountCents: 8000, Reference: "bag-5"}); err != nil {
+		t.Fatalf("cheque lodge: %v", err)
+	}
+	if err := svc.CountTill(ctx, CountInput{TillSessionID: sid, Tenders: []TenderActual{
+		{Method: MethodCash, ActualCents: 75000}, {Method: MethodCheque, ActualCents: 0},
+	}}); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+
+	z, err := svc.ZReportFor(ctx, sid)
+	if err != nil {
+		t.Fatalf("zreport: %v", err)
+	}
+	zr := map[string]TenderTotal{}
+	for _, tt := range z.PerTender {
+		zr[tt.Method] = tt
+	}
+	detail, err := svc.GetSession(ctx, sid)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	dt := map[string]TenderTotal{}
+	for _, tt := range detail.Tenders {
+		dt[tt.Method] = tt
+	}
+	if dt[MethodCash].ExpectedCents != zr[MethodCash].ExpectedCents {
+		t.Fatalf("detail read cash expected %d disagrees with the Z report's %d", dt[MethodCash].ExpectedCents, zr[MethodCash].ExpectedCents)
+	}
+	if dt[MethodCash].VarianceCents != 0 {
+		t.Fatalf("detail read cash variance %d, want 0 on a correctly counted drawer", dt[MethodCash].VarianceCents)
+	}
+	if dt[MethodCheque].ExpectedCents != zr[MethodCheque].ExpectedCents {
+		t.Fatalf("detail read cheque expected %d disagrees with the Z report's %d", dt[MethodCheque].ExpectedCents, zr[MethodCheque].ExpectedCents)
+	}
+	if dt[MethodCheque].VarianceCents != 0 {
+		t.Fatalf("detail read cheque variance %d, want 0 on a correctly counted drawer", dt[MethodCheque].VarianceCents)
 	}
 }
 
