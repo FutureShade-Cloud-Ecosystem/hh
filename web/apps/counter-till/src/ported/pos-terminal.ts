@@ -39,6 +39,7 @@ import './pos-lookup.js';
 import './product-thumb.js';
 import type { RelatedDoc } from './ports.js';
 import type { PosCustomer } from './pos-customer-strip.js';
+import type { HosPosParked } from './pos-parked.js';
 import { parseCompactDate } from './_date.js'; // DIB-200: compact YYYYMMDD → ISO requested-date entry
 import {
   restoreParkedCustomer,
@@ -2827,6 +2828,17 @@ export class HosPosTerminal extends LitElement {
   private async refreshParkedCount(): Promise<void> {
     try {
       this.parkedCount = (await listParked(this.branchId)).length;
+      // This read fires exactly when the branch's parked list changes through
+      // the terminal (park, resume, dialog close). The open dialog reads once
+      // on open (the reference's own shape, ref-master app/src/pos-terminal.ts
+      // and pos-parked.ts), so a change landing under it left the open rail
+      // frozen at the stale rows while this button beside it stated the newer
+      // figure. Telling the open dialog to re-read here converges the two
+      // within one read: take-and-improve on the reference (row 563), no
+      // polling loop, no contract change.
+      if (this.showParked) {
+        void this.renderRoot.querySelector<HosPosParked>('hos-pos-parked')?.reload();
+      }
     } catch {
       /* count is cosmetic */
     }
