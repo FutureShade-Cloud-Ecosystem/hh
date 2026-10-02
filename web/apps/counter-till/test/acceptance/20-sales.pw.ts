@@ -229,14 +229,12 @@ test("tender and receipt: an account sale bills the account, invoice and fresh b
   await expect(sold).toContainText(rung.invoice_no);
   await expect(sold).toContainText(cad(sale.total_cents as number));
   // The fresh balance is the core's: the account's open balance grew by this
-  // sale, and the account's card shows it once the account is picked again
-  // (the confirmation names the invoice and the amount due; the account's
-  // balance lives on its card).
+  // sale, and the till re-reads the account after the ring, so the account's
+  // card shows the new balance (not the figure read at the pick).
   const balanceAfter = await balanceOf();
   expect(balanceAfter).toBe(balanceBefore + (sale.total_cents as number));
   const confirmation = await sold.screenshot();
-  await page.getByRole("button", { name: "Next sale" }).click();
-  await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
+  await openStep(page, "customer");
   const card = page.getByTestId("customer-card");
   await expect(card).toContainText(/outstanding/i);
   await expect(card).toContainText(cad(balanceAfter));
