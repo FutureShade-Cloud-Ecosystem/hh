@@ -9,6 +9,7 @@ package pos
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -71,5 +72,39 @@ func TestTaxRate_RuleSourceFlowsThrough(t *testing.T) {
 	}
 	if out.RoundMode != "PER_LINE" {
 		t.Fatalf("the wired rule source's word must flow through: got %q, want PER_LINE", out.RoundMode)
+	}
+}
+
+// erringAssessor answers an error, the rail-down shape the read must surface
+// rather than paper over with a default rate.
+type erringAssessor struct{}
+
+func (erringAssessor) AssessSale(context.Context, TaxQuoteInput) (QuoteResult, error) {
+	return QuoteResult{}, errors.New("assessor down")
+}
+
+// erringRoundMode answers an error, the config read's failure shape.
+type erringRoundMode struct{}
+
+func (erringRoundMode) RoundMode(context.Context) (string, error) {
+	return "", errors.New("config down")
+}
+
+// The read surfaces its seams' errors: an assessor error answers that error,
+// never a guessed rate.
+func TestTaxRate_AssessorErrorSurfaces(t *testing.T) {
+	h := newHarness()
+	h.svc = h.svc.WithTaxAssessor(erringAssessor{})
+	if _, err := h.svc.TaxRate(context.Background()); err == nil || err.Error() != "assessor down" {
+		t.Fatalf("the assessor's error must surface, got %v", err)
+	}
+}
+
+// A rule source error answers that error, never a default word.
+func TestTaxRate_RuleSourceErrorSurfaces(t *testing.T) {
+	h := newHarness()
+	h.svc = h.svc.WithTaxRuleSource(erringRoundMode{})
+	if _, err := h.svc.TaxRate(context.Background()); err == nil || err.Error() != "config down" {
+		t.Fatalf("the rule source's error must surface, got %v", err)
 	}
 }

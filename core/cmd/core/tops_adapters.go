@@ -109,7 +109,9 @@ func (a posTaxAdapter) AssessSale(ctx context.Context, in pos.TaxQuoteInput) (po
 // posTaxRuleAdapter satisfies pos.TaxRuleSource over *tax.Service: the round rule word the counter's
 // tax-rate read answers, the org default config row's round_mode (empty branch). The read's rate side
 // needs no adapter: the wired posTaxAdapter above IS the rate source, the same assessor the ring binds
-// with, so the counter's word and the ring's math cannot disagree.
+// with, so for a standard-rated sale at the moment of the read the counter's word and the ring's math
+// agree (a relief ticket binds its relief row at the ring; the fragment's description carries the full
+// claim).
 type posTaxRuleAdapter struct{ svc *tax.Service }
 
 func (a posTaxRuleAdapter) RoundMode(ctx context.Context) (string, error) {

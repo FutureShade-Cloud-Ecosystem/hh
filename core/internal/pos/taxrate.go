@@ -55,14 +55,18 @@ type fixedRoundMode string
 
 func (f fixedRoundMode) RoundMode(context.Context) (string, error) { return string(f), nil }
 
-// TaxRate answers the counter's tax-rate read. The RATE is the ring's rate BY
-// CONSTRUCTION: the method assesses a zero-cent standard sale through the
-// same TaxAssessor seam the Sale assesses with, so the answer is the binding
-// rate in every composition (the flat default answers 1300, the wired engine
-// answers the effective-dated row). The ROUND RULE comes from the
-// TaxRuleSource seam (INVOICE_TOTAL unwired): today the header tax rounds
-// half-up once at the invoice total and nothing branches on the stored rule,
-// so the word says what is configured, not what the ring does yet.
+// TaxRate answers the counter's tax-rate read. The RATE is the ring's rate
+// for a STANDARD-RATED sale BY CONSTRUCTION at the moment of the read: the
+// method assesses a zero-cent standard sale through the same TaxAssessor
+// seam the Sale assesses with, so the answer is the binding rate in every
+// composition (the flat default answers 1300, the wired engine answers the
+// effective-dated row). A relief sale binds its relief row at the ring, and
+// a rate row taking effect between the read and the ring moves the ring's
+// rate: the counter must not carry this rate onto a relief ticket. The ROUND
+// RULE comes from the TaxRuleSource seam (INVOICE_TOTAL unwired): today the
+// header tax rounds half-up once at the invoice total and nothing branches
+// on the stored rule, so the word says what is configured, not what the ring
+// does yet.
 func (s *Service) TaxRate(ctx context.Context) (TaxRate, error) {
 	quote, err := s.taxAssessor().AssessSale(ctx, TaxQuoteInput{SubtotalCents: 0, ReasonCode: ""})
 	if err != nil {

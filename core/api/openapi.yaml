@@ -14106,7 +14106,7 @@ paths:
       tags:
         - staff-pos
       summary: Read the tax rate the ring binds and its rounding rule
-      description: "The rate the sale ring binds: it is read through the same assessor the ring assesses with, so the counter's display and the ring's math cannot disagree. jurisdiction and reason_code are the standard-rated Ontario facts the read answers. The header tax today rounds half-up once at the invoice total; round_mode PER_LINE is stored but not yet applied at ring, so the word says what is configured, not what the ring does yet."
+      description: The rate the ring binds for a standard-rated sale, read through the same assessor the ring assesses with, so for a standard ticket priced at the moment of the read the counter's display and the ring's math agree. A relief ticket (the First Nations point-of-sale paths, the delivery relief) binds its relief row at the ring, not this rate, and an effective-dated rate row change between the read and the ring moves the ring's rate. jurisdiction and reason_code are the standard-rated Ontario facts the read answers. The header tax today rounds half-up once at the invoice total; round_mode PER_LINE is stored but not yet applied at ring, so the word says what is configured, not what the ring does yet.
       x-addition: the counter-readable tax rate (row 661); no ERP source route
       x-role: requireStaff
       x-access:
@@ -38980,7 +38980,7 @@ components:
           enum:
             - INVOICE_TOTAL
             - PER_LINE
-          description: The stored rounding rule; the header tax today rounds half-up once at the invoice total either way
+          description: The org default row's stored rounding rule; the header tax today rounds half-up once at the invoice total either way
     PosPolicy:
       type: object
       description: The branch-overridable POS behavior policy; branch_id empty is the org-wide default row. quick_chip_set empty on the wire means the service derived nothing and the client falls back to the full chip row.
