@@ -182,7 +182,7 @@ export class HosPosSignature extends LitElement {
           type="text"
           autocomplete="off"
           spellcheck="false"
-          placeholder="e.g. Ryan Rood"
+          placeholder="e.g. Avery Trenton"
           .value=${this.typedName}
           ?disabled=${this.busy}
           @input=${(e: Event) => (this.typedName = (e.target as HTMLInputElement).value)}

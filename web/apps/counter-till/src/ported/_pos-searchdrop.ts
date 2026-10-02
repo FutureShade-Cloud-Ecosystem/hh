@@ -2,7 +2,7 @@
 
 // _pos-searchdrop.ts: the counter search RESULT DROPDOWN's pure decisions.
 //
-// WHY A DROPDOWN AND NOT A GRID. Ryan Bostock, on the counter build: "the name of the game is
+// WHY A DROPDOWN AND NOT A GRID. The back-office lead, on the counter build: "the name of the game is
 // getting people in and out really quickly." The grid-first lookup spent the screen on browsing:
 // a mode the counter is almost never in. What a counter person actually does is type three
 // characters of a name they already know and take the first answer. So the default result surface
@@ -116,7 +116,7 @@ export interface PricePicture {
   /** Retail, shown STRUCK only when the customer is actually paying less than it. */
   retailCents: number;
   showRetail: boolean;
- /** The saving against retail: the number Ryan Rood says customers always ask for. */
+ /** The saving against retail: the number customers always ask for, per the counter lead's ask. */
   savingCents: number;
   savingBps: number;
   showSaving: boolean;

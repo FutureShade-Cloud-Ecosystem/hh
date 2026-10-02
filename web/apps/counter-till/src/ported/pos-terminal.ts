@@ -278,7 +278,7 @@ export class HosPosTerminal extends LitElement {
   @state() private requestedDate = '';
   // DIB-200: inline validation hint for the fast (YYYYMMDD) date-entry box. '' = no error.
   @state() private dateError = '';
-  // DIB-196 (Ryan Rood): when true, adding a product jumps focus to its quantity box (BisTrack's
+  // DIB-196 (the counter lead's ask): when true, adding a product jumps focus to its quantity box (BisTrack's
   // per-terminal "ask for quantity" posture) instead of silently defaulting the line to qty 1.
  // In-memory only: a per-terminal preference, deliberately never persisted.
   @state() private promptQtyOnAdd = false;
@@ -2845,7 +2845,7 @@ export class HosPosTerminal extends LitElement {
 
   // End Session opens the real A-03 close flow (movements → blind count → Z-report → complete);
   // the local chrome resets only once the till actually closes (or the cashier defers: COUNTED
-  // sessions can be completed next morning, per the Dibbits SOP).
+  // sessions can be completed next morning, per the dealer's SOP).
   // HH note: the reference's End Session opened its till-close screen
   // (hos-till-close), a host boundary screen this release does not carry. The
   // core refuses a complete unless the session is COUNTED (409), and a drawer
@@ -4277,8 +4277,8 @@ export class HosPosTerminal extends LitElement {
    *
    * This is the ask's other half. The search rows and the hot-list tiles show what a product costs
    * this account BEFORE it goes on the ticket; this shows it AFTER, which is where the number is
- * actually read out loud: Ryan Rood wanted the saving visible and printable, and Ryan Bostock
-   * reads the whole ticket back before the customer pays.
+ * actually read out loud: the counter lead wanted the saving visible and printable, and the
+   * back-office lead reads the whole ticket back before the customer pays.
    *
    * Same read, same authority, same rules: retail struck only where they pay less, no zero saving,
  * no arithmetic here. Best-effort: an outage costs the SAVING line, never the ticket.
@@ -4816,8 +4816,9 @@ export class HosPosTerminal extends LitElement {
   /**
    * The counter-view menu: two switches, no sentences.
    *
-   * THIS IS THE WAY BACK, and it deliberately does not need an administrator. Ryan Bostock does not
-   * want the legend; Ryan Rood does. Whoever is standing at this till decides, here, in one gesture,
+   * THIS IS THE WAY BACK, and it deliberately does not need an administrator. The back-office lead
+   * does not want the legend; the counter lead does. Whoever is standing at this till decides, here,
+   * in one gesture,
    * and the choice follows them to the next till because it is stored against them and not against
    * the machine.
    */
@@ -5875,8 +5876,8 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
   /**
  * THE READ-BACK: the Summary step BEFORE the money moves.
    *
-   * Ryan Bostock asked for the summary and said exactly when he uses it: "before the person pays
-   * I'm going over all the details." So Summary is not the receipt's card. The receipt is what it
+   * The back-office lead asked for the summary and said exactly when it gets used: "before the person
+   * pays I'm going over all the details." So Summary is not the receipt's card. The receipt is what it
    * BECOMES; what it is for most of its life is the thing a counter person reads aloud with a
  * customer leaning on the counter: and it has to exist while the sale is still changeable,
    * because the whole point of reading it back is to catch what is wrong.
@@ -6267,9 +6268,9 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
             ${c.open_balance_cents > 0
               ? html`<span>Outstanding <span class="num out">${money(c.open_balance_cents)}</span></span>`
               : nothing}
-            ${/* THE PAST-DUE FACT (N4). Ryan Bostock starts a counter sale partly because "it also
-               gives me an opportunity to ask them to pay their bill": this is the thing that was
-               missing when he did. It is one more entry in the same quiet fact row, in the same
+            ${/* THE PAST-DUE FACT (N4). The back-office lead starts a counter sale partly because "it
+               also gives me an opportunity to ask them to pay their bill": this is the thing that was
+               missing when they did. It is one more entry in the same quiet fact row, in the same
                clothes as Terms and Outstanding: no banner, no sentence, no call to action, and
                nothing at all when the account is current. The overdue colour is paired with the
                word "Past due", because colour never carries meaning alone. Whether the sale may

@@ -31,7 +31,7 @@
 // shipped seven. A sweep of app/src found stroke-width at 2 (fifteen sites), 1.8 (ten), 1.6 (ten),
 // 1.5, 1.9, 1.7 and 4. The registry's own two render sites were the 1.7, so the tiles this file
 // exists to unify were lighter than most of the app around them. The number is now 2, which is both
-// the majority weight already in the tree and the weight of the icon library Dibbits' design team
+// the majority weight already in the tree and the weight of the icon library the reference's design team
 // supplied (120 icons, 24x24 grid, 2px stroke, rounded corners). `_home-icons.test.mjs` pins it, so
 // the rule is now enforced rather than asserted.
 //

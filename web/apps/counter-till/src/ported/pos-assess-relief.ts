@@ -257,11 +257,11 @@ export class HosPosRelief extends LitElement {
           <select @change=${(e: Event) => (this.fulfilment = (e.target as HTMLSelectElement).value)}>
             <option value="pickup">Customer pickup (counter)</option>
             <option value="purchaser_carrier">Purchaser's own carrier</option>
-            <option value="dibbits_truck">Dibbits truck → reserve</option>
-            <option value="dibbits_carrier">Dibbits-arranged carrier → reserve</option>
+            <option value="house_truck">House truck → reserve</option>
+            <option value="house_carrier">House-arranged carrier → reserve</option>
           </select>
 
-          ${this.fulfilment.startsWith('dibbits')
+          ${this.fulfilment.startsWith('house')
             ? html`<label class="check">
                 <input
                   type="checkbox"
