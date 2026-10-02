@@ -380,13 +380,16 @@ func TestIntegration_Item5_TheLoserOfTwoConcurrentFirstSendsIsAReplayNotAFalseCo
 
 	// THE LOSER: its replay read missed the winner's uncommitted row, so it arrived at the insert.
 	repo := NewRepository(h.pool)
-	loser, err := repo.InsertPOSend(h.ctx, POSend{
+	loser, replayed, err := repo.InsertPOSend(h.ctx, POSend{
 		POID: po.ID, Channel: ChannelEmail, Recipient: winner.Recipient,
 		RecipientKind: winner.RecipientKind, Status: SendQueued, Provider: "unwired",
 		DocumentName: winner.DocumentName, DocumentBytes: winner.DocumentBytes, IdempotencyKey: key,
 	}, h.user)
 	if err != nil {
 		t.Fatalf("the concurrent retry was refused: %v, the key belongs to THIS order and the refusal names another", err)
+	}
+	if !replayed {
+		t.Fatal("the concurrent retry claims it inserted a row, the loser must be answered as the replay it is")
 	}
 	if loser.ID != winner.ID || loser.POID != po.ID {
 		t.Fatalf("the concurrent retry minted %+v beside the winner's row %s", loser, winner.ID)
@@ -398,7 +401,7 @@ func TestIntegration_Item5_TheLoserOfTwoConcurrentFirstSendsIsAReplayNotAFalseCo
 
 	// THE NEGATIVE CONTROL, same seam: the same key under a SECOND order is still the 409 collision,
 	// so the arm above cannot have become "every violation is a replay".
-	_, err = repo.InsertPOSend(h.ctx, POSend{
+	_, replayed, err = repo.InsertPOSend(h.ctx, POSend{
 		POID: other.ID, Channel: ChannelEmail, Recipient: winner.Recipient,
 		RecipientKind: winner.RecipientKind, Status: SendQueued, Provider: "unwired",
 		DocumentName: winner.DocumentName, DocumentBytes: winner.DocumentBytes, IdempotencyKey: key,
@@ -406,6 +409,9 @@ func TestIntegration_Item5_TheLoserOfTwoConcurrentFirstSendsIsAReplayNotAFalseCo
 	var ce clientError
 	if !errors.As(err, &ce) || ce.status != http.StatusConflict {
 		t.Fatalf("a second order under a held key at the seam = %v, want the 409 collision classification", err)
+	}
+	if replayed {
+		t.Fatal("a cross-order key collision was answered as a replay of this order's send")
 	}
 	if rows, _ := h.svc.ListPOSends(h.ctx, other.ID); len(rows) != 0 {
 		t.Fatalf("the refused insert left %d rows on the second order", len(rows))

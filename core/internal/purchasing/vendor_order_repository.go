@@ -245,10 +245,12 @@ func scanPOSend(row pgx.Row) (POSend, error) {
 }
 
 // InsertPOSend writes the send row BEFORE the transport is called. See SendPO for why the order is
-// not negotiable.
-func (r *Repository) InsertPOSend(ctx context.Context, in POSend, actorID string) (POSend, error) {
+// not negotiable. The second return says whether the row is a REPLAY (the loser of two concurrent
+// first sends of one order): a replay inserted nothing and the caller must answer it as the serial
+// replay, skipping the transport, the mark and the po.sent record.
+func (r *Repository) InsertPOSend(ctx context.Context, in POSend, actorID string) (POSend, bool, error) {
 	if r.pool == nil {
-		return POSend{}, errNoDB
+		return POSend{}, false, errNoDB
 	}
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO purchasing_po_sends
@@ -264,22 +266,22 @@ func (r *Repository) InsertPOSend(ctx context.Context, in POSend, actorID string
 	// route exists for, can both miss the replay read, and the loser's insert loses the race for the
 	// key. Re-read scoped to THIS order before claiming anything: the winner's row found here is the
 	// replay a serial retry would have gotten, a read that comes back empty is the cross-order
-	// collision the 409 below names, and a read that itself failed is returned, never guessed past.
+	// collision the 409 names, and a read that itself failed is returned, never guessed past.
 	if isUniqueViolation(err) {
 		prior, found, rerr := r.FindPOSendByKey(ctx, in.IdempotencyKey, in.POID)
 		if rerr != nil {
-			return POSend{}, rerr
+			return POSend{}, false, rerr
 		}
 		if found {
-			return prior, nil
+			return prior, true, nil
 		}
-		return POSend{}, conflict("purchasing: idempotency key %q already belongs to a send for another order, a new order needs a new key",
+		return POSend{}, false, conflict("purchasing: idempotency key %q already belongs to a send for another order, a new order needs a new key",
 			in.IdempotencyKey)
 	}
 	if err != nil {
-		return POSend{}, fmt.Errorf("purchasing: record po send: %w", err)
+		return POSend{}, false, fmt.Errorf("purchasing: record po send: %w", err)
 	}
-	return out, nil
+	return out, false, nil
 }
 
 // MarkPOSendResult finalises the row with what the transport said. On this deployment that is

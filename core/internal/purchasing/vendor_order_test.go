@@ -77,15 +77,15 @@ func (f *fakeSends) heldByKey(key string) POSend {
 	return f.byKey[key]
 }
 
-func (f *fakeSends) InsertPOSend(_ context.Context, row POSend, actorID string) (POSend, error) {
+func (f *fakeSends) InsertPOSend(_ context.Context, row POSend, actorID string) (POSend, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if row.IdempotencyKey != "" {
 		if held := f.heldByKey(row.IdempotencyKey); held.ID != "" {
 			if held.POID == row.POID {
-				return held, nil
+				return held, true, nil
 			}
-			return POSend{}, conflict("purchasing: idempotency key %q already belongs to a send for another order, a new order needs a new key",
+			return POSend{}, false, conflict("purchasing: idempotency key %q already belongs to a send for another order, a new order needs a new key",
 				row.IdempotencyKey)
 		}
 	}
@@ -100,7 +100,7 @@ func (f *fakeSends) InsertPOSend(_ context.Context, row POSend, actorID string) 
 		f.byKey[row.IdempotencyKey] = row
 	}
 	_ = actorID
-	return row, nil
+	return row, false, nil
 }
 
 func (f *fakeSends) MarkPOSendResult(_ context.Context, id, status, provider, ref, detail string) error {

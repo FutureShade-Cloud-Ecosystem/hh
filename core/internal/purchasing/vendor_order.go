@@ -311,7 +311,11 @@ func (s *Service) orders() (orderStore, error) {
 
 type sendStore interface {
 	VendorContact(ctx context.Context, vendorID string) (VendorContact, bool, error)
-	InsertPOSend(ctx context.Context, row POSend, actorID string) (POSend, error)
+	// InsertPOSend returns the stored row and whether that row is a REPLAY of a send this order
+	// already made under the same key (the loser of two concurrent first sends). A replay inserted
+	// nothing: the caller must answer it exactly as the serial replay, with no second transport
+	// call, no mark over the winner's result and no second po.sent.
+	InsertPOSend(ctx context.Context, row POSend, actorID string) (POSend, bool, error)
 	MarkPOSendResult(ctx context.Context, id, status, provider, ref, detail string) error
 	FindPOSendByKey(ctx context.Context, key, poID string) (POSend, bool, error)
 	ListPOSends(ctx context.Context, poID string) ([]POSend, error)
@@ -408,7 +412,7 @@ func (s *Service) SendPO(ctx context.Context, poID string, in SendPORequest) (PO
 		return POSend{}, err
 	}
 
-	row, err := store.InsertPOSend(ctx, POSend{
+	row, replayed, err := store.InsertPOSend(ctx, POSend{
 		POID: po.ID, Channel: ChannelEmail,
 		Recipient: target.Recipient, RecipientKind: target.Kind, FallbackReason: target.FallbackReason,
 		Status: SendQueued, Provider: s.sender().Name(),
@@ -417,6 +421,14 @@ func (s *Service) SendPO(ctx context.Context, poID string, in SendPORequest) (PO
 	}, caller.UserID)
 	if err != nil {
 		return POSend{}, err
+	}
+	// THE LOSER OF TWO CONCURRENT FIRST SENDS OF ONE ORDER answers here (HH-181 round 3). The winner
+	// owns the dispatch and the row's outcome; the loser returns the winner's row exactly as the
+	// serial replay above does. Carrying on instead would dispatch the purchase order a second time
+	// once a real transport is wired, overwrite the winner's result with the loser's, and record a
+	// second po.sent, three claims about one send.
+	if replayed {
+		return row, nil
 	}
 
 	receipt, sendErr := s.sender().Send(ctx, POSendMessage{
