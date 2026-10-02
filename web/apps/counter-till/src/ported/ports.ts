@@ -722,24 +722,30 @@ export function availableCreditCents(customer: {
 // ---------------------------------------------------------------------------
 //
 // The reference kept the multi-card surface's box positions in the browser's
-// local store, per device, under a versioned key. In HH the host owns
-// persistence (this app's credential sink rule reserves the browser's stores),
-// so the ported panel module asks these seams with the same key and the same
-// raw-string contract; the wiring item picks the backing store.
+// local store, per device. This app's committed gate on credential sinks
+// refuses the browser's storage accessors outright (test/sinks.test.mjs: no
+// source may carry a place a credential could rest in), so the backing store
+// here is tab memory: the layout survives every gesture inside the tab and
+// forgets on a reload, which is the same posture the app's custody already
+// takes. The per-person half of the arrangement (the layout choice, the
+// collapse states) rides the server's workspace row through the ported
+// surface's own saves; only the pixel boxes degrade to tab memory.
 
-/** Whatever the device remembers under this key, as the stored string, or null. */
+const panelStore = new Map<string, string>();
+
+/** Whatever this tab remembers under this key, as the stored string, or null. */
 export function readPanelLayoutRaw(key: string): string | null {
-  return unwired('readPanelLayoutRaw');
+  return panelStore.get(key) ?? null;
 }
 
 /** Best effort persist of the stored string under this key. A refusing store just forgets. */
 export function writePanelLayoutRaw(key: string, value: string): void {
-  return unwired('writePanelLayoutRaw');
+  panelStore.set(key, value);
 }
 
 /** Forget the layout under this key; the next read returns the default tiling. */
 export function clearPanelLayoutRaw(key: string): void {
-  return unwired('clearPanelLayoutRaw');
+  panelStore.delete(key);
 }
 
 // ---------------------------------------------------------------------------
@@ -756,14 +762,27 @@ export function clearPanelLayoutRaw(key: string): void {
 export type { ReceiptWindow } from './receipt-print-logic.js';
 
 /**
- * Write a rendered receipt into a freshly opened window and print it. A
- * blocked pop-up is a real and common counter failure (browsers block
- * window.open outside a user gesture); it must surface as the operator
- * message the reference worded, never a silent no-op.
+ * Write a rendered receipt into a freshly opened window and print it. The
+ * document is the core's own render (the receipt route's answer), so this is
+ * a carriage, not a composition: the write puts it in the window, the window's
+ * own print does the rest. A blocked pop-up is a real and common counter
+ * failure (browsers block window.open outside a user gesture); it surfaces as
+ * the operator message the reference worded, never a silent no-op.
  */
 export function printReceiptInto(
   win: import('./receipt-print-logic.js').ReceiptWindow | null,
   receiptHtml: string,
 ): import('./receipt-print-logic.js').PrintOutcome {
-  return unwired('printReceiptInto');
+  if (win === null) {
+    return {
+      ok: false,
+      reason: 'popup_blocked',
+      message: 'The browser blocked the receipt window: allow pop-ups for this till and print again.',
+    };
+  }
+  win.document.write(receiptHtml);
+  win.document.close();
+  if (typeof win.focus === 'function') win.focus();
+  if (typeof win.print === 'function') win.print();
+  return { ok: true };
 }
