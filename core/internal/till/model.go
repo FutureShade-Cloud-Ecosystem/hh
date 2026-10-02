@@ -314,11 +314,13 @@ type MovementRow struct {
 	CreatedBy     string
 }
 
-// MovementTotals are the per-session CASH movement sums used in the over/short derivation.
+// MovementTotals are the per-session movement sums of ONE tender method, used in the drawer math
+// (the Z report's expected totals and the session detail read). The movement table's own vocabulary
+// (0028) is movement_type PAID_IN/PAID_OUT/DROP/LODGEMENT per method CASH/CHEQUE/CARD/EFT/OTHER.
 type MovementTotals struct {
-	PaidInCash    int64 // Σ PAID_IN cash
-	PaidOutCash   int64 // Σ (PAID_OUT + DROP) cash
-	LodgementCash int64 // Σ LODGEMENT cash (banked)
+	PaidIn    int64 // Σ PAID_IN of the method
+	PaidOut   int64 // Σ (PAID_OUT + DROP) of the method
+	Lodgement int64 // Σ LODGEMENT of the method (banked)
 }
 
 // SessionDetail is the operator reopen/lookup read (US-A03-10): the header + its tenders + movements.

@@ -230,22 +230,21 @@ func (f *fakeStore) TenderActuals(_ context.Context, sessionID string) (map[stri
 	return out, nil
 }
 
-func (f *fakeStore) MovementCashTotals(_ context.Context, sessionID string) (MovementTotals, error) {
-	var mt MovementTotals
+func (f *fakeStore) MovementTotalsByMethod(_ context.Context, sessionID string) (map[string]MovementTotals, error) {
+	out := map[string]MovementTotals{}
 	for _, m := range f.movements[sessionID] {
-		if m.Method != MethodCash {
-			continue
-		}
+		mt := out[m.Method]
 		switch m.MovementType {
 		case MovementPaidIn:
-			mt.PaidInCash += m.AmountCents
+			mt.PaidIn += m.AmountCents
 		case MovementPaidOut, MovementDrop:
-			mt.PaidOutCash += m.AmountCents
+			mt.PaidOut += m.AmountCents
 		case MovementLodgement:
-			mt.LodgementCash += m.AmountCents
+			mt.Lodgement += m.AmountCents
 		}
+		out[m.Method] = mt
 	}
-	return mt, nil
+	return out, nil
 }
 
 func (f *fakeStore) UpsertTenderActuals(_ context.Context, sessionID string, actuals []TenderActual) error {
