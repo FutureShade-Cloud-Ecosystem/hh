@@ -85,9 +85,10 @@ func (c *captureNotifier) Send(_ context.Context, m notify.Message) error {
 // TestWorkerSmsDispatcherOwnsTheQuoteTopics, HH-188: every topic the live
 // producers write into sms_outbox must have an owner on the worker's sms
 // dispatcher, and the follow-up email topic must reach a wired mail
-// transport. The share row must also settle with the redact flag set: its
-// payload carries the share link, and the dispatcher must treat it as
-// secret no matter who wired it.
+// transport. Every quote topic (the share and both follow-ups) must also
+// settle with the redact flag set: their payloads carry the share link or
+// the customer's address, and the dispatcher must treat them as secret no
+// matter who wired them.
 func TestWorkerSmsDispatcherOwnsTheQuoteTopics(t *testing.T) {
 	t.Setenv("SMS_PROVIDER", "stub")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))

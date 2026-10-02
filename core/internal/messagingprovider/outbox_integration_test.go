@@ -245,24 +245,30 @@ func TestIntegrationAFailingProviderDeadLettersRatherThanLoopingForever(t *testi
 	}
 }
 
-// TestIntegrationADeadRowDoesNotKeepItsPayload (HH-188): a DEAD row is as terminal as a PUBLISHED one,
-// and its payload carries the same phone number (and, on the quote topics, the live share link, a
-// bearer credential for the public quote view and accept routes). The dead-letter UPDATE must redact
-// it, the way the published one always has.
+// TestIntegrationADeadRowLosesItsSecretsAndKeepsItsReference (HH-188): a DEAD row is as terminal
+// as a PUBLISHED one, and the same sensitive keys leave with it. The follow-up notice carries all
+// three (the live share link, a bearer credential for the public quote view and accept routes; the
+// recipient's number; the customer's address), so each removal is pinned in its own right, not
+// vacuously: the round 2 review proved that with a fixture carrying only the share link, dropping
+// the number or the address key from the UPDATE survived every suite. The reference stays, because
+// this table's enqueue returns no event id for several topics and a cleared row is an anonymous
+// dead letter.
 //
 // The driver is the worker's exact main shape for this topic: the Wave 2 consumer registered, the
-// quote topics unowned, so the share notice settles "no handler registered for topic". That
-// unregistered path is the one that must never park a token at rest, a registered secret topic that
-// fails five times gets the same terminal redaction through the same UPDATE, and no secret marking
-// exists to consult for a topic nobody registered.
-func TestIntegrationADeadRowDoesNotKeepItsPayload(t *testing.T) {
+// quote topics unowned, so the notice settles "no handler registered for topic". That unregistered
+// path is the one that must never park a token at rest, a registered secret topic that fails five
+// times gets the same terminal redaction through the same UPDATE, and no secret marking exists to
+// consult for a topic nobody registered.
+func TestIntegrationADeadRowLosesItsSecretsAndKeepsItsReference(t *testing.T) {
 	pool, outbox, _ := markedFixture(t)
 	ctx := context.Background()
 
 	// EnqueueAt returns the row's id (Enqueue does not), and a zero notBefore means immediately due.
-	id, err := outbox.EnqueueAt(ctx, TopicQuoteShare, QuoteShareNotice{
-		QuoteID: "fx-dead-share", QuoteNo: "Q-FX-1", CustomerID: "fx-cust-1",
+	// The follow-up notice is the one shape carrying all three sensitive keys at once.
+	id, err := outbox.EnqueueAt(ctx, TopicQuoteFollowupSMS, QuoteFollowupNotice{
+		QuoteID: "fx-dead-share", QuoteNo: "Q-FX-1", CustomerID: "fx-cust-1", StepDay: 2,
 		ShareURL: "https://erp.fx.invalid/quote.html?t=fx-live-share-token",
+		Email:    "customer@fx.invalid", To: "+15550100",
 	}, time.Time{})
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
@@ -309,7 +315,51 @@ func TestIntegrationADeadRowDoesNotKeepItsPayload(t *testing.T) {
 			t.Errorf("the DEAD row still carries %s (%v): a credential or a contact nobody will ever deliver must not sit at rest", key, kept[key])
 		}
 	}
+	if kept["step_day"] != float64(2) {
+		t.Errorf("the DEAD row lost its cadence step (payload %s): the reference keys survive the redaction with the secret ones gone", payload)
+	}
 	if kept["quote_id"] != "fx-dead-share" {
 		t.Errorf("the DEAD row lost its quote reference (payload %s): the operator's only trace of what failed must survive the redaction", payload)
+	}
+}
+
+// TestIntegrationAScalarPayloadStillDeadLetters (HH-188 round 3): the round 2 review found that
+// jsonb key removal raises on a non-object payload, so a scalar row could never reach DEAD and
+// would sit PENDING as the oldest row, erroring every drain. No producer writes a scalar today
+// (every enqueue marshals a struct), but the seam takes any and the column has no shape check;
+// the dead-letter path must hold for any shape the table can store, falling back to the empty
+// object the published row gets.
+func TestIntegrationAScalarPayloadStillDeadLetters(t *testing.T) {
+	pool, outbox, _ := markedFixture(t)
+	ctx := context.Background()
+
+	// A scalar payload planted straight at the table: no producer writes one, the test does.
+	var id string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO sms_outbox (topic, payload) VALUES ($1, 'null'::jsonb) RETURNING event_id::text`,
+		TopicQuoteShare).Scan(&id); err != nil {
+		t.Fatalf("plant scalar row: %v", err)
+	}
+
+	stub, serr := Select(Settings{}, nil)
+	if serr != nil {
+		t.Fatalf("select: %v", serr)
+	}
+	d := notify.NewDispatcher(outbox, slog.Default())
+	NewConsumer(stub, NewConsentResolver(NewPrefsStore(pool), nil), slog.Default()).RegisterHandlers(d)
+	d.DrainOnce(ctx)
+
+	var status string
+	var payload string
+	if err := pool.QueryRow(ctx,
+		`SELECT status, payload::text FROM sms_outbox WHERE event_id = $1`, id).
+		Scan(&status, &payload); err != nil {
+		t.Fatalf("read the scalar row: %v", err)
+	}
+	if status != "DEAD" {
+		t.Fatalf("status = %s after one drain, want DEAD: a scalar payload must dead-letter like any other, never sit PENDING erroring every drain", status)
+	}
+	if payload != "{}" {
+		t.Fatalf("payload = %s, want the empty object: a shape with no keys to remove gets the published row's clear", payload)
 	}
 }
