@@ -1104,3 +1104,20 @@ applied-history mechanisms to HH-3.7 to report before HH-5; this entry
 records that the shared dev instance is itself the live example, and
 that rebuilding it from main's chain (rather than patching its ledger)
 is the clean remedy. Lane work should keep using scratch databases.
+
+## HH hardening, HH-186 round 2: the incident's cause, named after the review (the entry above stands)
+
+The round 1 review is right that the entry above records the damage and
+the remedy but not the cause, and the cause is the recurring trap: the
+run set CORE_DATABASE_URL and called the migrate role, which reads
+DATABASE_URL (core/cmd/core/roles_oneshot.go, through the config default
+at core/internal/config/config.go), so the variable the operator set was
+never read and the shared default stood in silently. Nothing refused,
+nothing logged a different target than the one hit: the migrate role does
+not print its target, so the first visible failure is the migration
+error on someone else's ledger. This is defect HH-199's exact class (the
+two names for the database URL), and the trap will recur until that
+defect's fix lands: one-shot roles reading CORE_DATABASE_URL with no
+default and refusing when unset. Until then: always export DATABASE_URL,
+never only CORE_DATABASE_URL, when running the migrate or seed roles
+by hand, and give them a scratch database's URL in full.
