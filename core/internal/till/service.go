@@ -39,7 +39,10 @@ type tillStore interface {
 	InsertMovement(ctx context.Context, m MovementRow) error
 	ExpectedTenders(ctx context.Context, sessionID string) (map[string]int64, error)
 	TenderActuals(ctx context.Context, sessionID string) (map[string]int64, error)
-	MovementCashTotals(ctx context.Context, sessionID string) (MovementTotals, error)
+	// MovementTotalsByMethod returns the session's drawer movement sums per tender method (0028's
+	// vocabulary: paid in, paid out and dropped, lodgements, per method). A method with no
+	// movements is absent and reads as zero.
+	MovementTotalsByMethod(ctx context.Context, sessionID string) (map[string]MovementTotals, error)
 	UpsertTenderActuals(ctx context.Context, sessionID string, actuals []TenderActual) error
 	InsertDenominations(ctx context.Context, sessionID, phase string, denoms []DenominationCount) error
 	SetCounted(ctx context.Context, sessionID, countedBy string, at time.Time, closingFloatCents int64) error
@@ -516,7 +519,9 @@ func (s *Service) ZReportFor(ctx context.Context, sessionID string) (ZReport, er
 	return s.deriveZReport(ctx, sess)
 }
 
-// deriveZReport is the single source of the over/short math, reused by ZReportFor and CompleteTill.
+// deriveZReport is the single source of the drawer math (the over/short summary and the counted
+// methods' derived expecteds), reused by ZReportFor, CompleteTill and GetSession so every read of
+// this module states the same numbers.
 func (s *Service) deriveZReport(ctx context.Context, sess TillSession) (ZReport, error) {
 	expected, err := s.store.ExpectedTenders(ctx, sess.ID)
 	if err != nil {
@@ -526,28 +531,56 @@ func (s *Service) deriveZReport(ctx context.Context, sess TillSession) (ZReport,
 	if err != nil {
 		return ZReport{}, err
 	}
-	mv, err := s.store.MovementCashTotals(ctx, sess.ID)
+	mv, err := s.store.MovementTotalsByMethod(ctx, sess.ID)
 	if err != nil {
 		return ZReport{}, err
 	}
 
+	// Expected totals for the two physically counted methods, over the movement table's own
+	// vocabulary (0028: paid in, paid out and dropped, lodgements, per method).
+	//
 	// Cash reconciliation, start float IS in the math.
-	expectedCash := sess.FloatCents + expected[MethodCash] + mv.PaidInCash - mv.PaidOutCash - mv.LodgementCash
+	cashMv := mv[MethodCash]
+	expectedCash := sess.FloatCents + expected[MethodCash] + cashMv.PaidIn - cashMv.PaidOut - cashMv.Lodgement
 	countedCash := actuals[MethodCash]
+	// Cheque carries its movements with NO float: the float is cash in the drawer by definition,
+	// and a cheque movement (the lodgement to the bank, a cheque handed out) empties the cheque
+	// expected exactly as a cash one empties the cash expected.
+	chequeMv := mv[MethodCheque]
+	expectedCheque := expected[MethodCheque] + chequeMv.PaidIn - chequeMv.PaidOut - chequeMv.Lodgement
+	countedCheque := actuals[MethodCheque]
 
-	// Per-tender variance, derived. Cash + cheque are physically (blind) counted; card/EFT/OTHER are
+	// Per-tender variance, derived. Cash and cheque are physically (blind) counted; card/EFT/OTHER are
 	// processor-confirmed captures, so their actual = expected captures (variance 0), D-A03-9.
 	var perTender []TenderTotal
 	for _, method := range []string{MethodCash, MethodCheque, MethodCard, MethodEFT, MethodOther} {
 		exp, hasExp := expected[method]
 		act, hasAct := actuals[method]
-		if !hasExp && !hasAct {
-			continue
-		}
 		switch method {
 		case MethodCash, MethodCheque:
-			// physically counted (blind)
+			// The counted methods state the drawer's expected total, not the raw payments sum:
+			// CASH = start float + RECEIVED cash payments + cash paid in - cash paid out and
+			// dropped - cash lodgements; CHEQUE = the same movement math with NO float. A refund
+			// books a REFUNDED payments row (excluded from that sum) plus a cash PAID_OUT
+			// movement, and cheque movements book against cheque the same way, which is why the
+			// raw sum alone is never the expected drawer total. Each line states the same number
+			// its summary carries, so one answer carries one expected per method and the variance
+			// equals the summary's over/short by construction.
+			if method == MethodCash {
+				exp, act = expectedCash, countedCash
+			} else {
+				exp, act = expectedCheque, countedCheque
+			}
+			// The line MEANS the drawer, so a drawer with an expected but no payments row and no
+			// count yet (a float plus a paid in, a cheque movement with no cheque sale) still
+			// gets its line.
+			if exp == 0 && !hasExp && !hasAct {
+				continue
+			}
 		default:
+			if !hasExp && !hasAct {
+				continue
+			}
 			act = exp // processor-confirmed captures (D-A03-9)
 		}
 		perTender = append(perTender, TenderTotal{
@@ -648,6 +681,27 @@ func (s *Service) GetSession(ctx context.Context, id string) (SessionDetail, err
 	movements, err := s.store.SessionMovements(ctx, id)
 	if err != nil {
 		return SessionDetail{}, err
+	}
+	// One truth per counted method across both reads: the tenders rows carry the stored close-time
+	// snapshot (the payments sums, still true as what it is), but the ANSWER states the derived
+	// drawer expected for the counted methods, the same numbers deriveZReport states, so the Z
+	// report and this read can never name two different expected_cents for the same drawer. The
+	// stored snapshot itself is untouched.
+	z, err := s.deriveZReport(ctx, sess)
+	if err != nil {
+		return SessionDetail{}, err
+	}
+	derived := make(map[string]int64, 2)
+	for _, tt := range z.PerTender {
+		if tt.Method == MethodCash || tt.Method == MethodCheque {
+			derived[tt.Method] = tt.ExpectedCents
+		}
+	}
+	for i := range tenders {
+		if exp, ok := derived[tenders[i].Method]; ok {
+			tenders[i].ExpectedCents = exp
+			tenders[i].VarianceCents = tenders[i].ActualCents - exp
+		}
 	}
 	return SessionDetail{TillSession: sess, Tenders: tenders, Movements: movements}, nil
 }
