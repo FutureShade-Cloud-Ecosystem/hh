@@ -31,9 +31,10 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 // constructor set, and the mapping is by route, never by parameter position:
 // the deep viewer reads keep the admin gate, the operator transaction-reopen
 // read keeps the staff gate. The handlers receive the resolved caller as an
-// argument (guards.StaffHandler); this module does not read it today, and the
-// parameter is kept so the registrar's shape is the one every carried module
-// shares.
+// argument (guards.StaffHandler); the reopen read branch-fences on it
+// (HH-180), the two deep viewer reads keep their admin gate and do not read
+// it, and the parameter stays so the registrar's shape is the one every
+// carried module shares.
 func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/audit", g.RequireAdmin(h.list))
 	r.Handle("GET /api/v1/audit/{id}", g.RequireAdmin(h.get))
@@ -103,8 +104,11 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, _ guards.StaffCall
 // reopen is the operator transaction-reopen read path (any authenticated staff). The masking
 // projection runs HERE, server-side: admin-only deep fields (FN identifiers, override reasons, raw
 // payloads) are stripped before the response leaves the server (US-B1), so a frontline client never
-// receives them.
-func (h *Handler) reopen(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+// receives them. The caller's authority fences the trail to their branch reach (HH-180): the staff
+// gate proves the caller is staff, not that they may reach THIS entity's trail, so the read runs
+// through ReopenTransactionFor, a scoped caller sees only their branches' rows plus branch-less
+// ones, and a fully out-of-branch entity answers an empty trail, never a refusal.
+func (h *Handler) reopen(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	// Validate {entityId} before it reaches the `entity_id = $2::uuid` cast (same 22P02→503 class as
 	// get()). entityType is a plain `entity_type = $1` text comparison, so it needs no validation.
 	entityID := r.PathValue("entityId")
@@ -112,7 +116,7 @@ func (h *Handler) reopen(w http.ResponseWriter, r *http.Request, _ guards.StaffC
 		httpx.Error(w, http.StatusBadRequest, "entityId must be a valid UUID")
 		return
 	}
-	rows, err := h.svc.ReopenTransaction(r.Context(), r.PathValue("entityType"), entityID)
+	rows, err := h.svc.ReopenTransactionFor(r.Context(), caller.StaffAuthority, r.PathValue("entityType"), entityID)
 	if err != nil {
 		h.log.Error("audit: reopen failed", "err", err)
 		httpx.Error(w, http.StatusServiceUnavailable, "audit lookup failed")

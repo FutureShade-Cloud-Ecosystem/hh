@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -653,7 +654,9 @@ func TestAuditList_ValidatesActorAndSince(t *testing.T) {
 }
 
 // pathCallStore records whether the get/reopen store reads were reached, so a test can assert a
-// malformed path id is rejected at the handler BEFORE any store/DB call.
+// malformed path id is rejected at the handler BEFORE any store/DB call. The reopen read runs fenced
+// for every non-global caller (the zero-value caller of the valid-id leg included), so both read
+// methods set the flag.
 type pathCallStore struct {
 	fakeStore
 	getByIDCalled      bool
@@ -666,6 +669,11 @@ func (s *pathCallStore) GetByID(ctx context.Context, id string) (*Entry, error) 
 }
 
 func (s *pathCallStore) ListByEntity(ctx context.Context, et, id string) ([]Entry, error) {
+	s.listByEntityCalled = true
+	return []Entry{}, nil
+}
+
+func (s *pathCallStore) ListByEntityFenced(ctx context.Context, et, id string, branches []string) ([]Entry, error) {
 	s.listByEntityCalled = true
 	return []Entry{}, nil
 }
@@ -844,6 +852,71 @@ func TestAuditPathID_ValidatesID(t *testing.T) {
 		if rr.Code == http.StatusBadRequest || !st.listByEntityCalled {
 			t.Fatalf("reopen() valid entityId: code=%d listByEntityCalled=%v, want gate-pass and store call", rr.Code, st.listByEntityCalled)
 		}
+	}
+}
+
+// TestReopenHandler_FencesOnCaller drives the reopen handler with a resolved caller (HH-180): the
+// handler ignored its caller entirely before the fence, so the scoped leg here is the regression.
+// The scoped caller's response holds only their branch's row plus the branch-less one and the
+// service saw the fenced read; the global caller keeps the unfenced read and the full trail.
+func TestReopenHandler_FencesOnCaller(t *testing.T) {
+	const home = "b11111111-1111-4111-8111-111111111111"
+	const away = "c22222222-2222-4222-8222-222222222222"
+	newHandlerStore := func() (*Handler, *reopenCallStore) {
+		st := &reopenCallStore{fakeStore: *newFakeStore()}
+		for _, e := range []Entry{
+			{Action: ActOrderChanged, EntityType: "order", EntityID: sampleUUID, BranchID: home,
+				Changes: map[string]any{"field": "unit_price_cents"}},
+			{Action: ActOrderChanged, EntityType: "order", EntityID: sampleUUID, BranchID: away,
+				Changes: map[string]any{"field": "line_total_cents"}},
+			{Action: ActHTTPPost, EntityType: "order", EntityID: sampleUUID,
+				Changes: map[string]any{"status": 201, "actor_role": "sales"}},
+		} {
+			if err := st.Insert(context.Background(), e); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+		}
+		return NewHandler(&Service{repo: st, log: testLogger()}, testLogger()), st
+	}
+	call := func(h *Handler, caller guards.StaffCaller) []Entry {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/audit/transaction/order/"+sampleUUID, nil)
+		req.SetPathValue("entityType", "order")
+		req.SetPathValue("entityId", sampleUUID)
+		rr := httptest.NewRecorder()
+		h.reopen(rr, req, caller)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("reopen status %d, want 200", rr.Code)
+		}
+		var got []Entry
+		if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode reopen body %q: %v", rr.Body.String(), err)
+		}
+		return got
+	}
+
+	h, st := newHandlerStore()
+	got := call(h, guards.StaffCaller{StaffAuthority: identity.StaffAuthority{
+		RoleID: "r", Tier: identity.TierFrontline, Scope: identity.ScopeBranch, Branches: []string{home}}})
+	if st.unfenced || !st.fenced {
+		t.Errorf("scoped caller must reach the fenced read, got unfenced=%v fenced=%v", st.unfenced, st.fenced)
+	}
+	if len(got) != 2 {
+		t.Errorf("scoped caller got %d rows, want 2 (their branch's row + the branch-less coarse row)", len(got))
+	}
+	for _, e := range got {
+		if e.BranchID == away {
+			t.Errorf("scoped caller leaked the out-of-branch row: action %q branch %q", e.Action, e.BranchID)
+		}
+	}
+
+	h2, st2 := newHandlerStore()
+	got2 := call(h2, guards.StaffCaller{StaffAuthority: identity.StaffAuthority{
+		RoleID: "r", Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}})
+	if !st2.unfenced || st2.fenced {
+		t.Errorf("global caller must reach the unfenced read, got unfenced=%v fenced=%v", st2.unfenced, st2.fenced)
+	}
+	if len(got2) != 3 {
+		t.Errorf("global caller got %d rows, want 3 (the full cross-branch trail)", len(got2))
 	}
 }
 
