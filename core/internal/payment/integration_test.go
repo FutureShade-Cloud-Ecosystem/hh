@@ -8,6 +8,7 @@ package payment
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -122,6 +123,35 @@ func TestIntegration_Config_CiphertextOnly_And_StatusHidesCreds(t *testing.T) {
 	}
 	if !configured || mid != "MID-1" || proc != "run_payments" || currency != "CAD" {
 		t.Fatalf("Status = %v/%q/%q/%q", configured, mid, proc, currency)
+	}
+}
+
+// HH-186, the store refuses surcharge_enabled=true against the real database: nothing is stored,
+// and a following configure with the flag off still lands, so reads keep reporting the stored
+// state (disabled).
+func TestIntegration_Config_SurchargeEnable_Refused(t *testing.T) {
+	pool := intPool(t)
+	cleanConfig(t, pool)
+	st := intStore(t, pool)
+	ctx := context.Background()
+
+	if err := st.Configure(ctx, "run_payments", "MID-1", "CAD", "", 240, true, map[string]string{"api_key": "k"}, ""); !errors.Is(err, ErrSurchargeNotEnforced) {
+		t.Fatalf("Configure(enable) err = %v, want ErrSurchargeNotEnforced", err)
+	}
+	// The refused enable stored nothing: no active row exists.
+	if _, _, err := st.activeConfig(ctx); !errors.Is(err, ErrNoConfig) {
+		t.Fatalf("activeConfig after the refused enable = %v, want ErrNoConfig", err)
+	}
+	// The refusal is not an outage: the same admin payload with the flag off lands and reads back.
+	if err := st.Configure(ctx, "run_payments", "MID-1", "CAD", "", 240, false, map[string]string{"api_key": "k"}, ""); err != nil {
+		t.Fatalf("Configure(disable): %v", err)
+	}
+	cfg, _, err := st.activeConfig(ctx)
+	if err != nil {
+		t.Fatalf("activeConfig after disable: %v", err)
+	}
+	if cfg.Surcharge {
+		t.Fatal("stored surcharge_enabled = true, want false")
 	}
 }
 

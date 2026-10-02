@@ -19,13 +19,19 @@ type fakeConfigStore struct {
 	proc       string
 	currency   string
 	lastCreds  map[string]string
+	// lastSurcharge records the flag the handler handed down; configureCalls
+	// counts Configure invocations so a refusal can prove nothing was stored.
+	lastSurcharge  bool
+	configureCalls int
 }
 
 func (f *fakeConfigStore) Status(context.Context) (bool, string, string, string, error) {
 	return f.configured, f.mid, f.proc, f.currency, nil
 }
-func (f *fakeConfigStore) Configure(_ context.Context, processor, mid, currency, _ string, _ int64, _ bool, creds map[string]string, _ string) error {
+func (f *fakeConfigStore) Configure(_ context.Context, processor, mid, currency, _ string, _ int64, surchargeEnabled bool, creds map[string]string, _ string) error {
+	f.configureCalls++
 	f.lastCreds = creds
+	f.lastSurcharge = surchargeEnabled
 	f.configured, f.mid, f.currency = true, mid, currency
 	f.proc = processor
 	if f.proc == "" {
@@ -89,6 +95,67 @@ func TestConfig_GET_RequiresStaff(t *testing.T) {
 	}
 	if b := rec2.Body.String(); strings.Contains(b, "credential") || strings.Contains(b, "api_key") {
 		t.Fatalf("status response must never carry creds: %s", b)
+	}
+}
+
+// HH-186, the surcharge setting was accepted and ignored: an enable PUT answered 200 and stored
+// surcharge_enabled=true while no tender path computed a cent of surcharge. The route now refuses
+// the enable with 422 and stores nothing; the message says the truth about why.
+func TestConfig_PUT_SurchargeEnable_Refused(t *testing.T) {
+	fake := &fakeConfigStore{}
+	sg, mux := newTestMux(t, fake)
+	sg.SetAuthority(identity.StaffAuthority{RoleID: "owner", Tier: 1, Scope: "global"})
+	body := `{"merchant_id":"MID-1","processor":"run_payments","currency":"CAD","mdr_bps":240,"surcharge_enabled":true,"credentials":{"api_key":"k"}}`
+
+	rec := doReq(t, sg, mux, http.MethodPut, "/api/v1/payments/config", body)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("admin PUT with surcharge_enabled=true = %d, want 422 (%s)", rec.Code, rec.Body.String())
+	}
+	if fake.configureCalls != 0 {
+		t.Fatalf("Configure calls = %d, want 0 (a refused enable must store nothing)", fake.configureCalls)
+	}
+	msg := rec.Body.String()
+	for _, want := range []string{"surcharge_enabled cannot be enabled", "no tender path"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("refusal message must say %q, got %s", want, msg)
+		}
+	}
+}
+
+// HH-186 (D18): enabling a surcharge requires a recorded jurisdiction and its cap, and this server
+// records none (the request carries no such field and payment_config holds none), so an otherwise
+// complete enable is still refused with the precondition named.
+func TestConfig_PUT_SurchargeEnable_D18_NoJurisdictionAndCap(t *testing.T) {
+	fake := &fakeConfigStore{}
+	sg, mux := newTestMux(t, fake)
+	sg.SetAuthority(identity.StaffAuthority{RoleID: "owner", Tier: 1, Scope: "global"})
+	body := `{"merchant_id":"MID-1","mdr_bps":240,"surcharge_enabled":true,"credentials":{"api_key":"k"}}`
+
+	rec := doReq(t, sg, mux, http.MethodPut, "/api/v1/payments/config", body)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("enable with no jurisdiction and cap recorded = %d, want 422 (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "no surcharge jurisdiction and cap is recorded") {
+		t.Fatalf("refusal must name the missing jurisdiction and cap (D18), got %s", rec.Body.String())
+	}
+	if fake.configureCalls != 0 {
+		t.Fatalf("Configure calls = %d, want 0", fake.configureCalls)
+	}
+}
+
+// Turning the setting OFF is always safe: surcharge_enabled=false stays a 200 and reaches the store.
+func TestConfig_PUT_SurchargeDisable_Accepted(t *testing.T) {
+	fake := &fakeConfigStore{}
+	sg, mux := newTestMux(t, fake)
+	sg.SetAuthority(identity.StaffAuthority{RoleID: "owner", Tier: 1, Scope: "global"})
+	body := `{"merchant_id":"MID-1","surcharge_enabled":false,"credentials":{"api_key":"k"}}`
+
+	rec := doReq(t, sg, mux, http.MethodPut, "/api/v1/payments/config", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin PUT with surcharge_enabled=false = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if fake.configureCalls != 1 || fake.lastSurcharge {
+		t.Fatalf("Configure calls = %d, lastSurcharge = %v; want 1 call carrying false", fake.configureCalls, fake.lastSurcharge)
 	}
 }
 

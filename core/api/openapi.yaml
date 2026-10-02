@@ -2234,7 +2234,7 @@ paths:
       tags:
         - staff-payment
       summary: Store the processor config
-      description: Credentials are stored write-only and are never echoed back; the response carries only the configured flag, the merchant id, and the processor.
+      description: "Credentials are stored write-only and are never echoed back; the response carries only the configured flag, the merchant id, and the processor. surcharge_enabled=true is refused with 422: no tender path on this server computes a surcharge and no surcharge jurisdiction and cap is recorded (D18), so the setting cannot be enabled; surcharge_enabled=false is always accepted."
       x-role: requireAdmin
       x-access:
         surfaces:
@@ -2261,6 +2261,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "422":
+          description: "surcharge_enabled=true was refused; the message names the rule the edit broke: no tender path on this server computes a surcharge and no jurisdiction and cap is recorded, so the setting cannot be enabled"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/ar/payments/{id}/reverse:
     post:
       operationId: paymentsReversePayment
@@ -27147,6 +27153,7 @@ components:
           description: The merchant discount rate in basis points
         surcharge_enabled:
           type: boolean
+          description: Refused as true with 422 while no tender path on this server computes a surcharge and no jurisdiction and cap is recorded (D18); false is always accepted
         credentials:
           type: object
           writeOnly: true

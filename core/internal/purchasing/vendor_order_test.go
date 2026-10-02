@@ -13,12 +13,17 @@ package purchasing
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
 
@@ -35,47 +40,114 @@ func (f *fakeOrders) POLinesFor(context.Context, string) ([]POLine, error) {
 	return f.lines, f.err
 }
 
-// fakeSends records the ORDER of what happened to it, which is the property under test.
+// fakeSends records the ORDER of what happened to it, which is the property under test. Its insert
+// speaks the repository's whole contract (HH-181 round 3): the key index is global, so a key held by
+// THIS order is the concurrent-retry replay (the row comes back, nothing is stored), a key held by
+// ANOTHER order is the collision, and an unheld key inserts. The mutex is for the concurrent arm;
+// every other test here is single-goroutine.
 type fakeSends struct {
 	contact  VendorContact
 	tagged   bool
 	rows     []POSend
 	priorKey string
 	prior    POSend
+	findErr  error
 
+	mu       sync.Mutex
 	trail    []string
 	inserted POSend
 	marked   [5]string
+	byKey    map[string]POSend
+	insertN  int
 }
 
 func (f *fakeSends) VendorContact(context.Context, string) (VendorContact, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.trail = append(f.trail, "read-contact")
 	return f.contact, f.tagged, nil
 }
 
-func (f *fakeSends) InsertPOSend(_ context.Context, row POSend, actorID string) (POSend, error) {
+// heldByKey is the row the global key index names, the seeded prior first, then rows this fake
+// stored. Caller holds the mutex.
+func (f *fakeSends) heldByKey(key string) POSend {
+	if f.priorKey != "" && key == f.priorKey {
+		return f.prior
+	}
+	return f.byKey[key]
+}
+
+func (f *fakeSends) InsertPOSend(_ context.Context, row POSend, actorID string) (POSend, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if row.IdempotencyKey != "" {
+		if held := f.heldByKey(row.IdempotencyKey); held.ID != "" {
+			if held.POID == row.POID {
+				return held, true, nil
+			}
+			return POSend{}, false, conflict("purchasing: idempotency key %q already belongs to a send for another order, a new order needs a new key",
+				row.IdempotencyKey)
+		}
+	}
 	f.trail = append(f.trail, "insert")
-	row.ID = "send-1"
+	f.insertN++
+	row.ID = "send-" + strconv.Itoa(f.insertN)
 	f.inserted = row
+	if row.IdempotencyKey != "" {
+		if f.byKey == nil {
+			f.byKey = map[string]POSend{}
+		}
+		f.byKey[row.IdempotencyKey] = row
+	}
 	_ = actorID
-	return row, nil
+	return row, false, nil
 }
 
 func (f *fakeSends) MarkPOSendResult(_ context.Context, id, status, provider, ref, detail string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.trail = append(f.trail, "mark:"+status)
 	f.marked = [5]string{id, status, provider, ref, detail}
 	return nil
 }
 
-func (f *fakeSends) FindPOSendByKey(_ context.Context, key string) (POSend, bool, error) {
+func (f *fakeSends) FindPOSendByKey(_ context.Context, key, poID string) (POSend, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.trail = append(f.trail, "find-key")
-	if key != "" && key == f.priorKey {
-		return f.prior, true, nil
+	// A read the test fails on purpose, the round 2 arm: what the service does with a replay read
+	// that errors is a decision this file can prove.
+	if f.findErr != nil {
+		return POSend{}, false, f.findErr
+	}
+	// Keyed to the order like the real read: a key is a replay only for the order that minted it.
+	if key != "" {
+		if held := f.heldByKey(key); held.ID != "" && held.POID == poID {
+			return held, true, nil
+		}
 	}
 	return POSend{}, false, nil
 }
 
-func (f *fakeSends) ListPOSends(context.Context, string) ([]POSend, error) { return f.rows, nil }
+func (f *fakeSends) ListPOSends(context.Context, string) ([]POSend, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.rows, nil
+}
+
+// insertCount is how many rows this fake actually stored, the concurrent arm's "one row".
+func (f *fakeSends) insertCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.insertN
+}
+
+// missRead records a replay read that found nothing, for the gated concurrent arm.
+func (f *fakeSends) missRead() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.trail = append(f.trail, "find-key")
+}
 
 type fakeCatalogue struct {
 	rows []VendorSKU
@@ -117,13 +189,70 @@ func (s *recordingSender) Send(_ context.Context, m POSendMessage) (POSendReceip
 		Detail: "recorded"}, nil
 }
 
+// gatedReads holds every replay read at a barrier until the expected number of callers have arrived,
+// and answers each as the miss it was AT THAT MOMENT: the miss is decided at arrival, never re-read
+// after release, because the winner's insert lands after the barrier and re-reading would answer the
+// loser's read as a hit, exactly the interleaving this gate exists to exclude. Embedding keeps the
+// rest of the seam on the wrapped fake.
+type gatedReads struct {
+	*fakeSends
+	barrier *sync.WaitGroup
+}
+
+func (g *gatedReads) FindPOSendByKey(_ context.Context, _, _ string) (POSend, bool, error) {
+	g.barrier.Done()
+	g.barrier.Wait()
+	g.fakeSends.missRead()
+	return POSend{}, false, nil
+}
+
+// countingSender counts transport calls across goroutines; the concurrent arm needs only the count.
+type countingSender struct{ calls atomic.Int64 }
+
+func (s *countingSender) Name() string { return "counting" }
+func (s *countingSender) Live() bool   { return true }
+func (s *countingSender) Send(context.Context, POSendMessage) (POSendReceipt, error) {
+	s.calls.Add(1)
+	return POSendReceipt{Provider: "counting", Ref: "ref-9", Delivered: true, Detail: "recorded"}, nil
+}
+
+// countingAudit counts the audit entries the service records, guarded for the concurrent arm.
+type countingAudit struct {
+	mu      sync.Mutex
+	actions []string
+}
+
+func (a *countingAudit) Record(_ context.Context, e audit.SensitiveAccess) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.actions = append(a.actions, e.Action)
+	return nil
+}
+
+func (a *countingAudit) count(action string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	n := 0
+	for _, x := range a.actions {
+		if x == action {
+			n++
+		}
+	}
+	return n
+}
+
 func sendCaller() identity.StaffContext {
 	return identity.StaffContext{UserID: "u-buyer", Tier: identity.TierManager, Scope: identity.ScopeGlobal}
 }
 
 func sendSvc(orders *fakeOrders, sends *fakeSends, sender POSender, p Policy) *Service {
+	return sendSvcAs(sendCaller(), orders, sends, sender, p)
+}
+
+// sendSvcAs is sendSvc for a caller the test chooses, the arm the branch-fence cases need.
+func sendSvcAs(c identity.StaffContext, orders *fakeOrders, sends *fakeSends, sender POSender, p Policy) *Service {
 	svc := NewService(nil).
-		withCaller(func(context.Context) (identity.StaffContext, bool) { return sendCaller(), true }).
+		withCaller(func(context.Context) (identity.StaffContext, bool) { return c, true }).
 		withOrderStore(orders).
 		withSendStore(sends).
 		withCatalogueStore(&fakeCatalogue{}).
@@ -390,7 +519,7 @@ func TestSendPO_TheDocumentCrossesTheSeamWithTheMessage(t *testing.T) {
 
 func TestSendPO_AnIdenticalRetryReusesItsRow(t *testing.T) {
 	sends := &fakeSends{contact: taggedDesk(), tagged: true,
-		priorKey: "k-1", prior: POSend{ID: "send-0", Status: SendFailed, Recipient: "orders@unilock.example"}}
+		priorKey: "k-1", prior: POSend{ID: "send-0", POID: "po-1", Status: SendFailed, Recipient: "orders@unilock.example"}}
 	sender := &recordingSender{live: true, delivered: true}
 	got, err := sendSvc(orderedPO(), sends, sender, DefaultPolicy()).
 		SendPO(context.Background(), "po-1", SendPORequest{IdempotencyKey: "k-1"})
@@ -402,6 +531,132 @@ func TestSendPO_AnIdenticalRetryReusesItsRow(t *testing.T) {
 	}
 	if sender.calls != 0 {
 		t.Fatalf("the retry called the transport %d times", sender.calls)
+	}
+}
+
+// HH-181 (b): the key index is global in the database, so a client that reuses one key across two orders
+// must be told it collided, in the 409 shape this route already speaks, and must never be handed the FIRST
+// order's record as though the second order went out. A caller told "sent" for an order that was never
+// sent is left waiting for a truck nobody ordered.
+func TestSendPO_AKeyHeldByAnotherOrderIsAKeyCollisionNotAReplay(t *testing.T) {
+	sends := &fakeSends{contact: taggedDesk(), tagged: true,
+		priorKey: "k-1", prior: POSend{ID: "send-0", POID: "po-2", Status: SendFailed,
+			Recipient: "orders@unilock.example"}}
+	sender := &recordingSender{live: true, delivered: true}
+	got, err := sendSvc(orderedPO(), sends, sender, DefaultPolicy()).
+		SendPO(context.Background(), "po-1", SendPORequest{IdempotencyKey: "k-1"})
+	if err == nil {
+		t.Fatalf("the second order was answered with the first order's record %+v, a key collision is not a replay", got)
+	}
+	var ce clientError
+	if !errors.As(err, &ce) || ce.status != http.StatusConflict {
+		t.Fatalf("the collision = %v, want the 409 conflict classification", err)
+	}
+	if got.ID == "send-0" || got.POID == "po-2" {
+		t.Fatalf("the first order's record leaked through the collision: %+v", got)
+	}
+	if sender.calls != 0 {
+		t.Fatalf("the second order was sent to the vendor %d times behind a colliding key", sender.calls)
+	}
+}
+
+// HH-181 (c): the replay answer must arrive AFTER the branch fence, never before it. A manager scoped to
+// another branch who quotes a real key must meet the fence, not the record: a replay answered first is a
+// read of another branch's send history through the one route that forgot to ask.
+func TestSendPO_AReplayKeyDoesNotAnswerForACallerOutsideTheBranch(t *testing.T) {
+	outsider := identity.StaffContext{UserID: "u-other", Tier: identity.TierManager,
+		Scope: identity.ScopeBranch, Branches: map[string]bool{"b-2": true}}
+	sends := &fakeSends{contact: taggedDesk(), tagged: true,
+		priorKey: "k-1", prior: POSend{ID: "send-0", POID: "po-1", Status: SendFailed}}
+	sender := &recordingSender{live: true, delivered: true}
+	got, err := sendSvcAs(outsider, orderedPO(), sends, sender, DefaultPolicy()).
+		SendPO(context.Background(), "po-1", SendPORequest{IdempotencyKey: "k-1"})
+	if !errors.Is(err, errForbidden) {
+		t.Fatalf("err = %v, a caller outside the branch was answered through the replay instead of the fence", err)
+	}
+	if got.ID == "send-0" {
+		t.Fatalf("the replay handed another branch's send record to a caller the fence refuses: %+v", got)
+	}
+	if indexOf(sends.trail, "find-key") >= 0 {
+		t.Fatalf("the replay lookup ran before the branch fence: %v", sends.trail)
+	}
+	if sender.calls != 0 {
+		t.Fatalf("the transport was called %d times for a caller the fence refuses", sender.calls)
+	}
+}
+
+// HH-181 round 2 (P2): a replay read that FAILS must be returned, never fallen past. Falling through
+// answers a genuine same-order retry as a key collision once the insert trips the index, which is a
+// claim about a row the code just failed to read.
+func TestSendPO_AFailedReplayReadIsReturnedNeverFallenPast(t *testing.T) {
+	sends := &fakeSends{contact: taggedDesk(), tagged: true,
+		findErr: errors.New("purchasing: find po send: connection reset")}
+	sender := &recordingSender{live: true, delivered: true}
+	got, err := sendSvc(orderedPO(), sends, sender, DefaultPolicy()).
+		SendPO(context.Background(), "po-1", SendPORequest{IdempotencyKey: "k-1"})
+	if err == nil || !strings.Contains(err.Error(), "connection reset") {
+		t.Fatalf("err = %v, the failed replay read was swallowed and the send proceeded to %+v", err, got)
+	}
+	if indexOf(sends.trail, "insert") >= 0 {
+		t.Fatalf("a send whose replay read failed still wrote a row: %v", sends.trail)
+	}
+	if sender.calls != 0 {
+		t.Fatalf("the transport was called %d times behind a failed read", sender.calls)
+	}
+}
+
+// HH-181 round 3 (P1): the loser of a same-order double click must be answered exactly as the serial
+// replay is. Both replay reads are held at a barrier until BOTH have missed, the interleaving the
+// route exists for, by construction rather than by luck of the scheduler; the fake's insert then
+// speaks the repository's whole contract, so the loser's insert is handed the winner's row as a
+// replay, and everything after the insert must skip: no second transport call (a duplicate purchase
+// order dispatched to the vendor once a real transport is wired), no mark over the winner's result,
+// no second purchasing.po.sent.
+func TestSendPO_TheLoserOfAConcurrentDoubleClickIsTheReplayNotASecondDispatch(t *testing.T) {
+	sends := &fakeSends{contact: taggedDesk(), tagged: true}
+	var reads sync.WaitGroup
+	reads.Add(2)
+	gated := &gatedReads{fakeSends: sends, barrier: &reads}
+	sender := &countingSender{}
+	audits := &countingAudit{}
+	svc := NewService(nil).
+		withCaller(func(context.Context) (identity.StaffContext, bool) { return sendCaller(), true }).
+		withOrderStore(orderedPO()).
+		withSendStore(gated).
+		withCatalogueStore(&fakeCatalogue{}).
+		withPolicyStore(&fakePolicy{p: DefaultPolicy()}).
+		WithPOSender(sender).
+		WithAudit(audits)
+
+	const callers = 2
+	var done sync.WaitGroup
+	rows := make([]POSend, callers)
+	errs := make([]error, callers)
+	done.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func(i int) {
+			defer done.Done()
+			rows[i], errs[i] = svc.SendPO(context.Background(), "po-1", SendPORequest{IdempotencyKey: "k-1"})
+		}(i)
+	}
+	done.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("caller %d of the double click was refused: %v", i, err)
+		}
+	}
+	if rows[0].ID == "" || rows[0].ID != rows[1].ID {
+		t.Fatalf("the double click was answered as two orders: %+v and %+v", rows[0], rows[1])
+	}
+	if n := sender.calls.Load(); n != 1 {
+		t.Fatalf("the transport was called %d times for one order and one key, a duplicate dispatch", n)
+	}
+	if n := sends.insertCount(); n != 1 {
+		t.Fatalf("%d send rows for one order and one key", n)
+	}
+	if n := audits.count("purchasing.po.sent"); n != 1 {
+		t.Fatalf("%d purchasing.po.sent entries for one send", n)
 	}
 }
 
