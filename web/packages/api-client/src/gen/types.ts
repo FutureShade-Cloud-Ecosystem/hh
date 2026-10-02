@@ -4076,6 +4076,12 @@ export type PosAddonSuggestion = {
 export type PosAddonSuggestions = {
   suggestions: PosAddonSuggestion[];
 };
+export type PosTaxRate = {
+  jurisdiction: "ON";
+  reason_code: "STD_ON_HST_13";
+  rate_bps: number;
+  round_mode: "INVOICE_TOTAL" | "PER_LINE";
+};
 export type PosPolicy = {
   branch_id: string;
   cod_enabled: boolean;
