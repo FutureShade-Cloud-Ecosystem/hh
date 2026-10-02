@@ -1142,6 +1142,62 @@ test("the split panel shows the typed sum and leaves the settlement to the ring"
   await expect(page.getByTestId("split-ring")).toBeEnabled();
 });
 
+test("a short typed cash amount rides the ring and the server refuses it: nothing commits", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  // CA$1.00 against a line that will ring at CA$4.52: the till computes no
+  // total, so it cannot judge the entry short, and the typed amount rides the
+  // ring for the server to judge.
+  await page
+    .getByLabel("Cash tendered in dollars: optional; leave empty to ring the exact total")
+    .fill("1.00");
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await page.getByTestId("pos-complete-sale").click();
+  const answer = await ringPost;
+  expect(answer.status()).toBe(400);
+  // The refusal is the server's own words, and the ticket stands: no
+  // confirmation exists, the line is still on the Items step, and the sale
+  // can be corrected.
+  await expect(page.getByRole("alert")).toContainText(
+    "the cash tendered does not cover the sale's total",
+  );
+  await expect(page.getByTestId("sold-panel")).toHaveCount(0);
+  await openStep(page, "items");
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
+});
+
+test("a split whose legs miss the total rides the ring and the server refuses it: nothing commits", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await ensureSession(page);
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Split" }).click();
+  const panel = page.getByTestId("pos-split-panel");
+  // CA$4.00 and CA$0.40 against a sale the server will total at CA$4.52: the
+  // legs settle the server's total, and the till computed none to check
+  // against, so the miss is the ring's own refusal.
+  await panel.getByTestId("split-amount-0").fill("4.00");
+  await panel.getByTestId("split-amount-1").fill("0.40");
+  await expect(page.getByTestId("split-ring")).toBeEnabled();
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await page.getByTestId("split-ring").click();
+  const answer = await ringPost;
+  expect(answer.status()).toBe(400);
+  await expect(page.getByRole("alert")).toContainText("the legs do not sum exactly to the sale's total");
+  // Nothing committed, and the panel stays open and armed for the correction.
+  await expect(page.getByTestId("sold-panel")).toHaveCount(0);
+  await expect(page.getByTestId("split-ring")).toBeEnabled();
+});
+
 test("an empty draft shows the blank marker, never a confident zero, in the linear flow", async ({
   page,
 }) => {
