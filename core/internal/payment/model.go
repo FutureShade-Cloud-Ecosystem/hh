@@ -32,6 +32,13 @@ var ErrNotImplemented = errors.New("payment: processor operation not implemented
 // ErrNoConfig means no active payment_config has been set up yet.
 var ErrNoConfig = errors.New("payment: no active payment configuration")
 
+// ErrSurchargeNotEnforced means surcharge_enabled=true was refused. No tender path on this server
+// computes a surcharge (QuoteTender has no production caller), and D18 requires a recorded
+// jurisdiction and its cap before enabling, none of which is recorded. Accepting the flag would
+// store a setting nothing enforces while every charge stays surcharge-free, so the setting cannot
+// be enabled. Turning it off is always accepted.
+var ErrSurchargeNotEnforced = errors.New("payment: surcharge_enabled cannot be enabled: no tender path on this server computes a surcharge and no surcharge jurisdiction and cap is recorded (D18)")
+
 // errBadCharge is returned before any processor dispatch when the charge inputs are invalid.
 var errBadCharge = errors.New("payment: invalid charge (token and positive amount required)")
 
