@@ -981,6 +981,59 @@ func TestZReport_PerTenderVariance_Derived(t *testing.T) {
 	}
 }
 
+// The Z report must not answer two different numbers both named expected_cents for cash. A cash
+// refund books a REFUNDED payments row (excluded by the RECEIVED payments sum) PLUS a cash PAID_OUT
+// movement (the documented RefundTender shape), and the float sits in the drawer from open, so the
+// per-tender CASH line carries the SAME expected the cash summary derives (float + movements in).
+// A perfectly counted drawer then reads variance 0 on BOTH lines, equal to the summary over/short.
+func TestZReport_PerTenderCashExpected_AgreesWithCashSummary(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestSvc(store, nil)
+	ctx := ctxWith(context.Background(), staffAt("u-sarah", trenton))
+	sid := openSession(t, store, trenton) // float 20000
+	store.seedPayment(PaymentRow{Method: MethodCash, AmountCents: 60000, Status: PaymentReceived, TillSessionID: sid})
+	// The movement every cash refund books (RefundTender's documented shape).
+	if err := svc.PaidOut(ctx, MovementInput{TillSessionID: sid, MovementType: MovementPaidOut, Method: MethodCash, AmountCents: 5000, Reason: "RETURN ret-1"}); err != nil {
+		t.Fatalf("paid out: %v", err)
+	}
+
+	perTenderCash := func(z ZReport) TenderTotal {
+		for _, tt := range z.PerTender {
+			if tt.Method == MethodCash {
+				return tt
+			}
+		}
+		t.Fatalf("no per-tender CASH line in %+v", z.PerTender)
+		return TenderTotal{}
+	}
+
+	z, err := svc.ZReportFor(ctx, sid)
+	if err != nil {
+		t.Fatalf("zreport: %v", err)
+	}
+	if z.Cash.ExpectedCents != 75000 { // 20000 + 60000 - 5000
+		t.Fatalf("summary expected cash = 75000, got %d", z.Cash.ExpectedCents)
+	}
+	if cash := perTenderCash(z); cash.ExpectedCents != z.Cash.ExpectedCents {
+		t.Fatalf("per-tender CASH expected %d disagrees with the summary's %d: one answer, one expected cash", cash.ExpectedCents, z.Cash.ExpectedCents)
+	}
+
+	// A drawer counted exactly right: variance 0 on BOTH cash lines.
+	if err := svc.CountTill(ctx, CountInput{TillSessionID: sid, Tenders: []TenderActual{{Method: MethodCash, ActualCents: 75000}}}); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	z, err = svc.ZReportFor(ctx, sid)
+	if err != nil {
+		t.Fatalf("zreport after count: %v", err)
+	}
+	if z.Cash.OverShortCents != 0 {
+		t.Fatalf("summary over/short = 0, got %d", z.Cash.OverShortCents)
+	}
+	if cash := perTenderCash(z); cash.VarianceCents != 0 || cash.ActualCents != z.Cash.CountedCents {
+		t.Fatalf("a perfectly counted drawer shows per-tender CASH variance %d (actual %d), want variance 0 on the counted %d", cash.VarianceCents, cash.ActualCents, z.Cash.CountedCents)
+	}
+}
+
 func TestCompleteTill_CleanClose_NoManager(t *testing.T) {
 	store := newFakeStore()
 	svc := newTestSvc(store, nil)

@@ -232,6 +232,72 @@ func TestIntegration_ReconciliationSnapshot(t *testing.T) {
 	}
 }
 
+// I4b, the cash refund path end to end: RefundTender books the REFUNDED payments row PLUS the cash
+// PAID_OUT movement (both real rows, one tx), so the Z report's per-tender CASH expected and the
+// cash summary's expected BOTH drop by the refund and agree with each other; a drawer counted
+// exactly right reads variance 0 on both lines.
+func TestIntegration_CashRefund_PerTenderCashAgreesWithSummary(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	branchID, userID := seedBranchUser(t, pool)
+	svc := realSvc(pool)
+	cctx := globalCtx(userID)
+
+	sid, err := svc.OpenTill(cctx, OpenTillInput{BranchID: branchID, Station: "ITEST-REFUND", FloatCents: 20000})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { cleanupSession(pool, sid) })
+
+	takeInTx(t, pool, svc, cctx, TenderInput{TillSessionID: sid, Method: MethodCash, AmountCents: 60000, IdempotencyKey: "itest-refund-sale-" + sid})
+	refundInTx(t, pool, svc, cctx, RefundInput{TillSessionID: sid, Method: MethodCash, AmountCents: 5000,
+		BranchID: branchID, Reference: "ret-itest", IdempotencyKey: "itest-refund-" + sid})
+
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM till_movements WHERE till_session_id = $1 AND movement_type = $2`, sid, MovementPaidOut).Scan(&n); err != nil {
+		t.Fatalf("count movements: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("the refund booked %d PAID_OUT movements, want 1", n)
+	}
+
+	z, err := svc.ZReportFor(cctx, sid)
+	if err != nil {
+		t.Fatalf("zreport: %v", err)
+	}
+	if z.Cash.ExpectedCents != 75000 { // 20000 + 60000 - 5000
+		t.Fatalf("summary expected cash = 75000 after the refund, got %d", z.Cash.ExpectedCents)
+	}
+	var cash TenderTotal
+	for _, tt := range z.PerTender {
+		if tt.Method == MethodCash {
+			cash = tt
+		}
+	}
+	if cash.Method != MethodCash {
+		t.Fatalf("no per-tender CASH line in %+v", z.PerTender)
+	}
+	if cash.ExpectedCents != z.Cash.ExpectedCents {
+		t.Fatalf("per-tender CASH expected %d disagrees with the summary's %d after the refund: one answer, one expected cash", cash.ExpectedCents, z.Cash.ExpectedCents)
+	}
+
+	if err := svc.CountTill(cctx, CountInput{TillSessionID: sid, Tenders: []TenderActual{{Method: MethodCash, ActualCents: 75000}}}); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	z, err = svc.ZReportFor(cctx, sid)
+	if err != nil {
+		t.Fatalf("zreport after count: %v", err)
+	}
+	if z.Cash.OverShortCents != 0 {
+		t.Fatalf("summary over/short = 0, got %d", z.Cash.OverShortCents)
+	}
+	for _, tt := range z.PerTender {
+		if tt.Method == MethodCash && tt.VarianceCents != 0 {
+			t.Fatalf("a perfectly counted drawer shows per-tender CASH variance %d, want 0", tt.VarianceCents)
+		}
+	}
+}
+
 // I5, over-threshold complete as a frontline token → 403; as a manager with a note → CLOSED.
 func TestIntegration_ConditionalManagerGate(t *testing.T) {
 	pool := intPool(t)
@@ -367,6 +433,25 @@ func takeInTx(t *testing.T, pool *pgxpool.Pool, svc *Service, ctx context.Contex
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("TakeTender: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	return res.PaymentID
+}
+
+// refundInTx mirrors takeInTx for the refund seam: the REFUNDED payments row + the PAID_OUT
+// movement commit together inside the caller's tx.
+func refundInTx(t *testing.T, pool *pgxpool.Pool, svc *Service, ctx context.Context, in RefundInput) string {
+	t.Helper()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	res, err := svc.RefundTender(ctx, tx, in)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("RefundTender: %v", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit: %v", err)
