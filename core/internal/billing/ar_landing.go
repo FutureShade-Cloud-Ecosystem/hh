@@ -328,7 +328,7 @@ func BuildCards(invs []OpenInvoice, p ARLandingPolicy, asOf time.Time) []Landing
 		buckets[b] = &agg{accounts: map[string]bool{}}
 	}
 	for _, iv := range invs {
-		if iv.BalanceCents == 0 {
+		if iv.BalanceCents <= 0 {
 			continue
 		}
 		a := buckets[BucketFor(DaysPastDue(iv.DueDate, asOf), p)]
@@ -366,7 +366,10 @@ func BuildCards(invs []OpenInvoice, p ARLandingPolicy, asOf time.Time) []Landing
 func BuildEscalation(invs []OpenInvoice, p ARLandingPolicy, asOf time.Time, onHold map[string]bool) []EscalationEntry {
 	byCustomer := map[string]*EscalationEntry{}
 	for _, iv := range invs {
-		if iv.BalanceCents == 0 {
+		if iv.BalanceCents <= 0 {
+			// A credit memo (negative balance) is money owed TO the customer, never a call to make:
+			// it must not make an account appear here, or lend the account its age or its count
+			// (HH-195). The landing cards still net it, as exposure; only the queue skips it.
 			continue
 		}
 		d := DaysPastDue(iv.DueDate, asOf)

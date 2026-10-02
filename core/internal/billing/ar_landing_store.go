@@ -110,9 +110,7 @@ func (r *ARLandingRepository) UpsertARLandingPolicy(ctx context.Context, p ARLan
 
 // OpenInvoices projects the unpaid book. Same status set as the aging query next door
 // (FINALIZED / PARTIALLY_PAID) so the landing and the register can never disagree about which
-// invoices are open, two definitions of "open" is two totals and one very long meeting. Only
-// positive-balance INVOICE documents are dunnable: a credit memo is money we owe the customer, and
-// the escalation queue and the account reminder both read this set, so they must agree (HH-195).
+// invoices are open, two definitions of "open" is two totals and one very long meeting.
 func (r *ARLandingRepository) OpenInvoices(ctx context.Context, asOf time.Time, branchID string) ([]OpenInvoice, error) {
 	if r.pool == nil {
 		return nil, errNoDB
@@ -123,8 +121,7 @@ func (r *ARLandingRepository) OpenInvoices(ctx context.Context, asOf time.Time, 
 		  FROM invoices i
 		  JOIN customers c ON c.id = i.customer_id
 		 WHERE i.status IN ('FINALIZED','PARTIALLY_PAID')
-		   AND i.balance_cents > 0
-		   AND i.doc_type = 'INVOICE'
+		   AND i.balance_cents <> 0
 		   AND ($1 = '' OR i.branch_id = $1::uuid)`, branchID)
 	if err != nil {
 		return nil, fmt.Errorf("billing: open invoices: %w", err)
