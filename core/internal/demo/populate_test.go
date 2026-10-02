@@ -31,6 +31,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/printing"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -205,8 +206,10 @@ func seedAndPopulate(t *testing.T, bin, dsn string) (first, second string) {
 }
 
 // worldTables is every table the populate writes. demo_box joins only once
-// it exists (after the first populate run).
-var worldTables = []string{"users", "user_roles", "user_branch_grants", "staff_role_grant", "payment_config", "org", "demo_box"}
+// it exists (after the first populate run); system_settings joins because
+// the populate converges the org_name row (the receipt's letterhead row)
+// onto the invented demo name.
+var worldTables = []string{"users", "user_roles", "user_branch_grants", "staff_role_grant", "payment_config", "org", "system_settings", "demo_box"}
 
 // migratedWorldTables is worldTables before the populate has run, when no
 // demo_box table exists yet.
@@ -394,6 +397,21 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		t.Errorf("the users rows render %d distinct display names, want exactly the 12 invented ones (saw: %v)", len(saw), saw)
 	}
 
+	// The receipt's letterhead row: system_settings org_name carries the
+	// invented demo name exactly. The migrations seed this row with the
+	// real dealer's trading name (0014) and the printed receipt reads it
+	// verbatim (printing's ReadBranchHeader), so a demo database whose
+	// settings row was never converged would print that name on every
+	// receipt while every screen shows the invented one.
+	var orgSetting string
+	if err := pool.QueryRow(ctx,
+		`SELECT value #>> '{}' FROM system_settings WHERE key = 'org_name'`).Scan(&orgSetting); err != nil {
+		t.Fatalf("system_settings org_name is missing: %v", err)
+	}
+	if orgSetting != demoOrgName {
+		t.Errorf("system_settings org_name carries %q, want the invented demo name %q", orgSetting, demoOrgName)
+	}
+
 	// No row of the demo database carries a credential: the planted
 	// password hashes are cleared (the core has no password route) and the
 	// two role accounts are inserted without one.
@@ -497,6 +515,32 @@ func assertRoleAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 	}
 	if gotRole != roleCode || gotBranch == nil || *gotBranch != trentonBranchID {
 		t.Errorf("role account %s resolves role %s at branch %v, want %s at %s", email, gotRole, gotBranch, roleCode, trentonBranchID)
+	}
+}
+
+// TestPopulate_ReceiptHeaderCarriesTheInventedName: the printed receipt's
+// letterhead is the document that reads system_settings org_name verbatim
+// (printing's ReadBranchHeader), the row the migrations seed with the real
+// dealer's trading name (0014). Over the fully populated world the header's
+// org field is the invented demo name and its branch field the invented
+// Trenton name, so a demo box prints no receipt headed by the seeded
+// trading name. This is the ReadBranchHeader leg, not a served-receipt leg:
+// proving the letterhead needs no whole sale first.
+func TestPopulate_ReceiptHeaderCarriesTheInventedName(t *testing.T) {
+	ctx := context.Background()
+	pool, dsn := freshMigratedDB(t, "receipt")
+	bin := buildDemoCore(t)
+	seedAndPopulate(t, bin, dsn)
+
+	header, err := printing.NewRepository(pool).ReadBranchHeader(ctx, trentonBranchID)
+	if err != nil {
+		t.Fatalf("ReadBranchHeader over the populated world: %v", err)
+	}
+	if header.OrgName != demoOrgName {
+		t.Errorf("the receipt header's org field carries %q, want the invented demo name %q", header.OrgName, demoOrgName)
+	}
+	if header.Name != "Hardscape House (demo), Trenton" {
+		t.Errorf("the receipt header's branch field carries %q, want the invented branch name %q", header.Name, "Hardscape House (demo), Trenton")
 	}
 }
 

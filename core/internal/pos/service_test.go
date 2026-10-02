@@ -57,6 +57,8 @@ type fakeStore struct {
 	retLines        map[string]returnableLine   // order_line_id → the sold line (prior sums derive from returnLineRows)
 	returnRows      []returnRow
 	returnLineRows  []returnLineRow
+	priorSums       map[string]int64  // order_id → the sale's earlier committed return total (the per-sale sum the refund gate reads)
+	returnLocks     []string          // order ids the per-sale return advisory lock was taken for, in order
 	refundPayments  map[string]string // return id → refund payment id
 	creditApplies   []creditApply
 	invoiceBalance  map[string]int64 // invoice id → open balance (drives ApplyCreditToInvoice)
@@ -116,6 +118,7 @@ func newFakeStore(tr *[]string) *fakeStore {
 		cachedReturns:  map[string]Return{},
 		retCtx:         map[string]returnOrderCtx{},
 		retLines:       map[string]returnableLine{},
+		priorSums:      map[string]int64{},
 		refundPayments: map[string]string{},
 		invoiceBalance: map[string]int64{},
 		parked:         map[string]ParkedTicket{},
@@ -320,6 +323,16 @@ func (f *fakeStore) FindReturnByKey(_ context.Context, key string) (Return, bool
 	return r, ok, nil
 }
 
+// The tx twins answer from the same maps: the fake has one world, the tx
+// shape exists so the service's in-transaction re-check stays tx-bound.
+func (f *fakeStore) FindReturnByKeyTx(_ context.Context, _ pgx.Tx, key string) (Return, bool, error) {
+	return f.FindReturnByKey(context.Background(), key)
+}
+
+func (f *fakeStore) ReturnOrderContextTx(_ context.Context, _ pgx.Tx, orderID, orderNo string) (returnOrderCtx, bool, error) {
+	return f.ReturnOrderContext(context.Background(), orderID, orderNo)
+}
+
 func (f *fakeStore) ReturnOrderContext(_ context.Context, orderID, orderNo string) (returnOrderCtx, bool, error) {
 	if oc, ok := f.retCtx[orderID]; ok {
 		return oc, true, nil
@@ -389,6 +402,22 @@ func (f *fakeStore) InsertReturn(_ context.Context, _ pgx.Tx, r returnRow) (stri
 
 func (f *fakeStore) InsertReturnLines(_ context.Context, _ pgx.Tx, _ string, lines []returnLineRow) error {
 	f.returnLineRows = append(f.returnLineRows, lines...)
+	return nil
+}
+
+// The per-sale return sums and lock: the fake answers the map a test set
+// directly (the real store sums pos_returns; see the LockSaleForReturn and
+// SumCommittedReturnTotals implementations in repository_w7.go).
+func (f *fakeStore) SumCommittedReturnTotals(_ context.Context, orderID string) (int64, error) {
+	return f.priorSums[orderID], nil
+}
+
+func (f *fakeStore) SumCommittedReturnTotalsTx(_ context.Context, _ pgx.Tx, orderID string) (int64, error) {
+	return f.priorSums[orderID], nil
+}
+
+func (f *fakeStore) LockSaleForReturn(_ context.Context, _ pgx.Tx, orderID string) error {
+	f.returnLocks = append(f.returnLocks, orderID)
 	return nil
 }
 
