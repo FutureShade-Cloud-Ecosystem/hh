@@ -115,9 +115,17 @@ type branchReach struct {
 // fenced list read uses. nil means SQL NULL, the predicate short-circuits true, and a global caller
 // keeps the whole list. A scoped caller with no grants binds an EMPTY array, and = ANY('{}') is false
 // for every row, so the fence fails closed rather than open.
+//
+// The nil normalisation is load-bearing for the ZERO value as well as the built reach: pgx binds a
+// nil slice as SQL NULL, which is the global arm, so a branchReach that reached a query uninitialised
+// would read every row in every branch. Empty is the honest binding for no branches, and it is what
+// the zero value means.
 func (r branchReach) filter() any {
 	if r.global {
 		return nil
+	}
+	if r.branchIDs == nil {
+		return []string{}
 	}
 	return r.branchIDs
 }
