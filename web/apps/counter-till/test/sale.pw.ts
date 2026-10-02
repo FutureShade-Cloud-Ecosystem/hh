@@ -93,7 +93,10 @@ async function ensureSession(page: Page): Promise<void> {
     await expect(dot).toContainText("Open");
     return;
   }
-  await openButton.click();
+  // The open control can show for an instant before the hydrating read finds
+  // the drawer already open: a click that loses that race is not a failure,
+  // the dot arriving is the state the helper wants.
+  await openButton.click({ timeout: 3_000 }).catch(() => undefined);
   await expect(dot).toContainText("Open");
 }
 
@@ -757,4 +760,165 @@ test("a split with a card leg carries the simulated word on the confirmation and
   const printed = await receiptPage;
   await expect(printed.getByText("Simulated card: no card was charged")).toBeVisible();
   await printed.close();
+});
+
+test("an empty draft shows the blank marker, never a confident zero, in the linear flow", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await openStep(page, "payment");
+  const totals = page.getByTestId("pos-totals-card");
+  // Nothing on the ticket: the rows say they cannot say, and no plausible
+  // zero appears anywhere on the payment step.
+  await expect(totals).toContainText("(not priced)");
+  await expect(totals).not.toContainText("CA$0.00");
+  await expect(totals).toContainText("Total (est.)");
+  const cta = page.getByTestId("pos-complete-sale");
+  await expect(cta).toContainText("(not priced)");
+  await expect(cta).not.toContainText("CA$0.00");
+  // A priced line returns the figures.
+  await openStep(page, "items");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  await expect(totals).toContainText("CA$4.00");
+  await expect(totals).not.toContainText("(not priced)");
+});
+
+test("an empty draft shows the blank marker in the detached layout too", async ({ page }) => {
+  await signIn(page, "Sales");
+  await page.getByTestId("pos-view").click();
+  await page.getByTestId("pos-layout-panels").click();
+  await expect(page.getByTestId("pos-flow-panels")).toBeVisible();
+  // The Panels payment panel paints from the first render: the same honest
+  // marker, never a zero.
+  const totals = page.getByTestId("pos-totals-card");
+  await expect(totals).toContainText("(not priced)");
+  await expect(totals).not.toContainText("CA$0.00");
+  // Back to the linear flow for the tests after this one (the pick is saved
+  // before this page closes).
+  const savedBack = page.waitForRequest(
+    (request) => request.method() === "PUT" && request.url().includes("/api/v1/pos/workspace"),
+  );
+  await page.getByTestId("pos-view").click();
+  await page.getByTestId("pos-layout-stepper").click();
+  await savedBack;
+});
+
+test("a disabled control on the ported surface drops its fill and goes grey", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await openStep(page, "payment");
+  // The empty ticket's complete-sale button is disabled: grey, no gold fill,
+  // no fade. The computed styles are the assertion: a restored gold fill or
+  // a pure-opacity fade fails here.
+  const cta = page.getByTestId("pos-complete-sale");
+  await expect(cta).toBeDisabled();
+  const shape = await cta.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { background: style.backgroundColor, color: style.color, opacity: style.opacity };
+  });
+  expect(shape.background).toBe("rgba(0, 0, 0, 0)");
+  expect(shape.color).not.toBe("rgb(0, 0, 0)");
+  expect(shape.opacity).toBe("1");
+  // The split panel's ring carries the same shape while it is not settleable.
+  await page.getByRole("button", { name: "Split" }).click();
+  const ring = page.getByTestId("split-ring");
+  await expect(ring).toBeDisabled();
+  const ringShape = await ring.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { background: style.backgroundColor, borderColor: style.borderColor, color: style.color };
+  });
+  expect(ringShape.background).toBe("rgba(0, 0, 0, 0)");
+});
+
+test("the chrome sits above the surface: the demo banner is in the first viewport, on the till and in the pop-out", async ({
+  page,
+  context,
+}) => {
+  await signIn(page, "Sales");
+  // The counter screen: the banner, the role, the pop-out and sign out are
+  // the first row on the page, inside the first viewport.
+  const banner = page.getByRole("note");
+  await expect(banner).toBeVisible();
+  const bannerBox = await banner.boundingBox();
+  const viewport = page.viewportSize();
+  expect(bannerBox).not.toBeNull();
+  expect(bannerBox?.y ?? -1).toBeGreaterThanOrEqual(0);
+  expect((bannerBox?.y ?? 0) + (bannerBox?.height ?? 0)).toBeLessThan((viewport?.height ?? 900) / 2);
+  await expect(page.getByTestId("signed-in-role")).toBeVisible();
+
+  // The pop-out: the same bar, same place, in its own first viewport.
+  const popped = context.waitForEvent("page");
+  await page.getByRole("button", { name: "Pop out" }).click();
+  const second = await popped;
+  await expect(second.getByTestId("pos-page-title")).toBeVisible();
+  const secondBanner = second.getByRole("note");
+  await expect(secondBanner).toBeVisible();
+  const secondBox = await secondBanner.boundingBox();
+  expect((secondBox?.y ?? 0) + (secondBox?.height ?? 0)).toBeLessThan((second.viewportSize()?.height ?? 900) / 2);
+  await second.close();
+});
+
+test("End Session ends the session: confirm, the server's answer, honestly back at no-session", async ({
+  page,
+}) => {
+  await signIn(page, "Sales manager");
+  await ensureSession(page);
+  const completePost = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/v1/till/sessions/") &&
+      response.url().endsWith("/complete") &&
+      response.request().method() === "POST",
+  );
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "End Session" }).click();
+  const answer = await (await completePost).json();
+  expect(answer.status).toBe("COMPLETED");
+  // The chrome is honestly back at no-session: the dot is gone, the way in
+  // for the next sale is the open control again.
+  await expect(page.getByTestId("session-dot")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Open Session", exact: true })).toBeVisible();
+  // A declined confirm ends nothing.
+  await page.getByRole("button", { name: "Open Session", exact: true }).click();
+  await expect(page.getByTestId("session-dot")).toContainText("Open");
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.getByRole("button", { name: "End Session" }).click();
+  await expect(page.getByTestId("session-dot")).toContainText("Open");
+});
+
+test("the search drop rows carry the branch's stock beside the SKU", async ({ page }) => {
+  await signIn(page, "Sales");
+  await openStep(page, "items");
+  const field = page.getByTestId("pos-scan-input");
+  await field.fill("holland");
+  const row = page.getByTestId("drop-row").filter({ hasText: "Holland Stone 60 mm" }).first();
+  await expect(row).toBeVisible();
+  // The reference's row words: the stock after the SKU, the counter's own
+  // branch (the fence), never guessed.
+  await expect(row).toContainText("HPV-60");
+  await expect(row).toContainText("120 on hand");
+});
+
+test("a sale rung at the till is found by the returns desk right after it commits", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await ensureSession(page);
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await page.getByTestId("pos-complete-sale").click();
+  const sale = (await (await ringPost).json()) as Record<string, unknown>;
+  await expect(page.getByTestId("sold-panel")).toBeVisible();
+
+  // The ruled desk below the till finds the just-rung sale by its number and
+  // lays out its lines with what is still returnable.
+  await page.getByLabel("Sale number").fill(String(sale.order_no));
+  await page.getByRole("button", { name: "Find sale" }).click();
+  await expect(page.getByTestId("returns-sale")).toContainText(String(sale.order_no));
+  await expect(page.getByTestId("returns").getByText("Holland Stone 60 mm")).toBeVisible();
+  await expect(page.getByText("sold 1, returned 0")).toBeVisible();
 });
