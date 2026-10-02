@@ -8,8 +8,9 @@ package billing
 //
 // The client said "Twilio-style". That is a description of a capability, not an instruction to
 // import a vendor. Nothing in this file, this package, or this lane imports or names a vendor SDK:
-// ReminderSender is four methods' worth of interface, StubSender is the default implementation, and
-// an adapter for any real transport is a file somebody adds later without touching a single line
+// ReminderSender is the seam, UnwiredSender is the shipped default and refuses in words, StubSender
+// is the delivering test seam a test injects explicitly, and an adapter for any real transport is a
+// file somebody adds later without touching a single line
 // here. The SMS arm this program already ships (internal/messagingprovider) is deliberately NOT
 // imported either, it owns the outbound consent/quiet-hours cadence for marketing-shaped notices
 // and its own outbox, and reaching into it from AR would couple two independently-flagged switches.
@@ -95,8 +96,10 @@ type ReminderSender interface {
 	Send(ctx context.Context, m ReminderMessage) (ReminderReceipt, error)
 }
 
-// StubSender is the default and the one this program ships on. It delivers nothing and says so, and
-// it is what every test and every walkthrough runs against.
+// StubSender is the TEST seam. It is injected explicitly by tests that need a delivering transport,
+// and it is NEVER what a nil sender resolves to: a server that records DELIVERED for messages
+// nothing sent is HH-185, the paper-path sweep counted the phantom deliveries and flagged
+// customers nobody had contacted, so the nil default is UnwiredSender below.
 //
 // IT REPORTS DELIVERED ON PURPOSE, and that deserves a sentence rather than a shrug: the tracking
 // machinery, the cadence and the black-hole detector all key off DELIVERED, and a stub that reported
@@ -112,6 +115,26 @@ func (StubSender) Name() string { return "stub" }
 func (StubSender) Send(_ context.Context, m ReminderMessage) (ReminderReceipt, error) {
 	return ReminderReceipt{Provider: "stub", Ref: "stub-" + strings.ToLower(m.Channel), Delivered: true,
 		Detail: "no transport is wired on this server"}, nil
+}
+
+// UnwiredSender is the default, and the one this program ships on.
+//
+// IT REPORTS A FAILURE ON PURPOSE. Nothing in this build delivers AR reminders, and a nil sender
+// that resolved to the delivering stub is HH-185: every send came back DELIVERED though nothing
+// left the server, the paper-path sweep counted the phantom rows, and a customer who was never
+// contacted was flagged as unreachable by email. The send is still recorded, the row is written
+// first and then marked FAILED with these words, the same posture as purchasing's UnwiredSender:
+// a collector who BELIEVES a notice went out is how an account gets chased over a channel that
+// never carried it.
+type UnwiredSender struct{}
+
+// Name identifies the transport in the stored row.
+func (UnwiredSender) Name() string { return "unwired" }
+
+// Send delivers nothing and says so.
+func (UnwiredSender) Send(_ context.Context, _ ReminderMessage) (ReminderReceipt, error) {
+	return ReminderReceipt{Provider: "unwired", Delivered: false,
+		Detail: "no transport is wired on this server, nothing left the building"}, nil
 }
 
 // -- the AP contact, and the one recipient a send is aimed at -----------------------------------
@@ -392,11 +415,12 @@ type ARReminderService struct {
 	now     func() time.Time
 }
 
-// NewARReminderService wires the machinery. A nil sender means the stub, which is the default this
-// program ships on, an unwired transport is visibly inert, never quietly half-running.
+// NewARReminderService wires the machinery. A nil sender means UnwiredSender, which is the default
+// this program ships on, an unwired transport is visibly inert, never quietly half-running: the row
+// is written and marked FAILED in words rather than pretending a delivery nobody made.
 func NewARReminderService(store ARReminderStore, landing *ARLandingService, sender ReminderSender, baseURL string) *ARReminderService {
 	if sender == nil {
-		sender = StubSender{}
+		sender = UnwiredSender{}
 	}
 	return &ARReminderService{store: store, landing: landing, sender: sender,
 		baseURL: strings.TrimRight(baseURL, "/"), now: time.Now}
