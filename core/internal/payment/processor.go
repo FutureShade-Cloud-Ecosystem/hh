@@ -13,9 +13,9 @@ import (
 // mark simulated card charges on paper: a CARD payments row whose gateway_ref carries this prefix
 // is a charge that never reached a processor, and the receipt says so beside the tender. A live
 // gateway's adapter writes its own refs, only this stub mints this shape. The PORTAL rail's own
-// stub (payments.StubGateway, refs beginning ch_) is a separate rail entirely: its CARD rows reach
-// receipts through the allocation arm and carry no simulated word here, that follow-up is filed
-// for the principal.
+// stub (payments.StubGateway) is a separate rail with its own discriminator: its CARD rows reach
+// receipts through the allocation arm and stamp the simulated word through the stub's own exact
+// mint shape (payments.IsStubChargeRef, named beside that stub).
 const StubCaptureRefPrefix = "rp_sim_"
 
 // RunPaymentsStub is the DETERMINISTIC stand-in for the Run Payments /api/v1/charge keyed / card-NOT-

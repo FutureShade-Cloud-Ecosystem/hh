@@ -395,4 +395,3 @@ func cycleSyncCreate(t *testing.T, f *cycleSyncFixture, payload map[string]any) 
 	t.Fatalf("sync create: the new sheet never pulled at seq %d", *res[0].Seq)
 	return ""
 }
-

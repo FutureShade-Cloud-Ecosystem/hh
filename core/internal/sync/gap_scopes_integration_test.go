@@ -670,7 +670,7 @@ func TestGapPaymentsLegs(t *testing.T) {
 	payID := uuid.NewString()
 	res := gapPush(t, f.engine, info, alpha, []apigen.SyncPushOperation{
 		gapOp("create", uuid.NewString(), map[string]any{
-			"id": payID,
+			"id":                payID,
 			"invoice_ids":       []any{gapInvoicePayID},
 			"payment_method_id": testkit.PayMethodAlphaID,
 		}, nil),

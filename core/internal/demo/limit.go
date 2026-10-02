@@ -11,7 +11,10 @@
 //
 // The address lives here and nowhere else: it is never written to the
 // database and never rendered in a response, so the limit keeps no
-// record a tester's address could be read back from.
+// record a tester's address could be read back from. The visitor id the
+// flows GET issues beside it (visitor.go) holds the same posture: a
+// random value with no meaning, keyed on and forgotten with the window,
+// never written to the database, never logged, never rendered.
 package demo
 
 import (
@@ -25,6 +28,14 @@ import (
 const (
 	DefaultBurstAllowance = 5
 	DefaultBurstWindow    = 30 * time.Second
+	// DefaultAddressCeiling is the allowance of the second bucket every
+	// mint also spends, keyed by the address alone: it meters the first
+	// taps of a team behind one edge, whose testers share the address
+	// however their visitor ids differ, and it bounds cookie farming
+	// scripts at this allowance of mints per address per window, against
+	// the per key allowance of DefaultBurstAllowance that bounds one
+	// tester's own flow.
+	DefaultAddressCeiling = 40
 	// maxTrackedAddresses bounds the map: past it, addresses whose newest
 	// attempt sits outside the window give way first, then arbitrary ones,
 	// exactly the discipline the membership cache's store holds. Dropping
@@ -79,6 +90,44 @@ func (l *AddressLimit) Allow(address string) bool {
 		l.sweep(cutoff)
 	}
 	return true
+}
+
+// Peek reports whether one more admission from the address would fit
+// inside the allowance, and records nothing: not a stamp, and not even
+// the window slide's compaction. It walks the stamps and counts those
+// the window still holds, because the live helper rewrites the slice's
+// backing array in place, and a read that compacted without storing the
+// shortened slice back would leave the stored length over mutated
+// positions, phantom stamps behind every expired one. It is the
+// question half of the mint's two bucket check: a mint that must fit
+// its own key and the address ceiling at once peeks both before
+// anything spends, so a refusal spends nothing anywhere.
+func (l *AddressLimit) Peek(address string) bool {
+	now := l.now()
+	cutoff := now.Add(-l.window)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	live := 0
+	for _, s := range l.entries[address] {
+		if s.After(cutoff) {
+			live++
+		}
+	}
+	return live < l.allow
+}
+
+// Record spends one admission for the address, the answer half of the
+// peek and record pair: the mint records a bucket only after both peeks
+// fit. The pruning and the sweep are Allow's own, unchanged.
+func (l *AddressLimit) Record(address string) {
+	now := l.now()
+	cutoff := now.Add(-l.window)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.entries[address] = append(l.live(l.entries[address], cutoff), now)
+	if len(l.entries) > maxTrackedAddresses {
+		l.sweep(cutoff)
+	}
 }
 
 // live returns the address's admissions still inside the window, oldest
