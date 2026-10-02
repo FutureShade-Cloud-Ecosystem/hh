@@ -1289,3 +1289,14 @@ and till are the Counter Till lane's.
 declared Touches, so the break is recorded here for the owning lane; the same
 command is one of this lane's exit checks and cannot pass repository-wide
 until the field mismatch is reconciled.
+
+## HH hardening, HH-194 (AR register CSV export): the register list read still pages by offset and total
+
+The export now reads every row of its filter in one statement (`RegisterFilter.All`), one snapshot, so a
+write landing mid-export cannot shift a row. The list read itself still pages by offset and a counted
+total and ignores `cursor`, against the cursor rule in `core/api/CONVENTIONS.md` (never offset, never
+total). Moving it to the cursor helpers changes the register's contract and repository, so it is recorded
+here for the billing lane rather than made inside this one-handler fix. Two further facts for that lane:
+the export holds the whole file in memory and has no row ceiling (neither is timed), and the export
+neither declares nor reads the `issued_from` and `issued_to` filters the list read takes, so a
+date-filtered screen exports every date.
