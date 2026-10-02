@@ -5,13 +5,14 @@ package pos
 // tax_silentzero_integration_test.go, the money-path proof at Trenton over
 // the real composition on a throwaway local Postgres: the seeded
 // STD_ON_HST_13 row is removed (fixture-scoped: the captured rows go back in
-// the leg's cleanup, so a shared scratch database never loses them), then a
+// the leg's cleanup, byte identical including their timestamps, so a shared
+// scratch database never loses them), then a
 // sale is rung through the wired engine and the counter's tax-rate read is
 // driven on the same damaged table. On the defect both assessSale fallback
 // reads discard the found flag, so the ring commits UNTAXED with a 2xx and
 // the read answers rate_bps 0 with a 200; the leg demands the 503 refusal
-// the counter-readable shape: the rate table is not configured, the sale
-// cannot be ringed) and that no pos_sale row was written.
+// (the counter-readable shape: the rate table is not configured, tax cannot
+// be assessed) and that no pos_sale row was written.
 //
 // Run (own throwaway container, removed afterwards, an unused port):
 //
@@ -63,49 +64,55 @@ func (a ringTaxAssessor) AssessSale(ctx context.Context, in TaxQuoteInput) (Quot
 
 // dropStandardRows removes every ON STD_ON_HST_13 row (the defect's world:
 // deleted, never seeded, or every row expired) and restores the captured rows
-// in the leg's cleanup, so the damage never outlives the leg and a shared
-// scratch database never loses another suite's rows.
+// in the leg's cleanup, byte identical including created_at and updated_at, so
+// the damage never outlives a normal exit and a shared scratch database never
+// loses another suite's rows or their timestamps. The capture and the delete
+// are ONE statement (DELETE RETURNING): there is no window in which rows are
+// captured but still standing, or gone before they are captured. A process
+// killed between the delete and the cleanup still leaves the table damaged;
+// that much no in-process cleanup can cure, and the rig's recipe rebuilds the
+// world if it ever happens.
 func dropStandardRows(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
 	rows, err := pool.Query(ctx, `
-		SELECT id::text, rate_bps, effective_from::text, COALESCE(effective_to::text, ''), notes
-		  FROM tax_rates WHERE jurisdiction = 'ON' AND reason_code = 'STD_ON_HST_13'`)
+		DELETE FROM tax_rates WHERE jurisdiction = 'ON' AND reason_code = 'STD_ON_HST_13'
+		RETURNING id::text, rate_bps, effective_from::text, COALESCE(effective_to::text, ''), notes,
+		          created_at::text, updated_at::text`)
 	if err != nil {
-		t.Fatalf("capture the standard rows: %v", err)
+		t.Fatalf("remove the standard rows: %v", err)
 	}
 	type stdRow struct {
-		id    string
-		bps   int
-		fromD string
-		toD   string
-		notes string
+		id      string
+		bps     int
+		fromD   string
+		toD     string
+		notes   string
+		created string
+		updated string
 	}
 	var captured []stdRow
 	for rows.Next() {
 		var r stdRow
-		if err := rows.Scan(&r.id, &r.bps, &r.fromD, &r.toD, &r.notes); err != nil {
+		if err := rows.Scan(&r.id, &r.bps, &r.fromD, &r.toD, &r.notes, &r.created, &r.updated); err != nil {
 			rows.Close()
-			t.Fatalf("scan the standard rows: %v", err)
+			t.Fatalf("scan the removed standard rows: %v", err)
 		}
 		captured = append(captured, r)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		t.Fatalf("read the standard rows: %v", err)
+		t.Fatalf("read the removed standard rows: %v", err)
 	}
 	if len(captured) == 0 {
 		t.Fatal("no seeded STD_ON_HST_13 row to remove: the scratch world is not migrated and seeded")
 	}
-	if _, err := pool.Exec(ctx, `DELETE FROM tax_rates WHERE jurisdiction = 'ON' AND reason_code = 'STD_ON_HST_13'`); err != nil {
-		t.Fatalf("remove the standard rows: %v", err)
-	}
 	t.Cleanup(func() {
 		for _, r := range captured {
 			if _, err := pool.Exec(ctx, `
-				INSERT INTO tax_rates (id, jurisdiction, reason_code, rate_bps, effective_from, effective_to, notes)
-				VALUES ($1::uuid, 'ON', 'STD_ON_HST_13', $2, $3::date, NULLIF($4, '')::date, $5)
-				ON CONFLICT (id) DO NOTHING`, r.id, r.bps, r.fromD, r.toD, r.notes); err != nil {
+				INSERT INTO tax_rates (id, jurisdiction, reason_code, rate_bps, effective_from, effective_to, notes, created_at, updated_at)
+				VALUES ($1::uuid, 'ON', 'STD_ON_HST_13', $2, $3::date, NULLIF($4, '')::date, $5, $6::timestamptz, $7::timestamptz)
+				ON CONFLICT (id) DO NOTHING`, r.id, r.bps, r.fromD, r.toD, r.notes, r.created, r.updated); err != nil {
 				t.Errorf("restore the standard rows: %v", err)
 			}
 		}

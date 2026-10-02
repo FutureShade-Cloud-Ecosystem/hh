@@ -42,10 +42,18 @@ func TestWriteErr_TaxRailUnavailable_IsCounterReadable503(t *testing.T) {
 	if want := httpx.CounterMessage(ErrTaxRailUnavailable.Error()); body.Error != want {
 		t.Errorf("the 503 must carry the sentinel's own message, got %q, want %q", body.Error, want)
 	}
-	if !strings.Contains(body.Error, "not configured") || !strings.Contains(body.Error, "cannot be ringed") {
+	if !strings.Contains(body.Error, "not configured") || !strings.Contains(body.Error, "cannot be assessed") {
 		t.Errorf("the 503's words must be the counter-readable shape (what failed, what it means for the ticket), got %q", body.Error)
 	}
-	if !errors.Is(ErrTaxRailUnavailable, ErrTaxRailUnavailable) {
-		t.Fatal("sanity: the sentinel must match itself")
+
+	// The arm must be SELECTIVE, not a blanket 503: a non-sentinel error
+	// through the same writeErr must not borrow the tax rail's status. This is
+	// the real assertion the round 1 tautology (the sentinel matching itself)
+	// stood in for: drop the errors.Is discrimination from the arm and this
+	// fails while nothing else in the package does.
+	recOther := httptest.NewRecorder()
+	h.writeErr(recOther, req, errors.New("pos: some other failure"))
+	if recOther.Code == http.StatusServiceUnavailable {
+		t.Fatalf("the 503 arm must be selective to the sentinel: a non-sentinel error borrowed it (got %d: %s)", recOther.Code, recOther.Body.String())
 	}
 }

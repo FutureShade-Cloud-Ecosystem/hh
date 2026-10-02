@@ -364,15 +364,17 @@ type ErrNoOpenTill struct{}
 
 func (ErrNoOpenTill) Error() string { return "pos: open a till session first" }
 
-// ErrTaxRailUnavailable refuses a sale (and the counter's tax-rate read) when
-// the wired tax engine reports no standard rate row in effect: the rate table
-// is not configured for the date, the sale cannot be ringed, and ringing it
-// untaxed is not an answer. pos never imports the tax package: the TaxAssessor
+// ErrTaxRailUnavailable refuses the tax-bound doors (ringing a sale, pricing an
+// order, assessing relief, reading the tax rate) when the wired tax engine
+// reports no standard rate row in effect: the rate table is not configured for
+// the date, tax cannot be assessed, and answering an assessed shape anyway is
+// not an answer (a sale rung untaxed, a quote priced untaxed, a read answering
+// rate 0). pos never imports the tax package: the TaxAssessor
 // seam in sale_hooks.go is the boundary, and the composition root's adapter
 // (cmd/core posTaxAdapter) translates the tax engine's typed refusal into this
 // sentinel, which writeErr maps to the counter-readable 503. The flat default
 // assessor never produces it, so unwired scaffold compositions are unchanged.
-var ErrTaxRailUnavailable = errors.New("pos: the tax rate table is not configured, the sale cannot be ringed")
+var ErrTaxRailUnavailable = errors.New("pos: the tax rate table is not configured, tax cannot be assessed")
 
 var (
 	errBadRequest    = clientError{status: http.StatusBadRequest, msg: "pos: invalid request"}

@@ -7,6 +7,8 @@ package tax
 // fully expired standard row binds a silent zero rate on a sale, a quote, a
 // relief assessment and the counter's tax-rate read: every ticket rings
 // untaxed while the ledger believes a rate is configured. The regression pins
+// each fallback read separately (the no-row leg and the evidence-gate leg), so
+// restoring one found check alone still fails the other leg.
 
 import (
 	"context"

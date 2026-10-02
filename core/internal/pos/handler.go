@@ -508,10 +508,11 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrTaxRailUnavailable):
 		// The tax rail is down (the engine reports no standard rate row in
-		// effect): the sale cannot be ringed untaxed, so the counter gets the
-		// 503 it can act on, in the card-refund 502 arm's wording shape: what
-		// failed, what it means for the ticket. Never a bare 500, and never a
-		// 200 with a zero rate.
+		// effect): nothing tax-bound can be answered untaxed (a sale, a
+		// pricing order, a relief assessment, the rate read), so the counter
+		// gets the 503 it can act on, in the card-refund 502 arm's wording
+		// shape: what failed, what it means for the ticket. Never a bare 500,
+		// and never a 200 with a zero rate.
 		httpx.Error(w, http.StatusServiceUnavailable, ErrTaxRailUnavailable.Error())
 	case errors.As(err, &cb):
 		httpx.ErrorWith(w, http.StatusConflict, "credit_blocked", map[string]any{"policy": cb.Policy, "queue": "staff_approvals"})
