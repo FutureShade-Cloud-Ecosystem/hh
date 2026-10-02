@@ -264,7 +264,8 @@ func (r *ARLandingRepository) ReminderContextFor(ctx context.Context, customerID
 		         FROM invoices iv
 		        WHERE iv.customer_id = c.id
 		          AND iv.status IN ('FINALIZED','PARTIALLY_PAID')
-		          AND iv.balance_cents <> 0
+		          AND iv.balance_cents > 0
+		          AND iv.doc_type = 'INVOICE'
 		          AND ($2::uuid IS NULL OR iv.id = $2::uuid)
 		        ORDER BY iv.due_date
 		        LIMIT 1
