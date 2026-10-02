@@ -764,6 +764,49 @@ test("the split state is a status band, not a disabled button", async ({ page })
   await expect(page.getByRole("button", { name: /Split: compose/ })).toHaveCount(0);
 });
 
+test("a fresh line before its price answers: the split says a price is pending, Rest fills nothing, and the ring opens once the price answers", async ({
+  page,
+}) => {
+  // The resolve answer for the Holland line is held until released: the line is on the ticket,
+  // priced by no one yet (ui2c P3-2's fresh pending line).
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let hold = true;
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    if (hold) await held;
+    await route.fallback();
+  });
+  await signIn(page, "Sales");
+  await ensureSession(page);
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Split" }).click();
+  const panel = page.getByTestId("pos-split-panel");
+  await panel.getByTestId("split-amount-0").fill("1.00");
+  await panel.getByTestId("split-amount-1").fill("1.00");
+  // Pending: the true sentence, not "add a line"; the ring stays closed.
+  await expect(page.getByTestId("split-remaining")).toContainText("(not priced)");
+  await expect(page.getByTestId("split-problem")).toContainText("A price is still pending");
+  await expect(page.getByTestId("split-problem")).not.toContainText("Add a line");
+  await expect(page.getByTestId("split-ring")).toBeDisabled();
+  // Rest fills nothing while there is no total.
+  await panel.getByTestId("split-amount-1").fill("");
+  await panel.getByRole("button", { name: "Rest" }).nth(1).click();
+  await expect(panel.getByTestId("split-amount-1")).toHaveValue("");
+  await expect(panel.getByTestId("split-amount-1")).not.toHaveValue("0.00");
+  // The price answers: the panel states the figure, Rest fills the true remainder, the ring opens.
+  hold = false;
+  release();
+  await expect(page.getByTestId("split-remaining")).not.toContainText("(not priced)");
+  await panel.getByTestId("split-amount-0").fill("4.00");
+  await panel.getByRole("button", { name: "Rest" }).nth(1).click();
+  await expect(panel.getByTestId("split-amount-1")).toHaveValue("0.52");
+  await expect(page.getByTestId("split-remaining")).toContainText("Settled exactly");
+  await expect(page.getByTestId("split-ring")).toBeEnabled();
+});
+
 test("a split with a card leg carries the simulated word on the confirmation and on the receipt", async ({
   page,
 }) => {
