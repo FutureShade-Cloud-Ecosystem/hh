@@ -12,12 +12,12 @@ import {
   openParked,
   openStep,
   openingFloat,
-  paceMint,
   pickCustomer,
   returnLineInputs,
   ring,
   ringCash,
   searchAndAdd,
+  tapRoleCard,
   test,
   setQuantity,
   shot,
@@ -31,8 +31,8 @@ test("the way in: the manager's card opens the same till under its own name", as
   page,
 }, testInfo) => {
   await page.goto("/");
-  await paceMint(page);
-  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
+  // The same entry page move every sign-in holds, belt included.
+  await tapRoleCard(page, "Sales manager");
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales manager");
   // The till has loaded under the manager's name: the drawer open, the
   // identity line, the parked button's count.

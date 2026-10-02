@@ -5,7 +5,9 @@
 // reads the assertions compare the screen against, and the screenshot helper
 // that names every screen of the story.
 import { expect, test as base, type Page, type TestInfo } from "@playwright/test";
-import { mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export type Role = "Sales" | "Sales manager";
@@ -93,34 +95,84 @@ export function houseDaysAgo(days: number): string {
 }
 
 /**
- * The demo mint's per-address allowance is the till's own guard: a bounded
- * number of mints from one address inside one window, one bucket behind the
- * proxy. The run paces itself to the human pace the guard assumes before every
- * mint, wherever it happens: a person taps a card, reads the screen, and taps
- * again far slower than this guard's window. The clock lives on the worker's
- * global object, not in module state: the run's spec files each get their own
- * module instance, and the pace is one pace for the whole run.
+ * The demo mint's allowance is the till's own guard: a bounded number of
+ * mints from one key inside one sliding window, with a per address ceiling
+ * beside it. The run paces itself to the human pace the guard assumes before
+ * every mint, wherever it happens: a person taps a card, reads the screen,
+ * and taps again far slower than this guard's window. The arithmetic this
+ * spacing buys: the fourth stamp of a window lands exactly as the first
+ * leaves it, so a bucket holds at most three stamps per window in steady
+ * state, and at most four even with clock skew between the runner and the
+ * box, one full mint of headroom under the allowance of five. A tighter
+ * spacing sits on the knife edge, the fifth stamp at the exact instant the
+ * first expires, the refusal decided by the skew alone. The clock lives in a
+ * small JSON file under the system temp directory, its name keyed on the box
+ * (a hash of the box's address), read and written synchronously at each
+ * pace: Playwright restarts the worker process after every failed test, a
+ * restart resets any in-process clock to zero and drops the per spec file
+ * mint memo, and every restart then injects the very burst the guard
+ * refuses, while the box's limiter memory persists across restarts and
+ * across two suites run against one box. The file matches that reality: the
+ * newest writer wins, and a stale file can only delay a mint, never burst
+ * one. Parallel suites against one box are not a supported shape, and the
+ * file does not pretend otherwise. The file outlives the run in the system
+ * temp directory under its predictable name: fine on the single user runner
+ * this harness assumes, and a stale file can only ever delay a mint.
  */
-const MINT_SPACING_MS = 7500;
-type MintClock = { lastMintAt: number };
+const MINT_SPACING_MS = 10_000;
 
-function mintClock(): MintClock {
-  const carrier = globalThis as { __ctMintClock?: MintClock };
-  if (carrier.__ctMintClock === undefined) carrier.__ctMintClock = { lastMintAt: 0 };
-  return carrier.__ctMintClock;
+/** The box's sliding window, the span the limiter's own stamps live in. */
+const WINDOW_SPAN_MS = 30_000;
+
+/** The pace file's path: one per box, under the system temp directory. */
+function paceFilePath(): string {
+  const base = process.env.CT_IMAGE_URL ?? "http://127.0.0.1:5801";
+  const key = createHash("sha256").update(base).digest("hex").slice(0, 16);
+  return join(tmpdir(), `ct-mint-pace-${key}.json`);
+}
+
+/** The last reserved mint's epoch milliseconds, zero when nothing is held. */
+function heldMintAt(): number {
+  try {
+    const held = JSON.parse(readFileSync(paceFilePath(), "utf8")) as { lastMintAt?: number };
+    return typeof held.lastMintAt === "number" ? held.lastMintAt : 0;
+  } catch {
+    // No file yet, or one that cannot be read: the pace starts from zero,
+    // and the belt below, not the clock, then stands between the run and
+    // the guard.
+    return 0;
+  }
+}
+
+function holdMintAt(at: number): void {
+  writeFileSync(paceFilePath(), JSON.stringify({ lastMintAt: at }));
+}
+
+/**
+ * Reserve the next mint's instant and return how long to wait for it: read,
+ * decide, and write with no await between them, so one process's concurrent
+ * reservations serialize onto the file, then the caller sleeps to the slot.
+ * A held value far ahead of now is a stale or corrupted file (a clock that
+ * stepped back, a hand edited file, a reservation whose mint never
+ * happened), not a pace: a held value more than one window ahead of now is
+ * discarded and the pace restarts from now. One spacing ahead is the most
+ * an honest reservation ever writes.
+ */
+function reserveMintSlot(): number {
+  const now = Date.now();
+  const raw = heldMintAt() + MINT_SPACING_MS - now;
+  const wait = raw > MINT_SPACING_MS + WINDOW_SPAN_MS ? 0 : Math.max(raw, 0);
+  holdMintAt(now + wait);
+  return wait;
 }
 
 export async function paceMint(page: Page): Promise<void> {
-  const clock = mintClock();
-  const wait = clock.lastMintAt + MINT_SPACING_MS - Date.now();
+  const wait = reserveMintSlot();
   if (wait > 0) await page.waitForTimeout(wait);
-  clock.lastMintAt = Date.now();
 }
 
 function paceMintOffPage(): Promise<void> {
-  const clock = mintClock();
-  const wait = clock.lastMintAt + MINT_SPACING_MS - Date.now();
-  clock.lastMintAt = Date.now() + Math.max(wait, 0);
+  const wait = reserveMintSlot();
   return wait > 0 ? new Promise((resolve) => setTimeout(resolve, wait)) : Promise.resolve();
 }
 
@@ -142,14 +194,28 @@ export function mint(page: Page, flow: string): Promise<string> {
       await paceMintOffPage();
       const phrase = process.env.CT_GATE_PHRASE ?? "";
       const base = process.env.CT_IMAGE_URL ?? "http://127.0.0.1:5801";
-      const answer = await fetch(new URL("/api/v1/demo/session", base), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Basic ${Buffer.from(`demo:${phrase}`).toString("base64")}`,
-        },
-        body: JSON.stringify({ flow }),
-      });
+      const ask = () =>
+        fetch(new URL("/api/v1/demo/session", base), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Basic ${Buffer.from(`demo:${phrase}`).toString("base64")}`,
+          },
+          body: JSON.stringify({ flow }),
+        });
+      let answer = await ask();
+      if (answer.status === 429) {
+        // The same belt the page side holds: the box refused a burst and
+        // spent nothing, its own instruction is to let the window pass, so
+        // the mint waits the fixed thirty one seconds and asks once more,
+        // failing honestly if the refusal stands.
+        await new Promise((resolve) => setTimeout(resolve, WINDOW_PASS_MS));
+        // The window passed, so the held slot is spent history: reserve a
+        // fresh one before the re-ask, or the retry lands back to back with
+        // the next pace and the file stops telling the truth.
+        await paceMintOffPage();
+        answer = await ask();
+      }
       expect(answer.ok).toBe(true);
       const body = (await answer.json()) as { token?: string };
       expect(typeof body.token).toBe("string");
@@ -248,6 +314,75 @@ export async function openStep(page: Page, step: Step): Promise<void> {
 }
 
 /**
+ * The window refusal's own words, inside the entry page's refusal status.
+ * The status line's prefix is no good to the belt: the app prints it for
+ * every failed mint, whatever the reason, and a wait cures only the box's
+ * window refusal. The watch holds the narrower words, so the belt retries
+ * the one refusal a wait can cure; every other failed mint fails through
+ * to the text expect, its answer watch spent, no window wait.
+ */
+const REFUSAL_WORDS = "too many sign-in attempts";
+
+/**
+ * The wait between a refused tap and the next one: the box's own instruction
+ * is "let the window pass and tap the card again", and its window is thirty
+ * seconds, so the belt waits a fixed thirty one. A refusal spends nothing on
+ * the box, so the wait is the whole cost of the retry: it is the human pace
+ * the guard assumes, not a bypass.
+ */
+const WINDOW_PASS_MS = 31_000;
+
+/** How long the watch holds for either signal before it calls the answer stalled. */
+const SIGN_ANSWER_MS = 15_000;
+
+/** A refused sign-in is retried at most this often before the run fails honestly. */
+const REFUSAL_RETRIES = 2;
+
+/**
+ * Tap one role card on the entry page and wait for the sign-in to land: the
+ * shared move of every entry-page sign-in (signIn, and the closed drawer
+ * spec's own tap before its press), the pace, the tap, and then the watch.
+ * The watch is a belt, not an assertion: the till either renders the
+ * signed-in chrome or the entry page states a refusal, and the watched words
+ * are the window refusal's own, so the belt waits and taps again only for
+ * the one refusal a wait can cure, at most twice. Any other failed mint
+ * reads as a stall: the answer watch runs out, then the text expect fails
+ * honestly, and no window wait is spent on it. The belt exists so
+ * one refused sign-in recovers in place instead of failing its test and
+ * restarting the worker (a restart drops every spec file's mint memo and
+ * injects the very burst the guard refuses; that cascade is what once left
+ * the world's drawer closed and the run's later screens timed out on the
+ * session dot).
+ */
+export async function tapRoleCard(page: Page, role: Role): Promise<void> {
+  const card = page.getByRole("button", { name: role, exact: true });
+  const signedIn = page.getByTestId("signed-in-role");
+  const refusal = page.getByRole("status").filter({ hasText: REFUSAL_WORDS });
+  for (let attempt = 0; ; attempt += 1) {
+    await paceMint(page);
+    await card.click();
+    const answer = await Promise.race([
+      signedIn
+        .waitFor({ state: "visible", timeout: SIGN_ANSWER_MS })
+        .then(() => "in" as const, () => "stalled" as const),
+      refusal
+        .waitFor({ state: "visible", timeout: SIGN_ANSWER_MS })
+        .then(() => "refused" as const, () => "stalled" as const),
+    ]);
+    if (answer === "in") break;
+    if (answer !== "refused" || attempt >= REFUSAL_RETRIES) break;
+    await page.waitForTimeout(WINDOW_PASS_MS);
+  }
+  // Every ending holds the role's text, success included: the belt wraps the
+  // assertion the specs held before it, it never replaces it (the closed
+  // drawer spec's sign-in kept its own text expect through the round that
+  // extracted this helper). A stalled answer or a spent retry fails here
+  // honestly, naming what the run waited for, with the page snapshot
+  // carrying the refusal words when they are on it.
+  await expect(signedIn).toHaveText(role);
+}
+
+/**
  * Tap a role card and wait until the till answers under that role's name and
  * has loaded: the session bar's open dot (the drawer the till finds open)
  * use), the page's context line naming the invented dealer and the branch,
@@ -256,8 +391,7 @@ export async function openStep(page: Page, step: Step): Promise<void> {
 export async function signIn(page: Page, role: Role): Promise<void> {
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
-  await paceMint(page);
-  await page.getByRole("button", { name: role, exact: true }).click();
+  await tapRoleCard(page, role);
   await expect(page.getByTestId("signed-in-role")).toHaveText(role);
   await expect(page.getByTestId("session-dot")).toContainText("Open", { timeout: 15_000 });
   await expect(page.getByTestId("pagectx")).toContainText(DEMO_DEALER);
