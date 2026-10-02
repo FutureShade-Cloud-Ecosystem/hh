@@ -12,19 +12,58 @@ import type { RefundMethod, RefundReceipt, ReturnsFlow } from "../returns/flow.j
 import type { PosRefundApproval } from "@hardscapehouse/api-client";
 
 export const returnsStyles = css`
+  /* UI-3 (visual GAP 2): the desk wears the till's own card: the same column
+     (the terminal's 1180px cap, 20px gutter, full bleed like the surface above
+     it), the same card face, hairline, radius and shadow as an accordion card,
+     a 15px semibold head like the step heads, 13px body copy, 11px caption
+     labels and the till's input face. The roles read the --hos-* tokens the
+     till reads, so both themes follow. */
   .returns {
-    max-width: 720px;
-    margin: var(--hh-s-24) 0 0;
-    border-top: 1px solid var(--hh-line);
-    padding-top: var(--hh-s-16);
+    /* The bottom lane keeps the last control clear of the pinned hotkey legend. */
+    margin: var(--hh-s-24) calc(-1 * var(--hh-s-20)) 0;
+    padding-bottom: 72px;
+  }
+  .returns-col {
+    box-sizing: border-box;
+    width: min(100%, 1180px);
+    margin: 0 auto;
+    padding: 0 var(--hh-s-20);
+  }
+  .returns-card {
+    border: 1px solid var(--hos-line);
+    border-radius: var(--hos-radius-card);
+    background: var(--hos-slate-warm);
+    box-shadow: var(--hos-elev-1);
+    overflow: hidden;
   }
   .returns h2 {
-    font-size: var(--hh-s-16);
-    margin: 0 0 var(--hh-s-8);
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0;
+    padding: var(--hh-s-12) var(--hh-s-16);
+    border-bottom: 1px solid var(--hos-line);
+  }
+  .returns-body {
+    padding: var(--hh-s-16);
+    font-size: 13px;
   }
   .returns .hint {
-    color: var(--hh-text-dim);
+    color: var(--hos-text-dim);
     margin: 0 0 var(--hh-s-16);
+  }
+  .returns .btn-primary,
+  .returns .btn-secondary {
+    font-size: 13px;
+  }
+  /* UI-3 (visual NOTE 4): the one disabled rule the till uses (Complete sale): no fill, grey ink
+     and line, no fade, in both themes; not the design system's pale fill. */
+  .returns button:disabled,
+  .returns button:disabled:hover {
+    background: transparent;
+    border-color: var(--hos-line);
+    color: var(--hos-text-dim);
+    opacity: 1;
+    cursor: not-allowed;
   }
   .find-row {
     display: flex;
@@ -35,17 +74,19 @@ export const returnsStyles = css`
   }
   .find-row label {
     display: block;
-    font-size: var(--hh-s-12);
-    color: var(--hh-text-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--hos-text-dim);
     margin: 0 0 var(--hh-s-4);
   }
   .find-row input {
     font-family: inherit;
-    font-size: var(--hh-s-16);
-    color: var(--hh-text);
-    background: var(--hh-card);
+    font-size: 13px;
+    color: var(--hos-text);
+    background: var(--hos-deep-earth);
     border: 1px solid var(--hh-control-line);
-    border-radius: var(--hh-radius-control);
+    border-radius: var(--hos-radius-control);
     padding: var(--hh-s-8) var(--hh-s-12);
     min-height: 44px;
   }
@@ -54,7 +95,7 @@ export const returnsStyles = css`
     outline-offset: 2px;
   }
   .sale-heading {
-    font-size: var(--hh-s-16);
+    font-size: 15px;
     margin: 0 0 var(--hh-s-8);
   }
   .sale-meta {
@@ -89,11 +130,11 @@ export const returnsStyles = css`
   }
   .line-qty input {
     font-family: inherit;
-    font-size: var(--hh-s-16);
-    color: var(--hh-text);
-    background: var(--hh-card);
+    font-size: 13px;
+    color: var(--hos-text);
+    background: var(--hos-deep-earth);
     border: 1px solid var(--hh-control-line);
-    border-radius: var(--hh-radius-control);
+    border-radius: var(--hos-radius-control);
     padding: var(--hh-s-8) var(--hh-s-12);
     width: 5em;
     min-height: 44px;
@@ -126,11 +167,11 @@ export const returnsStyles = css`
   .draft-row select,
   .draft-row input[type="text"] {
     font-family: inherit;
-    font-size: var(--hh-s-16);
-    color: var(--hh-text);
-    background: var(--hh-card);
+    font-size: 13px;
+    color: var(--hos-text);
+    background: var(--hos-deep-earth);
     border: 1px solid var(--hh-control-line);
-    border-radius: var(--hh-radius-control);
+    border-radius: var(--hos-radius-control);
     padding: var(--hh-s-8) var(--hh-s-12);
     min-height: 44px;
   }
@@ -143,14 +184,14 @@ export const returnsStyles = css`
     display: flex;
     align-items: center;
     gap: var(--hh-s-8);
-    font-size: var(--hh-s-16);
+    font-size: 13px;
     color: var(--hh-text);
   }
   .submit-row {
     margin: var(--hh-s-16) 0 0;
   }
   .receipt {
-    border: 1px solid var(--hh-line);
+    border: 1px solid var(--hos-line);
     border-radius: var(--hh-radius-control);
     padding: var(--hh-s-16);
     margin: var(--hh-s-16) 0 0;
@@ -164,7 +205,7 @@ export const returnsStyles = css`
     max-width: 480px;
   }
   .refusal h3 {
-    font-size: var(--hh-s-16);
+    font-size: 15px;
     margin: 0 0 var(--hh-s-8);
   }
   .refusal p {
@@ -182,7 +223,7 @@ export const returnsStyles = css`
     max-width: 480px;
   }
   .dialog h3 {
-    font-size: var(--hh-s-16);
+    font-size: 15px;
     margin: 0 0 var(--hh-s-8);
   }
   .dialog p {
@@ -208,7 +249,7 @@ export const returnsStyles = css`
     border-color: var(--hh-accent);
   }
   .receipt h3 {
-    font-size: var(--hh-s-16);
+    font-size: 15px;
     margin: 0 0 var(--hh-s-8);
   }
   .receipt p {
@@ -223,7 +264,10 @@ export const returnsStyles = css`
 export function renderReturns(flow: ReturnsFlow): TemplateResult {
   return html`
     <section class="returns" data-testid="returns">
+      <div class="returns-col">
+      <div class="returns-card">
       <h2>Returns</h2>
+      <div class="returns-body">
       <p class="hint">Find the original sale by its number, then choose the lines to take back.</p>
       <div class="find-row">
         <div>
@@ -249,6 +293,9 @@ export function renderReturns(flow: ReturnsFlow): TemplateResult {
       ${flow.refusal === null || flow.receipt !== null ? nothing : renderRefusal(flow.refusal)}
       ${flow.dialogOpen ? renderApprovalDialog(flow) : nothing}
       ${flow.receipt === null ? nothing : renderReceipt(flow.receipt)}
+      </div>
+      </div>
+      </div>
     </section>
   `;
 }

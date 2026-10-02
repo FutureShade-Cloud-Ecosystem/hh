@@ -114,12 +114,16 @@ export class HosQuickStartGuard extends LitElement {
         border-color: var(--hos-stone-amber);
         color: #0b1725;
       }
-      button.primary:hover {
+      button.primary:hover:not(:disabled) {
         background: color-mix(in srgb, var(--hos-stone-amber) 86%, #000);
       }
-      button:disabled {
-        opacity: 0.5;
-        cursor: default;
+      button:disabled,
+      button.primary:disabled {
+        background: transparent;
+        border-color: var(--hos-line);
+        color: var(--hos-text-dim);
+        opacity: 1;
+        cursor: not-allowed;
       }
     `,
   ];

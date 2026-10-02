@@ -37,6 +37,7 @@ import {
   type BranchRef,
 } from "./till-client.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
+import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 import { entryStyles, renderEntry, type FlowsState } from "./views/entry.js";
 import { ReturnsFlow } from "./returns/flow.js";
 import { OneTimeCredential } from "./returns/approval.js";
@@ -108,8 +109,95 @@ export class CounterTillApp extends HHElement {
         border-bottom: 1px solid var(--hh-line);
         margin: 0 calc(-1 * var(--hh-s-20)) var(--hh-s-16);
       }
+      /* UI-3 (visual NOTE 3): the bar is on the till's own compact scale: a bar of about 48px
+         (the reference shell bar's), the till's small-chrome button face and type size, and a
+         one-line banner that stays visible and legible. The design system's 44px control floor
+         is for the entry page; this bar's controls take the till's chrome role. */
+      main.on-till {
+        padding-top: 0;
+      }
+      .surfacebar {
+        min-height: 48px;
+        padding: var(--hh-s-8) var(--hh-s-20);
+        margin-bottom: var(--hh-s-8);
+        gap: var(--hh-s-12);
+      }
+      /* The entry page's header takes the same compact scale (visual NOTE 2): one row of about 48px,
+         the banner beside the title and the chrome buttons, the same small button face. */
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: var(--hh-s-12);
+        min-height: 48px;
+        box-sizing: border-box;
+        padding: var(--hh-s-8) var(--hh-s-20);
+      }
+      header .title-row {
+        gap: var(--hh-s-12);
+        margin-left: auto;
+      }
+      header .signed-in {
+        margin: 0;
+        gap: var(--hh-s-8);
+      }
+      header .role-name {
+        font-size: 13px;
+      }
+      header button {
+        min-height: 0;
+        padding: 7px 12px;
+        font-size: 11px;
+        line-height: normal;
+        color: var(--hh-text-dim);
+      }
+      header button:hover:not(:disabled) {
+        border-color: var(--hh-accent-text);
+        color: var(--hh-accent-text);
+      }
+      header .demo-banner {
+        margin: 0;
+        padding: var(--hh-s-4) var(--hh-s-12);
+        align-items: center;
+        gap: var(--hh-s-8);
+      }
+      header .demo-banner .word,
+      header .demo-banner .copy {
+        font-size: 12px;
+        line-height: 1.3;
+      }
+      header h1 {
+        font-size: 15px;
+      }
+      .surfacebar .signed-in {
+        margin: 0;
+        gap: var(--hh-s-8);
+      }
+      .surfacebar .role-name {
+        font-size: 13px;
+      }
+      .surfacebar button {
+        min-height: 0;
+        padding: 7px 12px;
+        font-size: 11px;
+        line-height: normal;
+        color: var(--hh-text-dim);
+      }
+      .surfacebar button:hover:not(:disabled) {
+        border-color: var(--hh-accent-text);
+        color: var(--hh-accent-text);
+      }
       .surfacebar .demo-banner {
         margin: 0;
+        padding: var(--hh-s-4) var(--hh-s-12);
+        align-items: center;
+        gap: var(--hh-s-8);
+      }
+      .surfacebar .demo-banner .word,
+      .surfacebar .demo-banner .copy {
+        font-size: 12px;
+        line-height: 1.3;
       }
       .chrome-row {
         margin: var(--hh-s-16) 0 0;
@@ -133,6 +221,10 @@ export class CounterTillApp extends HHElement {
   readonly #controller: AuthController;
   readonly #approverCredential: OneTimeCredential;
   readonly #tillClient: TillClient;
+  /** The theme choice: Auto follows the system, Light and Dark pin it; tab memory only (see theme.ts). */
+  readonly #theme = new ThemeController(() => this.requestUpdate());
+  /** What a screen reader hears after a Theme press: focus stays on the button, so the new name is not re-read. */
+  #themeStatus = "";
   #flowsState: FlowsState = { kind: "loading" };
   /** The one flows read this element makes; the pop-out's tap waits for it. */
   #flowsLoaded: Promise<void> = Promise.resolve();
@@ -254,6 +346,9 @@ export class CounterTillApp extends HHElement {
     // uncontrolled: the DOM holds what was typed, the flow hears every edit
     // here, and a draft's fresh mount shows the flow's own defaults.
     this.addEventListener("input", this.#onHostInput);
+    // The system's light setting is honoured from the first paint; the Theme
+    // control in the account area cycles Auto, Light and Dark.
+    this.#theme.start();
     // The flows read happens once; the pop-out, when this window is one,
     // chains on the same answer rather than asking the route twice.
     this.#flowsLoaded = this.#loadFlows();
@@ -274,6 +369,7 @@ export class CounterTillApp extends HHElement {
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
     this.removeEventListener("input", this.#onHostInput);
+    this.#theme.stop();
     super.disconnectedCallback();
   }
 
@@ -308,6 +404,10 @@ export class CounterTillApp extends HHElement {
     const flow = control.getAttribute("data-flow");
     if (control.getAttribute("data-action") === "choose" && typeof flow === "string" && flow !== "") {
       void this.#chooseFlow(flow);
+    }
+    if (control.getAttribute("data-action") === "theme") {
+      this.#theme.cycle();
+      this.#themeStatus = themeStatusText(this.#theme.choice);
     }
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
@@ -486,6 +586,23 @@ export class CounterTillApp extends HHElement {
     this.requestUpdate();
   }
 
+  /** The Theme control of the account area: one button, its value beside the word. */
+  #themeControl(): TemplateResult {
+    const choice = this.#theme.choice;
+    return html`
+      <button
+        type="button"
+        class="btn-secondary"
+        data-action="theme"
+        data-testid="theme-control"
+        aria-label=${themeControlLabel(choice)}
+        title="Cycle the theme: Auto, Light, Dark"
+      >
+        Theme: ${THEME_LABEL[choice]}
+      </button>
+    `;
+  }
+
   render(): TemplateResult {
     // The banner's rule is "only once the flows route has answered with
     // cards": an error answer and an empty answer alike are not the demo
@@ -494,6 +611,7 @@ export class CounterTillApp extends HHElement {
       this.#surface === "terminal" ||
       (this.#flowsState.kind === "ready" && this.#flowsState.flows.length > 0);
     return html`
+      <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
       ${this.#surface === "terminal"
         ? nothing
         : html`
@@ -502,10 +620,11 @@ export class CounterTillApp extends HHElement {
               <div class="title-row">
                 <h1>Counter Till</h1>
                 ${this.#till === null
-                  ? nothing
+                  ? html`<p class="signed-in">${this.#themeControl()}</p>`
                   : html`
                       <p class="signed-in">
                         <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
+                        ${this.#themeControl()}
                         <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
                           Sign out
                         </button>
@@ -514,7 +633,7 @@ export class CounterTillApp extends HHElement {
               </div>
             </header>
           `}
-      <main>
+      <main class="${this.#surface === "terminal" ? "on-till" : ""}">
         ${this.#surface === "terminal"
           ? html`
               <h2 class="visually-hidden">Till</h2>
@@ -522,6 +641,7 @@ export class CounterTillApp extends HHElement {
                 ${demoPresent ? demoBanner() : nothing}
                 <p class="signed-in">
                   <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
+                  ${this.#themeControl()}
                   <button
                     type="button"
                     class="btn-secondary"

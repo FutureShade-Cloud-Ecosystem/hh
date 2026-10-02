@@ -29,7 +29,7 @@
 //   GET  /api/v1/pos/workspace              -> PosWorkspacePrefs (PUT writes, DELETE resets)
 //   GET  /api/v1/pos/hotkeys                -> PosHotkeys (the shipped default: no keys)
 //   GET  /api/v1/pos/salespeople            -> { items: [{id, name}] }
-//   GET  /api/v1/pos/quick-picks            -> PosQuickPicks (derived, empty)
+//   GET  /api/v1/pos/quick-picks            -> PosQuickPicks (the demo dealer's three-tile hot list)
 //   GET  /api/v1/products                   -> PosProduct[] (the browse grid's read)
 //   GET  /api/v1/products/scan              -> CounterHit | 404
 //   GET  /api/v1/pos/stock-glance           -> StockGlance
@@ -140,10 +140,14 @@ const ACCOUNT_BRANCH = { "demo-account-sales": TRENTON_ID, "demo-account-sales-m
 // carries no cost at Trenton on purpose: a glance line with no cost stays
 // byte-absent in the real answer, and the till shows the explicit placeholder
 // there, never a fake margin. sold_by is the unit the counter rings in.
+// The demo dealer's curated hot list: the quick-pick tiles, in tap order.
+const HOT_LIST_SKUS = ["HPV-60", "PSN-100", "WAT-STD"];
+
 const PRODUCTS = [
   {
     product_id: "p-holland-60",
     sku: "HPV-60",
+    category: "Pavers",
     name: "Holland Stone 60 mm",
     description: "The Holland paver, 60 mm, per square foot",
     aliases: ["holland paver", "holland stone"],
@@ -155,6 +159,7 @@ const PRODUCTS = [
   {
     product_id: "p-polymer-sand",
     sku: "PSN-100",
+    category: "Sand and base",
     name: "Polymeric Locking Sand",
     description: "Jointing sand for paver courses",
     aliases: ["polymer sand", "jointing sand"],
@@ -166,6 +171,7 @@ const PRODUCTS = [
   {
     product_id: "p-edge-8",
     sku: "EDG-08",
+    category: "Edging",
     name: "Edge Restraint 8 ft",
     description: "Flexible paver edge restraint, eight foot strip",
     aliases: ["edge restraint", " edging"],
@@ -177,6 +183,7 @@ const PRODUCTS = [
   {
     product_id: "p-wall-std",
     sku: "WAT-STD",
+    category: "Walls",
     name: "Retaining Wall Stone, Standard",
     description: "Standard wall unit, per piece",
     aliases: ["wall stone", "retaining wall"],
@@ -188,6 +195,7 @@ const PRODUCTS = [
   {
     product_id: "p-clear-stone",
     sku: "GRA-CL",
+    category: "Sand and base",
     name: "Clear Stone",
     description: "Clear gravel base, per cubic yard",
     aliases: ["gravel", "clear gravel"],
@@ -915,7 +923,9 @@ function productRow(product) {
     sku: product.sku,
     name: product.name,
     color_family: "",
-    application: "",
+    // The browse grid's category chips read the list row's application word;
+    // the demo catalogue groups its five products under four of them.
+    application: product.category,
     sold_by: product.sold_by,
     base_uom: product.base_uom,
     is_active: true,
@@ -1792,7 +1802,7 @@ const server = createServer(async (request, response) => {
       workspace_arrangement: "LOOKUP_LEFT",
       lookup_presentation: "CARDS",
       margin_visibility: "ALL_STAFF",
-      quick_chip_set: ["HPV-60", "PSN-100", "WAT-STD"],
+      quick_chip_set: ["Pavers", "Sand and base", "Walls"],
     });
     return;
   }
@@ -1844,10 +1854,37 @@ const server = createServer(async (request, response) => {
     }
     const customerId = url.searchParams.get("customer_id") ?? "";
     const customer = customerFor(customerId);
+    // The demo dealer curates a short hot list (the same three SKUs the chip
+    // set names), grouped by the catalogue's category word and priced for the
+    // customer on the sale through the same engine the counter prices read
+    // answer from, so the filled quick-pick tiles and chips are exercised.
+    // The contract is unchanged: PosQuickPicks is this shape already.
+    const items = HOT_LIST_SKUS.map((sku) => {
+      const product = PRODUCTS.find((p) => p.sku === sku);
+      const resolved = product === undefined ? null : resolveLine(customerId, product.product_id, branchId);
+      if (product === undefined || resolved === null) return null;
+      return {
+        product_id: product.product_id,
+        sku: product.sku,
+        name: product.name,
+        uom: product.sold_by,
+        has_image: false,
+        category: product.category,
+        subcategory: product.category,
+        price: {
+          product_id: product.product_id,
+          price_uom: resolved.price_uom,
+          retail_cents: resolved.retail_cents,
+          customer_cents: resolved.customer_cents,
+          ...(resolved.saving_cents > 0 ? { saving_cents: resolved.saving_cents } : {}),
+          ...(resolved.basis !== undefined ? { basis: resolved.basis } : {}),
+        },
+      };
+    }).filter((row) => row !== null);
     respondJson(response, 200, {
-      source: "derived",
+      source: "dealer",
       customer_type: customer === null ? "RETAIL" : customer.customer_type,
-      items: [],
+      items,
     });
     return;
   }

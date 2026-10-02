@@ -2,6 +2,7 @@
 
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { ifDefined } from 'lit/directives/if-defined.js';
 import { api, BRANCHES, branchName, getCurrentUser, isAdmin } from './ports.js';
 import {
   availableCreditCents,
@@ -552,12 +553,48 @@ export class HosPosTerminal extends LitElement {
  * "Park failed: retry." wore the ok banner and announced to no one. Faults now render.bad
    * with role=alert (the house rule: alert for faults only); good news keeps ok + role=status.
    */
-  @state() private utilTone: 'ok' | 'bad' = 'ok';
+  @state() private utilTone: 'ok' | 'bad' | 'note' = 'ok';
+  /** A 'note' is announced only when asked for (a press), never on focus, where the closed control's own
+   *  description already speaks: one announcement, not two. */
+  @state() private utilLive = false;
+  /**
+   * UI-3 (visual GAP 1): where the utility message renders. The End Session reason belongs beside
+   * its control in the top bar (a press answered about 680px away at the foot of the flow, its
+   * lower edge under the hotkey bar with the Items step open); every other message keeps the foot
+   * line. One state machine either way, so the next message still replaces the notice.
+   */
+  @state() private utilWhere: 'foot' | 'session' = 'foot';
+  /**
+   * Round d: the pickup line's captured-once facts, and only those: the ticket, the resume's own
+   * tails (lines the product list dropped, lines the race discarded) and the fault tone. The
+   * line's price tail is NOT captured: its words render from the cart's any-line-pending state
+   * (pickupLineWords), so a price that answers after the line was set flips it, the way every
+   * other marker on the till flips when a price answers. One line at a time: setUtil (any other
+   * message) and every direct clear retire the pickup line with the utility message.
+   */
+  @state() private pickupLine: { ticketNo: string; tails: string; bad: boolean } | null = null;
+
+  /** The pickup line's words: the tail derives from the cart at render time, never from a snapshot. */
+  private pickupLineWords(): string {
+    const line = this.pickupLine;
+    if (line === null) return '';
+    const pending = this.cart.some((l) => l.priceMissing);
+    return `Resumed ${line.ticketNo}: ${pending ? 're-deriving prices' : 'prices re-derived now'}.${line.tails}`;
+  }
 
   /** One door for the utility banner: message + tone together, so a fault can never wear green. */
-  private setUtil(msg: string, tone: 'ok' | 'bad' = 'ok'): void {
+  private setUtil(msg: string, tone: 'ok' | 'bad' | 'note' = 'ok', live = true, where: 'foot' | 'session' = 'foot'): void {
     this.utilMsg = msg;
     this.utilTone = tone;
+    this.utilLive = live;
+    this.utilWhere = where;
+    this.pickupLine = null; // one message line at a time: a new message retires the pickup line
+  }
+
+  /** One door for the silent clear (a fresh ticket, a park, a pricing doc): the pickup line goes with it. */
+  private clearUtil(): void {
+    this.utilMsg = '';
+    this.pickupLine = null;
   }
   // ── DIB-434 ── the in-progress guard's own state. `quickGuard` is the dialog's open flag; it is
   // set ONLY when quickStartNeedsGuard() says the till holds something to lose, so an empty
@@ -756,7 +793,9 @@ export class HosPosTerminal extends LitElement {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
+      /* UI-3 (visual GAP 6): the bar fits one row at the column cap with no session open; the
+         row gap keeps a wrapped bar (an open session adds the dot and End Session) as airy as before. */
+      gap: 16px 12px;
       width: min(100%, var(--pos-column-max));
       margin: 0 auto;
       padding: 12px var(--hos-space-5); /* rev 5: on-scale gutter (was 22px) */
@@ -772,9 +811,13 @@ export class HosPosTerminal extends LitElement {
     .session {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 8px;
       font-size: 13px;
       color: var(--hos-text-dim);
+      /* ui3d P2-1: the End Session notice's positioning context: the notice hangs off the whole
+         session region, so its anchored right edge and its 320px of width can never reach past
+         the window's left edge the way a button wrap anchor did on a wrapped bar. */
+      position: relative;
     }
     .timer {
       font-family: var(--hos-font-mono);
@@ -796,14 +839,15 @@ export class HosPosTerminal extends LitElement {
       cursor: pointer;
     }
     /* HH note: disabled drops its fill and goes grey; fade is not a state. */
-    .topbtn:disabled {
+    .topbtn:disabled,
+    .topbtn[aria-disabled='true'] {
       background: transparent;
       border-color: var(--hos-line);
       color: var(--hos-text-dim);
       opacity: 1;
       cursor: not-allowed;
     }
-    .topbtn:hover:not(:disabled) {
+    .topbtn:hover:not(:disabled):not([aria-disabled='true']) {
       border-color: var(--hos-stone-amber);
       color: var(--hos-stone-amber-text);
     }
@@ -1524,9 +1568,12 @@ export class HosPosTerminal extends LitElement {
        counter and in a panel the person may have dragged to 280px, and minmax lets the same rule
        answer both: four across where they fit, wrapping where they do not. The doctrine's own
        instruction, and the reason there is no media query here. */
+    /* UI-3 (visual GAP 9): 112px, not 132px, so all four choices (Collect now, Will-call, Delivery,
+       COD) share one row at the Panels layout's default panel width (about 535px inside); the
+       tile's gap and side padding below tighten with it so the longest label still fits. */
     .fulfil {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
       gap: 8px;
     }
  /* rev 8 (item 6): all four options as ICON TILES: inline currentColor SVG (the rev-6
@@ -1537,7 +1584,7 @@ export class HosPosTerminal extends LitElement {
       flex-direction: row;
       align-items: center;
       justify-content: center;
-      gap: 8px;
+      gap: 6px;
       min-height: 40px;
       background: var(--hos-deep-earth);
       border: 1px solid var(--hos-line);
@@ -1546,7 +1593,7 @@ export class HosPosTerminal extends LitElement {
       font-family: inherit;
       font-size: 13px;
       font-weight: 600;
-      padding: 8px 10px;
+      padding: 8px 6px;
       cursor: pointer;
     }
     .fulfil button svg {
@@ -1562,7 +1609,10 @@ export class HosPosTerminal extends LitElement {
       background: color-mix(in srgb, var(--hos-stone-amber) 10%, var(--hos-deep-earth));
     }
     .fulfil button:disabled {
-      opacity: 0.45;
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
       cursor: not-allowed;
     }
  /* ── DIB-488 collapsible more-options (native details: no JS state to desync) ── */
@@ -1659,7 +1709,10 @@ export class HosPosTerminal extends LitElement {
       background: color-mix(in srgb, var(--hos-stone-amber) 10%, var(--hos-deep-earth));
     }
     .paytiles button:disabled {
-      opacity: 0.45;
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
       cursor: not-allowed;
     }
     .complete-cta {
@@ -1688,6 +1741,31 @@ export class HosPosTerminal extends LitElement {
       color: var(--hos-text-dim);
       opacity: 1;
       cursor: not-allowed;
+    }
+    /* UI-3 (visual GAP 7): the split state is a band, not a control: the reference's pale yellow
+       in both themes, with the theme-stable ink. It is a statement, so it is not greyed, and it is
+       not a button either: a disabled button must look disabled (AGENTS.md). */
+    .split-band {
+      display: block;
+      box-sizing: border-box;
+      width: 100%;
+      margin: 12px 0 0;
+      background: var(--hos-band-fill);
+      border: 1px solid var(--hos-band-fill);
+      border-radius: var(--hos-radius-control);
+      color: var(--hos-stone-amber-ink); /* a theme-stable fill pins its theme-stable ink in the SAME rule */
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 700;
+      line-height: normal;
+      padding: 14px 10px;
+      text-align: center;
+    }
+    .split-band .band-why {
+      display: block;
+      margin-top: 4px;
+      font-size: 12px;
+      font-weight: 400;
     }
     /* UNION-TRAIN11 · the counter's pay key worn as a keycap on the CTA (see payKeycap()).
        Gold-on-gold: the chip borrows the CTA's own ink (D-078: the ONLY ink gold may carry), so
@@ -2029,7 +2107,7 @@ export class HosPosTerminal extends LitElement {
       width: 100%;
       background: var(--hos-deep-earth);
       color: var(--hos-text);
-      border: 1px solid var(--hos-line);
+      border: 1px solid var(--hos-control-line);
       border-radius: var(--hos-radius-control);
       padding: 8px 10px;
       font-size: 13px;
@@ -2135,7 +2213,10 @@ export class HosPosTerminal extends LitElement {
       border-color: var(--hos-stone-amber);
     }
     .tenders button:disabled {
-      opacity: 0.45;
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
       cursor: not-allowed;
     }
     .util {
@@ -2164,9 +2245,43 @@ export class HosPosTerminal extends LitElement {
     }
  /* DIB-244: the explicit destructive "Clear sale" affordance; red text sets it apart from the
        neutral utility buttons so it reads as "empty the whole ticket in one step". */
+    /* UI-3 (visual GAP 8): the margin eye is an outlined control like its neighbours, not the UA's
+       grey square; it sits at the row's far end with a fixed footprint. */
+    .saleutil .eye {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      margin-left: auto;
+      padding: 0;
+      background: transparent;
+      border: 1px solid var(--hos-line);
+      border-radius: var(--hos-radius-control);
+      color: var(--hos-text-dim);
+      cursor: pointer;
+    }
+    .saleutil .eye:hover {
+      border-color: var(--hos-stone-amber);
+      color: var(--hos-stone-amber-text);
+    }
+    /* One name with aria-pressed (pressed means the margin is hidden). Pressed is a filled tint
+       so a hovered eye (outline only) never reads as pressed; the glyph change carries it too. */
+    .saleutil .eye[aria-pressed='true'] {
+      border-color: var(--hos-stone-amber);
+      color: var(--hos-stone-amber-text);
+      background: color-mix(in srgb, var(--hos-stone-amber) 16%, transparent);
+    }
     .util button.clear {
       color: var(--hos-safety-red);
       border-color: color-mix(in srgb, var(--hos-safety-red) 40%, var(--hos-line));
+    }
+    /* ui3 visual NOTE 5: a util control that cannot act (Park ticket on an empty ticket, Open
+       order and Print receipt with nothing typed) takes the one disabled rule's cursor too:
+       the pointer promised an act the control cannot make, and it was the one cursor outside
+       the rule. */
+    .util button:disabled {
+      cursor: not-allowed;
     }
     .util button.clear:hover {
       border-color: var(--hos-safety-red);
@@ -2181,6 +2296,45 @@ export class HosPosTerminal extends LitElement {
       background: rgba(74, 222, 128, 0.12);
       border: 1px solid var(--hos-success);
       color: var(--hos-success);
+    }
+    /* A notice, neither good news nor a fault: neutral ink on the slate, the control line for its edge. */
+    .banner.note {
+      background: var(--hos-slate-warm);
+      border: 1px solid var(--hos-line);
+      color: var(--hos-text);
+    }
+    /* UI-3 (visual GAP 1): the End Session notice rides the same note palette, anchored under the
+       session region its control lives in, at the popover scale, so the bar's height never moves
+       and the words sit in the page's first band in both themes. ui3d P2-1: right-aligned to that
+       region (never past it toward the window's left) and clamped to the window minus the bar's
+       own padding on each side, so the card stays fully inside the viewport at every width. */
+    .esnotice {
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      z-index: var(--hos-z-modal);
+      width: 320px;
+      max-width: calc(100vw - 2 * var(--hos-space-5));
+      background: var(--hos-slate-warm);
+      border: 1px solid var(--hos-line);
+      border-radius: var(--hos-radius-card);
+      box-shadow: var(--hos-elev-1);
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--hos-text);
+      text-align: left;
+    }
+    /* Visually hidden, still in the accessibility tree: a description a closed control points at. */
+    .srdesc {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+      border: 0;
     }
     .banner.bad {
       background: rgba(244, 63, 94, 0.12);
@@ -2696,7 +2850,7 @@ export class HosPosTerminal extends LitElement {
   // core refuses a complete unless the session is COUNTED (409), and a drawer
   // that does not balance needs a manager's sign-off (row 500), so the mount
   // cannot honestly end a session from here: the button stays visible but is
-  // closed (disabled, with its reason), and the gap is named in CLOSURE.md.
+  // closed (aria-disabled, focusable, its reason shown in the till's message line), and the gap is named in CLOSURE.md.
   // The reference's handler is dropped for the day the close flow is ported.
   private readonly endSessionClosedReason =
     "Ending the session needs the blind count, the Z report and a manager's sign-off; the drawer close is not on this surface yet.";
@@ -3478,7 +3632,7 @@ export class HosPosTerminal extends LitElement {
     this.signatureRef = '';
     this.depositDollars = '';
     this.fulfilment = 'PICKUP';
-    this.utilMsg = '';
+    this.clearUtil();
     this.soldPanelDismissed = false;
     this.ring = { state: 'idle' };
     // DIB-488: the flow facts reset with the sale they describe.
@@ -3640,7 +3794,7 @@ export class HosPosTerminal extends LitElement {
 
  /** Start a fresh ticket: or stop and ask, if the till is holding one. */
   private quickStartSale(): void {
-    this.utilMsg = '';
+    this.clearUtil();
     if (quickStartNeedsGuard(this.liveTicket())) {
       this.quickGuard = true;
       return;
@@ -3690,7 +3844,7 @@ export class HosPosTerminal extends LitElement {
   // ── W7: park / resume / pricing doc ────────────────────────────────────
   private async parkCurrent(): Promise<void> {
     if (this.cart.length === 0) return;
-    this.utilMsg = '';
+    this.clearUtil();
     try {
       const t = await parkTicket({
         branch_id: this.branchId,
@@ -3701,7 +3855,7 @@ export class HosPosTerminal extends LitElement {
       });
       // DIB-246/247: snapshot who + how much under the server ticket id BEFORE newSale() clears
       // them, so resume can restore this customer and the parked list can show name + total.
-      this.parkedInfo.set(t.id, { customer: this.customer, totalCents: this.total() });
+      this.parkedInfo.set(t.id, { customer: this.customer, totalCents: this.hasPricedLine() ? this.total() : null });
       this.newSale();
       this.setUtil(`Parked as ${t.ticket_no}: resume re-prices live.`);
       void this.refreshParkedCount();
@@ -3754,20 +3908,30 @@ export class HosPosTerminal extends LitElement {
           priceUom: ln.uom_entered,
           lineTotalCents: 0,
           breakdown: null,
+          // Pending until the price lookup answers, the add path's own rule: the summary stays on
+          // the marker rather than a zero for a line nobody has priced yet. Without the flag the
+          // resumed ticket painted CA$0.00 totals and margin figures in the instant before the
+          // first answer landed (ui3d visual NOTE).
+          priceMissing: true,
         });
       }
       this.cart = cart;
       this.cartReplaced(); // D17: the resumed lines are a different ticket's
       for (const l of this.cart) void this.hydrateLineStock(l.product.id); // DIB-488 stock lines
       for (let i = 0; i < this.cart.length; i++) await this.reprice(i);
-      this.setUtil(
-        `Resumed ${t.ticket_no}: prices re-derived now.` +
+      // ui3 visual GAP 3, and round d: the words must be true in both states AND STAY true. The
+      // line's price tail renders from the cart's any-line-pending state (pickupLineWords), so a
+      // price that answers after this line was set flips it; only the resume's own facts are
+      // captured here: the ticket, the dropped lines, the discarded race, the fault tone.
+      this.pickupLine = {
+        ticketNo: t.ticket_no,
+        tails:
           (missing.length ? ` ${missing.length} line(s) dropped (product inactive).` : '') +
           (lostToTheRace > 0
             ? ` ${lostToTheRace} line(s) added while this loaded were discarded with the old ticket: re-scan them.`
             : ''),
-        lostToTheRace > 0 ? 'bad' : 'ok',
-      );
+        bad: lostToTheRace > 0,
+      };
       void this.refreshParkedCount();
     } catch {
       this.setUtil(`Resumed ${t.ticket_no}, but the lines could not be reloaded: re-add manually.`, 'bad');
@@ -3776,7 +3940,7 @@ export class HosPosTerminal extends LitElement {
 
   private async savePricingDoc(): Promise<void> {
     if (this.cart.length === 0) return;
-    this.utilMsg = '';
+    this.clearUtil();
     try {
       this.pricingDoc = await createPricingOrder({
         branch_id: this.branchId,
@@ -4433,13 +4597,24 @@ export class HosPosTerminal extends LitElement {
   }
 
   /**
- * rev 8 (item 10): the one-click quick-hide (eye): counter privacy while a customer watches
+   * rev 8 (item 10): the one-click quick-hide (eye): counter privacy while a customer watches
    * the screen. An ergonomic exactly like the divider position: per-user, debounced merge-save.
    */
   private wsToggleMarginHidden(): void {
     this.wsMarginHidden = !this.wsMarginHidden;
     this.wsDirty.add('marginHidden');
     this.schedulePersist();
+  }
+
+  /**
+   * The eye's words in each state, one source for the hover title AND the accessible name
+   * (ui3 visual NOTE 1: the name stayed "Hide margin and est. profit" while pressed, so the
+   * name asked for an act the state had already performed, and name and title disagreed).
+   */
+  private marginEyeWords(): string {
+    return this.wsMarginHidden
+      ? 'Margin and est. profit are hidden: press to show them (counter privacy)'
+      : 'Hide margin and est. profit (counter privacy)';
   }
 
   /**
@@ -4512,13 +4687,37 @@ export class HosPosTerminal extends LitElement {
             ? html`<span class="sessiondot" data-testid="session-dot" title="Till session open: elapsed ${this.elapsed}">
                   <span class="dot" aria-hidden="true"></span> Open
                 </span>
-                <button
-                  class="topbtn"
-                  data-testid="end-session"
-                  disabled
-                  title=${this.endSessionClosedReason}
-                  aria-label=${`End Session. ${this.endSessionClosedReason}`}
-                >End Session</button>`
+                <span class="helpwrap">
+                  <button
+                    class="topbtn"
+                    data-testid="end-session"
+                    aria-disabled="true"
+                    aria-describedby="end-session-reason"
+                    title=${this.endSessionClosedReason}
+                    @click=${() => this.setUtil(this.endSessionClosedReason, 'note', true, 'session')}
+                    @focus=${() => this.setUtil(this.endSessionClosedReason, 'note', false, 'session')}
+                  >End Session</button>
+                </span>
+                ${/* UI-3 (visual GAP 1): the reason renders beside its control, anchored under the
+                     session region the button lives in, in the note palette (never the success
+                     green), so a press answers where the hand is: the foot line sat at the flow's
+                     end, half under the hotkey bar. The status region arrives only on a press
+                     (announced once, polite); focus shows it silently, per the recorded ruling. */ ''}
+                ${/* ui3d P2-1: the card hangs off the SESSION region, not the button's own wrap: a
+                     wrap anchor right-aligns a 320px card to the button's right edge, and on a
+                     wrapped bar that edge sits a few hundred pixels from the window's left, so the
+                     card ran off screen below about 1415px wide. The session region is at least a
+                     card wide plus the bar's padding at every width the till supports, so its band
+                     keeps both edges of the card on screen. */ ''}
+                ${this.utilMsg !== '' && this.utilWhere === 'session'
+                  ? html`<span
+                      data-testid="end-session-notice"
+                      class="esnotice"
+                      role="${ifDefined(this.utilLive ? 'status' : undefined)}"
+                      >${this.utilMsg}</span
+                    >`
+                  : nothing}
+                <span id="end-session-reason" class="srdesc" data-testid="end-session-reason">${this.endSessionClosedReason}</span>`
             : html`<button class="topbtn" @click=${this.openSession}>Open Session</button>`}
           ${/* COUNTER VIEW (R1/R2, the user half). The way back from a dismissed legend
                and the on/off for the hot list, in one place a counter person can reach without an
@@ -5463,18 +5662,20 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                       : nothing}
                   </button>
                   `
-              : html`<button
-                  class="complete-cta"
+              : html`<p
+                  class="split-band"
+                  role="status"
                   data-testid="cta-split-state"
-                  disabled
-                  title="A split is composed before it is committed: the legs must add up first, and the panel below rings it."
                 >
                   Split: compose the legs below
-                </button>`}
+                  <span class="band-why" data-testid="cta-split-why"
+                    >The legs must add up to the total first; the panel below rings the split.</span
+                  >
+                </p>`}
 
           ${this.showSplit
             ? html`<hos-pos-split-tender
-                .totalCents=${this.total()}
+                .totalCents=${this.hasPricedLine() ? this.total() : null}
                 .hasCustomer=${!!this.customer}
                 .customerName=${this.customer?.name ?? ''}
                 .busy=${this.ringBusy()}
@@ -5723,20 +5924,6 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
          the role-gated data is actually PRESENT: there is nothing to hide otherwise, and the
          role gate itself is server-side (the payload omits the fields; this is counter privacy,
          not security). */ ''}
-      ${this.marginPresent()
-        ? html`<button
-            class="eye"
-            data-testid="margin-eye"
-            aria-pressed=${this.wsMarginHidden ? 'true' : 'false'}
-            title=${this.wsMarginHidden ? 'Show margin and est. profit' : 'Hide margin and est. profit (counter privacy)'}
-            aria-label=${this.wsMarginHidden ? 'Show margin' : 'Hide margin'}
-            @click=${() => this.wsToggleMarginHidden()}
-          >
-            ${this.wsMarginHidden
-              ? html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 3l18 18M10.6 10.7a2.6 2.6 0 003.7 3.7M6.6 6.8C4.5 8 3 9.9 2 12c1.8 3.7 5.5 6 10 6 1.6 0 3.1-.3 4.4-.9M9.9 4.2C10.6 4.1 11.3 4 12 4c4.5 0 8.2 2.3 10 8-.5 1.1-1.2 2.1-2 3"></path></svg>`
-              : html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M2 12c1.8-5.7 5.5-8 10-8s8.2 2.3 10 8c-1.8 3.7-5.5 6-10 6S3.8 15.7 2 12z"></path><circle cx="12" cy="12" r="2.6"></circle></svg>`}
-          </button>`
-        : nothing}
 ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id input used to
    render below the CTA on EVERY sale (empty included). What earns the always-on row:
    Park / Parked (the mid-rush pair) and: only while the order holds something to
@@ -5774,9 +5961,27 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
             </div>
             ${this.renderOrderOpenRow()}
           </details>
-          ${this.utilMsg
-            ? html`<div class="banner ${this.utilTone}" role="${this.utilTone === 'bad' ? 'alert' : 'status'}">${this.utilMsg}</div>`
+          ${/* UI-3 (visual GAP 8): the eye rides the END of the utility row, so it appearing when the
+             first priced line lands never moves Park ticket; it is an outlined control, as the reference's. */ ''}
+          ${this.marginPresent()
+            ? html`<button
+                class="eye"
+                data-testid="margin-eye"
+                aria-pressed=${this.wsMarginHidden ? 'true' : 'false'}
+                title=${this.marginEyeWords()}
+                aria-label=${this.marginEyeWords()}
+                @click=${() => this.wsToggleMarginHidden()}
+              >
+                ${this.wsMarginHidden
+                  ? html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 3l18 18M10.6 10.7a2.6 2.6 0 003.7 3.7M6.6 6.8C4.5 8 3 9.9 2 12c1.8 3.7 5.5 6 10 6 1.6 0 3.1-.3 4.4-.9M9.9 4.2C10.6 4.1 11.3 4 12 4c4.5 0 8.2 2.3 10 8-.5 1.1-1.2 2.1-2 3"></path></svg>`
+                  : html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M2 12c1.8-5.7 5.5-8 10-8s8.2 2.3 10 8c-1.8 3.7-5.5 6-10 6S3.8 15.7 2 12z"></path><circle cx="12" cy="12" r="2.6"></circle></svg>`}
+              </button>`
             : nothing}
+          ${this.pickupLine !== null
+            ? html`<div id="till-message" class="banner ${this.pickupLine.bad ? 'bad' : 'ok'}" role="${ifDefined(this.pickupLine.bad ? 'alert' : 'status')}">${this.pickupLineWords()}</div>`
+            : this.utilMsg && this.utilWhere === 'foot'
+              ? html`<div id="till-message" class="banner ${this.utilTone}" role="${ifDefined(this.utilTone === 'bad' ? 'alert' : this.utilTone === 'note' && !this.utilLive ? undefined : 'status')}">${this.utilMsg}</div>`
+              : nothing}
 
           
     </div>`;
@@ -5833,12 +6038,17 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     const weights = this.cart.map((l) => this.lineWeight(l));
     const { totalLbs, allKnown } = ticketWeightTotalLbs(weights);
     const anyKnown = weights.some((w) => w !== null);
+    // ui3 visual GAP 2's rule at the ticket line too (ui3d P2-2): the glance derives its figures
+    // from the server's own prices, so while any line's price has not answered neither segment
+    // shows a figure. The building window with the same lines shows neither (its glance never
+    // ran): the two windows agree by the same condition the margin cells read.
+    const ticketPriced = this.hasPricedLine();
     const segs = txbarSegments(
       {
         itemCount: this.cart.length,
         totalWeightLbs: anyKnown ? totalLbs : null,
-        marginBps: this.marginData?.margin_bps,
-        estProfitCents: this.marginData?.est_profit_cents,
+        marginBps: ticketPriced ? this.marginData?.margin_bps : undefined,
+        estProfitCents: ticketPriced ? this.marginData?.est_profit_cents : undefined,
         marginHidden: this.wsMarginHidden,
       },
       money,
@@ -5969,9 +6179,11 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
       </div>
       ${this.cashTenderedDollars.trim() !== ''
         ? html`<div class="cashhint" data-testid="cash-change-preview">
-            ${plan.sendable
-              ? html`Change due <span class="num">${this.moneyOrMarker(plan.changeDueCents)}</span>`
-              : 'Less than the total: the sale rings for the exact total; add more or clear the box.'}
+            ${!this.hasPricedLine()
+              ? html`Change due <span class="num">(not priced)</span>`
+              : plan.sendable
+                ? html`Change due <span class="num">${money(plan.changeDueCents)} (est.)</span>`
+                : 'Less than the total: the sale rings for the exact total; add more or clear the box.'}
           </div>`
         : nothing}`;
   }
@@ -6279,7 +6491,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
              rev 5's honesty stands: an unresolved price says "price pending", never CA$0.00. */ ''}
           ${l.priceMissing
             ? html`<div class="lprice">price pending</div>
-                <div class="ltot">(none)</div>`
+                <div class="ltot">(not priced)</div>`
             : html`<div class="lprice" title=${l.priceUom && l.priceUom !== l.uom ? `Priced per ${l.priceUom}` : 'Unit price'}>
                   ${money(l.unitPriceCents)}${l.priceUom && l.priceUom !== l.uom ? ` / ${l.priceUom}` : ''}
                 </div>
@@ -6288,9 +6500,13 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           <div class="lweight" data-testid="pos-line-weight" title=${w === null ? 'No weight on file for this item' : 'Line weight: quantity × unit weight'}>
             ${w === null ? '(none)' : formatLbs(w)}
           </div>
+          ${/* ui3 visual GAP 2: one rule, both windows agree. The margin glance derives its figures
+               from the server's own prices, so on a pickup whose prices never answer it still
+               returns a percentage for the line: while the line's price has not answered, the cell
+               reads the marker, never a stale or derived figure (the building window's rule). */ ''}
           ${m
             ? html`<div class="lmargin" data-testid="pos-line-margin" title="Gross margin: computed server-side">
-                ${mb === undefined ? '(none)' : formatMargin(mb)}
+                ${mb === undefined || l.priceMissing ? '(none)' : formatMargin(mb)}
               </div>`
             : nothing}
           <button class="rm" @click=${() => this.removeLine(i)} title="Remove line" aria-label="Remove ${l.product.name}">

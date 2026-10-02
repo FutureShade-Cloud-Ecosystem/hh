@@ -5,7 +5,7 @@
 // node --import./src/_ts-js-loader.mjs --test 'src/**/*.test.mjs' (run from app/)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   SPLIT_MIN,
@@ -210,6 +210,23 @@ test('BUDGET: hardcoded hex colour literals in pos-terminal.ts may only FALL (ra
     hexes.length <= 2,
     `pos-terminal.ts hex colour budget is 2 (the pre-existing gold inks); found ${hexes.length}: ${hexes.join(', ')}`,
   );
+});
+
+test('BUDGET: no named colour (white, black) stands in for a role in a colour position, in any ported file', () => {
+  // A keyword is the same hard-coded literal as a hex; the ratchet above would not see it.
+  // A role the design system does not carry is declared LOCAL in styles/tokens.css instead.
+  // Every source file under src/ported is read (not only the terminal), and box-shadow counts.
+  const dir = new URL('./', import.meta.url);
+  const files = readdirSync(fileURLToPath(dir)).filter((f) => f.endsWith('.ts'));
+  assert.ok(files.includes('pos-terminal.ts') && files.length > 20, 'the scan reaches the whole ported directory');
+  const found = [];
+  for (const f of files) {
+    const src = readFileSync(fileURLToPath(new URL(f, dir)), 'utf8');
+    const named = src.match(/(?:color|background|background-color|border(?:-[a-z]+)?|fill|stroke|outline|box-shadow|text-shadow)\s*:[^;{}]*\b(?:white|black)\b/g) ?? [];
+    const mixes = src.match(/color-mix\([^)]*,\s*(?:white|black)\s*\)/g) ?? [];
+    for (const hit of [...named, ...mixes]) found.push(`${f}: ${hit}`);
+  }
+  assert.deepEqual(found, [], 'name a LOCAL role in tokens.css, not a colour keyword');
 });
 
 // ── 0220 · the counter layout rides the same whole-or-absent row ─────────────────────────────────

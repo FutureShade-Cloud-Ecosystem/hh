@@ -264,7 +264,7 @@ test('FLOOR (6): all four fulfilment options are ICON tiles: inline currentColor
  // tile that is still a real target under a thumb.
   assert.match(
     terminalSrc,
-    /\.fulfil \{\s*\n\s*display: grid;\s*\n\s*grid-template-columns: repeat\(auto-fit, minmax\(132px, 1fr\)\);/,
+    /\.fulfil \{\s*\n\s*display: grid;\s*\n\s*grid-template-columns: repeat\(auto-fit, minmax\(112px, 1fr\)\);/,
     'the tiles wrap to the pane they are in rather than to a breakpoint',
   );
   const tile = terminalSrc.slice(terminalSrc.indexOf('.fulfil button {'), terminalSrc.indexOf('.fulfil button svg'));

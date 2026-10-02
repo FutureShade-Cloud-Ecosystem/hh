@@ -321,8 +321,11 @@ export class HosPosCounterSettings extends LitElement {
         color: var(--hos-stone-amber-ink); /* E6: a theme-stable fill pins its theme-stable ink */
       }
       button.go[disabled] {
-        opacity: 0.5;
-        cursor: default;
+        background: transparent;
+        border-color: var(--hos-line);
+        color: var(--hos-text-dim);
+        opacity: 1;
+        cursor: not-allowed;
       }
       .foot {
         display: flex;
