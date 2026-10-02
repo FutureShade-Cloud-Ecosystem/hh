@@ -132,9 +132,9 @@ export class HosPosSignature extends LitElement {
   }
 
   private async capture(): Promise<void> {
- // The gate is enforced HERE as well as on the button's disabled state: a click that arrives some
+    // The gate is enforced HERE as well as on the button's disabled state: a click that arrives some
  // other way must not produce an unaffirmed attestation. (The server refuses it either way: this
- // is the courtesy, not the authority.)
+    // is the courtesy, not the authority.)
     if (!canSubmitAttestation(this.draft)) return;
     this.busy = true;
     this.error = '';

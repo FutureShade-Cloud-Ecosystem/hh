@@ -346,7 +346,7 @@ test("a C01 Holland paver line rings at its rule price with its margin shown, an
   await searchAndAdd(page, "edge", "Edge Restraint 8 ft");
   const edge = page.getByTestId("pos-line-row").filter({ hasText: "Edge Restraint 8 ft" });
   await expect(edge.locator(".lprice")).toHaveText("CA$26.24");
-  await expect(edge.getByTestId("pos-line-margin")).toHaveText(":");
+  await expect(edge.getByTestId("pos-line-margin")).toHaveText("(none)");
 });
 
 test("a ticket parks and resumes with its customer, at the account's price", async ({ page }) => {

@@ -43,7 +43,7 @@ import { rowStripe } from './styles/row-stripe.js';
 export class HosPosLookup extends LitElement {
  /** The branch this terminal is acting for: always sent, never chosen here. */
   @property({ attribute: 'branch-id' }) branchId = '';
- /** The open drawer session, for the "this shift" scope. '' disables that toggle. */
+  /** The open drawer session, for the "this shift" scope. '' disables that toggle. */
   @property({ attribute: 'till-session-id' }) tillSessionId = '';
 
   @state() private scope: 'session' | 'branch' = 'session';
@@ -219,7 +219,7 @@ export class HosPosLookup extends LitElement {
     try {
       this.rows = await lookupSales({
         branch_id: this.branchId,
- // The only difference between the two scopes: a session filter, or none.
+        // The only difference between the two scopes: a session filter, or none.
         till_session_id: this.scope === 'session' ? this.tillSessionId : undefined,
         q: this.term.trim() || undefined,
         from: this.from || undefined,
@@ -245,7 +245,7 @@ export class HosPosLookup extends LitElement {
     }
   }
 
- // reprint runs the DIB-410 flow: fetch the document with the session token, write it into a blank
+  // reprint runs the DIB-410 flow: fetch the document with the session token, write it into a blank
  // window, print. Never a navigation to the API URL: see the class comment.
   private async reprint(row: SaleSummary): Promise<void> {
     this.detailError = '';
@@ -253,7 +253,7 @@ export class HosPosLookup extends LitElement {
       const outcome = await printReceipt(row.sale_id || row.order_id);
       if (!outcome.ok) {
  // The popup-blocker case is the cashier's to fix: say so plainly rather than leaving them
- // looking at a window that never appeared.
+        // looking at a window that never appeared.
         this.detailError = outcome.message;
       }
     } catch (err) {
@@ -274,7 +274,7 @@ export class HosPosLookup extends LitElement {
           <button
             class="${this.scope === 'session' ? 'active' : ''}"
             ?disabled=${noSession}
-            aria-label=${noSession ? 'Open a till session to search this shift' : 'Sales rung on this drawer session'}
+            title=${noSession ? 'Open a till session to search this shift' : 'Sales rung on this drawer session'}
             @click=${() => this.setScope('session')}
           >
             This shift
@@ -295,7 +295,7 @@ export class HosPosLookup extends LitElement {
           .value=${this.term}
           @input=${(e: Event) => (this.term = (e.target as HTMLInputElement).value)}
           @keydown=${(e: KeyboardEvent) => {
- // Enter searches: the counter's hands are on the keyboard, not the mouse.
+            // Enter searches: the counter's hands are on the keyboard, not the mouse.
             if (e.key === 'Enter') void this.search();
           }}
         />

@@ -20,26 +20,26 @@ import { ModalFocus } from './modal-focus.js';
  */
 @customElement('hos-pos-customer-picker')
 export class HosPosCustomerPicker extends LitElement {
- // hint is an optional prompt (e.g. the Charge-Account nudge). Empty = plain picker.
+  // hint is an optional prompt (e.g. the Charge-Account nudge). Empty = plain picker.
   @property({ type: String }) hint = '';
 
- /**
+  /**
  * THE BRANCH THIS TILL IS STANDING IN: DIB-506, and the reason this picker returned nothing.
- *
- * The account search is branch-fenced on the server: the U-park E4 fence 403s a branch-SCOPED
- * caller that names no branch, so `searchCustomers` grew an optional `branchId` and its own
- * docstring says "callers that know their branch must say it". Every other read on this counter
+   *
+   * The account search is branch-fenced on the server: the U-park E4 fence 403s a branch-SCOPED
+   * caller that names no branch, so `searchCustomers` grew an optional `branchId` and its own
+   * docstring says "callers that know their branch must say it". Every other read on this counter
  * says it: the scan box, the search drop, the hot list, the browse grid and the past-sales
  * lookup all take `.branchId` from the terminal: and quote-workarea.ts has passed it to THIS
- * function since DIB-506 landed. The picker was the one caller that did not, which meant an
- * INSIDE_SALES clerk (branch-scoped, and the exact role this screen is for) got a 403 for every
- * search and therefore could not put an account on a sale at all. Empty is still honest: a
- * GLOBAL-scoped caller names no branch and gets the unfiltered sweep, byte for byte as before.
- */
+   * function since DIB-506 landed. The picker was the one caller that did not, which meant an
+   * INSIDE_SALES clerk (branch-scoped, and the exact role this screen is for) got a 403 for every
+   * search and therefore could not put an account on a sale at all. Empty is still honest: a
+   * GLOBAL-scoped caller names no branch and gets the unfiltered sweep, byte for byte as before.
+   */
   @property({ type: String }) branchId = '';
 
  // E6: parent-mounted, so connected IS open. No data-autofocus needed: the search box is already
- // first in DOM order, which is where a cashier wants to be typing the moment this opens.
+  // first in DOM order, which is where a cashier wants to be typing the moment this opens.
   readonly modalFocus = new ModalFocus(this, {
     container: () => this.renderRoot.querySelector<HTMLElement>('.hos-dialog'),
     onEscape: () => this.close(),
@@ -52,22 +52,22 @@ export class HosPosCustomerPicker extends LitElement {
   private debounce = 0;
 
  // ── rev 8 (item 5): the add-new-customer flow: REUSED, not rebuilt. The create door is the
- // EXISTING manager-gated POST /api/v1/customers (M5 Canadian-address validation and all); this
- // panel is only the counter's way to knock on it. No second create path exists.
+  // EXISTING manager-gated POST /api/v1/customers (M5 Canadian-address validation and all); this
+  // panel is only the counter's way to knock on it. No second create path exists.
   @state() private creating = false;
   @state() private newName = '';
   @state() private newAccountNo = '';
   @state() private newType = 'CONTRACTOR';
   @state() private createBusy = false;
- /**
- * DIB-636. Set when the create form is left while a POST is still in flight. The counter carries
- * the same defect as the shared picker and gets the same two layers; see customer-picker.ts for
- * the full account, including which gesture actually reaches this and which two do not. The
+  /**
+   * DIB-636. Set when the create form is left while a POST is still in flight. The counter carries
+   * the same defect as the shared picker and gets the same two layers; see customer-picker.ts for
+   * the full account, including which gesture actually reaches this and which two do not. The
  * request cannot be recalled: this only stops the answer selecting itself into a form the user
- * has walked away from, and clears the fields so a reopen cannot ask for the account twice.
- */
+   * has walked away from, and clears the fields so a reopen cannot ask for the account twice.
+   */
   private createAbandoned = false;
- /** Set when an abandoned create nevertheless succeeded; shown once on the next open. */
+  /** Set when an abandoned create nevertheless succeeded; shown once on the next open. */
   @state() private abandonedNotice = '';
   @state() private createError = '';
 
@@ -308,7 +308,7 @@ export class HosPosCustomerPicker extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
- // Autofocus the search input once rendered.
+    // Autofocus the search input once rendered.
     this.updateComplete.then(() => {
       const el = this.renderRoot.querySelector<HTMLInputElement>('input.search');
       el?.focus();
@@ -337,7 +337,7 @@ export class HosPosCustomerPicker extends LitElement {
     this.busy = true;
     this.error = '';
     try {
- // DIB-506: name the branch. See the branchId property for why the omission was the whole bug.
+      // DIB-506: name the branch. See the branchId property for why the omission was the whole bug.
       this.results = await searchCustomers(q, 20, this.branchId);
     } catch (err) {
       this.error = this.searchRefusal(err);
@@ -347,15 +347,15 @@ export class HosPosCustomerPicker extends LitElement {
     }
   }
 
- /**
- * A REFUSAL IN COUNTER WORDS, never a wire status.
- *
+  /**
+   * A REFUSAL IN COUNTER WORDS, never a wire status.
+   *
  * `searchCustomers` throws `customer search 403`: the literal HTTP number: and this panel used
- * to hand that straight to a role="alert" for a person standing at a till with a customer in
- * front of them to read aloud. Every line here is the D-107 shape: what is missing, what that
- * means for THIS sale, and the way forward. The way forward is always real on this screen,
- * because walk-in is one row above the message.
- */
+   * to hand that straight to a role="alert" for a person standing at a till with a customer in
+   * front of them to read aloud. Every line here is the D-107 shape: what is missing, what that
+   * means for THIS sale, and the way forward. The way forward is always real on this screen,
+   * because walk-in is one row above the message.
+   */
   private searchRefusal(err: unknown): string {
     const raw = err instanceof Error ? err.message : '';
     if (/\b40[13]\b/.test(raw)) {
@@ -412,16 +412,16 @@ export class HosPosCustomerPicker extends LitElement {
     this.dispatchEvent(new CustomEvent('hos-customer-picker-close', { bubbles: true, composed: true }));
   }
 
- // ── rev 8 (item 5): drive the EXISTING create endpoint, then select the new account ───────────
+  // ── rev 8 (item 5): drive the EXISTING create endpoint, then select the new account ───────────
 
   private toggleCreate(): void {
- // DIB-636 · leaving a create in flight abandons it. The create toggle is the one control
- // still enabled while the POST is in the air; see the field's own comment for why the other
- // two gestures an earlier note claimed do not reach here.
+    // DIB-636 · leaving a create in flight abandons it. The create toggle is the one control
+    // still enabled while the POST is in the air; see the field's own comment for why the other
+    // two gestures an earlier note claimed do not reach here.
     if (this.createBusy && this.creating) this.createAbandoned = true;
     this.creating = !this.creating;
- // A notice from a create the person walked away from outlives this reset, and is shown
- // once on the next open. Everything else about the previous attempt is cleared.
+    // A notice from a create the person walked away from outlives this reset, and is shown
+    // once on the next open. Everything else about the previous attempt is cleared.
     this.createError = this.abandonedNotice;
     this.abandonedNotice = '';
     if (this.creating) {
@@ -431,10 +431,10 @@ export class HosPosCustomerPicker extends LitElement {
     }
   }
 
- /**
- * The account number the counter offers by default: derived from the name (a recognisable
+  /**
+   * The account number the counter offers by default: derived from the name (a recognisable
  * "CUST-" slug) but fully editable: the SERVER is the authority (409 on a duplicate, in words).
- */
+   */
   private suggestAccountNo(): void {
     if (this.newAccountNo.trim() !== '') return;
     const slug = this.newName
@@ -474,7 +474,7 @@ export class HosPosCustomerPicker extends LitElement {
           const body = (await res.json()) as { error?: string; detail?: string };
           msg = body.detail || body.error || msg;
         } catch {
- /* keep the fallback wording */
+          /* keep the fallback wording */
         }
         this.createError = msg;
         return;
@@ -489,14 +489,14 @@ export class HosPosCustomerPicker extends LitElement {
         balance_cents?: number;
       };
  // The new account is the answer to the picker's own question: select it,
- // unless nobody is waiting for the answer any more (DIB-636).
+      // unless nobody is waiting for the answer any more (DIB-636).
       if (this.createAbandoned) {
- // The account EXISTS now. Leaving the form did not stop the request and nothing here
- // can, so the only question is what the person finds when they come back. Before this,
- // the fields kept their values: reopening and pressing Create again asked the server to
- // make an account that had just been made, and the counter person was told to "pick
- // another account number" for an account they were never told about. The form is
- // cleared and the next open says what happened, once.
+        // The account EXISTS now. Leaving the form did not stop the request and nothing here
+        // can, so the only question is what the person finds when they come back. Before this,
+        // the fields kept their values: reopening and pressing Create again asked the server to
+        // make an account that had just been made, and the counter person was told to "pick
+        // another account number" for an account they were never told about. The form is
+        // cleared and the next open says what happened, once.
         this.abandonedNotice = `${acctBody.name} was created while you were away. Search for it by name.`;
         this.newName = '';
         this.newAccountNo = '';
@@ -519,7 +519,7 @@ export class HosPosCustomerPicker extends LitElement {
     }
   }
 
- /** rev 8 (item 5): the minimal create form over the existing endpoint (name, account #, type). */
+  /** rev 8 (item 5): the minimal create form over the existing endpoint (name, account #, type). */
   private renderCreateForm() {
     return html`<div class="createform" data-testid="customer-create-form" role="group" aria-label="New customer account">
       ${this.createError ? html`<div class="banner bad" role="alert">${this.createError}</div>` : nothing}

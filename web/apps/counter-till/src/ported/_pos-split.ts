@@ -22,13 +22,13 @@ export interface DraftLeg {
 
 /** The live state of a split as the cashier types it. */
 export interface SplitState {
- /** Σ legs. */
+  /** Σ legs. */
   tenderedCents: number;
- /** total − tendered. Positive = still owed, negative = over-tendered. */
+  /** total − tendered. Positive = still owed, negative = over-tendered. */
   remainingCents: number;
- /** True only when the legs settle the sale exactly AND the shape is legal. */
+  /** True only when the legs settle the sale exactly AND the shape is legal. */
   ready: boolean;
- /** Why it is not ready, in words a cashier can act on. '' when ready. */
+  /** Why it is not ready, in words a cashier can act on. '' when ready. */
   problem: string;
 }
 

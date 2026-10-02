@@ -35,18 +35,18 @@
 export type QuickStartMode =
  /** Nothing to lose: reset now, no prompt. */
   | 'fresh'
- /** Lines are on the ticket: offer Continue or Park it. NEVER a discard. */
+  /** Lines are on the ticket: offer Continue or Park it. NEVER a discard. */
   | 'park-or-continue'
- /** No lines to park, but real work to lose: offer Continue or an explicit, named clear. */
+  /** No lines to park, but real work to lose: offer Continue or an explicit, named clear. */
   | 'confirm-or-continue';
 
 /** The live terminal state the decision reads. Deliberately primitives: no Lit, no cart type. */
 export interface LiveTicket {
- /** Number of priced lines on the ticket. */
+  /** Number of priced lines on the ticket. */
   lineCount: number;
- /** True when a customer account is selected (not walk-in). */
+  /** True when a customer account is selected (not walk-in). */
   hasCustomer: boolean;
- /** True when notes, a requested date, or anything else typed is present. */
+  /** True when notes, a requested date, or anything else typed is present. */
   hasOtherWork: boolean;
 }
 

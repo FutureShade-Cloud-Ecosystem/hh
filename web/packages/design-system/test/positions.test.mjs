@@ -637,10 +637,22 @@ test('the ported surface allowance is narrow: the directory, the names, and noth
   assert.ok(refusalsOf(partial, PORTED_FILE).length > 0, 'a partial unquoted value must stay refused inside the prefix');
 
   // style is the one deliberate admission past the gate's own refusal, inside
-  // the prefix only.
+  // the prefix only, quoted or whole-unquoted: the panels' geometry binds it
+  // whole, and product-thumb's box size is a quoted value with bindings in it.
   const style = `html\`<div style=\${'left: 4px'}>t</div>\``;
   assert.ok(refusalsOf(style, HH_FILE).length > 0, 'a style binding outside the prefix must stay refused');
   assert.deepEqual(refusalsOf(style, PORTED_FILE), [], "a style binding inside the prefix is the ruling's allowance");
+  const partialStyle = `html\`<div style="width:\${'8px'};height:\${'8px'}">t</div>\``;
+  assert.ok(refusalsOf(partialStyle, HH_FILE).length > 0, 'a quoted partial style outside the prefix must stay refused');
+  assert.deepEqual(refusalsOf(partialStyle, PORTED_FILE), [], 'a quoted partial style inside the prefix is allowed');
+
+  // src is admitted as ONE whole value inside the prefix only: the thumbnail
+  // route, and never reassembled from parts.
+  const srcWhole = `html\`<img src=\${'x'}>\``;
+  assert.ok(refusalsOf(srcWhole, HH_FILE).length > 0, 'an src binding outside the prefix must stay refused');
+  assert.deepEqual(refusalsOf(srcWhole, PORTED_FILE), [], 'a whole src binding inside the prefix is allowed');
+  const srcPartial = `html\`<img src="/api/v1/products/\${'x'}/image">\``;
+  assert.ok(refusalsOf(srcPartial, PORTED_FILE).length > 0, 'a src reassembled from parts must stay refused inside the prefix');
 });
 
 test('no walked file of this package imports anything the import list does not name', () => {

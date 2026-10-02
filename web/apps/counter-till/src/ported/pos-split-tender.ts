@@ -4,6 +4,7 @@ import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { focusRing } from './styles/focus-ring.js';
 import { drawIcon, iconForId } from './_icon-consumer.js';
+import { plainDollars } from './_money-format.js'; // HH note: the display spelling lives in the named helper (CLOSURE.md)
 import {
   evaluateSplit,
   autoFillRemainder,
@@ -35,17 +36,17 @@ import {
  */
 @customElement('hos-pos-split-tender')
 export class HosPosSplitTender extends LitElement {
- /** The sale total the legs must settle, in cents. */
+  /** The sale total the legs must settle, in cents. */
   @property({ type: Number, attribute: 'total-cents' }) totalCents = 0;
  /** Whether an account is selected: an ACCOUNT leg needs one. */
   @property({ type: Boolean, attribute: 'has-customer' }) hasCustomer = false;
- /** Name of the selected account, for the on-screen confirmation of what gets charged. */
+  /** Name of the selected account, for the on-screen confirmation of what gets charged. */
   @property({ attribute: 'customer-name' }) customerName = '';
- /** Disables the controls while the parent's ring is in flight. */
+  /** Disables the controls while the parent's ring is in flight. */
   @property({ type: Boolean }) busy = false;
 
- // Two legs is the smallest legal split, so the panel opens ready to be typed into rather than
- // making the cashier click "add tender" twice before anything can happen.
+  // Two legs is the smallest legal split, so the panel opens ready to be typed into rather than
+  // making the cashier click "add tender" twice before anything can happen.
   @state() private legs: { method: DraftLeg['method']; raw: string }[] = [
     { method: 'CASH', raw: '' },
     { method: 'CARD', raw: '' },
@@ -110,7 +111,7 @@ export class HosPosSplitTender extends LitElement {
         font-family: inherit;
         cursor: pointer;
       }
- /* vertical-align: middle on the drawn glyph keeps the icon on the
+      /* vertical-align: middle on the drawn glyph keeps the icon on the
       text middle and the line box the character left behind, so the button keeps its exact
       height (PR 55 review round; the quick-action-bar precedent centers, this keeps the box) */
       button svg {
@@ -172,7 +173,7 @@ export class HosPosSplitTender extends LitElement {
     `,
   ];
 
- /** draft maps the typed rows onto the pure arithmetic's input shape. */
+  /** draft maps the typed rows onto the pure arithmetic's input shape. */
   private draft(): DraftLeg[] {
     return this.legs.map((l) => ({ method: l.method, amountCents: parseAmountCents(l.raw) }));
   }
@@ -195,8 +196,8 @@ export class HosPosSplitTender extends LitElement {
   }
 
   private removeLeg(i: number): void {
- // Two is the floor: dropping to one would silently turn a split into an ordinary sale with the
- // panel still open, which is a confusing state to be in when you press Ring.
+    // Two is the floor: dropping to one would silently turn a split into an ordinary sale with the
+    // panel still open, which is a confusing state to be in when you press Ring.
     if (this.legs.length <= 2) return;
     this.legs = this.legs.filter((_, n) => n !== i);
   }
@@ -204,7 +205,7 @@ export class HosPosSplitTender extends LitElement {
  /** fill puts exactly what is left into one leg: the counter's whole reason to trust this panel. */
   private fill(i: number): void {
     const cents = autoFillRemainder(this.draft(), this.totalCents, i);
-    this.setAmount(i, (cents / 100).toFixed(2));
+    this.setAmount(i, plainDollars(cents));
   }
 
   private ring(): void {

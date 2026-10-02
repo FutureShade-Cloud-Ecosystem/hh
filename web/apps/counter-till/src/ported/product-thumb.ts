@@ -27,16 +27,16 @@ import { productImageUrl } from './pos-api.js';
  */
 @customElement('hos-product-thumb')
 export class HosProductThumb extends LitElement {
- /** The product whose thumbnail to show. */
+  /** The product whose thumbnail to show. */
   @property({ attribute: 'product-id' }) productId = '';
  /** Alt text: the product name. Required for a meaningful image; '' marks it decorative. */
   @property() alt = '';
- /** Edge length in px. 40 suits a table row, 96 a search tile. */
+  /** Edge length in px. 40 suits a table row, 96 a search tile. */
   @property({ type: Number }) size = 40;
- /**
- * Known-ahead-of-time image presence. undefined = "try and see"; false skips the request; true is
+  /**
+   * Known-ahead-of-time image presence. undefined = "try and see"; false skips the request; true is
  * a hint only: the error fallback still applies if the byte route disagrees.
- */
+   */
   @property({ type: Boolean, attribute: 'has-image' }) hasImage?: boolean;
 
   @state() private failed = false;
@@ -60,7 +60,7 @@ export class HosProductThumb extends LitElement {
       object-fit: cover;
       display: block;
     }
- /* The placeholder mark: a stacked-stone silhouette in the dim text colour. Deliberately low
+    /* The placeholder mark: a stacked-stone silhouette in the dim text colour. Deliberately low
        contrast: it is an absence, and should not compete with the product name beside it. */
     svg {
       width: 60%;
@@ -71,13 +71,13 @@ export class HosProductThumb extends LitElement {
   `;
 
   private onError(): void {
- // One-way latch: once the byte route has said no, stop asking on every re-render.
+    // One-way latch: once the byte route has said no, stop asking on every re-render.
     this.failed = true;
   }
 
   protected willUpdate(changed: Map<string, unknown>): void {
  // A new product gets a fresh chance: otherwise a list that reuses this element for row 2 would
- // inherit row 1's failure and show a placeholder for a product that does have a picture.
+    // inherit row 1's failure and show a placeholder for a product that does have a picture.
     if (changed.has('productId')) this.failed = false;
   }
 
@@ -98,8 +98,8 @@ export class HosProductThumb extends LitElement {
   }
 
   private placeholder() {
- // aria-hidden + role=img on the wrapper would double-announce; the box carries the product name
- // in the row beside it, so the absence itself needs no announcement.
+    // aria-hidden + role=img on the wrapper would double-announce; the box carries the product name
+    // in the row beside it, so the absence itself needs no announcement.
     return html`<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <rect x="2" y="14" width="20" height="5" rx="1" stroke="currentColor" stroke-width="1.5" />
       <rect x="4" y="9" width="16" height="5" rx="1" stroke="currentColor" stroke-width="1.5" />

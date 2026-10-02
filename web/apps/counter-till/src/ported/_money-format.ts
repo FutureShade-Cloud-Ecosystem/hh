@@ -43,3 +43,15 @@ export function centsAmount(cents: number): string {
     maximumFractionDigits: 2,
   });
 }
+
+/**
+ * The PLAIN shape some surfaces need: integer cents in, `12.34` out, ungrouped,
+ * the value the counter types back into an amount box or reads beside a middot.
+ * HH note: this is the ported surface's named display helper for that shape,
+ * consolidated here so the arithmetic spelling lives in one reviewed file
+ * (CLOSURE.md names it); the relief dialog and the split panel's fill render
+ * through it instead of dividing inline.
+ */
+export function plainDollars(cents: number): string {
+  return (cents / 100).toFixed(2);
+}

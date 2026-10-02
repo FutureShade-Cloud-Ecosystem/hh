@@ -32,20 +32,20 @@ import type { FlowStep, FlowStepId } from './_pos-flow.js';
  */
 @customElement('hos-pos-flow-steps')
 export class HosPosFlowSteps extends LitElement {
- /** The derived steps (deriveFlow output). Order is the render order. */
+  /** The derived steps (deriveFlow output). Order is the render order. */
   @property({ attribute: false }) steps: FlowStep[] = [];
 
- /**
- * Does this mount have an order? True at the counter, where the steps front an accordion that
- * opens one card at a time; false on the quote builder, which is one page. See the file header.
- */
+  /**
+   * Does this mount have an order? True at the counter, where the steps front an accordion that
+   * opens one card at a time; false on the quote builder, which is one page. See the file header.
+   */
   @property({ type: Boolean }) sequential = true;
 
- /**
- * The nav's accessible name. It defaults to the counter's, because the counter is what this was
+  /**
+   * The nav's accessible name. It defaults to the counter's, because the counter is what this was
  * built for: but a screen that is not a sale must say so, or a screen reader announces "Sale
- * progress" over a quote.
- */
+   * progress" over a quote.
+   */
   @property() navLabel = 'Sale progress';
 
   static styles = [
@@ -100,7 +100,7 @@ export class HosPosFlowSteps extends LitElement {
         font-size: 11px;
         color: var(--hos-text-dim);
       }
- /* CURRENT IS A STATE, AND A STATE IS NOT THE COMMIT ACTION.
+      /* CURRENT IS A STATE, AND A STATE IS NOT THE COMMIT ACTION.
          This was the gold PILL: --hos-stone-amber as a background fill. Measured on a cold
          counter that put exactly three gold fills on one screen (the shell's brand mark, this chip
          and + New Sale), two of them belonging to POS, and one of those two was an indicator
@@ -118,7 +118,7 @@ export class HosPosFlowSteps extends LitElement {
         border-color: var(--hos-stone-amber);
         color: var(--hos-stone-amber-text);
       }
- /* Complete (and not current): the check in success ink; the label brightens to full text. */
+      /* Complete (and not current): the check in success ink; the label brightens to full text. */
       button.complete {
         color: var(--hos-text);
       }

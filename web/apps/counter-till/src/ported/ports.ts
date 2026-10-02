@@ -647,6 +647,18 @@ export function ticketTotalCents(subtotalCents: number, taxCents: number): numbe
 
 /**
  * One line's contribution to what the ticket saves against retail, as the
+ * server priced it: the per-line saving times that line's quantity. The
+ * multiplication is money arithmetic, so the host owns it, exactly as it owns
+ * the footer's summed figure (sumLineSavingCents, below). A value the engine
+ * did not answer contributes nothing rather than a guess.
+ */
+export function perLineSavingCents(savingCents: number, qty: number): number {
+  if (!Number.isFinite(savingCents) || !Number.isFinite(qty)) return 0;
+  return savingCents * qty;
+}
+
+/**
+ * One line's contribution to what the ticket saves against retail, as the
  * server priced it: the per-line saving times the quantity, summed. A line
  * the engine could not answer contributes nothing: it does not contribute a
  * guess, and it does not blank the total for the lines that DID answer.
@@ -753,6 +765,46 @@ export function writePanelLayoutRaw(key: string, value: string): void {
 /** Forget the layout under this key; the next read returns the default tiling. */
 export function clearPanelLayoutRaw(key: string): void {
   panelStore.delete(key);
+}
+
+/**
+ * The catalogue's active products, as the POS module's list route answers.
+ * The reference fetched this route with a bare browser call that carried no
+ * bearer and no organisation header; in HH every ported request rides the
+ * host's one authed helper (api, above), so the seam carries the list whole.
+ */
+export async function listProducts(): Promise<import('./pos-api.js').PosProduct[]> {
+  const res = await api('/api/v1/products?active=true');
+  if (!res.ok) throw new Error(`products ${res.status}`);
+  return (await res.json()) as import('./pos-api.js').PosProduct[];
+}
+
+/**
+ * Put one product's photo bytes. Not the json door: this route reads the raw
+ * image bytes and validates the declared content type against an allowlist,
+ * so a JSON content type would make every upload a 415; the session token and
+ * the organisation header travel the same way api() sends them, from the
+ * host's own header provider.
+ */
+export async function putProductImage(productId: string, file: File): Promise<Response> {
+  if (host === null) return unwired('putProductImage');
+  const headers = new Headers(await host.headers());
+  headers.set('Content-Type', file.type || 'image/png');
+  return fetch(`/api/v1/products/${encodeURIComponent(productId)}/image?alt=${encodeURIComponent(file.name)}`, {
+    method: 'PUT',
+    headers,
+    body: file,
+  });
+}
+
+/**
+ * The receipt window opener. The reference opened a blank same-origin window
+ * here by hand; window surgery around printing is the host's, like the write
+ * itself (printReceiptInto).
+ */
+export function openBlankWindow(): import('./receipt-print-logic.js').ReceiptWindow | null {
+  if (typeof window === 'undefined') return null;
+  return window.open('', '_blank') as unknown as import('./receipt-print-logic.js').ReceiptWindow | null;
 }
 
 // ---------------------------------------------------------------------------

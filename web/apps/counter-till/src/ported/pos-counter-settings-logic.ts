@@ -93,8 +93,8 @@ export const POS_HISTORY_WORDS: SettingsVocabulary = Object.freeze({
     workspace_arrangement: ARRANGEMENT_WORDS,
     margin_visibility: VISIBILITY_WORDS,
     balance_visibility: VISIBILITY_WORDS,
- // restocking_fee_bps and workspace_split_pct are integers, and a number is already the word for
+    // restocking_fee_bps and workspace_split_pct are integers, and a number is already the word for
  // itself. quick_chip_set is a dealer's OWN category names joined by the server: translating a
- // dealer's word would be this app deciding it knows what they meant.
+    // dealer's word would be this app deciding it knows what they meant.
   }),
 });

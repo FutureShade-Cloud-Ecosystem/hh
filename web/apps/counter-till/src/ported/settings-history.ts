@@ -83,7 +83,7 @@ export class HosSettingsHistory extends LitElement {
         color: var(--hos-text-dim);
         padding: 6px 0;
       }
- /* Wide content scrolls INSIDE its own box. Five columns of words on a 390px surface must not
+      /* Wide content scrolls INSIDE its own box. Five columns of words on a 390px surface must not
          push the settings page sideways under the reader's thumb. */
       .wrap {
         overflow-x: auto;
@@ -99,20 +99,20 @@ export class HosSettingsHistory extends LitElement {
         text-align: left;
         padding: 5px 8px;
         border-bottom: 1px solid var(--hos-line);
- /* TOP, not baseline. Four of the five columns wrap, and rows of different heights that
+        /* TOP, not baseline. Four of the five columns wrap, and rows of different heights that
            bottom-align turn a dense table into a ragged one. */
         vertical-align: top;
       }
- /*
- * THE COLUMN WIDTHS ARE MINIMUMS, NOT FIXED SHARES, and they were measured on the narrowest
- * place this panel renders: the counter settings modal, which is roughly half the width of the
+      /*
+       * THE COLUMN WIDTHS ARE MINIMUMS, NOT FIXED SHARES, and they were measured on the narrowest
+       * place this panel renders: the counter settings modal, which is roughly half the width of the
  * receivables page. With no minimums the word columns shredded to one word a line: "Every /
  * staff / member" over three rows: while the By column, holding a full display name plus a
- * role in parentheses, stayed on one line and pushed the timestamp out of the panel entirely.
- * A minimum per column lets the browser wrap where wrapping is cheap and keeps the table
- * inside the panel; the scroll container above is the honest fallback for the widths that
- * genuinely do not fit.
- */
+       * role in parentheses, stayed on one line and pushed the timestamp out of the panel entirely.
+       * A minimum per column lets the browser wrap where wrapping is cheap and keeps the table
+       * inside the panel; the scroll container above is the honest fallback for the widths that
+       * genuinely do not fit.
+       */
       td.rule {
         min-width: 12ch;
       }
@@ -141,25 +141,25 @@ export class HosSettingsHistory extends LitElement {
  /** The recorded changes, newest first: exactly as all three servers serve them. */
   @property({ attribute: false }) rows: PolicyChangeRow[] = [];
 
- /** This screen's own words for its knobs and their values. */
+  /** This screen's own words for its knobs and their values. */
   @property({ attribute: false }) vocabulary: SettingsVocabulary = { rule: {}, value: {} };
 
- /** The server's sentence when the read failed. '' means it did not. */
+  /** The server's sentence when the read failed. '' means it did not. */
   @property({ type: String }) fault = '';
 
- /** Re-runs the host's read. Omitted only where there is genuinely nothing to retry. */
+  /** Re-runs the host's read. Omitted only where there is genuinely nothing to retry. */
   @property({ attribute: false }) retry?: () => void;
 
- /** True while the host is re-reading, so the retry cannot be pressed twice. */
+  /** True while the host is re-reading, so the retry cannot be pressed twice. */
   @property({ type: Boolean }) busy = false;
 
- /**
+  /**
  * What these rules ARE, in the dealer's terms: "the counter rules", "the receivables rules".
- *
- * It is one noun phrase and not a whole empty-state sentence because the sentence is the same on
- * every settings screen and saying it once here is the point of sharing the component; what
- * legitimately differs is which rules the reader is standing in front of.
- */
+   *
+   * It is one noun phrase and not a whole empty-state sentence because the sentence is the same on
+   * every settings screen and saying it once here is the point of sharing the component; what
+   * legitimately differs is which rules the reader is standing in front of.
+   */
   @property({ type: String }) subject = 'these rules';
 
  /** The disclosure's own label. One or two words: it is chrome, not copy. */

@@ -40,13 +40,13 @@ import type { FlowStepId } from './_pos-flow.js';
 export class HosPosStepCard extends LitElement {
  /** Which step this card is: supplies the header/region ids the ARIA pair points at. */
   @property({ attribute: false }) step: FlowStepId = 'customer';
- /** The step's number in the flow (1-4). Presentational; the flow derives it. */
+  /** The step's number in the flow (1-4). Presentational; the flow derives it. */
   @property({ type: Number }) n = 1;
- /** The step's name. 1-2 words, per the text budget. */
+  /** The step's name. 1-2 words, per the text budget. */
   @property({ type: String }) label = '';
  /** The sale data satisfies this step: a CHECK MARK, never a lock (deriveFlow decides). */
   @property({ type: Boolean }) complete = false;
- /** This card is the expanded one. */
+  /** This card is the expanded one. */
   @property({ type: Boolean, reflect: true }) open = false;
  /** The one fact a CLOSED card still shows. Empty renders nothing at all: never a placeholder. */
   @property({ type: String }) summary = '';
@@ -66,7 +66,7 @@ export class HosPosStepCard extends LitElement {
         box-shadow: var(--hos-elev-1);
         overflow: hidden;
       }
- /* The OPEN card is the work; the closed ones are a list. One hairline of extra emphasis
+      /* The OPEN card is the work; the closed ones are a list. One hairline of extra emphasis
          (the stone-amber edge) says which is which without a second accent: gold stays with the
          one commit action on the screen. */
       :host([open]) .card {
@@ -91,12 +91,12 @@ export class HosPosStepCard extends LitElement {
         text-align: left;
         cursor: pointer;
       }
- /* The hover is the page ground showing through the card, not a new colour: it reads as the
+      /* The hover is the page ground showing through the card, not a new colour: it reads as the
          header lifting off the card rather than as a second surface entering the palette. */
       .head:hover {
         background: var(--hos-deep-earth);
       }
- /* The step number, or a check once the sale data satisfies the step. The check is the
+      /* The step number, or a check once the sale data satisfies the step. The check is the
          success ink and is paired with the step's own label: colour never carries it alone. */
       .no {
         flex: none;
@@ -124,7 +124,7 @@ export class HosPosStepCard extends LitElement {
       .label {
         flex: none;
       }
- /* The collapsed fact. Dim and right-aligned so the open card's content still reads first,
+      /* The collapsed fact. Dim and right-aligned so the open card's content still reads first,
          but never truncated to nothing: a summary that says half a customer name is worse than
          none. Money and counts ride the mono face like every other figure in the app. */
       .sum {
@@ -151,7 +151,7 @@ export class HosPosStepCard extends LitElement {
           transition: none;
         }
       }
- /* The step's state in words, for a reader who cannot see the check mark or the open edge.
+      /* The step's state in words, for a reader who cannot see the check mark or the open edge.
          Colour and shape never carry meaning alone: the doctrine's a11y non-negotiable. */
       .visually-hidden {
         position: absolute;
@@ -167,7 +167,7 @@ export class HosPosStepCard extends LitElement {
       .body {
         padding: 0 var(--hos-space-4) var(--hos-space-4);
         border-top: 1px solid var(--hos-line);
- /* The region takes programmatic focus (the honest fallback when a step's first meaningful
+        /* The region takes programmatic focus (the honest fallback when a step's first meaningful
            control has not mounted) and must not paint a ring for a mouse click that landed in it. */
         outline: none;
       }

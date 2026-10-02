@@ -72,7 +72,7 @@ export function clockLabel(now: Date): string {
 // The glance carries weight_kg_per_base (products.weight_per_unit_kg: kg per BASE unit) plus the
 // unit meta the stock line already uses. A line's weight is qty × (base units per line unit) ×
 // kg-per-base × KG_PER_LB⁻¹: and it exists ONLY when every factor is honestly known:
-// • no weight on file → null (the column shows an em-dash)
+// • no weight on file → null (the column shows the blank word)
 // • line unit is the base unit → factor 1
 // • line unit is the sell unit → the glance's sell_factor, only when > 0
 // • any other unit / factor 0 → null (never divided-or-multiplied by a guess)
@@ -80,11 +80,11 @@ export function clockLabel(now: Date): string {
 export const LBS_PER_KG = 2.20462;
 
 export interface LineWeightFacts {
- /** kg per BASE unit; 0/undefined = no weight on file. */
+  /** kg per BASE unit; 0/undefined = no weight on file. */
   weightKgPerBase: number | undefined;
   baseUom: string;
   sellUom: string;
- /** base units per ONE sell unit; 0 = no conversion on file. */
+  /** base units per ONE sell unit; 0 = no conversion on file. */
   sellFactor: number;
 }
 
@@ -130,13 +130,13 @@ export function marginPctLabel(bps: number): string {
 
 export interface TxbarFacts {
   itemCount: number;
- /** Total known weight in lbs; null when NO line has a weight (the segment then reads ":"). */
+ /** Total known weight in lbs; null when NO line has a weight (the segment then reads "(not weighed)"). */
   totalWeightLbs: number | null;
  /** Server margin bps: undefined when the role-gated data is absent. */
   marginBps: number | undefined;
  /** Server est. profit cents: undefined when absent. */
   estProfitCents: number | undefined;
- /** The per-user quick-hide (eye) toggle. */
+  /** The per-user quick-hide (eye) toggle. */
   marginHidden: boolean;
 }
 

@@ -240,13 +240,16 @@ export interface StoredPanels {
  */
 export const PANELS_KEY = 'hos-pos-panels-v1';
 
-/** readPanels: whatever this device remembers, or null. A store that throws answers null.
- * HH note: the reference read the browser's local store here; the ported module asks the host
- * seam instead (ports.ts, named in CLOSURE.md), same key, same raw-string contract. */
+/** readPanels: whatever this device remembers, or null.
+ * HH note: the reference read the browser's local store here and caught everything; the seam
+ * call stands OUTSIDE the catch on purpose, so an unwired host refuses loudly (the port
+ * message, ports.ts), and the catch answers null only for a store entry the parser cannot
+ * read: a hand-edited or half-written layout takes the default tiling, as the reference's own
+ * comment promised (ports.ts, named in CLOSURE.md). */
 export function readPanels(): StoredPanels | null {
+  const raw = readPanelLayoutRaw(PANELS_KEY);
+  if (!raw) return null;
   try {
-    const raw = readPanelLayoutRaw(PANELS_KEY);
-    if (!raw) return null;
     const parsed = JSON.parse(raw) as { boxes?: unknown; order?: unknown };
     if (!parsed || typeof parsed !== 'object') return null;
     return {
@@ -258,20 +261,17 @@ export function readPanels(): StoredPanels | null {
   }
 }
 
-/** writePanels: best effort. A private window whose store refuses just forgets, silently. */
+/** writePanels: persist the layout under the versioned key.
+ * HH note: no catch here. The reference swallowed store failures because its own store could
+ * throw; the seam's contract is to refuse loudly until wired (ports.ts), and whether a
+ * refusing store is fatal or best effort is the host implementation's decision, not this
+ * module's silence. */
 export function writePanels(v: StoredPanels): void {
-  try {
-    writePanelLayoutRaw(PANELS_KEY, JSON.stringify(v));
-  } catch {
- /* a layout is not worth an error on a till */
-  }
+  writePanelLayoutRaw(PANELS_KEY, JSON.stringify(v));
 }
 
-/** clearPanels: Reset layout. The next read returns the default tiling for the current area. */
+/** clearPanels: Reset layout. The next read returns the default tiling for the current area.
+ * HH note: unguarded, for the same ground as writePanels. */
 export function clearPanels(): void {
-  try {
-    clearPanelLayoutRaw(PANELS_KEY);
-  } catch {
- /* as above */
-  }
+  clearPanelLayoutRaw(PANELS_KEY);
 }

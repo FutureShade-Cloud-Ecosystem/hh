@@ -7,6 +7,7 @@ import {
   availableCreditCents,
   cartSubtotalCents,
   depositCentsFromTyped,
+  perLineSavingCents,
   sumLineSavingCents,
   ticketTaxCents,
   ticketTotalCents,
@@ -200,24 +201,24 @@ export interface PosOrderSnapshot {
   fulfilment: string;
   tillSessionId: string;
   sessionStartMs: number;
- // ── DIB-488 (both optional so an older snapshot restores cleanly) ──
- /** The operator explicitly confirmed the walk-in posture (sale-session data the flow derives from). */
+  // ── DIB-488 (both optional so an older snapshot restores cleanly) ──
+  /** The operator explicitly confirmed the walk-in posture (sale-session data the flow derives from). */
   walkInConfirmed?: boolean;
- /** The chosen tender tile ('' = none yet). */
+  /** The chosen tender tile ('' = none yet). */
   payMethod?: string;
- /** The operator actually PICKED a tender (as opposed to riding the cash default). */
+  /** The operator actually PICKED a tender (as opposed to riding the cash default). */
   tenderConfirmed?: boolean;
  // ── DIB-488 rev 6 (all optional: an older snapshot restores cleanly) ──
- /** Item D: the optional PO / job reference typed under More options. */
+  /** Item D: the optional PO / job reference typed under More options. */
   poJobRef?: string;
- /** Item D: the credited salesperson ('' = the signed-in operator's default applies). */
+  /** Item D: the credited salesperson ('' = the signed-in operator's default applies). */
   salespersonId?: string;
- /** Item F: the optional cash-tendered quick entry (dollars, as typed). */
+  /** Item F: the optional cash-tendered quick entry (dollars, as typed). */
   cashTenderedDollars?: string;
  // ── DIB-488 rev 8 (item 11, all optional: an older snapshot restores cleanly) ──
- /** The job-site address typed under More options. */
+  /** The job-site address typed under More options. */
   jobAddress?: string;
- /** The job reference typed under More options. */
+  /** The job reference typed under More options. */
   jobReference?: string;
 }
 
@@ -239,24 +240,24 @@ const LINE_FLASH_MS = 1600;
 @customElement('hos-pos-terminal')
 export class HosPosTerminal extends LitElement {
   @state() private cart: CartLine[] = [];
- /**
+  /**
  * DIB-DUPLINE: the ticket line an add just touched, or -1. Presentation only: deliberately NOT
- * a field on CartLine, so the till snapshot never rehydrates mid-flash and the merge rule's
- * line-state guard keeps seeing a clean line shape.
- */
+   * a field on CartLine, so the till snapshot never rehydrates mid-flash and the merge rule's
+   * line-state guard keeps seeing a clean line shape.
+   */
   @state() private flashIdx = -1;
   private flashTimer = 0;
- // ── W3-A ──
- /** DIB-165: the split-tender panel is open (mutually exclusive with a plain tender). */
+  // ── W3-A ──
+  /** DIB-165: the split-tender panel is open (mutually exclusive with a plain tender). */
   @state() private showSplit = false;
- /** DIB-165: the past-sale / till-session lookup overlay. */
- // E6: the terminal is the POS ring itself and stays mounted; the ONE dialog it owns inline is the
- // past-sales sheet (its other five modals are separate elements with their own traps). Escape is
+  /** DIB-165: the past-sale / till-session lookup overlay. */
+  // E6: the terminal is the POS ring itself and stays mounted; the ONE dialog it owns inline is the
+  // past-sales sheet (its other five modals are separate elements with their own traps). Escape is
  // safe: the sheet is a read-only lookup over completed sales and holds no unsaved entry.
- //
- // Worth stating because this is the busiest keyboard surface in the app: without the trap, Tab out
- // of the sheet walked straight back into the LIVE CART behind the scrim, where the next Enter
- // could ring or void a line the cashier could not see.
+  //
+  // Worth stating because this is the busiest keyboard surface in the app: without the trap, Tab out
+  // of the sheet walked straight back into the LIVE CART behind the scrim, where the next Enter
+  // could ring or void a line the cashier could not see.
   readonly modalFocus = new ModalFocus(this, {
     container: () => this.renderRoot.querySelector<HTMLElement>('.overlay'),
     isOpen: () => this.showLookup,
@@ -270,104 +271,104 @@ export class HosPosTerminal extends LitElement {
   @state() private cardType = 'CREDIT';
   @state() private notes = '';
   @state() private requestedDate = '';
- // DIB-200: inline validation hint for the fast (YYYYMMDD) date-entry box. '' = no error.
+  // DIB-200: inline validation hint for the fast (YYYYMMDD) date-entry box. '' = no error.
   @state() private dateError = '';
- // DIB-196 (Ryan Rood): when true, adding a product jumps focus to its quantity box (BisTrack's
- // per-terminal "ask for quantity" posture) instead of silently defaulting the line to qty 1.
+  // DIB-196 (Ryan Rood): when true, adding a product jumps focus to its quantity box (BisTrack's
+  // per-terminal "ask for quantity" posture) instead of silently defaulting the line to qty 1.
  // In-memory only: a per-terminal preference, deliberately never persisted.
   @state() private promptQtyOnAdd = false;
   @state() private ring: Ring = { state: 'idle' };
   @state() private reliefReason = '';
  // The engine-assessed rate for the applied relief (bps). null = standard 13%. Display preview only:
- // the server (M5) computes the BINDING per-line tax at ring time; this keeps the on-screen totals
- // consistent with what the engine will actually charge.
+  // the server (M5) computes the BINDING per-line tax at ring time; this keeps the on-screen totals
+  // consistent with what the engine will actually charge.
   @state() private reliefRateBps: number | null = null;
   @state() private signatureRef = '';
   @state() private showRelief = false;
- // Customer picker overlay (account-tender UX fix). pickerHint carries the Charge-Account
- // nudge when the picker is opened because a no-account sale was attempted.
+  // Customer picker overlay (account-tender UX fix). pickerHint carries the Charge-Account
+  // nudge when the picker is opened because a no-account sale was attempted.
   @state() private showPicker = false;
   @state() private pickerHint = '';
 
- /**
+  /**
  * POS restructure: THE ONE OPEN STEP. Selecting a step expands its card and collapses the
- * others; '' means every card is collapsed, which is a legitimate whole-sale-at-a-glance view
+   * others; '' means every card is collapsed, which is a legitimate whole-sale-at-a-glance view
  * (four summary lines) and never a dead end: any card is one click from open.
- *
- * A fresh sale opens CUSTOMER, deliberately. The client moved that step to the front because the
- * price of everything below it depends on which account is on the sale, and answering it costs
- * one press: focus lands on the Walk-in tile, and resolving it expands Items with the caret in
+   *
+   * A fresh sale opens CUSTOMER, deliberately. The client moved that step to the front because the
+   * price of everything below it depends on which account is on the sale, and answering it costs
+   * one press: focus lands on the Walk-in tile, and resolving it expands Items with the caret in
  * the scan box. Nothing is gated either way: a clerk who wants to scan first clicks Items and
- * the sale rings with the customer question still open.
- */
+   * the sale rings with the customer question still open.
+   */
   @state() private openStep: FlowStepId | '' = 'customer';
 
- // ── DIB-488 sale-session flow + workspace state ──────────────────────────
- /**
- * The operator explicitly chose walk-in (as opposed to walk-in merely being the default). This is
+  // ── DIB-488 sale-session flow + workspace state ──────────────────────────
+  /**
+   * The operator explicitly chose walk-in (as opposed to walk-in merely being the default). This is
  * SALE data: it rides the pop-out snapshot and resets with the sale: and it is what lets the
- * flow's Customer step distinguish "resolved as walk-in" from "nobody has answered yet" without
- * the stepper keeping any state of its own.
- */
+   * flow's Customer step distinguish "resolved as walk-in" from "nobody has answered yet" without
+   * the stepper keeping any state of its own.
+   */
   @state() private walkInConfirmed = false;
- /** The chosen tender tile. '' until picked; SPLIT opens the split panel (which rings itself). */
- /**
+  /** The chosen tender tile. '' until picked; SPLIT opens the split panel (which rings itself). */
+  /**
  * THE CHOSEN TENDER: and it starts as CASH, on the client's instruction: "it should default to
- * cash. if you don't pick one, just default it to cash."
- *
- * The consequence, which is the actual feature: A TICKET IS ALWAYS TENDERABLE. There is no state
- * in which a clerk has scanned three items, reached the gold button and been refused it for not
+   * cash. if you don't pick one, just default it to cash."
+   *
+   * The consequence, which is the actual feature: A TICKET IS ALWAYS TENDERABLE. There is no state
+   * in which a clerk has scanned three items, reached the gold button and been refused it for not
  * having pressed Cash: which is ceremony at a counter where cash is most of the volume. Picking
- * a tile still changes the tender; it just is not a precondition of ringing.
- *
- * '' remains in the type because SPLIT can be cancelled back out of, and because a restored
- * snapshot from before this change can carry it. Every consumer treats '' as "not tenderable",
+   * a tile still changes the tender; it just is not a precondition of ringing.
+   *
+   * '' remains in the type because SPLIT can be cancelled back out of, and because a restored
+   * snapshot from before this change can carry it. Every consumer treats '' as "not tenderable",
  * so the old state is safe: it is simply no longer reachable by doing nothing.
- */
+   */
   @state() private payMethod: '' | 'ACCOUNT' | 'CASH' | 'CARD' | 'SPLIT' = 'CASH';
- /**
+  /**
  * THE OPERATOR ACTUALLY PICKED A TENDER: the payment step's twin of walkInConfirmed, and for
- * exactly the same reason.
- *
- * Cash is the DEFAULT posture (the client's instruction, argued above), and a default is not a
+   * exactly the same reason.
+   *
+   * Cash is the DEFAULT posture (the client's instruction, argued above), and a default is not a
  * decision. _pos-flow.ts says so in the walkInConfirmed docstring: "the step reads complete only
  * when someone actually resolved the question": and its Customer rule honours it. Its Payment
- * rule three lines down reads `payMethod !== ''`, which the cash default satisfies at mount, so a
+   * rule three lines down reads `payMethod !== ''`, which the cash default satisfies at mount, so a
  * cold counter with nothing on it rendered "✓ Payment: done Cash" and a screen reader heard
- * ": done" about a sale that had not begun.
- *
- * THE FIX IS HERE AND NOT IN deriveFlow, DELIBERATELY. deriveFlow's predicate is correct for the
- * fact it is given and is pinned by _pos-flow.test.mjs ({lineCount:1, payMethod:'CASH'} →
- * payment.complete). What was wrong is what this terminal REPORTED into it: the posture, dressed
- * as a choice. So the flow module and every test over it stand untouched and flowSteps() feeds
- * the tender only once someone has chosen it.
- *
- * NOTHING ABOUT THE TENDER ITSELF MOVES. payMethod is still CASH from the first millisecond, the
- * ticket is still tenderable with nobody touching a tile, and the collapsed Payment card still
+   * ": done" about a sale that had not begun.
+   *
+   * THE FIX IS HERE AND NOT IN deriveFlow, DELIBERATELY. deriveFlow's predicate is correct for the
+   * fact it is given and is pinned by _pos-flow.test.mjs ({lineCount:1, payMethod:'CASH'} →
+   * payment.complete). What was wrong is what this terminal REPORTED into it: the posture, dressed
+   * as a choice. So the flow module and every test over it stand untouched and flowSteps() feeds
+   * the tender only once someone has chosen it.
+   *
+   * NOTHING ABOUT THE TENDER ITSELF MOVES. payMethod is still CASH from the first millisecond, the
+   * ticket is still tenderable with nobody touching a tile, and the collapsed Payment card still
  * says "Cash": the posture is a fact worth reporting (summaryFor's own reasoning). Only the tick
- * waits for a decision.
- */
+   * waits for a decision.
+   */
   @state() private tenderConfirmed = false;
- /**
+  /**
  * Items presentation: D-096: the dealer default arrives with pos_policy (line_presentation);
- * the terminal may flip its own view in-memory (the promptQtyOnAdd posture: per-terminal,
- * deliberately not persisted).
- */
+   * the terminal may flip its own view in-memory (the promptQtyOnAdd posture: per-terminal,
+   * deliberately not persisted).
+   */
   @state() private presentation: 'LINES' | 'CARDS' = 'LINES';
- /** D-096: the dealer-level quick-chip row toggle, from pos_policy. */
+  /** D-096: the dealer-level quick-chip row toggle, from pos_policy. */
   @state() private quickChips = true;
- /** Per-product stock glance cache for the stock-status line (display-only; never blocks adds). */
+  /** Per-product stock glance cache for the stock-status line (display-only; never blocks adds). */
   @state() private lineStock: Record<string, StockGlance> = {};
 
- // ── DIB-488 rev 6 (item D): PO / Job # + salesperson, under More options ──
+  // ── DIB-488 rev 6 (item D): PO / Job # + salesperson, under More options ──
  /** The customer's PO / job reference: optional free text, ≤64 chars (server-validated too). */
   @state() private poJobRef = '';
- /** The credited salesperson. Defaults to the signed-in operator; changeable from the roster. */
+  /** The credited salesperson. Defaults to the signed-in operator; changeable from the roster. */
   @state() private salespersonId = '';
- /** The active-staff roster for the selector. Empty = load failed → the operator alone is offered. */
+  /** The active-staff roster for the selector. Empty = load failed → the operator alone is offered. */
   @state() private salespeople: Salesperson[] = [];
 
- // ── DIB-488 rev 6 (item F): the optional cash-tendered quick entry ──
+  // ── DIB-488 rev 6 (item F): the optional cash-tendered quick entry ──
  /** Dollars as typed on the Cash tile's quick entry. '' = not used: one-click cash unchanged. */
   @state() private cashTenderedDollars = '';
 
@@ -375,165 +376,165 @@ export class HosPosTerminal extends LitElement {
   @state() private jobAddress = '';
   @state() private jobReference = '';
 
- // ── DIB-488 rev 8 (item 2): the header bar's live clock. The TIMER lives here; the LABEL is
+  // ── DIB-488 rev 8 (item 2): the header bar's live clock. The TIMER lives here; the LABEL is
  // pure (clockLabel: the injected-clock house rule: the Date goes IN, no clock read inside). ──
   @state() private clockNow = new Date();
   private clockTimer = 0;
 
- /** rev 8 (item 2): the Help popover's open state (session-only chrome). */
+  /** rev 8 (item 2): the Help popover's open state (session-only chrome). */
   @state() private helpOpen = false;
 
- /** DIB-512 · the roving tabindex position inside the payment-tile group (one Tab stop). The
+  /** DIB-512 · the roving tabindex position inside the payment-tile group (one Tab stop). The
  * group's resting stop is CASH: the counter's most frequent tender: so the whole top task
- * is three keystrokes from the scan field: F8 (walk to payment) · Enter (Cash) · F8 (ring). */
+   * is three keystrokes from the scan field: F8 (walk to payment) · Enter (Cash) · F8 (ring). */
   @state() private payTileIdx = 1;
 
- // ── DIB-488 rev 8 (item 1): the unified smart field's live term, forwarded to the grid ──
+  // ── DIB-488 rev 8 (item 1): the unified smart field's live term, forwarded to the grid ──
   @state() private lookupTerm = '';
 
- // ── DIB-488 rev 8 (item 4): the curated chip categories off pos_policy (hardened at the edge) ──
+  // ── DIB-488 rev 8 (item 4): the curated chip categories off pos_policy (hardened at the edge) ──
   @state() private curatedChips: string[] = [];
 
- // ── DIB-488 rev 8 (item 10): the SERVER's role-gated margin answer. null = absent (not allowed,
+  // ── DIB-488 rev 8 (item 10): the SERVER's role-gated margin answer. null = absent (not allowed,
  // not loaded, or the read failed): and ABSENT data renders NOTHING (no column, no footer). ──
   @state() private marginData: MarginGlanceResult | null = null;
 
- // ── DIB-488 rev 8 (item 8): the DIB-502 suggestion tiles. Empty = the strip does not exist. ──
+  // ── DIB-488 rev 8 (item 8): the DIB-502 suggestion tiles. Empty = the strip does not exist. ──
   @state() private addons: AddonSuggestion[] = [];
 
- /**
+  /**
  * The ticket's per-line price picture, keyed by product id. Display only, and server-decided:
- * the LINE's own money still comes from the resolve that put it on the ticket. This read exists
- * so the counter can say what the account is SAVING, which is the number the client says
- * customers always ask for.
- */
+   * the LINE's own money still comes from the resolve that put it on the ticket. This read exists
+   * so the counter can say what the account is SAVING, which is the number the client says
+   * customers always ask for.
+   */
   @state() private ticketQuotes: Record<string, CounterQuote> = {};
 
- /** The selected account's past-due position, when the dealer's policy lets this caller see it. */
+  /** The selected account's past-due position, when the dealer's policy lets this caller see it. */
   @state() private standing: AccountStanding = {};
- /** Per-tile qty entries (product_id → dollars-free qty string), seeded from default_qty. */
+  /** Per-tile qty entries (product_id → dollars-free qty string), seeded from default_qty. */
   private addonQty = new Map<string, string>();
- /** Debounce + staleness token for the ticket-facts reads (margin + addons). */
+  /** Debounce + staleness token for the ticket-facts reads (margin + addons). */
   private ticketFactsTimer = 0;
   private ticketFactsSeq = 0;
- /**
+  /**
  * Staleness bookkeeping for reprice(): decision D17, round 3. The reasoning is in `_pos.ts`
- * beside `repriceAnswerIsCurrent`; the two counters are here because only the terminal can bump
- * them.
- *
- * `repriceSeq` is PER SLOT rather than one scalar like `ticketFactsSeq`, and deliberately so: two
- * lines can be in flight at once (a counter picking items off a category board does three adds in
- * well under a second) and a single scalar would let each add cancel the one before it, leaving
- * the earlier line reading a hard CA$0.00 until tender. Per slot, an add only ever supersedes
- * ITSELF.
- *
+   * beside `repriceAnswerIsCurrent`; the two counters are here because only the terminal can bump
+   * them.
+   *
+   * `repriceSeq` is PER SLOT rather than one scalar like `ticketFactsSeq`, and deliberately so: two
+   * lines can be in flight at once (a counter picking items off a category board does three adds in
+   * well under a second) and a single scalar would let each add cancel the one before it, leaving
+   * the earlier line reading a hard CA$0.00 until tender. Per slot, an add only ever supersedes
+   * ITSELF.
+   *
  * `cartGen` is bumped ONLY where the cart is replaced WHOLESALE: new sale, clear, park, resume,
- * apply-snapshot. Not on setQty and not on removeLine: both of those already supersede via the
- * per-slot token or fail the product/qty/uom check, and bumping there would cancel a fresh add's
- * first price because an unrelated line was deleted.
- */
+   * apply-snapshot. Not on setQty and not on removeLine: both of those already supersede via the
+   * per-slot token or fail the product/qty/uom check, and bumping there would cancel a fresh add's
+   * first price because an unrelated line was deleted.
+   */
   private repriceSeq: number[] = [];
   private cartGen = 0;
 
- // ── the per-user workspace row, AFTER the single-column restructure ───────
- //
+  // ── the per-user workspace row, AFTER the single-column restructure ───────
+  //
  // POS no longer RENDERS a divider, a swap, a collapse rail or a per-panel config popover: the
- // counter is one column. But the pos_user_workspace row those gestures wrote is shared state
- // with a real history: people have saved layouts in it, the quote work area reads the same
- // shape, and the server's whole-or-absent PUT contract is unchanged. So the geometry fields are
- // still READ, still HELD, and still WRITTEN BACK untouched by the merge-save below. Dropping
- // them would have silently reset every operator's stored row the first time they opened POS.
- //
- // DEALER (pos_policy) the defaults, written only through the admin policy PUT.
+  // counter is one column. But the pos_user_workspace row those gestures wrote is shared state
+  // with a real history: people have saved layouts in it, the quote work area reads the same
+  // shape, and the server's whole-or-absent PUT contract is unchanged. So the geometry fields are
+  // still READ, still HELD, and still WRITTEN BACK untouched by the merge-save below. Dropping
+  // them would have silently reset every operator's stored row the first time they opened POS.
+  //
+  // DEALER (pos_policy) the defaults, written only through the admin policy PUT.
  // PER USER (pos_user_workspace) the ergonomics. Two of them still have a control on POS:
  // the results Cards ⇄ Rows flip and the margin quick-hide:
- // and the geometry three ride along as carried state.
- /** Carried, not rendered: the retired divider's percent share. */
+  // and the geometry three ride along as carried state.
+  /** Carried, not rendered: the retired divider's percent share. */
   @state() private wsSplit = defaultView().split;
   @state() private wsArrangement: Arrangement = 'LOOKUP_LEFT';
   @state() private wsLookupCollapsed = false;
   @state() private wsSaleCollapsed = false;
- /**
+  /**
  * rev 3 (0167): the lookup panel's results presentation: the client's cards ⇄ rows toggle.
- * PERSISTED per user (unlike the sale panel's in-memory Lines/Cards flip): it rides the same
- * whole-or-absent pos_user_workspace row as the split, so it follows the person across tills;
- * the dealer default arrives with the same resolved workspace read.
- */
+   * PERSISTED per user (unlike the sale panel's in-memory Lines/Cards flip): it rides the same
+   * whole-or-absent pos_user_workspace row as the split, so it follows the person across tills;
+   * the dealer default arrives with the same resolved workspace read.
+   */
   @state() private wsLookupPresentation: LookupPresentation = 'CARDS';
- /**
+  /**
  * rev 8 (0170): the margin quick-hide (eye) toggle: counter privacy, one click. Display-only
- * (the server's ROLE gate owns whether margin data is ever sent); persists per user on the same
- * whole-or-absent workspace row through the same rev-6 merge-save contract.
- */
+   * (the server's ROLE gate owns whether margin data is ever sent); persists per user on the same
+   * whole-or-absent workspace row through the same rev-6 merge-save contract.
+   */
   @state() private wsMarginHidden = false;
- /**
+  /**
  * 0220: which counter this person works on: the four-step single column, or all four at once.
- *
- * STEPPER is the standard counter and the shipped default at every level, and nothing about it
- * changes for anybody who never opens the view menu. The account behind that default is in
- * `_pos-accordion.ts` and it still stands: the client used a multi-panel counter for a day and
- * asked for one column, because a person at a till with a customer in front of them is doing one
- * thing and four half-visible panels made them hunt for it.
- *
+   *
+   * STEPPER is the standard counter and the shipped default at every level, and nothing about it
+   * changes for anybody who never opens the view menu. The account behind that default is in
+   * `_pos-accordion.ts` and it still stands: the client used a multi-panel counter for a day and
+   * asked for one column, because a person at a till with a customer in front of them is doing one
+   * thing and four half-visible panels made them hunt for it.
+   *
  * What the commander ruled is that the OTHER answer should also be available: several
- * testers asked for everything visible at once, in different words, and one of them asked for it
- * as a per-user switch ("Maybe if users still want this we give the ability to turn it off?").
- * So this is a preference, not a redesign: it rides the same whole-or-absent workspace row as the
- * split and follows the person across tills.
- */
+   * testers asked for everything visible at once, in different words, and one of them asked for it
+   * as a per-user switch ("Maybe if users still want this we give the ability to turn it off?").
+   * So this is a preference, not a redesign: it rides the same whole-or-absent workspace row as the
+   * split and follows the person across tills.
+   */
   @state() private counterLayout: CounterLayout = 'STEPPER';
- /**
- * The dealer's key roster, resolved server-side (user over dealer over default). Held as data,
- * never as a switch statement: the client's people are BisTrack refugees who will want their old
- * keys, and a roster compiled into a component is a roster nobody can change.
- */
+  /**
+   * The dealer's key roster, resolved server-side (user over dealer over default). Held as data,
+   * never as a switch statement: the client's people are BisTrack refugees who will want their old
+   * keys, and a roster compiled into a component is a roster nobody can change.
+   */
   @state() private hotkeyRoster: PosHotkey[] = asHotkeyRoster(null);
 
- /**
+  /**
  * Which counter panels this person keeps on screen: the legend and the hot list. Resolved
- * user-over-dealer-over-default through the presentation substrate, because two people at the
- * same yard asked for opposite answers and neither of them is wrong.
- */
+   * user-over-dealer-over-default through the presentation substrate, because two people at the
+   * same yard asked for opposite answers and neither of them is wrong.
+   */
   @state() private panels: Record<string, boolean> = { ...COUNTER_PANEL_DEFAULTS };
- /** The dealer's panel curation, kept so a per-user write starts from what they actually see. */
+  /** The dealer's panel curation, kept so a per-user write starts from what they actually see. */
   private panelRoleItems: ReturnType<typeof asSurfaceItems> = [];
  /** The view popover in the header: where a dismissed legend comes back from. */
   @state() private viewOpen = false;
- /** The admin editor for the roster, the board and the panel defaults (R1/R2). */
+  /** The admin editor for the roster, the board and the panel defaults (R1/R2). */
   @state() private counterSettingsOpen = false;
 
   private wsPersistTimer = 0;
- /**
+  /**
  * rev 6 (item G): the fields THIS surface's gestures changed since their last successful save.
- * Each debounced save re-reads the stored row and overlays only these (mergeWorkspaceForSave),
+   * Each debounced save re-reads the stored row and overlays only these (mergeWorkspaceForSave),
  * so two live surfaces stop flattening each other's ergonomics. Not @state: never painted.
- */
+   */
   private wsDirty = new Set<WorkspaceField>();
 
- /**
+  /**
  * rev 5: the in-flight ring attempt's idempotency key, keyed by the request fingerprint
- * (stableRingKey in _pos.ts). A retry of the IDENTICAL sale reuses the key verbatim (true
+   * (stableRingKey in _pos.ts). A retry of the IDENTICAL sale reuses the key verbatim (true
  * replay safety); any edit to the sale re-mints; success clears it. Not @state: it never
- * paints anything.
- */
+   * paints anything.
+   */
   private ringKeyMemo: RingKeyMemo | null = null;
 
- // A-03 till chrome (A-19 renders only).
+  // A-03 till chrome (A-19 renders only).
   @state() private tillSessionId = '';
   @state() private sessionStartMs = 0;
   @state() private elapsed = '00:00';
   private timer = 0;
 
- // Card-rail mode, from GET /api/v1/payments/config: 'test' = deterministic simulated gateway
- // (no card reader / live Run Payments call), 'live' = real processor, 'unconfigured' = card
- // tender will be refused until an admin configures the processor. '' = not yet loaded.
+  // Card-rail mode, from GET /api/v1/payments/config: 'test' = deterministic simulated gateway
+  // (no card reader / live Run Payments call), 'live' = real processor, 'unconfigured' = card
+  // tender will be refused until an admin configures the processor. '' = not yet loaded.
   @state() private cardRail: '' | 'test' | 'live' | 'unconfigured' = '';
 
- // The A-03 end-of-day close flow (movements → blind count → Z-report → complete).
+  // The A-03 end-of-day close flow (movements → blind count → Z-report → complete).
   @state() private showTillClose = false;
 
- // ── W7 counter-v2 state ──
- // COD availability from pos_policy (branch override wins). null = not yet loaded → option disabled.
+  // ── W7 counter-v2 state ──
+  // COD availability from pos_policy (branch override wins). null = not yet loaded → option disabled.
   @state() private codEnabled: boolean | null = null;
   @state() private fulfilment = 'PICKUP'; // COD only: the payment posture rides any fulfilment
   @state() private depositDollars = '';
@@ -543,49 +544,49 @@ export class HosPosTerminal extends LitElement {
   @state() private parkedCount = 0;
   @state() private pricingDoc: PricingOrder | null = null;
   @state() private utilMsg = '';
- /**
+  /**
  * rev 5: the utility banner's tone. It painted EVERY message success-green with no role:
  * "Park failed: retry." wore the ok banner and announced to no one. Faults now render.bad
- * with role=alert (the house rule: alert for faults only); good news keeps ok + role=status.
- */
+   * with role=alert (the house rule: alert for faults only); good news keeps ok + role=status.
+   */
   @state() private utilTone: 'ok' | 'bad' = 'ok';
 
- /** One door for the utility banner: message + tone together, so a fault can never wear green. */
+  /** One door for the utility banner: message + tone together, so a fault can never wear green. */
   private setUtil(msg: string, tone: 'ok' | 'bad' = 'ok'): void {
     this.utilMsg = msg;
     this.utilTone = tone;
   }
- // ── DIB-434 ── the in-progress guard's own state. `quickGuard` is the dialog's open flag; it is
- // set ONLY when quickStartNeedsGuard() says the till holds something to lose, so an empty
- // terminal reached by "+ Sale" starts fresh with no prompt at all.
+  // ── DIB-434 ── the in-progress guard's own state. `quickGuard` is the dialog's open flag; it is
+  // set ONLY when quickStartNeedsGuard() says the till holds something to lose, so an empty
+  // terminal reached by "+ Sale" starts fresh with no prompt at all.
   @state() private quickGuard = false;
   @state() private quickGuardBusy = false;
- // ── end DIB-434 ──
- // DIB-191: the direct order-id path (B2/C3). lookupOrderId is what the operator is typing;
- // lookupOpenId is the id actually opened, so the panel does not thrash on every keystroke.
+  // ── end DIB-434 ──
+  // DIB-191: the direct order-id path (B2/C3). lookupOrderId is what the operator is typing;
+  // lookupOpenId is the id actually opened, so the panel does not thrash on every keystroke.
   @state() private lookupOrderId = '';
   @state() private lookupOpenId = '';
- // DIB-379/F3: whether hos-order-lifecycle found lookupOpenId. Starts true (optimistic) so nothing
+  // DIB-379/F3: whether hos-order-lifecycle found lookupOpenId. Starts true (optimistic) so nothing
  // is suppressed before the first load resolves; hos-order-history renders only once we know: else
- // both panels independently 404 and paint "order not found" twice for the same bad id/order_no.
+  // both panels independently 404 and paint "order not found" twice for the same bad id/order_no.
   @state() private lookupFound = true;
- // DIB-410: the receipt print flow's operator feedback (a blocked pop-up, a cross-branch refusal).
+  // DIB-410: the receipt print flow's operator feedback (a blocked pop-up, a cross-branch refusal).
   @state() private receiptMsg = '';
   @state() private receiptBusy = false;
 
- /**
+  /**
  * DIB-444: the confirmation panel is dismissible, and dismissing it must not survive into the
- * NEXT sale. Reset wherever a ring begins or the terminal is cleared, so the counter never rings a
- * sale that confirms silently because someone closed the previous panel.
- */
+   * NEXT sale. Reset wherever a ring begins or the terminal is cleared, so the counter never rings a
+   * sale that confirms silently because someone closed the previous panel.
+   */
   @state() private soldPanelDismissed = false;
 
- /**
+  /**
  * DIB-410: print the receipt for a committed sale. The document is FETCHED with the staff token
- * and written into a blank window (window.open on the route would send no Authorization header and
+   * and written into a blank window (window.open on the route would send no Authorization header and
  * render a 401 at the customer). `saleRef` is the order id or its visible "#SO-" number: the
- * server resolves both.
- */
+   * server resolves both.
+   */
   private async printSaleReceipt(saleRef: string): Promise<void> {
     if (!saleRef || this.receiptBusy) return;
     this.receiptBusy = true;
@@ -600,28 +601,28 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- /**
+  /**
  * DIB-191: a lifecycle transition appended a row, so refresh every status timeline on screen:
- * otherwise the chip shows the new status above a chain that still ends at the old one.
- */
+   * otherwise the chip shows the new status above a chain that still ends at the old one.
+   */
   private onOrderStatusChanged = (): void => {
     this.refreshOrderPanels();
   };
 
- /**
+  /**
  * DIB-175: an edit landed, so refresh the change history AND the status timeline: and re-read the
- * edit panel itself, because an edit moves the order's money and the server recomputes it.
- */
+   * edit panel itself, because an edit moves the order's money and the server recomputes it.
+   */
   private onOrderChanged = (): void => {
     this.refreshOrderPanels();
   };
 
- /**
+  /**
  * DIB-489/490: a panel asked this surface to OPEN another order: the freshly created duplicate
- * draft ("Open #SO-…"), or DIB-490's "open that order first" on a suspected double-key. Routing
- * it through the existing lookup keeps one order-detail surface: the same lifecycle/history/edit
- * panels open for it that open for any looked-up order.
- */
+   * draft ("Open #SO-…"), or DIB-490's "open that order first" on a suspected double-key. Routing
+   * it through the existing lookup keeps one order-detail surface: the same lifecycle/history/edit
+   * panels open for it that open for any looked-up order.
+   */
   private onOpenOrder = (e: CustomEvent<{ orderId: string; orderNo?: string }>): void => {
     const id = e.detail?.orderId ?? '';
     if (id === '') return;
@@ -630,12 +631,12 @@ export class HosPosTerminal extends LitElement {
     this.lookupFound = true; // reset the suppression for the new lookup, exactly like the Open button
   };
 
- /**
- * DIB-491: an ORDER chip in a Related documents panel was clicked (a sibling order minted from
+  /**
+   * DIB-491: an ORDER chip in a Related documents panel was clicked (a sibling order minted from
  * the same quote). Open it through the existing lookup path: the same door "Open order" uses:
- * so every panel the lookup renders comes along. Other kinds never arrive: open-kinds="ORDER"
- * renders them as labels, but the guard stays because a guard beats an assumption.
- */
+   * so every panel the lookup renders comes along. Other kinds never arrive: open-kinds="ORDER"
+   * renders them as labels, but the guard stays because a guard beats an assumption.
+   */
   private openRelatedOrder = (e: CustomEvent<RelatedDoc>): void => {
     if (e.detail.kind !== 'ORDER') return;
     this.lookupOrderId = e.detail.number || e.detail.id;
@@ -643,55 +644,55 @@ export class HosPosTerminal extends LitElement {
     this.lookupFound = true; // reset the suppression, exactly as the Open-order button does
   };
 
- /**
- * Refreshes every order panel on screen without a page reload. A status transition narrows what is
- * editable (line edits die at READY) and an edit appends change rows, so BOTH events have to touch
+  /**
+   * Refreshes every order panel on screen without a page reload. A status transition narrows what is
+   * editable (line edits die at READY) and an edit appends change rows, so BOTH events have to touch
  * all three panels: refreshing only the one that fired leaves a stale sibling next to it.
- */
+   */
   private refreshOrderPanels(): void {
     this.renderRoot
       ?.querySelectorAll('hos-order-history, hos-order-edits, hos-order-edit')
       .forEach((el) => (el as HTMLElement & { reload?: () => void }).reload?.());
   }
 
- // DIB-195: when this terminal is mounted inside a popped-out window, the shell passes the
- // opener's in-progress order here and we apply it ONCE on first update, so the popped window
+  // DIB-195: when this terminal is mounted inside a popped-out window, the shell passes the
+  // opener's in-progress order here and we apply it ONCE on first update, so the popped window
  // opens on the SAME ticket instead of empty. null (the default): the normal in-tab mount:
- // is a no-op, so an in-shell terminal is entirely unaffected.
+  // is a no-op, so an in-shell terminal is entirely unaffected.
   @property({ attribute: false }) restore: PosOrderSnapshot | null = null;
   private restored = false;
 
- /**
- * What the Complete-sale CTA's keycap says.
- *
+  /**
+   * What the Complete-sale CTA's keycap says.
+   *
  * UNION TRAIN 14: IT READS THE COUNTER'S OWN ROSTER, and since D-111 that is the ONLY thing it
- * can read.
- *
- * There are two hotkey substrates and they are not the same thing:
- * · the COUNTER roster (`surface_role_items` kind `action` on `pos.counter`, under it the
+   * can read.
+   *
+   * There are two hotkey substrates and they are not the same thing:
+   * · the COUNTER roster (`surface_role_items` kind `action` on `pos.counter`, under it the
  * platform roster of 0191, under that `defaultHotkeys` in internal/pos/hotkeys.go): this is
- * what `onPosKey` actually listens to;
+   * what `onPosKey` actually listens to;
  * · the SHELL's map (`dealer_hotkeys` over 0191's `app.shell` roster): a different table for
- * the app-wide nav keys.
- *
+   * the app-wide nav keys.
+   *
  * Until the R1 ruling both bound pay to F8, so nobody noticed this chip was reading the
- * wrong one. R1 moved the counter's pay key to F12 and left the shell alone, so the chip began
+   * wrong one. R1 moved the counter's pay key to F12 and left the shell alone, so the chip began
  * advertising a key that is deliberately UNBOUND: a clerk who trusts it presses F8 and the sale
- * does not ring. Train 14 fixed the READ (this method) and left the shell's `sale.pay` in place
- * as a fallback; D-111 finished the job by retiring `sale.pay` from the shell map entirely, so
- * there is no longer a second source to fall back TO and no way for the two to disagree again.
- * The chip's whole job is to name the key that rings THIS sale; now only the roster that rings
- * it can answer.
- */
+   * does not ring. Train 14 fixed the READ (this method) and left the shell's `sale.pay` in place
+   * as a fallback; D-111 finished the job by retiring `sale.pay` from the shell map entirely, so
+   * there is no longer a second source to fall back TO and no way for the two to disagree again.
+   * The chip's whole job is to name the key that rings THIS sale; now only the roster that rings
+   * it can answer.
+   */
   private payKeycap(): string | null {
     const mine = this.hotkeyRoster.find((r) => r && r.action === HK_PAY);
     return mine?.key ? keycap(mine.key) : null;
   }
 
- // DIB-246/247: the server's parked row keeps only customer_id and price-less lines, so the
+  // DIB-246/247: the server's parked row keeps only customer_id and price-less lines, so the
  // terminal holds the richer DISPLAY facts captured at park time: the selected customer and the
  // ticket total: keyed by the server ticket id. Read on resume (restore the customer) and by the
- // parked list (show who + how much). In-memory per terminal; a cold entry degrades to walk-in.
+  // parked list (show who + how much). In-memory per terminal; a cold entry degrades to walk-in.
   private parkedInfo = new Map<string, ParkedInfo>();
 
   static styles = [
@@ -702,7 +703,7 @@ export class HosPosTerminal extends LitElement {
       font-family: var(--hos-font-ui);
       color: var(--hos-text);
       background: var(--hos-deep-earth);
- /* THE COUNTER'S ONE MEASURE, declared once and read by both things that cap: the sale column
+      /* THE COUNTER'S ONE MEASURE, declared once and read by both things that cap: the sale column
          (.flowcol) and the Counter-settings overlay (.cspanel). It was two literals: 980 and 760:
          and two literals that have to agree are a disagreement waiting for one of them to be edited.
          Local, and deliberately NOT --hos-*: the theme gate (_theme-tokens.test.mjs) requires every
@@ -718,7 +719,7 @@ export class HosPosTerminal extends LitElement {
          screen dead INSIDE the pane. 1180 is the same argument re-costed against the real pane. */
       --pos-column-max: 1180px;
     }
- /* ── THE HEADER SITS ON THE MEASURE OF THE WORK IT HEADS ─────────────────────────────────────
+    /* ── THE HEADER SITS ON THE MEASURE OF THE WORK IT HEADS ─────────────────────────────────────
        Measured before this rule existed: at 1920 the page title started at x=104 and the first
        accordion card at x=418: 314px apart, on one screen, with the bar's own hairline running
        the full 1808px pane above them. At 1440 the same gap was 74px and at 1024 it inverted to 8,
@@ -732,7 +733,7 @@ export class HosPosTerminal extends LitElement {
        two left edges resolve to the identical number at every width by construction rather than by
        a matched literal. If --pos-column-max is ever re-costed: or removed: both move together.
        Nothing here re-caps the PAGE: the pane stays fluid and the bar still paints edge to edge. */
- /* ── THE COLD COUNTER'S TYPE SCALE ─────────────────────────────────────────────────────────
+    /* ── THE COLD COUNTER'S TYPE SCALE ─────────────────────────────────────────────────────────
        Measured on a cold screen before any panel is opened: 22 / 15 / 13 / 12 / 11 / 10px: SIX
        sizes against a budget of four, and the two extra ones were not carrying a distinction. 12px
        was doing the same job as 11 (a caption, a small control's label, a numbered chip) one pixel
@@ -795,7 +796,7 @@ export class HosPosTerminal extends LitElement {
       border-color: var(--hos-stone-amber);
       color: var(--hos-stone-amber-text);
     }
- /* ── DIB-488 rev 8 (item 2): the concept header bar ─────────────────────────────────────────
+    /* ── DIB-488 rev 8 (item 2): the concept header bar ─────────────────────────────────────────
        Large bold sale title over the yard context (the brand lockup stays as the eyebrow: the
        DIB-456 gate pins it); clock + session dot + Help + the page-level gold + New Sale on the
        right. All tokens; the flow stepper between is untouched. */
@@ -841,7 +842,7 @@ export class HosPosTerminal extends LitElement {
       width: 8px;
       height: 8px;
       border-radius: var(--hos-radius-pill);
- /* DIB-468 rule: a SOLID green fill uses the per-theme fill token, never the text green. */
+      /* DIB-468 rule: a SOLID green fill uses the per-theme fill token, never the text green. */
       background: var(--hos-success-fill);
     }
     .topbtn.help {
@@ -915,7 +916,7 @@ export class HosPosTerminal extends LitElement {
     .viewpop .sw:first-of-type {
       border-top: 0;
     }
- /* 0220 · the layout radios. Same row rhythm as the switches below them so the menu reads as one
+    /* 0220 · the layout radios. Same row rhythm as the switches below them so the menu reads as one
        list, but a check mark rather than a pip: a pip promises an independent on/off, and these two
        are one question with two answers. */
     .viewpop .layoutpick {
@@ -975,7 +976,7 @@ export class HosPosTerminal extends LitElement {
       padding: 24px 16px;
       overflow: auto;
     }
- /* COUNTER SETTINGS IS A FORM, and the wave-1 contract says what a form owes the width it is
+    /* COUNTER SETTINGS IS A FORM, and the wave-1 contract says what a form owes the width it is
        given: columns, or it ships as one long column with a 44px keycap stranded at the right-hand
        end of a 1146px row. The panel was min(760px, 100%) in CONTENT-BOX, so it painted 794px and
        handed pos-counter-settings.ts a 760px form column: and a 734px tile row inside it, measured
@@ -1012,7 +1013,7 @@ export class HosPosTerminal extends LitElement {
       color: var(--hos-stone-amber-ink); /* E6: a theme-stable fill pins its theme-stable ink */
       transform: translateX(13px);
     }
- /* an inline-flex centred row keeps the button the exact height the words
+    /* an inline-flex centred row keeps the button the exact height the words
       line box always gave it, the drawn glyph beside them centred (PR 55 review round; the
       quick-action-bar precedent) */
     .newsale {
@@ -1030,7 +1031,7 @@ export class HosPosTerminal extends LitElement {
       white-space: nowrap;
       cursor: pointer;
     }
- /* vertical-align: middle on the drawn glyph keeps the icon on the
+    /* vertical-align: middle on the drawn glyph keeps the icon on the
       text middle and the line box the character left behind, so the button keeps its exact
       height (PR 55 review round; the quick-action-bar precedent centers, this keeps the box) */
     .stepper button svg,
@@ -1044,7 +1045,7 @@ export class HosPosTerminal extends LitElement {
       border-color: var(--hos-stone-amber-hover);
       color: var(--hos-stone-amber-ink); /* E6: a theme-stable fill pins its theme-stable ink in the SAME rule */
     }
- /* ── the counter's SINGLE COLUMN (the restructure) ───────────────────────────────────────────
+    /* ── the counter's SINGLE COLUMN (the restructure) ───────────────────────────────────────────
        One measure, centred, four accordion cards down it. The column is width-capped rather than
        full-bleed because a sale is read top-to-bottom: a 1920px-wide line of text is a worse read
        than a 1180px one, and the space either side is where the eye rests. Nothing scrolls inside
@@ -1088,7 +1089,7 @@ export class HosPosTerminal extends LitElement {
          bars honour it, so on a device with a home indicator both rise by exactly that much. */
       padding: var(--hos-space-4) var(--hos-space-5) calc(var(--hos-fab-lane) + var(--hos-safe-bottom));
     }
- /* The whole-sale utilities (park / parked / clear) and the stat bar sit UNDER the cards, so
+    /* The whole-sale utilities (park / parked / clear) and the stat bar sit UNDER the cards, so
        they are reachable from whichever step is open: see renderSaleUtilities. */
     .saleutil {
       display: flex;
@@ -1126,7 +1127,7 @@ export class HosPosTerminal extends LitElement {
     .txbar .partial {
       color: var(--hos-text-dim);
     }
- /* A touch till (1024×768 is the shop-floor panel) gets the same column with more air under the
+    /* A touch till (1024×768 is the shop-floor panel) gets the same column with more air under the
        thumb: bigger tap targets and a tighter gutter, so the column keeps as much of a narrow
        screen as it can. The layout does not CHANGE shape: that was the whole point of one column:
        it just loosens.
@@ -1150,7 +1151,7 @@ export class HosPosTerminal extends LitElement {
         padding-left: var(--hos-space-3);
         padding-right: var(--hos-space-3);
       }
- /* The header follows the column's touch-till gutter for the same reason it follows its
+      /* The header follows the column's touch-till gutter for the same reason it follows its
          measure: below the cap both are full width, so the only thing that can put the title and
          the cards on different left edges is a different side padding: which is precisely what
          the 8px offset measured at 1024 was. The BOTTOM padding is untouched here: the bar has no
@@ -1175,13 +1176,13 @@ export class HosPosTerminal extends LitElement {
       padding: var(--hos-space-4); /* rev 5: on-scale (was 18px sides) */
       outline: none; /* panels take programmatic focus from the stepper; the ring is for controls */
     }
- /* Panel head: the step number echoes the header flow so panel and step read as one thing. */
- /* The in-memory Lines/Cards view flip (D-096 sets the DEFAULT; this is the per-terminal view).
+    /* Panel head: the step number echoes the header flow so panel and step read as one thing. */
+    /* The in-memory Lines/Cards view flip (D-096 sets the DEFAULT; this is the per-terminal view).
        DIB-488 rev 3: the same pill idiom also wears the lookup panel's cards ⇄ rows toggle in its
        bar (that one PERSISTS per user: it rides the workspace row).
        DIB-488 rev 2: lives in the Sale panel's config popover: the panel-config affordance is
        where the existing presentation options moved. */
- /* Browsing is the exception path: one quiet disclosure, never a second search surface open
+    /* Browsing is the exception path: one quiet disclosure, never a second search surface open
        beside the first. Closed by default: the counter's default posture is "I know what I want". */
     .browse > summary {
       cursor: pointer;
@@ -1192,7 +1193,7 @@ export class HosPosTerminal extends LitElement {
     .browse > summary:hover {
       color: var(--hos-text);
     }
- /* The read-back: a receipt-shaped block, deliberately not a form. Nothing in it is a control. */
+    /* The read-back: a receipt-shaped block, deliberately not a form. Nothing in it is a control. */
     .readback {
       font-size: 13px;
     }
@@ -1277,15 +1278,15 @@ export class HosPosTerminal extends LitElement {
       background: color-mix(in srgb, var(--hos-line) 40%, transparent);
       color: var(--hos-text);
     }
- /* ── DIB-488 LINES presentation: the compact thumbnail line table ──
+    /* ── DIB-488 LINES presentation: the compact thumbnail line table ──
        rev 6 (item B): five working columns (thumb · item · qty · UNIT · money): the unit gets its
        own aligned column (mock parity) instead of riding the price string; unit price + line total
        still stack in the money column (price dim above, line total gold below) so the money keeps
        its prominence. */
- /* rev 8 (item 3): Item | Qty | Unit | Price | Total as SEPARATE aligned columns (price and
+    /* rev 8 (item 3): Item | Qty | Unit | Price | Total as SEPARATE aligned columns (price and
        total no longer stacked), plus the item-9 Total Weight column; the item-10 Margin column
        joins ONLY while the role-gated data is present and un-hidden (.withmargin). */
- /* DIB-512 · ONE grid for header + every row (subgrid): each row used to be its own grid, so
+    /* DIB-512 · ONE grid for header + every row (subgrid): each row used to be its own grid, so
        'auto' columns resolved per row and the qty/price clusters drifted left and right with each
        row's unit and price string. The container owns the tracks; rows adopt them: every column
        shares one edge down the whole ticket. */
@@ -1371,7 +1372,7 @@ export class HosPosTerminal extends LitElement {
     .stockline.out {
       color: var(--hos-safety-red);
     }
- /* ── rev 8 (item 8 · DIB-502): the suggested add-ons strip below the ticket ── */
+    /* ── rev 8 (item 8 · DIB-502): the suggested add-ons strip below the ticket ── */
     .addons {
       margin-top: 14px;
       border-top: 1px solid var(--hos-line);
@@ -1441,9 +1442,9 @@ export class HosPosTerminal extends LitElement {
       color: var(--hos-text-dim);
       text-transform: uppercase;
     }
- /* DIB-512 · SUGGESTION adds are quiet (accent discipline: gold never decorates, and exactly
+    /* DIB-512 · SUGGESTION adds are quiet (accent discipline: gold never decorates, and exactly
        one gold primary per panel: the commit CTA). Same button, same handler, quieter clothes. */
- /* an inline-flex centred row keeps the button the exact height the words
+    /* an inline-flex centred row keeps the button the exact height the words
       line box always gave it, the drawn glyph beside them centred (PR 55 review round; the
       quick-action-bar precedent) */
     .addonadd {
@@ -1465,8 +1466,8 @@ export class HosPosTerminal extends LitElement {
       border-color: var(--hos-stone-amber);
       color: var(--hos-stone-amber-text);
     }
- /* ── DIB-488 customer card: the explicit Walk-in / Account resolution tiles ── */
- /* rev 8 (item 5): the customer question wears UNDERLINE TABS (concept parity) instead of the
+    /* ── DIB-488 customer card: the explicit Walk-in / Account resolution tiles ── */
+    /* rev 8 (item 5): the customer question wears UNDERLINE TABS (concept parity) instead of the
        filled segment tiles: same two buttons, same handlers, same aria-pressed; only the clothes
        changed. The active tab is the gold ink over an amber underline; the rest keeps a quiet
        hairline base so the pair still reads as one control. */
@@ -1495,7 +1496,7 @@ export class HosPosTerminal extends LitElement {
       color: var(--hos-stone-amber-text);
       border-bottom-color: var(--hos-stone-amber);
     }
- /* ── DIB-488 fulfilment segment: the EXISTING sale types, worn as tiles ── */
+    /* ── DIB-488 fulfilment segment: the EXISTING sale types, worn as tiles ── */
  /* ── THE FOUR OPTIONS GET ONE ROW, AND THE ITEMS STEP GETS 100px BACK ──────────────
        Measured before the change, at 1920 with the Items step open and an empty ticket: the
        fulfilment label plus this group was 158px of a 494px card: 32% of the step: with 140px of
@@ -1568,7 +1569,7 @@ export class HosPosTerminal extends LitElement {
       color: var(--hos-text-dim);
       padding: 8px 0 4px;
     }
- /* HH-203: the caret drew from a font character in ::before content; it now draws from the
+    /* HH-203: the caret drew from a font character in ::before content; it now draws from the
        registry in the summary markup (.disc span), and these rules swap closed for open exactly
        as the two content rules did. */
     details.more > summary .disc .open {
@@ -1610,7 +1611,7 @@ export class HosPosTerminal extends LitElement {
     details.orderadmin[open] > summary .disc .open {
       display: inline;
     }
- /* ── DIB-488 payment tiles + the one CTA ── */
+    /* ── DIB-488 payment tiles + the one CTA ── */
     .paytiles {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -1673,7 +1674,7 @@ export class HosPosTerminal extends LitElement {
       opacity: 0.45;
       cursor: not-allowed;
     }
- /* UNION-TRAIN11 · the counter's pay key worn as a keycap on the CTA (see payKeycap()).
+    /* UNION-TRAIN11 · the counter's pay key worn as a keycap on the CTA (see payKeycap()).
        Gold-on-gold: the chip borrows the CTA's own ink (D-078: the ONLY ink gold may carry), so
        every CTA state (hover included) keeps the pair legal with zero new colours. */
     .complete-cta .keycap {
@@ -1692,7 +1693,7 @@ export class HosPosTerminal extends LitElement {
  /*.cta-hint retired with the sentence it dressed (wave 2, finding 10). The split state is a
        state OF the CTA now, so there is nothing left on this surface that stands where the commit
        button stands and is not the commit button. */
- /* ── DIB-488 rev 6 (item F): the optional cash-tendered quick entry on the Cash tender ── */
+    /* ── DIB-488 rev 6 (item F): the optional cash-tendered quick entry on the Cash tender ── */
     .cashrow {
       display: grid;
       grid-template-columns: 1fr auto;
@@ -1723,7 +1724,7 @@ export class HosPosTerminal extends LitElement {
       border-radius: var(--hos-radius-pill);
       padding: 2px 8px;
     }
- /* ── DIB-488 rev 6 (item A): the resolved-customer IDENTITY CARD (mock parity) ──
+    /* ── DIB-488 rev 6 (item A): the resolved-customer IDENTITY CARD (mock parity) ──
        Once the customer question is answered, the picker area becomes a proper card: initials
        chip, name, account number, account-type tag, the credit facts, and a Change control that
        reopens selection. Walk-in confirmed gets the same clean shape with its own facts. */
@@ -1791,7 +1792,7 @@ export class HosPosTerminal extends LitElement {
       border-color: var(--hos-line);
       color: var(--hos-text-dim);
     }
- /* The one tag on this card that is not the account's type. Same shape as its neighbour so the
+    /* The one tag on this card that is not the account's type. Same shape as its neighbour so the
        line still reads as one row of status, in the red this surface already uses for money that
        is past due: the account-type tag keeps the gold. */
     .custcard .ctag.hold {
@@ -1843,7 +1844,7 @@ export class HosPosTerminal extends LitElement {
       color: var(--hos-stone-amber-text);
     }
     .pickhint {
- /* DIB-255: a proper "select customer" label ABOVE the strip with a clear gap, instead of a
+      /* DIB-255: a proper "select customer" label ABOVE the strip with a clear gap, instead of a
          hint cramped into the strip's top-right corner against the chosen customer name. */
       display: block;
       margin-bottom: 8px;
@@ -1876,7 +1877,7 @@ export class HosPosTerminal extends LitElement {
       align-items: center;
       gap: 4px;
     }
- /* DIB-409: shadow roots do not inherit the document :focus-visible rule (tokens.css). The POS
+    /* DIB-409: shadow roots do not inherit the document :focus-visible rule (tokens.css). The POS
        is the most keyboard-driven surface in the ERP (tender entry, steppers, quantity fields), so
        it repeats the same amber ring pos-product-grid.ts already uses on its tiles. */
     button:focus-visible,
@@ -1944,7 +1945,7 @@ export class HosPosTerminal extends LitElement {
     .rm:hover {
       color: var(--hos-safety-red);
     }
- /* DIB-DUPLINE: the line an add just touched rings for a beat, so a merge is SEEN. This is what
+    /* DIB-DUPLINE: the line an add just touched rings for a beat, so a merge is SEEN. This is what
        makes "same product twice raises the quantity" trustworthy at the counter: without it a scan
        that lands on an existing line looks, from the gun, like a scan that did nothing.
        An INSET RING, never a fill: --hos-success is the text/border green (DIB-468), and green is
@@ -1975,7 +1976,7 @@ export class HosPosTerminal extends LitElement {
         box-shadow: inset 0 0 0 2px var(--hos-success);
       }
     }
- /* DIB-263: the empty-ticket prompt slow-pulses to draw the eye to the first action, kept gentle
+    /* DIB-263: the empty-ticket prompt slow-pulses to draw the eye to the first action, kept gentle
        (2.4s ease, only down to 55% opacity) so it guides without annoying: the client's exact ask
        ("flash slowly… we don't want it to be an annoyance"). Honors prefers-reduced-motion. */
     .empty {
@@ -2020,7 +2021,7 @@ export class HosPosTerminal extends LitElement {
       font-family: inherit;
       box-sizing: border-box;
     }
- /* rev 8 (item 7): inside its own card the totals block needs no separating border. */
+    /* rev 8 (item 7): inside its own card the totals block needs no separating border. */
     .totalscard .totals {
       border-top: none;
       margin-top: 0;
@@ -2055,7 +2056,7 @@ export class HosPosTerminal extends LitElement {
       font-size: 18px;
       font-weight: 600;
     }
- /* DIB-165 past-sale lookup sheet. Same scrim primitive the parked/return overlays use
+    /* DIB-165 past-sale lookup sheet. Same scrim primitive the parked/return overlays use
        (--hos-scrim + --hos-z-modal) so the counter's modals stack and dim identically. */
     .overlay {
       position: fixed;
@@ -2191,7 +2192,7 @@ export class HosPosTerminal extends LitElement {
       background: color-mix(in srgb, var(--hos-safety-red) 12%, transparent);
     }
 
- /* ── DIB-444: the post-sale confirmation ──────────────────────────────────────────────────────
+    /* ── DIB-444: the post-sale confirmation ──────────────────────────────────────────────────────
        "It does not appear to post a sale … it does not really verify: would be nice if you got
        more confirmation." The sale DOES post (order + invoice + payment + two balanced GL journals
        + stock moves, verified against the DB). What it did not do was SAY so: one 13px green line
@@ -2349,7 +2350,7 @@ export class HosPosTerminal extends LitElement {
  /* DIB-196: the per-terminal "ask for quantity on add" toggle. DIB-488 rev 2: moved into the
        Sale panel's config popover (a .cfgrow) with the other per-terminal presentation options. */
  /* DIB-198 / DIB-200: requested date: native calendar (left) + fast YYYYMMDD entry (right). */
- /* DIB-259: one date field + a calendar button (was two side-by-side inputs). The text box takes
+    /* DIB-259: one date field + a calendar button (was two side-by-side inputs). The text box takes
        the free track; the button is a fixed square; the native date input is visually hidden but
        still focusable-by-script so its picker can open from the button. */
     .daterow {
@@ -2419,45 +2420,45 @@ export class HosPosTerminal extends LitElement {
     this.salespersonId = getCurrentUser()?.user_id ?? ''; // rev 6 (D): defaults to the operator
     void this.refreshParkedCount();
     void this.hydrateTillSession(); // rev 5: a reload/second surface rediscovers the OPEN till
- // The Help flyout light-dismisses on any pointer press outside it (capture on window so a
- // click swallowed by another shadow root still counts as "outside").
+    // The Help flyout light-dismisses on any pointer press outside it (capture on window so a
+    // click swallowed by another shadow root still counts as "outside").
     window.addEventListener('pointerdown', this.onDocPointerDown, true);
- // ── DIB-434 ── both arrival orders of a "+ Sale" click. If this terminal was ALREADY mounted
- // (kept alive behind another unit tab) the listener catches it; if the click is what caused
- // this mount, takeIntent() finds the one waiting. Whichever runs first consumes it.
+    // ── DIB-434 ── both arrival orders of a "+ Sale" click. If this terminal was ALREADY mounted
+    // (kept alive behind another unit tab) the listener catches it; if the click is what caused
+    // this mount, takeIntent() finds the one waiting. Whichever runs first consumes it.
  // The counter's F-keys. A WINDOW listener for the same reason the shell's map is one: the key
  // must ring from wherever focus happens to be, including from inside the scan field: and in
- // the CAPTURE phase, which is what makes the counter win a key the shell has also bound.
- //
- // THIS IS NOT A LAND GRAB, IT IS THE ONLY CORRECT ORDER, and the keyboard walkthrough is what
- // proved it: the shipped dealer map already binds F1-F4, F8 and F9 (0171), the shell listens on
+    // the CAPTURE phase, which is what makes the counter win a key the shell has also bound.
+    //
+    // THIS IS NOT A LAND GRAB, IT IS THE ONLY CORRECT ORDER, and the keyboard walkthrough is what
+    // proved it: the shipped dealer map already binds F1-F4, F8 and F9 (0171), the shell listens on
  // bubble and calls preventDefault, and the counter's listener: which yields to
  // defaultPrevented: therefore never fired once. Every advertised counter key was dead, and
- // pressing the one on the legend opened a new Sales tab under the clerk mid-sale.
- //
- // The rule is innermost-wins, scoped by mounting: this listener exists only while the counter
- // is on screen, it claims a key ONLY when it actually did something with it (runHotkey), and
- // anything it does not claim propagates to the shell's map completely untouched. F5 still
- // reloads, the shell's other keys still navigate, and the counter's advertised keys do what the
- // legend says they do.
+    // pressing the one on the legend opened a new Sales tab under the clerk mid-sale.
+    //
+    // The rule is innermost-wins, scoped by mounting: this listener exists only while the counter
+    // is on screen, it claims a key ONLY when it actually did something with it (runHotkey), and
+    // anything it does not claim propagates to the shell's map completely untouched. F5 still
+    // reloads, the shell's other keys still navigate, and the counter's advertised keys do what the
+    // legend says they do.
     window.addEventListener('keydown', this.onPosKey, true);
     window.addEventListener(INTENT_EVENT, this.onQuickIntent as EventListener);
     this.applyQuickIntent(takeIntent('pos', [INTENT_POS_NEW_TICKET, INTENT_POS_PAY]));
- // ── end DIB-434 ──
+    // ── end DIB-434 ──
   }
 
- /**
+  /**
  * The counter takes the keyboard when it opens: but only if nobody else has it.
- *
- * The keyboard walkthrough opened POS and found focus on <body>: thirteen Tab presses from the
- * top of the document before a counter control, on a screen whose whole premise is that a
- * cashier picks up the gun and shoots. The scan box's own autofocus could not help, because at
- * mount the Items card is CLOSED and the box is not rendered at all.
- *
- * The guard matters as much as the focus. A surface that grabs focus unconditionally will yank
- * it out from under a person who has already clicked something during the mount, which is worse
+   *
+   * The keyboard walkthrough opened POS and found focus on <body>: thirteen Tab presses from the
+   * top of the document before a counter control, on a screen whose whole premise is that a
+   * cashier picks up the gun and shoots. The scan box's own autofocus could not help, because at
+   * mount the Items card is CLOSED and the box is not rendered at all.
+   *
+   * The guard matters as much as the focus. A surface that grabs focus unconditionally will yank
+   * it out from under a person who has already clicked something during the mount, which is worse
  * than the problem it fixes: so this acts only while focus is still on the document body.
- */
+   */
   protected firstUpdated(): void {
     void this.updateComplete.then(() => {
       const active = document.activeElement;
@@ -2466,8 +2467,8 @@ export class HosPosTerminal extends LitElement {
     });
   }
 
- // DIB-195: apply the popped-in order exactly once, the first update where `restore` is set.
- // Guarded so a later re-render never re-applies (which would clobber the cashier's edits).
+  // DIB-195: apply the popped-in order exactly once, the first update where `restore` is set.
+  // Guarded so a later re-render never re-applies (which would clobber the cashier's edits).
   protected willUpdate(): void {
     if (!this.restored && this.restore) {
       this.restored = true;
@@ -2476,9 +2477,9 @@ export class HosPosTerminal extends LitElement {
   }
 
 
- // DIB-195 (opener side): capture the current in-progress order so a pop-out can carry it into
+  // DIB-195 (opener side): capture the current in-progress order so a pop-out can carry it into
  // the new window. Verbatim client state (a DRAFT: no server sale id yet); the shell stashes
- // this and the popped terminal restores it via the `restore` property.
+  // this and the popped terminal restores it via the `restore` property.
   snapshotOrder(): PosOrderSnapshot {
     return {
       cart: this.cart,
@@ -2509,10 +2510,10 @@ export class HosPosTerminal extends LitElement {
     };
   }
 
- // DIB-195 (popped side): apply a handoff snapshot into this terminal's live state. Lines carry
- // their own engine breakdown, so totals/prices match the opener with no re-fetch. If a till
- // session was open in the opener, resume its timer here so the moved window is immediately
- // ready to ring against the SAME drawer.
+  // DIB-195 (popped side): apply a handoff snapshot into this terminal's live state. Lines carry
+  // their own engine breakdown, so totals/prices match the opener with no re-fetch. If a till
+  // session was open in the opener, resume its timer here so the moved window is immediately
+  // ready to ring against the SAME drawer.
   private applySnapshot(s: PosOrderSnapshot): void {
     this.cart = Array.isArray(s.cart) ? s.cart : [];
     this.cartReplaced(); // D17: a pop-out's snapshot is a different ticket: drop answers in flight
@@ -2529,27 +2530,27 @@ export class HosPosTerminal extends LitElement {
     this.depositDollars = s.depositDollars ?? '';
     this.depositMethod = s.depositMethod || 'CASH';
     this.fulfilment = s.fulfilment || 'PICKUP';
- // DIB-488: flow facts follow the sale into the popped window; an older snapshot without them
+    // DIB-488: flow facts follow the sale into the popped window; an older snapshot without them
  // restores to the defaults (unresolved customer, no tender picked): never undefined.
     this.walkInConfirmed = s.walkInConfirmed ?? false;
- // A snapshot taken before the cash default (a popped-out window, a parked ticket) carries no
- // tender. It resumes tenderable rather than resuming into the state this change removed.
+    // A snapshot taken before the cash default (a popped-out window, a parked ticket) carries no
+    // tender. It resumes tenderable rather than resuming into the state this change removed.
     this.payMethod = (s.payMethod as typeof this.payMethod) || 'CASH';
- // An older snapshot carries no answer, which restores as the honest default: un-answered. A
- // snapshot that DID name a tender was taken from a terminal where '' meant "nothing picked",
- // so a named tender in it is a decision and restores as one.
+    // An older snapshot carries no answer, which restores as the honest default: un-answered. A
+    // snapshot that DID name a tender was taken from a terminal where '' meant "nothing picked",
+    // so a named tender in it is a decision and restores as one.
     this.tenderConfirmed = s.tenderConfirmed ?? (s.payMethod ? s.payMethod !== '' : false);
- // rev 6: the More-options facts follow the sale; an older snapshot restores to the defaults
- // (no PO ref, the signed-in operator as salesperson, no cash quick entry).
+    // rev 6: the More-options facts follow the sale; an older snapshot restores to the defaults
+    // (no PO ref, the signed-in operator as salesperson, no cash quick entry).
     this.poJobRef = s.poJobRef ?? '';
     this.salespersonId = s.salespersonId || (getCurrentUser()?.user_id ?? '');
     this.cashTenderedDollars = s.cashTenderedDollars ?? '';
- // rev 8: the job facts follow the sale; older snapshots restore to empty.
+    // rev 8: the job facts follow the sale; older snapshots restore to empty.
     this.jobAddress = s.jobAddress ?? '';
     this.jobReference = s.jobReference ?? '';
  // rev 5: a snapshot restoring payMethod SPLIT must also restore the split panel: without it
- // the popped window shows the "compose the split legs below" hint over NO panel and no CTA
- // (a dead-end payment state until the cashier re-taps the tile twice).
+    // the popped window shows the "compose the split legs below" hint over NO panel and no CTA
+    // (a dead-end payment state until the cashier re-taps the tile twice).
     this.showSplit = this.payMethod === 'SPLIT';
     for (const l of this.cart) void this.hydrateLineStock(l.product.id);
     if (s.tillSessionId) {
@@ -2560,9 +2561,9 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- // Resolve pos_policy so the COD sale type is offered honestly (disabled + tooltip when off).
+  // Resolve pos_policy so the COD sale type is offered honestly (disabled + tooltip when off).
  // DIB-488: the same read now carries the dealer's workspace preferences (D-096): the default
- // items presentation and whether the quick-chip row exists at all.
+  // items presentation and whether the quick-chip row exists at all.
   private async loadPolicy(): Promise<void> {
     try {
       const p = await getPosPolicy(this.branchId);
@@ -2570,8 +2571,8 @@ export class HosPosTerminal extends LitElement {
       if (!p.cod_enabled && this.saleType === 'COD') this.saleType = 'COLLECT_NOW';
       this.presentation = p.line_presentation === 'CARDS' ? 'CARDS' : 'LINES';
       this.quickChips = p.quick_chips_enabled !== false;
- // rev 8 (item 4): the curated chip set (dealer-authored, or the server's top-sellers
- // derivation). Hardened at the edge; [] = the grid keeps its full chip row.
+      // rev 8 (item 4): the curated chip set (dealer-authored, or the server's top-sellers
+      // derivation). Hardened at the edge; [] = the grid keeps its full chip row.
       this.curatedChips = resolveCuratedChips(p.quick_chip_set);
     } catch {
       this.codEnabled = null; // unknown: keep the option disabled rather than wrong
@@ -2579,16 +2580,16 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- /**
+  /**
  * rev 6 (item D): the salesperson roster, best-effort: a failed read leaves the list empty and
- * the selector offers just the signed-in operator (empty-never-error; the field is a convenience,
- * never a gate on ringing a sale).
- */
+   * the selector offers just the signed-in operator (empty-never-error; the field is a convenience,
+   * never a gate on ringing a sale).
+   */
   private async loadSalespeople(): Promise<void> {
     try {
       this.salespeople = await listSalespeople();
     } catch {
- /* the operator-only fallback renders from getCurrentUser() */
+      /* the operator-only fallback renders from getCurrentUser() */
     }
   }
 
@@ -2596,7 +2597,7 @@ export class HosPosTerminal extends LitElement {
     try {
       this.parkedCount = (await listParked(this.branchId)).length;
     } catch {
- /* count is cosmetic */
+      /* count is cosmetic */
     }
   }
 
@@ -2607,20 +2608,20 @@ export class HosPosTerminal extends LitElement {
     if (this.ticketFactsTimer) window.clearTimeout(this.ticketFactsTimer); // rev 8: no orphan facts read
     if (this.wsPersistTimer) window.clearTimeout(this.wsPersistTimer); // a torn-down till saves nothing
     window.removeEventListener('pointerdown', this.onDocPointerDown, true); // rev 5
- // ── DIB-434 ──
+    // ── DIB-434 ──
     window.removeEventListener('keydown', this.onPosKey, true);
     window.removeEventListener(INTENT_EVENT, this.onQuickIntent as EventListener);
- // ── end DIB-434 ──
+    // ── end DIB-434 ──
   }
 
- /**
+  /**
  * rev 5: rehydrate the OPEN till on mount. tillSessionId was in-memory only, so a mid-shift
- * reload (or a Duplicate) showed "Open Session" and rang 409 while the drawer WAS open. The
- * server is the source of truth: ask it for the caller's open drawer at this branch/station and
+   * reload (or a Duplicate) showed "Open Session" and rang 409 while the drawer WAS open. The
+   * server is the source of truth: ask it for the caller's open drawer at this branch/station and
  * adopt it: id AND opened_at, so the elapsed timer resumes honestly instead of restarting at
- * 00:00. Best-effort: an outage leaves the chrome exactly as before (empty-never-error), and a
- * pop-out snapshot that already carried the session wins (guarded on tillSessionId === '').
- */
+   * 00:00. Best-effort: an outage leaves the chrome exactly as before (empty-never-error), and a
+   * pop-out snapshot that already carried the session wins (guarded on tillSessionId === '').
+   */
   private async hydrateTillSession(): Promise<void> {
     try {
       const open = await findOpenTillSession(this.branchId, 'MAIN');
@@ -2635,7 +2636,7 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- // Resolve the card-rail mode so the Card tender is labelled honestly (test vs live vs unconfigured).
+  // Resolve the card-rail mode so the Card tender is labelled honestly (test vs live vs unconfigured).
   private async loadCardRail(): Promise<void> {
     try {
       const res = await api('/api/v1/payments/config');
@@ -2647,7 +2648,7 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- // ── till chrome (A-03) ────────────────────────────────────────────────
+  // ── till chrome (A-03) ────────────────────────────────────────────────
   private async openSession(): Promise<void> {
     try {
       const res = await api('/api/v1/till/sessions', {
@@ -2668,9 +2669,9 @@ export class HosPosTerminal extends LitElement {
     this.tick();
   }
 
- // End Session opens the real A-03 close flow (movements → blind count → Z-report → complete);
+  // End Session opens the real A-03 close flow (movements → blind count → Z-report → complete);
  // the local chrome resets only once the till actually closes (or the cashier defers: COUNTED
- // sessions can be completed next morning, per the Dibbits SOP).
+  // sessions can be completed next morning, per the Dibbits SOP).
   private endSession(): void {
     this.showTillClose = true;
   }
@@ -2690,76 +2691,76 @@ export class HosPosTerminal extends LitElement {
     this.elapsed = `${mm}:${ss}`;
   }
 
- // ── cart ──────────────────────────────────────────────────────────────
- /**
+  // ── cart ──────────────────────────────────────────────────────────────
+  /**
  * DIB-DUPLINE: adding a product that is ALREADY on the ticket raises the existing line's
- * quantity instead of appending a second line of the same thing. Reported from the live counter:
- * three scans of one SKU used to build three lines of 1.
- *
+   * quantity instead of appending a second line of the same thing. Reported from the live counter:
+   * three scans of one SKU used to build three lines of 1.
+   *
  * EVERY add path lands here: the scan box's resolve, a search-result row, a browse tile, the
  * add-ons strip's + Add, the quick-add rail: so the rule is written once and cannot be missed by
- * a caller. decideAdd() (pure, _pos.ts) owns the judgement:
- *
- * merge same product, same sell unit, and a target line carrying no line-level work of its
+   * a caller. decideAdd() (pure, _pos.ts) owns the judgement:
+   *
+   * merge same product, same sell unit, and a target line carrying no line-level work of its
  * own. The quantity is SUMMED and the line goes straight back through reprice(): the
- * same /pricing/resolve call a fresh add makes. No money is ever computed here: a
- * merged 250 + 250 is repriced AT 500, so a volume break that only opens above 400
- * actually opens (client-side arithmetic would have kept the 250-tier unit price).
- * append a different sell unit, or a line the clerk has shaped by hand. A second line is the
- * HONEST answer there, and the outcome line below says why it appeared.
- *
- * The scan-focus contract is untouched: the scan box refocuses itself, and the DIB-196
- * ask-for-quantity jump now lands on the MERGED line's qty box (the affected line) exactly as it
- * has always landed on the affected line.
- */
- /**
+   * same /pricing/resolve call a fresh add makes. No money is ever computed here: a
+   * merged 250 + 250 is repriced AT 500, so a volume break that only opens above 400
+   * actually opens (client-side arithmetic would have kept the 250-tier unit price).
+   * append a different sell unit, or a line the clerk has shaped by hand. A second line is the
+   * HONEST answer there, and the outcome line below says why it appeared.
+   *
+   * The scan-focus contract is untouched: the scan box refocuses itself, and the DIB-196
+   * ask-for-quantity jump now lands on the MERGED line's qty box (the affected line) exactly as it
+   * has always landed on the affected line.
+   */
+  /**
  * DIB-553 (bounce 2): the ticket's change counter, handed to every add surface.
- *
- * Each surface holds its own 300ms echo guard, and that guard is only meaningful while the line
- * it created is still on the ticket. It is surface state; the cart is terminal state; nothing
- * connected the two. Driving the grid directly showed it: click (1 line), `cart = []`, click
+   *
+   * Each surface holds its own 300ms echo guard, and that guard is only meaningful while the line
+   * it created is still on the ticket. It is surface state; the cart is terminal state; nothing
+   * connected the two. Driving the grid directly showed it: click (1 line), `cart = []`, click
  * again on the SAME product: ZERO lines, because the surface still thought the second press was
- * an echo. New Sale and Park re-render enough to reset it in practice, and "in practice" is not
- * a rule.
- *
- * Bumped by every cart change that is NOT the add itself. Deliberately NOT bumped by reprice():
- * reprice runs inside addProduct, so a bump there would cancel the guard on the very gesture it
- * exists for.
- */
+   * an echo. New Sale and Park re-render enough to reset it in practice, and "in practice" is not
+   * a rule.
+   *
+   * Bumped by every cart change that is NOT the add itself. Deliberately NOT bumped by reprice():
+   * reprice runs inside addProduct, so a bump there would cancel the guard on the very gesture it
+   * exists for.
+   */
   @state() private ticketEpoch = 0;
 
   private ticketChanged(): void {
     this.ticketEpoch++;
   }
 
- /**
+  /**
  * The cart was replaced WHOLESALE: a different ticket now occupies these slots.
- *
- * Everything `ticketChanged()` does (the add surfaces' echo guards forget their last press), plus
- * a bump of the D17 reprice generation, which drops every pricing answer still in flight for the
- * ticket that just left. Without it, a slot that happens to be refilled with the same product at
+   *
+   * Everything `ticketChanged()` does (the add surfaces' echo guards forget their last press), plus
+   * a bump of the D17 reprice generation, which drops every pricing answer still in flight for the
+   * ticket that just left. Without it, a slot that happens to be refilled with the same product at
  * the same quantity would accept the PREVIOUS customer's price: the narrow case the per-slot
- * token and the product/qty/uom check cannot see, and the one the round-2 docstring named.
- *
- * Deliberately NOT called from setQty or removeLine. Those change the cart but do not replace it,
- * they already supersede correctly, and cancelling every in-flight answer there would leave a
- * freshly added line reading a hard CA$0.00 because an unrelated line was deleted.
- */
+   * token and the product/qty/uom check cannot see, and the one the round-2 docstring named.
+   *
+   * Deliberately NOT called from setQty or removeLine. Those change the cart but do not replace it,
+   * they already supersede correctly, and cancelling every in-flight answer there would leave a
+   * freshly added line reading a hard CA$0.00 because an unrelated line was deleted.
+   */
   private cartReplaced(): void {
     this.ticketChanged();
     this.cartGen++;
   }
 
- /**
- * An add a surface SWALLOWED as the second half of one gesture (DIB-553, bounce 2).
- *
- * The swallow used to be silent, which is the worst possible answer: a real add flashes the line
- * and announces the new quantity, so a suppressed one reading as nothing is indistinguishable
+  /**
+   * An add a surface SWALLOWED as the second half of one gesture (DIB-553, bounce 2).
+   *
+   * The swallow used to be silent, which is the worst possible answer: a real add flashes the line
+   * and announces the new quantity, so a suppressed one reading as nothing is indistinguishable
  * from the till dropping the press. It gets the SAME two signals a real add gets: the line
  * flashes, and one sentence lands in the role="status" line the counter is already reading:
- * with the quantity that is actually on the ticket, so the outcome is legible without looking
- * away from the gun.
- */
+   * with the quantity that is actually on the ticket, so the outcome is legible without looking
+   * away from the gun.
+   */
   private onAddEcho(id: string): void {
     const idx = this.cart.findIndex((l) => l.product.id === id);
     if (idx < 0) return; // an echo implies the first half landed; if it did not, say nothing false
@@ -2775,16 +2776,16 @@ export class HosPosTerminal extends LitElement {
   }
 
   private async addProduct(p: PosProduct, qty = 1): Promise<void> {
- // Sell UoM: the product's declared sold_by, else its stocking base unit. A hardcoded 'EA' fallback
- // rang up "no uom conversion factor" for any product stocked in tonnes/SF with sold_by unset.
- // rev 8: the optional qty is the add-ons strip's one-click add (its tile carries a qty box);
+    // Sell UoM: the product's declared sold_by, else its stocking base unit. A hardcoded 'EA' fallback
+    // rang up "no uom conversion factor" for any product stocked in tonnes/SF with sold_by unset.
+    // rev 8: the optional qty is the add-ons strip's one-click add (its tile carries a qty box);
  // every existing caller still adds 1: the engine prices either way (never client-priced).
     const uom = p.sold_by || p.base_uom || 'EA';
     const d = decideAdd(this.cart, p.id, uom, qty);
     let idx: number;
     if (d.action === 'merge') {
- // Quantity only. Every money field on the line is left exactly as it was and is overwritten
- // wholesale by the engine's answer in reprice() below.
+      // Quantity only. Every money field on the line is left exactly as it was and is overwritten
+      // wholesale by the engine's answer in reprice() below.
       const next = [...this.cart];
       next[d.index] = { ...next[d.index], qty: d.toQty };
       this.cart = next;
@@ -2802,29 +2803,29 @@ export class HosPosTerminal extends LitElement {
       this.cart = [...this.cart, line];
       idx = this.cart.length - 1;
     }
- // DIB-488: warm the stock-status line for the new item (display-only; never blocks the add).
+    // DIB-488: warm the stock-status line for the new item (display-only; never blocks the add).
     void this.hydrateLineStock(p.id);
     await this.reprice(idx);
- // The affected line draws attention to itself, so a counter person SEES 250 → 500 instead of
- // wondering where their scan went. Both are needed: the flash for the eye already on the
- // ticket, the spoken outcome for the eye still on the gun.
+    // The affected line draws attention to itself, so a counter person SEES 250 → 500 instead of
+    // wondering where their scan went. Both are needed: the flash for the eye already on the
+    // ticket, the spoken outcome for the eye still on the gun.
     void this.flashLine(idx);
     this.speakAddOutcome(d, p.name, uom);
- // DIB-196: with the terminal's "ask for quantity" toggle on, jump to the affected line's qty
- // box (highlighted, via the DIB-199 select-on-focus) so the clerk types the amount instead of 1.
+    // DIB-196: with the terminal's "ask for quantity" toggle on, jump to the affected line's qty
+    // box (highlighted, via the DIB-199 select-on-focus) so the clerk types the amount instead of 1.
     if (this.promptQtyOnAdd) void this.focusLineQty(idx);
   }
 
- /**
+  /**
  * The add OUTCOME, in the scan box's own role="status" line: the region the counter is already
- * reading, and the one the box itself uses for "Added …". Speaking here rather than adding a
- * second message strip keeps one fact in one place (doctrine bullet 6): on a merge this REPLACES
- * the box's "Added …", which would otherwise be true but useless ("added" where? which line?).
- *
- * Ordering: the box sets its own "Added …" synchronously right after it dispatches
+   * reading, and the one the box itself uses for "Added …". Speaking here rather than adding a
+   * second message strip keeps one fact in one place (doctrine bullet 6): on a merge this REPLACES
+   * the box's "Added …", which would otherwise be true but useless ("added" where? which line?).
+   *
+   * Ordering: the box sets its own "Added …" synchronously right after it dispatches
  * pos-scan-resolved, and this runs after the awaited reprice(): so the outcome always lands
- * last. A plain first add says nothing here and the box's own confirmation stands.
- */
+   * last. A plain first add says nothing here and the box's own confirmation stands.
+   */
   private speakAddOutcome(d: AddDecision, productName: string, uom: string): void {
     const out = addOutcomeMessage(d, productName, uom);
     if (!out) return;
@@ -2835,19 +2836,19 @@ export class HosPosTerminal extends LitElement {
     else this.setUtil(out.msg, out.kind === 'warn' ? 'bad' : 'ok'); // no box mounted: never silent
   }
 
- /**
- * Ring the affected line for a beat. Deliberately NOT a field on CartLine: the cart is
- * serialized verbatim into the till snapshot, and a rehydrated ticket must not come back
- * flashing a merge that happened before lunch. Index-keyed, and a new flash supersedes the old.
- *
+  /**
+   * Ring the affected line for a beat. Deliberately NOT a field on CartLine: the cart is
+   * serialized verbatim into the till snapshot, and a rehydrated ticket must not come back
+   * flashing a merge that happened before lunch. Index-keyed, and a new flash supersedes the old.
+   *
  * The animation is RESTARTED explicitly, because the gesture this fix exists for: scan, scan,
  * scan: lands on the SAME line every time. The class is already on that row from the previous
- * add, so the browser has no reason to re-run the keyframes, and the second and third scans
- * would ring nothing: the exact "where did my scan go?" silence the merge is meant to end.
+   * add, so the browser has no reason to re-run the keyframes, and the second and third scans
+   * would ring nothing: the exact "where did my scan go?" silence the merge is meant to end.
  * getAnimations() is guarded (older engines, the node test runner): a missing restart costs the
- * animation, never the quantity, and reduced-motion has no animation to restart because its ring
- * is static.
- */
+   * animation, never the quantity, and reduced-motion has no animation to restart because its ring
+   * is static.
+   */
   private async flashLine(idx: number): Promise<void> {
     if (this.flashTimer) window.clearTimeout(this.flashTimer);
     this.flashIdx = idx;
@@ -2867,24 +2868,24 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- /**
+  /**
  * DIB-488: fetch (once per product) the glance behind the stock-status line. Best-effort and
- * display-only, exactly like the product grid's own glances: a failed read renders NOTHING under
- * the line (absent data is not an error and must never read as "out of stock").
- */
+   * display-only, exactly like the product grid's own glances: a failed read renders NOTHING under
+   * the line (absent data is not an error and must never read as "out of stock").
+   */
   private async hydrateLineStock(productId: string): Promise<void> {
     if (this.lineStock[productId]) return;
     try {
       const g = await stockGlance(productId);
       this.lineStock = { ...this.lineStock, [productId]: g };
     } catch {
- /* display-only */
+      /* display-only */
     }
   }
 
- // DIB-196: focus + select a cart line's quantity box once the DOM has settled, so the default
+  // DIB-196: focus + select a cart line's quantity box once the DOM has settled, so the default
  // "1" is highlighted and the next keystroke replaces it. Best-effort: a missing node (line
- // removed mid-flight) is simply a no-op.
+  // removed mid-flight) is simply a no-op.
   private async focusLineQty(idx: number): Promise<void> {
     await this.updateComplete;
     const el = this.renderRoot.querySelectorAll<HTMLInputElement>('input.qty')[idx];
@@ -2894,49 +2895,49 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- /**
- * Re-derive one line's money from the engine.
- *
- * THE TICKET CAN MOVE WHILE THIS IS IN FLIGHT, and before this guard it did the worst possible
- * thing about it. `resolveLine` is a network round trip; the line object was captured before it
+  /**
+   * Re-derive one line's money from the engine.
+   *
+   * THE TICKET CAN MOVE WHILE THIS IS IN FLIGHT, and before this guard it did the worst possible
+   * thing about it. `resolveLine` is a network round trip; the line object was captured before it
  * and written back after it, into `[...this.cart]`: whatever `this.cart` had become. Found while
- * instrumenting DIB-553's ticket-scoping fix, and reproduced in the browser: add an item, press
- * New Sale before the reprice returns, and the cleared line REAPPEARS on the fresh ticket
+   * instrumenting DIB-553's ticket-scoping fix, and reproduced in the browser: add an item, press
+   * New Sale before the reprice returns, and the cleared line REAPPEARS on the fresh ticket
  * (measured: cart 1 → 0 on the reset, then back to 1 ~200ms later, and the line stays). The same
- * hole is open for Clear sale, Park, resuming a parked ticket and applying a pop-out snapshot,
- * because every one of them replaces the cart wholesale. A previous customer's product on the
- * next customer's ticket is a money defect, and nothing announced it.
- *
- * ROUND 2 CHECKED THE PRODUCT AND NOTHING ELSE, AND THAT WAS THE WORSE HALF OF THE BUG.
+   * hole is open for Clear sale, Park, resuming a parked ticket and applying a pop-out snapshot,
+   * because every one of them replaces the cart wholesale. A previous customer's product on the
+   * next customer's ticket is a money defect, and nothing announced it.
+   *
+   * ROUND 2 CHECKED THE PRODUCT AND NOTHING ELSE, AND THAT WAS THE WORSE HALF OF THE BUG.
  * The guard asked only whether the slot still held the same product id: but the write-back was
  * `{...line, …money }`, spreading the whole PRE-AWAIT SNAPSHOT. Product identity survived the
- * guard; the operator's QUANTITY was restored from the snapshot. Measured with the first answer
- * held 600ms: add Red Mulch, add it again 800ms later (deliberate, far outside the echo window)
- * and the ticket went 1 → 2 → **1**. A deliberate unit silently deleted. Same for a 7 typed into
- * the line's qty box, for a next customer's ticket, and for a resumed parked ticket's 6.
- *
+   * guard; the operator's QUANTITY was restored from the snapshot. Measured with the first answer
+   * held 600ms: add Red Mulch, add it again 800ms later (deliberate, far outside the echo window)
+   * and the ticket went 1 → 2 → **1**. A deliberate unit silently deleted. Same for a 7 typed into
+   * the line's qty box, for a next customer's ticket, and for a resumed parked ticket's 6.
+   *
  * So the guard is now the one `refreshAddons()` has used all along: a sequence token: made
- * per-slot and made PURE so it can actually be tested (`repriceAnswerIsCurrent`, `_pos.ts`);
- * round 2's inline `stillOurs()` had zero coverage in 3311 tests, which is why forcing it true
- * reproduced the original defect with nothing going red. Four independent reasons to drop an
- * answer, each measured biting a different gesture: the cart generation (a previous customer's
+   * per-slot and made PURE so it can actually be tested (`repriceAnswerIsCurrent`, `_pos.ts`);
+   * round 2's inline `stillOurs()` had zero coverage in 3311 tests, which is why forcing it true
+   * reproduced the original defect with nothing going red. Four independent reasons to drop an
+   * answer, each measured biting a different gesture: the cart generation (a previous customer's
  * ticket), the slot's own token (a newer reprice was issued: every quantity change reprices),
- * the product id (round 2's check, kept), and the qty/uom the answer was actually computed for.
- *
- * And the write-back now goes through `applyPriceAnswer`, which copies the money fields onto the
- * line that is THERE. Both halves matter and they are not redundant: the token stops a stale
- * answer applying at all, and not spreading the snapshot means a late answer that somehow does
- * apply still cannot carry old operator state back onto the ticket.
- *
- * A dropped answer costs a repaint and never a price: the engine re-resolves everything
- * authoritatively at tender time.
- */
+   * the product id (round 2's check, kept), and the qty/uom the answer was actually computed for.
+   *
+   * And the write-back now goes through `applyPriceAnswer`, which copies the money fields onto the
+   * line that is THERE. Both halves matter and they are not redundant: the token stops a stale
+   * answer applying at all, and not spreading the snapshot means a late answer that somehow does
+   * apply still cannot carry old operator state back onto the ticket.
+   *
+   * A dropped answer costs a repaint and never a price: the engine re-resolves everything
+   * authoritatively at tender time.
+   */
   private async reprice(idx: number): Promise<void> {
     const line = this.cart[idx];
     if (!line) return;
     const seq = (this.repriceSeq[idx] = (this.repriceSeq[idx] ?? 0) + 1);
     const stamp = repriceStamp(this.cartGen, seq, line);
- /** Is this answer still about the line that is in the slot NOW? */
+    /** Is this answer still about the line that is in the slot NOW? */
     const stillOurs = (): boolean =>
       repriceAnswerIsCurrent(stamp, this.cartGen, this.repriceSeq[idx] ?? 0, this.cart[idx]);
     try {
@@ -2962,9 +2963,9 @@ export class HosPosTerminal extends LitElement {
       this.cart = next;
       this.scheduleTicketFacts(); // rev 8: a repriced ticket refreshes margin + suggestions
     } catch {
- // rev 5: the line stays unpriced (the server still re-resolves authoritatively at tender
+      // rev 5: the line stays unpriced (the server still re-resolves authoritatively at tender
  // time), but it must SAY so: a hard "CA$0.00" where a price failed to resolve reads as a
- // real price until the ring refuses it. priceMissing renders "price pending" instead.
+      // real price until the ring refuses it. priceMissing renders "price pending" instead.
       const cur = this.cart[idx];
       if (!stillOurs() || !cur) return; // same reason: a failure for a line that is gone marks nothing
       const next = [...this.cart];
@@ -2975,7 +2976,7 @@ export class HosPosTerminal extends LitElement {
 
   private setQty(idx: number, qty: number): void {
  // rev 5: cleanQty (pure, _pos.ts) also catches NaN: a scanner burst landing in a focused qty
- // box used to store a literal NaN on the line (stuck steppers, stale totals, silence).
+    // box used to store a literal NaN on the line (stuck steppers, stale totals, silence).
     const next = [...this.cart];
     next[idx] = { ...next[idx], qty: cleanQty(qty) };
     this.cart = next;
@@ -2983,12 +2984,12 @@ export class HosPosTerminal extends LitElement {
     void this.reprice(idx);
   }
 
- /**
+  /**
  * rev 5: the qty-entry gesture ENDS back at the scan box. With ask-for-quantity on, focus
- * parked in the qty box after Enter, so the next scanner burst typed a SKU into the quantity
- * (the exact "600,000 pavers" scenario the scan box's docstring warns about). Enter now commits
- * the qty (change fires on blur) and hands the caret back to the gun's input.
- */
+   * parked in the qty box after Enter, so the next scanner burst typed a SKU into the quantity
+   * (the exact "600,000 pavers" scenario the scan box's docstring warns about). Enter now commits
+   * the qty (change fires on blur) and hands the caret back to the gun's input.
+   */
   private onQtyKeydown(e: KeyboardEvent): void {
     if (e.key !== 'Enter') return;
     e.preventDefault();
@@ -2996,16 +2997,16 @@ export class HosPosTerminal extends LitElement {
     this.focusScanBox();
   }
 
- /** Return the caret to the scan box (the counter's rest state) once the DOM settles. */
- /**
- * The field's Enter fell through to the results (a TYPED miss, never a scanner burst): commit the
- * top row. This is the client's "Enter takes the top hit", and it deliberately lives here rather
+  /** Return the caret to the scan box (the counter's rest state) once the DOM settles. */
+  /**
+   * The field's Enter fell through to the results (a TYPED miss, never a scanner burst): commit the
+   * top row. This is the client's "Enter takes the top hit", and it deliberately lives here rather
  * than in the scan box: the box does not own the result list, and a box that reached into it
- * would be a box that could commit a row nobody could see.
- *
- * No hit means no commit: the term stays in the field and the browse path is one press away.
- * Enter must never invent a product.
- */
+   * would be a box that could commit a row nobody could see.
+   *
+   * No hit means no commit: the term stays in the field and the browse path is one press away.
+   * Enter must never invent a product.
+   */
   private commitTopHit(): void {
     const drop = this.renderRoot.querySelector<HTMLElement & { commitTop?: () => boolean; topHit?: () => { name: string; sku: string } | null }>(
       'hos-pos-search-drop',
@@ -3016,7 +3017,7 @@ export class HosPosTerminal extends LitElement {
     box?.commitDone?.(`Added ${top.name} · ${top.sku}`);
   }
 
- /** ArrowDown out of the field walks into the result list; an empty list keeps the caret. */
+  /** ArrowDown out of the field walks into the result list; an empty list keeps the caret. */
   private enterResultList(): void {
     const drop = this.renderRoot.querySelector<HTMLElement & { focusFirstRow?: () => boolean }>('hos-pos-search-drop');
     drop?.focusFirstRow?.();
@@ -3028,12 +3029,12 @@ export class HosPosTerminal extends LitElement {
     });
   }
 
- // ── requested-date entry (DIB-198 calendar + DIB-200 compact YYYYMMDD + DIB-259 single box) ──
- // DIB-259: the calendar button sits next to the single date box; clicking it opens the native
- // picker on the visually-hidden <input type="date"> that shares requestedDate. showPicker() is a
+  // ── requested-date entry (DIB-198 calendar + DIB-200 compact YYYYMMDD + DIB-259 single box) ──
+  // DIB-259: the calendar button sits next to the single date box; clicking it opens the native
+  // picker on the visually-hidden <input type="date"> that shares requestedDate. showPicker() is a
  // progressive enhancement: guarded (older browsers lack it) and wrapped, because it throws
- // without user activation. Never fatal: the clerk can still type the date. No-op if the hidden
- // input isn't in the DOM yet (SSR / test runner).
+  // without user activation. Never fatal: the clerk can still type the date. No-op if the hidden
+  // input isn't in the DOM yet (SSR / test runner).
   private openDatePickerFromButton(e: Event): void {
     const btn = e.currentTarget as HTMLElement;
     const hidden = btn.parentElement?.querySelector('input.datehidden') as
@@ -3047,7 +3048,7 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- // DIB-200: commit a compact entry to requestedDate. parseCompactDate (pure, unit-tested) turns
+  // DIB-200: commit a compact entry to requestedDate. parseCompactDate (pure, unit-tested) turns
  // a compact run of digits into the ISO form, and passes a valid ISO string straight through, so
  // this box and the native picker agree. Returns whether the raw value was a usable date.
   private commitCompactDate(raw: string): boolean {
@@ -3058,18 +3059,18 @@ export class HosPosTerminal extends LitElement {
     return true;
   }
 
- // Live path: as the clerk types, file the date the instant a full 8 digits are present (never
- // tabbing year→month→day). DIB-259: this is now the single visible date field, so the committed
+  // Live path: as the clerk types, file the date the instant a full 8 digits are present (never
+  // tabbing year→month→day). DIB-259: this is now the single visible date field, so the committed
  // value STAYS in the box (bound to requestedDate as ISO) rather than being cleared: the box is
- // the one place the chosen date shows.
+  // the one place the chosen date shows.
   private onCompactDateInput(e: Event): void {
     const el = e.target as HTMLInputElement;
     if (this.dateError) this.dateError = '';
     if (el.value.replace(/\D/g, '').length >= 8) this.commitCompactDate(el.value);
   }
 
- // Commit path (blur / Enter): validate a non-empty entry and show an inline hint if it's not a
- // real YYYYMMDD date. An empty box just clears any prior error (the native picker still owns it).
+  // Commit path (blur / Enter): validate a non-empty entry and show an inline hint if it's not a
+  // real YYYYMMDD date. An empty box just clears any prior error (the native picker still owns it).
   private onCompactDateChange(e: Event): void {
     const el = e.target as HTMLInputElement;
     const raw = el.value.trim();
@@ -3078,14 +3079,14 @@ export class HosPosTerminal extends LitElement {
       this.requestedDate = '';
       return;
     }
- // DIB-259: on a valid entry keep the normalised ISO value in the box (via requestedDate) instead
- // of clearing it; only surface the hint when the 8 digits aren't a real date.
+    // DIB-259: on a valid entry keep the normalised ISO value in the box (via requestedDate) instead
+    // of clearing it; only surface the hint when the 8 digits aren't a real date.
     if (this.commitCompactDate(raw)) el.value = this.requestedDate;
     else {
       this.dateError = 'Type 8 digits: YYYYMMDD.';
  // DIB-259 (ship review): never leave a stale committed ISO behind a visible error: the box
- // text and requestedDate would desync and the sale could ring with a hidden date the clerk
- // never sees. Clear the hidden value; the ring path is also guarded on dateError below.
+      // text and requestedDate would desync and the sale could ring with a hidden date the clerk
+      // never sees. Clear the hidden value; the ring path is also guarded on dateError below.
       this.requestedDate = '';
     }
   }
@@ -3096,12 +3097,12 @@ export class HosPosTerminal extends LitElement {
     this.scheduleTicketFacts(); // rev 8: fewer lines = a different margin footer + suggestion set
   }
 
-  // HH note: subtotal, tax and total are the core's arithmetic in HH (the money invariant), so
-  // each answers through a host seam (ports.ts, named in CLOSURE.md) with the reference's shape.
+   // HH note: subtotal, tax and total are the core's arithmetic in HH (the money invariant), so
+   // each answers through a host seam (ports.ts, named in CLOSURE.md) with the reference's shape.
   private subtotal(): number {
     return cartSubtotalCents(this.cart);
   }
- // Preview rate: the applied relief's engine-assessed bps, else the 13% standard. M5 owns the binding value.
+  // Preview rate: the applied relief's engine-assessed bps, else the 13% standard. M5 owns the binding value.
   private taxRateBps(): number {
     return this.reliefRateBps ?? 1300;
   }
@@ -3117,60 +3118,60 @@ export class HosPosTerminal extends LitElement {
     return ticketTotalCents(this.subtotal(), this.tax());
   }
 
- // A deposit rides only an unpaid-at-ring posture: Charge Account tender or a COD sale.
+  // A deposit rides only an unpaid-at-ring posture: Charge Account tender or a COD sale.
  // HH note: the reference parsed the typed deposit through a float; the house rule converts
  // through the decimal string, so the parse is a host seam.
   private depositCents(): number {
     return depositCentsFromTyped(this.depositDollars || '');
   }
 
- /** DIB-512 · is this sale going out on a truck? (Delivery tile, or a COD released by delivery.) */
+  /** DIB-512 · is this sale going out on a truck? (Delivery tile, or a COD released by delivery.) */
   private deliveryActive(): boolean {
     return this.saleType === 'DELIVERED' || (this.saleType === 'COD' && this.fulfilment === 'DELIVERY');
   }
 
- /**
- * DIB-512 · a deposit rides only Charge Account or COD (the ring path has always enforced it);
- * the label used to carry that policy as a nine-word clause. The constraint is now the
+  /**
+   * DIB-512 · a deposit rides only Charge Account or COD (the ring path has always enforced it);
+   * the label used to carry that policy as a nine-word clause. The constraint is now the
  * control's STATE: disabled, with the why on its flyout, while a paid-now tender is chosen.
- */
+   */
   private depositAllowed(): boolean {
     return this.saleType === 'COD' || this.payMethod === 'ACCOUNT' || this.payMethod === '';
   }
 
- // ── customer picker (account-tender UX fix) ───────────────────────────────
+  // ── customer picker (account-tender UX fix) ───────────────────────────────
   private openPicker(hint = ''): void {
     this.pickerHint = hint;
     this.showPicker = true;
   }
 
- // onCustomerSelected commits the picked account (or null → walk-in) and re-resolves every
- // visible line: a contractor's tier price differs from RETAIL, so the on-screen prices must
- // follow the customer. The server re-prices authoritatively at ring time regardless.
+  // onCustomerSelected commits the picked account (or null → walk-in) and re-resolves every
+  // visible line: a contractor's tier price differs from RETAIL, so the on-screen prices must
+  // follow the customer. The server re-prices authoritatively at ring time regardless.
   private async onCustomerSelected(c: PosCustomer | null): Promise<void> {
     this.showPicker = false;
     this.pickerHint = '';
     this.customer = c;
     void this.refreshStanding();
  // DIB-488: either answer RESOLVES the flow's Customer step: an account, or an explicit
- // walk-in choice from the picker. (The untouched default resolves nothing; see _pos-flow.ts.)
+    // walk-in choice from the picker. (The untouched default resolves nothing; see _pos-flow.ts.)
     if (c === null) this.walkInConfirmed = true;
     else this.walkInConfirmed = false;
     for (let i = 0; i < this.cart.length; i++) await this.reprice(i);
- // POS restructure: the customer question is ANSWERED, so the next thing anyone does is put
+    // POS restructure: the customer question is ANSWERED, so the next thing anyone does is put
  // items on the ticket: the accordion follows the sale forward and lands the caret in the scan
- // box. It moves only on this and on the ring (advanceOn); no other state change touches it.
+    // box. It moves only on this and on the ring (advanceOn); no other state change touches it.
     this.advanceAccordion('customer-resolved');
   }
 
- /**
- * The selected account's past-due position.
- *
- * A failed read and a current account are the SAME empty answer here, on purpose (the reasoning
- * lives in backend/internal/pos/standing.go): a counter must never be told an account is current
- * because a query timed out, and must never be shown a fault banner over a fact nobody asked
- * for. So this never throws, never sets an error, and never announces anything.
- */
+  /**
+   * The selected account's past-due position.
+   *
+   * A failed read and a current account are the SAME empty answer here, on purpose (the reasoning
+   * lives in backend/internal/pos/standing.go): a counter must never be told an account is current
+   * because a query timed out, and must never be shown a fault banner over a fact nobody asked
+   * for. So this never throws, never sets an error, and never announces anything.
+   */
   private async refreshStanding(): Promise<void> {
     const id = this.customer?.id ?? '';
     const branch = this.branchId;
@@ -3180,16 +3181,16 @@ export class HosPosTerminal extends LitElement {
     }
     const out = await accountStanding(branch, id);
  // D17, round 3: the SECOND instance of the shape reprice() had. `this.standing = await …` read
- // the customer before the round trip and wrote the answer after it, with nothing in between
- // checking the customer was still the same one. Two quick changes in the picker (a mis-click
- // and a correction, which is the ordinary way a wrong account gets fixed) render an OLDER
+    // the customer before the round trip and wrote the answer after it, with nothing in between
+    // checking the customer was still the same one. Two quick changes in the picker (a mis-click
+    // and a correction, which is the ordinary way a wrong account gets fixed) render an OLDER
  // account's past-due position and hold flag against the account now on screen: on the surface
- // that takes the money, beside the control that refuses a sale.
- //
- // Dropping is the right answer and not merely the safe one: a newer refreshStanding is already
- // in flight for the customer that IS selected, and a standing that is absent renders nothing,
- // which is this surface's documented empty answer (backend/internal/pos/standing.go: a counter
- // must never be told an account is current because a query timed out).
+    // that takes the money, beside the control that refuses a sale.
+    //
+    // Dropping is the right answer and not merely the safe one: a newer refreshStanding is already
+    // in flight for the customer that IS selected, and a standing that is absent renders nothing,
+    // which is this surface's documented empty answer (backend/internal/pos/standing.go: a counter
+    // must never be told an account is current because a query timed out).
     if ((this.customer?.id ?? '') !== id || this.branchId !== branch) return;
     this.standing = out;
   }
@@ -3205,28 +3206,28 @@ export class HosPosTerminal extends LitElement {
     this.advanceAccordion('customer-resolved');
   }
 
- /**
+  /**
  * advanceAccordion: the ONLY way the expansion moves on its own.
- *
- * advanceOn() (pure, tested) answers with a step or with null, and null means "leave the operator
- * where they are". That restraint is the design: an accordion that re-opens itself on every state
- * change fights the person using it, and a clerk who deliberately opened Customer mid-ticket must
- * not have the card yanked shut because a scan landed.
- */
+   *
+   * advanceOn() (pure, tested) answers with a step or with null, and null means "leave the operator
+   * where they are". That restraint is the design: an accordion that re-opens itself on every state
+   * change fights the person using it, and a clerk who deliberately opened Customer mid-ticket must
+   * not have the card yanked shut because a scan landed.
+   */
   private advanceAccordion(event: FlowAdvance): void {
     const next = advanceOn(event);
     if (next) this.openAccordion(next);
   }
 
- // ── ring a sale ─────────────────────────────────────────────────────────
- /**
+  // ── ring a sale ─────────────────────────────────────────────────────────
+  /**
  * DIB-165: ring the sale across several tenders. Deliberately a thin wrapper over the SAME
- * createSale call the single-tender path uses: a split is not a different kind of sale, it is the
- * same sale with a `tenders` array, and having two ring implementations is how the two drift.
- *
- * `tender` is omitted from the body: the server derives the primary leg (the largest) and would
- * ignore a scalar tender anyway, so sending one would be a lie the next reader has to decode.
- */
+   * createSale call the single-tender path uses: a split is not a different kind of sale, it is the
+   * same sale with a `tenders` array, and having two ring implementations is how the two drift.
+   *
+   * `tender` is omitted from the body: the server derives the primary leg (the largest) and would
+   * ignore a scalar tender anyway, so sending one would be a lie the next reader has to decode.
+   */
   private async ringSplitSale(tenders: { method: string; amount_cents: number; payment_token?: string }[]): Promise<void> {
     if (this.cart.length === 0) return;
     if (this.dateError) {
@@ -3244,7 +3245,7 @@ export class HosPosTerminal extends LitElement {
       signature_ref: this.signatureRef || undefined,
       requested_date: this.requestedDate || undefined,
       notes: this.notes || undefined,
- // rev 6 (item D): the More-options facts ride the split ring too (a split is the same sale).
+      // rev 6 (item D): the More-options facts ride the split ring too (a split is the same sale).
       po_job_ref: this.poJobRef.trim() || undefined,
       salesperson_id: this.salespersonId || undefined,
  // rev 8 (item 11): the job facts too: new body fields, so stableRingKey re-mints naturally.
@@ -3259,8 +3260,8 @@ export class HosPosTerminal extends LitElement {
       })),
     };
  // rev 5: an IDENTICAL retry reuses the previous attempt's key VERBATIM (stableRingKey): that
- // is what makes "retry; the sale is replay-safe" true. Any edit to the sale re-mints; every
- // leg's payment key still derives from the one sale key server-side.
+    // is what makes "retry; the sale is replay-safe" true. Any edit to the sale re-mints; every
+    // leg's payment key still derives from the one sale key server-side.
     this.ringKeyMemo = stableRingKey(this.ringKeyMemo, JSON.stringify(payload), newIdempotencyKey);
     const body = { idempotency_key: this.ringKeyMemo.key, ...payload };
     try {
@@ -3290,8 +3291,8 @@ export class HosPosTerminal extends LitElement {
         return;
       }
       if (res.err.status === 402) {
- // A declined card leg rolls the WHOLE split back server-side, so the panel stays open with
- // the legs intact and the cashier can swap that one leg for cash.
+        // A declined card leg rolls the WHOLE split back server-side, so the panel stays open with
+        // the legs intact and the cashier can swap that one leg for cash.
         this.ring = { state: 'error', msg: 'A card leg was declined: the whole sale was rolled back. Try another tender.' };
         return;
       }
@@ -3303,14 +3304,14 @@ export class HosPosTerminal extends LitElement {
 
   private async ringSale(tender: 'ACCOUNT' | 'CASH' | 'CARD'): Promise<void> {
     if (this.cart.length === 0) return;
- // DIB-259 (ship review): refuse to ring while the requested-date box holds an unparseable entry.
- // Otherwise a stale/blank requestedDate would silently go on the order under a visible error.
+    // DIB-259 (ship review): refuse to ring while the requested-date box holds an unparseable entry.
+    // Otherwise a stale/blank requestedDate would silently go on the order under a visible error.
     if (this.dateError) {
       this.setUtil('Fix or clear the requested date before ringing the sale.', 'bad');
       return;
     }
- // Charge Account needs an account. With no customer selected, open the picker (the
- // commander's requested UX) instead of ringing a nonsensical no-account sale.
+    // Charge Account needs an account. With no customer selected, open the picker (the
+    // commander's requested UX) instead of ringing a nonsensical no-account sale.
     if (tender === 'ACCOUNT' && !this.customer) {
       this.openPicker('Pick the account to charge.');
       return;
@@ -3321,10 +3322,10 @@ export class HosPosTerminal extends LitElement {
     const unpaidAtRing = tender === 'ACCOUNT' || isCOD;
     const deposit = unpaidAtRing ? this.depositCents() : 0;
     const cardAtRing = (tender === 'CARD' && !unpaidAtRing) || (deposit > 0 && this.depositMethod === 'CARD');
- // rev 6 (item F): the optional cash quick entry rides the body ONLY when it covers the total
+    // rev 6 (item F): the optional cash quick entry rides the body ONLY when it covers the total
  // on a paid CASH ring (cashTenderedPlan: a short or empty entry sends nothing; one-click cash
- // is byte-identical to before). Being in the BODY, it re-mints the idempotency key naturally
- // through stableRingKey's fingerprint when it changes.
+    // is byte-identical to before). Being in the BODY, it re-mints the idempotency key naturally
+    // through stableRingKey's fingerprint when it changes.
     const cashPlan = cashTenderedPlan(this.total(), this.cashTenderedDollars);
     const sendCashTendered = tender === 'CASH' && !unpaidAtRing && cashPlan.sendable;
     const payload = {
@@ -3339,7 +3340,7 @@ export class HosPosTerminal extends LitElement {
       signature_ref: this.signatureRef || undefined,
       requested_date: this.requestedDate || undefined,
       notes: this.notes || undefined,
- // rev 6 (item D): the optional More-options facts.
+      // rev 6 (item D): the optional More-options facts.
       po_job_ref: this.poJobRef.trim() || undefined,
       salesperson_id: this.salespersonId || undefined,
  // rev 8 (item 11): the job facts: in the fingerprinted body, so the key re-mints naturally.
@@ -3356,7 +3357,7 @@ export class HosPosTerminal extends LitElement {
       })),
     };
  // rev 5: same replay-safety rule as the split path: an identical retry reuses its key
- // verbatim (stableRingKey); any edit to the sale re-mints; success clears the memo.
+    // verbatim (stableRingKey); any edit to the sale re-mints; success clears the memo.
     this.ringKeyMemo = stableRingKey(this.ringKeyMemo, JSON.stringify(payload), newIdempotencyKey);
     const body = { idempotency_key: this.ringKeyMemo.key, ...payload };
     try {
@@ -3367,7 +3368,7 @@ export class HosPosTerminal extends LitElement {
         this.revealSaleOutcome();
         return;
       }
- // 409 credit/price → route to the manager approvals path; 402 → card declined.
+      // 409 credit/price → route to the manager approvals path; 402 → card declined.
       if (res.err.status === 409 && (res.err.error === 'credit_blocked' || res.err.error === 'price_blocked')) {
         this.dispatchEvent(
           new CustomEvent('hos-action-blocked', {
@@ -3395,30 +3396,30 @@ export class HosPosTerminal extends LitElement {
         this.ring = { state: 'error', msg: 'Card declined: try another tender.' };
         return;
       }
- // DIB-379/F2: surface the server's real detail for EVERY ring failure (409 no-till-session, 503
+      // DIB-379/F2: surface the server's real detail for EVERY ring failure (409 no-till-session, 503
  // an unwired guard, 422 policy/validation refusals, …), not just 422: see ringErrorMessage.
       this.ring = { state: 'error', msg: counterRingMessage(res.err) };
     } catch {
- // Network error: the key is safe to retry verbatim (idempotent endpoint).
+      // Network error: the key is safe to retry verbatim (idempotent endpoint).
       this.ring = { state: 'error', msg: 'Network error: retry; the sale is replay-safe.' };
     }
   }
 
- /**
+  /**
  * rev 5: the confirmation moment must be SEEN and the next scan must LAND. The sold panel
- * renders near the foot of the sale panel's internal scroll, so right after Complete the clerk
- * saw a 60px sliver of it (measured); and focus died on the disabled CTA. Scroll the sold panel
+   * renders near the foot of the sale panel's internal scroll, so right after Complete the clerk
+   * saw a 60px sliver of it (measured); and focus died on the disabled CTA. Scroll the sold panel
  * into its panel's view AND hand the caret to the scan box: the two panels scroll separately,
- * so both happen. role=status on the panel still announces without stealing focus.
- */
+   * so both happen. role=status on the panel still announces without stealing focus.
+   */
   private revealSaleOutcome(): void {
- // POS restructure: COMPLETING PAYMENT EXPANDS SUMMARY. The confirmation used to render at the
- // foot of the sale panel's own scroll, where a clerk saw a 60px sliver of it (measured) and
+    // POS restructure: COMPLETING PAYMENT EXPANDS SUMMARY. The confirmation used to render at the
+    // foot of the sale panel's own scroll, where a clerk saw a 60px sliver of it (measured) and
  // focus died on the disabled CTA. It is a STEP now, and the ring opens it: which also scrolls
- // it to the top of the column and lands focus on Print receipt, the thing a person finishing a
- // sale reaches for. The old focusScanBox() call is deliberately gone: with Items collapsed
- // there is no scan box mounted to receive the caret, and focusing a control that is not on
- // screen is exactly the focus game the doctrine forbids.
+    // it to the top of the column and lands focus on Print receipt, the thing a person finishing a
+    // sale reaches for. The old focusScanBox() call is deliberately gone: with Items collapsed
+    // there is no scan box mounted to receive the caret, and focusing a control that is not on
+    // screen is exactly the focus game the doctrine forbids.
     this.advanceAccordion('sale-rung');
   }
 
@@ -3438,13 +3439,13 @@ export class HosPosTerminal extends LitElement {
     this.utilMsg = '';
     this.soldPanelDismissed = false;
     this.ring = { state: 'idle' };
- // DIB-488: the flow facts reset with the sale they describe.
+    // DIB-488: the flow facts reset with the sale they describe.
     this.walkInConfirmed = false;
     this.payMethod = 'CASH'; // the next ticket is tenderable the moment it exists
     this.tenderConfirmed = false; // …and un-answered: the posture returns, the decision does not
     this.showSplit = false;
  // rev 6: the More-options facts and the cash quick entry reset with the sale too: the
- // salesperson returns to its default (the signed-in operator), never to '' mid-shift.
+    // salesperson returns to its default (the signed-in operator), never to '' mid-shift.
     this.poJobRef = '';
     this.salespersonId = getCurrentUser()?.user_id ?? '';
     this.cashTenderedDollars = '';
@@ -3453,18 +3454,18 @@ export class HosPosTerminal extends LitElement {
     this.payTileIdx = 1; // DIB-512: the tender group's resting stop returns to Cash with the sale
     this.scheduleTicketFacts(); // rev 8: an empty ticket clears the margin footer + the add-ons strip
     this.ringKeyMemo = null; // rev 5: a fresh sale never inherits a prior attempt's key
- // DIB-254/256: whenever the order resets (New sale / Clear sale / after Park), return to the
- // top so the next customer starts at the head of the terminal, not stranded at the tenders.
+    // DIB-254/256: whenever the order resets (New sale / Clear sale / after Park), return to the
+    // top so the next customer starts at the head of the terminal, not stranded at the tenders.
     this.resetScroll();
- // rev 5: …and the caret returns to the scan box, so Complete → Next sale → scan is unbroken.
+    // rev 5: …and the caret returns to the scan box, so Complete → Next sale → scan is unbroken.
     this.focusScanBox();
   }
 
- // DIB-254/256: scroll the terminal back to the top. window.scrollTo covers the page-scroll shell;
- // scrollIntoView covers a shell that scrolls an inner container (e.g. a popped-out window). Both
- // are guarded for the no-DOM test runner and detached/older environments.
+  // DIB-254/256: scroll the terminal back to the top. window.scrollTo covers the page-scroll shell;
+  // scrollIntoView covers a shell that scrolls an inner container (e.g. a popped-out window). Both
+  // are guarded for the no-DOM test runner and detached/older environments.
  // rev 5: the panels own their scroll since rev 2 (.wsbody), so "the top" must include THEM:
- // without it the fresh ticket opened mid-panel, contradicting this very comment (DIB-254/256).
+  // without it the fresh ticket opened mid-panel, contradicting this very comment (DIB-254/256).
   private resetScroll(): void {
     try {
       this.renderRoot?.querySelectorAll<HTMLElement>('.wsbody').forEach((el) => (el.scrollTop = 0));
@@ -3484,28 +3485,28 @@ export class HosPosTerminal extends LitElement {
   }
 
  // DIB-245/262 (ship review): the confirm must fire whenever there's ANYTHING to lose: not just
- // cart lines. A clerk who selected a customer (or typed a requested date / notes) but hasn't added
- // a line yet would otherwise have that work wiped with no prompt, contradicting the button tooltips.
- // clearSaleNeedsConfirm(cartLength) still owns the cart-only rule (unit-tested); this widens it.
+  // cart lines. A clerk who selected a customer (or typed a requested date / notes) but hasn't added
+  // a line yet would otherwise have that work wiped with no prompt, contradicting the button tooltips.
+  // clearSaleNeedsConfirm(cartLength) still owns the cart-only rule (unit-tested); this widens it.
   private orderHasContent(): boolean {
  // rev 5: once the ring is DONE the ticket on screen is a committed record: nothing can be
- // lost, so the DIB-245 discard-confirm stands down. Sold-panel "Next sale" (and the util row's
- // "New sale") must not tell a clerk their just-committed order "will be discarded".
+    // lost, so the DIB-245 discard-confirm stands down. Sold-panel "Next sale" (and the util row's
+    // "New sale") must not tell a clerk their just-committed order "will be discarded".
     if (this.ringDone()) return false;
     return (
       clearSaleNeedsConfirm(this.cart.length) ||
       !!this.customer ||
       !!this.requestedDate ||
       !!this.notes.trim() ||
- // rev 8 (item 11): a typed job fact is work even before the first line goes on.
+      // rev 8 (item 11): a typed job fact is work even before the first line goes on.
       !!this.jobAddress.trim() ||
       !!this.jobReference.trim()
     );
   }
 
- // DIB-244: one-click clear of the whole SO. Reuses newSale()'s reset (lines, customer, notes,
- // dates, deposit, scroll) rather than duplicating it; the confirm fires whenever the order holds
- // something to lose (orderHasContent), so an empty terminal clears silently.
+  // DIB-244: one-click clear of the whole SO. Reuses newSale()'s reset (lines, customer, notes,
+  // dates, deposit, scroll) rather than duplicating it; the confirm fires whenever the order holds
+  // something to lose (orderHasContent), so an empty terminal clears silently.
   private clearSale(): void {
     if (
       this.orderHasContent() &&
@@ -3518,10 +3519,10 @@ export class HosPosTerminal extends LitElement {
   }
 
  // DIB-245: the "New sale" button used to reset the terminal silently: a clerk who tapped it
- // mid-order lost the in-progress SO with no warning (reported via the widget). Guard it with the
- // SAME confirm gate as Clear sale (only when the cart holds something to lose). Internal callers
+  // mid-order lost the in-progress SO with no warning (reported via the widget). Guard it with the
+  // SAME confirm gate as Clear sale (only when the cart holds something to lose). Internal callers
  // of newSale(): clearSale() and parkCurrent(): deliberately bypass this so they don't
- // double-prompt after their own handling.
+  // double-prompt after their own handling.
   private newSaleClicked(): void {
     if (
       this.orderHasContent() &&
@@ -3533,29 +3534,29 @@ export class HosPosTerminal extends LitElement {
     this.newSale();
   }
 
- // ── DIB-434 ── the quick-action entry point: "start a fresh ticket", from anywhere in the OS.
- //
- // THIS IS THE ONLY DOOR THE GLOBAL "+ Sale" HAS INTO THE TERMINAL, and it deliberately does NOT
- // reach for newSale(). The shipped New sale button already guards itself with a window.confirm;
- // a quick action fired from a screen where this till was not even visible needs a stronger answer
- // than a browser confirm whose only outcomes are "lose it" and "cancel". So it asks the pure
- // decision (quick-action-guard.ts) and, if there is anything to lose, raises a dialog whose
+  // ── DIB-434 ── the quick-action entry point: "start a fresh ticket", from anywhere in the OS.
+  //
+  // THIS IS THE ONLY DOOR THE GLOBAL "+ Sale" HAS INTO THE TERMINAL, and it deliberately does NOT
+  // reach for newSale(). The shipped New sale button already guards itself with a window.confirm;
+  // a quick action fired from a screen where this till was not even visible needs a stronger answer
+  // than a browser confirm whose only outcomes are "lose it" and "cancel". So it asks the pure
+  // decision (quick-action-guard.ts) and, if there is anything to lose, raises a dialog whose
  // outcomes are Continue and PARK: the parked-tickets rail (POS Counter V2 / Q-042) is shipped
- // and this integrates with it rather than rebuilding it.
- //
- // The only path that resets the terminal without asking is the one where the till is completely
- // empty, which is the case where there is, by definition, nothing to clobber.
+  // and this integrates with it rather than rebuilding it.
+  //
+  // The only path that resets the terminal without asking is the one where the till is completely
+  // empty, which is the case where there is, by definition, nothing to clobber.
 
- /** The live ticket, as the three primitives the guard reads. */
+  /** The live ticket, as the three primitives the guard reads. */
   private liveTicket(): LiveTicket {
  // rev 5: a rung ticket is committed, not "in progress": the quick-action guard has nothing
- // to protect (same stand-down as orderHasContent).
+    // to protect (same stand-down as orderHasContent).
     if (this.ringDone()) return { lineCount: 0, hasCustomer: false, hasOtherWork: false };
     return {
       lineCount: this.cart.length,
       hasCustomer: !!this.customer,
- // Same widened rule as orderHasContent() (DIB-245/262): a typed note or a requested date is
- // work even before the first line goes on.
+      // Same widened rule as orderHasContent() (DIB-245/262): a typed note or a requested date is
+      // work even before the first line goes on.
       hasOtherWork: !!this.requestedDate || !!this.notes.trim(),
     };
   }
@@ -3563,8 +3564,8 @@ export class HosPosTerminal extends LitElement {
   private onQuickIntent = (e: Event): void => {
     const detail = (e as CustomEvent<PendingIntent>).detail;
     if (!detail || detail.module !== 'pos') return;
- // Consume through the channel (not straight off the event) so the mounted and mounting paths
- // cannot both act on the same click.
+    // Consume through the channel (not straight off the event) so the mounted and mounting paths
+    // cannot both act on the same click.
     this.applyQuickIntent(takeIntent('pos', [INTENT_POS_NEW_TICKET, INTENT_POS_PAY]));
   };
 
@@ -3577,15 +3578,15 @@ export class HosPosTerminal extends LitElement {
     if (intent.intent === INTENT_POS_PAY) this.hotkeyPay();
   }
 
- /**
- * UNION-TRAIN11 · the dealer's pay key (the concept's "F8 Pay"). An ARMED till rings through the
+  /**
+   * UNION-TRAIN11 · the dealer's pay key (the concept's "F8 Pay"). An ARMED till rings through the
  * SAME guarded completeSale() the CTA click takes: every rev-5 protection (busy, the DONE
- * disarm, the SPLIT deferral) holds because the guard IS the method's own first line. An
+   * disarm, the SPLIT deferral) holds because the guard IS the method's own first line. An
  * un-armed till is walked to the payment step instead of silently no-opping: the key was
- * pressed on purpose, and the panel it lands on says exactly what is still missing (the CTA's
- * own split state / the tiles). A DONE ring does nothing: the committed basket must never
- * re-ring, and the sold panel's Next sale is the forward path.
- */
+   * pressed on purpose, and the panel it lands on says exactly what is still missing (the CTA's
+   * own split state / the tiles). A DONE ring does nothing: the committed basket must never
+   * re-ring, and the sold panel's Next sale is the forward path.
+   */
   private hotkeyPay(): void {
     if (this.ringBusy() || this.ringDone()) return;
     if (this.cart.length > 0 && this.payMethod !== '' && this.payMethod !== 'SPLIT') {
@@ -3606,45 +3607,45 @@ export class HosPosTerminal extends LitElement {
     this.setUtil('New ticket ready.');
   }
 
- /** Continue: the guard's safe answer. The till is left EXACTLY as it was. */
+  /** Continue: the guard's safe answer. The till is left EXACTLY as it was. */
   private onQuickContinue(): void {
     this.quickGuard = false;
     this.quickGuardBusy = false;
   }
 
- /**
- * Park it & start new: hand the ticket to the shipped rail, then reset.
- *
- * parkCurrent() already does both (park → snapshot the display facts → newSale) and reports its
- * own failure, so this adds nothing except the dialog's lifecycle. The dialog stays UP while the
+  /**
+   * Park it & start new: hand the ticket to the shipped rail, then reset.
+   *
+   * parkCurrent() already does both (park → snapshot the display facts → newSale) and reports its
+   * own failure, so this adds nothing except the dialog's lifecycle. The dialog stays UP while the
  * request is in flight and closes only on success: if the park fails, the ticket is still on the
- * till and the operator is still looking at the choice, which is the correct outcome for a guard
- * whose promise is that nothing is lost.
- */
+   * till and the operator is still looking at the choice, which is the correct outcome for a guard
+   * whose promise is that nothing is lost.
+   */
   private async onQuickPark(): Promise<void> {
     if (this.quickGuardBusy) return;
     this.quickGuardBusy = true;
     const before = this.cart.length;
     await this.parkCurrent();
     this.quickGuardBusy = false;
- // parkCurrent() clears the cart on success (via newSale) and leaves it alone on failure.
+    // parkCurrent() clears the cart on success (via newSale) and leaves it alone on failure.
     if (this.cart.length === 0 && before > 0) this.quickGuard = false;
   }
 
- /**
+  /**
  * Clear it & start new: offered ONLY when there are no lines, because a line-less ticket is not
- * something the parked rail can hold. The button names what it clears and the operator pressed
- * it; that is the difference between this and the silent reset the guard exists to prevent.
- */
+   * something the parked rail can hold. The button names what it clears and the operator pressed
+   * it; that is the difference between this and the silent reset the guard exists to prevent.
+   */
   private onQuickClear(): void {
     this.quickGuard = false;
     this.quickGuardBusy = false;
     this.newSale();
     this.setUtil('New ticket ready.');
   }
- // ── end DIB-434 ──
+  // ── end DIB-434 ──
 
- // ── W7: park / resume / pricing doc ────────────────────────────────────
+  // ── W7: park / resume / pricing doc ────────────────────────────────────
   private async parkCurrent(): Promise<void> {
     if (this.cart.length === 0) return;
     this.utilMsg = '';
@@ -3656,8 +3657,8 @@ export class HosPosTerminal extends LitElement {
         notes: this.notes || undefined,
         lines: this.cart.map((l) => ({ product_id: l.product.id, qty_entered: l.qty, uom_entered: l.uom })),
       });
- // DIB-246/247: snapshot who + how much under the server ticket id BEFORE newSale() clears
- // them, so resume can restore this customer and the parked list can show name + total.
+      // DIB-246/247: snapshot who + how much under the server ticket id BEFORE newSale() clears
+      // them, so resume can restore this customer and the parked list can show name + total.
       this.parkedInfo.set(t.id, { customer: this.customer, totalCents: this.total() });
       this.newSale();
       this.setUtil(`Parked as ${t.ticket_no}: resume re-prices live.`);
@@ -3667,30 +3668,30 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- // Resume: re-add the saved lines through the NORMAL engine-priced path (never a stale price).
+  // Resume: re-add the saved lines through the NORMAL engine-priced path (never a stale price).
   private async onParkedResume(t: ParkedTicket): Promise<void> {
     this.showParked = false;
     const openLines = this.cart.length; // what the rail's confirm was asked about
     try {
  // D17, round 3: the THIRD instance of the shape. `newSale()` below empties the cart, and
- // anything the operator put on the ticket while this catalogue read was in flight goes with
+      // anything the operator put on the ticket while this catalogue read was in flight goes with
  // it. The DESTRUCTIVE half is answered before the resume is committed at all: the parked
- // rail asks, holding this line count, before it POSTs /resume (see pos-parked.ts). What is
- // left is the narrow race: lines added AFTER that question and BEFORE this answer.
- //
- // It cannot be answered the same way. By the time this runs the server has already moved the
- // ticket to RESUMED and taken it out of the parked list, so there is nothing to decline back
+      // rail asks, holding this line count, before it POSTs /resume (see pos-parked.ts). What is
+      // left is the narrow race: lines added AFTER that question and BEFORE this answer.
+      //
+      // It cannot be answered the same way. By the time this runs the server has already moved the
+      // ticket to RESUMED and taken it out of the parked list, so there is nothing to decline back
  // to: refusing here would strand a ticket that is no longer parked and no longer on screen,
- // which is worse than the thing it would be preventing. So the race is ANNOUNCED instead of
- // silent, with the count, in the one place this screen speaks: a person who scanned into the
- // gap is told those lines went and can re-scan them, rather than discovering it at tender.
+      // which is worse than the thing it would be preventing. So the race is ANNOUNCED instead of
+      // silent, with the count, in the one place this screen speaks: a person who scanned into the
+      // gap is told those lines went and can re-scan them, rather than discovering it at tender.
       const lostToTheRace = this.cart.length - openLines;
       const products = await listProducts();
       const byId = new Map(products.map((p) => [p.id, p]));
       this.newSale();
- // DIB-246: restore the customer captured at park time so the resumed ticket shows the SAME
- // account (and re-prices at that account's tier in the loop below) instead of reverting to
- // walk-in. Set before the cart is built so reprice() sees the right customer.
+      // DIB-246: restore the customer captured at park time so the resumed ticket shows the SAME
+      // account (and re-prices at that account's tier in the loop below) instead of reverting to
+      // walk-in. Set before the cart is built so reprice() sees the right customer.
       this.customer = restoreParkedCustomer(t, this.parkedInfo);
       void this.refreshStanding();
       this.saleType = t.sale_type === 'COD' && !this.codEnabled ? 'COLLECT_NOW' : t.sale_type;
@@ -3747,46 +3748,46 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- // ── DIB-488: the tracked flow + the payment tiles ─────────────────────────
+  // ── DIB-488: the tracked flow + the payment tiles ─────────────────────────
 
- /** The stepper's steps, derived fresh from the sale data on every render (see _pos-flow.ts). */
+  /** The stepper's steps, derived fresh from the sale data on every render (see _pos-flow.ts). */
   private flowSteps() {
     return deriveFlow({
       lineCount: this.cart.length,
       customerSelected: !!this.customer,
       walkInConfirmed: this.walkInConfirmed,
- // The POSTURE is not the ANSWER. Cash is on the sale from mount; a chosen tender is what
- // completes the step, so an unpressed default reports as no choice at all. See
- // tenderConfirmed for why the correction belongs here and not in deriveFlow.
+      // The POSTURE is not the ANSWER. Cash is on the sale from mount; a chosen tender is what
+      // completes the step, so an unpressed default reports as no choice at all. See
+      // tenderConfirmed for why the correction belongs here and not in deriveFlow.
       payMethod: this.tenderConfirmed ? this.payMethod : '',
       rungDone: this.ringDone(),
     });
   }
 
- /**
+  /**
  * A step click SCROLLS AND FOCUSES: that is the entire contract (tracked, never gated). The
- * items step also hands the caret back to the scan box, because "go to items" at a counter means
- * "I want to add something".
- */
+   * items step also hands the caret back to the scan box, because "go to items" at a counter means
+   * "I want to add something".
+   */
   private onFlowGoto(step: FlowStepId): void {
     this.openAccordion(step);
   }
 
- /**
+  /**
  * toggleStep: the accordion header's whole contract.
- *
- * Selecting a step expands it and collapses the others. Selecting the OPEN one collapses it,
- * leaving four summary lines and no open card: a legitimate whole-sale-at-a-glance view, and the
- * reason the header button always does something rather than being a control that reports a
+   *
+   * Selecting a step expands it and collapses the others. Selecting the OPEN one collapses it,
+   * leaving four summary lines and no open card: a legitimate whole-sale-at-a-glance view, and the
+   * reason the header button always does something rather than being a control that reports a
  * state it cannot change. Nothing here gates anything: this moves a disclosure, not the sale.
- */
+   */
   private toggleStep(step: FlowStepId): void {
     if (this.openStep === step) {
       this.openStep = '';
- // FOCUS SURVIVES THE COLLAPSE. The region and everything in it is unrendered on the next
- // frame, so if the operator closed the card from a control INSIDE it, focus would land on
+      // FOCUS SURVIVES THE COLLAPSE. The region and everything in it is unrendered on the next
+      // frame, so if the operator closed the card from a control INSIDE it, focus would land on
  // <body>: the keyboard user's version of the screen going blank. It goes to the header they
- // just pressed, which is the control that reopens the card.
+      // just pressed, which is the control that reopens the card.
       void this.updateComplete.then(() =>
         this.renderRoot.querySelector<HTMLElement>(`[data-testid="step-head-${step}"]`)?.focus({ preventScroll: true }),
       );
@@ -3795,21 +3796,21 @@ export class HosPosTerminal extends LitElement {
     this.openAccordion(step);
   }
 
- /**
+  /**
  * openAccordion: expand a step, scroll it into view, and put the keyboard on the work.
- *
- * FOCUS IS THE POINT. Expanding a card that the operator then has to Tab into is barely better
- * than not collapsing at all, so focus goes to that step's FIRST MEANINGFUL control
+   *
+   * FOCUS IS THE POINT. Expanding a card that the operator then has to Tab into is barely better
+   * than not collapsing at all, so focus goes to that step's FIRST MEANINGFUL control
  * (focusTargetFor, _pos-accordion.ts): the scan box for Items: a scanner burst must land
  * somewhere useful the instant the card opens: the Walk-in tile for Customer, the tender
- * group's roving stop for Payment, the receipt action for Summary. When that control has not
- * mounted (a busy or already-rung sale disarms the tenders), focus falls back to the disclosed
- * REGION itself, which is honest: the operator is in the right card with the right accessible
- * name announced, just not on a control that would have been wrong to press.
- */
+   * group's roving stop for Payment, the receipt action for Summary. When that control has not
+   * mounted (a busy or already-rung sale disarms the tenders), focus falls back to the disclosed
+   * REGION itself, which is honest: the operator is in the right card with the right accessible
+   * name announced, just not on a control that would have been wrong to press.
+   */
   private openAccordion(step: FlowStepId): void {
- // Is the operator already working inside this step? Then this is a "show me where I am", not a
- // "take me somewhere": the card is scrolled into view and the CARET IS LEFT ALONE. Without this
+    // Is the operator already working inside this step? Then this is a "show me where I am", not a
+    // "take me somewhere": the card is scrolled into view and the CARET IS LEFT ALONE. Without this
  // an F-key press for the step you are already on: or an advance that fires while you are
  // already there: would yank the caret out of a half-typed search term and select its contents.
     const alreadyInside = this.openStep === step && this.focusIsInsideStep(step);
@@ -3819,7 +3820,7 @@ export class HosPosTerminal extends LitElement {
       if (alreadyInside) return;
       const region = this.stepRegion(step);
       if (step === 'items') {
- // The scan box owns its own caret (and its select-on-focus), so it is asked rather than
+        // The scan box owns its own caret (and its select-on-focus), so it is asked rather than
  // focused: the shipped scanner contract, unchanged.
         const box = this.renderRoot.querySelector<HTMLElement & { focusInput?: () => void }>('hos-pos-scan-box');
         if (box?.focusInput) {
@@ -3837,20 +3838,20 @@ export class HosPosTerminal extends LitElement {
         target.focus?.({ preventScroll: true });
         return;
       }
- // The honest fallback: the disclosed REGION itself, which carries the header's accessible
+      // The honest fallback: the disclosed REGION itself, which carries the header's accessible
  // name through aria-labelledby. Failing even that, the header: never <body>.
       if (region) region.focus?.({ preventScroll: true });
       else this.renderRoot.querySelector<HTMLElement>(`[data-testid="step-head-${step}"]`)?.focus({ preventScroll: true });
     });
   }
 
- /**
- * The step card element, and the disclosed REGION inside its shadow root.
- *
- * The region is `hos-pos-step-card`'s own markup, so `this.renderRoot.querySelector` cannot see it
+  /**
+   * The step card element, and the disclosed REGION inside its shadow root.
+   *
+   * The region is `hos-pos-step-card`'s own markup, so `this.renderRoot.querySelector` cannot see it
  *: a fact that silently disabled the focus fallback until the keyboard walkthrough caught focus
- * sitting on <body> after every F-key step move.
- */
+   * sitting on <body> after every F-key step move.
+   */
   private stepCard(step: FlowStepId): HTMLElement | null {
     return this.renderRoot.querySelector<HTMLElement>(`[data-step-card="${step}"]`);
   }
@@ -3860,7 +3861,7 @@ export class HosPosTerminal extends LitElement {
     return card?.shadowRoot?.querySelector<HTMLElement>(`[data-testid="step-panel-${step}"]`) ?? null;
   }
 
- /** Is the active element inside this step's card? Walks out through shadow roots honestly. */
+  /** Is the active element inside this step's card? Walks out through shadow roots honestly. */
   private focusIsInsideStep(step: FlowStepId): boolean {
     const card = this.stepCard(step);
     if (!card) return false;
@@ -3878,14 +3879,14 @@ export class HosPosTerminal extends LitElement {
     return false;
   }
 
- /**
+  /**
  * Put the open card FULLY on screen: the client's "always have the step, in view 100%".
- *
- * The arithmetic is scrollPlan()'s (pure, unit-tested); this is only the measuring and the
- * scrolling. A null plan means the card is already whole on screen and nothing moves, which is
- * the case that matters most: a scroll that fires when nothing needed to move is the jank the
- * critique's "waiting and jank" audit exists to catch.
- */
+   *
+   * The arithmetic is scrollPlan()'s (pure, unit-tested); this is only the measuring and the
+   * scrolling. A null plan means the card is already whole on screen and nothing moves, which is
+   * the case that matters most: a scroll that fires when nothing needed to move is the jank the
+   * critique's "waiting and jank" audit exists to catch.
+   */
   private scrollStepIntoView(step: FlowStepId): void {
     try {
       const host = this.renderRoot.querySelector<HTMLElement>(`[data-step-card="${step}"]`);
@@ -3899,23 +3900,23 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- /** The disclosed region's DOM id, for the tests and the header's aria-controls pair. */
- /**
- * Pick a tender tile. SPLIT opens the compose panel (which owns its own ring); any plain tender
+  /** The disclosed region's DOM id, for the tests and the header's aria-controls pair. */
+  /**
+   * Pick a tender tile. SPLIT opens the compose panel (which owns its own ring); any plain tender
  * closes it. Picking is only CHOOSING: the sale rings on the Complete-sale CTA, so the flow can
- * honestly track "payment chosen" as a state of the sale rather than a click that already fired.
- */
+   * honestly track "payment chosen" as a state of the sale rather than a click that already fired.
+   */
   private choosePay(method: 'ACCOUNT' | 'CASH' | 'CARD' | 'SPLIT'): void {
  // A press on any tile: Cash included, and the un-choose press included: IS the decision the
- // flow's Payment step waits for. It is set before the early returns below for that reason: a
- // clerk who taps Cash on a sale that was already defaulted to Cash has still answered the
- // question, and the step must read done even though nothing about the tender changed.
+    // flow's Payment step waits for. It is set before the early returns below for that reason: a
+    // clerk who taps Cash on a sale that was already defaulted to Cash has still answered the
+    // question, and the step must read done even though nothing about the tender changed.
     this.tenderConfirmed = true;
     if (this.payMethod === method) {
  // Tapping the chosen tile again UNDOES the choice: which now means falling back to cash, not
- // to nothing. "Un-choose" used to leave the ticket untenderable, and a gesture that can
- // disarm the gold button is a gesture that will disarm it by accident on a touch till.
- // Cash is already chosen, so tapping Cash again is simply a no-op.
+      // to nothing. "Un-choose" used to leave the ticket untenderable, and a gesture that can
+      // disarm the gold button is a gesture that will disarm it by accident on a touch till.
+      // Cash is already chosen, so tapping Cash again is simply a no-op.
       if (method === 'CASH') return;
       this.payMethod = 'CASH';
       this.payTileIdx = 1;
@@ -3926,15 +3927,15 @@ export class HosPosTerminal extends LitElement {
     this.showSplit = method === 'SPLIT';
   }
 
- // ── DIB-512 · the payment tiles as ONE keyboard stop ────────────────────────────────────────
- //
- // The critique's keyboard-only run put the Cash tile SIXTY Tab stops from the scan field (out
- // through the chips, the grid, the Feedback pill and the whole app chrome). The group is now a
+  // ── DIB-512 · the payment tiles as ONE keyboard stop ────────────────────────────────────────
+  //
+  // The critique's keyboard-only run put the Cash tile SIXTY Tab stops from the scan field (out
+  // through the chips, the grid, the Feedback pill and the whole app chrome). The group is now a
  // roving-tabindex composite (one Tab stop; arrows move inside: the grid/rail house rule), and
  // the pay key's un-armed walk (hotkeyPay → onFlowGoto('payment')) lands focus ON the group:
- // so from the scan field: F8 · Enter (choose the focused tender) · F8 rings the sale.
+  // so from the scan field: F8 · Enter (choose the focused tender) · F8 rings the sale.
 
- /** Arrow/Home/End navigation inside the tender-tile group (payTileStep is pure, unit-tested). */
+  /** Arrow/Home/End navigation inside the tender-tile group (payTileStep is pure, unit-tested). */
   private onPayTilesKey(e: KeyboardEvent): void {
     const next = payTileStep(this.payTileIdx, e.key, 4);
     if (next === null) return;
@@ -3943,28 +3944,28 @@ export class HosPosTerminal extends LitElement {
     this.focusPayTile(next);
   }
 
- /** Focus the tile at index i once the roving tabindex has re-rendered. */
+  /** Focus the tile at index i once the roving tabindex has re-rendered. */
   private focusPayTile(i: number): void {
     void this.updateComplete.then(() =>
       this.renderRoot.querySelectorAll<HTMLElement>('.paytiles button')[i]?.focus(),
     );
   }
 
- /**
- * The one CTA. Split rings from its own panel (legs must add up first), so the CTA defers to it.
- *
+  /**
+   * The one CTA. Split rings from its own panel (legs must add up first), so the CTA defers to it.
+   *
  * WAVE 2 · finding 11: THE SHUT DRAWER IS HANDLED BEFORE THE PRESS, NOT AFTER IT. The button's
- * disabled predicate carried no till term, so a clerk on a register with no session pressed a
- * fully armed "Complete sale · CA$7,661.40" and was answered by a server refusal in a red
+   * disabled predicate carried no till term, so a clerk on a register with no session pressed a
+   * fully armed "Complete sale · CA$7,661.40" and was answered by a server refusal in a red
  * banner. The state was knowable the whole time: `tillSessionId === ''` is the exact predicate
  * the banner's own repair button tests: so the CTA now names the session in its label and does
- * it here, in that order. The banner and its "Open session now" repair stay exactly as they
- * were: this removes the trap, not the safety net, and a ring that fails for any other reason
- * still lands in the same place.
- */
+   * it here, in that order. The banner and its "Open session now" repair stay exactly as they
+   * were: this removes the trap, not the safety net, and a ring that fails for any other reason
+   * still lands in the same place.
+   */
   private completeSale(): void {
  // rev 5: ringDone() disarms the CTA: the committed basket must never re-ring as a duplicate
- // order on a second "did it take?" tap. The forward path is the sold panel's Next sale.
+    // order on a second "did it take?" tap. The forward path is the sold panel's Next sale.
     if (this.cart.length === 0 || this.ringBusy() || this.ringDone()) return;
     if (this.payMethod === '' || this.payMethod === 'SPLIT') return;
     if (this.tillSessionId === '') {
@@ -3974,16 +3975,16 @@ export class HosPosTerminal extends LitElement {
     void this.ringSale(this.payMethod);
   }
 
- /**
- * The shut-drawer path, kept out of completeSale() so that method stays the SYNCHRONOUS guard it
+  /**
+   * The shut-drawer path, kept out of completeSale() so that method stays the SYNCHRONOUS guard it
  * has always been: every caller (the CTA, the pay key, the quick-action intent) reads the same
- * four refusals in the same order before anything asynchronous can happen.
- *
- * openSession() never throws: it answers with a real session id, or with the 'till-pending' /
- * 'till-offline' chrome placeholders. So the ring always follows, and a drawer that could not
+   * four refusals in the same order before anything asynchronous can happen.
+   *
+   * openSession() never throws: it answers with a real session id, or with the 'till-pending' /
+   * 'till-offline' chrome placeholders. So the ring always follows, and a drawer that could not
  * actually be opened lands in the ring's own error banner: the same banner, carrying the same
- * "Open session now" repair, that this path exists to stop being the FIRST thing a clerk sees.
- */
+   * "Open session now" repair, that this path exists to stop being the FIRST thing a clerk sees.
+   */
   private async openThenRing(): Promise<void> {
     await this.openSession();
     if (this.payMethod === '' || this.payMethod === 'SPLIT') return;
@@ -3992,12 +3993,12 @@ export class HosPosTerminal extends LitElement {
 
  // ── DIB-488 rev 8: the ticket facts: margin glance (item 10) + add-on suggestions (item 8) ──
 
- /**
- * Debounced (a burst of adds/qty edits is one refresh) and sequence-guarded (a stale answer for
+  /**
+   * Debounced (a burst of adds/qty edits is one refresh) and sequence-guarded (a stale answer for
  * an older ticket is dropped when it lands: the grid's searchSeq idiom). Both reads are
- * display-only and BEST-EFFORT: any failure renders as ABSENT data (no margin column, no strip),
- * never as an error surface.
- */
+   * display-only and BEST-EFFORT: any failure renders as ABSENT data (no margin column, no strip),
+   * never as an error surface.
+   */
   private scheduleTicketFacts(): void {
     if (this.ticketFactsTimer) window.clearTimeout(this.ticketFactsTimer);
     this.ticketFactsTimer = window.setTimeout(() => {
@@ -4009,12 +4010,12 @@ export class HosPosTerminal extends LitElement {
     }, 350);
   }
 
- /**
+  /**
  * rev 8 (item 10): ask the SERVER for the ticket's margins. The server computes from its own
- * engine revenue × its WAC cost source and GATES AT THE MARSHAL LAYER: a non-allowed role
- * receives `{}`, so this surface simply has no data and renders no margin anywhere. The UI
- * never computes a margin itself.
- */
+   * engine revenue × its WAC cost source and GATES AT THE MARSHAL LAYER: a non-allowed role
+   * receives `{}`, so this surface simply has no data and renders no margin anywhere. The UI
+   * never computes a margin itself.
+   */
   private async refreshMarginGlance(seq: number): Promise<void> {
     if (this.cart.length === 0) {
       this.marginData = null;
@@ -4035,17 +4036,17 @@ export class HosPosTerminal extends LitElement {
   }
 
  /** rev 8 (item 8, DIB-502): the suggestion tiles for the current ticket. Empty = no strip. */
- /**
- * The ticket's CUSTOMER-AWARE price picture, one line at a time, from the pricing engine.
- *
- * This is the ask's other half. The search rows and the hot-list tiles show what a product costs
- * this account BEFORE it goes on the ticket; this shows it AFTER, which is where the number is
+  /**
+   * The ticket's CUSTOMER-AWARE price picture, one line at a time, from the pricing engine.
+   *
+   * This is the ask's other half. The search rows and the hot-list tiles show what a product costs
+   * this account BEFORE it goes on the ticket; this shows it AFTER, which is where the number is
  * actually read out loud: Ryan Rood wanted the saving visible and printable, and Ryan Bostock
- * reads the whole ticket back before the customer pays.
- *
- * Same read, same authority, same rules: retail struck only where they pay less, no zero saving,
+   * reads the whole ticket back before the customer pays.
+   *
+   * Same read, same authority, same rules: retail struck only where they pay less, no zero saving,
  * no arithmetic here. Best-effort: an outage costs the SAVING line, never the ticket.
- */
+   */
   private async refreshTicketPrices(seq: number): Promise<void> {
     if (this.cart.length === 0) {
       this.ticketQuotes = {};
@@ -4066,15 +4067,15 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- /**
- * What this ticket saves against retail, as the SERVER computed it line by line.
- *
+  /**
+   * What this ticket saves against retail, as the SERVER computed it line by line.
+   *
  * Built from per-line saving figures times their quantities, but the multiplication and the
  * addition are money arithmetic: HH's core computes them, so the port hands the per-line entries
  * to a host seam and renders its answer (ports.ts, named in CLOSURE.md). A line the engine could
  * not answer contributes nothing: it does not contribute a guess, and it does not blank the total
  * for the lines that DID answer.
- */
+   */
   private ticketSavingCents(): number {
     const entries: { saving_cents: number; qty: number }[] = [];
     for (const l of this.cart) {
@@ -4094,7 +4095,7 @@ export class HosPosTerminal extends LitElement {
       const out = await addonSuggestions(this.cart.map((l) => l.product.id));
       if (seq !== this.ticketFactsSeq) return;
       this.addons = out;
- // Seed each new tile's qty box from the server's sensible default; keep any typed entry.
+      // Seed each new tile's qty box from the server's sensible default; keep any typed entry.
       for (const a of out) {
         if (!this.addonQty.has(a.product_id)) this.addonQty.set(a.product_id, String(a.default_qty));
       }
@@ -4103,7 +4104,7 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- /** rev 8: the margin data the ROLE gate actually sent us (footer pair present). */
+  /** rev 8: the margin data the ROLE gate actually sent us (footer pair present). */
   private marginPresent(): boolean {
     return this.marginData !== null && this.marginData.margin_bps !== undefined;
   }
@@ -4113,7 +4114,7 @@ export class HosPosTerminal extends LitElement {
     return this.marginPresent() && !this.wsMarginHidden;
   }
 
- // ── DIB-488 rev 2: workspace gestures + persistence ───────────────────────
+  // ── DIB-488 rev 2: workspace gestures + persistence ───────────────────────
 
  /** The whole view state as one value: everything below derives through _pos-workspace.ts. */
   private wsView(): WorkspaceView {
@@ -4139,38 +4140,38 @@ export class HosPosTerminal extends LitElement {
     this.counterLayout = v.counterLayout; // 0220
   }
 
- /**
- * Resolve the workspace: the server answers user-over-dealer (whole-or-absent) and the edge
+  /**
+   * Resolve the workspace: the server answers user-over-dealer (whole-or-absent) and the edge
  * hardens the wire (resolveWorkspaceView). A prefs outage keeps the shipped defaults: the
- * empty-never-error posture; a till must never fail to open over a layout preference.
- */
+   * empty-never-error posture; a till must never fail to open over a layout preference.
+   */
   private async loadWorkspace(): Promise<void> {
     try {
       const row = await getWorkspacePrefs(this.branchId);
       this.applyWsView(resolveWorkspaceView(row));
     } catch {
- /* defaults hold */
+      /* defaults hold */
     }
   }
 
- /**
- * The dealer's key roster. A failure is not an error state and does not surface: the shipped
- * fallback roster is already on the legend, and a counter whose keys stopped working because a
- * settings read timed out is a counter nobody trusts again.
- */
+  /**
+   * The dealer's key roster. A failure is not an error state and does not surface: the shipped
+   * fallback roster is already on the legend, and a counter whose keys stopped working because a
+   * settings read timed out is a counter nobody trusts again.
+   */
   private async loadHotkeys(): Promise<void> {
     try {
       this.hotkeyRoster = asHotkeyRoster(await posHotkeys(this.branchId));
     } catch {
- /* the fallback roster stands */
+      /* the fallback roster stands */
     }
   }
 
- /**
- * Which counter panels this person keeps on screen. Failure is not an error state: the shipped
- * defaults are already rendering, and a counter that lost its hot list because a settings read
+  /**
+   * Which counter panels this person keeps on screen. Failure is not an error state: the shipped
+   * defaults are already rendering, and a counter that lost its hot list because a settings read
  * timed out is a counter nobody trusts again: the same posture the roster read takes.
- */
+   */
   private async loadPanels(): Promise<void> {
     try {
       const res = await api(
@@ -4181,15 +4182,15 @@ export class HosPosTerminal extends LitElement {
       this.panelRoleItems = asSurfaceItems(body, 'role_items');
       this.panels = panelView(this.panelRoleItems, asSurfaceItems(body, 'user_items'));
     } catch {
- /* the shipped defaults stand */
+      /* the shipped defaults stand */
     }
   }
 
- /**
+  /**
  * Turn one panel on or off FOR THIS PERSON. Optimistic: the switch answers the finger before
  * the round trip, because a toggle that waits on a network is a toggle people press twice: and
- * a failed write puts the screen back where it was rather than lying about what is stored.
- */
+   * a failed write puts the screen back where it was rather than lying about what is stored.
+   */
   private async setPanel(id: string, on: boolean): Promise<void> {
     const before = this.panels;
     const items = panelWrite(this.panels, id, on);
@@ -4205,37 +4206,37 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- /**
+  /**
  * 0220 · setCounterLayout: the other counter, chosen and kept.
- *
- * Applied locally FIRST, like every other workspace gesture: the layout changes under the press
- * rather than after a round trip, and a failed save puts it back. It rides the SAME merge-save the
- * split and the margin quick-hide ride (wsDirty → schedulePersist → mergeWorkspaceForSave), so
- * choosing a layout at this till cannot flatten a preference the same person set at the one next
- * door.
- *
- * It is not a `panel` row on the surface kit, deliberately: the kit's panel rows answer "does this
- * pane render" for the legend and the hot list. This answers "which counter is this", which is the
- * workspace's own question, and the workspace row is the thing that already follows a person
- * across tills.
- */
+   *
+   * Applied locally FIRST, like every other workspace gesture: the layout changes under the press
+   * rather than after a round trip, and a failed save puts it back. It rides the SAME merge-save the
+   * split and the margin quick-hide ride (wsDirty → schedulePersist → mergeWorkspaceForSave), so
+   * choosing a layout at this till cannot flatten a preference the same person set at the one next
+   * door.
+   *
+   * It is not a `panel` row on the surface kit, deliberately: the kit's panel rows answer "does this
+   * pane render" for the legend and the hot list. This answers "which counter is this", which is the
+   * workspace's own question, and the workspace row is the thing that already follows a person
+   * across tills.
+   */
   private setCounterLayout(next: CounterLayout): void {
     if (this.counterLayout === next) return;
     this.counterLayout = next;
     this.viewOpen = false;
- // Leaving the panels: the operator's attention goes back to a single open step, and the step
+    // Leaving the panels: the operator's attention goes back to a single open step, and the step
  // they were last working in is the honest one to open: not step 1, which would throw away
- // where they were.
+    // where they were.
     if (next === 'STEPPER' && !this.openStep) this.openStep = 'customer';
     this.wsDirty.add('counterLayout');
     this.schedulePersist();
   }
 
- /**
- * Dismissing the legend from the legend itself. It turns OFF THE STRIP, never the keys: the
- * roster is untouched, F4 still advances and F12 still pays. Focus lands on the view control
- * that brings it back, so the way back is where the hand already is.
- */
+  /**
+   * Dismissing the legend from the legend itself. It turns OFF THE STRIP, never the keys: the
+   * roster is untouched, F4 still advances and F12 still pays. Focus lands on the view control
+   * that brings it back, so the way back is where the hand already is.
+   */
   private dismissLegend(): void {
     void this.setPanel(PANEL_LEGEND, false);
     void this.updateComplete.then(() =>
@@ -4254,48 +4255,48 @@ export class HosPosTerminal extends LitElement {
     };
   }
 
- /**
- * The counter's own key listener.
- *
- * THREE THINGS IT REFUSES TO DO, EACH ONE A REAL BUG IT WOULD OTHERWISE CAUSE:
- *
- * 1. It never handles a key the SHELL already claimed. The app shell owns its own dealer
- * hotkey map on the same window; `defaultPrevented` is how the two maps stay one map from
- * the operator's point of view instead of both firing.
- * 2. It never matches anything but an exact chord. That IS the browser escape: bind F12 to
- * payment and Shift+F12 still opens dev tools, because `shift-f12` is not `f12` and an
- * unmatched key never gets preventDefault called on it.
- * 3. It never steals an ordinary keystroke. Only function keys produce a chord at all, so
+  /**
+   * The counter's own key listener.
+   *
+   * THREE THINGS IT REFUSES TO DO, EACH ONE A REAL BUG IT WOULD OTHERWISE CAUSE:
+   *
+   * 1. It never handles a key the SHELL already claimed. The app shell owns its own dealer
+   * hotkey map on the same window; `defaultPrevented` is how the two maps stay one map from
+   * the operator's point of view instead of both firing.
+   * 2. It never matches anything but an exact chord. That IS the browser escape: bind F12 to
+   * payment and Shift+F12 still opens dev tools, because `shift-f12` is not `f12` and an
+   * unmatched key never gets preventDefault called on it.
+   * 3. It never steals an ordinary keystroke. Only function keys produce a chord at all, so
  * every letter, digit and punctuation mark still reaches the scan field: which is where a
- * counter expects everything it types to go.
- */
+   * counter expects everything it types to go.
+   */
   private onPosKey = (e: KeyboardEvent): void => {
     if (e.defaultPrevented) return;
     const action = resolveHotkey(chordFromEvent(e), this.hotkeyRoster);
     if (!action) return;
- // THE COUNTER OWNS A KEY ITS OWN LEGEND ADVERTISES, available or not. The two halves of that
- // sentence are two different calls, and conflating them is a real defect this fixed:
- //
+    // THE COUNTER OWNS A KEY ITS OWN LEGEND ADVERTISES, available or not. The two halves of that
+    // sentence are two different calls, and conflating them is a real defect this fixed:
+    //
  // stopPropagation: ALWAYS, for a chord on this roster. The shell's dealer map is on the
- // same window and binds F1-F4 / F9 (0164/0171). Before this, a DIMMED counter key fell
+    // same window and binds F1-F4 / F9 (0164/0171). Before this, a DIMMED counter key fell
  // through to it: pressing F4 on the payment step: where "Next" is legitimately unavailable:
- // navigated the clerk to the product catalogue mid-sale. A key the legend shows must never
- // do a third thing nobody asked for.
- //
+    // navigated the clerk to the product catalogue mid-sale. A key the legend shows must never
+    // do a third thing nobody asked for.
+    //
  // preventDefault: only when the action actually RAN. The browser's own meaning is not ours
- // to suppress on a key that did nothing: bind F12 to payment and, on a rung sale where Pay is
- // dimmed, F12 still opens dev tools. That is the escape rule, and it is the reason the client
- // could have his F12 at all.
+    // to suppress on a key that did nothing: bind F12 to payment and, on a rung sale where Pay is
+    // dimmed, F12 still opens dev tools. That is the escape rule, and it is the reason the client
+    // could have his F12 at all.
     e.stopPropagation();
     if (!this.runHotkey(action)) return;
     e.preventDefault();
   };
 
- /**
- * Carry out a bound action. Returns whether it DID anything: an action that is not available
- * right now must not swallow the key, because a dimmed keycap and a key that silently does
- * nothing while the browser's meaning is also suppressed are two different kinds of broken.
- */
+  /**
+   * Carry out a bound action. Returns whether it DID anything: an action that is not available
+   * right now must not swallow the key, because a dimmed keycap and a key that silently does
+   * nothing while the browser's meaning is also suppressed are two different kinds of broken.
+   */
   private runHotkey(action: string): boolean {
     const s = this.hotkeyState();
     switch (action) {
@@ -4332,20 +4333,20 @@ export class HosPosTerminal extends LitElement {
     }, 400);
   }
 
- /**
- * PER-USER persistence (the ergonomics half of the 0166 ruling). One idempotency key is minted
+  /**
+   * PER-USER persistence (the ergonomics half of the 0166 ruling). One idempotency key is minted
  * per save (the settings-write idiom: the server replays a duplicated request instead of
- * double-applying it); workspacePayload deliberately excludes the transient maximize. Failure is
- * silent by design: the screen already shows what the operator chose, and the next gesture
- * saves again.
- *
- * rev 6 (item G, the commander-approved opinion #2 fix): before each debounced save the stored
- * row is RE-READ and only the fields THIS surface's gestures changed are overlaid on it
+   * double-applying it); workspacePayload deliberately excludes the transient maximize. Failure is
+   * silent by design: the screen already shows what the operator chose, and the next gesture
+   * saves again.
+   *
+   * rev 6 (item G, the commander-approved opinion #2 fix): before each debounced save the stored
+   * row is RE-READ and only the fields THIS surface's gestures changed are overlaid on it
  * (mergeWorkspaceForSave): two live surfaces stop flattening each other's divider/pills. The
- * wire contract is untouched: one complete row still goes over the PUT (whole-or-absent), and
- * the server's whole-or-absent ruling stands. A failed re-read degrades to the pre-rev-6
+   * wire contract is untouched: one complete row still goes over the PUT (whole-or-absent), and
+   * the server's whole-or-absent ruling stands. A failed re-read degrades to the pre-rev-6
  * behavior (the whole local view: best-effort either way).
- */
+   */
   private async persistWorkspace(): Promise<void> {
     const dirty = [...this.wsDirty];
     const sent = this.wsView(); // what the local fields were when this save composed
@@ -4357,11 +4358,11 @@ export class HosPosTerminal extends LitElement {
       body = { ...sent, maximized: '' }; // re-read failed: the whole local view, as before
     }
     try {
- // rev 3→8: workspaceSaveBodyV8 = the rev-3 body + margin_hidden (0170), one whole-or-absent
- // row either way; maximize stays excluded by construction; the earlier composers stand.
+      // rev 3→8: workspaceSaveBodyV8 = the rev-3 body + margin_hidden (0170), one whole-or-absent
+      // row either way; maximize stays excluded by construction; the earlier composers stand.
       await putWorkspacePrefs({ idempotency_key: newIdempotencyKey(), ...workspaceSaveBodyV9(body) });
  // A field is clean once saved: unless a gesture moved it again while this save was in
- // flight (its queued save must still carry it).
+      // flight (its queued save must still carry it).
       const now = this.wsView();
       for (const f of dirty) {
         if (now[f] === sent[f]) this.wsDirty.delete(f);
@@ -4371,16 +4372,16 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- /**
- * rev 3: the lookup panel's cards ⇄ rows toggle (the quick pill in its bar). An ergonomic
- * preference exactly like the divider position, so it persists per user through the same
- * debounced whole-or-absent save; choosing the already-active shape is a no-op, not a write.
- */
+  /**
+   * rev 3: the lookup panel's cards ⇄ rows toggle (the quick pill in its bar). An ergonomic
+   * preference exactly like the divider position, so it persists per user through the same
+   * debounced whole-or-absent save; choosing the already-active shape is a no-op, not a write.
+   */
   private wsSetLookupPresentation(p: LookupPresentation): void {
     if (this.wsLookupPresentation === p) return;
  // rev 5: keep the reader's place: the flip re-renders every result at a different height and
- // used to snap the lookup scroll back to 0 mid-browse. Exact restoration is impossible (row
- // heights differ) so the offset is clamped by the browser; better than losing the place.
+    // used to snap the lookup scroll back to 0 mid-browse. Exact restoration is impossible (row
+    // heights differ) so the offset is clamped by the browser; better than losing the place.
     const body = this.renderRoot.querySelector<HTMLElement>('[data-testid="step-panel-items"]');
     const keep = body?.scrollTop ?? 0;
     this.wsLookupPresentation = p;
@@ -4389,27 +4390,27 @@ export class HosPosTerminal extends LitElement {
     if (body && keep > 0) void this.updateComplete.then(() => (body.scrollTop = keep));
   }
 
- /**
+  /**
  * rev 8 (item 10): the one-click quick-hide (eye): counter privacy while a customer watches
- * the screen. An ergonomic exactly like the divider position: per-user, debounced merge-save.
- */
+   * the screen. An ergonomic exactly like the divider position: per-user, debounced merge-save.
+   */
   private wsToggleMarginHidden(): void {
     this.wsMarginHidden = !this.wsMarginHidden;
     this.wsDirty.add('marginHidden');
     this.schedulePersist();
   }
 
- /**
+  /**
  * rev 5: light dismiss for the Help popover: a pointer press anywhere OUTSIDE its wrap closes
- * it (composedPath, so presses inside other shadow roots count as outside honestly). The pressed
+   * it (composedPath, so presses inside other shadow roots count as outside honestly). The pressed
  * control keeps focus: only Escape refocuses the trigger.
- *
- * The panel-config popovers this listener also served retired with the two-panel workspace; the
- * Help flyout is the last light-dismissed surface POS owns.
- */
+   *
+   * The panel-config popovers this listener also served retired with the two-panel workspace; the
+   * Help flyout is the last light-dismissed surface POS owns.
+   */
   private onDocPointerDown = (e: Event): void => {
- // Both flyouts in the utility cluster light-dismiss on the same listener; each one closes only
- // when the click landed outside ITS OWN wrapper, so opening one closes the other.
+    // Both flyouts in the utility cluster light-dismiss on the same listener; each one closes only
+    // when the click landed outside ITS OWN wrapper, so opening one closes the other.
     const path = e.composedPath();
     const wraps = [...this.renderRoot.querySelectorAll('.helpwrap')];
     if (this.helpOpen) {
@@ -4429,16 +4430,16 @@ export class HosPosTerminal extends LitElement {
     this.showRelief = false;
   }
 
- // ── render ────────────────────────────────────────────────────────────
+  // ── render ────────────────────────────────────────────────────────────
   render() {
     const sessionOpen = this.tillSessionId !== '';
  // rev 8 (item 2): the concept HEADER BAR: one compact page bar. Large bold sale title with
  // the yard context under it (left), the tracked 1→2→3 flow (middle: the rev-1 contract,
- // untouched), and the utility cluster (right): live clock (label pure, clock injected),
+    // untouched), and the utility cluster (right): live clock (label pure, clock injected),
  // green session-status dot when the till is OPEN (pairs with the rev-5 rehydration: a reload
- // rediscovers the drawer and the dot survives it), Help, the session control, and the
- // page-level gold "+ New Sale" (the same guarded newSaleClicked path as the util button).
- // The brand lockup stays as the eyebrow line (the DIB-456 brand gate pins it).
+    // rediscovers the drawer and the dot survives it), Help, the session control, and the
+    // page-level gold "+ New Sale" (the same guarded newSaleClicked path as the util button).
+    // The brand lockup stays as the eyebrow line (the DIB-456 brand gate pins it).
     return html`
       <div class="topbar">
         ${/* WAVE 2 · finding 15: the bar is full-bleed (its hairline divides the whole page) and
@@ -4535,14 +4536,14 @@ export class HosPosTerminal extends LitElement {
     `;
   }
 
- /**
- * The counter-view menu: two switches, no sentences.
- *
- * THIS IS THE WAY BACK, and it deliberately does not need an administrator. Ryan Bostock does not
- * want the legend; Ryan Rood does. Whoever is standing at this till decides, here, in one gesture,
- * and the choice follows them to the next till because it is stored against them and not against
- * the machine.
- */
+  /**
+   * The counter-view menu: two switches, no sentences.
+   *
+   * THIS IS THE WAY BACK, and it deliberately does not need an administrator. Ryan Bostock does not
+   * want the legend; Ryan Rood does. Whoever is standing at this till decides, here, in one gesture,
+   * and the choice follows them to the next till because it is stored against them and not against
+   * the machine.
+   */
   private renderViewMenu() {
     return html`<div class="helppop viewpop" role="group" aria-label="Counter view" data-testid="pos-view-menu">
       <h3>Counter view</h3>
@@ -4604,11 +4605,11 @@ export class HosPosTerminal extends LitElement {
     </div>`;
   }
 
- /**
- * The admin editor (R1's second half, R2's first). Rendered only for an administrator, and the
+  /**
+   * The admin editor (R1's second half, R2's first). Rendered only for an administrator, and the
  * SERVER refuses the write regardless: this gate spares a counter person a control they cannot
- * use, it is not what makes the write safe.
- */
+   * use, it is not what makes the write safe.
+   */
   private renderCounterSettings() {
     return html`<div
       class="csoverlay"
@@ -4634,7 +4635,7 @@ export class HosPosTerminal extends LitElement {
     </div>`;
   }
 
- /** Closing re-reads the roster and the panels, so a save shows on the counter without a reload. */
+  /** Closing re-reads the roster and the panels, so a save shows on the counter without a reload. */
   private closeCounterSettings(): void {
     this.counterSettingsOpen = false;
     void this.loadHotkeys();
@@ -4653,7 +4654,7 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- /** rev 8 (item 2): Escape closes the Help popover from the trigger or inside it. */
+  /** rev 8 (item 2): Escape closes the Help popover from the trigger or inside it. */
   private onHelpKey(e: KeyboardEvent): void {
     if (e.key === 'Escape' && this.helpOpen) {
       e.stopPropagation();
@@ -4675,36 +4676,36 @@ export class HosPosTerminal extends LitElement {
     </div>`;
   }
 
- // ── the counter's single column ───────────────────────────────────────────────────────────────
- //
- // WHAT REPLACED WHAT. The two-panel workspace (Inventory lookup ⇄ Sale, with the draggable
- // divider, the collapse rails, the swap/maximize controls and the per-panel config popovers) is
- // GONE FROM POS. The client used it for a day and asked for one column: a person standing at a
- // till with a customer in front of them is doing one thing, and four half-visible panels made
- // them hunt for it. What stands here instead is four accordion cards in the order the sale
+  // ── the counter's single column ───────────────────────────────────────────────────────────────
+  //
+  // WHAT REPLACED WHAT. The two-panel workspace (Inventory lookup ⇄ Sale, with the draggable
+  // divider, the collapse rails, the swap/maximize controls and the per-panel config popovers) is
+  // GONE FROM POS. The client used it for a day and asked for one column: a person standing at a
+  // till with a customer in front of them is doing one thing, and four half-visible panels made
+  // them hunt for it. What stands here instead is four accordion cards in the order the sale
  // actually happens: Customer, Items, Payment, Summary: with exactly one open.
- //
- // WHAT WAS RETIRED IS THE USE, NOT THE MACHINERY. _pos-workspace.ts is shared: the quote builder
- // and the settings kit still resolve layouts through it, so the module, its tests and the
- // pos_user_workspace wire contract are all untouched. POS simply stops offering the geometry
- // controls. The two per-user ergonomics that still MEAN something in one column ride on exactly
+  //
+  // WHAT WAS RETIRED IS THE USE, NOT THE MACHINERY. _pos-workspace.ts is shared: the quote builder
+  // and the settings kit still resolve layouts through it, so the module, its tests and the
+  // pos_user_workspace wire contract are all untouched. POS simply stops offering the geometry
+  // controls. The two per-user ergonomics that still MEAN something in one column ride on exactly
  // as before through the same merge-save: the results Cards ⇄ Rows flip, and the margin
  // quick-hide: so nobody's saved preferences were thrown away to get here.
- //
- // THE STEPPER AND THE ACCORDION SAY DIFFERENT THINGS ON PURPOSE. deriveFlow reports what the
- // SALE still needs; openStep reports where the OPERATOR is working. They usually agree and are
- // allowed not to: a clerk who opens Payment to check a tender has not answered the customer
- // question, and neither indicator should pretend otherwise.
+  //
+  // THE STEPPER AND THE ACCORDION SAY DIFFERENT THINGS ON PURPOSE. deriveFlow reports what the
+  // SALE still needs; openStep reports where the OPERATOR is working. They usually agree and are
+  // allowed not to: a clerk who opens Payment to check a tender has not answered the customer
+  // question, and neither indicator should pretend otherwise.
 
- /**
+  /**
  * renderFlowColumn: the four cards, top to bottom, one of them open.
- *
- * The body of a closed card is not rendered AT ALL (the `${open ? … : nothing}` below), which is
- * what makes the disclosure real rather than cosmetic: nothing inside a collapsed step is
+   *
+   * The body of a closed card is not rendered AT ALL (the `${open ? … : nothing}` below), which is
+   * what makes the disclosure real rather than cosmetic: nothing inside a collapsed step is
  * painted, tab-reachable, announced, or: for the Items card: still holding a live product grid
- * open. hos-pos-step-card carries the aria-expanded/aria-controls pair against a region that
- * genuinely comes and goes.
- */
+   * open. hos-pos-step-card carries the aria-expanded/aria-controls pair against a region that
+   * genuinely comes and goes.
+   */
   private renderFlowColumn() {
     if (this.counterLayout === 'PANELS') return this.renderFlowPanels();
     const steps = this.flowSteps();
@@ -4732,22 +4733,22 @@ export class HosPosTerminal extends LitElement {
     </div>`;
   }
 
- /**
+  /**
  * renderFlowPanels: 0220: the same four steps, all open at once, in boxes the person arranged.
- *
- * THE BODIES COME FROM THE SAME SWITCH the accordion renders through (renderStepBody), which is
- * the rule that file states and the reason this is fifteen lines rather than a second counter: a
- * step rendered by two paths is a step that drifts, and the one that drifts is always the one
- * nobody is looking at.
- *
- * NO SUMMARY LINES HERE. A collapsed card carries a summary because its body is gone; an open
- * panel carries its body, and repeating the total in the header of the panel showing the total is
- * the say-it-once rule broken in the smallest possible space.
- *
- * The utilities and the footer stat bar stay BELOW the panel surface rather than inside a panel:
- * they belong to the sale, not to any one step, which is exactly why they sit under the column in
- * the other layout too.
- */
+   *
+   * THE BODIES COME FROM THE SAME SWITCH the accordion renders through (renderStepBody), which is
+   * the rule that file states and the reason this is fifteen lines rather than a second counter: a
+   * step rendered by two paths is a step that drifts, and the one that drifts is always the one
+   * nobody is looking at.
+   *
+   * NO SUMMARY LINES HERE. A collapsed card carries a summary because its body is gone; an open
+   * panel carries its body, and repeating the total in the header of the panel showing the total is
+   * the say-it-once rule broken in the smallest possible space.
+   *
+   * The utilities and the footer stat bar stay BELOW the panel surface rather than inside a panel:
+   * they belong to the sale, not to any one step, which is exactly why they sit under the column in
+   * the other layout too.
+   */
   private renderFlowPanels() {
     const steps = this.flowSteps();
     return html`<div class="flowcol" data-testid="pos-flow-panels">
@@ -4763,27 +4764,27 @@ export class HosPosTerminal extends LitElement {
     </div>`;
   }
 
- /**
+  /**
  * stepSummary: summaryFor's line, with the separator this terminal's own withholding orphaned.
- *
- * summaryFor builds the Items line as `${count} ${items} · ${totalLabel}` and is right for every
- * input it was designed to take. The input it was never given is the one stepFacts() invents:
- * while Payment is open the terminal blanks `totalLabel` on purpose (the say-it-once rule
+   *
+   * summaryFor builds the Items line as `${count} ${items} · ${totalLabel}` and is right for every
+   * input it was designed to take. The input it was never given is the one stepFacts() invents:
+   * while Payment is open the terminal blanks `totalLabel` on purpose (the say-it-once rule
  * argued at stepFacts), and the template dutifully rendered the middot with nothing after it:
  * "✓ Items: done 1 item ·", a dangling separator in the header button's accessible name.
- *
- * The trim lives HERE, at the feed point, because the withholding lives here: the pure module is
- * not the thing that decided to hand it half a line. (The better long-term shape is for
- * summaryFor to JOIN its parts rather than template them, which would make the empty half
- * disappear at the source. That file is outside this lane's fences, so it is reported rather
+   *
+   * The trim lives HERE, at the feed point, because the withholding lives here: the pure module is
+   * not the thing that decided to hand it half a line. (The better long-term shape is for
+   * summaryFor to JOIN its parts rather than template them, which would make the empty half
+   * disappear at the source. That file is outside this lane's fences, so it is reported rather
  * than edited, and this trim is correct either way: a joined line has no trailing separator to
- * find.)
- */
+   * find.)
+   */
   private stepSummary(step: FlowStepId, f: StepSummaryFacts): string {
     return summaryFor(step, f).replace(/\s*·\s*$/, '');
   }
 
- /** The open card's contents. One switch so a step can never be rendered by two different paths. */
+  /** The open card's contents. One switch so a step can never be rendered by two different paths. */
   private renderStepBody(step: FlowStepId) {
     switch (step) {
       case 'customer':
@@ -4797,37 +4798,37 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
- /**
+  /**
  * The facts the COLLAPSED cards summarise (summaryFor, _pos-accordion.ts: pure and tested).
- *
- * `totalLabel` is deliberately withheld while Payment is open: the totals card inside that step
- * is the running total's SOURCE, and the doctrine's say-it-once rule means the Items summary must
+   *
+   * `totalLabel` is deliberately withheld while Payment is open: the totals card inside that step
+   * is the running total's SOURCE, and the doctrine's say-it-once rule means the Items summary must
  * not echo a number the operator is already looking at. Closed Payment, and the echo comes back:
- * which is the same source-and-echo rule the old header chip followed, now with a better echo.
- */
+   * which is the same source-and-echo rule the old header chip followed, now with a better echo.
+   */
   private stepFacts(): StepSummaryFacts {
     return {
       customerName: this.customer ? this.customer.name : '',
       walkInConfirmed: this.walkInConfirmed,
       lineCount: this.cart.length,
       totalLabel: this.openStep === 'payment' ? '' : money(this.total()),
- // DIB-512 (8) · one word per surface. Before the ring the collapsed Payment card says which
- // tender is CHOSEN; after it, salePillLabel decides the counter word for what the sale
+      // DIB-512 (8) · one word per surface. Before the ring the collapsed Payment card says which
+      // tender is CHOSEN; after it, salePillLabel decides the counter word for what the sale
  // actually is ('Paid' / 'On account' / 'COD' / 'Deposit'): never the wire status, which is
- // the whole point of that helper and the reason COMMITTED never reaches chrome.
+      // the whole point of that helper and the reason COMMITTED never reaches chrome.
       tenderLabel: this.ringDone() ? salePillLabel(this.doneSale()) : this.payMethod ? tenderLabel(this.payMethod) : '',
       orderNo: this.ringDone() ? this.doneSale().order_no : '',
       rungDone: this.ringDone(),
     };
   }
 
- /**
+  /**
  * STEP 1 · CUSTOMER: who is on the sale, and nothing else.
- *
- * Fulfilment used to live here and has moved to the end of Items (the client's ask, and the right
- * adjacency: how the material leaves is a fact about the GOODS, decided once they are on the
- * ticket). What is left is the question this step exists to answer plus the quiet order facts.
- */
+   *
+   * Fulfilment used to live here and has moved to the end of Items (the client's ask, and the right
+   * adjacency: how the material leaves is a fact about the GOODS, decided once they are on the
+   * ticket). What is left is the question this step exists to answer plus the quiet order facts.
+   */
   private renderCustomerBody() {
     return html`
 
@@ -4961,21 +4962,21 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
           `;
   }
 
- /**
+  /**
  * STEP 2 · ITEMS: the whole add-to-ticket surface in one card.
- *
- * THE SEARCH IS NOT A SEPARATE PANEL ANY MORE. One scan-or-search field feeds the ticket
- * directly: scanner bursts and exact SKUs commit on Enter exactly as they always did, anything
- * else is forwarded live to the grid's search, and the chips and results render inline beneath
+   *
+   * THE SEARCH IS NOT A SEPARATE PANEL ANY MORE. One scan-or-search field feeds the ticket
+   * directly: scanner bursts and exact SKUs commit on Enter exactly as they always did, anything
+   * else is forwarded live to the grid's search, and the chips and results render inline beneath
  * it. Every one of those paths: the scan resolve, a result row, a browse tile, a quick-pick
  * tile, the add-ons strip: goes through the SAME addProduct(), so the one-product-one-line merge
- * rule it inherited keeps working no matter which gesture added the item.
- *
- * The browse grid is auto-collapsing here: with no search term the space belongs to the
- * quick-picks (the tiles a yard taps all day), and "Browse products" opens the full catalogue
- * when someone actually wants it. Nothing became unreachable; the frequent thing simply got the
- * pixels.
- */
+   * rule it inherited keeps working no matter which gesture added the item.
+   *
+   * The browse grid is auto-collapsing here: with no search term the space belongs to the
+   * quick-picks (the tiles a yard taps all day), and "Browse products" opens the full catalogue
+   * when someone actually wants it. Nothing became unreachable; the frequent thing simply got the
+   * pixels.
+   */
   private renderItemsBody() {
     return html`
       ${/* ONE field, both muscles: a scanner burst resolves and adds; typing searches. Same box,
@@ -5235,13 +5236,13 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
             `;
   }
 
- /**
+  /**
  * STEP 3 · PAYMENT: the totals card, the tender tiles and the one gold commit.
- *
- * The totals card stays adjacent to the tender it justifies (it is the number the clerk reads out
- * loud), and it is the running total's one source; the collapsed Items card echoes it only while
- * this step is closed.
- */
+   *
+   * The totals card stays adjacent to the tender it justifies (it is the number the clerk reads out
+   * loud), and it is the running total's one source; the collapsed Items card echoes it only while
+   * this step is closed.
+   */
   private renderPaymentBody() {
     return html`
 ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, ABOVE a
@@ -5432,22 +5433,22 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                 @pos-split-ring=${(e: CustomEvent<{ tenders: { method: string; amount_cents: number }[] }>) =>
                   void this.ringSplitSale(e.detail.tenders)}
                 @pos-split-cancel=${() => {
- // Cancelling the split falls back to CASH rather than to no tender at all: the
- // ticket must stay tenderable, and the legs that were being composed are gone.
+                  // Cancelling the split falls back to CASH rather than to no tender at all: the
+                  // ticket must stay tenderable, and the legs that were being composed are gone.
                   this.showSplit = false;
                   this.payMethod = 'CASH';
  // WAVE 2 · finding 18: THE ROVING GROUP'S DECLARED STOP AND ITS FOCUSED MEMBER
- // MUST BE THE SAME TILE. This set the index to Cash (1) and then focused Split
- // (3), so Cash held tabindex="0" while the keyboard sat on a tabindex="-1"
- // button: Shift+Tab out and Tab back relocated the user to a tile they had not
+                  // MUST BE THE SAME TILE. This set the index to Cash (1) and then focused Split
+                  // (3), so Cash held tabindex="0" while the keyboard sat on a tabindex="-1"
+                  // button: Shift+Tab out and Tab back relocated the user to a tile they had not
  // chosen, silently. The focus move below is right and stays: the control that
  // opened the panel is where the panel's Cancel belongs: so it is the index that
- // has to agree with it. The TENDER still falls back to CASH (the ticket must
- // stay tenderable, the composed legs are gone); only the group's keyboard seat
- // follows the focus.
+                  // has to agree with it. The TENDER still falls back to CASH (the ticket must
+                  // stay tenderable, the composed legs are gone); only the group's keyboard seat
+                  // follows the focus.
                   this.payTileIdx = 3;
  // rev 5: the panel unmounts under the keyboard: hand focus back to the Split
- // tile (the control that opened it) instead of dropping it on <body>.
+                  // tile (the control that opened it) instead of dropping it on <body>.
                   void this.updateComplete.then(() =>
                     this.renderRoot.querySelector<HTMLElement>('[data-testid="tender-split"]')?.focus(),
                   );
@@ -5469,14 +5470,14 @@ ${this.ring.state === 'error'
             : nothing}`;
   }
 
- /**
+  /**
  * STEP 4 · SUMMARY: the receipt moment, promoted out from under the payment block into a step of
- * its own, because that is what it always was: what sold, what was paid and how, the change due,
- * the numbers the customer will quote back, and the two things anyone does next.
- *
- * Completing payment expands this card itself (revealSaleOutcome → advanceOn('sale-rung')), so
- * the confirmation is never a sliver at the foot of a scroll the way it was measured to be.
- */
+   * its own, because that is what it always was: what sold, what was paid and how, the change due,
+   * the numbers the customer will quote back, and the two things anyone does next.
+   *
+   * Completing payment expands this card itself (revealSaleOutcome → advanceOn('sale-rung')), so
+   * the confirmation is never a sliver at the foot of a scroll the way it was measured to be.
+   */
   private renderSummaryBody() {
     return html`
       ${this.ringDone() ? nothing : this.renderReadBack()}
@@ -5592,27 +5593,27 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
           `;
   }
 
- /**
+  /**
  * THE READ-BACK: the Summary step BEFORE the money moves.
- *
- * Ryan Bostock asked for the summary and said exactly when he uses it: "before the person pays
- * I'm going over all the details." So Summary is not the receipt's card. The receipt is what it
- * BECOMES; what it is for most of its life is the thing a counter person reads aloud with a
+   *
+   * Ryan Bostock asked for the summary and said exactly when he uses it: "before the person pays
+   * I'm going over all the details." So Summary is not the receipt's card. The receipt is what it
+   * BECOMES; what it is for most of its life is the thing a counter person reads aloud with a
  * customer leaning on the counter: and it has to exist while the sale is still changeable,
- * because the whole point of reading it back is to catch what is wrong.
- *
- * WHAT IT SAYS, IN THE ORDER IT IS SAID: who it is for, what is on it, how it leaves, what it
- * comes to, and what they are saving. Nothing else. Every one of those is a thing the customer
- * will say "no, wait" about; nothing here is a control, because a step whose job is reading is
+   * because the whole point of reading it back is to catch what is wrong.
+   *
+   * WHAT IT SAYS, IN THE ORDER IT IS SAID: who it is for, what is on it, how it leaves, what it
+   * comes to, and what they are saving. Nothing else. Every one of those is a thing the customer
+   * will say "no, wait" about; nothing here is a control, because a step whose job is reading is
  * not a step to also be editing in: the card that owns each fact is one header press away and
- * still open for business.
- *
- * The totals here are the same derivations the Payment card's totals card shows, and only one
- * card is open at a time, so the say-it-once rule is kept structurally rather than by suppression.
- */
+   * still open for business.
+   *
+   * The totals here are the same derivations the Payment card's totals card shows, and only one
+   * card is open at a time, so the say-it-once rule is kept structurally rather than by suppression.
+   */
   private renderReadBack() {
     if (this.cart.length === 0) {
- // Empty is never an error. One calm line: what is missing, what that means, the way forward.
+      // Empty is never an error. One calm line: what is missing, what that means, the way forward.
       return html`<div class="empty" data-testid="summary-empty">
         Nothing on this ticket yet: add items and the whole sale reads back here before you take payment.
       </div>`;
@@ -5633,9 +5634,7 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
               >${l.product.name}
               ${p.showSaving
                 ? html`<span class="rbsave" data-testid="readback-saving"
-                    >Save ${money(sumLineSavingCents([{ saving_cents: p.savingCents, qty: l.qty }]))}${word
-                      ? ` · ${word}`
-                      : ''}</span
+                    >Save ${money(perLineSavingCents(p.savingCents, l.qty))}${word ? ` · ${word}` : ''}</span
                   >`
                 : nothing}</span
             >
@@ -5659,15 +5658,15 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
     </div>`;
   }
 
- /**
- * The sale-session utilities, DELIBERATELY OUTSIDE the accordion.
- *
+  /**
+   * The sale-session utilities, DELIBERATELY OUTSIDE the accordion.
+   *
  * Park ticket, the parked rail and Clear sale are not steps: they act on the whole sale, and a
- * clerk parks a ticket most often while looking at the ITEMS. Leaving them inside the payment
- * card (where they shipped) would have made parking unreachable from the step you park from,
- * which is the kind of capability loss a restructure is supposed to avoid. Everything occasional
- * stays one quiet disclosure away exactly as before.
- */
+   * clerk parks a ticket most often while looking at the ITEMS. Leaving them inside the payment
+   * card (where they shipped) would have made parking unreachable from the step you park from,
+   * which is the kind of capability loss a restructure is supposed to avoid. Everything occasional
+   * stays one quiet disclosure away exactly as before.
+   */
   private renderSaleUtilities() {
     return html`<div class="saleutil">
       ${/* rev 8 (item 10): the one-click margin quick-hide (eye), re-homed from the retired sale
@@ -5734,13 +5733,13 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
   }
 
 
- /**
+  /**
  * DIB-191 B2/C3 · the direct order-id path: DRAFT orders (quote-convert, portal reorder) never
- * reach the Sold panel, so this lookup is what makes DRAFT→CONFIRMED demonstrable, and DIB-410's
- * any-past-sale receipt rides beside it. DIB-512: it lives inside the payment block's More
- * disclosure (an occasional task, not counter chrome), and the placeholder says "#SO or order
- * id" instead of a 13-word tutorial. Same state, same handlers, same panels open below.
- */
+   * reach the Sold panel, so this lookup is what makes DRAFT→CONFIRMED demonstrable, and DIB-410's
+   * any-past-sale receipt rides beside it. DIB-512: it lives inside the payment block's More
+   * disclosure (an occasional task, not counter chrome), and the placeholder says "#SO or order
+   * id" instead of a 13-word tutorial. Same state, same handlers, same panels open below.
+   */
   private renderOrderOpenRow() {
     return html`<div class="util">
       <input
@@ -5774,12 +5773,12 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     </div>`;
   }
 
- /**
+  /**
  * rev 8 (item 12): the FOOTER TRANSACTION BAR: the ticket panel's bottom line of truth.
- * "N Items · Total Weight X lbs" always (weight an honest em-dash when NO line has a weight);
- * "Margin Y% · Est. Profit CA$Z" segments ONLY while the role-gated server data is present AND
- * the quick-hide is off. Sits OUTSIDE the panel's internal scroll, so it never leaves view.
- */
+   * "N Items · Total Weight X lbs" always (the blank word when NO line has a weight);
+   * "Margin Y% · Est. Profit CA$Z" segments ONLY while the role-gated server data is present AND
+   * the quick-hide is off. Sits OUTSIDE the panel's internal scroll, so it never leaves view.
+   */
   private renderTxBar() {
     const weights = this.cart.map((l) => this.lineWeight(l));
     const { totalLbs, allKnown } = ticketWeightTotalLbs(weights);
@@ -5815,33 +5814,33 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     </div>`;
   }
 
- /**
+  /**
  * DIB-488 rev 6 (item A): the customer question's IDENTITY states (mock parity):
- *
+   *
  * resolved account a proper identity card: initials chip, name, account number, the
- * account-type tag, the credit facts the old strip carried (Terms /
+   * account-type tag, the credit facts the old strip carried (Terms /
  * Available / Outstanding: losing them would be a regression), and a
- * Change control that reopens selection.
- * walk-in confirmed the same clean card shape with its own honest facts (Cash tag, no
+   * Change control that reopens selection.
+   * walk-in confirmed the same clean card shape with its own honest facts (Cash tag, no
  * account on the order): an explicit answer deserves better than the
- * default's placeholder strip.
+   * default's placeholder strip.
  * unresolved the existing "Select customer" pick affordance, unchanged: nobody has
- * answered yet, so there is no identity to card.
- */
- /**
+   * answered yet, so there is no identity to card.
+   */
+  /**
  * rev 6 (item F, the commander-approved opinion #1): the OPTIONAL cash-tendered quick entry.
- * Shown only once Cash is the chosen tender and FULLY skippable: an untouched box changes
- * nothing (Complete rings the exact total, one-click cash intact). An entry covering the total
- * previews the change due here and rides the ring body (the server confirms; the sold panel
- * shows the committed answer); a short entry says so honestly and sends nothing.
- */
- /**
+   * Shown only once Cash is the chosen tender and FULLY skippable: an untouched box changes
+   * nothing (Complete rings the exact total, one-click cash intact). An entry covering the total
+   * previews the change due here and rides the ring body (the server confirms; the sold panel
+   * shows the committed answer); a short entry says so honestly and sends nothing.
+   */
+  /**
  * rev 8 (item 8: DIB-502): the SUGGESTED ADD-ONS strip below the ticket. Up to 3 tiles from
- * the server's category-level co-purchase pairing map (0169), items already on the ticket
- * excluded server-side; an EMPTY answer means the strip does not render at all
+   * the server's category-level co-purchase pairing map (0169), items already on the ticket
+   * excluded server-side; an EMPTY answer means the strip does not render at all
  * (empty-never-error). Adds go through the EXISTING add path: the engine prices the line;
- * the tile's list price is display only.
- */
+   * the tile's list price is display only.
+   */
   private renderAddonsStrip() {
     if (this.addons.length === 0 || this.ringDone()) return nothing;
     return html`<div class="addons" data-testid="pos-addons">
@@ -5927,12 +5926,12 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
         : nothing}`;
   }
 
- /**
+  /**
  * rev 6 (item D): the salesperson options: the active-staff roster, with the signed-in operator
- * guaranteed present even when the roster read failed (or the operator is not in it), so the
- * default is always a real, selectable option. Empty-never-error: a roster outage degrades to
- * the one-person list, never a broken select.
- */
+   * guaranteed present even when the roster read failed (or the operator is not in it), so the
+   * default is always a real, selectable option. Empty-never-error: a roster outage degrades to
+   * the one-person list, never a broken select.
+   */
   private renderSalespersonOptions() {
     const me = getCurrentUser();
     const roster = [...this.salespeople];
@@ -5945,8 +5944,8 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
   private renderCustomerIdentity() {
     const c = this.customer;
     if (c) {
-      // HH note: the reference subtracted the balance from the limit here; the core computes
-      // credit in HH, so the port asks the host seam (CLOSURE.md names it), already clamped.
+       // HH note: the reference subtracted the balance from the limit here; the core computes
+       // credit in HH, so the port asks the host seam (CLOSURE.md names it), already clamped.
       const available = availableCreditCents(c);
       return html`<div class="custcard" data-testid="customer-card">
         <span class="avatar" aria-hidden="true">${customerInitials(c.name)}</span>
@@ -6043,10 +6042,10 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     </div>`;
   }
 
- /**
+  /**
  * The modal overlays stay at render()'s top level: OUTSIDE both workspace panels: so a
- * collapse or maximize can never unmount an open dialog mid-interaction.
- */
+   * collapse or maximize can never unmount an open dialog mid-interaction.
+   */
   private renderOverlays() {
     return html`
       ${/* DIB-506: the picker is branch-fenced like every other read on this counter: the scan
@@ -6129,13 +6128,13 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     `;
   }
 
- // ── DIB-488: the two line presentations ───────────────────────────────────
+  // ── DIB-488: the two line presentations ───────────────────────────────────
 
- /**
- * The stock-status line under an item (DIB-488 scope 4). All the honesty rules live in
- * _pos-stock.ts (stockStatus); this only paints the answer with the existing status token roles.
+  /**
+   * The stock-status line under an item (DIB-488 scope 4). All the honesty rules live in
+   * _pos-stock.ts (stockStatus); this only paints the answer with the existing status token roles.
  * No glance (yet, or at all) renders NOTHING: absent data is not an error and not a stock claim.
- */
+   */
   private renderStockLine(l: CartLine) {
     const g = this.lineStock[l.product.id];
     if (!g) return nothing;
@@ -6150,11 +6149,11 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     return html`<div class="stockline ${st.tone}">${st.label}</div>`;
   }
 
- /** The shared qty stepper for a cart line (identical behavior in both presentations). */
+  /** The shared qty stepper for a cart line (identical behavior in both presentations). */
   private renderQtyStepper(l: CartLine, i: number) {
  // rev 5: the controls carry the PRODUCT in their names: three lines of "Decrease quantity /
- // Quantity / Increase quantity" were indistinguishable to a screen reader (the Remove button
- // on the same row already did this right). Enter in the box hands focus back to the scan box.
+    // Quantity / Increase quantity" were indistinguishable to a screen reader (the Remove button
+    // on the same row already did this right). Enter in the box hands focus back to the scan box.
     return html`<div class="stepper">
       <button @click=${() => this.setQty(i, l.qty - 1)} aria-label="Decrease quantity: ${l.product.name}">${drawIcon(iconForId('lucide:minus'), 14)}</button>
       <input
@@ -6170,17 +6169,17 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     </div>`;
   }
 
- /**
+  /**
  * LINES: the D-096 default: one compact row per item (thumbnail, name, SKU, stock-status line,
- * qty stepper, unit, unit price, line total, remove). The engine still owns every number; the
- * full per-line breakdown remains one view-flip away in the Cards presentation.
- */
- /**
+   * qty stepper, unit, unit price, line total, remove). The engine still owns every number; the
+   * full per-line breakdown remains one view-flip away in the Cards presentation.
+   */
+  /**
  * rev 8 (item 9): one line's Total Weight in lbs, from the glance's DISCOVERED catalogue facts
- * (weight_kg_per_base + the unit meta the stock line already uses). null = cannot be said
- * honestly (no weight on file / no usable conversion / glance not landed) → the column shows an
- * em-dash and the line is excluded from the footer total.
- */
+   * (weight_kg_per_base + the unit meta the stock line already uses). null = cannot be said
+   * honestly (no weight on file / no usable conversion / glance not landed) → the column shows an
+   * the blank word and the line is excluded from the footer total.
+   */
   private lineWeight(l: CartLine): number | null {
     const g = this.lineStock[l.product.id];
     const facts: LineWeightFacts = {
@@ -6198,13 +6197,13 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
   }
 
   private renderLinesTable() {
- // rev 8: the margin column exists only while the role-gated data is present AND un-hidden.
+    // rev 8: the margin column exists only while the role-gated data is present AND un-hidden.
     const m = this.marginVisible();
     const cols = m ? 'withmargin' : '';
  // DIB-512 · the column is 'Weight' (the LINE's own weight): 'Total Weight' is the footer
- // bar's word for the ticket total, and the same words for two different numbers on one
- // screen was the exact duplicate the critique flagged. The container grid owns the tracks
- // (subgrid rows) so every row's columns share one edge.
+    // bar's word for the ticket total, and the same words for two different numbers on one
+    // screen was the exact duplicate the critique flagged. The container grid owns the tracks
+    // (subgrid rows) so every row's columns share one edge.
     return html`<div data-testid="pos-lines" class="linegrid ${cols}">
       <div class="linehead ${cols}" aria-hidden="true">
         <span></span><span>Item</span><span>Qty</span><span>Unit</span><span class="r">Price</span><span class="r">Total</span><span class="r">Weight</span>${m ? html`<span class="r">Margin</span>` : nothing}<span></span>
@@ -6230,18 +6229,18 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
              rev 5's honesty stands: an unresolved price says "price pending", never CA$0.00. */ ''}
           ${l.priceMissing
             ? html`<div class="lprice">price pending</div>
-                <div class="ltot">:</div>`
+                <div class="ltot">(none)</div>`
             : html`<div class="lprice" title=${l.priceUom && l.priceUom !== l.uom ? `Priced per ${l.priceUom}` : 'Unit price'}>
                   ${money(l.unitPriceCents)}${l.priceUom && l.priceUom !== l.uom ? ` / ${l.priceUom}` : ''}
                 </div>
                 <div class="ltot">${money(l.lineTotalCents)}</div>`}
-          ${/* rev 8 (item 9): line qty × unit weight, lbs: em-dash when the data cannot say. */ ''}
+          ${/* rev 8 (item 9): line qty × unit weight, lbs: the explicit blank word when the data cannot say. */ ''}
           <div class="lweight" data-testid="pos-line-weight" title=${w === null ? 'No weight on file for this item' : 'Line weight: quantity × unit weight'}>
-            ${w === null ? ':' : formatLbs(w)}
+            ${w === null ? '(none)' : formatLbs(w)}
           </div>
           ${m
             ? html`<div class="lmargin" data-testid="pos-line-margin" title="Gross margin: computed server-side">
-                ${mb === undefined ? ':' : marginPctLabel(mb)}
+                ${mb === undefined ? '(none)' : marginPctLabel(mb)}
               </div>`
             : nothing}
           <button class="rm" @click=${() => this.removeLine(i)} title="Remove line" aria-label="Remove ${l.product.name}">
@@ -6254,10 +6253,10 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     </div>`;
   }
 
- /**
+  /**
  * CARDS: the pre-DIB-488 presentation, kept as the alternate (D-096): each line as a block
- * carrying its full engine price breakdown. Markup unchanged from the shipped terminal.
- */
+   * carrying its full engine price breakdown. Markup unchanged from the shipped terminal.
+   */
   private renderCardLines() {
     return html`<div data-testid="pos-cards">
       ${this.cart.map(
@@ -6287,21 +6286,21 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     </div>`;
   }
 
- /**
+  /**
  * DIB-444: the confirmation moment.
- *
- * What this replaces: `Sold · #SO-TRT-32 · #INV-20 · PAID` as one 13px line in the middle of the
- * utility buttons. It carried three facts, none of them the amount, and announced nothing.
- *
- * What it does NOT change: the ring. `this.ring` and its state machine, the idempotency key, the
+   *
+   * What this replaces: `Sold · #SO-TRT-32 · #INV-20 · PAID` as one 13px line in the middle of the
+   * utility buttons. It carried three facts, none of them the amount, and announced nothing.
+   *
+   * What it does NOT change: the ring. `this.ring` and its state machine, the idempotency key, the
  * error branches and every panel below are exactly as they were: this renders the same
- * `SaleResult`, more loudly. `saleConfirmation()` (in _pos.ts) decides what may be CLAIMED, so an
- * account or COD sale cannot be dressed up as money received.
- *
- * role="status" (not alert): a completed sale is not an error, and role="status" announces the
+   * `SaleResult`, more loudly. `saleConfirmation()` (in _pos.ts) decides what may be CLAIMED, so an
+   * account or COD sale cannot be dressed up as money received.
+   *
+   * role="status" (not alert): a completed sale is not an error, and role="status" announces the
  * headline politely to a screen reader without stealing focus from the product grid: the counter
- * flow must not slow down. Dismissible for the same reason: one click, or ring the next sale.
- */
+   * flow must not slow down. Dismissible for the same reason: one click, or ring the next sale.
+   */
   private renderSoldPanel(sale: SaleResult) {
     if (this.soldPanelDismissed) return nothing;
     const c = saleConfirmation(sale);
@@ -6386,14 +6385,14 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     </div>`;
   }
 
- /**
- * Is the sale credited to somebody OTHER than the person standing at this till?
- *
- * Both halves are honest when the answer is unknowable: a sale with no salesperson at all is not
- * credited elsewhere (nothing to say), and a sale whose id we cannot match to a signed-in
- * operator IS reported, because an unresolvable credit is exactly the case a counter person
- * needs to see rather than have hidden.
- */
+  /**
+   * Is the sale credited to somebody OTHER than the person standing at this till?
+   *
+   * Both halves are honest when the answer is unknowable: a sale with no salesperson at all is not
+   * credited elsewhere (nothing to say), and a sale whose id we cannot match to a signed-in
+   * operator IS reported, because an unresolvable credit is exactly the case a counter person
+   * needs to see rather than have hidden.
+   */
   private creditedElsewhere(sale: SaleResult): boolean {
     const id = sale.salesperson_id ?? '';
     const name = sale.salesperson_name ?? '';

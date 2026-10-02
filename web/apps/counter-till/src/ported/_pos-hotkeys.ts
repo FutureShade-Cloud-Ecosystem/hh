@@ -119,7 +119,7 @@ export function asHotkeyRoster(body: unknown): PosHotkey[] {
  * reaching the scan field.
  */
 export function chordFromEvent(e: { key: string; shiftKey?: boolean; ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean }): string {
- // Meta is never bindable (the server's grammar has no 'meta'), so a Meta press cannot match any
+  // Meta is never bindable (the server's grammar has no 'meta'), so a Meta press cannot match any
  // binding: which is the escape rule doing its job rather than a special case.
   if (e.metaKey) return '';
   const fn = isFnKey(e.key);
@@ -225,8 +225,8 @@ export function available(actionId: string, s: HotkeyState): boolean {
     case HK_STEP_BACK:
       return idx > 0;
     case HK_PAY:
- // Exactly the Complete-sale CTA's own disabled predicate: lines on the ticket, a tender, not
- // already rung, not mid-ring.
+      // Exactly the Complete-sale CTA's own disabled predicate: lines on the ticket, a tender, not
+      // already rung, not mid-ring.
       return s.tenderable && s.lineCount > 0 && !s.rungDone && !s.ringBusy;
     case HK_PARK:
       return s.lineCount > 0 && !s.rungDone && !s.ringBusy;

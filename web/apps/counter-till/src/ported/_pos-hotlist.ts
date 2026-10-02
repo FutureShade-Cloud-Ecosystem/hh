@@ -35,13 +35,13 @@ export const HOT_ROOT: HotPath = { category: '', subcategory: '' };
 /** One tile at the current level: either a group to drill into, or a product to add. */
 export interface HotTile {
   kind: 'group' | 'item';
- /** The group's name, or the product's name. */
+  /** The group's name, or the product's name. */
   label: string;
- /** How many products sit under a group. Groups only; a tile that says "1" is worth a tap too. */
+  /** How many products sit under a group. Groups only; a tile that says "1" is worth a tap too. */
   count: number;
- /** The product, for an item tile. */
+  /** The product, for an item tile. */
   pick?: HotPick;
- /** A representative product, so a GROUP tile can wear a photo instead of an empty square. */
+  /** A representative product, so a GROUP tile can wear a photo instead of an empty square. */
   thumbFor?: HotPick;
 }
 
@@ -63,27 +63,27 @@ export function hotTiles(items: readonly HotPick[] | null | undefined, path: Hot
   if (!path.category) return groupTiles(all, (p) => facet(p.category), cap);
   const inCat = all.filter((p) => facet(p.category) === path.category);
   if (!path.subcategory) {
- // A category whose members carry no second facet has nothing to drill INTO, so it shows its
- // products directly. Making someone tap through a subcategory named after the category is the
- // kind of empty ceremony a counter notices on the fiftieth sale of the day.
+    // A category whose members carry no second facet has nothing to drill INTO, so it shows its
+    // products directly. Making someone tap through a subcategory named after the category is the
+    // kind of empty ceremony a counter notices on the fiftieth sale of the day.
     const subs = new Set(inCat.map((p) => clean(p.subcategory)).filter((s) => s !== ''));
     if (subs.size === 0) return itemTiles(inCat, cap);
  // DIB-553: AND NEITHER DOES A SUBCATEGORY PER PRODUCT.
- //
- // The rule two lines up covers the case where the second facet is missing. This is the same
- // ceremony arriving through a facet that is PRESENT and unique: this dealer names a collection
- // per product, so Mulch's four members sat in four one-member subcategories and every add cost
- // a tap on a tile with exactly one thing behind it.
- //
- // MEASURED on the seeded counter before this line: adding Black Mulch from the hot list took
+    //
+    // The rule two lines up covers the case where the second facet is missing. This is the same
+    // ceremony arriving through a facet that is PRESENT and unique: this dealer names a collection
+    // per product, so Mulch's four members sat in four one-member subcategories and every add cost
+    // a tap on a tile with exactly one thing behind it.
+    //
+    // MEASURED on the seeded counter before this line: adding Black Mulch from the hot list took
  // FOUR clicks: Items, Mulch, Black, Black Mulch: and three of them landed on tiles that look
- // exactly like a product tile and do not add a product. That is the whole of "single click adds
- // a product": the tile a person presses is not the product printed on it.
- //
- // The test is whether the level offers a CHOICE. One group per product is not a choice, it is
- // the same list with a tap in front of it. A level that groups eleven products into three
+    // exactly like a product tile and do not add a product. That is the whole of "single click adds
+    // a product": the tile a person presses is not the product printed on it.
+    //
+    // The test is whether the level offers a CHOICE. One group per product is not a choice, it is
+    // the same list with a tap in front of it. A level that groups eleven products into three
  // categories still groups and is untouched, and the ROOT is never flattened at all: the
- // category board is the dealer's curated arrangement and its muscle memory outranks one tap.
+    // category board is the dealer's curated arrangement and its muscle memory outranks one tap.
     if (subGroupCount(inCat) === inCat.length) return itemTiles(inCat, cap);
     return groupTiles(inCat, (p) => facet(p.subcategory), cap);
   }
@@ -126,17 +126,17 @@ function groupTiles(items: readonly HotPick[], key: (p: HotPick) => string, cap:
   }
   const tiles: HotTile[] = [];
   for (const [label, members] of groups) {
- // Map preserves insertion order, so this loop IS the curated order.
+    // Map preserves insertion order, so this loop IS the curated order.
     tiles.push({
       kind: 'group',
       label,
       count: members.length,
- // A group borrows a photo from the FIRST curated member that has one, so the tile an admin
- // put at the top of the group is the tile the group wears.
+      // A group borrows a photo from the FIRST curated member that has one, so the tile an admin
+      // put at the top of the group is the tile the group wears.
       thumbFor: members.find((m) => m.has_image) ?? members[0],
     });
   }
- // 'Other' always sinks: it is where the grouping ran out, never a category anyone chose.
+  // 'Other' always sinks: it is where the grouping ran out, never a category anyone chose.
   tiles.sort((a, b) => Number(a.label === UNGROUPED_LABEL) - Number(b.label === UNGROUPED_LABEL));
   return tiles.slice(0, Math.max(0, cap));
 }

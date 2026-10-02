@@ -56,22 +56,22 @@ export type CounterLayout = 'STEPPER' | 'PANELS';
 
 /** The whole workspace view state the terminal renders from (maximized is transient: see above). */
 export interface WorkspaceView {
- /** The LOOKUP panel's percent share (20-80), side-independent. */
+  /** The LOOKUP panel's percent share (20-80), side-independent. */
   split: number;
   arrangement: Arrangement;
   lookupCollapsed: boolean;
   saleCollapsed: boolean;
  /** rev 3: how the lookup panel's results paint: CARDS (grid) or ROWS (dense list). */
   lookupPresentation: LookupPresentation;
- /**
+  /**
  * rev 8 (0170): the margin quick-hide (eye) toggle: counter privacy. Display-only (the ROLE
- * gate on the server decides whether margin data is ever sent); persists per user on the same
- * whole-or-absent row through the same merge-save contract.
- */
+   * gate on the server decides whether margin data is ever sent); persists per user on the same
+   * whole-or-absent row through the same merge-save contract.
+   */
   marginHidden: boolean;
- /** 0220: STEPPER (the standard four-step column) | PANELS (all four open, arrangeable). */
+  /** 0220: STEPPER (the standard four-step column) | PANELS (all four open, arrangeable). */
   counterLayout: CounterLayout;
- /** '' = none. Never persisted. */
+  /** '' = none. Never persisted. */
   maximized: '' | PanelId;
 }
 
@@ -120,18 +120,18 @@ export function resolveWorkspaceView(wire: WorkspacePrefsWire | null | undefined
   v.lookupCollapsed = wire.lookup_collapsed === true;
   v.saleCollapsed = wire.sale_collapsed === true;
  // rev 3: only the literal 'ROWS' flips the presentation: anything else (absent, garbage, an
- // unknown future value) stays on the shipped CARDS, never an error and never a blank panel.
+  // unknown future value) stays on the shipped CARDS, never an error and never a blank panel.
   if (wire.lookup_presentation === 'ROWS') v.lookupPresentation = 'ROWS';
  // rev 8: only the literal true hides: absence/garbage keeps the margin surface visible (the
- // role gate server-side is what decides whether there is anything to see at all).
+  // role gate server-side is what decides whether there is anything to see at all).
   v.marginHidden = wire.margin_hidden === true;
- // 0220: only the literal 'PANELS' leaves the standard counter. Absent (a pre-0220 row), garbage,
+  // 0220: only the literal 'PANELS' leaves the standard counter. Absent (a pre-0220 row), garbage,
  // or an unknown future value all keep the four-step column the person is already looking at:
- // the same posture lookup_presentation takes, and for the same reason: a layout nobody chose is
- // not a layout to put somebody in.
+  // the same posture lookup_presentation takes, and for the same reason: a layout nobody chose is
+  // not a layout to put somebody in.
   if (wire.counter_layout === 'PANELS') v.counterLayout = 'PANELS';
  // Both panels stored collapsed (a hand-written PUT could) would open on NOTHING: refuse the
- // combination in favour of the sale panel, the one with the money on it.
+  // combination in favour of the sale panel, the one with the money on it.
   if (v.lookupCollapsed && v.saleCollapsed) v.saleCollapsed = false;
   return v;
 }
@@ -345,13 +345,13 @@ export function toggleMaximize(v: WorkspaceView, panel: PanelId): WorkspaceView 
 export type PanelState = 'open' | 'rail' | 'hidden';
 
 export interface WorkspaceLayout {
- /** Panel order, left to right (the divider renders between them when both are open). */
+  /** Panel order, left to right (the divider renders between them when both are open). */
   order: [PanelId, PanelId];
   lookup: PanelState;
   sale: PanelState;
- /** Whether the divider participates at all (both panels open, neither maximized). */
+  /** Whether the divider participates at all (both panels open, neither maximized). */
   divider: boolean;
- /** The grid-template-columns value, in panel `order`, divider between when present. */
+  /** The grid-template-columns value, in panel `order`, divider between when present. */
   gridColumns: string;
 }
 
@@ -381,7 +381,7 @@ export function resolveLayout(v: WorkspaceView): WorkspaceLayout {
     return `minmax(240px, ${share}fr)`;
   };
   if (state.lookup === 'rail' || state.sale === 'rail') {
- // One rail: the open panel takes everything left; no divider to drag against a rail.
+    // One rail: the open panel takes everything left; no divider to drag against a rail.
     const cols = order.map((p) => (state[p] === 'rail' ? `${RAIL_PX}px` : 'minmax(0, 1fr)')).join(' ');
     return { order, lookup: state.lookup, sale: state.sale, divider: false, gridColumns: cols };
   }

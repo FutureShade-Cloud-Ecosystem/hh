@@ -122,6 +122,12 @@ token sheet rebased onto the HH design system (see Styles below).
 - The browser's local store: the reference's detached panel layout persisted
   to it directly. Seams: `readPanelLayoutRaw`, `writePanelLayoutRaw`,
   `clearPanelLayoutRaw`, called with the reference's versioned key.
+- Three calls the reference made around its own boundary, now seams: the
+  catalogue list (`listProducts`), which the reference fetched with a bare
+  browser call carrying no bearer; the product photo upload
+  (`putProductImage`), which attached the raw session token by hand; and the
+  receipt window opener (`openBlankWindow`), which opened a blank window by
+  hand. Each refuses loudly until the wiring item implements it.
 - The neighbouring screens `pos-terminal.ts` side-effect imports and embeds as
   custom elements: `till-close`, `pricing-doc`, `order-history`,
   `order-lifecycle`, `order-edit`, `order-edits`, `order-duplicate`,
@@ -163,26 +169,49 @@ reappears as a `ports.ts` seam with the reference's signature:
   `parseFloat` times 100. Seam: `depositCentsFromTyped`.
 - `pos-terminal.ts` `ticketSavingCents`: multiplied per-line saving cents by
   quantity and summed. Seam: `sumLineSavingCents`.
+- `pos-terminal.ts` the readback's per-line saving (the sold ticket's line
+  rows): multiplied the same per-line figure by quantity for the `Save`
+  chip. Seam: `perLineSavingCents`.
 - `pos-return.ts` `estimate`: prorated the refund's subtotal and tax per
   picked quantity. Seam: `refundEstimateCents`.
 - `pos-customer-strip.ts`, `pos-customer-picker.ts` and `pos-terminal.ts`:
   credit headroom as `credit_limit_cents - open_balance_cents`. Seam:
   `availableCreditCents`.
 
+The scan's stated limits, recorded rather than hidden (the reference's own
+scan missed these shapes too): compound assignment (`subtotalCents += x`)
+is not read; an operand inside parentheses or split across lines escapes the
+line-based read; and a money figure whose name carries no `cents` (a bare
+`price` or `amount`) is invisible to any spelling scan. The invariant binds
+on the reader, not the regex.
+
 Kept, reviewed as display formatting of figures the core already computed
-(integer cents in, string out, no money decided): `_money-format.ts`
-`centsAmount`, `pos-api.ts` `money`, `_pos-split.ts` `fmtCents`,
-`price-breakdown.ts`'s local formatter, `pos-split-tender.ts` `fill`'s cents
-to input string, `pos-terminal.ts` `taxLabel`'s basis points to percent,
-`pos-assess-relief.ts`'s dollar display, `tax-api.ts`'s word formatters,
-`_pos-rev8.ts` `marginPctLabel`.
+(integer cents in, string out, no money decided). The named display helpers
+are `_money-format.ts` (`centsAmount`, and `plainDollars`, the ungrouped
+cents-to-input-string shape that the relief dialog's outcome line and the
+split panel's fill render through, consolidated here so the division spelling
+lives in one reviewed file) and the app's own `src/money.ts`. The wiring
+answers the thirteen rerouted seams in `ports.ts` itself, display assembly
+over figures the core stated, each pinned by `ports-money.test.mjs`; the
+app's money scan names `_money-format.ts` and the seam file `ports.ts` and
+walks everything else, so the ported closure, the app's own views and
+`src/money.ts` all keep owing it zero hits. The remaining thin wrappers and
+word formatters, none of which divide anything: `pos-api.ts` `money`,
+`_pos-split.ts` `fmtCents`, `price-breakdown.ts` `priceMoney`,
+`pos-terminal.ts` `taxLabel`'s basis points to percent, `tax-api.ts`'s word
+formatters, `_pos-rev8.ts` `marginPctLabel`.
 
 ## Sweeps carried through the port
 
 - No em or en dash survives anywhere in the ported files, comments or strings.
-  One rendered string changed shape because of it: the ticket footer's
-  unknown-weight mark was a bare rule character in the reference and now reads
-  `(not weighed)`, pinned by the ported test.
+  The reference rendered an em dash as its blank mark, which the house
+  forbids, so every blank marker now carries a real word: the ticket footer's
+  unknown weight reads `(not weighed)` (pinned by the ported test), a pending
+  line's total and a line's absent weight and margin read `(none)`, a branch
+  stock cell with no read reads `(no read)`, the returns reason's blank option
+  and the tile picker's blank option read `(not set)`, and an unbound keycap
+  reads `(not set)`. An earlier pass of this port had collapsed those marks to
+  a bare colon; the review caught it and the words above are the repair.
 - No calendar reference survives in committed prose; the reference dated its
   rulings in comments and those dates are gone. The one calendar literal left
   in the tree is a date parser's own test fixtures, shifted to a neutral year:
@@ -205,10 +234,12 @@ to input string, `pos-terminal.ts` `taxLabel`'s basis points to percent,
   directory alone. Satisfied at source: the receipt window write is the
   `printReceiptInto` seam, the panel layout persistence is the store seams, the
   icon builder opens from static per-size branches, `d`, `class` and `role`
-  bindings are quoted, the `html` name keeps to its two places, the tooltip
-  bindings moved to the allowed `aria-label` namespace (hover lost until the
-  polish item brings a tooltip primitive), and the panels' style geometry is
-  spelled as a flat concatenation so the gate's parser can judge it. Allowed by
+  bindings are quoted, the `html` name keeps to its two places, the
+  reference's `title` tooltips stand as they were (the allowance names
+  `title`, so the reference's accessible names and their hover both survive;
+  the polish item may still move the surface onto a tooltip primitive when it
+  adopts the kit discipline), and the panels' style geometry is spelled as a
+  flat concatenation so the gate's parser can judge it. Allowed by
   the ruling, inside the ported prefix only and enumerated by name: the
   surface's `@event` and `.property` bindings, its boolean bindings besides
   `?disabled`, bound values on `title`, `tabindex`, `value`, `id`, `label`,
@@ -218,6 +249,37 @@ to input string, `pos-terminal.ts` `taxLabel`'s basis points to percent,
   own security refusal. The gate's narrowness guards hold every edge of that
   shape, and the polish item still converges the surface onto the kit
   discipline.
+
+## Debts recorded with the review
+
+- The app's `tsconfig.json` carries `experimentalDecorators` and
+  `useDefineForClassFields: false` for the ported elements' legacy Lit
+  decorators. Both are whole-app compiler settings and Vite reads them, so
+  the app's own views compile and run under them too; the app's suites stay
+  green under the flags, and the wiring item should keep the difference in
+  mind if a view ever depends on class-field define semantics. (P3-1)
+- `product-thumb.ts` renders `<img src>` straight at the thumbnail route,
+  and no ported seam carries that request: the wiring item decides how the
+  thumbnail fetch is authorised (bearer through the api helper, a signed
+  route, or a seam of its own). (P3-3)
+- `_money-format.ts` `centsAmount` formats a non-finite input as `0.00`, a
+  confident zero, carried unchanged from the reference; the polish item gives
+  it the blank marker the house prefers. (P3-6)
+- The split panel's problem sentences travelled with the split arithmetic
+  into `evaluateSplit`, so the host seam owns the cashier wording as well as
+  the money; the wiring item's implementation carries those words back.
+  (P3-7)
+- Two seams throw synchronously where the reference returned a promise
+  (`listProducts`, `putProductImage`: the port declares the promise return
+  and the seam's refusal is a synchronous throw), a boundary-shape matter the
+  wiring item settles when it implements them against the host's async
+  helper. (R1-5)
+- The quiet empties are boundary shape too, and the wiring item owns them:
+  `ports.ts` `BRANCHES` is an empty array and `SCREEN_GATE` an empty object
+  by construction, so `pos-product-grid` renders zero yard columns without a
+  word, and `pos-terminal.ts:268` (`BRANCHES[0].id`) would die with an
+  unnamed TypeError rather than the port message; the wiring item either
+  wires them or gives them the loud refusal the other seams carry. (R1-2)
 
 ## Reference tests brought along
 
@@ -233,9 +295,10 @@ rather than on a defect:
   `_pos-hotlist.test.mjs`, `_pos-panels.test.mjs`, `order-logic.test.mjs`,
   `tender-words.test.mjs`, `modal-focus.test.mjs`,
   `quick-action-guard.test.mjs`, `pos-signature-logic.test.mjs`,
-  `receipt-print.test.mjs`.
+  `receipt-print.test.mjs`, `field-refusal.test.mjs`,
+  `pricing-words-logic.test.mjs`.
 
-Four brought files carried halves that asserted invariants over the reference
+Five brought files carried halves that asserted invariants over the reference
 repository's own tree rather than over the module they test; those halves
 stayed with the reference, each marked where it was cut:
 
@@ -265,6 +328,15 @@ Left out, with reasons:
   gate table and registry, which are host seams now.
 - `_money-format.test.mjs`: it is a meta test that walks the reference's own
   source tree on disk; it cannot run against this repository's layout.
+- `_icon-consumer.test.mjs`: beyond the drawIcon cases (which would have
+  pinned the per-size branches this tree now carries), it asserts the
+  reference's whole-tree icon weight gates over files that are not ported;
+  the wiring item re-pins the weight gate over this tree when the surface
+  mounts.
+- `_icon-registry.test.mjs` and `quick-action-registry.test.mjs`: their cases
+  enumerate the reference's whole module registry and its launcher surface,
+  which are host seams here (the registries' own ported logic is pinned by
+  the brought hotkey and quick-action tests).
 - `receipt-print.test.mjs` beyond its logic half, `_pos-lookup-rows.test.mjs`,
   `_pos-thumbs.test.mjs`, `_pos-counter-admin.test.mjs`,
   `_hotkey-effective.test.mjs`, `hotkey-pay.test.mjs`, `hotkey-shell.test.mjs`,

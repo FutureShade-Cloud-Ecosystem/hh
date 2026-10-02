@@ -183,7 +183,7 @@ export function focusablesIn(container: ParentNode | null | undefined): HTMLElem
  */
 export function nextTrapIndex(count: number, activeIndex: number, shiftKey: boolean): number | null {
   if (count <= 0) return null;
- // Focus is outside the dialog (or on the container itself): pull it back to the near edge.
+  // Focus is outside the dialog (or on the container itself): pull it back to the near edge.
   if (activeIndex < 0) return shiftKey ? count - 1 : 0;
   if (shiftKey) return activeIndex === 0 ? count - 1 : null;
   return activeIndex === count - 1 ? 0 : null;
@@ -204,21 +204,21 @@ export function pickInitialIndex(count: number, autofocusIndex: number): number 
 }
 
 export interface ModalFocusOptions {
- /** The dialog's outermost element (the scrim/backdrop), resolved fresh each update. */
+  /** The dialog's outermost element (the scrim/backdrop), resolved fresh each update. */
   container: () => HTMLElement | null | undefined;
- /** Is the dialog open? Defaults to "whenever the host is connected", for parent-mounted modals. */
+  /** Is the dialog open? Defaults to "whenever the host is connected", for parent-mounted modals. */
   isOpen?: () => boolean;
- /**
+  /**
  * Called when Escape is pressed. Omit for a dialog that must NOT be escapable: a modal that is
- * blocking on an irreversible acknowledgement (kiosk takeover) or on a document the operator has
- * to read (the till-close Z-report) is not "dismissable", and giving it an Escape would lose the
- * thing it exists to force.
- */
+   * blocking on an irreversible acknowledgement (kiosk takeover) or on a document the operator has
+   * to read (the till-close Z-report) is not "dismissable", and giving it an Escape would lose the
+   * thing it exists to force.
+   */
   onEscape?: () => void;
- /**
- * Per-STEP escapability, for wizard dialogs whose safety changes as they progress. Consulted only
- * when `onEscape` is present. Defaults to always-safe.
- */
+  /**
+   * Per-STEP escapability, for wizard dialogs whose safety changes as they progress. Consulted only
+   * when `onEscape` is present. Defaults to always-safe.
+   */
   escapeSafe?: () => boolean;
 }
 
@@ -242,8 +242,8 @@ export class ModalFocus implements ReactiveController {
   }
 
   hostConnected(): void {
- // keydown is composed, so it retargets to the host and bubbles out of the shadow root: one
- // listener on the host sees every key pressed anywhere inside the dialog.
+    // keydown is composed, so it retargets to the host and bubbles out of the shadow root: one
+    // listener on the host sees every key pressed anywhere inside the dialog.
     this.host.addEventListener('keydown', this.onKeydown);
   }
 
@@ -253,30 +253,30 @@ export class ModalFocus implements ReactiveController {
   }
 
   hostUpdated(): void {
- // After render, so the container and its controls exist to be measured and focused.
+    // After render, so the container and its controls exist to be measured and focused.
     const open = this.opts.isOpen ? this.opts.isOpen() : true;
     if (open && !this.armed) this.arm();
     else if (open && this.armed) this.recoverIfDropped();
     else if (!open && this.armed) this.disarm();
   }
 
- /**
- * Re-establish focus when the browser has DROPPED it to the document.
- *
- * Found by the Chromium keyboard walk, on the till-close wizard: advancing from the count step to
- * the Z-report replaces the whole card, and the control that had focus is removed with it. The
+  /**
+   * Re-establish focus when the browser has DROPPED it to the document.
+   *
+   * Found by the Chromium keyboard walk, on the till-close wizard: advancing from the count step to
+   * the Z-report replaces the whole card, and the control that had focus is removed with it. The
  * browser's response is to reset focus to <body>: outside the host. The trap survives (the next
- * Tab pulls focus back, because nextTrapIndex treats "outside" as a wrap to the near edge), but in
+   * Tab pulls focus back, because nextTrapIndex treats "outside" as a wrap to the near edge), but in
  * the meantime the dialog has NO focus, a screen reader announces nothing, and: the part that
  * actually bites: ESCAPE STOPS WORKING, because the keydown listener is on the host and a keydown
- * on <body> never reaches it. A wizard could strand a keyboard user on a step they could not leave.
- *
- * The recovery is deliberately narrow: it fires ONLY when focus is on <body> or nowhere. Any other
- * location means something else legitimately owns focus, and stealing it back would be worse than
+   * on <body> never reaches it. A wizard could strand a keyboard user on a step they could not leave.
+   *
+   * The recovery is deliberately narrow: it fires ONLY when focus is on <body> or nowhere. Any other
+   * location means something else legitimately owns focus, and stealing it back would be worse than
  * the bug: the three panes that raise two dialogs at once (rule-editor, quantity-breaks,
- * customer-pricing) would have their two controllers pulling focus off each other on every update,
- * a tug-of-war with no stable state.
- */
+   * customer-pricing) would have their two controllers pulling focus off each other on every update,
+   * a tug-of-war with no stable state.
+   */
   private recoverIfDropped(): void {
     const active = deepActiveElement(document);
     if (active && active !== document.body) return;
@@ -289,7 +289,7 @@ export class ModalFocus implements ReactiveController {
     const container = this.opts.container();
     if (!container) return; // not painted yet; hostUpdated will come round again
     this.armed = true;
- // Whoever opened this is where focus goes back to. Captured BEFORE we move it.
+    // Whoever opened this is where focus goes back to. Captured BEFORE we move it.
     const previous = deepActiveElement(document);
     this.restoreTo = previous instanceof HTMLElement ? previous : null;
     this.focusInitial(container);
@@ -303,8 +303,8 @@ export class ModalFocus implements ReactiveController {
       items[index].focus();
       return;
     }
- // No controls at all (a pure message dialog): focus the container so a screen reader announces
- // the dialog and Escape still reaches us, rather than leaving focus behind the scrim.
+    // No controls at all (a pure message dialog): focus the container so a screen reader announces
+    // the dialog and Escape still reaches us, rather than leaving focus behind the scrim.
     if (!container.hasAttribute('tabindex')) container.setAttribute('tabindex', '-1');
     container.focus();
   }
@@ -315,7 +315,7 @@ export class ModalFocus implements ReactiveController {
     const target = this.restoreTo;
     this.restoreTo = null;
  // Only restore if it is still in the document: a dialog that replaced its own invoker (a row
- // that got deleted) must not throw, and must not steal focus to a detached node.
+    // that got deleted) must not throw, and must not steal focus to a detached node.
     if (target && target.isConnected && typeof target.focus === 'function') target.focus();
   }
 
@@ -327,7 +327,7 @@ export class ModalFocus implements ReactiveController {
       if (!this.opts.onEscape) return; // deliberately non-dismissable
       if (this.opts.escapeSafe && !this.opts.escapeSafe()) return;
       e.preventDefault();
- // A dialog is the innermost thing on screen; a parent must not ALSO act on this Escape.
+      // A dialog is the innermost thing on screen; a parent must not ALSO act on this Escape.
       e.stopPropagation();
       this.opts.onEscape();
       return;
@@ -338,12 +338,12 @@ export class ModalFocus implements ReactiveController {
     if (!container) return;
     const items = focusablesIn(container);
 
- // A dialog with NOTHING focusable in it still has to hold the keyboard. Found by the Chromium
- // walk on till-close's Z-report step, which renders as prose while its report loads: the trap
- // had no item to move to, returned "let the browser handle it", and the browser handled it by
+    // A dialog with NOTHING focusable in it still has to hold the keyboard. Found by the Chromium
+    // walk on till-close's Z-report step, which renders as prose while its report loads: the trap
+    // had no item to move to, returned "let the browser handle it", and the browser handled it by
  // tabbing out of the modal into the shell behind the scrim: Home, Log out, the theme toggle.
- // Swallowing the Tab and holding focus on the container is the only correct answer here; there
- // is nowhere else inside the dialog for focus to legitimately go.
+    // Swallowing the Tab and holding focus on the container is the only correct answer here; there
+    // is nowhere else inside the dialog for focus to legitimately go.
     if (items.length === 0) {
       e.preventDefault();
       if (!container.hasAttribute('tabindex')) container.setAttribute('tabindex', '-1');

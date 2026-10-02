@@ -43,30 +43,30 @@ import { css } from 'lit';
  * that would clip a box-shadow.
  */
 export const focusRing = css`
- /* The host itself, for components used as a focusable unit (e.g. with delegatesFocus). A bare
+  /* The host itself, for components used as a focusable unit (e.g. with delegatesFocus). A bare
      :focus-visible below does NOT match the host: shadow styles reach descendants only. */
   :host(:focus-visible) {
     outline: 2px solid var(--hos-stone-amber-text);
     outline-offset: 2px;
   }
 
- /*
+  /*
  * UNIVERSAL, exactly like the document-level rule in tokens.css: and for a reason learned the
- * hard way. This started as an enumerated selector list (a, button, input, select, textarea,
- * summary, [tabindex], [role=button]) which looked exhaustive and was not: Chromium makes a
- * SCROLL CONTAINER with no focusable children keyboard-focusable on its own, with no tabindex
- * attribute to match on. The quote builder's UL of quotes is one, and the keyboard walk caught it
- * sitting on the 1px user-agent outline.
- *
- * Any enumerated list is a coverage question that has to be re-audited every time the platform
- * adds a focusable. The :focus-visible pseudo-class already encodes "the browser thinks a keyboard
+   * hard way. This started as an enumerated selector list (a, button, input, select, textarea,
+   * summary, [tabindex], [role=button]) which looked exhaustive and was not: Chromium makes a
+   * SCROLL CONTAINER with no focusable children keyboard-focusable on its own, with no tabindex
+   * attribute to match on. The quote builder's UL of quotes is one, and the keyboard walk caught it
+   * sitting on the 1px user-agent outline.
+   *
+   * Any enumerated list is a coverage question that has to be re-audited every time the platform
+   * adds a focusable. The :focus-visible pseudo-class already encodes "the browser thinks a keyboard
  * user needs to see this", so matching all of it is both simpler and complete: and the browser's
- * own heuristics keep it off programmatically-focused containers after a pointer interaction.
- */
+   * own heuristics keep it off programmatically-focused containers after a pointer interaction.
+   */
   :focus-visible {
     outline: 2px solid var(--hos-stone-amber-text);
     outline-offset: 2px;
- /* A control inside a scrolling pane must not have its ring clipped by the pane's edge; 2px of
+    /* A control inside a scrolling pane must not have its ring clipped by the pane's edge; 2px of
        offset needs 2px of room when the browser scrolls it into view. */
     scroll-margin: 4px;
   }

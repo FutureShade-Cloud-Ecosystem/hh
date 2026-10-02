@@ -18,28 +18,28 @@ import { ModalFocus } from './modal-focus.js';
 export class HosPosParked extends LitElement {
   @property({ type: String }) branchId = '';
 
- // DIB-247: the park-time display snapshots (customer + total) the terminal captured, keyed by
- // ticket id. The server list carries only customer_id and no prices, so this is where a row's
- // customer NAME and TOTAL come from. A cold entry (parked in a prior session) falls back to the
- // account/walk-in label with no total.
+  // DIB-247: the park-time display snapshots (customer + total) the terminal captured, keyed by
+  // ticket id. The server list carries only customer_id and no prices, so this is where a row's
+  // customer NAME and TOTAL come from. A cold entry (parked in a prior session) falls back to the
+  // account/walk-in label with no total.
   @property({ attribute: false }) info: ReadonlyMap<string, ParkedInfo> = new Map();
- /**
- * How many lines are on the ticket the resume is about to discard (D17, round 3).
- *
- * The terminal owns the cart; this rail owns the button that throws it away. Resuming calls
+  /**
+   * How many lines are on the ticket the resume is about to discard (D17, round 3).
+   *
+   * The terminal owns the cart; this rail owns the button that throws it away. Resuming calls
  * `newSale()` on the till, and until round 3 it did so with nothing asked and nothing said:
- * while Clear sale and New Sale, which do exactly the same thing, both confirm first. The
- * question has to be asked HERE, before POST /resume: once the server has moved the ticket to
- * RESUMED it is out of the parked list, so a confirm on the far side would have nothing to
- * decline back to.
- */
+   * while Clear sale and New Sale, which do exactly the same thing, both confirm first. The
+   * question has to be asked HERE, before POST /resume: once the server has moved the ticket to
+   * RESUMED it is out of the parked list, so a confirm on the far side would have nothing to
+   * decline back to.
+   */
   @property({ type: Number, attribute: false }) openLines = 0;
 
  // E6: parent-mounted: pos-terminal renders this element only while the dialog is open, so
- // "connected" IS "open" and no isOpen predicate is needed. Escape mirrors the scrim click exactly:
- // closing this dialog discards nothing, so there is no unsafe step to gate.
- // Public because `noUnusedLocals` flags a private field that is only ever constructed; the
- // controller registers itself with the host, so nothing needs to read it back.
+  // "connected" IS "open" and no isOpen predicate is needed. Escape mirrors the scrim click exactly:
+  // closing this dialog discards nothing, so there is no unsafe step to gate.
+  // Public because `noUnusedLocals` flags a private field that is only ever constructed; the
+  // controller registers itself with the host, so nothing needs to read it back.
   readonly modalFocus = new ModalFocus(this, {
     container: () => this.renderRoot.querySelector<HTMLElement>('.hos-dialog'),
     onEscape: () => this.close(),
@@ -201,7 +201,7 @@ export class HosPosParked extends LitElement {
 
   private async resume(t: ParkedTicket): Promise<void> {
  // Ask BEFORE the ticket is consumed: see `openLines`. Nothing is lost when they decline: no
- // request has gone out, the rail stays open, and the ticket stays parked.
+    // request has gone out, the rail stays open, and the ticket stays parked.
     const ask = resumeDiscardMessage(this.openLines, t.ticket_no);
     if (ask && !window.confirm(ask)) return;
     this.busyId = t.id;
@@ -242,8 +242,8 @@ export class HosPosParked extends LitElement {
           ? html`<div class="empty">No parked tickets.</div>`
           : this.tickets.map((t) => {
  // DIB-247: identify each ticket by WHO it's for and HOW MUCH: both come from the
- // terminal's park-time snapshot (the server row carries neither the name nor a
- // price). A cold snapshot degrades to the account/walk-in label with no total.
+              // terminal's park-time snapshot (the server row carries neither the name nor a
+              // price). A cold snapshot degrades to the account/walk-in label with no total.
               const snap = this.info.get(t.id);
               const who = snap?.customer?.name || (t.customer_id ? 'Account customer' : 'Walk-in');
               const total = snap ? money(snap.totalCents) : '';
