@@ -11,9 +11,9 @@ import (
 )
 
 // registerSettingsRoutes wires self-service profile + the password-change route (which answers 501
-// until HH-4.2, see changePassword). Any authenticated
-// user may reach these (h.authn, token required, no capability), since they act only on
-// the caller's own record.
+// until HH-4.2, see changePassword). Any tenant caller may reach these (g.RequireTenant: a tenant
+// bearer and a portal account that is not inactive, no capability; a staff bearer is refused), since
+// they act only on the caller's own record.
 func (h *Handler) registerSettingsRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/tenant/me", g.RequireTenant(h.tenant(h.getMe)))
 	r.Handle("PUT /api/v1/tenant/me", g.RequireTenant(h.tenant(h.updateMe)))

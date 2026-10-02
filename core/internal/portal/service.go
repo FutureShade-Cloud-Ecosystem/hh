@@ -55,9 +55,8 @@ type portalStore interface {
 	// ConsumePasswordReset atomically validates + spends a reset token (single-use) and
 	// returns its user id. errInvalidToken for any invalid/expired/already-used token.
 	ConsumePasswordReset(ctx context.Context, tokenHash string, now time.Time) (string, error)
-	// RevokeSessions revokes the user's other live sessions after a credential change.
-	// In this stateless-JWT design it invalidates the user's outstanding reset tokens
-	// (best-effort); see the repository note for the TTL-bounded limitation.
+	// RevokeSessions consumes the user's outstanding reset tokens after a credential change
+	// (best-effort). It revokes no session: the platform issues every session (HH-197).
 	RevokeSessions(ctx context.Context, userID string) error
 }
 
