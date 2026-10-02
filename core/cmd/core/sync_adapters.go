@@ -61,7 +61,8 @@ func (a syncAuditSeam) RecordSync(ctx context.Context, e sync.AuditEntry) error 
 		}
 	}
 	if actor == "" {
-		// No linked users.id (a tenant caller): the uuid actor column stays
+		// No linked users.id (a tenant caller, or a staff caller whose
+		// platform subject has no linked users row): the uuid actor column stays
 		// empty and the platform subject rides the allowlisted actor_subject
 		// key, so the trail still names who pushed.
 		subject = separatorEncodeSubject(e.Actor)

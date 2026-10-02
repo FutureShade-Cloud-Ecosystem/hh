@@ -491,7 +491,7 @@ var allowedExtraKeys = map[string]bool{
 	"client_id":       true, // the operation's idempotency key (uuid)
 	"conflict_policy": true, // the conflict policy that resolved a stale write
 	// The sync caller's platform subject, recorded when no linked users.id exists (a tenant
-	// caller): audit_log.actor_id is a uuid column a text subject cannot ride. It is the
+	// caller, or a staff caller with no linked users row): audit_log.actor_id is a uuid column a text subject cannot ride. It is the
 	// platform JWT subject (an identity id, not PII) and stays out of operatorSafeKeys.
 	"actor_subject": true,
 }
