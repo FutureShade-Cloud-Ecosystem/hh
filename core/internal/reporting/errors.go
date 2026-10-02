@@ -10,7 +10,9 @@ var (
 	// ErrUnauthorized, no server-stamped staff caller on the context. Never returned for a caller who
 	// exists but lacks reach; that is ErrForbidden.
 	ErrUnauthorized = errors.New("reporting: unauthorized")
-	// ErrForbidden, the caller exists but the branch fence refuses the read.
+	// ErrForbidden, the caller exists but the branch fence refuses the act: running, printing or
+	// previewing outside the caller's reach. A refusal on a single-read path answers ErrNotFound
+	// instead, so an id does not confirm that a row exists outside the reach.
 	ErrForbidden = errors.New("reporting: forbidden")
 	// ErrNoDatabase, scaffold/offline mode. Answered as 503, not 500: nothing is broken, the module
 	// simply has nothing to read.

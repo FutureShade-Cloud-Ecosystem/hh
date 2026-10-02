@@ -1059,3 +1059,22 @@ users rows and grants the populate plants.
   phrase gate accept that waits for W2's mint; and the app holds a till past
   the token's expiry with nothing to re-check it against until W7's first
   core call. W5, W9, W2 and W7 hold the closures, per the plan.
+
+## HH hardening, defect HH-179: two reporting integration tests fail on any freshly migrated database (recorded, not this lane's defect)
+
+The full reporting integration suite cannot go green on a database built
+from this repository's migrations, on main and on the HH-179 branch
+alike. Two tests assert the human title a template is seeded with:
+TestIntegration_Print_FreezesArtefactAndEnqueuesREPORTJob wants the
+printed artefact to contain "Sales by Day", and
+TestIntegration_Export_CSVCarriesTheSameNumbersAsTheRun wants the CSV
+title row to read "Sales by Day". The seeding migration for the
+reporting templates inserts the scrubbed name for sales_by_day, so the
+database matches its migrations and the assertions cannot hold on any
+fresh database. The failure predates HH-179 (it reproduces on main
+against the same local database) and CI does not see it because the
+integration tag suite runs only where DATABASE_URL is set. The fix
+belongs to whoever owns the template seed or those assertions: either
+the assertions stop pinning the human title, or the seed carries it.
+Recorded so the HH-179 checks can be read honestly: every other test in
+the reporting integration suite passes on the HH-179 branch.
