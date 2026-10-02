@@ -259,11 +259,20 @@ func (r *Repository) InsertPOSend(ctx context.Context, in POSend, actorID string
 		in.POID, in.Channel, in.Recipient, in.RecipientKind, in.FallbackReason,
 		in.Status, in.Provider, in.DocumentName, in.DocumentBytes, in.IdempotencyKey, actorID)
 	out, err := scanPOSend(row)
-	// The key index is GLOBAL, so this violation means the key is held by ANOTHER order's send: a
-	// same-order retry was already answered by the replay read above. That is a key collision and the
-	// honest answer is the conflict this module already speaks (the InsertBill shape), because the
-	// caller's way forward is a new key, not a retry (HH-181).
+	// The key index is GLOBAL, so this violation means the key is held by another order's send, with
+	// one exception (HH-181 round 2): two concurrent FIRST sends of ONE order, the double click this
+	// route exists for, can both miss the replay read, and the loser's insert loses the race for the
+	// key. Re-read scoped to THIS order before claiming anything: the winner's row found here is the
+	// replay a serial retry would have gotten, a read that comes back empty is the cross-order
+	// collision the 409 below names, and a read that itself failed is returned, never guessed past.
 	if isUniqueViolation(err) {
+		prior, found, rerr := r.FindPOSendByKey(ctx, in.IdempotencyKey, in.POID)
+		if rerr != nil {
+			return POSend{}, rerr
+		}
+		if found {
+			return prior, nil
+		}
 		return POSend{}, conflict("purchasing: idempotency key %q already belongs to a send for another order, a new order needs a new key",
 			in.IdempotencyKey)
 	}
