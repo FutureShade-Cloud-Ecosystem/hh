@@ -130,22 +130,34 @@ test('the contractor example on the page clears AA, measured', () => {
 
 // ── the serve smoke: the server grades its own page ─────────────────────────────
 
-const startServer = (port) =>
+// Spawns are asked for port 0 unless an explicit port is pinned: port 0 has
+// the kernel hand out a genuinely free port, so the suite never races the
+// ephemeral range for one. The child announces its actual port on stdout and
+// the announce line is the only source of truth for which port came up; the
+// parsed port is resolved so every later fetch goes through it. An explicit
+// port pins a spawn to a known one, which is how the rerun and refusal legs
+// prove their point against a real announced port.
+const ANNOUNCED = /harness on http:\/\/127\.0\.0\.1:(\d+)\//;
+
+const startServer = (explicitPort) =>
   new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['--import', './src/_ts-js-loader.mjs', 'harness/serve.mjs'], {
       cwd: pkgDir,
-      env: { ...process.env, HARNESS_PORT: String(port) },
+      env: { ...process.env, HARNESS_PORT: explicitPort === undefined ? '0' : String(explicitPort) },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let out = '';
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (out += d));
-    child.on('exit', (code, signal) => resolve({ code, signal, out }));
+    child.on('exit', (code, signal) => resolve({ code, signal, out, child }));
 
     const poll = async () => {
       for (let i = 0; i < 60; i++) {
         await delay(250);
         if (child.exitCode !== null) return; // the exit handler already resolved
+        const announced = out.match(ANNOUNCED);
+        if (!announced) continue; // keep polling until the announce line appears
+        const port = Number(announced[1]);
         try {
           const res = await fetch(`http://127.0.0.1:${port}/`);
           const text = await res.text();
@@ -153,18 +165,16 @@ const startServer = (port) =>
           // a left-over server on this port is the exact thing the port guard
           // exists to refuse, so its answers must never read as success here.
           if (res.ok && text.includes(`<title>${HARNESS_TITLE}</title>`) && out.includes('harness on http')) {
-            resolve({ code: 0, out, child });
+            resolve({ code: 0, out, child, port });
             return;
           }
         } catch {}
       }
       child.kill('SIGKILL');
-      reject(new Error(`the server on port ${port} never announced itself. Output:\n${out}`));
+      reject(new Error(`the server never announced a port it serves. Output:\n${out}`));
     };
     poll();
   });
-
-const freePort = () => 41000 + Math.floor(Math.random() * 2000);
 
 // The serve smoke spawns real servers and awaits them, and bun (CI's drift
 // gate) interleaves one file's running async tests with the next file's module
@@ -181,39 +191,61 @@ if (underBun) {
   });
 } else {
 test('the harness server serves this package, and a rerun after a clean stop serves again', async () => {
-  const port = freePort();
-  const first = await startServer(port);
+  const first = await startServer();
   assert.equal(first.code, 0, `the first server should stay up. Output:\n${first.out}`);
+  assert.ok(first.port > 0, `the announce must carry an actual port, got ${first.port}`);
 
-  const page = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+  const page = await (await fetch(`http://127.0.0.1:${first.port}/`)).text();
   assert.match(page, new RegExp(`<title>${HARNESS_TITLE}</title>`), 'the served page must be this harness');
-  const variants = await (await fetch(`http://127.0.0.1:${port}/?theme=light&brand=hh-pro`)).text();
+  const variants = await (await fetch(`http://127.0.0.1:${first.port}/?theme=light&brand=hh-pro`)).text();
   assert.match(variants, /data-theme="light" data-brand="hh-pro"/, 'the served variants must flip the html attributes');
-  const sheet = await (await fetch(`http://127.0.0.1:${port}/tokens.css`)).text();
+  const sheet = await (await fetch(`http://127.0.0.1:${first.port}/tokens.css`)).text();
   assert.match(sheet, /--hh-page:/, 'the server must serve the raw sheet beside the page');
-  const kitSheet = await (await fetch(`http://127.0.0.1:${port}/sheets/hh-inbox.css`)).text();
+  const kitSheet = await (await fetch(`http://127.0.0.1:${first.port}/sheets/hh-inbox.css`)).text();
   assert.match(kitSheet, /\.kit-root/, 'the server must serve the per-kit sheets the page links');
 
   first.child.kill('SIGKILL');
   await delay(500);
 
-  // A clean stop frees the port for the next run: the guard refuses a LIVE
-  // stranger, not the memory of one.
-  const second = await startServer(port);
+  // A clean stop frees the announced port for the next run: the guard refuses
+  // a LIVE stranger, not the memory of one. The rerun pins the freed port as
+  // an explicit HARNESS_PORT, so the proof is against a real known port.
+  const second = await startServer(first.port);
   assert.equal(second.code, 0, `a rerun on the freed port must serve. Output:\n${second.out}`);
+  assert.equal(second.port, first.port, 'the rerun must come up on the port it was pinned to');
   second.child.kill('SIGKILL');
 });
 
 test('a second server refuses an occupied port, loudly', async () => {
-  const port = freePort();
-  const holder = await startServer(port);
+  const holder = await startServer();
   assert.equal(holder.code, 0, 'the holder must be up before the refusal is proven');
   try {
-    const second = await startServer(port);
+    const second = await startServer(holder.port);
     assert.notEqual(second.code, 0, 'a second server on an occupied port must refuse');
     assert.match(second.out, /already in use/, 'the refusal must say the port is occupied');
   } finally {
     holder.child.kill('SIGKILL');
+  }
+});
+
+test('two servers asked for port 0 at the same time get different actual ports and both serve', async () => {
+  // The shape that used to collide by luck: a random pick inside the ephemeral
+  // range can land on a port the kernel already handed out. With port 0 the
+  // kernel assigns each spawn its own port, so two simultaneous servers must
+  // announce different ports and both must grade as this harness.
+  const [a, b] = await Promise.all([startServer(), startServer()]);
+  try {
+    assert.equal(a.code, 0, `the first of the pair should stay up. Output:\n${a.out}`);
+    assert.equal(b.code, 0, `the second of the pair should stay up. Output:\n${b.out}`);
+    assert.ok(a.port > 0 && b.port > 0, 'both of the pair must announce actual ports');
+    assert.notEqual(a.port, b.port, 'two simultaneous port 0 servers must not share a port');
+    for (const { port } of [a, b]) {
+      const page = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+      assert.match(page, new RegExp(`<title>${HARNESS_TITLE}</title>`), 'each server of the pair must serve this harness');
+    }
+  } finally {
+    a.child.kill('SIGKILL');
+    b.child.kill('SIGKILL');
   }
 });
 }
