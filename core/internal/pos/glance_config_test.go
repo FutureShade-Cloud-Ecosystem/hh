@@ -1,13 +1,13 @@
 package pos
 
-// glance_config_test.go, the till's cost and margin gate reading the
-// DEALER'S CONFIGURATION (X3) and the branch wall on the two counter reads
-// (X2). The rev-8 tests beside this file pin the 0170 margin_visibility
-// switch for a service with no configuration wired; this file pins what the
-// demo composition runs: the glance answers by the configuration's cost and
-// margin list, the switch does not decide, and a branch the caller's
-// resolved authority does not reach is refused with the wall's 403 on both
-// the glance and the standing read (row 343, row 342).
+// glance_config_test.go, the till's cost and margin gate reading BOTH dealer
+// knobs, the configuration's cost and margin list (X3) and the 0170 policy's
+// margin_visibility, and the branch wall on the two counter reads (X2). The
+// margin glance policy ruling: the list decides who MAY be considered, the
+// policy's margin_visibility decides whether the answer leaves the server,
+// and both must allow. This file pins what the demo composition runs; a
+// branch the caller's resolved authority does not reach is refused with the
+// wall's 403 on both the glance and the standing read (row 342).
 
 import (
 	"context"
@@ -69,32 +69,155 @@ func marginInputAtBranch() MarginGlanceInput {
 }
 
 // The decided default puts the sales roles on the cost and margin list, so
-// BOTH demo logins see margin at the till, and the branch policy switch
-// does not get a vote anymore.
-func TestMarginGlance_Configured_ListDecidesNotThePolicySwitch(t *testing.T) {
+// both demo logins are CONSIDERED; the 0170 policy decides whether the
+// answer leaves the server. Its column default (MANAGER_UP) holds the
+// glance from the frontline clerk the list considers while the manager
+// carries it, and the dealer flipping the switch to ALL_STAFF moves the
+// clerk's answer with no code change: both knobs must allow.
+func TestMarginGlance_Configured_BothKnobsMustAllow(t *testing.T) {
 	h := newHarness()
 	h.svc = h.svc.WithRoleConfig(defaultConfig(t))
 	h.caller = salesCaller()
+	h.store.branchCosts = map[string]int64{"prod-paver": 60}
+
+	// The core bite: the served policy is MANAGER_UP, so the Sales caller,
+	// on the list but not a manager, receives the byte-absent glance. (The
+	// harness policy row's own empty value fails closed to the same
+	// manager-only answer; the leg pins the named default explicitly.)
 	p := h.store.policies[""]
-	p.MarginVisibility = MarginVisibilityHidden // the switch would hide it from everyone
+	p.MarginVisibility = MarginVisibilityManagerUp
+	h.store.policies[""] = p
+	out, err := h.svc.MarginGlance(context.Background(), marginInputAtBranch())
+	if err != nil {
+		t.Fatalf("glance as Sales under MANAGER_UP: %v", err)
+	}
+	raw, _ := json.Marshal(out)
+	if string(raw) != "{}" {
+		t.Fatalf("MANAGER_UP must hold the glance from a frontline caller the list considers: %s", raw)
+	}
+
+	// The same policy carries the answer for the manager the list considers.
+	h.caller = salesManagerCaller()
+	out, err = h.svc.MarginGlance(context.Background(), marginInputAtBranch())
+	if err != nil {
+		t.Fatalf("glance as Sales manager under MANAGER_UP: %v", err)
+	}
+	if len(out.Lines) != 1 || out.Lines[0].MarginBps == nil {
+		t.Fatalf("MANAGER_UP must carry margin to the listed manager: %+v", out)
+	}
+
+	// The flip: the same Sales caller under ALL_STAFF receives margin, the
+	// dealer's knob moving the answer with no code change.
+	h.caller = salesCaller()
+	p.MarginVisibility = MarginVisibilityAllStaff
+	h.store.policies[""] = p
+	out, err = h.svc.MarginGlance(context.Background(), marginInputAtBranch())
+	if err != nil {
+		t.Fatalf("glance as Sales under ALL_STAFF: %v", err)
+	}
+	if len(out.Lines) != 1 || out.Lines[0].MarginBps == nil {
+		t.Fatalf("ALL_STAFF must carry margin to the listed frontline caller: %+v", out)
+	}
+}
+
+// HIDDEN is the dealer switching the surface off: nobody receives margin, a
+// listed manager included.
+func TestMarginGlance_Configured_HiddenHidesEvenAListedManager(t *testing.T) {
+	h := newHarness()
+	h.svc = h.svc.WithRoleConfig(defaultConfig(t))
+	h.caller = salesManagerCaller()
+	p := h.store.policies[""]
+	p.MarginVisibility = MarginVisibilityHidden
 	h.store.policies[""] = p
 	h.store.branchCosts = map[string]int64{"prod-paver": 60}
 
 	out, err := h.svc.MarginGlance(context.Background(), marginInputAtBranch())
 	if err != nil {
-		t.Fatalf("glance as Sales: %v", err)
+		t.Fatalf("glance as Sales manager under HIDDEN: %v", err)
 	}
-	if len(out.Lines) != 1 || out.Lines[0].MarginBps == nil {
-		t.Fatalf("the configuration's list must show margin to Sales: %+v", out)
+	raw, _ := json.Marshal(out)
+	if string(raw) != "{}" {
+		t.Fatalf("HIDDEN must hide the glance from a listed manager too: %s", raw)
+	}
+}
+
+// An empty or unknown switch value fails closed to the manager-only answer
+// (the purchasing module's cost gate resolves unknowns the same way): a
+// listed frontline caller receives nothing, a listed manager margin.
+func TestMarginGlance_Configured_EmptyOrUnknownSwitchFailsClosed(t *testing.T) {
+	h := newHarness()
+	h.svc = h.svc.WithRoleConfig(defaultConfig(t))
+	h.store.branchCosts = map[string]int64{"prod-paver": 60}
+
+	for _, tc := range []struct{ name, visibility string }{
+		{"empty", ""},
+		{"unknown", "MANAGERS_ONLY_PLEASE"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := h.store.policies[""]
+			p.MarginVisibility = tc.visibility
+			h.store.policies[""] = p
+
+			h.caller = salesCaller()
+			out, err := h.svc.MarginGlance(context.Background(), marginInputAtBranch())
+			if err != nil {
+				t.Fatalf("glance as Sales: %v", err)
+			}
+			raw, _ := json.Marshal(out)
+			if string(raw) != "{}" {
+				t.Fatalf("%s switch value must fail closed for a listed frontline caller: %s", tc.name, raw)
+			}
+
+			h.caller = salesManagerCaller()
+			out, err = h.svc.MarginGlance(context.Background(), marginInputAtBranch())
+			if err != nil {
+				t.Fatalf("glance as Sales manager: %v", err)
+			}
+			if len(out.Lines) != 1 || out.Lines[0].MarginBps == nil {
+				t.Fatalf("a %s switch value fails closed to the manager-only answer: %+v", tc.name, out)
+			}
+		})
+	}
+}
+
+// unreadablePolicyStore is the shipped fake with every policy read broken,
+// the database hiccup shape (the preImageFailsStore embed idiom).
+type unreadablePolicyStore struct {
+	*fakeStore
+}
+
+func (f *unreadablePolicyStore) ReadPosPolicy(context.Context, string) (PosPolicy, error) {
+	return PosPolicy{}, errors.New("pos: policy row unreadable")
+}
+
+// An unreadable policy row fails CLOSED and SILENTLY: the glance answers the
+// byte-absent zero value with no error, never a 500, for a listed frontline
+// caller and a listed manager alike. The wall keeps its own refusal beside
+// this: a branch the caller does not reach is the 403 error, never this blank.
+func TestMarginGlance_UnreadablePolicy_FailsClosedSilently(t *testing.T) {
+	h := newHarness()
+	h.svc = h.svc.WithRoleConfig(defaultConfig(t))
+	h.store.branchCosts = map[string]int64{"prod-paver": 60}
+	h.svc.store = &unreadablePolicyStore{fakeStore: h.store}
+
+	h.caller = salesCaller()
+	out, err := h.svc.MarginGlance(context.Background(), marginInputAtBranch())
+	if err != nil {
+		t.Fatalf("an unreadable policy must fail closed silently, got %v", err)
+	}
+	raw, _ := json.Marshal(out)
+	if string(raw) != "{}" {
+		t.Fatalf("an unreadable policy must answer the byte-absent glance: %s", raw)
 	}
 
 	h.caller = salesManagerCaller()
 	out, err = h.svc.MarginGlance(context.Background(), marginInputAtBranch())
 	if err != nil {
-		t.Fatalf("glance as Sales manager: %v", err)
+		t.Fatalf("an unreadable policy must fail closed silently for a manager too, got %v", err)
 	}
-	if len(out.Lines) != 1 || out.Lines[0].MarginBps == nil {
-		t.Fatalf("the configuration's list must show margin to the Sales manager: %+v", out)
+	raw, _ = json.Marshal(out)
+	if string(raw) != "{}" {
+		t.Fatalf("an unreadable policy must answer the byte-absent glance for a manager too: %s", raw)
 	}
 }
 

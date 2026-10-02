@@ -116,11 +116,16 @@ func TestCounterPayloads_ClerkReceivesNoCostOrMarginBytes(t *testing.T) {
 }
 
 func TestCounterPayloads_TheGateIsTheDEALERSSwitchNotTheCallersTier(t *testing.T) {
-	// The configuration's list means a named role DOES receive margin, the gate is a dealer
-	// decision, not a hard-coded tier rule. Pinned because a "fix" that simply refused frontline
-	// callers everywhere would pass every absence test above while removing a configuration the
-	// dealer paid for: the decided list names Inside Sales (X3, row 343), so the clerk sees margin.
+	// The configuration's list means a named role DOES receive margin once
+	// the dealer's 0170 switch admits staff: the gate is a dealer decision,
+	// not a hard-coded tier rule. Pinned because a "fix" that simply refused
+	// frontline callers everywhere would pass every absence test above while
+	// removing a configuration the dealer paid for: the decided list names
+	// Inside Sales (X3), and with the switch set to ALL_STAFF the clerk's
+	// glance carries margin. Under the column default (MANAGER_UP) the tests
+	// beside this pin the same clerk receiving the byte-absent answer.
 	h := newHarness()
+	h.store.policies[""] = PosPolicy{MarginVisibility: MarginVisibilityAllStaff}
 	h.caller = identity.StaffContext{UserID: "u-clerk", RoleCode: "INSIDE_SALES",
 		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
 	h.store.branchCosts = map[string]int64{"prod-paver": 60}
@@ -129,7 +134,7 @@ func TestCounterPayloads_TheGateIsTheDEALERSSwitchNotTheCallersTier(t *testing.T
 		t.Fatalf("glance: %v", err)
 	}
 	if len(out.Lines) != 1 || out.Lines[0].MarginBps == nil {
-		t.Fatalf("ALL_STAFF must reach a clerk: %+v", out)
+		t.Fatalf("ALL_STAFF must reach a clerk the list considers: %+v", out)
 	}
 }
 
