@@ -1309,13 +1309,6 @@ export class HosPosTerminal extends LitElement {
       padding: 3px 0;
       color: var(--hos-text-dim);
     }
-    .readback .rbrow.total {
-      padding-top: 8px;
-      border-top: 1px solid var(--hos-line);
-      color: var(--hos-text);
-      font-weight: 700;
-      font-size: 15px;
-    }
     .readback .rbrow.saving span {
       color: var(--hos-success);
     }
@@ -3383,6 +3376,20 @@ export class HosPosTerminal extends LitElement {
     return this.hasPricedLine() ? money(cents) : '(not priced)';
   }
 
+  /**
+   * The words the tax-and-total row carries before the ring: the ring states
+   * both figures, so the till names the ring instead of computing them (row
+   * 661). An applied relief's engine-assessed rate is a server-stated fact
+   * (the relief dialog's outcome), so it may be NAMED here, never multiplied
+   * into a figure.
+   */
+  private ringTaxWords(): string {
+    if (this.reliefRateBps === null) return 'added at the ring';
+    const bps = this.reliefRateBps;
+    const pct = bps % 100 === 0 ? String(bps / 100) : (bps / 100).toFixed(2);
+    return `relief assessed at ${pct}%: added at the ring`;
+  }
+
   // A deposit rides only an unpaid-at-ring posture: Charge Account tender or a COD sale.
  // HH note: the reference parsed the typed deposit through a float; the house rule converts
  // through the decimal string, so the parse is a host seam.
@@ -5170,15 +5177,15 @@ export class HosPosTerminal extends LitElement {
    * The facts the COLLAPSED cards summarise (summaryFor, _pos-accordion.ts: pure and tested).
    *
    * `totalLabel` is withheld while Payment is open pre-ring: the totals card inside that step is
-   * the running total's SOURCE, and the doctrine's say-it-once rule means the Items summary must
+   * the subtotal's SOURCE, and the doctrine's say-it-once rule means the Items summary must
    * not echo a number the operator is already looking at. Closed Payment, and the echo comes back:
    * which is the same source-and-echo rule the old header chip followed, now with a better echo.
    *
-   * The echo is an ESTIMATE before the ring (the browser's own arithmetic; the ring is the binding
-   * price), so it carries the same mark the totals rows and both ring buttons carry. After the ring
-   * the summary stops estimating entirely: it reads the sale's committed total, the server's own
-   * figure, with no mark, so the estimate cannot stand on screen beside the confirmation's
-   * committed figure (and they would disagree at any rate other than the preview's).
+   * Before the ring the echo is the priced lines' SUBTOTAL, the one figure the till assembles
+   * (row 661: no browser-computed tax, no browser-computed total), so it carries no mark: there
+   * is no estimate on the sale surface to mark. After the ring it reads the sale's committed
+   * total, the server's own figure: the slot's meaning is named by the ring state, and both of
+   * its figures are assemblies over server-stated lines.
    */
   private stepFacts(): StepSummaryFacts {
     return {
@@ -5189,7 +5196,7 @@ export class HosPosTerminal extends LitElement {
         ? money(this.doneSale().total_cents)
         : this.openStep === 'payment'
           ? ''
-          : `${this.moneyOrMarker(this.total())}${this.hasPricedLine() ? ' (est.)' : ''}`,
+          : this.moneyOrMarker(this.subtotal()),
       // DIB-512 (8) · one word per surface. Before the ring the collapsed Payment card says which
       // tender is CHOSEN; after it, salePillLabel decides the counter word for what the sale
  // actually is ('Paid' / 'On account' / 'COD' / 'Deposit'): never the wire status, which is
@@ -5784,8 +5791,8 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                       : this.ringBusy()
                         ? 'Ringing…'
                         : this.tillSessionId === ''
-                          ? `Open session · then complete · ${this.moneyOrMarker(this.total())}${this.hasPricedLine() ? ' (est.)' : ''}`
-                          : `Complete sale · ${this.moneyOrMarker(this.total())}${this.hasPricedLine() ? ' (est.)' : ''}`}
+                          ? `Open session · then complete · subtotal ${this.moneyOrMarker(this.subtotal())} + tax at the ring`
+                          : `Complete sale · subtotal ${this.moneyOrMarker(this.subtotal())} + tax at the ring`}
                     ${!this.ringDone() && this.payKeycap()
                       ? html`<span class="keycap" data-testid="pay-hotkey-chip" aria-hidden="true"
                           >${this.payKeycap()}</span
@@ -5993,9 +6000,10 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
  * not a step to also be editing in: the card that owns each fact is one header press away and
    * still open for business.
    *
-   * The totals here are the same derivations the Payment card's totals card shows, and only one
-   * card is open at a time, so the say-it-once rule is kept structurally rather than by suppression.
-   */
+ * The subtotal here is the same derivation the Payment card's totals card shows, and only one
+ * card is open at a time, so the say-it-once rule is kept structurally rather than by suppression.
+ * The tax and the total are not derivations any more: the row names the ring for them (row 661).
+ */
   private renderReadBack() {
     if (this.cart.length === 0) {
       // Empty is never an error. One calm line: what is missing, what that means, the way forward.
@@ -6030,8 +6038,7 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
       <div class="rbrow"><span>${fulfilmentLabel(this.saleType)}</span><span></span></div>
       ${this.requestedDate ? html`<div class="rbrow"><span>Requested</span><span>${this.requestedDate}</span></div>` : nothing}
       <div class="rbrow"><span>Subtotal</span><span class="m">${this.moneyOrMarker(this.subtotal())}</span></div>
-      <div class="rbrow"><span>${this.taxLabel()}</span><span class="m">${this.moneyOrMarker(this.tax())}</span></div>
-      <div class="rbrow total"><span>Total (est.)</span><span class="m">${this.moneyOrMarker(this.total())}</span></div>
+      <div class="rbrow" data-testid="readback-ring-words"><span>Tax and total</span><span class="m">${this.ringTaxWords()}</span></div>
       <div class="rbrow"><span>${tenderLabel(this.payMethod || 'CASH')}</span><span></span></div>
       ${/* "how much am I saving?": the client's words for the thing customers always ask. Server
          arithmetic, summed per line; absent entirely when there is nothing to claim. */ ''}

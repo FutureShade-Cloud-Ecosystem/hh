@@ -443,14 +443,46 @@ test("an account on hold is refused in the reviewed words, and nothing commits",
   await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
 });
 
-test("the collapsed Items summary labels its pre-ring figure an estimate", async ({ page }) => {
+test("the collapsed Items summary carries the priced lines' subtotal before the ring", async ({ page }) => {
   await signIn(page, "Sales");
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
   // Another step open: the Items card collapses and its summary speaks. The
-  // figure is the browser's own estimate (the ring is the binding price), so
-  // the line carries the same mark the totals rows and the ring button do.
+  // figure is the priced lines' own subtotal (the only figure the till
+  // assembles), unmarked: there is no estimate on the sale surface to mark.
   await openStep(page, "customer");
-  await expect(page.getByTestId("step-summary-items")).toHaveText("1 item · CA$4.52 (est.)");
+  await expect(page.getByTestId("step-summary-items")).toHaveText("1 item · CA$4.00");
+  await expect(page.getByTestId("step-summary-items")).not.toContainText("(est.");
+});
+
+test("the read-back names the ring, and the confirmation reads the server's figures unmarked", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
+  // The read-back, pre-ring: the priced lines' subtotal (CA$18.00), the ring
+  // named for the tax and the total, and no estimate mark anywhere on it.
+  await openStep(page, "summary");
+  const readback = page.getByTestId("pos-readback");
+  await expect(readback).toContainText("CA$18.00");
+  await expect(readback).toContainText("added at the ring");
+  await expect(readback).not.toContainText("(est.");
+  await expect(readback).not.toContainText("CA$20.34");
+  // The ring: the confirmation carries the server's own figures, unmarked.
+  await openStep(page, "payment");
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await page.getByTestId("pos-complete-sale").click();
+  const sale = (await (await ringPost).json()) as Record<string, unknown>;
+  const sold = page.getByTestId("sold-panel");
+  await expect(sold).toBeVisible();
+  await expect(sold).toContainText(dollars(sale.total_cents as number));
+  await expect(sold).not.toContainText("(est.");
+  // And the collapsed Items summary echoes the server's total, still unmarked.
+  await expect(page.getByTestId("step-summary-items")).toHaveText(
+    `2 items · CA${dollars(sale.total_cents as number)}`,
+  );
 });
 
 test("a walk-in COD sale is refused in words that are true, and the same sale with an account rings", async ({
@@ -810,10 +842,14 @@ test("a line the account's price cannot answer reads price pending through ordin
   await expect(polymeric.locator(".lprice")).toHaveText("CA$11.48");
   await expect(polymeric.locator(".ltot")).toHaveText("CA$22.96");
   await expect(page.getByTestId("pos-line-row").filter({ hasText: "price pending" })).toHaveCount(0);
-  // Every line priced: the figures return, the estimate mark on the ring.
+  // Every line priced: the subtotal returns, and the Complete button names it
+  // as the subtotal with the tax left to the ring: never a total.
   await openStep(page, "payment");
   await expect(totals).not.toContainText("(not priced)");
-  await expect(page.getByTestId("pos-complete-sale")).toContainText("(est.)");
+  const cta = page.getByTestId("pos-complete-sale");
+  await expect(cta).toContainText("subtotal CA$");
+  await expect(cta).toContainText("+ tax at the ring");
+  await expect(cta).not.toContainText("(est.");
 });
 
 test("a pricing answer that arrives for a stale line state is dropped: the newest answer owns the line", async ({
