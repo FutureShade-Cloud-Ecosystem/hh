@@ -9,6 +9,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -99,10 +100,19 @@ func TestBootLogNotifierShowsBodiesOnlyInDev(t *testing.T) {
 			// A non-dev box must state its payment vault key (config.Validate);
 			// an invented all-zero fixture value, not a credential.
 			t.Setenv("PAYMENT_VAULT_KEY", strings.Repeat("00", 32))
+			// ...and public link bases (config.Validate outside dev once HH-198 lands; harmless before).
+			t.Setenv("PORTAL_BASE_URL", "https://portal.example.test")
+			t.Setenv("ERP_BASE_URL", "https://erp.example.test")
 			var buf bytes.Buffer
-			prior := slog.Default()
+			// slog.SetDefault on a custom handler also redirects the standard log package and zeroes
+			// its flags; restore all three or later tests in the binary lose their logger output.
+			prior, priorWriter, priorFlags := slog.Default(), log.Writer(), log.Flags()
 			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-			t.Cleanup(func() { slog.SetDefault(prior) })
+			t.Cleanup(func() {
+				slog.SetDefault(prior)
+				log.SetOutput(priorWriter)
+				log.SetFlags(priorFlags)
+			})
 
 			_, graph := registeredSurface(t, env)
 			buf.Reset()
@@ -111,6 +121,9 @@ func TestBootLogNotifierShowsBodiesOnlyInDev(t *testing.T) {
 				Body: "Activate: https://portal.example/?token=" + token})
 			if err != nil {
 				t.Fatalf("send: %v", err)
+			}
+			if !tc.want && !strings.Contains(buf.String(), "body_len") {
+				t.Fatalf("APP_ENV=%s: the withheld-body line is missing from the log (an empty capture would pass vacuously): %s", tc.appEnv, buf.String())
 			}
 			if got := strings.Contains(buf.String(), token); got != tc.want {
 				t.Fatalf("APP_ENV=%s: token in log = %v, want %v; log: %s", tc.appEnv, got, tc.want, buf.String())
