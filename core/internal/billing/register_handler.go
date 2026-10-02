@@ -45,13 +45,6 @@ import (
 
 const maxRegisterBody = 1 << 20 // 1 MiB
 
-// The export pages the register at the repository's page cap and stops after exportMaxPages pages,
-// so a loop cannot run away; the bound is 500,000 rows.
-const (
-	exportPageSize = 200
-	exportMaxPages = 2500
-)
-
 // RegisterHandler serves the receivables register.
 type RegisterHandler struct {
 	userLink identity.UserIDLinker
@@ -216,24 +209,17 @@ func (h *RegisterHandler) export(w http.ResponseWriter, r *http.Request, caller 
 		CustomerID:  q.Get("customer_id"),
 		Salesperson: q.Get("salesperson_id"),
 		ShowCredits: q.Get("show_credits") == "1" || q.Get("show_credits") == "true",
-		Limit:       exportPageSize,
+		// Every row of the view in one statement: the repository caps one page, and the export is
+		// promised to carry the whole view. One statement is one snapshot, so a payment landing
+		// mid-export cannot shift a row between pages (an offset walk could skip or repeat one).
+		All: true,
 	}
-	// Page the register read to completion: the repository caps one page, and the export is promised
-	// to carry every row of the view, so it walks the repository's own offset until the filter's
-	// total is written. The order is the register's, stable on the unique invoice number.
-	var items []RegisterRow
-	for pages := 0; pages < exportMaxPages; pages++ {
-		f.Offset = len(items)
-		page, err := h.svc.Register(r.Context(), f)
-		if err != nil {
-			h.writeErr(w, r, err)
-			return
-		}
-		items = append(items, page.Items...)
-		if len(page.Items) == 0 || len(items) >= page.Total {
-			break
-		}
+	page, err := h.svc.Register(r.Context(), f)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
 	}
+	items := page.Items
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="receivables.csv"`)
 	var b strings.Builder
