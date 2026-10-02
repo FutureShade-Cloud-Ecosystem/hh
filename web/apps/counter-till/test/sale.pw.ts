@@ -178,15 +178,19 @@ test("a walk-in cash sale of three lines rings, and the sale read equals every f
   // the ring, so the tile states no change figure either.
   await openStep(page, "payment");
   // The pre-ring summary, figure by figure, on a ticket the stub's prices
-  // pin: 12.00 + 14.00 + 38.00 is a CA$64.00 subtotal; the estimated tax is
-  // the counter's 1300 bps on it (CA$8.32); the estimated total is CA$72.32.
-  // The rows say they are estimates; the ring's figures are the binding ones.
+  // pin: 12.00 + 14.00 + 38.00 is a CA$64.00 subtotal, and that is the only
+  // figure the card assembles: the tax and the total are the ring's own
+  // answer, named in words, never computed here.
   const totals = page.getByTestId("pos-totals-card");
+  await expect(totals).toContainText("Subtotal");
   await expect(totals).toContainText("CA$64.00");
-  await expect(totals).toContainText("HST 13% (est.)");
-  await expect(totals).toContainText("CA$8.32");
-  await expect(totals).toContainText("Total (est.)");
-  await expect(totals).toContainText("CA$72.32");
+  await expect(totals.getByTestId("pos-ring-words")).toContainText("added at the ring");
+  await expect(totals).not.toContainText("(est.");
+  // No tax figure and no total figure anywhere on the payment step: neither
+  // the stub's HST line (CA$8.32) nor its total (CA$72.32).
+  const paymentStep = page.getByTestId("step-panel-payment");
+  await expect(paymentStep).not.toContainText("CA$8.32");
+  await expect(paymentStep).not.toContainText("CA$72.32");
   await page.getByLabel("Cash tendered in dollars: optional; leave empty to ring the exact total").fill("80.00");
   await expect(page.getByTestId("cash-change-preview")).toContainText("Change due");
   await expect(page.getByTestId("cash-change-preview")).toContainText("the ring's own answer");
@@ -1137,10 +1141,11 @@ test("an empty draft shows the blank marker, never a confident zero, in the line
   await openStep(page, "payment");
   const totals = page.getByTestId("pos-totals-card");
   // Nothing on the ticket: the rows say they cannot say, and no plausible
-  // zero appears anywhere on the payment step.
+  // zero appears anywhere on the payment step. The tax-and-total row names
+  // the ring; there is no Total row to carry an estimate.
   await expect(totals).toContainText("(not priced)");
   await expect(totals).not.toContainText("CA$0.00");
-  await expect(totals).toContainText("Total (est.)");
+  await expect(totals.getByTestId("pos-ring-words")).toContainText("added at the ring");
   const cta = page.getByTestId("pos-complete-sale");
   await expect(cta).toContainText("(not priced)");
   await expect(cta).not.toContainText("CA$0.00");
@@ -1473,7 +1478,7 @@ test("a ticket parked with a line price pending lists no total", async ({ page }
   await expect(ticket).not.toContainText("CA$");
 });
 
-test("the parked list labels a ticket's snapshot total an estimate", async ({ page }) => {
+test("the parked list shows a ticket's park-time subtotal", async ({ page }) => {
   await signIn(page, "Sales");
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
   await page.getByRole("button", { name: "Park ticket" }).click();
@@ -1481,13 +1486,13 @@ test("the parked list labels a ticket's snapshot total an estimate", async ({ pa
   await page.getByRole("button", { name: /^Parked \(/ }).click();
   const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
   await expect(parkedDialog).toBeVisible();
-  // The row's figure is the park-time snapshot of the estimate (a resumed
-  // ticket reprices through the engine), so the line carries the mark; the
-  // "(not priced)" degradation beside it stays as it was.
-  // The rail lists the branch's tickets in insertion order: the ticket this
-  // story just parked is the rail's last.
+  // The row's figure is the park-time snapshot of the priced lines' subtotal
+  // (a resumed ticket reprices through the engine), named as a subtotal and
+  // carrying no estimate mark: there is no estimate on the sale surface to
+  // mark. The rail lists the branch's tickets in insertion order: the ticket
+  // this story just parked is the rail's last.
   const ticket = parkedDialog.locator(".ticket").last();
-  await expect(ticket.locator(".mtot")).toHaveText("CA$4.52 (est.)");
+  await expect(ticket.locator(".mtot")).toHaveText("subtotal CA$4.00");
   await expect(ticket.locator(".meta")).toContainText("1 line");
 });
 

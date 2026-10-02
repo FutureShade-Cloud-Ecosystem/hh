@@ -69,9 +69,9 @@ they were derived from. The split panel states no remaining at all: the legs
 settle the server's total at the ring (decision log row 661), so the panel
 shows the typed sum, which is arithmetic over the operator's own entries, and
 words the shape; Rest fills no leg until a server-stated total returns. The
-parked list's total follows the marker while any line is price pending (the
-parked snapshot keeps no figure for such a ticket); a parked ticket with no
-price memory in this window lists the marker too. The search drop rows render
+parked list names the snapshot a SUBTOTAL of the priced lines, unmarked (the
+snapshot keeps no figure while any line is price pending, and a parked ticket
+with no price memory in this window lists the marker too). The search drop rows render
 the contract's per-branch stock (`on_hand_branch`) beside the SKU, as the
 reference's rows do; the contract carries the field, so no gap remains.
 

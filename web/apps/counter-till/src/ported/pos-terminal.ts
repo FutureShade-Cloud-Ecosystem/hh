@@ -11,8 +11,6 @@ import {
   parseAmountCents,
   perLineSavingCents,
   sumLineSavingCents,
-  ticketTaxCents,
-  ticketTotalCents,
 } from './ports.js';
 import { drawIcon, iconForId } from './_icon-consumer.js';
 // Boundary: the sold and lookup panels embed neighbouring screens by tag
@@ -2172,15 +2170,14 @@ export class HosPosTerminal extends LitElement {
       margin-top: 0;
       padding-top: 0;
     }
-    .totalscard .trow.grand {
+    /* The tax-and-total row (row 661): muted words where the oversized gold
+       Total used to sit. The ring states both figures; the card does not. */
+    .totalscard .trow.ringwords {
       margin-top: 6px;
       padding-top: 8px;
       border-top: 1px solid var(--hos-line);
-      align-items: baseline;
-    }
- /* The oversized gold Total: the concept's one loud number on the quiet card. */
-    .totalscard .trow.grand .num {
-      font-size: 26px;
+      color: var(--hos-text-dim);
+      font-size: 12px;
     }
     .totals {
       border-top: 1px solid var(--hos-line);
@@ -2195,11 +2192,6 @@ export class HosPosTerminal extends LitElement {
     }
     .trow .num {
       font-family: var(--hos-font-mono);
-    }
-    .trow.grand .num {
-      color: var(--hos-stone-amber-text);
-      font-size: 18px;
-      font-weight: 600;
     }
     /* DIB-165 past-sale lookup sheet. Same scrim primitive the parked/return overlays use
        (--hos-scrim + --hos-z-modal) so the counter's modals stack and dim identically. */
@@ -3336,32 +3328,14 @@ export class HosPosTerminal extends LitElement {
     this.scheduleTicketFacts(); // rev 8: fewer lines = a different margin footer + suggestion set
   }
 
-   // HH note: the pre-ring figures are the counter's ESTIMATE. The subtotal is
-   // the priced lines' own assembly (host seam), but HH's contract gives the
-   // counter no rate (PricingBreakdown carries no tax, and the rate table is
-   // money-desk), so the tax line applies this surface's default of 1300 bps
-   // unless the relief flow set another; the dealer's rate table may differ.
-   // The surface says so: the tax row reads (est.) and the total row carries
-   // the estimate mark, and the ring's committed figures are the binding ones.
+  // HH note: the pre-ring figures are the priced lines' own assembly (host
+  // seam), and that is the WHOLE assembly: the till computes no tax and no
+  // total before the ring (decision log row 661 unwound the earlier estimate
+  // bend: no browser rate, no 1300 default, no estimate marks). The tax and
+  // the total are the ring's own answer, and the rows that once estimated
+  // them name the ring instead (ringTaxWords).
   private subtotal(): number {
     return cartSubtotalCents(this.cart);
-  }
-  // Preview rate: the applied relief's engine-assessed bps, else the counter's
-  // 13% default. The binding rate is the core's, at the ring.
-  private taxRateBps(): number {
-    return this.reliefRateBps ?? 1300;
-  }
-  private tax(): number {
-    return ticketTaxCents(this.subtotal(), this.taxRateBps());
-  }
-  private taxLabel(): string {
-    const bps = this.taxRateBps();
-    const pct = bps % 100 === 0 ? String(bps / 100) : (bps / 100).toFixed(2);
-    const relief = this.reliefRateBps === null ? '' : ' (relief)';
-    return `HST ${pct}%${relief} (est.)`;
-  }
-  private total(): number {
-    return ticketTotalCents(this.subtotal(), this.tax());
   }
  // HH note: an empty draft shows the app's blank marker, never a plausible
  // zero (the house rule; the reference showed CA$0.00 here, and HH's rule
@@ -3961,8 +3935,10 @@ export class HosPosTerminal extends LitElement {
         lines: this.cart.map((l) => ({ product_id: l.product.id, qty_entered: l.qty, uom_entered: l.uom })),
       });
       // DIB-246/247: snapshot who + how much under the server ticket id BEFORE newSale() clears
-      // them, so resume can restore this customer and the parked list can show name + total.
-      this.parkedInfo.set(t.id, { customer: this.customer, totalCents: this.hasPricedLine() ? this.total() : null });
+      // them, so resume can restore this customer and the parked list can show name + figure.
+      // Row 661: the figure is the priced lines' SUBTOTAL, the one assembly the till has; the
+      // parked list names it as a subtotal, and a pending line keeps no figure at all.
+      this.parkedInfo.set(t.id, { customer: this.customer, totalCents: this.hasPricedLine() ? this.subtotal() : null });
       this.newSale();
       this.setUtil(`Parked as ${t.ticket_no}: resume re-prices live.`);
       void this.refreshParkedCount();
@@ -5624,15 +5600,17 @@ ${/* Fulfilment: the EXISTING sale types (counter / will-call / delivered / COD 
   /**
  * STEP 3 · PAYMENT: the totals card, the tender tiles and the one gold commit.
    *
-   * The totals card stays adjacent to the tender it justifies (it is the number the clerk reads out
-   * loud), and it is the running total's one source; the collapsed Items card echoes it only while
-   * this step is closed.
+   * The totals card stays adjacent to the tender it justifies (it is the figure the clerk reads out
+   * loud), and it is the subtotal's one source; the collapsed Items card echoes it only while
+   * this step is closed. The tax and the total are not on the card at all: the row names the
+   * ring for them (row 661), so the number the clerk reads out loud at the ring is the server's.
    */
   private renderPaymentBody() {
     return html`
 ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, ABOVE a
-   clearly separate Payment section (concept parity). Same numbers, same derivations;
-   the oversized gold Total is the card's one loud element. The rev-6 total chip in
+   clearly separate Payment section (concept parity). One server-priced figure
+   (the subtotal) and one row of honest words (row 661): the oversized gold
+   Total is gone with the browser arithmetic that fed it. The rev-6 total chip in
    the panel bar stands for the scroll cases. */ ''}
           <section class="panel totalscard" aria-label="Totals" data-testid="pos-totals-card">
             ${this.reliefReason
@@ -5640,8 +5618,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
               : nothing}
             <div class="totals">
               <div class="trow"><span>Subtotal</span><span class="num">${this.moneyOrMarker(this.subtotal())}</span></div>
-              <div class="trow"><span>${this.taxLabel()}</span><span class="num">${this.moneyOrMarker(this.tax())}</span></div>
-              <div class="trow grand"><span>Total (est.)</span><span class="num">${this.moneyOrMarker(this.total())}</span></div>
+              <div class="trow ringwords" data-testid="pos-ring-words"><span>Tax and total</span><span>${this.ringTaxWords()}</span></div>
             </div>
           </section>
 
