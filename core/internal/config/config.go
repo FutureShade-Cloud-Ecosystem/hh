@@ -1,5 +1,6 @@
 // Package config centralizes all environment configuration for HardscapeOS.
-// Every value has a sane dev default; production overrides via env vars.
+// Dev has sane defaults for local work; staging, production and demo must say what they mean
+// (see Validate), and APP_ENV itself must be set for any role that serves traffic.
 //
 // The carried configuration is trimmed by the carry itself: the HS256 world
 // this package used to configure (PORTAL_JWT_SECRET and STAFF_JWT_SECRET and
@@ -18,8 +19,12 @@ package config
 import (
 	"encoding/hex"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
+	"unicode"
 )
 
 // EnvDemo is the APP_ENV a DEMO BOX declares, and it is a value this program had no need of until
@@ -49,7 +54,14 @@ type Config struct {
 	// value would be a second, unused spelling of that input. Kept because
 	// the trim is exactly the two secrets; disposition likewise recorded.
 	JWKSURL string
-	Env     string // dev | staging | production
+	Env     string // dev | staging | production | demo
+
+	// EnvUnset records that APP_ENV was not set at all, so Env holds the "dev" default and
+	// nobody said so. The one-shot tools (migrate, seed, demoseed) never call Validate and keep
+	// reading the default as dev; the roles that serve traffic or send messages refuse it in
+	// Validate, because a production box with the variable forgotten would otherwise skip every
+	// check below.
+	EnvUnset bool
 
 	// PaymentVaultKey is the AES-256-GCM key (64 hex chars / 32 bytes) that seals
 	// the RUN-PAY processor credentials at rest (W4). Empty → the vault generates an
@@ -130,19 +142,32 @@ func (c Config) DemoEnabled() bool {
 }
 
 func Load() Config {
+	env, envSet := os.LookupEnv("APP_ENV")
+	envUnset := !envSet || env == ""
+	if envUnset {
+		env = "dev"
+	}
+	// The link bases default to the Vite dev origin ONLY where a localhost link is the right
+	// answer (dev, and the demo box, which has never set them). Anywhere else they stay empty
+	// until the operator sets them, and Validate refuses the empty value.
+	portalDef, erpDef := "", ""
+	if env == "dev" || env == EnvDemo {
+		portalDef, erpDef = "http://localhost:5173/portal.html", "http://localhost:5173"
+	}
 	return Config{
+		EnvUnset:        envUnset,
 		Port:            intEnv("PORT", 8080),
 		DatabaseURL:     strEnv("DATABASE_URL", "postgres://hardscape:hardscape@localhost:5435/hardscapeos?sslmode=disable"),
 		NATSURL:         strEnv("NATS_URL", ""),
 		JWKSURL:         strEnv("JWKS_URL", ""),
-		Env:             strEnv("APP_ENV", "dev"),
+		Env:             env,
 		PaymentVaultKey: strEnv("PAYMENT_VAULT_KEY", ""),
-		PortalBaseURL:   strEnv("PORTAL_BASE_URL", "http://localhost:5173/portal.html"),
+		PortalBaseURL:   strEnv("PORTAL_BASE_URL", portalDef),
 		PlaneAPIURL:     strEnv("PLANE_API_URL", ""),
 		PlaneAPIKey:     strEnv("PLANE_API_KEY", ""),
 		PlaneProject:    strEnv("PLANE_PROJECT_ID", ""),
 		PlaneWorkspace:  strEnv("PLANE_WORKSPACE_SLUG", ""),
-		StaffBaseURL:    strEnv("ERP_BASE_URL", "http://localhost:5173"),
+		StaffBaseURL:    strEnv("ERP_BASE_URL", erpDef),
 		DemoMode:        boolEnv("DEMO_MODE", false),
 
 		BisTrackEndpoint: strEnv("BISTRACK_ENDPOINT", ""),
@@ -151,13 +176,30 @@ func Load() Config {
 }
 
 // Validate fails closed on insecure configuration. Call it at startup and treat
-// any error as fatal. The dev defaults are accepted ONLY when APP_ENV=dev (or
-// unset → "dev"); every other environment (staging, production, typos, unset-to-
-// something-else) must supply the values the remaining checks demand. (The
+// any error as fatal. The dev defaults are accepted ONLY when APP_ENV=dev is set
+// explicitly; an unset APP_ENV is refused, a value that is not exactly dev, staging,
+// production or demo (a typo) is refused outright, and staging, production and demo
+// must supply the values the remaining checks demand. (The
 // two signing-secret clauses this function used to carry left with the HS256
 // world they served: token verification is no longer this package's to
 // configure.)
 func (c Config) Validate() error {
+	// An unset APP_ENV is refused before the dev short-circuit: the default is "dev", and a
+	// production box that forgot the variable must not pass as one. An explicit APP_ENV=dev
+	// is the deliberate spelling and stays permissive. Only serve and worker (and the demo
+	// serve) call Validate; the one-shot tools never do.
+	if c.EnvUnset {
+		return fmt.Errorf("APP_ENV is not set: set it explicitly to one of dev, staging, production or demo (an unset value is refused so a missing variable cannot skip the checks)")
+	}
+	// APP_ENV must be exactly one of the four named values, case-sensitive and untrimmed. A
+	// typo such as prod, Production or "dev " would otherwise get the strict checks below but
+	// slip past the ones elsewhere that compare against the literal word production (the card
+	// rail refusals in payment and payments). The bad value is deliberately not echoed.
+	switch c.Env {
+	case "dev", "staging", "production", EnvDemo:
+	default:
+		return fmt.Errorf("APP_ENV is not one of the accepted values: set it exactly (case-sensitive, no spaces) to dev, staging, production or demo")
+	}
 	if c.Env == "dev" {
 		return nil
 	}
@@ -179,7 +221,112 @@ func (c Config) Validate() error {
 	if b, err := hex.DecodeString(c.PaymentVaultKey); err != nil || len(b) != 32 {
 		return fmt.Errorf("PAYMENT_VAULT_KEY must be 64 hex chars (32 bytes) when APP_ENV=%q", c.Env)
 	}
+	// The link bases that invite, reset and reminder messages point at. A demo box is exempt:
+	// it sends nothing live and has always run on the localhost defaults.
+	if c.Env != EnvDemo {
+		if err := checkBaseURL("PORTAL_BASE_URL", c.PortalBaseURL); err != nil {
+			return err
+		}
+		if err := checkBaseURL("ERP_BASE_URL", c.StaffBaseURL); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// checkBaseURL requires an absolute https URL with a usable link base. It enforces: https; a
+// host that is ASCII and is not empty, localhost (or *.localhost, with or without a trailing
+// dot), a loopback or unspecified address, an IPv6 zone, a numeric shorthand spelling of an
+// address (127.1, 2130706433, 0x7f.0.0.1, 0177.0.0.1, 127.0.0x.1) that a resolver or browser
+// would read as loopback, an empty or hyphen-edged label, or a port outside 1 to 65535; and no
+// userinfo, query, fragment, whitespace or control character, because every link built from
+// this value would carry them. Non-ASCII hosts are refused outright (their full-width and
+// ideographic-dot spellings normalise to localhost and 127.0.0.1); punycode xn-- hosts are ASCII
+// and pass.
+//
+// IT CHECKS SPELLING ONLY. POLICY: it does not require a public address and it does not
+// resolve anything. Private ranges, tailnet addresses, .local, .internal and single-label hosts
+// pass, since a staging box may sit on a tailnet; so do names that resolve to loopback through a
+// hosts file or public DNS (127.0.0.1.nip.io, localhost.localdomain, ip6-localhost,
+// ip6-loopback, localhost6). The error names the variable and the reason, never the value.
+func checkBaseURL(name, raw string) error {
+	if raw == "" {
+		return fmt.Errorf("%s must be set outside dev: it is the origin that links in messages point at", name)
+	}
+	for _, r := range raw {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return fmt.Errorf("%s must not contain whitespace or control characters", name)
+		}
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || u.Scheme != "https" {
+		return fmt.Errorf("%s must be an absolute https URL outside dev", name)
+	}
+	if u.User != nil {
+		return fmt.Errorf("%s must not carry credentials (userinfo): they would be mailed in every link", name)
+	}
+	if strings.ContainsAny(raw, "?#") {
+		return fmt.Errorf("%s must not carry a query or fragment: it is a base that links are built from", name)
+	}
+	if strings.HasSuffix(u.Host, ":") {
+		return fmt.Errorf("%s must not carry an empty port", name)
+	}
+	if ps := u.Port(); ps != "" {
+		if n, err := strconv.Atoi(ps); err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("%s must carry a port from 1 to 65535 or none", name)
+		}
+	}
+	for i := 0; i < len(u.Hostname()); i++ {
+		if u.Hostname()[i] >= 0x80 {
+			return fmt.Errorf("%s must name an ASCII host (use punycode for an international name)", name)
+		}
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	const notLocal = "%s must name a real host outside dev, not an empty, localhost, loopback, unspecified or numeric-shorthand host"
+	if host == "" || host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.Contains(host, "%") {
+		return fmt.Errorf(notLocal, name)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsUnspecified() {
+			return fmt.Errorf(notLocal, name)
+		}
+		return nil
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return fmt.Errorf("%s must name a well formed host (no empty or hyphen-edged label)", name)
+		}
+	}
+	if numericShorthand(host) {
+		return fmt.Errorf(notLocal, name)
+	}
+	return nil
+}
+
+// numericShorthand reports whether every dot-separated label is all digits or a 0x-prefixed hex
+// group (a bare 0x counts, browsers read it as zero): the integer and short forms of an IPv4
+// address that net.ParseIP does not accept but a resolver or browser does.
+func numericShorthand(host string) bool {
+	for _, label := range strings.Split(host, ".") {
+		if label == "" {
+			return false
+		}
+		digits := label
+		if strings.HasPrefix(label, "0x") {
+			for _, r := range label[2:] {
+				if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+					return false
+				}
+			}
+			continue
+		}
+		for _, r := range digits {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func strEnv(k, def string) string {

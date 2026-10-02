@@ -14,7 +14,11 @@ import (
 // made up and must never be dialed while the guards hold: a test that
 // reaches it is a test whose guard is gone, which is what the failure
 // then shows.
-func serveEnv() map[string]string {
+func serveEnv(t *testing.T) map[string]string {
+	t.Helper()
+	// config.Load reads the process environment, and Validate refuses an unset
+	// APP_ENV (HH-198): the made-up map below is the identity environment only.
+	t.Setenv("APP_ENV", "dev")
 	return map[string]string{
 		"DEMO_MODE":            "true",
 		"APP_ENV":              "demo",
@@ -54,7 +58,7 @@ func TestDemoServeRefusesABoxThatDoesNotSayDemo(t *testing.T) {
 		{"mode unset", "DEMO_MODE", nil, "DEMO_MODE"},
 	}
 	for _, c := range cases {
-		env := serveEnv()
+		env := serveEnv(t)
 		if c.drop != "" {
 			delete(env, c.drop)
 		}
@@ -77,7 +81,7 @@ func TestDemoServeRefusesABoxThatDoesNotSayDemo(t *testing.T) {
 // variable. Removing the RefuseProviderVars call from demoServe fails
 // here, not only in the boot package's suite.
 func TestDemoServeRefusesAProviderVariable(t *testing.T) {
-	env := serveEnv()
+	env := serveEnv(t)
 	getenv, lookup, environ := envFuncs(env)
 	picture := append(environ(), "TWILIO_AUTH_TOKEN=x")
 	err := demoServe(getenv, lookup, func() []string { return picture })
@@ -102,7 +106,7 @@ func TestDemoServeChecksTheDatabaseBeforeTheListener(t *testing.T) {
 	if base == "" {
 		t.Skip("HH_CORE_TEST_DATABASE_URL is not set: the serve wiring's database leg needs a scratch database to refuse")
 	}
-	env := serveEnv()
+	env := serveEnv(t)
 	env["CORE_DATABASE_URL"] = base
 	// The gate database is migrated and holds no demo org, so the guard's
 	// org check is the refusal this test expects.
@@ -120,7 +124,7 @@ func TestDemoServeChecksTheDatabaseBeforeTheListener(t *testing.T) {
 // P3-9: the token expiry is capped at the demo ceiling; a longer value
 // refuses at load with the variable named.
 func TestDemoServeRefusesATokenExpiryOverTheCeiling(t *testing.T) {
-	env := serveEnv()
+	env := serveEnv(t)
 	env["CORE_DEMO_TOKEN_TTL"] = "24h"
 	getenv, lookup, environ := envFuncs(env)
 	err := demoServe(getenv, lookup, environ)
