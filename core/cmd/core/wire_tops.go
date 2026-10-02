@@ -186,7 +186,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithCustomers(customerSvc).
 		WithBilling(billingSvc).
 		WithOrders(orderSvc).
-		WithQuotes(quote.NewService(quoteRepo)).
+		WithQuotes(quote.NewService(quoteRepo).WithAudit(auditSvc)).
 		WithPayments(portalPaySvc).
 		WithProcurement(procurementSvc).
 		WithProducts(productSvc).
