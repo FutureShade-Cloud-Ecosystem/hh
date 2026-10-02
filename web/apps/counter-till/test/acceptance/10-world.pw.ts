@@ -1,7 +1,8 @@
 // The acceptance run's world leg: the facts the screens stand on, read from
-// the demo image's own core as each rule names it. The margin glance answers
-// the clerk (the configuration's cost and margin list, not a managers only
-// default), the card rail answers simulated true, the dealer's approval amount
+// the demo image's own core as each rule names it. The margin glance refuses
+// the clerk and answers the manager (the box's policy word MANAGER_UP, the
+// hardening train's glance now honouring it server-side), the card rail
+// answers simulated true, the dealer's approval amount
 // and its approvers are the configuration's, the role gate admits the manager
 // past the counter's walls and refuses the clerk, the other branch's sale is
 // refused at this counter, the seeded card sale carries no card reference, and
@@ -120,7 +121,7 @@ test("the account picker answers the branch's demo accounts, every name carrying
   expect(scrubbed.length).toBeGreaterThanOrEqual(1);
 });
 
-test("the clerk's margin glance answers: the configuration names who sees cost and margin", async ({
+test("the clerk's margin glance is refused, the manager's answers: the policy word names who sees cost and margin", async ({
   page,
 }) => {
   const bearer = await mint(page, "sales");
@@ -133,6 +134,10 @@ test("the clerk's margin glance answers: the configuration names who sees cost a
   });
   expect(priced.status).toBe(200);
   const customerType = priced.body.customer_type as string;
+  // The box's policy word is MANAGER_UP and the hardening train made the
+  // glance honour it server-side (row 651): the clerk's answer is the zero
+  // document, every margin figure byte-absent, never an empty lines array
+  // that could read as "priced but marginless".
   const glanced = await staffPost(page, bearer, "/api/v1/pos/margin-glance", {
     branch_id: TRENTON_ID,
     customer_id: "",
@@ -140,11 +145,21 @@ test("the clerk's margin glance answers: the configuration names who sees cost a
     lines: [{ product_id: productId, qty_entered: 10, uom_entered: "PC" }],
   });
   expect(glanced.status).toBe(200);
-  const lines = glanced.body.lines as Array<{ margin_bps?: number }>;
+  expect(glanced.body).toEqual({});
+  // The manager is the policy word's named reader: the same glance answers
+  // the line, and the rendered column shows the same words the glance gave.
+  const manager = await mint(page, "sales-manager");
+  const managerGlance = await staffPost(page, manager, "/api/v1/pos/margin-glance", {
+    branch_id: TRENTON_ID,
+    customer_id: "",
+    customer_type: customerType,
+    lines: [{ product_id: productId, qty_entered: 10, uom_entered: "PC" }],
+  });
+  expect(managerGlance.status).toBe(200);
+  const lines = managerGlance.body.lines as Array<{ margin_bps?: number }>;
   expect(Array.isArray(lines)).toBe(true);
   expect(lines).toHaveLength(1);
   expect(typeof lines[0].margin_bps).toBe("number");
-  // The rendered column shows the same words the glance answered.
   expect(marginPercent(lines[0].margin_bps as number)).toMatch(/%$/);
 });
 

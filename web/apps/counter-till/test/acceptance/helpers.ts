@@ -31,7 +31,8 @@ export const SEEDED = {
  * Two of the seed's stable ids, fixed by the seed's own id scheme: the
  * Trenton contractor whose bulk rule puts Granular A below the floor, and
  * that product. The below floor leg reads the glance for exactly this line
- * and holds the screen's column to its answer.
+ * through the manager's bearer (the policy word's named reader, row 651)
+ * and proves the floor fact; the clerk's screen states no column at all.
  */
 export const SEEDED_IDS = {
   quinteC03: "02969883-fda1-5281-b306-014ad3a2b655",
@@ -338,6 +339,10 @@ export interface Rung {
   order_no: string;
   invoice_no: string;
   total_cents: number;
+  /** The cash over-tender's change, present on a cash ring with a quick entry. */
+  change_due_cents?: number;
+  /** The deposit taken at ring, present on an unpaid-at-ring sale taken with one. */
+  deposit_cents?: number;
 }
 
 /**

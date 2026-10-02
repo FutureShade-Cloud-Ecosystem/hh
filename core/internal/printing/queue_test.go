@@ -15,7 +15,6 @@ type fakeQueueStore struct {
 	markFind bool
 	markUpd  bool
 	markErr  error
-	printed  int
 }
 
 func (f *fakeQueueStore) InsertJob(_ context.Context, j Job) (Job, error) {
@@ -25,7 +24,18 @@ func (f *fakeQueueStore) InsertJob(_ context.Context, j Job) (Job, error) {
 	return j, nil
 }
 
-func (f *fakeQueueStore) MarkJobPrinted(_ context.Context, _ string, _ time.Time) (bool, bool, error) {
+func (f *fakeQueueStore) MarkJobPrinted(_ context.Context, id string, _ time.Time) (bool, bool, error) {
+	// Faithful to the guarded UPDATE's shape: the flags stay the test's refusal
+	// dials, and a successful mark flips the row the count below reads, the way
+	// the real store's one UPDATE does.
+	for i := range f.jobs {
+		if f.jobs[i].ID == id {
+			if f.markFind && f.markUpd && f.markErr == nil {
+				f.jobs[i].Status = StatusPrinted
+			}
+			return f.markFind, f.markUpd, f.markErr
+		}
+	}
 	return f.markFind, f.markUpd, f.markErr
 }
 
@@ -33,8 +43,17 @@ func (f *fakeQueueStore) ListJobsForRef(_ context.Context, _, _ string) ([]Job, 
 	return f.jobs, nil
 }
 
-func (f *fakeQueueStore) CountPrintedForRef(_ context.Context, _, _ string) (int, error) {
-	return f.printed, nil
+// The count is the store's own: PRINTED rows for this document and ref, the
+// same question the real store answers, so a reprint pin against this fake
+// proves the count's keying and not the fake's arithmetic.
+func (f *fakeQueueStore) CountPrintedForRef(_ context.Context, docType, refID string) (int, error) {
+	n := 0
+	for _, j := range f.jobs {
+		if j.DocType == docType && j.RefID == refID && j.Status == StatusPrinted {
+			n += 1
+		}
+	}
+	return n, nil
 }
 
 const (
