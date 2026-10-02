@@ -585,7 +585,7 @@ export class CounterTillApp extends HHElement {
               </div>
             </header>
           `}
-      <main class=${this.#surface === "terminal" ? "on-till" : ""}>
+      <main class="${this.#surface === "terminal" ? "on-till" : ""}">
         ${this.#surface === "terminal"
           ? html`
               <h2 class="visually-hidden">Till</h2>

@@ -5528,8 +5528,7 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
 
           ${this.showSplit
             ? html`<hos-pos-split-tender
-                .totalCents=${this.total()}
-                .priced=${this.hasPricedLine()}
+                .totalCents=${this.hasPricedLine() ? this.total() : null}
                 .hasCustomer=${!!this.customer}
                 .customerName=${this.customer?.name ?? ''}
                 .busy=${this.ringBusy()}
