@@ -11,7 +11,10 @@
 //
 // The address lives here and nowhere else: it is never written to the
 // database and never rendered in a response, so the limit keeps no
-// record a tester's address could be read back from.
+// record a tester's address could be read back from. The visitor id the
+// flows GET issues beside it (visitor.go) holds the same posture: a
+// random value with no meaning, keyed on and forgotten with the window,
+// never written to the database, never logged, never rendered.
 package demo
 
 import (
@@ -25,6 +28,14 @@ import (
 const (
 	DefaultBurstAllowance = 5
 	DefaultBurstWindow    = 30 * time.Second
+	// DefaultAddressCeiling is the allowance of the second bucket every
+	// mint also spends, keyed by the address alone: it meters the first
+	// taps of a team behind one edge, whose testers share the address
+	// however their visitor ids differ, and it bounds cookie farming
+	// scripts at this allowance of mints per address per window, against
+	// the per key allowance of DefaultBurstAllowance that bounds one
+	// tester's own flow.
+	DefaultAddressCeiling = 40
 	// maxTrackedAddresses bounds the map: past it, addresses whose newest
 	// attempt sits outside the window give way first, then arbitrary ones,
 	// exactly the discipline the membership cache's store holds. Dropping

@@ -2,12 +2,13 @@
 
 // The demo module (W2, the plan's 3.2 piece 1): the tap-a-role sign-in,
 // carried from the older app's demo. GET /api/v1/demo/flows lists the
-// closed flow table; POST /api/v1/demo/session mints one demo session for
-// one named flow. Both routes are pre-auth by design (the contract's
-// x-role public, security none), a recorded demo-only exception to D38
-// (D49), and they register only in the demo build, at the marked block in
-// core/cmd/core/demo_on.go, on the same public leg the tenant config
-// uses.
+// closed flow table and issues the visitor cookie the mint keys on when
+// the request carries none (visitor.go); POST /api/v1/demo/session mints
+// one demo session for one named flow. Both routes are pre-auth by
+// design (the contract's x-role public, security none), a recorded
+// demo-only exception to D38 (D49), and they register only in the demo
+// build, at the marked block in core/cmd/core/demo_on.go, on the same
+// public leg the tenant config uses.
 //
 // The request carries a flow name and nothing else, so there is nowhere
 // to put an email or a role: the closed flow table names the account, the
@@ -17,10 +18,12 @@
 // the demo org or the mint refuses: the table's word about an account is
 // never enough on its own, the database's live grant decides.
 //
-// The order inside a mint is the plan's own: the per-address limit
-// refuses the burst first, then the audit row is written, and only then
-// is the token minted, so the bypass's trail always exists by the time
-// its credential does, and a burst leaves neither.
+// The order inside a mint is the plan's own: the limits refuse the burst
+// first (the mint's own key, the visitor id when the request carries a
+// well formed one and the address otherwise, then the address ceiling
+// that stands however the ids rotate), then the audit row is written,
+// and only then is the token minted, so the bypass's trail always exists
+// by the time its credential does, and a burst leaves neither.
 //
 // Everything after the token is the real path: the token is an ordinary
 // staff bearer the unchanged verifier classifies, and the org, the role
@@ -95,21 +98,27 @@ type MintDeps struct {
 	Staff StaffResolver
 	// Audit writes the mint's trail row; required.
 	Audit AuditRecorder
-	// Limit refuses a burst from one address; a nil limit selects the
-	// default allowance and window.
+	// Limit refuses a burst from the mint's own key: the visitor id when
+	// the request carries a well formed one, the address otherwise; a nil
+	// limit selects the default allowance and window.
 	Limit *AddressLimit
-	// Now pins the clock for the limit when a test drives one; nil means
+	// Ceiling caps the mints one address may spend however its visitor
+	// ids rotate; a nil ceiling selects the team scale default allowance
+	// (DefaultAddressCeiling) and the default window.
+	Ceiling *AddressLimit
+	// Now pins the clock for the limits when a test drives one; nil means
 	// the wall clock.
 	Now func() time.Time
 }
 
 // Mint is the demo module: the two routes the entry page calls.
 type Mint struct {
-	minter Minter
-	orgs   authz.OrgResolver
-	staff  StaffResolver
-	audit  AuditRecorder
-	limit  *AddressLimit
+	minter  Minter
+	orgs    authz.OrgResolver
+	staff   StaffResolver
+	audit   AuditRecorder
+	limit   *AddressLimit
+	ceiling *AddressLimit
 }
 
 // NewMint validates the collaborators and returns the module.
@@ -130,7 +139,11 @@ func NewMint(d MintDeps) (*Mint, error) {
 	if limit == nil {
 		limit = NewAddressLimit(0, 0, d.Now)
 	}
-	return &Mint{minter: d.Minter, orgs: d.Orgs, staff: d.Staff, audit: d.Audit, limit: limit}, nil
+	ceiling := d.Ceiling
+	if ceiling == nil {
+		ceiling = NewAddressLimit(DefaultAddressCeiling, 0, d.Now)
+	}
+	return &Mint{minter: d.Minter, orgs: d.Orgs, staff: d.Staff, audit: d.Audit, limit: limit, ceiling: ceiling}, nil
 }
 
 // flowRow is one DemoFlow of the contract: the flow name, the staff role
@@ -149,8 +162,12 @@ type flowList struct {
 }
 
 // Flows answers GET /api/v1/demo/flows: the closed table, in the table's
-// own stable order.
-func (m *Mint) Flows(w http.ResponseWriter, _ *http.Request) {
+// own stable order, with the visitor cookie issued when the request
+// carries none. The cookie is the mint's per browser key behind a host
+// edge; its value is answered once in the Set-Cookie line and nowhere
+// else.
+func (m *Mint) Flows(w http.ResponseWriter, r *http.Request) {
+	setVisitorCookie(w, r)
 	all := flows.All()
 	rows := make([]flowRow, 0, len(all))
 	for _, a := range all {
@@ -195,12 +212,13 @@ type sessionResponse struct {
 const maxSessionBodyBytes = 4096
 
 // Session answers POST /api/v1/demo/session: mint one session for the
-// account one named flow stands for. The mint refuses a burst from one
-// address, refuses unless the staff resolver answers the flow's role for
-// the account in the demo org, and writes the audit row before the token:
-// a flow whose account reaches nothing, or reaches the wrong role, mints
-// nothing and trails nothing, and the coarse audit middleware takes no
-// row for this route at all, so a refused mint trails nothing anywhere.
+// account one named flow stands for. The mint refuses a burst from its
+// own key and caps the address itself, refuses unless the staff resolver
+// answers the flow's role for the account in the demo org, and writes
+// the audit row before the token: a flow whose account reaches nothing,
+// or reaches the wrong role, mints nothing and trails nothing, and the
+// coarse audit middleware takes no row for this route at all, so a
+// refused mint trails nothing anywhere.
 func (m *Mint) Session(w http.ResponseWriter, r *http.Request) {
 	var in sessionRequest
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSessionBodyBytes))
@@ -225,7 +243,26 @@ func (m *Mint) Session(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !m.limit.Allow(clientAddress(r)) {
+	// The limit's key: the visitor id when the request carries a well
+	// formed one, the address exactly as clientAddress spells it
+	// otherwise. Behind a host edge the address is one bucket for every
+	// tester behind it, so the cookie is what separates a team; a forged
+	// or malformed value is taken for nothing and falls back to the
+	// address, and the ceiling below stands however the values rotate.
+	address := clientAddress(r)
+	key := "a:" + address
+	if id := visitorIDFrom(r); id != "" {
+		key = "v:" + id
+	}
+	if !m.limit.Allow(key) {
+		httpx.Error(w, http.StatusTooManyRequests, "demo: too many sign-in attempts from this address, let the window pass and tap the card again")
+		return
+	}
+	// The address ceiling: every mint also spends the address's own
+	// bucket, so a script juggling many ids stops at the team scale
+	// allowance however it rotates them. The refusal's words are the
+	// limit's own, unchanged.
+	if !m.ceiling.Allow(address) {
 		httpx.Error(w, http.StatusTooManyRequests, "demo: too many sign-in attempts from this address, let the window pass and tap the card again")
 		return
 	}
@@ -299,15 +336,17 @@ func (m *Mint) Session(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// clientAddress is the limit's key: the one address a mint came from.
-// Behind the box's own proxy (the demo image's Caddy on loopback) every
-// connection's peer is the proxy, so the peer address alone would be one
-// bucket for the whole box; there, the first address of the forwarded
-// chain names the tester instead. From any other peer the header is
-// untrusted and the connection's own address stands: a direct client can
-// write any header it likes. An address the net package cannot split is
-// taken as it stands rather than discarded, so a peer shape the split
-// does not expect still counts against something.
+// clientAddress is the one address a mint arrived from: the limit's
+// fallback key when the request carries no well formed visitor id, and
+// the address ceiling's key always. Behind the box's own proxy (the demo
+// image's Caddy on loopback) every connection's peer is the proxy, so
+// the peer address alone would be one bucket for the whole box; there,
+// the first address of the forwarded chain names the tester instead.
+// From any other peer the header is untrusted and the connection's own
+// address stands: a direct client can write any header it likes. An
+// address the net package cannot split is taken as it stands rather than
+// discarded, so a peer shape the split does not expect still counts
+// against something.
 func clientAddress(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

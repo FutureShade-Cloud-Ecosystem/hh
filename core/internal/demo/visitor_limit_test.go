@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The visitor key legs (the comprehensive review's P3-8): behind a host
@@ -131,6 +132,11 @@ func TestMintWithoutCookiesStillRefusesTheBurst(t *testing.T) {
 func TestMintStopsAtTheAddressCeiling(t *testing.T) {
 	minter := &fakeMinter{token: "t"}
 	m, _, _ := newTestMint(t, minter, nil)
+	// The wiring's ceiling must carry exactly the number the farm walk
+	// below proves, the package's own team scale constant.
+	if m.ceiling.allow != DefaultAddressCeiling {
+		t.Fatalf("the wiring's ceiling allowance is %d, want the package's %d", m.ceiling.allow, DefaultAddressCeiling)
+	}
 
 	mintAs := func(id string) *httptest.ResponseRecorder {
 		return postSessionFrom(t, m, `{"flow":"sales"}`, "192.0.2.1:1234",
@@ -306,5 +312,44 @@ func TestMintFallsBackToTheAddressKeyOnAMalformedCookie(t *testing.T) {
 	fresh.seed(t, m)
 	if rsp := fresh.mint(t, m, `{"flow":"sales"}`); rsp.Code != http.StatusOK {
 		t.Fatalf("a well formed id answered %d, want 200 from its own bucket (body: %s)", rsp.Code, rsp.Body.String())
+	}
+}
+
+// The ceiling is the same sliding window the per key limit is, not a
+// standing ban: with the clock driven past the window the address is
+// admitted again. The ceiling here is overridden to a small allowance so
+// the leg can walk its whole window without a long loop; the default
+// wiring's number is the farm leg's pin.
+func TestCeilingReopensAfterTheWindow(t *testing.T) {
+	clock := &testClock{at: time.Unix(0, 0).UTC()}
+	minter := &fakeMinter{token: "t"}
+	m, err := NewMint(MintDeps{
+		Minter: minter,
+		Orgs:   &fakeOrgs{id: "org-demo-1", ok: true},
+		Staff:  &fakeStaff{auth: salesAuthority(), ok: true},
+		Audit:  &fakeAudit{},
+		Now:    clock.Now,
+	})
+	if err != nil {
+		t.Fatalf("NewMint: %v", err)
+	}
+	m.limit = NewAddressLimit(1000, DefaultBurstWindow, clock.Now)
+	m.ceiling = NewAddressLimit(2, DefaultBurstWindow, clock.Now)
+
+	mintAs := func(id string) *httptest.ResponseRecorder {
+		return postSessionFrom(t, m, `{"flow":"sales"}`, "192.0.2.1:1234",
+			map[string]string{"Cookie": "demo_visitor=" + id})
+	}
+	for i := 0; i < 2; i++ {
+		if rsp := mintAs(fmt.Sprintf("%032x", i)); rsp.Code != http.StatusOK {
+			t.Fatalf("admission %d: status %d, want 200 inside the small ceiling", i+1, rsp.Code)
+		}
+	}
+	if rsp := mintAs(fmt.Sprintf("%032x", 2)); rsp.Code != http.StatusTooManyRequests {
+		t.Fatalf("a third distinct id answered %d, want the small ceiling's 429 (body: %s)", rsp.Code, rsp.Body.String())
+	}
+	clock.advance(DefaultBurstWindow + time.Second)
+	if rsp := mintAs(fmt.Sprintf("%032x", 3)); rsp.Code != http.StatusOK {
+		t.Fatalf("a fresh id after the window answered %d, want 200: the ceiling is a window, not a ban (body: %s)", rsp.Code, rsp.Body.String())
 	}
 }
