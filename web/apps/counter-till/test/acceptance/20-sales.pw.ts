@@ -84,9 +84,9 @@ test("a sale: lines priced by the engine, no price field, and the margin column 
   await expect(holland.locator(".lprice")).toHaveText(cad(595));
   // The box's policy word is MANAGER_UP and the clerk is frontline (tier 3),
   // so the till refuses the whole margin surface (P3-10: the surface follows
-  // the policy word): no margin cells, though the glance itself still answers
-  // the clerk server-side (the world leg holds that half; the surface's
-  // refusal is this story's).
+  // the policy word): no margin cells, and the glance is refused server-side
+  // too (the world leg holds that half; the surface's refusal is this
+  // story's).
   await expect(page.getByTestId("pos-line-margin")).toHaveCount(0);
   // The line carries a quantity input and no price field anywhere: the price
   // is text, and the one textbox of the line is its quantity.
@@ -112,15 +112,18 @@ test("a contractor's pavers: the account price rings, and a below floor line rin
   await shot(page, "sales-04-contractor-pavers", testInfo);
 
   // The floor is the quote flow's: a line priced below the floor margin rings
-  // anyway. The glance's own answer proves the line is genuinely below the
-  // bulk category's floor of 20 percent; the refused surface states no margin
-  // for it (P3-10), and rings it regardless.
+  // anyway. The glance refuses the clerk (the policy word, honoured
+  // server-side since the hardening train, row 651), so the manager's read is
+  // the proof the line is genuinely below the bulk category's floor of 20
+  // percent; the refused surface states no margin for it (P3-10), and rings
+  // it regardless.
   await pickCustomer(page, "Quinte", "Quinte Paving & Design (demo)");
   await searchAndAdd(page, "DEMO-AGG-GA", "Granular A (demo)");
   const granular = lineRow(page, "Granular A (demo)");
   await expect(granular.locator(".lprice")).toHaveText(cad(2925));
   const bearer = await mint(page, "sales");
-  const glanced = await staffPost(page, bearer, "/api/v1/pos/margin-glance", {
+  const manager = await mint(page, "sales-manager");
+  const glanced = await staffPost(page, manager, "/api/v1/pos/margin-glance", {
     branch_id: TRENTON_ID,
     customer_id: SEEDED_IDS.quinteC03,
     customer_type: "CONTRACTOR",
@@ -168,6 +171,24 @@ test("tender and receipt: cash with change due, held against the core's own read
 }, testInfo) => {
   await signIn(page, "Sales");
   await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum Edging 8ft (demo)");
+  // The pre-ring payment step, held against the core's own prices: the card's
+  // shape is exactly the Subtotal row and the row naming the ring (row 661),
+  // and the core's tax and total figures stand nowhere on it once this sale's
+  // own answer is read below. This is the proof behind the testers' page's
+  // sentence that until a sale is rung the till shows the lines' prices and
+  // their subtotal.
+  await openStep(page, "payment");
+  const preRingCard = page.getByTestId("pos-totals-card");
+  await expect(preRingCard.locator(".trow")).toHaveCount(2);
+  await expect(preRingCard).toContainText("Subtotal");
+  await expect(preRingCard).toContainText("added at the ring");
+  await expect(preRingCard).not.toContainText("(est.");
+  // The cash tile words the ring instead of computing a change figure: the
+  // proof behind the testers' page's sentence that before the ring the till
+  // states no change figure, even with an amount typed.
+  await page.getByLabel(/Cash tendered in dollars/).fill("60.00");
+  await expect(page.getByTestId("cash-change-preview")).toContainText("the ring's own answer");
+  await expect(page.getByTestId("cash-change-preview")).not.toContainText("CA$");
   const rung = await ringCash(page, "60.00");
   const sold = page.getByTestId("sold-panel");
   const bearer = await mint(page, "sales");
@@ -181,6 +202,11 @@ test("tender and receipt: cash with change due, held against the core's own read
   await expect(sold.getByTestId("sold-change-due")).toContainText(dollars(6000 - total));
   // The confirmation shows the total; the subtotal and the tax are the
   // printed receipt's own lines, the core's document, read against the sale.
+  // The document is the quality receipt the pass asks for: the change due row
+  // carries the ring's own figure, the fulfilment reads as the counter's
+  // plain words and never as the wire's constant, and the letterhead is the
+  // demo dealer's invented words end to end, never the first dealer's real
+  // trading name.
   const printing = page.context().waitForEvent("page");
   await sold.getByTestId("sold-print").click();
   const printed = await printing;
@@ -188,9 +214,65 @@ test("tender and receipt: cash with change due, held against the core's own read
   expect(printedText).toContain(`Subtotal\t${dollars(sale.subtotal_cents as number)}`);
   expect(printedText).toContain(`\t${dollars(sale.tax_cents as number)}`);
   expect(printedText).toContain(`Total\t${dollars(total)}`);
+  expect(typeof rung.change_due_cents).toBe("number");
+  expect(rung.change_due_cents as number).toBe(6000 - total);
+  expect(printedText).toContain(`Change due\t${dollars(rung.change_due_cents as number)}`);
+  expect(printedText).toContain("Collected at the counter");
+  expect(printedText).not.toContain("COLLECT_NOW");
+  // The customer row is required on every sale: the walk-in sale prints the
+  // counter's own word beside the walk-in account.
+  expect(printedText).toContain("Customer: Walk-in");
+  expect(printedText).toContain("Hardscape House (demo)");
+  expect(printedText).toContain("12 Yard Gate Road");
+  // The letterhead's honesty pin: the first dealer's real trading name never
+  // prints. The name rides encoded (the name sweep's own discipline), so the
+  // assertion ships without the name anywhere in the tree.
+  const realDealerName = Buffer.from("RGliYml0cw==", "base64").toString("utf8");
+  expect(printedText.toLowerCase()).not.toContain(realDealerName.toLowerCase());
   await printed.close();
+
+  // The full-page document: the same receipt as a sheet (the route's
+  // format=page), served from the same committed sale, so every figure above
+  // is on it too, on its own print CSS, and this second fetch is marked the
+  // reprint it factually is.
+  const pagePrinting = page.context().waitForEvent("page");
+  await sold.getByTestId("sold-print-page").click();
+  const printedPage = await pagePrinting;
+  const pageText = await printedPage.locator("body").innerText();
+  expect(pageText).toContain(`Subtotal\t${dollars(sale.subtotal_cents as number)}`);
+  expect(pageText).toContain(`Total\t${dollars(total)}`);
+  expect(pageText).toContain(`Change due\t${dollars(rung.change_due_cents as number)}`);
+  expect(pageText).toContain("Collected at the counter");
+  expect(pageText).toContain("REPRINT #1");
+  await printedPage.close();
+
+  // The reprint path: the More menu's any-past-sale receipt, fetched by the
+  // order id the past sale carries, arrives MARKED with its ordinal (two
+  // prints of this sale came before it) and carries the sale's figures again.
+  await page.locator("details.more > summary").filter({ hasText: /^\s*More\s*$/ }).click();
+  await page.getByLabel("Open order by id or #SO number").fill(rung.order_id);
+  const reprintPrinting = page.context().waitForEvent("page");
+  await page.locator("details.more").getByRole("button", { name: "Print receipt" }).click();
+  const reprinted = await reprintPrinting;
+  const reprintedText = await reprinted.locator("body").innerText();
+  expect(reprintedText).toContain("REPRINT #2");
+  expect(reprintedText).toContain(`Total\t${dollars(total)}`);
+  expect(reprintedText).toContain(`Change due\t${dollars(rung.change_due_cents as number)}`);
+  await reprinted.close();
   // A cash confirmation carries no card notice.
   await expect(sold.getByTestId("sold-simulated-notice")).toHaveCount(0);
+  // The ring's advance closed the payment step; reopened, the pre-ring card
+  // is the same template, so the core's own figures judge it where it lives:
+  // the browser's one assembly (the subtotal) equals the core's, and the
+  // core's tax and total for THIS sale stand nowhere on the card (the
+  // positive pins before the ring prove this locator sees what it judges).
+  await openStep(page, "payment");
+  await expect(preRingCard).toContainText(cad(sale.subtotal_cents as number));
+  await expect(preRingCard).not.toContainText(cad(sale.tax_cents as number));
+  await expect(preRingCard).not.toContainText(cad(total));
+  // The confirmation's view is restored for this story's shot.
+  await openStep(page, "summary");
+  await expect(sold).toContainText("Paid");
   await shot(page, "sales-06-receipt-cash", testInfo);
 });
 

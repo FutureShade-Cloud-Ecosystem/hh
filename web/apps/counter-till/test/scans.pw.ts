@@ -35,12 +35,14 @@ const MONEY_HELPER = "money.ts";
 // the decimal string and computes nothing, so it owes the scan zero hits, and
 // if it ever hits, that is a finding, not an exclusion.
 // Beside it the seam file, ports.ts: the port rerouted the reference's
-// thirteen client-side money computations there (CLOSURE.md lists each), and
-// the wiring item answers them in that one file as display assembly over
-// figures the core stated, each pinned by ports-money.test.mjs. The ported
-// closure and the app's own views keep owing the scan zero hits: the
-// exclusion names the boundary where the reroute lands, not a licence, and a
-// third file that divides figures by hand must still face the scan.
+// client-side money computations there (CLOSURE.md lists each; of the
+// reference's thirteen assemblies, the ticket tax and the ticket total were
+// removed outright by row 661 and the seam carries neither), and
+// the wiring item answers the rerouted ones in that one file as display
+// assembly over figures the core stated, each pinned by ports-money.test.mjs.
+// The ported closure and the app's own views keep owing the scan zero hits:
+// the exclusion names the boundary where the reroute lands, not a licence,
+// and a third file that divides figures by hand must still face the scan.
 const NAMED_HELPERS = [join(SRC, "ported", "_money-format.ts"), join(SRC, "ported", "ports.ts")];
 
 function walkSources(dir: string, out: string[] = []): string[] {
@@ -81,7 +83,7 @@ test("the money scan prints nothing outside the named display and parse helpers"
     offenders.push(`${file}: ${hits.join(" | ")}`);
   }
   // The exclusion is exactly the two named files and nothing else: the one
-  // display helper, and the one seam file that answers the thirteen rerouted
+  // display helper, and the one seam file that answers the rerouted
   // computations. A third file that divides figures by hand must face the
   // scan, not join the list, and the app's own money helper stays in the
   // walked set and owes zero hits.

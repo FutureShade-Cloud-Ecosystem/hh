@@ -34,3 +34,23 @@ test('DIB-410: 404 and 401 each say what actually happened; anything else names 
 // printed, and the pop-up-blocked refusal) drove printReceiptInto, which is a host seam now
 // (ports.ts, named in CLOSURE.md); they stayed with the reference until the wiring item
 // implements the seam, and its implementations bring the cases back against it.
+
+// ── the format parameter (row 666 item 2) ───────────────────────────────────
+// The route gained one optional query value: the paper. The roll is the default and builds the
+// same URL the buttons have always built, the page names the full-page document, and the id is
+// encoded on both.
+test('the receipt route builds the roll URL by default, and format=page names the full-page paper', () => {
+  const id = '9f1c0a2e-0000-4000-9000-000000000001';
+  // The default and the explicit roll are the same bytes the route has always served.
+  assert.equal(receiptPath(id), '/api/v1/pos/sales/9f1c0a2e-0000-4000-9000-000000000001/receipt');
+  assert.equal(
+    receiptPath(id, 'roll'),
+    '/api/v1/pos/sales/9f1c0a2e-0000-4000-9000-000000000001/receipt',
+  );
+  assert.equal(
+    receiptPath(id, 'page'),
+    '/api/v1/pos/sales/9f1c0a2e-0000-4000-9000-000000000001/receipt?format=page',
+  );
+  // An operator-typed value must never break out of the path segment, whichever paper is asked.
+  assert.equal(receiptPath('a/b?c=1', 'page'), '/api/v1/pos/sales/a%2Fb%3Fc%3D1/receipt?format=page');
+});

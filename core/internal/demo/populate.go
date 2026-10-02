@@ -538,10 +538,12 @@ func scrubPlantedUsers(ctx context.Context, tx pgx.Tx, now time.Time) (renamed, 
 // branches' names, which the migrations plant with the first dealer's real
 // trading name joined to the city by an em dash (migrations 0003 and 0014)
 // and which the till's screens render verbatim (the drawer strip, the
-// parked list header), and the system_settings org_name row (0014), which
-// the printed receipt reads verbatim as its letterhead (printing's
-// ReadBranchHeader). Each write is guarded on the value it would write, so
-// a re-run writes nothing, and the count is only what this run changed.
+// parked list header), those branches' address line1, which 0003 plants as
+// a note to the first dealer and the printed receipt's letterhead serves
+// verbatim (printing's ReadBranchHeader), and the system_settings org_name
+// row (0014), which the same letterhead reads verbatim. Each write is
+// guarded on the value it would write, so a re-run writes nothing, and the
+// count is only what this run changed.
 func renameDemoDealer(ctx context.Context, tx pgx.Tx) (replaced int, err error) {
 	for _, branch := range []struct{ id, name string }{
 		{trentonBranchID, "Hardscape House (demo), Trenton"},
@@ -551,6 +553,26 @@ func renameDemoDealer(ctx context.Context, tx pgx.Tx) (replaced int, err error) 
 			`UPDATE locations SET name = $2, updated_at = now()
 			  WHERE id = $1::uuid AND name IS DISTINCT FROM $2`,
 			branch.id, branch.name)
+		if err != nil {
+			return 0, fmt.Errorf("demo-populate: dealer name: %w", err)
+		}
+		replaced += int(tag.RowsAffected())
+	}
+	// The branch address lines the receipt's letterhead prints (printing's
+	// ReadBranchHeader serves locations.address verbatim): migration 0003
+	// planted each line1 as a note to the first dealer, with the real trading
+	// name in it, and the counter receipt is the document that prints that
+	// address to a customer, so the demo database converges the two lines onto
+	// invented ones, the same guarded, demo-only discipline the display names
+	// above follow. Real deployments keep their own addresses.
+	for _, branch := range []struct{ id, line1 string }{
+		{trentonBranchID, "12 Yard Gate Road"},
+		{kingstonBranchID, "9 Yard Gate Road"},
+	} {
+		tag, err := tx.Exec(ctx,
+			`UPDATE locations SET address = jsonb_set(address, '{line1}', to_jsonb($2::text)), updated_at = now()
+			  WHERE id = $1::uuid AND address->>'line1' IS DISTINCT FROM $2`,
+			branch.id, branch.line1)
 		if err != nil {
 			return 0, fmt.Errorf("demo-populate: dealer name: %w", err)
 		}
