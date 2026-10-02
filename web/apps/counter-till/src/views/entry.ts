@@ -10,8 +10,9 @@
 // plainly, on the same stage.
 //
 // The cards' accessible names stay the role labels alone: the mark is
-// aria-hidden (a drawing never names a control) and the one-liner is hung off
-// aria-labelledby on the role's own label, so the demo adapter's contract with
+// aria-hidden (a drawing never names a control) and the one-liner sits inside
+// the card without joining the name, which rides aria-label (the gate's own
+// rule admits no bound id here), so the demo adapter's contract with
 // app-root and every name-based selector keep reading exactly "Sales" and
 // "Sales manager".
 import { css, html, nothing, type TemplateResult } from "lit";
