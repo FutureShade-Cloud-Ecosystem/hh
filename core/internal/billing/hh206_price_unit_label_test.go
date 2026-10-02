@@ -1,6 +1,9 @@
 package billing
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestUnitPriceLabel (HH-206): the printed unit price names its unit exactly when the line was priced
 // in a different unit from the one it was sold in. Unit level on purpose: the integration test that
@@ -22,5 +25,30 @@ func TestUnitPriceLabel(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("%s: label = %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestRenderInvoiceHTML_PrintsThePriceUnitAndEscapesIt (HH-206): the rendered invoice uses the label
+// rule at the unit price cell, and the label goes through the HTML escape. A line priced per SF and
+// sold in PC must not read as a per-piece price; a price unit carrying markup must not inject it.
+func TestRenderInvoiceHTML_PrintsThePriceUnitAndEscapesIt(t *testing.T) {
+	d := InvoiceDetail{
+		InvoiceNo: "INV-206",
+		Customer:  CustomerBlock{Name: "Quinte", AccountNo: "CUST-1"},
+		Lines: []DetailLine{
+			{LineNo: 1, SKU: "A", Description: "Slab", QtyEntered: "25", UOMEntered: "PC", PriceUOM: "SF", UnitPriceCents: 1476, LineTotalCents: 36900},
+			{LineNo: 2, SKU: "B", Description: "Stone", QtyEntered: "2", UOMEntered: "T", PriceUOM: "T", UnitPriceCents: 1800, LineTotalCents: 3600},
+			{LineNo: 3, SKU: "C", Description: "Odd", QtyEntered: "1", UOMEntered: "EA", PriceUOM: "<b>", UnitPriceCents: 500, LineTotalCents: 500},
+		},
+	}
+	html := renderInvoiceHTML(d, "x")
+	if !strings.Contains(html, "CA$14.76 / SF") {
+		t.Fatalf("the per-SF unit price on a line sold in PC must print its unit; got:\n%s", html)
+	}
+	if strings.Contains(html, "CA$18.00 /") {
+		t.Fatal("a line priced and sold in the same unit must print its price without a unit suffix")
+	}
+	if !strings.Contains(html, "CA$5.00 / &lt;b&gt;") || strings.Contains(html, "<b>") {
+		t.Fatal("the price unit must be HTML escaped, never injected")
 	}
 }
