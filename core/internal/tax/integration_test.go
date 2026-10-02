@@ -506,3 +506,73 @@ func TestIntegration_Config_DormantAvalaraPostalRefusedAndPersistFalse(t *testin
 		t.Fatalf("tax_config drifted after refused writes: avalara=%v postal=%v, want both false", got.AvalaraEnabled, got.PostalRoutingEnabled)
 	}
 }
+
+// TestIntegration_CreateRateIntervalGuard drives the interval guard through the REAL repository's SQL
+// (the round 3 review's P2 and P3 1: the NULL scan faulted the admin edge on every no-overlap shape
+// and no committed leg had driven the SQL at all). Four shapes on the seeded world, all
+// fixture-scoped (the planted rows go in the leg's cleanup, keyed by their notes marker):
+//
+//   - a backdated open-ended ungated row beside a planted later raised standard era: refused, naming
+//     the raise;
+//   - the same row closed the day before the raise: accepted (it never governs beside it);
+//   - an ungated row before the seed's standard begins (a no-overlap shape): accepted, no fault (the
+//     NULL scan's own case);
+//   - a manual row planted HIGH first, then an ungated row above the seeded standard: accepted, which
+//     bites the SQL's reason scoping (with the reason predicate dropped, the manual row's rate would
+//     refuse it).
+func TestIntegration_CreateRateIntervalGuard(t *testing.T) {
+	pool := intPool(t)
+	svc := intSvc(t, pool)
+	ctx := context.Background()
+
+	const marker = "interval guard leg marker"
+	cleanup := func() {
+		if _, err := pool.Exec(ctx, `DELETE FROM tax_rates WHERE notes = $1`, marker); err != nil {
+			t.Errorf("clean the leg's marked rows: %v", err)
+		}
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	// A raised standard era thirty days ahead of the fixture clock (2026-07-07).
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO tax_rates (jurisdiction, reason_code, rate_bps, effective_from, notes)
+		VALUES ('ON', 'STD_ON_HST_13', 1500, DATE '2026-08-06', $1)`, marker); err != nil {
+		t.Fatalf("plant the raised era: %v", err)
+	}
+
+	// The backdated open-ended row governs beside the 1500 era: refused, naming it.
+	_, err := svc.CreateRate(ctx, Rate{ReasonCode: "FNT_PRODUCT", RateBps: 1300, EffectiveFrom: "2026-06-07", Notes: marker})
+	if err == nil {
+		t.Fatal("the backdated open-ended ungated row must be refused against the 1500 era it governs beside")
+	}
+	var bad httpx.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("the refusal must be the 400-shaped BadRequestError, got %T: %v", err, err)
+	}
+	if !strings.Contains(bad.Msg, "1500") {
+		t.Fatalf("the refusal must name the 1500 era, got %q", bad.Msg)
+	}
+
+	// The same row closed the day before the raise never governs beside it: accepted.
+	if _, err := svc.CreateRate(ctx, Rate{ReasonCode: "FNT_PRODUCT", RateBps: 1300, EffectiveFrom: "2026-06-07", EffectiveTo: "2026-08-05", Notes: marker}); err != nil {
+		t.Fatalf("the row closed before the raise must be accepted: %v", err)
+	}
+
+	// A no-overlap shape: an ungated row entirely before the seeded standard begins. The guard must
+	// refuse NOTHING here (found=false, the NULL scan's own case), no fault.
+	if _, err := svc.CreateRate(ctx, Rate{ReasonCode: "FNT_PRODUCT", RateBps: 0, EffectiveFrom: "1999-01-01", EffectiveTo: "1999-12-31", Notes: marker}); err != nil {
+		t.Fatalf("a row overlapping no standard era must pass the guard cleanly (the round 3 NULL scan fault): %v", err)
+	}
+
+	// The reason scoping: a manual row planted high (the manual freedom), then an ungated row ABOVE
+	// the seeded standard and closed before the raise (so no standard era it governs beside reads
+	// above it). Accepted: the guard measures standard rows only, never the manual row's rate
+	// (dropping the SQL's reason predicate would refuse this against the manual 2000).
+	if _, err := svc.CreateRate(ctx, Rate{ReasonCode: "MANUAL_TAX_REVIEW", RateBps: 2000, EffectiveFrom: "2026-07-07", Notes: marker}); err != nil {
+		t.Fatalf("the manual row's freedom must be accepted: %v", err)
+	}
+	if _, err := svc.CreateRate(ctx, Rate{ReasonCode: "FNT_PRODUCT", RateBps: 1400, EffectiveFrom: "2026-07-07", EffectiveTo: "2026-08-05", Notes: marker}); err != nil {
+		t.Fatalf("an ungated row above every standard era it governs beside must be accepted whatever other reasons' rows read: %v", err)
+	}
+}

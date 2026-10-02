@@ -33,6 +33,8 @@ package pos
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -43,7 +45,10 @@ import (
 // servedTaxAssessor mirrors the cmd/core posTaxAdapter over *tax.Service (the
 // M5 engine), which a test cannot import: the pos-declared input mapped onto
 // tax.SaleAssessment with evidence pinned false, so the served read assesses
-// through the real engine exactly as the ring does.
+// through the real engine exactly as the ring does, and the engine's
+// reason-universe refusal translates into the pos sentinel exactly as the
+// adapter translates it (the mirror must stay the adapter's twin, the ring's
+// 400 is the adapter's work).
 type servedTaxAssessor struct{ svc *tax.Service }
 
 func (a servedTaxAssessor) AssessSale(ctx context.Context, in TaxQuoteInput) (QuoteResult, error) {
@@ -54,6 +59,10 @@ func (a servedTaxAssessor) AssessSale(ctx context.Context, in TaxQuoteInput) (Qu
 		EvidenceAttached: false,
 	})
 	if err != nil {
+		var unk tax.UnknownReasonError
+		if errors.As(err, &unk) {
+			return QuoteResult{}, fmt.Errorf("%w: %s", ErrUnknownTaxReason, unk.Error())
+		}
 		return QuoteResult{}, err
 	}
 	return QuoteResult{TaxCents: q.TaxCents, RateBps: q.RateBps}, nil

@@ -17,6 +17,16 @@ const (
 	ReasonFNGST5     = "FNGST_5"                 // First Nations GST 5%
 	ReasonManual     = "MANUAL_TAX_REVIEW"       // routed to a person
 
+	// The remaining six codes of the eleven the snapshot CHECK lawfully carries: named nowhere else
+	// in the engine (no seeded row, no gate entry), but a lawfully bindable snapshot reason, so the
+	// universe below must list them.
+	ReasonFedGoodsOnRes  = "FED_S87_GOODS_ON_RES"
+	ReasonFedSvcReserve  = "FED_S87_SERVICE_RESERVE"
+	ReasonFedBandMgmt    = "FED_BAND_MANAGEMENT"
+	ReasonFNTProduct     = "FNT_PRODUCT"
+	ReasonTreatyReview   = "TREATY_OR_SELF_GOV_REVIEW"
+	ReasonReliefDeclined = "RELIEF_DECLINED_EVIDENCE"
+
 	jurisdictionON = "ON"
 
 	stdRateBps      = 1300 // 13% default fallback (bit-identical to pos.flatHSTRateBps)
@@ -41,11 +51,79 @@ const (
 // behavior) and any point-of-sale credit is withheld; the reason code is retained for the audit trail. EVERY
 // reason that resolves below the 13% standard must appear here, an ungated relief reason would let a caller
 // claim the reduced rate with no proof (S3 W6 B3). ReasonManual routes to a person and ReasonStdON13 is the
-// standard rate itself, so neither is a self-serve relief and neither is gated.
+// standard rate itself, so neither is a self-serve relief and neither is gated. This invariant is ENFORCED,
+// not just stated: an ungated reason resolving below the standard is refused at both edges (CreateRate and
+// assessSale), and a reason outside LegalReasonCodes is refused at both edges too.
 var evidenceGatedReasons = map[string]bool{
 	ReasonFedVendDel: true, // federal 0% on-reserve vendor delivery, POD/waybill
 	ReasonONFNPos8:   true, // Ontario FN point-of-sale 8% credit (collect 5%), status-card evidence
 	ReasonFNGST5:     true, // First Nations GST 5%, status-card evidence
+}
+
+// LegalReasonCodes is the lawful reason universe for every tax decision and every tax_rates row: the
+// exported mirror of the frozen CHECK on tax_decision_snapshot.tax_reason_code (migration 0029). The CHECK
+// is the authority; this set is its copy in code, and the migration is never edited to meet the code. Both
+// edges enforce the mirror: CreateRate refuses to plant a row outside the universe, and assessSale refuses
+// to bind a reason outside it, so no sale can die at the snapshot CHECK as a bare rollback and no rate row
+// can exist that the engine cannot lawfully carry.
+var LegalReasonCodes = map[string]bool{
+	ReasonStdON13:        true,
+	ReasonONFNPos8:       true,
+	ReasonFedGoodsOnRes:  true,
+	ReasonFedVendDel:     true,
+	ReasonFedSvcReserve:  true,
+	ReasonFedBandMgmt:    true,
+	ReasonFNGST5:         true,
+	ReasonFNTProduct:     true,
+	ReasonTreatyReview:   true,
+	ReasonManual:         true,
+	ReasonReliefDeclined: true,
+}
+
+// MisconfiguredRateError is the typed refusal for the ungated-below-standard shape: a reason that resolves
+// below the standard IN EFFECT for the date while being neither evidence gated nor the manual exception.
+// The comparison is against the standard row the dealer actually configured (the table exists to replace
+// the hard-coded default), never the constant; the error names the reason, the resolved rate and the
+// standard it fell short of, so the row to fix is named in the engine's refusal and in the admin's 400
+// alike (CreateRate refuses to plant such a row with these same words).
+type MisconfiguredRateError struct {
+	ReasonCode string
+	RateBps    int
+	StdBps     int
+}
+
+func (e MisconfiguredRateError) Error() string {
+	// "a standard of" names the threshold each edge measured with: the bind edge the standard resolved
+	// for the date, the admin edge the highest standard row overlapping the row's dates (which a
+	// superseded era can raise above what governs today; the refusal is then the safe direction and
+	// stays until the row is fixed, recorded in the pull request body).
+	return fmt.Sprintf("tax reason %s resolves %d bps, below a standard of %d bps, without an evidence gate and without the manual exception: the rate row is misconfigured against the gate map", boundReason(e.ReasonCode), e.RateBps, e.StdBps)
+}
+
+// UnknownReasonError is the typed refusal for a reason outside the lawful universe: the composition's
+// adapters key on THIS type (never on the 400 shape), so a later 400-shaped engine refusal can never
+// reach the counter worded as an unknown tax reason. The admin edge keeps its own 400-shaped refusal for
+// the tax handler's mapping; the echo of the offending reason is bounded, because the caller's string is
+// caller data and the refusal travels to a counter.
+type UnknownReasonError struct {
+	ReasonCode string
+}
+
+func (e UnknownReasonError) Error() string {
+	return fmt.Sprintf("unknown tax reason %s: not one of the lawful reason codes the counter can ring", boundReason(e.ReasonCode))
+}
+
+// reasonEchoBound bounds how much of a caller's reason code a refusal echoes back: the code is caller
+// data of unbounded length and the refusal's words travel to a counter.
+const reasonEchoBound = 48
+
+// boundReason echoes a reason code bounded, marking the cut.
+func boundReason(reason string) string {
+	r := []rune(reason)
+	if len(r) <= reasonEchoBound {
+		return fmt.Sprintf("%q", reason)
+	}
+	return fmt.Sprintf("%q...", string(r[:reasonEchoBound]))
 }
 
 // errNoDB marks a repository call made with no pool (scaffold/offline).
@@ -192,6 +270,10 @@ type ReliefEligibility struct {
 // -- store seam (the service depends on this; *Repository satisfies it; unit tests inject a fake) ----------
 type taxStore interface {
 	ResolveRate(ctx context.Context, jurisdiction, reasonCode, asOf string) (rateBps int, found bool, err error)
+	// MaxRateInRange answers the highest rate whose effectiveness overlaps [from, to] (to empty means
+	// open-ended): the admin edge's ungated-below-standard guard compares a new row against every
+	// standard it will govern beside over its whole life, not only the one on its first day.
+	MaxRateInRange(ctx context.Context, jurisdiction, reasonCode, from, to string) (rateBps int, found bool, err error)
 	ListRates(ctx context.Context) ([]Rate, error)
 	InsertRate(ctx context.Context, r Rate) (Rate, error)
 

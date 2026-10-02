@@ -529,6 +529,11 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusConflict, nt.Error())
 	case errors.As(err, &ce):
 		httpx.Error(w, ce.status, ce.msg)
+	case errors.Is(err, ErrUnknownTaxReason):
+		// The ring named a tax reason the engine refuses to bind: the cashier's client-correctable 400,
+		// the engine's words (the offending reason) riding behind the sentinel's, never the bare 500 the
+		// raw sentinel would fall to. Sits beside the sibling refusal arms out of the same adapter.
+		httpx.Error(w, http.StatusBadRequest, err.Error())
 	default:
 		h.log.Error("pos: internal error", "method", r.Method, "path", r.URL.Path, "err", err)
 		httpx.Error(w, http.StatusInternalServerError, "internal error")
