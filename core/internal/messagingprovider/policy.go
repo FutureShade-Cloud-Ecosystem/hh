@@ -69,28 +69,94 @@ const DefaultRatePerMinute = 30
 // A value that is out of range, inverted or degenerate falls back to the house rule rather than being
 // clamped or accepted, see NewQuietHours. There is no value of any of these that turns the policy
 // OFF, deliberately: "send at any hour" is not a configuration this program offers.
+//
+// ZERO IS NOT A PAUSE. SMS_RATE_PER_MIN=0 is refused and the default of 30 applies, exactly like a
+// negative or unparseable value; it does not hold sends. Every such fallback is recorded (Fallbacks)
+// and the boot path logs it, so an operator who typed 0 during a carrier incident is told the cap
+// is still 30 instead of finding out from the carrier.
 func PolicyFromEnv() *SendPolicy {
 	loc, zerr := LoadZone(env("SMS_WINDOW_ZONE", ""))
+	r := &policyRead{raw: map[string]string{}}
+	start, end := intEnv("SMS_WINDOW_START_MIN", DefaultQuietStartMin, 0, r), intEnv("SMS_WINDOW_END_MIN", DefaultQuietEndMin, 0, r)
+	win := NewQuietHours(start, end, loc)
+	// NewQuietHours replaces an out of range or degenerate pair as a whole, which can discard a value
+	// that parsed fine; record each variable the operator set whose value did not survive.
+	if win.StartMin != start || win.EndMin != end {
+		r.recordWindowPair()
+	}
 	p := NewSendPolicy().
-		WithWindow(NewQuietHours(intEnv("SMS_WINDOW_START_MIN", DefaultQuietStartMin),
-			intEnv("SMS_WINDOW_END_MIN", DefaultQuietEndMin), loc)).
-		WithRate(intEnv("SMS_RATE_PER_MIN", DefaultRatePerMinute))
+		WithWindow(win).
+		WithRate(intEnv("SMS_RATE_PER_MIN", DefaultRatePerMinute, 1, r))
 	p.zoneErr = zerr
+	p.fallbacks = r.fbs
 	return p
+}
+
+// PolicyFallback is one SMS_* policy variable whose value was refused and replaced by its default.
+// Value is the text read from the environment (a plain number or the junk the operator typed, never
+// a secret), Default is the number applied instead.
+type PolicyFallback struct {
+	Var     string
+	Value   string
+	Default int
+}
+
+// Fallbacks reports every policy variable that fell back to its default, in a stable order, so the
+// boot path can log one warning each. Empty when the environment was unset or fully valid.
+func (p *SendPolicy) Fallbacks() []PolicyFallback {
+	return append([]PolicyFallback(nil), p.fallbacks...)
+}
+
+// policyRead accumulates what PolicyFromEnv read: the raw text of each variable that was set and the
+// fallbacks taken, so the pair check can name values without reading the environment a second time.
+type policyRead struct {
+	raw map[string]string
+	fbs []PolicyFallback
+}
+
+func (r *policyRead) fellBack(k string, def int, v string) {
+	r.fbs = append(r.fbs, PolicyFallback{Var: k, Value: v, Default: def})
+}
+
+// recordWindowPair adds the window variables the operator set but the pair check discarded. A
+// variable already recorded (it failed to parse) is not recorded twice.
+func (r *policyRead) recordWindowPair() {
+	for _, v := range []struct {
+		name string
+		def  int
+	}{{"SMS_WINDOW_START_MIN", DefaultQuietStartMin}, {"SMS_WINDOW_END_MIN", DefaultQuietEndMin}} {
+		raw := r.raw[v.name]
+		if raw == "" || r.recorded(v.name) {
+			continue
+		}
+		r.fellBack(v.name, v.def, raw)
+	}
+}
+
+func (r *policyRead) recorded(name string) bool {
+	for _, f := range r.fbs {
+		if f.Var == name {
+			return true
+		}
+	}
+	return false
 }
 
 // ZoneError reports a bad SMS_WINDOW_ZONE so the boot path can log it. The policy is usable either
 // way, it fell back to the business zone.
 func (p *SendPolicy) ZoneError() error { return p.zoneErr }
 
-// intEnv reads a non-negative integer environment variable, falling back on anything unparseable.
-func intEnv(k string, def int) int {
+// intEnv reads an integer environment variable that must be at least min. Unset gives the default
+// silently; a value below min or unparseable gives the default and records a PolicyFallback on r.
+func intEnv(k string, def, min int, r *policyRead) int {
 	v := strings.TrimSpace(os.Getenv(k))
 	if v == "" {
 		return def
 	}
+	r.raw[k] = v
 	n, err := strconv.Atoi(v)
-	if err != nil || n < 0 {
+	if err != nil || n < min {
+		r.fellBack(k, def, v)
 		return def
 	}
 	return n
@@ -201,6 +267,8 @@ type SendPolicy struct {
 	tokens  float64
 	last    time.Time
 	zoneErr error
+
+	fallbacks []PolicyFallback
 }
 
 // NewSendPolicy builds the house policy: 08:00-20:00 America/Toronto, 30 messages a minute, real time.
@@ -235,7 +303,8 @@ func (p *SendPolicy) WithWindow(q QuietHours) *SendPolicy {
 }
 
 // WithRate overrides the per-minute cap (<=0 is ignored, an uncapped SMS sender is not a
-// configuration this package offers).
+// configuration this package offers, and zero is not a pause either; PolicyFromEnv records the
+// refusal so the boot path can say so).
 func (p *SendPolicy) WithRate(perMinute int) *SendPolicy {
 	if perMinute > 0 {
 		p.mu.Lock()
