@@ -219,8 +219,10 @@ func (s *Service) Return(ctx context.Context, in ReturnInput) (Return, error) {
 		// Without the re-check the duplicate's own gate would read its
 		// twin's committed row into the prior sum and answer a false
 		// refusal (or trip the over-return guard) for a return that
-		// committed.
-		cached, found, rerr := s.replayIfAllowed(ctx, in.IdempotencyKey, caller)
+		// committed. The re-check reads ON the transaction (replayIfAllowedTx):
+		// a pool read while this transaction holds a connection would
+		// deadlock a full pool of Returns waiting on the sale's lock.
+		cached, found, rerr := s.replayIfAllowedTx(ctx, tx, in.IdempotencyKey, caller)
 		if rerr != nil {
 			return rerr
 		}
@@ -520,6 +522,32 @@ func (s *Service) replayIfAllowed(ctx context.Context, key string, caller identi
 		return Return{}, false, err
 	}
 	oc, found, err := s.store.ReturnOrderContext(ctx, cached.OrderID, "")
+	if err != nil {
+		return Return{}, false, err
+	}
+	if !found {
+		return Return{}, false, errReturnNotFound
+	}
+	if err := requireBranchReach(caller, oc.BranchID); err != nil {
+		return Return{}, false, err
+	}
+	cached.Replayed = true
+	return cached, true, nil
+}
+
+// replayIfAllowedTx is replayIfAllowed on the open Return transaction: the
+// in-transaction same-key re-check reads through the transaction's own
+// connection, never through the pool. A Return transaction holds one
+// connection while it waits on the per-sale advisory lock; a pool read
+// there would have the lock holder wait for a second connection every
+// other connection is a waiter that needs the holder's lock, and a full
+// pool deadlocks until the context ends.
+func (s *Service) replayIfAllowedTx(ctx context.Context, tx pgx.Tx, key string, caller identity.StaffContext) (Return, bool, error) {
+	cached, found, err := s.store.FindReturnByKeyTx(ctx, tx, key)
+	if err != nil || !found {
+		return Return{}, false, err
+	}
+	oc, found, err := s.store.ReturnOrderContextTx(ctx, tx, cached.OrderID, "")
 	if err != nil {
 		return Return{}, false, err
 	}

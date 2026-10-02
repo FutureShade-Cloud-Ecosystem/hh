@@ -323,6 +323,16 @@ func (f *fakeStore) FindReturnByKey(_ context.Context, key string) (Return, bool
 	return r, ok, nil
 }
 
+// The tx twins answer from the same maps: the fake has one world, the tx
+// shape exists so the service's in-transaction re-check stays tx-bound.
+func (f *fakeStore) FindReturnByKeyTx(_ context.Context, _ pgx.Tx, key string) (Return, bool, error) {
+	return f.FindReturnByKey(context.Background(), key)
+}
+
+func (f *fakeStore) ReturnOrderContextTx(_ context.Context, _ pgx.Tx, orderID, orderNo string) (returnOrderCtx, bool, error) {
+	return f.ReturnOrderContext(context.Background(), orderID, orderNo)
+}
+
 func (f *fakeStore) ReturnOrderContext(_ context.Context, orderID, orderNo string) (returnOrderCtx, bool, error) {
 	if oc, ok := f.retCtx[orderID]; ok {
 		return oc, true, nil

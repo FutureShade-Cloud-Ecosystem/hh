@@ -138,16 +138,48 @@ func (r *Repository) DeleteUserWorkspace(ctx context.Context, userID string) err
 
 // -- returns -----------------------------------------------------------------
 
+// findReturnByKeyQuery is the committed return behind one idempotency key.
+const findReturnByKeyQuery = `
+SELECT id::text, return_no, order_id::text, invoice_id::text, refund_method,
+       subtotal_cents, tax_cents, total_cents, fee_cents, COALESCE(refund_payment_id::text,''), pickup_status, status
+  FROM pos_returns WHERE idempotency_key = $1`
+
+// returnOrderContextQuery is the original committed POS sale behind one
+// order id or number.
+const returnOrderContextQuery = `
+SELECT o.id::text, o.order_no, o.branch_id::text, o.customer_id::text,
+       COALESCE(ps.invoice_id::text,''), COALESCE(i.status,''), ps.tender, COALESCE(pay.gateway_ref,'')
+  FROM pos_sale ps
+  JOIN orders o ON o.id = ps.order_id
+  LEFT JOIN invoices i ON i.id = ps.invoice_id
+  LEFT JOIN payments pay ON pay.id = ps.payment_id
+ WHERE ($1 <> '' AND ps.order_id::text = $1) OR ($1 = '' AND o.order_no = $2)`
+
 func (r *Repository) FindReturnByKey(ctx context.Context, key string) (Return, bool, error) {
 	if r.pool == nil {
 		return Return{}, false, errNoPool
 	}
-	const q = `
-SELECT id::text, return_no, order_id::text, invoice_id::text, refund_method,
-       subtotal_cents, tax_cents, total_cents, fee_cents, COALESCE(refund_payment_id::text,''), pickup_status, status
-  FROM pos_returns WHERE idempotency_key = $1`
 	var ret Return
-	err := r.pool.QueryRow(ctx, q, key).Scan(&ret.ReturnID, &ret.ReturnNo, &ret.OrderID, &ret.InvoiceID,
+	err := r.pool.QueryRow(ctx, findReturnByKeyQuery, key).Scan(&ret.ReturnID, &ret.ReturnNo, &ret.OrderID, &ret.InvoiceID,
+		&ret.RefundMethod, &ret.SubtotalCents, &ret.TaxCents, &ret.TotalCents, &ret.FeeCents, &ret.RefundPaymentID,
+		&ret.PickupStatus, &ret.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Return{}, false, nil
+	}
+	if err != nil {
+		return Return{}, false, err
+	}
+	return ret, true, nil
+}
+
+// FindReturnByKeyTx is the same read on the open Return transaction: the
+// in-transaction same-key re-check must never read through the pool while
+// the transaction holds a connection, or a pool full of Returns waiting on
+// the same sale's advisory lock deadlocks the holder waiting for a second
+// connection.
+func (r *Repository) FindReturnByKeyTx(ctx context.Context, tx pgx.Tx, key string) (Return, bool, error) {
+	var ret Return
+	err := tx.QueryRow(ctx, findReturnByKeyQuery, key).Scan(&ret.ReturnID, &ret.ReturnNo, &ret.OrderID, &ret.InvoiceID,
 		&ret.RefundMethod, &ret.SubtotalCents, &ret.TaxCents, &ret.TotalCents, &ret.FeeCents, &ret.RefundPaymentID,
 		&ret.PickupStatus, &ret.Status)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -165,16 +197,23 @@ func (r *Repository) ReturnOrderContext(ctx context.Context, orderID, orderNo st
 	}
 	// The original ring must be a committed POS sale (a pos_sale facet row exists). gateway_ref rides
 	// the ORIGINAL capture's payments row, the CARD refund rail reverses against it.
-	const q = `
-SELECT o.id::text, o.order_no, o.branch_id::text, o.customer_id::text,
-       COALESCE(ps.invoice_id::text,''), COALESCE(i.status,''), ps.tender, COALESCE(pay.gateway_ref,'')
-  FROM pos_sale ps
-  JOIN orders o ON o.id = ps.order_id
-  LEFT JOIN invoices i ON i.id = ps.invoice_id
-  LEFT JOIN payments pay ON pay.id = ps.payment_id
- WHERE ($1 <> '' AND ps.order_id::text = $1) OR ($1 = '' AND o.order_no = $2)`
 	var oc returnOrderCtx
-	err := r.pool.QueryRow(ctx, q, orderID, orderNo).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
+	err := r.pool.QueryRow(ctx, returnOrderContextQuery, orderID, orderNo).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
+		&oc.CustomerID, &oc.InvoiceID, &oc.InvoiceStatus, &oc.SaleTender, &oc.GatewayRef)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return returnOrderCtx{}, false, nil
+	}
+	if err != nil {
+		return returnOrderCtx{}, false, err
+	}
+	return oc, true, nil
+}
+
+// ReturnOrderContextTx is the same read on the open Return transaction, the
+// tx twin the in-transaction replay check needs (see FindReturnByKeyTx).
+func (r *Repository) ReturnOrderContextTx(ctx context.Context, tx pgx.Tx, orderID, orderNo string) (returnOrderCtx, bool, error) {
+	var oc returnOrderCtx
+	err := tx.QueryRow(ctx, returnOrderContextQuery, orderID, orderNo).Scan(&oc.OrderID, &oc.OrderNo, &oc.BranchID,
 		&oc.CustomerID, &oc.InvoiceID, &oc.InvoiceStatus, &oc.SaleTender, &oc.GatewayRef)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return returnOrderCtx{}, false, nil
