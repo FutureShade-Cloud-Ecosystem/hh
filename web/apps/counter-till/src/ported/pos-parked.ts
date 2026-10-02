@@ -254,7 +254,7 @@ export class HosPosParked extends LitElement {
               // account/walk-in label and the "(not priced)" marker.
               const snap = this.info.get(t.id);
               const who = snap?.customer?.name || (t.customer_id ? 'Account customer' : 'Walk-in');
-              const figure = snap && snap.totalCents !== null ? `subtotal ${money(snap.totalCents)}` : '(not priced)';
+              const figure = snap && snap.subtotalCents !== null ? `subtotal ${money(snap.subtotalCents)}` : '(not priced)';
               return html`<div class="ticket">
                 <div>
                   <div class="tno">${t.ticket_no}</div>

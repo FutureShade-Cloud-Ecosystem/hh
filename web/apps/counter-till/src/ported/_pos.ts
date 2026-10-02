@@ -13,13 +13,13 @@ import type { CartLine } from './pos-api.js';
 import { balanceAfterDepositCents } from './ports.js';
 
 // One parked ticket's client-side display snapshot, captured in parkCurrent() before the order
-// is reset. `customer` is the full account (or null for walk-in); `totalCents` is the ticket's
+// is reset. `customer` is the full account (or null for walk-in); `subtotalCents` is the ticket's
 // SUBTOTAL of priced lines at park time (row 661: the till computes no total to snapshot; the
 // server stores no prices, so this is the only place the figure survives).
 export interface ParkedInfo {
   customer: PosCustomer | null;
   /** The ticket's priced-lines subtotal at park time; null when a line was price pending (no figure is kept). */
-  totalCents: number | null;
+  subtotalCents: number | null;
 }
 
 /**
@@ -115,6 +115,19 @@ const SALE_TYPE_LABELS: Record<string, string> = {
   DELIVERED: 'Delivery',
   COD: 'COD',
 };
+
+/**
+ * The pre-ring tax-and-total row's words (decision log row 661): the ring
+ * states both figures, so the till names the ring instead of computing them.
+ * An applied relief's engine-assessed rate (the relief dialog's server
+ * outcome) may be NAMED here, never multiplied into a figure; the percent
+ * spelling formats basis points, not money.
+ */
+export function ringTaxWords(reliefRateBps: number | null): string {
+  if (reliefRateBps === null) return 'added at the ring';
+  const pct = reliefRateBps % 100 === 0 ? String(reliefRateBps / 100) : (reliefRateBps / 100).toFixed(2);
+  return `relief assessed at ${pct}%: added at the ring`;
+}
 
 export function fulfilmentLabel(saleType: string): string {
   return SALE_TYPE_LABELS[saleType] ?? (saleType || 'Collect now');

@@ -61,7 +61,8 @@ summary and the read-back whenever the cart is empty OR any line is price
 pending (a just-added line before its price lookup answers, or a line whose
 reprice failed), and the figures return when every line is priced (the old
 reviewed till's own marker, views/till.ts's line-unpriced word). The Complete
-sale amount carries (est.) once it states a figure.
+sale button carries the priced lines' SUBTOTAL with the words "+ tax at the
+ring" (row 661), never a total figure.
 The cash tile computes nothing from a typed amount (the change due is the
 ring's own answer, stated on the confirmation), so the preview's figure, its
 estimate mark and its "Less than the total" choice are gone with the total
