@@ -8,6 +8,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 )
 
 // receiptStore is the receipt's read seam (satisfied by *Repository). Kept separate from queueStore
@@ -128,14 +129,20 @@ func (s *ReceiptService) Receipt(ctx context.Context, id string) (Receipt, error
 
 	// The cash facts the committed sale itself states: the change due is the core's one derivation
 	// from the order's own cash-tendered figure (pos repository.go reads the same column for the
-	// replay), and the deposit is the ring's own capture, stated only while a balance remains (a
-	// settled sale shows its payments as tenders, an unsettled account shows its balance alone).
+	// replay).
 	changeDue := int64(0)
 	if sale.CashTenderedCents > 0 {
 		changeDue = sale.CashTenderedCents - sale.TotalCents
 	}
+	// THE DEPOSIT IS THE PLAIN UNPAID-AT-RING RING'S OWN (the review's P2-1). pos refuses a
+	// deposit on a split (a split settles the sale itself), so the only sale the word Deposit
+	// names is the plain ACCOUNT or COD ring taken with one. A split with an account leg also
+	// leaves money captured in the ring's transaction and a balance behind it: its legs print as
+	// tenders and its remainder as the balance, and neither is a deposit. A settled sale shows
+	// its payments as tenders, an unsettled account shows its balance alone.
+	unpaidAtRing := sale.Tender == pos.TenderAccount || sale.SaleType == pos.SaleCOD
 	deposit := int64(0)
-	if sale.BalanceCents > 0 {
+	if sale.BalanceCents > 0 && !sale.SplitTender && unpaidAtRing {
 		deposit = sale.DepositCents
 	}
 
@@ -270,10 +277,11 @@ type Receipt struct {
 	// committed sale's own cash-tendered fact (orders.metadata), the ring's own derivation. It is
 	// rendered only when it applies: a sale tendered exact or tendered by card carries no row.
 	ChangeDueCents int64
-	// DepositCents is the money the ring itself captured on an unpaid-at-ring sale, read beside the
-	// invoice's balance from the committed rows. It is rendered only when a deposit was taken AND a
-	// balance remains: a settled sale shows its payments as tenders, an unsettled account sale shows
-	// its balance alone.
+	// DepositCents is the deposit the ring itself took on a plain unpaid-at-ring sale (ACCOUNT or
+	// COD, no split: pos refuses a deposit on a split), read beside the invoice's balance from the
+	// committed rows. It is rendered only there: a settled sale shows its payments as tenders, an
+	// unsettled account sale shows its balance alone, and a split's captured legs are tenders, its
+	// remainder the balance, never a deposit.
 	DepositCents int64
 
 	// ReprintCount is how many times this receipt was ALREADY printed before this fetch. 0 → the

@@ -1590,11 +1590,16 @@ const server = createServer(async (request, response) => {
           respondJson(response, 400, { error: "the legs do not sum exactly to the sale's total" });
           return;
         }
+        // The core's own capture shape: an ACCOUNT leg captures nothing (its
+        // remainder rides the invoice's balance), so only the captured legs
+        // land as tenders with their payment numbers, and the balance is the
+        // total less what the ring itself took.
         legs.forEach((leg, index) => {
+          if (leg.method === "ACCOUNT") return;
           const legPaymentId = nextDocNo("pay");
-          if (index === 0) paymentId = legPaymentId;
+          if (paymentId === undefined) paymentId = legPaymentId;
           tenders.push({
-            seq: index + 1,
+            seq: tenders.length + 1,
             method: leg.method,
             amount_cents: leg.amount_cents,
             payment_id: legPaymentId,
@@ -2162,6 +2167,13 @@ function receiptView(sale) {
     tenders.push({ label: "ON ACCOUNT", ref: sale.invoice_no, amountCents: sale.total_cents, simulated: false });
   }
   const balanceCents = sale.balance_cents ?? 0;
+  // The deposit row's gate, the core's own: the word names the plain
+  // unpaid-at-ring ring's deposit (ACCOUNT or COD, no split: a split settles
+  // the sale itself), and nowhere else.
+  const depositApplies =
+    balanceCents > 0 &&
+    sale.split_tender !== true &&
+    (sale.tender === "ACCOUNT" || sale.sale_type === "COD");
   return {
     orgName: RECEIPT_ORG_NAME,
     branchName: branch.name,
@@ -2192,7 +2204,7 @@ function receiptView(sale) {
     totalCents: sale.total_cents,
     tenders,
     changeDueCents: sale.change_due_cents ?? 0,
-    depositCents: balanceCents > 0 ? sale.deposit_cents ?? 0 : 0,
+    depositCents: depositApplies ? sale.deposit_cents ?? 0 : 0,
     balanceCents,
     printedAt: receiptStamp(new Date().toISOString()),
   };

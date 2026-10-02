@@ -640,3 +640,74 @@ func TestIntegration_Receipt_DepositAndChangeDueFromTheCommittedRows(t *testing.
 		}
 	})
 }
+
+// The review's P2-1 shape, pinned: a split of cash and account settles the sale itself, pos
+// refuses a deposit on it, so the cash leg captured in the ring's transaction is a TENDER and the
+// account remainder is the BALANCE, and the paper names no deposit. Run first against the
+// ungated read it failed with the reviewer's own figures (the cash leg reading as a deposit).
+func TestIntegration_Receipt_NoDepositOnASplitWithAnAccountLeg(t *testing.T) {
+	pool := intPool(t)
+	ctx := globalCtx(t, pool)
+	productID, branchID := aPaver(t, pool)
+	var custID string
+	if err := pool.QueryRow(ctx,
+		`SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND credit_limit_cents > 1000000 LIMIT 1`).Scan(&custID); err != nil {
+		t.Skipf("no CONTRACTOR with credit seeded: %v", err)
+	}
+	svc := realPosSvc(t, pool)
+	// The split's legs must sum exactly to the total, and the total is the engine's answer, so a
+	// plain account probe rings the same line first to learn the figure the legs split.
+	probe, err := svc.Sale(ctx, pos.SaleInput{
+		IdempotencyKey: key(), BranchID: branchID, CustomerID: custID,
+		Tender: pos.TenderAccount, SaleType: pos.SaleCollectNow,
+		Lines: []pos.LineInput{{ProductID: productID, QtyEntered: 1, UOMEntered: "SF"}},
+	})
+	if err != nil {
+		t.Fatalf("probe ring: %v", err)
+	}
+	cashLeg := int64(3000)
+	if cashLeg >= probe.TotalCents {
+		cashLeg = probe.TotalCents / 2
+	}
+	sale, err := svc.Sale(ctx, pos.SaleInput{
+		IdempotencyKey: key(), BranchID: branchID, CustomerID: custID,
+		TillSessionID: openTill(t, pool, branchID),
+		SaleType:      pos.SaleCollectNow,
+		Tenders: []pos.TenderLegInput{
+			{Method: pos.TenderCash, AmountCents: cashLeg},
+			{Method: pos.TenderAccount, AmountCents: probe.TotalCents - cashLeg},
+		},
+		Lines: []pos.LineInput{{ProductID: productID, QtyEntered: 1, UOMEntered: "SF"}},
+	})
+	if err != nil {
+		t.Fatalf("split ring: %v", err)
+	}
+	if sale.SplitTender != true {
+		t.Fatal("fixture assumption broken: the ring is not a split")
+	}
+
+	receipts, _ := printingSvcs(pool)
+	rec, err := receipts.Receipt(ctx, sale.OrderID)
+	if err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	if rec.DepositCents != 0 {
+		t.Fatalf("a split's captured leg must never read as a deposit, got %d (the ring answered deposit_cents %d)", rec.DepositCents, sale.DepositCents)
+	}
+	if rec.BalanceCents != probe.TotalCents-cashLeg {
+		t.Fatalf("the account remainder is the balance, got %d want %d", rec.BalanceCents, probe.TotalCents-cashLeg)
+	}
+	if len(rec.Tenders) != 1 || rec.Tenders[0].Method != "CASH" || rec.Tenders[0].AmountCents != cashLeg {
+		t.Fatalf("the tender rows carry the captured leg alone, got %+v", rec.Tenders)
+	}
+	html, err := RenderReceiptHTML(rec)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(html, "Deposit") {
+		t.Fatal("the paper must carry no Deposit row for a split with an account leg")
+	}
+	if !strings.Contains(html, "Balance due") || !strings.Contains(html, Money(probe.TotalCents-cashLeg)) {
+		t.Fatal("the balance due row must carry the account remainder")
+	}
+}

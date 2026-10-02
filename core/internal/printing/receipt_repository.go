@@ -34,6 +34,7 @@ type receiptSale struct {
 	Tender            string
 	SaleType          string
 	Status            string
+	SplitTender       bool
 	SubtotalCents     int64
 	TaxCents          int64
 	TotalCents        int64
@@ -86,6 +87,7 @@ func (r *Repository) ReadReceiptSale(ctx context.Context, id string, global bool
 SELECT o.id::text, o.order_no, o.branch_id::text,
        COALESCE(ps.invoice_id::text,''), COALESCE(i.invoice_no,''), COALESCE(ps.payment_id::text,''),
        ps.tender, ps.sale_type, ps.status,
+       EXISTS(SELECT 1 FROM pos_sale_tenders st WHERE st.pos_sale_id = ps.id),
        o.subtotal_cents, o.tax_cents, o.total_cents, COALESCE(i.balance_cents, 0),
        COALESCE((o.metadata->>'cash_tendered_cents')::bigint, 0),
        COALESCE((SELECT SUM(p.amount_cents) FROM payments p
@@ -103,7 +105,7 @@ SELECT o.id::text, o.order_no, o.branch_id::text,
  LIMIT 1`
 	var s receiptSale
 	err := r.pool.QueryRow(ctx, q, args...).Scan(&s.OrderID, &s.OrderNo, &s.BranchID,
-		&s.InvoiceID, &s.InvoiceNo, &s.PaymentID, &s.Tender, &s.SaleType, &s.Status,
+		&s.InvoiceID, &s.InvoiceNo, &s.PaymentID, &s.Tender, &s.SaleType, &s.Status, &s.SplitTender,
 		&s.SubtotalCents, &s.TaxCents, &s.TotalCents, &s.BalanceCents,
 		&s.CashTenderedCents, &s.DepositCents,
 		&s.SoldAt, &s.CustomerName, &s.CustomerAcct, &s.CashierName)

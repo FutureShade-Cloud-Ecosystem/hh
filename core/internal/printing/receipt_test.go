@@ -9,6 +9,7 @@ import (
 	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 )
 
 // fakeReceiptStore serves one committed sale, DB-free. It reproduces the repository's id-vs-order_no
@@ -245,6 +246,8 @@ func TestReceipt_ChangeDueFromTheCommittedSale(t *testing.T) {
 func TestReceipt_DepositFromTheCommittedSale(t *testing.T) {
 	svc, _ := receiptHarness(t)
 	store := svc.store.(*fakeReceiptStore)
+	// The one shape the word Deposit names: a plain ACCOUNT ring taken with a deposit.
+	store.sale.Tender = pos.TenderAccount
 	store.sale.BalanceCents = 6000
 	store.sale.DepositCents = 4000
 
@@ -268,6 +271,18 @@ func TestReceipt_DepositFromTheCommittedSale(t *testing.T) {
 		t.Fatalf("a settled sale carries no deposit row, got %d", rec.DepositCents)
 	}
 
+	store.sale.SaleType = pos.SaleCOD
+	store.sale.BalanceCents = 6000
+	store.sale.DepositCents = 4000
+	rec, err = svc.Receipt(staffFor(trentonID), saleOrderID)
+	if err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	if rec.DepositCents != 4000 {
+		t.Fatalf("a COD deposit sale reads its deposit the same way, got %d", rec.DepositCents)
+	}
+
+	store.sale.SaleType = pos.SaleCollectNow
 	store.sale.BalanceCents = 6000
 	store.sale.DepositCents = 0
 	rec, err = svc.Receipt(staffFor(trentonID), saleOrderID)
@@ -339,5 +354,54 @@ func TestReceipt_ReprintByTheOrderCarriesTheOrdinal(t *testing.T) {
 	}
 	if !strings.Contains(html, "REPRINT #1") {
 		t.Fatal("the marker must be on the paper")
+	}
+}
+
+// THE DEPOSIT IS THE PLAIN UNPAID-AT-RING RING'S OWN (the review's P2-1). A split settles the
+// sale itself: pos refuses a deposit on one, so a split with an account leg that leaves captured
+// money in the ring's transaction and a balance behind it prints its legs as tenders and its
+// remainder as the balance, and NO Deposit row: the paper must not name a deposit the ring never
+// took. The same holds for a split settled across card legs only (nothing captured would be a
+// lie twice over).
+func TestReceipt_NoDepositOnASplit(t *testing.T) {
+	svc, _ := receiptHarness(t)
+	store := svc.store.(*fakeReceiptStore)
+
+	// The reviewer's shape: a split of cash 3000 and account for the rest, a balance left.
+	store.sale.SplitTender = true
+	store.sale.BalanceCents = 21950
+	store.sale.DepositCents = 3000
+
+	rec, err := svc.Receipt(staffFor(trentonID), saleOrderID)
+	if err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	if rec.DepositCents != 0 {
+		t.Fatalf("a split's captured legs must never print as a Deposit, got %d", rec.DepositCents)
+	}
+	if rec.BalanceCents != 21950 {
+		t.Fatalf("the split's remainder is still the invoice's balance, got %d", rec.BalanceCents)
+	}
+	html, err := RenderReceiptHTML(rec)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(html, "Deposit") {
+		t.Fatal("the paper must carry no Deposit row for a split")
+	}
+	if !strings.Contains(html, "Balance due") {
+		t.Fatal("the split's balance due row stays on the paper")
+	}
+
+	// The plain deposit sale beside it: the gate stays open for the one shape the word names.
+	store.sale.SplitTender = false
+	store.sale.Tender = pos.TenderAccount
+	store.sale.SaleType = pos.SaleCollectNow
+	rec, err = svc.Receipt(staffFor(trentonID), saleOrderID)
+	if err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	if rec.DepositCents != 3000 {
+		t.Fatalf("the plain deposit sale must still read its deposit, got %d", rec.DepositCents)
 	}
 }
