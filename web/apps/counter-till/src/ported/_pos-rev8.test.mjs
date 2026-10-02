@@ -274,17 +274,20 @@ test('FLOOR (6): all four fulfilment options are ICON tiles: inline currentColor
 
 // ── FLOOR: the split totals card (item 7) ───────────────────────────────────────────────────────
 
-test('FLOOR (7): a distinct totals card LEADS the Payment step; the oversized gold Total', () => {
+test('FLOOR (7): a distinct totals card LEADS the Payment step; the subtotal leads it, the ring named for the rest', () => {
  // The concept put a quiet totals card above a clearly separate Payment section. In the single
  // column the Payment STEP is that separation, and the card leads its body: still distinct, still
- // above the tender tiles, still adjacent to the number it justifies (the one the clerk reads out
- // loud while taking the money). The rev-6 bar chip retired with the bar; see _pos-rev6 FLOOR (J)
- // for where the running total is readable from the other three steps.
+ // above the tender tiles, still adjacent to the figure it justifies (the one the clerk reads out
+ // loud while taking the money). Row 661: the one figure is the priced lines' subtotal, and the
+ // tax and the total are a muted row naming the ring; the oversized gold Total is gone with the
+ // browser arithmetic that fed it. The rev-6 bar chip retired with the bar; see _pos-rev6 FLOOR (J)
+ // for where the running figure is readable from the other three steps.
   assert.match(terminalSrc, /data-testid="pos-totals-card"/, 'the totals card exists');
   const body = terminalSrc.slice(terminalSrc.indexOf('private renderPaymentBody()'));
   assert.ok(body.indexOf('data-testid="pos-totals-card"') < body.indexOf('class="paytiles"'),
     'the totals card renders ABOVE the tender tiles inside the payment step');
-  assert.match(terminalSrc, /\.totalscard \.trow\.grand \.num \{\s*\n\s*font-size: 26px;/, 'the oversized gold Total');
+  assert.match(terminalSrc, /data-testid="pos-ring-words"/, 'the row that names the ring for the tax and the total');
+  assert.ok(!/\.totalscard \.trow\.grand/.test(terminalSrc), 'no oversized gold Total row: the ring states the total');
 });
 
 // ── FLOOR: the add-ons strip (item 8 · DIB-502) ─────────────────────────────────────────────────
