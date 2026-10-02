@@ -44,6 +44,12 @@ test("the way in's data: two flows with role codes and labels", async ({ page })
   expect(body.flows.map((row) => row.flow)).toEqual(["sales", "sales-manager"]);
   expect(body.flows.map((row) => row.role_code)).toEqual(["inside_sales", "sales_manager"]);
   expect(body.flows.map((row) => row.label)).toEqual(["Sales", "Sales manager"]);
+  // The picture is the table itself, as the browser shows the core's answer:
+  // the page loads the flows route and waits for its two rows to be on the
+  // screen (the test's own request never loads a page).
+  await page.goto("/api/v1/demo/flows");
+  await expect(page.locator("body")).toContainText('"sales-manager"');
+  await expect(page.locator("body")).toContainText('"inside_sales"');
   await shot(page, "00-world-flows", test.info());
 });
 
