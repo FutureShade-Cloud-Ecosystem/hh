@@ -200,6 +200,85 @@ func TestService_Charge_ReencryptsRotatedCreds(t *testing.T) {
 	}
 }
 
+// The tx charge resolves the config ON the caller's transaction, exactly
+// once, and never through the pool: the pos Sale transaction holds one
+// connection for the whole atomic ring while it takes the tender, and a
+// pool read there would have the connection holder wait for a second
+// connection, stalling a one-connection pool on a single sale and
+// deadlocking a full pool of concurrent sales (the FindReturnByKeyTx
+// discipline, RefundTx's shape on the charge side).
+func TestService_ChargeTx_RidesTheTransaction(t *testing.T) {
+	fr := &fakeResolver{
+		cfg:   activeCfg{Processor: "run_payments", MerchantID: "MID-1"},
+		creds: map[string]string{"api_key": "k"},
+	}
+	sp := &spyProcessor{res: ChargeResult{ProcessorRef: "rp_sim_x", Status: "captured"}}
+	svc := &Service{cfg: fr, proc: sp}
+	rcpt, err := svc.ChargeTx(context.Background(), nil, validInput())
+	if err != nil {
+		t.Fatalf("ChargeTx: %v", err)
+	}
+	if rcpt.Status != "captured" || rcpt.ProcessorRef != "rp_sim_x" || rcpt.Processor != "run_payments" {
+		t.Fatalf("receipt = %+v, want run_payments/captured/rp_sim_x", rcpt)
+	}
+	if fr.txCalls != 1 {
+		t.Fatalf("activeConfigTx calls = %d, want exactly 1 (the config read rides the transaction)", fr.txCalls)
+	}
+	if fr.calls != 0 {
+		t.Fatalf("activeConfig calls = %d, want 0: an in-transaction charge must never read through the pool", fr.calls)
+	}
+	if sp.calls != 1 || sp.gotAmount != 12500 || sp.gotToken != "tok_runtest_4242" || sp.gotMID != "MID-1" {
+		t.Fatalf("processor dispatched wrong args: %+v", sp)
+	}
+}
+
+// The pool-shaped Charge still resolves through activeConfig, exactly as it
+// always has: its callers hold no transaction, the pool is the right carrier
+// for them.
+func TestService_Charge_ReadsThroughThePool(t *testing.T) {
+	fr := &fakeResolver{
+		cfg:   activeCfg{Processor: "run_payments", MerchantID: "MID-1"},
+		creds: map[string]string{"api_key": "k"},
+	}
+	sp := &spyProcessor{res: ChargeResult{ProcessorRef: "rp_sim_x", Status: "captured"}}
+	svc := &Service{cfg: fr, proc: sp}
+	if _, err := svc.Charge(context.Background(), validInput()); err != nil {
+		t.Fatalf("Charge: %v", err)
+	}
+	if fr.calls != 1 {
+		t.Fatalf("activeConfig calls = %d, want exactly 1", fr.calls)
+	}
+	if fr.txCalls != 0 {
+		t.Fatalf("activeConfigTx calls = %d, want 0: the pool caller holds no transaction to ride", fr.txCalls)
+	}
+}
+
+// The rotation write-back on the tx charge rides the transaction too. The
+// stub never rotates, and that is exactly why it is pinned here: the tx
+// twin must already be the carrier the day a live client starts refreshing
+// mid-charge, so the write-back cannot come back as a pool write inside the
+// sale transaction.
+func TestService_ChargeTx_WriteBackRidesTheTransaction(t *testing.T) {
+	fr := &fakeResolver{
+		cfg:   activeCfg{Processor: "run_payments", MerchantID: "MID-1"},
+		creds: map[string]string{"api_key": "expired"},
+	}
+	sp := &spyProcessor{res: ChargeResult{ProcessorRef: "rp_sim_x", Status: "captured"}, mutateKey: "fresh"}
+	svc := &Service{cfg: fr, proc: sp}
+	if _, err := svc.ChargeTx(context.Background(), nil, validInput()); err != nil {
+		t.Fatalf("ChargeTx: %v", err)
+	}
+	if fr.txReencrypt != 1 {
+		t.Fatalf("reencryptActiveCredsTx calls = %d, want 1: the write-back rides the caller's transaction", fr.txReencrypt)
+	}
+	if fr.reencryptCall != 0 {
+		t.Fatalf("reencryptActiveCreds calls = %d, want 0: a pool write inside the caller's transaction is the stall", fr.reencryptCall)
+	}
+	if fr.reencProc != "run_payments" || fr.reencCreds["api_key"] != "fresh" {
+		t.Fatalf("write-back kept wrong facts: processor %q creds %v", fr.reencProc, fr.reencCreds)
+	}
+}
+
 // spyRefunder records what Service.Refund dispatched and answers a fixed result; it can simulate the
 // live client rotating an expiring api_key in place, the shape the write-back twin exists for.
 type spyRefunder struct {

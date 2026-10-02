@@ -286,22 +286,53 @@ func (s *Service) Simulated() bool {
 // Processor, and returns a ChargeReceipt. A nil/zero token or amount fails before any dispatch.
 // If the live client rotated the api_key (expiring JWT refresh), the new rotating creds are
 // re-encrypted back into the active payment_config row, never to the payments table.
+// Callers holding no database transaction call THIS entry point; the sale transaction's tender
+// goes through ChargeTx.
 func (s *Service) Charge(ctx context.Context, in ChargeInput) (ChargeReceipt, error) {
 	cfg, creds, err := s.cfg.activeConfig(ctx)
 	if err != nil {
 		return ChargeReceipt{}, err
 	}
+	return s.charge(ctx, cfg, creds, in, s.resealOnPool)
+}
+
+// ChargeTx is Charge on the caller's open transaction. The pos Sale
+// transaction holds one connection for the whole atomic ring while it
+// takes the tender: the config read here rides THAT transaction
+// (activeConfigTx) and the rotation write-back, if it ever fires, rides it
+// too, because a pool read there would have the connection holder wait for
+// a second connection, stalling a one-connection pool on a single sale and
+// deadlocking a full pool of concurrent sales until the caller's context
+// ends (the activeConfigTx discipline, RefundTx's shape on the charge
+// side). No pool use is reachable from this path at all.
+func (s *Service) ChargeTx(ctx context.Context, tx pgx.Tx, in ChargeInput) (ChargeReceipt, error) {
+	cfg, creds, err := s.cfg.activeConfigTx(ctx, tx)
+	if err != nil {
+		return ChargeReceipt{}, err
+	}
+	return s.charge(ctx, cfg, creds, in, func(ctx context.Context, processor string, creds map[string]string) error {
+		if rs, ok := s.cfg.(credsReencryptor); ok {
+			_ = rs.reencryptActiveCredsTx(ctx, tx, processor, creds)
+		}
+		return nil
+	})
+}
+
+// charge is the shared body: dispatch Processor.Charge and return the
+// receipt. reseal is the rotation write-back's carrier, the pool or the
+// caller's transaction, chosen by the entry point (its error is ignored
+// exactly as the write-back always was: best-effort, the processor's
+// answer is the receipt). A nil/zero token or amount fails before any
+// dispatch.
+func (s *Service) charge(ctx context.Context, cfg activeCfg, creds map[string]string, in ChargeInput, reseal func(context.Context, string, map[string]string) error) (ChargeReceipt, error) {
 	if in.PaymentToken == "" || in.AmountCents <= 0 {
 		return ChargeReceipt{}, errBadCharge
 	}
 	prevKey := creds["api_key"]
 	creds["__idem"] = in.IdempotencyKey // call-scoped; not persisted
 	res, chargeErr := s.proc.Charge(ctx, creds, cfg.MerchantID, in.AmountCents, in.PaymentToken)
-	// Persist a rotated api_key (the live client refreshed an expired JWT) into the active config.
 	if creds["api_key"] != prevKey && creds["api_key"] != "" {
-		if rs, ok := s.cfg.(credsReencryptor); ok {
-			_ = rs.reencryptActiveCreds(ctx, cfg.Processor, creds)
-		}
+		_ = reseal(ctx, cfg.Processor, creds)
 	}
 	rcpt := ChargeReceipt{Processor: cfg.Processor, ProcessorRef: res.ProcessorRef, Status: res.Status}
 	if chargeErr != nil {
@@ -347,8 +378,8 @@ func (s *Service) RefundTx(ctx context.Context, tx pgx.Tx, in RefundInput) (Refu
 	})
 }
 
-// resealOnPool is the write-back carrier for the pool-shaped Refund, the
-// behavior Refund has always had.
+// resealOnPool is the write-back carrier for the pool-shaped Charge and
+// Refund, the behavior those entry points have always had.
 func (s *Service) resealOnPool(ctx context.Context, processor string, creds map[string]string) error {
 	if rs, ok := s.cfg.(credsReencryptor); ok {
 		_ = rs.reencryptActiveCreds(ctx, processor, creds)
