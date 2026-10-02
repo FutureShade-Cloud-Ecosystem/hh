@@ -2248,6 +2248,13 @@ export class HosPosTerminal extends LitElement {
       color: var(--hos-safety-red);
       border-color: color-mix(in srgb, var(--hos-safety-red) 40%, var(--hos-line));
     }
+    /* ui3 visual NOTE 5: a util control that cannot act (Park ticket on an empty ticket, Open
+       order and Print receipt with nothing typed) takes the one disabled rule's cursor too:
+       the pointer promised an act the control cannot make, and it was the one cursor outside
+       the rule. */
+    .util button:disabled {
+      cursor: not-allowed;
+    }
     .util button.clear:hover {
       border-color: var(--hos-safety-red);
     }

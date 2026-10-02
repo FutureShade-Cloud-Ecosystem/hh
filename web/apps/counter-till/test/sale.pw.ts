@@ -1194,6 +1194,24 @@ test("with COD allowed (the stub's default), the COD tile is selectable", async 
   await expect(tile).not.toContainText("off");
 });
 
+test("a util control that cannot act takes the one disabled rule's cursor", async ({ page }) => {
+  await signIn(page, "Sales");
+  // Park ticket on an empty ticket, then Open order and Print receipt with
+  // nothing typed: each looks grey and closed like the rule's other controls,
+  // so each carries the rule's own not-allowed cursor, not a pointer that
+  // promises an act (ui3 visual NOTE 5).
+  const park = page.getByRole("button", { name: "Park ticket" });
+  await expect(park).toBeDisabled();
+  expect(await park.evaluate((node) => getComputedStyle(node).cursor)).toBe("not-allowed");
+  await page.locator("details.more > summary").filter({ hasText: /^\s*More\s*$/ }).click();
+  const open = page.getByRole("button", { name: "Open order" });
+  await expect(open).toBeDisabled();
+  expect(await open.evaluate((node) => getComputedStyle(node).cursor)).toBe("not-allowed");
+  const print = page.getByRole("button", { name: "Print receipt" });
+  await expect(print).toBeDisabled();
+  expect(await print.evaluate((node) => getComputedStyle(node).cursor)).toBe("not-allowed");
+});
+
 test("a ticket parked with a line price pending lists no total", async ({ page }) => {
   await page.route("**/api/v1/pricing/resolve", async (route) => {
     const body = route.request().postDataJSON() as { product_id?: string };
