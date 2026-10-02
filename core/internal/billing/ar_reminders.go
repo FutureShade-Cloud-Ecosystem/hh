@@ -525,7 +525,7 @@ func arLandingReminderSubject(rc ReminderContext, bucket, watermark string) stri
 }
 
 func arLandingReminderBody(rc ReminderContext, days int, watermark string) string {
-	amount := fmt.Sprintf("CA$%d.%02d", rc.BalanceCents/100, abs64(rc.BalanceCents%100))
+	amount := money(rc.BalanceCents)
 	if days <= 0 {
 		return fmt.Sprintf("Invoice %s for %s is due %s.", rc.InvoiceNo, amount, rc.DueDate.Format("2 January 2006"))
 	}
@@ -535,13 +535,6 @@ func arLandingReminderBody(rc ReminderContext, days int, watermark string) strin
 	}
 	return fmt.Sprintf("Invoice %s for %s was due %s, %d days ago.%s",
 		rc.InvoiceNo, amount, rc.DueDate.Format("2 January 2006"), days, stamp)
-}
-
-func abs64(v int64) int64 {
-	if v < 0 {
-		return -v
-	}
-	return v
 }
 
 // Track records one open or click against a token. It returns the send id it touched.
