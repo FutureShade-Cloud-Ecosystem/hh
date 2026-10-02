@@ -2,6 +2,7 @@
 
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { ifDefined } from 'lit/directives/if-defined.js';
 import { api, BRANCHES, branchName, getCurrentUser, isAdmin } from './ports.js';
 import {
   availableCreditCents,
@@ -553,12 +554,16 @@ export class HosPosTerminal extends LitElement {
  * "Park failed: retry." wore the ok banner and announced to no one. Faults now render.bad
    * with role=alert (the house rule: alert for faults only); good news keeps ok + role=status.
    */
-  @state() private utilTone: 'ok' | 'bad' = 'ok';
+  @state() private utilTone: 'ok' | 'bad' | 'note' = 'ok';
+  /** A 'note' is announced only when asked for (a press), never on focus, where the closed control's own
+   *  description already speaks: one announcement, not two. */
+  @state() private utilLive = false;
 
   /** One door for the utility banner: message + tone together, so a fault can never wear green. */
-  private setUtil(msg: string, tone: 'ok' | 'bad' = 'ok'): void {
+  private setUtil(msg: string, tone: 'ok' | 'bad' | 'note' = 'ok', live = true): void {
     this.utilMsg = msg;
     this.utilTone = tone;
+    this.utilLive = live;
   }
   // ── DIB-434 ── the in-progress guard's own state. `quickGuard` is the dialog's open flag; it is
   // set ONLY when quickStartNeedsGuard() says the till holds something to lose, so an empty
@@ -1569,7 +1574,10 @@ export class HosPosTerminal extends LitElement {
       background: color-mix(in srgb, var(--hos-stone-amber) 10%, var(--hos-deep-earth));
     }
     .fulfil button:disabled {
-      opacity: 0.45;
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
       cursor: not-allowed;
     }
  /* ── DIB-488 collapsible more-options (native details: no JS state to desync) ── */
@@ -1666,7 +1674,10 @@ export class HosPosTerminal extends LitElement {
       background: color-mix(in srgb, var(--hos-stone-amber) 10%, var(--hos-deep-earth));
     }
     .paytiles button:disabled {
-      opacity: 0.45;
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
       cursor: not-allowed;
     }
     .complete-cta {
@@ -1714,6 +1725,12 @@ export class HosPosTerminal extends LitElement {
       line-height: normal;
       padding: 14px 10px;
       text-align: center;
+    }
+    .split-band .band-why {
+      display: block;
+      margin-top: 4px;
+      font-size: 12px;
+      font-weight: 400;
     }
     /* UNION-TRAIN11 · the counter's pay key worn as a keycap on the CTA (see payKeycap()).
        Gold-on-gold: the chip borrows the CTA's own ink (D-078: the ONLY ink gold may carry), so
@@ -2161,7 +2178,10 @@ export class HosPosTerminal extends LitElement {
       border-color: var(--hos-stone-amber);
     }
     .tenders button:disabled {
-      opacity: 0.45;
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
       cursor: not-allowed;
     }
     .util {
@@ -2234,6 +2254,24 @@ export class HosPosTerminal extends LitElement {
       background: rgba(74, 222, 128, 0.12);
       border: 1px solid var(--hos-success);
       color: var(--hos-success);
+    }
+    /* A notice, neither good news nor a fault: neutral ink on the slate, the control line for its edge. */
+    .banner.note {
+      background: var(--hos-slate-warm);
+      border: 1px solid var(--hos-line);
+      color: var(--hos-text);
+    }
+    /* Visually hidden, still in the accessibility tree: a description a closed control points at. */
+    .srdesc {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+      border: 0;
     }
     .banner.bad {
       background: rgba(244, 63, 94, 0.12);
@@ -4598,11 +4636,12 @@ export class HosPosTerminal extends LitElement {
                   class="topbtn"
                   data-testid="end-session"
                   aria-disabled="true"
-                  aria-describedby="till-message"
+                  aria-describedby="end-session-reason"
                   title=${this.endSessionClosedReason}
-                  @click=${() => this.setUtil(this.endSessionClosedReason)}
-                  @focus=${() => this.setUtil(this.endSessionClosedReason)}
-                >End Session</button>`
+                  @click=${() => this.setUtil(this.endSessionClosedReason, 'note', true)}
+                  @focus=${() => this.setUtil(this.endSessionClosedReason, 'note', false)}
+                >End Session</button>
+                <span id="end-session-reason" class="srdesc" data-testid="end-session-reason">${this.endSessionClosedReason}</span>`
             : html`<button class="topbtn" @click=${this.openSession}>Open Session</button>`}
           ${/* COUNTER VIEW (R1/R2, the user half). The way back from a dismissed legend
                and the on/off for the hot list, in one place a counter person can reach without an
@@ -5551,9 +5590,11 @@ ${/* rev 8 (item 7): the SPLIT TOTALS CARD: a quiet, distinct card of its own, A
                   class="split-band"
                   role="status"
                   data-testid="cta-split-state"
-                  title="A split is composed before it is committed: the legs must add up first, and the panel below rings it."
                 >
                   Split: compose the legs below
+                  <span class="band-why" data-testid="cta-split-why"
+                    >The legs must add up to the total first; the panel below rings the split.</span
+                  >
                 </p>`}
 
           ${this.showSplit
@@ -5851,7 +5892,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
                 class="eye"
                 data-testid="margin-eye"
                 aria-pressed=${this.wsMarginHidden ? 'true' : 'false'}
-                title="Hide margin and est. profit (counter privacy)"
+                title=${this.wsMarginHidden ? 'Margin and est. profit are hidden: press to show them (counter privacy)' : 'Hide margin and est. profit (counter privacy)'}
                 aria-label="Hide margin and est. profit"
                 @click=${() => this.wsToggleMarginHidden()}
               >
@@ -5861,7 +5902,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
               </button>`
             : nothing}
           ${this.utilMsg
-            ? html`<div id="till-message" class="banner ${this.utilTone}" role="${this.utilTone === 'bad' ? 'alert' : 'status'}">${this.utilMsg}</div>`
+            ? html`<div id="till-message" class="banner ${this.utilTone}" role="${ifDefined(this.utilTone === 'bad' ? 'alert' : this.utilTone === 'note' && !this.utilLive ? undefined : 'status')}">${this.utilMsg}</div>`
             : nothing}
 
           
@@ -6367,7 +6408,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
              rev 5's honesty stands: an unresolved price says "price pending", never CA$0.00. */ ''}
           ${l.priceMissing
             ? html`<div class="lprice">price pending</div>
-                <div class="ltot">(none)</div>`
+                <div class="ltot">(not priced)</div>`
             : html`<div class="lprice" title=${l.priceUom && l.priceUom !== l.uom ? `Priced per ${l.priceUom}` : 'Unit price'}>
                   ${money(l.unitPriceCents)}${l.priceUom && l.priceUom !== l.uom ? ` / ${l.priceUom}` : ''}
                 </div>

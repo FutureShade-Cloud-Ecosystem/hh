@@ -136,7 +136,10 @@ export class HosPosReturn extends LitElement {
       font-weight: 600;
     }
     button:disabled {
-      opacity: 0.45;
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
       cursor: not-allowed;
     }
     /* HH note: disabled drops its fill and goes grey; fade is not a state. */

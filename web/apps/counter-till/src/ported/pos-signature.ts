@@ -107,7 +107,10 @@ export class HosPosSignature extends LitElement {
       border: 1px solid var(--hos-line);
     }
     button:disabled {
-      opacity: 0.5;
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
       cursor: not-allowed;
     }
     .hint {

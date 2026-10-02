@@ -125,8 +125,11 @@ export class HosPosSplitTender extends LitElement {
         color: var(--hos-stone-amber-text);
       }
       button:disabled {
-        opacity: 0.5;
-        cursor: default;
+        background: transparent;
+        border-color: var(--hos-line);
+        color: var(--hos-text-dim);
+        opacity: 1;
+        cursor: not-allowed;
       }
       button.ring {
         border-color: var(--hos-stone-amber);
@@ -215,6 +218,8 @@ export class HosPosSplitTender extends LitElement {
 
  /** fill puts exactly what is left into one leg: the counter's whole reason to trust this panel. */
   private fill(i: number): void {
+    // A pending price leaves no total to fill against: a 0.00 leg would be a wrong figure.
+    if (this.totalCents === null) return;
     const cents = autoFillRemainder(this.draft(), this.totalCents ?? 0, i);
     this.setAmount(i, plainDollars(cents));
   }
@@ -312,7 +317,7 @@ export class HosPosSplitTender extends LitElement {
             ${/* aria-live: the balance changes on every keystroke and is the one thing a
                screen-reader user needs to hear without leaving the amount box. */ ''}
             <div class="problem" role="status" aria-live="polite" data-testid="split-problem">
-              ${state.problem || nothing}
+              ${this.totalCents === null ? 'A price is still pending: the split rings once every line is priced.' : state.problem || nothing}
             </div>
           </div>
           <div>

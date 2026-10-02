@@ -295,7 +295,10 @@ export class HosPosCustomerPicker extends LitElement {
       color: var(--hos-stone-amber-ink);
     }
     .createform button.primary:disabled {
-      opacity: 0.45;
+      background: transparent;
+      border-color: var(--hos-line);
+      color: var(--hos-text-dim);
+      opacity: 1;
       cursor: not-allowed;
     }
     .createnote {
