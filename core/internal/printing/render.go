@@ -240,8 +240,9 @@ var receiptTmpl = template.Must(template.New("receipt").Funcs(template.FuncMap{
 // of a thermal roll. Margins only, never a forced page size, so the same document prints correctly
 // on both letter and A4 drawers.
 var receiptPageTmpl = template.Must(template.New("receipt-page").Funcs(template.FuncMap{
-	"money": Money,
-	"qty":   Qty,
+	"money":     Money,
+	"qty":       Qty,
+	"saleWords": saleTypeWords,
 }).Parse(`<!doctype html>
 <html lang="en">
 <head>
@@ -306,7 +307,7 @@ var receiptPageTmpl = template.Must(template.New("receipt-page").Funcs(template.
 
   <div>
     {{if .CustomerName}}<div>Customer: {{.CustomerName}}{{if .CustomerAccountNo}} ({{.CustomerAccountNo}}){{end}}</div>{{end}}
-    {{if .SaleType}}<div class="muted">{{.Fulfilment}}</div>{{end}}
+    {{if .SaleType}}<div class="muted">{{saleWords .SaleType}}</div>{{end}}
     {{if .CashierRef}}<div class="muted">Served by {{.CashierRef}}</div>{{end}}
   </div>
 
