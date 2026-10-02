@@ -1518,11 +1518,11 @@ export class HosPosTerminal extends LitElement {
        counter and in a panel the person may have dragged to 280px, and minmax lets the same rule
        answer both: four across where they fit, wrapping where they do not. The doctrine's own
        instruction, and the reason there is no media query here. */
+    /* UI-3 (visual GAP 9): 112px, not 132px, so all four choices (Collect now, Will-call, Delivery,
+       COD) share one row at the Panels layout's default panel width (about 535px inside); the
+       tile's gap and side padding below tighten with it so the longest label still fits. */
     .fulfil {
       display: grid;
-      /* UI-3 (visual GAP 9): 112px, not 132px, so all four choices (Collect now, Will-call, Delivery,
-         COD) share one row at the Panels layout's default panel width (about 535px inside); the
-         tile's gap and side padding below tighten with it so the longest label still fits. */
       grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
       gap: 8px;
     }
@@ -1689,8 +1689,8 @@ export class HosPosTerminal extends LitElement {
     /* UI-3 (visual GAP 7): the split state is a band, not a control: the reference's pale yellow
        in both themes, with the theme-stable ink. It is a statement, so it is not greyed. */
     .complete-cta.splitstate:disabled {
-      background: color-mix(in srgb, var(--hos-stone-amber) 42%, #ffffff);
-      border-color: color-mix(in srgb, var(--hos-stone-amber) 42%, #ffffff);
+      background: color-mix(in srgb, var(--hos-stone-amber) 42%, white);
+      border-color: color-mix(in srgb, var(--hos-stone-amber) 42%, white);
       color: var(--hos-stone-amber-ink);
       opacity: 1;
       cursor: default;
