@@ -1194,7 +1194,21 @@ test("a disabled control on the ported surface drops its fill and goes grey", as
   expect(shape.background).toBe("rgba(0, 0, 0, 0)");
   expect(shape.color).not.toBe("rgb(0, 0, 0)");
   expect(shape.opacity).toBe("1");
-  // The split panel's ring carries the same shape while it is not settleable.
+  // An empty ticket's split choice says so in the band's own words: the panel
+  // itself does not mount with nothing to settle (the positions gate repair:
+  // no new bound position carries the cart's emptiness into the panel, so the
+  // terminal's band owns the empty words).
+  await page.getByRole("button", { name: "Split" }).click();
+  await expect(page.getByTestId("cta-split-why")).toContainText("Add a line before splitting the tender.");
+  await expect(page.getByTestId("split-ring")).toHaveCount(0);
+});
+
+test("the split panel's ring wears the disabled rule's shape until the legs meet the shape rule", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
+  await openStep(page, "payment");
   await page.getByRole("button", { name: "Split" }).click();
   const ring = page.getByTestId("split-ring");
   await expect(ring).toBeDisabled();
