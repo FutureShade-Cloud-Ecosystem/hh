@@ -28,6 +28,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -58,7 +59,7 @@ func intPool(t *testing.T) *pgxpool.Pool {
 // stubCharger is the deterministic RunPaymentsStub seam for the card path (no live call).
 type stubCharger struct{ fail bool }
 
-func (c stubCharger) Charge(_ context.Context, _ int64, _, _ string) (till.ChargeResult, error) {
+func (c stubCharger) Charge(_ context.Context, _ pgx.Tx, _ int64, _, _ string) (till.ChargeResult, error) {
 	if c.fail {
 		return till.ChargeResult{Status: "failed"}, errors.New("processor: declined")
 	}

@@ -190,7 +190,7 @@ func (s *Service) TakeTender(ctx context.Context, tx pgx.Tx, in TenderInput) (Te
 		if s.charger == nil {
 			return TenderResult{}, clientErr(503, "till: card rail not configured")
 		}
-		res, cerr := s.charger.Charge(ctx, in.AmountCents, in.PaymentToken, in.IdempotencyKey)
+		res, cerr := s.charger.Charge(ctx, tx, in.AmountCents, in.PaymentToken, in.IdempotencyKey)
 		// Capture-before-stock: the charge completes BEFORE we persist a RECEIVED row / return success.
 		if cerr != nil || res.Status == ChargeFailed {
 			// No RECEIVED row is committed for a failed/declined charge; the drawer is unaffected.

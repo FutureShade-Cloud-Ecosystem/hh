@@ -24,13 +24,14 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // stubCharger is the deterministic card seam (no live processor call), the pos integration idiom.
 type stubCharger struct{}
 
-func (stubCharger) Charge(_ context.Context, _ int64, _, _ string) (till.ChargeResult, error) {
+func (stubCharger) Charge(_ context.Context, _ pgx.Tx, _ int64, _, _ string) (till.ChargeResult, error) {
 	return till.ChargeResult{ProcessorRef: "rp_stub_captured", Status: "captured"}, nil
 }
 

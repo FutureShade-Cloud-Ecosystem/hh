@@ -17,6 +17,7 @@ import (
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -49,7 +50,7 @@ func intPool(t *testing.T) *pgxpool.Pool {
 // vault, the stub returns a stable captured ref for any positive amount + token.
 type stubCharger struct{ proc payment.Processor }
 
-func (s stubCharger) Charge(ctx context.Context, amountCents int64, token, ref string) (ChargeResult, error) {
+func (s stubCharger) Charge(ctx context.Context, _ pgx.Tx, amountCents int64, token, ref string) (ChargeResult, error) {
 	res, err := s.proc.Charge(ctx, map[string]string{"api_key": "stub", "currency": "CAD"}, "MID-TEST", amountCents, token)
 	return ChargeResult{ProcessorRef: res.ProcessorRef, Status: res.Status}, err
 }
