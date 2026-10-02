@@ -311,8 +311,8 @@ export class HosPosSplitTender extends LitElement {
                 : state.remainingCents === 0
                 ? 'Settled exactly'
                 : state.remainingCents > 0
-                  ? `${fmtCents(state.remainingCents)} remaining`
-                  : `${fmtCents(-state.remainingCents)} over`}
+                  ? `${fmtCents(state.remainingCents)} (est.) remaining`
+                  : `${fmtCents(-state.remainingCents)} (est.) over`}
             </div>
             ${/* aria-live: the balance changes on every keystroke and is the one thing a
                screen-reader user needs to hear without leaving the amount box. */ ''}

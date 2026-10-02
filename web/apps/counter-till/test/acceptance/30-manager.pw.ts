@@ -53,19 +53,22 @@ test("the drawer: the same shared counter drawer the clerk found", async ({ page
   await shot(page, "manager-02-drawer", testInfo, { clip: TOP_BAR_CLIP });
 });
 
-test("a sale: the same engine prices, the same margin column, no price field", async ({
+test("a sale: the same engine prices, the manager's margin column, no price field", async ({
   page,
 }, testInfo) => {
   await signIn(page, "Sales manager");
   await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
   const holland = lineRow(page, "Holland Paver, Charcoal (demo)");
   await expect(holland.locator(".lprice")).toHaveText(cad(595));
+  // The engine price is the clerk's; the margin column is the manager's: the
+  // policy word is MANAGER_UP and the manager holds a tier 2 role, so the
+  // till keeps the column the clerk's screen refuses (P3-10).
   await expect(holland.getByTestId("pos-line-margin")).toContainText("%");
   await expect(page.getByTestId("pos-lines").getByRole("textbox")).toHaveCount(1);
   await shot(page, "manager-03-sale", testInfo);
 });
 
-test("a contractor's pavers: the account price and the margin column, the same as the clerk sees", async ({
+test("a contractor's pavers: the account price the clerk sees, and the margin column the policy allows the manager", async ({
   page,
 }, testInfo) => {
   await signIn(page, "Sales manager");

@@ -34,16 +34,22 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     { file: "10-world.pw.ts", test: "the world's newest rows are dated to the moment the box was rebuilt" },
   ],
   "engine-prices": [
-    { file: "20-sales.pw.ts", test: "a sale: lines priced by the engine, no price field, and the margin column answers" },
-    { file: "30-manager.pw.ts", test: "a sale: the same engine prices, the same margin column, no price field" },
+    { file: "20-sales.pw.ts", test: "a sale: lines priced by the engine, no price field, and the margin column refuses the clerk" },
+    { file: "30-manager.pw.ts", test: "a sale: the same engine prices, the manager's margin column, no price field" },
   ],
-  "margin-both": [
+  // P3-10 (the comprehensive train review): the margin surface follows the
+  // policy word /pos/policy answers (this box: MANAGER_UP), while the glance's
+  // own serving rule stays the core's. The world leg holds the glance half,
+  // the manager leg holds the allowed surface, and the clerk leg holds the
+  // refusal.
+  "margin-policy": [
     { file: "10-world.pw.ts", test: "the clerk's margin glance answers: the configuration names who sees cost and margin" },
-    { file: "30-manager.pw.ts", test: "a sale: the same engine prices, the same margin column, no price field" },
+    { file: "30-manager.pw.ts", test: "a sale: the same engine prices, the manager's margin column, no price field" },
+    { file: "20-sales.pw.ts", test: "a sale: lines priced by the engine, no price field, and the margin column refuses the clerk" },
   ],
   "no-floor": [
     { file: "20-sales.pw.ts", test: "a contractor's pavers: the account price rings, and a below floor line rings too" },
-    { file: "30-manager.pw.ts", test: "a contractor's pavers: the account price and the margin column, the same as the clerk sees" },
+    { file: "30-manager.pw.ts", test: "a contractor's pavers: the account price the clerk sees, and the margin column the policy allows the manager" },
   ],
   "credit-refused": [
     { file: "20-sales.pw.ts", test: "an account the credit gate refuses: refused in words, cash and card intact" },

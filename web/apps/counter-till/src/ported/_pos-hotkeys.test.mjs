@@ -129,7 +129,7 @@ test('hotkeys: the shipped fallback takes no key a browser owns', () => {
 });
 
 test('hotkeys: the BisTrack defaults are F4 to advance and F12 to pay, and F8 is left unbound', () => {
- // Ryan Rood: "bistrack does [F]4 to move to the next step and then [F]12 to take a
+ // The counter lead: "bistrack does [F]4 to move to the next step and then [F]12 to take a
  // payment." The frontend fallback and the server default are one roster or they are a bug.
   const by = Object.fromEntries(FALLBACK_ROSTER.map((r) => [r.action, r.key]));
   assert.equal(by[HK_STEP_NEXT], 'f4');
@@ -263,8 +263,8 @@ test('legend: it is chrome: pinned, not focusable, not clickable, and not announ
 });
 
 test('legend: dismissing it hides the BAR and never the keys, and the way back needs no admin', () => {
- // Ryan Bostock: "No, I don't even know what that is": and he is the same person who wants the
- // screen real estate back. Ryan Rood wants the keys. Both, at one dealer, on one screen.
+ // The back-office lead: "No, I don't even know what that is": the same side that wants the
+ // screen real estate back. The counter lead wants the keys. Both, at one dealer, on one screen.
   assert.match(legendSrc, /pos-legend-dismiss/, 'the bar reports the dismissal, it does not decide it');
   assert.ok(!/roster\s*=\s*\[\]|this\.roster\s*=/.test(legendSrc), 'the legend never edits the roster');
  // The terminal hides the STRIP on a panel flag and leaves the listener and the roster alone.

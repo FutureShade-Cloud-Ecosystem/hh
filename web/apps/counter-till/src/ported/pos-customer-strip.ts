@@ -76,7 +76,10 @@ export class HosPosCustomerStrip extends LitElement {
       return html`<div class="strip"><span class="walkin">Walk-In / Cash Customer: no account</span></div>`;
     }
     // HH note: the reference subtracted the balance from the limit here; the core computes
-    // credit in HH, so the port asks the host seam (CLOSURE.md names it).
+    // credit in HH, so the port asks the host seam (CLOSURE.md names it). The subtraction is
+    // the browser's own arithmetic on server-stated operands, so the label says the figure is
+    // derived: the contract serves no counter-side available-credit field (the tenant billing
+    // summary and the AR register rows do, and the counter never reads them).
     const available = availableCreditCents(c);
     return html`
       <div class="strip">
@@ -84,7 +87,7 @@ export class HosPosCustomerStrip extends LitElement {
         <span class="acct">${c.account_no}</span>
         <span class="pill">Terms <span class="num">${c.payment_terms_days}d</span></span>
         <span class="pill">
-          Available <span class="num avail">${money(available)}</span>
+          Available (derived) <span class="num avail">${money(available)}</span>
         </span>
         ${c.open_balance_cents > 0
           ? html`<span class="pill">

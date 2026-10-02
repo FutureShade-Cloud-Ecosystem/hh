@@ -3,9 +3,9 @@
 // _pos-counter-view.ts: WHICH PARTS OF THE COUNTER THIS PERSON WANTS ON SCREEN. Pure.
 //
 // THE ASK, AND WHY IT IS PER USER AND NOT PER DEALER. Two people at the same yard gave opposite
-// answers on the same call. Ryan Rood wants BisTrack's keys in his hands; Ryan Bostock, asked
-// whether he is hotkey-heavy, said "No, I don't even know what that is. So, probably not": and he
-// is the same person who wants screen real estate back and said "I wouldn't need it [the hot list]
+// answers on the same call. The counter lead wants BisTrack's keys in hand; the back-office lead,
+// asked whether the yard is hotkey-heavy, said "No, I don't even know what that is. So, probably
+// not": the same side that wants screen real estate back and said "I wouldn't need it [the hot list]
 // when I'm in my back office". A dealer-wide switch would have to pick one of them and be wrong for
 // the other every day, so this is a USER preference on the presentation substrate
 // (surface_user_items, kind `panel`, surface `pos.counter`: the 0140/0149 whole-or-absent idiom),

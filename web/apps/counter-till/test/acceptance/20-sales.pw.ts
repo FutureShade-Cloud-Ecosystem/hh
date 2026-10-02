@@ -17,7 +17,6 @@ import {
   dollars,
   expectedCash,
   lineRow,
-  marginPercent,
   mint,
   openDrawer,
   openParked,
@@ -76,14 +75,19 @@ test("the drawer: the branch's MAIN counter drawer, found open with the till's o
   await shot(page, "sales-02-drawer", testInfo, { clip: TOP_BAR_CLIP });
 });
 
-test("a sale: lines priced by the engine, no price field, and the margin column answers", async ({
+test("a sale: lines priced by the engine, no price field, and the margin column refuses the clerk", async ({
   page,
 }, testInfo) => {
   await signIn(page, "Sales");
   await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
   const holland = lineRow(page, "Holland Paver, Charcoal (demo)");
   await expect(holland.locator(".lprice")).toHaveText(cad(595));
-  await expect(holland.getByTestId("pos-line-margin")).toContainText("%");
+  // The box's policy word is MANAGER_UP and the clerk is frontline (tier 3),
+  // so the till refuses the whole margin surface (P3-10: the surface follows
+  // the policy word): no margin cells, though the glance itself still answers
+  // the clerk server-side (the world leg holds that half; the surface's
+  // refusal is this story's).
+  await expect(page.getByTestId("pos-line-margin")).toHaveCount(0);
   // The line carries a quantity input and no price field anywhere: the price
   // is text, and the one textbox of the line is its quantity.
   await expect(holland.getByRole("textbox")).toHaveCount(1);
@@ -101,14 +105,16 @@ test("a contractor's pavers: the account price rings, and a below floor line rin
   await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
   const holland = lineRow(page, "Holland Paver, Charcoal (demo)");
   await expect(holland.locator(".lprice")).toHaveText(cad(524));
-  await expect(holland.getByTestId("pos-line-margin")).toContainText("%");
+  // The policy word refuses the clerk the whole margin surface (P3-10), on
+  // this contractor ticket as on any other: the price stands, the column does
+  // not. The manager's till is the allowed side's proof (30-manager).
+  await expect(page.getByTestId("pos-line-margin")).toHaveCount(0);
   await shot(page, "sales-04-contractor-pavers", testInfo);
 
   // The floor is the quote flow's: a line priced below the floor margin rings
-  // anyway, its low margin shown in the column. The column's words are held
-  // to the glance's own answer for this line, and the glance's basis points
-  // are held below the bulk category's floor of 20 percent, so the screen
-  // shows a genuinely below floor margin and the sale rings regardless.
+  // anyway. The glance's own answer proves the line is genuinely below the
+  // bulk category's floor of 20 percent; the refused surface states no margin
+  // for it (P3-10), and rings it regardless.
   await pickCustomer(page, "Quinte", "Quinte Paving & Design (demo)");
   await searchAndAdd(page, "DEMO-AGG-GA", "Granular A (demo)");
   const granular = lineRow(page, "Granular A (demo)");
@@ -125,9 +131,9 @@ test("a contractor's pavers: the account price rings, and a below floor line rin
   expect(glanceLines).toHaveLength(1);
   const belowFloorBps = glanceLines[0].margin_bps as number;
   expect(belowFloorBps).toBeLessThan(2000);
-  await expect(granular.getByTestId("pos-line-margin")).toHaveText(marginPercent(belowFloorBps));
-  // The shot holds the populated ticket, so the picture shows the low margin
-  // the column carries, before the ring empties it.
+  await expect(page.getByTestId("pos-line-margin")).toHaveCount(0);
+  // The shot holds the populated ticket the ring empties; the column it would
+  // carry for the manager is absent for the clerk.
   await shot(page, "sales-04-below-floor-populated", testInfo);
   // Ring it: the account's pavers line is still on the ticket beside it, so
   // the cash is typed for the whole ticket.

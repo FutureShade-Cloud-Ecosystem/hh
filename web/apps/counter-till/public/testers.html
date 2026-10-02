@@ -77,8 +77,8 @@
 
 <h2>Two kinds of sale</h2>
 <p data-claim="engine-prices">The till rings a <strong>counter sale</strong>: every line is priced by the pricing engine at that customer's own price, and there is no price field to type into. What a customer pays comes from the dealer's pricing rules and tiers, never from the person at the counter.</p>
-<p data-claim="margin-both">Beside each price sits a margin column, and it answers for both logins: who sees cost and margin is the dealer's own configuration.</p>
-<p data-claim="no-floor">The till asks no floor. A contractor's price can sit below the dealer's floor margin, and at the counter that line rings anyway, with the low margin shown in the column. That is on purpose: the floor belongs to the quote flow, and it arrives with Quote Desk, the module after this one.</p>
+<p data-claim="margin-policy">A margin column can sit beside each price, exactly as the dealer's margin visibility policy answers: on this box the policy lets the manager and above see margin and estimated profit, so the Sales manager's till shows the column and the Sales clerk's till shows none. The margin glance still answers the clerk behind the scenes; the till is what follows the word, so the clerk's screen states no margin anywhere: no column, no margin or profit figures in the footer bar, and no eye to hide them with.</p>
+<p data-claim="no-floor">The till asks no floor. A contractor's price can sit below the dealer's floor margin, and at the counter that line rings anyway; the manager's till shows the low margin in its column, and the clerk's, refused by the same policy word, rings the line without one. That is on purpose: the floor belongs to the quote flow, and it arrives with Quote Desk, the module after this one.</p>
 <p>The other kind of sale is the quote, and it is not on this box yet: a quote is agreed at its price and becomes an order through its own flow, and that flow is where the floor margin lives. It comes with Quote Desk.</p>
 
 <h2>Tenders and receipts</h2>
@@ -105,7 +105,7 @@
 <ul>
   <li data-claim="known-seeded-card">The card sales that come with the starting world carry no card reference, so a card refund of one is refused. Refund such a sale in cash or to the account, or return a card sale you rang yourself in this round.</li>
   <li data-claim="restart">A restart of the box signs everyone out. Sign in again from the role cards.</li>
-  <li data-claim="signout-reload">Signing out, or just reloading the page, ends the session: the till keeps no session between visits.</li>
+  <li data-claim="signout-reload">Signing out, or just reloading the page, ends the session: the till keeps no session between visits. A reload also drops the ticket being built: nothing is kept between visits.</li>
   <li data-claim="beyond-reads">With browser developer tools, a technical tester reaches a few reads beyond the till, and none of them is fenced to a branch yet: the manager's sign-in reaches the will-call queue and the scan trail, either sign-in reaches the transaction trail, and the audit list stays walled to both. This is known, and it is named here rather than hidden: the fence work for those reads is a later item, and no Branch Manager login exists on this box.</li>
 </ul>
 

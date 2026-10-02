@@ -4,12 +4,12 @@
 //
 // TWO CLIENT ASKS MEET IN THIS FILE.
 //
-// "the name of the game is getting people in and out really quickly" (Ryan Bostock): the
+// "the name of the game is getting people in and out really quickly" (the back-office lead): the
 // grid-first lookup became about five rows under the field, Enter takes the top one, and
 // browsing moved behind its own disclosure as the exception path it always was.
 //
 // "one of the biggest things that people always complain about is, how much am I saving?"
-// (Ryan Rood): every row shows retail, this account's price, the saving between them, and any
+// (the counter lead): every row shows retail, this account's price, the saving between them, and any
 // bulk break stacked on top. Every one of those cents is the SERVER's; the tests below pin what
 // may be CLAIMED, never how it is computed, because computing it here would itself be the defect.
 //
@@ -148,8 +148,8 @@ test('price: an account paying less shows retail struck AND the saving, with the
 });
 
 test('price: the bulk break STACKS on top and is only shown while it is still an OFFER', () => {
- // Ryan Rood: customer type triggers a pricing role, "then it's going to show your savings against
- // retail. If it triggers a bulk pricing break it's going to add that to it as well."
+ // The counter lead: customer type triggers a pricing role, "then it's going to show your savings
+ // against retail. If it triggers a bulk pricing break it's going to add that to it as well."
   const p = pricePicture(
     quote({
       customer_cents: 850,
