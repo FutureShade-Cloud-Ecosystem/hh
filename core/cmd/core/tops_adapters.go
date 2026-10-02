@@ -106,6 +106,20 @@ func (a posTaxAdapter) AssessSale(ctx context.Context, in pos.TaxQuoteInput) (po
 	return pos.QuoteResult{TaxCents: q.TaxCents, RateBps: q.RateBps}, nil
 }
 
+// posTaxRuleAdapter satisfies pos.TaxRuleSource over *tax.Service: the round rule word the counter's
+// tax-rate read answers, the org default config row's round_mode (empty branch). The read's rate side
+// needs no adapter: the wired posTaxAdapter above IS the rate source, the same assessor the ring binds
+// with, so the counter's word and the ring's math cannot disagree.
+type posTaxRuleAdapter struct{ svc *tax.Service }
+
+func (a posTaxRuleAdapter) RoundMode(ctx context.Context) (string, error) {
+	c, err := a.svc.GetConfig(ctx, "")
+	if err != nil {
+		return "", err
+	}
+	return c.RoundMode, nil
+}
+
 // posStockAdapter satisfies pos.StockDecrementer over *inventory.Service. It maps the pos-declared
 // StockDecrementInput → inventory.DecrementInput (distinct named types, same shape) so a COLLECT_NOW sale
 // decrements real weighted-avg stock + posts COGS; DELIVERED/COLLECT_LATER records zero moves in-module.

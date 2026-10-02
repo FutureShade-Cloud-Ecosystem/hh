@@ -21,12 +21,12 @@ func (f fixedBpsAssessor) AssessSale(_ context.Context, _ TaxQuoteInput) (QuoteR
 	return QuoteResult{RateBps: f.bps}, nil
 }
 
-// fixedRoundMode answers one round mode word, the fake the rule-source leg
+// fakeRoundMode answers one round mode word, the fake the rule-source leg
 // wires: a word the default never answers, so a method that returns the
 // default constant instead of the seam fails it.
-type fixedRoundMode struct{ mode string }
+type fakeRoundMode struct{ mode string }
 
-func (f fixedRoundMode) RoundMode(context.Context) (string, error) { return f.mode, nil }
+func (f fakeRoundMode) RoundMode(context.Context) (string, error) { return f.mode, nil }
 
 func TestTaxRate_DefaultWiringAnswers1300AndInvoiceTotal(t *testing.T) {
 	h := newHarness()
@@ -64,7 +64,7 @@ func TestTaxRate_AssessedRateFlowsThrough(t *testing.T) {
 // the word. Returning the default constant in the method fails this leg.
 func TestTaxRate_RuleSourceFlowsThrough(t *testing.T) {
 	h := newHarness()
-	h.svc = h.svc.WithTaxRuleSource(fixedRoundMode{mode: "PER_LINE"})
+	h.svc = h.svc.WithTaxRuleSource(fakeRoundMode{mode: "PER_LINE"})
 	out, err := h.svc.TaxRate(context.Background())
 	if err != nil {
 		t.Fatalf("read: %v", err)

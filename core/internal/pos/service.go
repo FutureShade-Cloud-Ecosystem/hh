@@ -215,11 +215,15 @@ type Service struct {
 	curation SurfaceCuration
 	// aging is the AR read behind the Customer step's past-due fact (standing.go). Nil until wired,
 	// and nil says nothing, never an error, and never "this account is current".
-	aging      AgingReader
-	tender     TenderTaker
-	credit     CreditGate
-	sig        SignatureProvider
-	tax        TaxAssessor
+	aging  AgingReader
+	tender TenderTaker
+	credit CreditGate
+	sig    SignatureProvider
+	tax    TaxAssessor
+	// taxRules is the optional round-rule read behind the counter tax-rate
+	// read's round_mode word (taxrate.go). Nil answers INVOICE_TOTAL, the
+	// flat engine's actual behavior.
+	taxRules   TaxRuleSource
 	stock      StockDecrementer
 	restock    StockRestocker
 	cardRefund CardRefunder
