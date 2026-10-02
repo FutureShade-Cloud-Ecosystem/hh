@@ -1078,3 +1078,29 @@ belongs to whoever owns the template seed or those assertions: either
 the assertions stop pinning the human title, or the seed carries it.
 Recorded so the HH-179 checks can be read honestly: every other test in
 the reporting integration suite passes on the HH-179 branch.
+
+## HH hardening, defect HH-186: the shared dev instance's migration ledger holds a numbering epoch that diverges from main (recorded, D39 territory)
+
+The dev Postgres instance the lane was given (the default DATABASE_URL in
+core/internal/config, the hardscapeos database on the local port 5435)
+carries a schema_migrations ledger from a numbering epoch that differs
+from current main's chain: its rows name a_saved_sort at 0213,
+purchasing_delivery_method at 0214 and pos_counter_layout at 0220, where
+main's chain numbers the same content 0216, 0217 and 0223, and the
+epoch's ledger has no rows for main's 0214_new_entities_and_pricing or
+0215_identity_audit. Because the ledger is keyed by whole filename, a
+migrate run from current main against that instance applies main's
+0214, 0215 and 0216 for real and then fails at main's 0217 with
+"column delivery_method of relation purchasing_pos already exists" (the
+epoch's own 0214 added it). One such run happened from the HH-186
+worktree before the divergence was understood: the instance now also
+records main's 0214 through 0216 in its ledger, 0215 having inserted its
+staff_role and contractor role-map rows. The instance's schema content
+matches its objects either way; no production system and no scratch
+database of this lane was affected (HH-186's own integration legs run
+against a scratch database built from main's chain, which migrates
+cleanly end to end). D39 already assigns the two runners'
+applied-history mechanisms to HH-3.7 to report before HH-5; this entry
+records that the shared dev instance is itself the live example, and
+that rebuilding it from main's chain (rather than patching its ledger)
+is the clean remedy. Lane work should keep using scratch databases.
