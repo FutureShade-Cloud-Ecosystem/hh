@@ -182,15 +182,23 @@ test("a walk-in cash sale of three lines rings, and the sale read equals every f
   // figure the card assembles: the tax and the total are the ring's own
   // answer, named in words, never computed here.
   const totals = page.getByTestId("pos-totals-card");
+  // The card's whole shape: exactly two rows, the Subtotal and the ring-words
+  // row. A third row is a figure the till must not compute (the review's
+  // probe put a plain browser Total row here, and this count is what fails
+  // on it).
+  await expect(totals.locator(".trow")).toHaveCount(2);
   await expect(totals).toContainText("Subtotal");
   await expect(totals).toContainText("CA$64.00");
   await expect(totals.getByTestId("pos-ring-words")).toContainText("added at the ring");
+  // The absences are pinned on locators that hold the content (the review's
+  // P2-1: the step panel is a shadow slot and sees none of this body), and
+  // the positive assertions above prove these locators see the card they
+  // judge: neither the stub's HST figure (CA$8.32) nor its total (CA$72.32)
+  // may stand on the card or on the Complete button.
   await expect(totals).not.toContainText("(est.");
-  // No tax figure and no total figure anywhere on the payment step: neither
-  // the stub's HST line (CA$8.32) nor its total (CA$72.32).
-  const paymentStep = page.getByTestId("step-panel-payment");
-  await expect(paymentStep).not.toContainText("CA$8.32");
-  await expect(paymentStep).not.toContainText("CA$72.32");
+  await expect(totals).not.toContainText("CA$8.32");
+  await expect(totals).not.toContainText("CA$72.32");
+  await expect(page.getByTestId("pos-complete-sale")).not.toContainText("CA$72.32");
   await page.getByLabel("Cash tendered in dollars: optional; leave empty to ring the exact total").fill("80.00");
   await expect(page.getByTestId("cash-change-preview")).toContainText("Change due");
   await expect(page.getByTestId("cash-change-preview")).toContainText("the ring's own answer");
