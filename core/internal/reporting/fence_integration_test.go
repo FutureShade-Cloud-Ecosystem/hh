@@ -19,6 +19,14 @@ package reporting
 //
 // Every test here holds BOTH ways: a scoped caller must be held to their branch, and a global caller
 // must keep reading everything, a fence that breaks leadership's consolidated view is not a fence.
+//
+// ROUND 2, the fence is on the DATA, not on the PRINTER. report_runs.branch_id is where the paper
+// came out (print_queue.branch_id is NOT NULL, so even a consolidated report is printed AT a branch),
+// and fencing on it let a consolidated artefact printed at Kingston read as Kingston's. The scope of
+// what an artefact CARRIES is: the report's own branch parameter for a TEMPLATE artefact, empty
+// meaning consolidated; and, for a COMMISSION artefact, the branches of the frozen periods its
+// (rep, window) linkage matches, because the artefact row names no period id. Where that scope is
+// genuinely underivable the artefact reads as consolidated, global only, fail closed.
 
 import (
 	"context"
@@ -355,5 +363,198 @@ func TestIntegration_BranchFence_CommissionRulesAreHeldToTheirReach(t *testing.T
 		if !ruleRatePresent(globalRules, rate) {
 			t.Errorf("a global caller's rule list lost the %d bps rule", rate)
 		}
+	}
+}
+
+// TestIntegration_BranchFence_ConsolidatedTemplateArtefactPrintedAtABranchIsGlobalOnly, round 2: a
+// global caller running the consolidated sales_by_day must name a branch to print it AT, and that
+// print branch must not turn the whole company's numbers into that branch's to read. Trenton's sales
+// are inside the artefact; a Kingston manager must not see it, and a Trenton manager must still see
+// their own numbers wherever the paper came out: the fence is on the data, not on the printer.
+func TestIntegration_BranchFence_ConsolidatedTemplateArtefactPrintedAtABranchIsGlobalOnly(t *testing.T) {
+	pool := intPool(t)
+	f := newFixture(t, pool)
+	global := globalSvc(t, pool)
+	kingston := scopedSvc(t, pool, kingstonBranch)
+	trenton := scopedSvc(t, pool, trentonBranch)
+	ctx := context.Background()
+	from, to := window()
+
+	cust := f.customer("acme")
+	f.invoicePaid(cust, trentonBranch, "", from, 10_000, 500)
+
+	// A consolidated artefact (no branch parameter, the whole company) printed at Kingston.
+	consolidated, err := global.Print(ctx, "sales_by_day",
+		map[string]string{"from_date": from, "to_date": to}, kingstonBranch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.del(`UPDATE report_runs SET print_job_id = NULL WHERE id=$1::uuid`, consolidated.ID)
+	f.del(`DELETE FROM print_queue WHERE id=$1::uuid`, consolidated.PrintJobID)
+	f.del(`DELETE FROM report_runs WHERE id=$1::uuid`, consolidated.ID)
+
+	// The honest reader's contrast: a Kingston report (data and printer both at Kingston).
+	own, err := global.Print(ctx, "sales_by_day",
+		map[string]string{"from_date": from, "to_date": to, "branch_id": kingstonBranch}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.del(`UPDATE report_runs SET print_job_id = NULL WHERE id=$1::uuid`, own.ID)
+	f.del(`DELETE FROM print_queue WHERE id=$1::uuid`, own.PrintJobID)
+	f.del(`DELETE FROM report_runs WHERE id=$1::uuid`, own.ID)
+
+	// Trenton's data printed at Kingston: Trenton's to read, not Kingston's.
+	misplaced, err := global.Print(ctx, "sales_by_day",
+		map[string]string{"from_date": from, "to_date": to, "branch_id": trentonBranch}, kingstonBranch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.del(`UPDATE report_runs SET print_job_id = NULL WHERE id=$1::uuid`, misplaced.ID)
+	f.del(`DELETE FROM print_queue WHERE id=$1::uuid`, misplaced.PrintJobID)
+	f.del(`DELETE FROM report_runs WHERE id=$1::uuid`, misplaced.ID)
+
+	// The single read.
+	if _, err := kingston.RunArtefact(ctx, own.ID); err != nil {
+		t.Errorf("a Kingston manager was refused their OWN branch's artefact: %v", err)
+	}
+	if _, err := kingston.RunArtefact(ctx, consolidated.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a Kingston manager read the CONSOLIDATED artefact because it was printed at "+
+			"Kingston, and Trenton's numbers are inside it (err=%v)", err)
+	}
+	if _, err := kingston.RunArtefact(ctx, misplaced.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a Kingston manager read Trenton's numbers because the paper came out at Kingston "+
+			"(err=%v)", err)
+	}
+	if _, err := trenton.RunArtefact(ctx, misplaced.ID); err != nil {
+		t.Errorf("a Trenton manager was refused their OWN numbers printed at another branch: %v", err)
+	}
+	// A global caller keeps reading everything.
+	for _, id := range []string{own.ID, consolidated.ID, misplaced.ID} {
+		if _, err := global.RunArtefact(ctx, id); err != nil {
+			t.Errorf("a global caller was refused an artefact inside their reach (%s): %v", id, err)
+		}
+	}
+
+	// The list answers the same way.
+	scopedList, err := kingston.Runs(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runListHas(scopedList, own.ID) {
+		t.Error("a Kingston manager's artefact list does not contain their OWN branch's artefact")
+	}
+	if runListHas(scopedList, consolidated.ID) {
+		t.Error("a Kingston manager's artefact list contains the CONSOLIDATED artefact because it was " +
+			"printed at Kingston")
+	}
+	if runListHas(scopedList, misplaced.ID) {
+		t.Error("a Kingston manager's artefact list contains Trenton's numbers because the paper " +
+			"came out at Kingston")
+	}
+	trentonList, err := trenton.Runs(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runListHas(trentonList, misplaced.ID) {
+		t.Error("a Trenton manager's artefact list lost their OWN numbers printed at another branch")
+	}
+	globalList, err := global.Runs(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{own.ID, consolidated.ID, misplaced.ID} {
+		if !runListHas(globalList, id) {
+			t.Errorf("a global caller's artefact list lost an artefact inside their reach (%s)", id)
+		}
+	}
+}
+
+// TestIntegration_BranchFence_ConsolidatedCommissionArtefactPrintedAtABranchIsGlobalOnly, round 2:
+// the period read already answers not found for a scoped caller, but printing the consolidated period
+// wrote a report_runs row whose only branch is the PRINT branch, so the frozen statement stayed
+// readable through the artefact surface. The artefact carries its (rep, window) linkage in params and
+// nothing else, so its scope has to come from the periods that linkage matches.
+func TestIntegration_BranchFence_ConsolidatedCommissionArtefactPrintedAtABranchIsGlobalOnly(t *testing.T) {
+	pool := intPool(t)
+	f := newFixture(t, pool)
+	global := globalSvc(t, pool)
+	kingston := scopedSvc(t, pool, kingstonBranch)
+	ctx := context.Background()
+	from, to := window()
+
+	repK, repT := twoUsers(t, pool)
+	f.commissionRule(repK, BasisRevenue, 500, "", "", from)
+	f.commissionRule(repT, BasisRevenue, 500, "", "", from)
+	prod := f.product("PAV1", "Paver", f.category("pavers"))
+
+	// The honest reader's artefact: repK's Kingston period, frozen at Kingston and printed at
+	// Kingston, data and printer agreeing.
+	kgnPeriod := freezeAt(t, f, global, repK, kingstonBranch, 20_000, prod, from, to)
+	ownArtefact, err := global.PrintCommissionRun(ctx, kgnPeriod.RunID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.del(`UPDATE report_runs SET print_job_id = NULL WHERE id=$1::uuid`, ownArtefact.ID)
+	f.del(`DELETE FROM print_queue WHERE id=$1::uuid`, ownArtefact.PrintJobID)
+	f.del(`DELETE FROM report_runs WHERE id=$1::uuid`, ownArtefact.ID)
+
+	// repT's sale lives at Trenton, but the period is frozen consolidated (no branch), which only a
+	// global caller may do. The sale is planted by hand rather than through freezeAt so no
+	// branch-scoped twin period shares the linkage triple.
+	custT := f.customer("ct" + repT[len(repT)-6:])
+	f.repAssignment(custT, "", repT)
+	ordT := f.order(custT, trentonBranch, from)
+	invT := f.invoicePaid(custT, trentonBranch, ordT, from, 30_000, 0)
+	f.invoiceLine(invT, prod, 1, 1, 30_000, 30_000)
+	consolidatedPeriod, err := global.ComputeAndFreeze(ctx, repT, from, to, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.del(`DELETE FROM commission_run_lines WHERE run_id=$1::uuid`, consolidatedPeriod.RunID)
+	f.del(`DELETE FROM commission_runs WHERE id=$1::uuid`, consolidatedPeriod.RunID)
+	consolidatedArtefact, err := global.PrintCommissionRun(ctx, consolidatedPeriod.RunID, kingstonBranch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.del(`UPDATE report_runs SET print_job_id = NULL WHERE id=$1::uuid`, consolidatedArtefact.ID)
+	f.del(`DELETE FROM print_queue WHERE id=$1::uuid`, consolidatedArtefact.PrintJobID)
+	f.del(`DELETE FROM report_runs WHERE id=$1::uuid`, consolidatedArtefact.ID)
+
+	// The honest reader keeps their artefact...
+	if _, err := kingston.RunArtefact(ctx, ownArtefact.ID); err != nil {
+		t.Errorf("a Kingston manager was refused their OWN branch's commission artefact: %v", err)
+	}
+	// ...the period itself answers not found (round one)...
+	if _, err := kingston.CommissionRun(ctx, consolidatedPeriod.RunID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a Kingston manager read the consolidated period itself (err=%v)", err)
+	}
+	// ...and the frozen statement of that same period must answer not found too, not sneak back in
+	// as an artefact printed at Kingston.
+	if _, err := kingston.RunArtefact(ctx, consolidatedArtefact.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a Kingston manager read the CONSOLIDATED commission artefact because it was printed "+
+			"at Kingston, though the period itself answers not found (err=%v)", err)
+	}
+	if _, err := global.RunArtefact(ctx, consolidatedArtefact.ID); err != nil {
+		t.Errorf("a global caller was refused the consolidated commission artefact: %v", err)
+	}
+
+	// The list answers the same way.
+	scopedList, err := kingston.Runs(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runListHas(scopedList, ownArtefact.ID) {
+		t.Error("a Kingston manager's artefact list does not contain their OWN branch's commission artefact")
+	}
+	if runListHas(scopedList, consolidatedArtefact.ID) {
+		t.Error("a Kingston manager's artefact list contains the CONSOLIDATED commission artefact " +
+			"because it was printed at Kingston")
+	}
+	globalList, err := global.Runs(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runListHas(globalList, consolidatedArtefact.ID) {
+		t.Error("a global caller's artefact list lost the consolidated commission artefact")
 	}
 }
