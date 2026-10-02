@@ -52,14 +52,18 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "hh199: temp dir for the core binary: %v\n", err)
 		os.Exit(1)
 	}
-	defer os.RemoveAll(dir)
 	bin := filepath.Join(dir, "core")
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "hh199: building the core binary: %v\n%s", err, out)
 		os.Exit(1)
 	}
 	hh199CoreBin = bin
-	os.Exit(m.Run())
+	code := m.Run()
+	// Removed here and not by a defer: os.Exit never runs deferred calls,
+	// and the built binary is tens of megabytes every test run would
+	// otherwise leave behind.
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 // hh199Sink is a TCP sink: it accepts and immediately closes every
@@ -131,14 +135,14 @@ var (
 // hh199RunRole runs the built binary's role with the leg's environment
 // and returns the combined output and exit code (a refused role exits
 // non-zero through main's dispatch). isolated runs the role inside a
-// private user and network namespace when the platform grants one, so a
-// leg whose role would otherwise fall back to the localhost default
-// cannot reach any real listener even if its refusal were removed; the
-// namespace's loopback is down, so the default target fails in
-// milliseconds rather than hanging. Where no namespace can be had the
-// isolated leg runs plainly only under CI (whose runners carry nothing
-// on the default port) and skips elsewhere rather than risk a
-// developer's shared dev database.
+// private user and network namespace, so a leg whose role would
+// otherwise fall back to the localhost default cannot reach any real
+// listener even if its refusal were removed; the namespace's loopback
+// is down, so the default target fails in milliseconds rather than
+// hanging. Where no namespace can be had the isolated leg skips, on a
+// developer's machine and on CI alike: running it plainly would let a
+// regressed tree dial whatever answers on the default port, and a set
+// CI variable is not evidence that port is dead.
 func hh199RunRole(t *testing.T, role string, roleArgs []string, set map[string]string, isolated bool) (string, int) {
 	t.Helper()
 	prefix := []string{}
@@ -146,11 +150,10 @@ func hh199RunRole(t *testing.T, role string, roleArgs []string, set map[string]s
 		hh199NetNSOnce.Do(func() {
 			hh199NetNSOK = exec.Command("unshare", "-Urn", "--", "true").Run() == nil
 		})
-		if hh199NetNSOK {
-			prefix = []string{"unshare", "-Urn", "--"}
-		} else if os.Getenv("CI") == "" {
-			t.Skipf("no private network namespace on this machine and not on CI: the neither-set leg could dial a shared localhost database")
+		if !hh199NetNSOK {
+			t.Skipf("no private network namespace on this machine: the isolated leg never runs without one")
 		}
+		prefix = []string{"unshare", "-Urn", "--"}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
