@@ -360,7 +360,14 @@ func (s *Service) SendPO(ctx context.Context, poID string, in SendPORequest) (PO
 	// because it would be a read of another branch's send history through the one unguarded door.
 	if key := strings.TrimSpace(in.IdempotencyKey); key != "" {
 		// An identical retry reuses its key and its row: a double-clicked "Send order" is one order.
-		if prior, ok, err := store.FindPOSendByKey(ctx, key, po.ID); err == nil && ok {
+		// A FAILED READ IS RETURNED, never fallen past (HH-181 round 2): falling through would send the
+		// order again behind a read that errored, and once the insert tripped the key index the retry
+		// would be answered as a collision, a claim about a row this code just failed to read.
+		prior, ok, err := store.FindPOSendByKey(ctx, key, po.ID)
+		if err != nil {
+			return POSend{}, err
+		}
+		if ok {
 			return prior, nil
 		}
 	}
