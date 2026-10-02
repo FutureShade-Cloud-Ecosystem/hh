@@ -195,7 +195,7 @@ test('a strange value stays strange: it is not dressed up as a sentence', () => 
 
 test('the empty string is not a state, and is not turned into one', () => {
  // derived_from is `omitempty` on the wire (batch_model.go:117), so an absent anchor arrives as ''.
- // The word map must not manufacture a word for it: the import preview renders an em dash instead,
+ // The word map must not manufacture a word for it: the import preview renders the blank marker instead,
  // and that decision belongs to the component, not to the map.
   assert.equal(derivationWord(''), '');
   assert.equal(batchStatusWord(''), '');

@@ -5769,7 +5769,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
 
   /**
  * rev 8 (item 12): the FOOTER TRANSACTION BAR: the ticket panel's bottom line of truth.
-   * "N Items · Total Weight X lbs" always (weight an honest em-dash when NO line has a weight);
+   * "N Items · Total Weight X lbs" always (the blank word when NO line has a weight);
    * "Margin Y% · Est. Profit CA$Z" segments ONLY while the role-gated server data is present AND
    * the quick-hide is off. Sits OUTSIDE the panel's internal scroll, so it never leaves view.
    */
@@ -6172,7 +6172,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
  * rev 8 (item 9): one line's Total Weight in lbs, from the glance's DISCOVERED catalogue facts
    * (weight_kg_per_base + the unit meta the stock line already uses). null = cannot be said
    * honestly (no weight on file / no usable conversion / glance not landed) → the column shows an
-   * em-dash and the line is excluded from the footer total.
+   * the blank word and the line is excluded from the footer total.
    */
   private lineWeight(l: CartLine): number | null {
     const g = this.lineStock[l.product.id];

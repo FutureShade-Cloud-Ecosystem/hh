@@ -8,8 +8,11 @@
 //      snake_case the wire carries and the camelCase the ported surface's
 //      classes carry, beside any arithmetic operator (the review's P1-1: a
 //      `savingCents * qty` must not hide from the snake_case spelling), and
-//      the operator must have a left operand so a display negation passed to
-//      a formatter is not mistaken for arithmetic.
+//      every binary operator is read, plus included: the reference's own
+//      `s + l.lineTotalCents` subtotal reducer is money arithmetic in the
+//      browser, exactly what this scan exists to catch. A unary minus passed
+//      to a formatter is display shaping, not a figure decided, so the minus
+//      wants the binary left operand.
 //   2. No card number path: the till has no card number field and loads no
 //      card tokenization script; the card tender sends the fixed demo token.
 //
@@ -23,12 +26,15 @@ import { expect, test } from "@playwright/test";
 
 const SRC = fileURLToPath(new URL("../src", import.meta.url));
 const MONEY_HELPER = "money.ts";
-// The named display and parse helpers, the one place integer cents become a
-// readable amount (and the one place a typed amount becomes cents, through
-// the decimal string). Their internals divide by one hundred to format; that
-// is the formatting, not a figure decided, so the arithmetic scan walks
-// everything else and these two files are named here, exhaustively.
-const NAMED_HELPERS = [join(SRC, MONEY_HELPER), join(SRC, "ported", "_money-format.ts")];
+// The named display and parse helper of the ported surface, the one place
+// its integer cents become a readable amount and the one place its division
+// spelling lives. Its internals divide by one hundred to format; that is the
+// formatting, not a figure decided, so the arithmetic scan walks everything
+// else and this file is named here, alone. The app's own money helper stays
+// IN the scanned set: it formats integers and parses one typed string through
+// the decimal string and computes nothing, so it owes the scan zero hits, and
+// if it ever hits, that is a finding, not an exclusion.
+const NAMED_HELPERS = [join(SRC, "ported", "_money-format.ts")];
 
 function walkSources(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -40,9 +46,10 @@ function walkSources(dir: string, out: string[] = []): string[] {
 }
 
 test("the money scan prints nothing outside the named display and parse helpers", () => {
-  // Three shapes, all of them a cents-named operand beside arithmetic:
+  // Four shapes, all of them a cents-named operand beside arithmetic:
   //   the operand before the operator (`savingCents * qty`),
   //   times and divided after a binary operand (`q * unit_price_cents`),
+  //   plus after a binary operand (`s + l.lineTotalCents`, the reducer shape),
   //   and a binary minus after a binary operand (`total - taxCents`), where
   //   the identifier may not be the bare kebab suffix of an attribute name
   //   and a key shape (`- cents:`) is not arithmetic. A unary minus passed to
@@ -50,7 +57,7 @@ test("the money scan prints nothing outside the named display and parse helpers"
   //   figure the seam answered, not a figure decided, so the minus wants a
   //   binary left operand.
   const scan =
-    /[a-zA-Z_$.]*[cC]ents\s*[-+*/]|[a-zA-Z0-9_$)\]]\s*[*/]\s*[a-zA-Z_$.]*[cC]ents\b|[a-zA-Z0-9_$)\]]\s*-\s*(?![cC]ents\b)[a-zA-Z_$.]*[cC]ents\b\s*[^:]/;
+    /[a-zA-Z_$.]*[cC]ents\s*[-+*/]|[a-zA-Z0-9_$)\]]\s*[+*/]\s*[a-zA-Z_$.]*[cC]ents\b|[a-zA-Z0-9_$)\]]\s*-\s*(?![cC]ents\b)[a-zA-Z_$.]*[cC]ents\b\s*[^:]/;
   // String literals hold words, not computations, so quoted spans come off
   // the line before the scan (an attribute named 'total-cents' is a name).
 
@@ -66,14 +73,15 @@ test("the money scan prints nothing outside the named display and parse helpers"
     if (hits.length === 0) continue;
     offenders.push(`${file}: ${hits.join(" | ")}`);
   }
-  // The exclusion is exactly the two named helpers and nothing else: a third
-  // file that divides figures by hand must face the scan, not join the list.
-  expect(NAMED_HELPERS).toHaveLength(2);
-  expect(NAMED_HELPERS.some((file) => file.endsWith(MONEY_HELPER))).toBe(true);
+  // The exclusion is exactly the one named display helper and nothing else:
+  // a third file that divides figures by hand must face the scan, not join
+  // the list, and the app's own money helper stays in the walked set.
+  expect(NAMED_HELPERS).toHaveLength(1);
   expect(NAMED_HELPERS.some((file) => file.endsWith("_money-format.ts"))).toBe(true);
-  // The walk covers the app's own views and the ported tree both: the claim
-  // is about the tree, so the walk must be seen to reach it.
-  expect(scanned.some((file) => file.endsWith(MONEY_HELPER))).toBe(false);
+  // The walk covers the app's own views, the app's money helper and the
+  // ported tree: the claim is about the tree, so the walk must be seen to
+  // reach all three.
+  expect(scanned.some((file) => file.endsWith(MONEY_HELPER))).toBe(true);
   expect(scanned.length).toBeGreaterThan(20);
   expect(offenders).toEqual([]);
 });

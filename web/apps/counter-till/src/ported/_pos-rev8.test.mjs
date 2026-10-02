@@ -111,7 +111,7 @@ test('txbarSegments: items + weight ALWAYS; margin/profit only when present AND 
     txbarSegments({ ...base, marginBps: undefined, estProfitCents: undefined }, money).map((s) => s.id),
     ['items', 'weight'],
   );
- // No line has a weight → the honest em-dash, never 0 lbs.
+ // No line has a weight → the blank word, never 0 lbs.
   assert.equal(txbarSegments({ ...base, totalWeightLbs: null }, money)[1].text, 'Total Weight (not weighed)');
   assert.equal(txbarSegments({ ...base, itemCount: 1 }, money)[0].text, '1 Item');
 });
@@ -203,7 +203,7 @@ test('FLOOR (3): Item | Qty | Unit | Price | Total as SEPARATE columns, trash ic
   assert.ok(!/class="rm"[^]{0,200}>×</.test(terminalSrc), 'the × is retired');
 });
 
-test('FLOOR (9): the weight cell renders through the pure honesty table (em-dash, never a guess)', () => {
+test('FLOOR (9): the weight cell renders through the pure honesty table (the blank word, never a guess)', () => {
   assert.match(terminalSrc, /data-testid="pos-line-weight"/, 'every LINES row carries the weight cell');
   assert.match(terminalSrc, /lineWeightLbs\(l\.qty, l\.uom, facts\)/, 'the cell derives through the pure fn');
   assert.match(terminalSrc, /w === null \? '\(none\)' : formatLbs\(w\)/, 'absent weight gets the explicit blank word');

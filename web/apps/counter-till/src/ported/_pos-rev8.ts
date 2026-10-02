@@ -72,7 +72,7 @@ export function clockLabel(now: Date): string {
 // The glance carries weight_kg_per_base (products.weight_per_unit_kg: kg per BASE unit) plus the
 // unit meta the stock line already uses. A line's weight is qty × (base units per line unit) ×
 // kg-per-base × KG_PER_LB⁻¹: and it exists ONLY when every factor is honestly known:
-// • no weight on file → null (the column shows an em-dash)
+// • no weight on file → null (the column shows the blank word)
 // • line unit is the base unit → factor 1
 // • line unit is the sell unit → the glance's sell_factor, only when > 0
 // • any other unit / factor 0 → null (never divided-or-multiplied by a guess)

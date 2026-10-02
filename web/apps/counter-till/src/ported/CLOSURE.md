@@ -167,6 +167,13 @@ reappears as a `ports.ts` seam with the reference's signature:
   credit headroom as `credit_limit_cents - open_balance_cents`. Seam:
   `availableCreditCents`.
 
+The scan's stated limits, recorded rather than hidden (the reference's own
+scan missed these shapes too): compound assignment (`subtotalCents += x`)
+is not read; an operand inside parentheses or split across lines escapes the
+line-based read; and a money figure whose name carries no `cents` (a bare
+`price` or `amount`) is invisible to any spelling scan. The invariant binds
+on the reader, not the regex.
+
 Kept, reviewed as display formatting of figures the core already computed
 (integer cents in, string out, no money decided). The named display helpers
 are `_money-format.ts` (`centsAmount`, and `plainDollars`, the ungrouped
@@ -247,6 +254,17 @@ formatters, `_pos-rev8.ts` `marginPctLabel`.
   into `evaluateSplit`, so the host seam owns the cashier wording as well as
   the money; the wiring item's implementation carries those words back.
   (P3-7)
+- Two seams throw synchronously where the reference returned a promise
+  (`listProducts`, `putProductImage`: the port declares the promise return
+  and the seam's refusal is a synchronous throw), a boundary-shape matter the
+  wiring item settles when it implements them against the host's async
+  helper. (R1-5)
+- The quiet empties are boundary shape too, and the wiring item owns them:
+  `ports.ts` `BRANCHES` is an empty array and `SCREEN_GATE` an empty object
+  by construction, so `pos-product-grid` renders zero yard columns without a
+  word, and `pos-terminal.ts:268` (`BRANCHES[0].id`) would die with an
+  unnamed TypeError rather than the port message; the wiring item either
+  wires them or gives them the loud refusal the other seams carry. (R1-2)
 
 ## Reference tests brought along
 
