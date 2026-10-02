@@ -4,8 +4,9 @@
 // weighted-average maintenance in applyReceipt (service.go L105-125):
 //
 //	base   = max(onHand, 0)
-//	newAvg = base+recvQty > 0 ? round((base·oldAvg + recvValue) / (base+recvQty)) : cadUnit
+//	newAvg = base+recvQty > 0 ? roundOnce((scaled(base)·oldAvg + scaled(recvQty)·cadUnit) / (scaled(base) + scaled(recvQty))) : cadUnit
 //
+// (roundOnce: one half-away-from-zero rounding over the unrounded exact terms, the HH-183 blend.)
 // The shipped suite proves the HAPPY blend (TestGRNIIdempotentAndWeightedAvg, 100@$10 then 100@$12 → $11)
 // and the concurrency arm (TestWACLock_*). It does not pin the three edges the costing math actually turns
 // on, so a change to either clamp would ship silently. Each case below asserts an arithmetic result derived

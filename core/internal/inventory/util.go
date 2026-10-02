@@ -67,10 +67,35 @@ func scaledFromFloat(f float64, scale int64) (int64, bool) {
 // never inherits the float's last bit. The product of two int64 values can overflow int64 long
 // before the rounded RESULT does (the scale division brings it back down: a result of at most
 // ~9.2e18 cents implies an intermediate up to 9.2e22), so the multiply and divide run in big.Int
-// and ok=false only when the rounded result itself cannot be represented in int64 cents.
+// and ok=false only when the rounded result itself cannot be represented in int64 cents. The same
+// discipline covers the WHOLE money path, not only each helper in isolation: every sum or
+// difference BETWEEN helper results runs through addCents / subCents below or inside big.Int
+// (blendAvgHalfUp's numerator), so a total that cannot be integer cents is an error and a total
+// that can is exact, never a wrapped negative.
 func mulScaledHalfUp(scaled, cents, scale int64) (int64, bool) {
 	n := new(big.Int).Mul(big.NewInt(scaled), big.NewInt(cents))
 	return roundBigHalfUp(n, scale)
+}
+
+// addCents sums two integer-cent values, refusing a sum that cannot be represented in int64 cents.
+// The helpers guarantee their own results, but a plain + between two results could wrap and store a
+// confident wrong cent (the review's receipt: two terms of 8.1e18 cents each wrapped to a negative
+// average), so every addition between helper outputs runs through here.
+func addCents(a, b int64) (int64, bool) {
+	s := new(big.Int).Add(big.NewInt(a), big.NewInt(b))
+	if !s.IsInt64() {
+		return 0, false
+	}
+	return s.Int64(), true
+}
+
+// subCents is addCents for the difference of two helper results.
+func subCents(a, b int64) (int64, bool) {
+	d := new(big.Int).Sub(big.NewInt(a), big.NewInt(b))
+	if !d.IsInt64() {
+		return 0, false
+	}
+	return d.Int64(), true
 }
 
 // divScaledHalfUp divides integer cents by an exact scaled decimal (a count of 1/scale units,
@@ -144,6 +169,49 @@ func centsDivQty(cents int64, qty float64) (int64, error) {
 	v, ok := divScaledHalfUp(cents, scaled, qtyScale)
 	if !ok {
 		return 0, fmt.Errorf("inventory: %d cents over %v units exceeds integer cents", cents, qty)
+	}
+	return v, nil
+}
+
+// blendAvgHalfUp is the weighted-average blend, rounded ONCE, half away from zero:
+// (scaledOnHand x oldAvg + scaledRecv x recvUnit) / (scaledOnHand + scaledRecv). Every term stays
+// unrounded, so equal-cost stock blends back to exactly its cost (0.29 at 750 received onto 0.29 at
+// 750 averages exactly 750; rounding either term to whole cents first reads 751 or 752, and the
+// reviewer's sweep measured about 0.7 percent of blends drifting up to 6 cents that way). Both
+// products and their sum run in big.Int: each product alone can exceed int64 long before the
+// quotient does (a representable average of ~9e8 cents over ~9e9 units implies products of ~8.1e21),
+// and the wrapped sum used to store a negative average.
+func blendAvgHalfUp(scaledOnHand, oldAvgCents, scaledRecv, recvUnitCents int64) (int64, bool) {
+	// Both operands are guarded below 2^51 by scaledFromFloat and non-negative (negative on-hand is
+	// clamped by the caller), so the int64 denominator sum cannot overflow; big.Int is for the numerator.
+	d := scaledOnHand + scaledRecv
+	if d <= 0 {
+		return 0, false
+	}
+	n := new(big.Int).Mul(big.NewInt(scaledOnHand), big.NewInt(oldAvgCents))
+	n.Add(n, new(big.Int).Mul(big.NewInt(scaledRecv), big.NewInt(recvUnitCents)))
+	return roundBigHalfUp(n, d)
+}
+
+// blendAvg is blendAvgHalfUp on the two DECIMAL(19,4) quantities the WAC maintenance runs against:
+// receiving recvQty at recvUnit onto an onHand at oldAvg. Negative on-hand carries no weight (the
+// caller's positive-part clamp, restated so the arithmetic cannot blend against stock that is not
+// there).
+func blendAvg(onHand float64, oldAvg int64, recvQty float64, recvUnit int64) (int64, error) {
+	ohScaled, ok := scaledFromFloat(onHand, qtyScale)
+	if !ok {
+		return 0, fmt.Errorf("inventory: on-hand %v is beyond the exact DECIMAL(19,4) grain", onHand)
+	}
+	if ohScaled < 0 {
+		ohScaled = 0
+	}
+	rScaled, ok := scaledFromFloat(recvQty, qtyScale)
+	if !ok {
+		return 0, fmt.Errorf("inventory: received quantity %v is beyond the exact DECIMAL(19,4) grain", recvQty)
+	}
+	v, ok := blendAvgHalfUp(ohScaled, oldAvg, rScaled, recvUnit)
+	if !ok {
+		return 0, fmt.Errorf("inventory: weighted average over %v and %v units cannot be integer cents", onHand, recvQty)
 	}
 	return v, nil
 }

@@ -145,21 +145,13 @@ func TestCapitalizeLanded_Sweep(t *testing.T) {
 // subledgerDelta is the perpetual inventory value change the W5 gl_tieout / W6 B1 report measures against GL
 // 1200 for this product: round(upserted-avg × on-hand) − round(prior-avg × on-hand). It reads the WAC BACK from
 // the store after capitalize upserts it, so it sees exactly what the ledger will later reconcile against. The
-// valuation runs through the module's exact integer arithmetic (HH-183): the report's own ROUND leg in SQL is
-// exact, so the oracle here must not be the one float product left in the file.
+// valuation is PREDICTED by the oracle's own statement of the report's ROUND (hh183_blend_oracle_test.go), not
+// computed with the service helpers under test: a mirror cannot catch a change, it agrees with one.
 func subledgerDelta(t *testing.T, f *fakeStore, product, branch string, priorAvg int64) int64 {
 	t.Helper()
 	onHand := f.onhand[key(product, branch)]
 	newAvg := f.cost[key(product, branch)]
-	newVal, err := qtyTimesCents(onHand, newAvg)
-	if err != nil {
-		t.Fatalf("subledgerDelta new: %v", err)
-	}
-	priorVal, err := qtyTimesCents(onHand, priorAvg)
-	if err != nil {
-		t.Fatalf("subledgerDelta prior: %v", err)
-	}
-	return newVal - priorVal
+	return oracleValue(t, onHand, newAvg) - oracleValue(t, onHand, priorAvg)
 }
 
 // TestCapitalizeLanded_TiesGL1200ToSubledger is the load-bearing DIB-189 regression the balance-only tests miss.

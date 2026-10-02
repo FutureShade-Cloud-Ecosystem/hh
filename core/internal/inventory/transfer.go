@@ -221,7 +221,11 @@ func (s *Service) ShipTransferWithETA(ctx context.Context, transferID, actorID s
 		if err := s.repo.MarkLineShipped(ctx, tx, ln.ID, ln.QtyBase, avg, moveID); err != nil {
 			return Transfer{}, err
 		}
-		totalValue += value
+		total, ok := addCents(totalValue, value)
+		if !ok {
+			return Transfer{}, fmt.Errorf("inventory: transfer %s total value exceeds integer cents", hdr.TransferNo)
+		}
+		totalValue = total
 	}
 
 	// The promised arrival is decided BEFORE the header write and inside the same transaction, so a
@@ -322,11 +326,7 @@ func (s *Service) ReceiveTransfer(ctx context.Context, transferID, actorID strin
 		}
 		newAvg := ln.UnitCostCents
 		if denom := base + outstanding; denom > 0 {
-			baseValue, err := qtyTimesCents(base, oldAvg)
-			if err != nil {
-				return Transfer{}, err
-			}
-			newAvg, err = centsDivQty(baseValue+value, denom)
+			newAvg, err = blendAvg(base, oldAvg, outstanding, ln.UnitCostCents)
 			if err != nil {
 				return Transfer{}, err
 			}
@@ -350,7 +350,11 @@ func (s *Service) ReceiveTransfer(ctx context.Context, transferID, actorID strin
 		if err := s.repo.MarkLineReceived(ctx, tx, ln.ID, ln.QtyReceivedBase+outstanding, moveID); err != nil {
 			return Transfer{}, err
 		}
-		totalValue += value
+		total, ok := addCents(totalValue, value)
+		if !ok {
+			return Transfer{}, fmt.Errorf("inventory: transfer %s total value exceeds integer cents", hdr.TransferNo)
+		}
+		totalValue = total
 	}
 
 	if err := s.repo.SetTransferReceived(ctx, tx, hdr.ID, actorID); err != nil {

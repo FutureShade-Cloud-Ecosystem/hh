@@ -109,21 +109,14 @@ func TestWACLock_ReceiptVsLandedCost_NoLostUpdate(t *testing.T) {
 			}
 		}
 
-		// Perpetual subledger value MUST equal every contribution, no lost update leaked value.
+		// Perpetual subledger value MUST equal every contribution, no lost update leaked value. The
+		// contributions are PREDICTED by the oracle's own statement of the report's ROUND, never
+		// computed with the service helpers under test (review round 2: a mirror cannot catch a change).
 		finalAvg := branchCost(t, pool, p)
 		finalOH := onHand(t, pool, p)
-		gotValue, err := qtyTimesCents(finalOH, finalAvg)
-		if err != nil {
-			t.Fatalf("iter %d: final value: %v", i, err)
-		}
-		initValue, err := qtyTimesCents(startOnHand, startAvg)
-		if err != nil {
-			t.Fatalf("iter %d: init value: %v", i, err)
-		}
-		receiptValue, err := qtyTimesCents(recvQty, recvUnit)
-		if err != nil {
-			t.Fatalf("iter %d: receipt value: %v", i, err)
-		}
+		gotValue := oracleValue(t, finalOH, finalAvg)
+		initValue := oracleValue(t, startOnHand, startAvg)
+		receiptValue := oracleValue(t, recvQty, recvUnit)
 		wantValue := initValue + receiptValue + freight
 		if gotValue != wantValue {
 			t.Fatalf("iter %d: perpetual value = %d (avg %d × oh %.0f), want %d "+
@@ -146,56 +139,21 @@ func TestWACLock_ReceiptVsLandedCost_NoLostUpdate(t *testing.T) {
 }
 
 // seqReceiptThenCapitalize is the WAC when the receipt commits first, then the freight capitalizes over the grown on-hand.
-// The oracle mirrors the module's exact integer arithmetic (HH-183), so the serial orders it predicts are the ones
-// the service can actually produce.
+// The oracle PREDICTS the serial orders from the formulas' own statement (hh183_blend_oracle_test.go): the blend
+// rounds once over the unrounded terms, the capitalization re-derives round(value / on-hand), and no step calls a
+// service helper, so a change to the service arithmetic cannot silently re-tune the prediction.
 func seqReceiptThenCapitalize(t *testing.T, oh float64, avg int64, recvQty float64, recvUnit, freight int64) int64 {
 	t.Helper()
-	ohVal, err := qtyTimesCents(oh, avg)
-	if err != nil {
-		t.Fatalf("seq r2c oh value: %v", err)
-	}
-	recvVal, err := qtyTimesCents(recvQty, recvUnit)
-	if err != nil {
-		t.Fatalf("seq r2c receipt value: %v", err)
-	}
-	afterReceipt, err := centsDivQty(ohVal+recvVal, oh+recvQty)
-	if err != nil {
-		t.Fatalf("seq r2c after-receipt avg: %v", err)
-	}
+	afterReceipt := oracleBlend(t, oh, avg, recvQty, recvUnit)
 	newOH := oh + recvQty
-	oldVal, err := qtyTimesCents(newOH, afterReceipt)
-	if err != nil {
-		t.Fatalf("seq r2c grown value: %v", err)
-	}
-	afterFreight, err := centsDivQty(oldVal+freight, newOH)
-	if err != nil {
-		t.Fatalf("seq r2c after-freight avg: %v", err)
-	}
-	return afterFreight
+	oldVal := oracleValue(t, newOH, afterReceipt)
+	return oracleDivCents(t, oldVal+freight, newOH)
 }
 
 // seqCapitalizeThenReceipt is the WAC when the freight capitalizes first (over the original on-hand), then the receipt blends in.
 func seqCapitalizeThenReceipt(t *testing.T, oh float64, avg int64, recvQty float64, recvUnit, freight int64) int64 {
 	t.Helper()
-	oldVal, err := qtyTimesCents(oh, avg)
-	if err != nil {
-		t.Fatalf("seq c2r oh value: %v", err)
-	}
-	afterCap, err := centsDivQty(oldVal+freight, oh)
-	if err != nil {
-		t.Fatalf("seq c2r after-freight avg: %v", err)
-	}
-	capVal, err := qtyTimesCents(oh, afterCap)
-	if err != nil {
-		t.Fatalf("seq c2r capitalized value: %v", err)
-	}
-	recvVal, err := qtyTimesCents(recvQty, recvUnit)
-	if err != nil {
-		t.Fatalf("seq c2r receipt value: %v", err)
-	}
-	blended, err := centsDivQty(capVal+recvVal, oh+recvQty)
-	if err != nil {
-		t.Fatalf("seq c2r blended avg: %v", err)
-	}
-	return blended
+	oldVal := oracleValue(t, oh, avg)
+	afterCap := oracleDivCents(t, oldVal+freight, oh)
+	return oracleBlend(t, oh, afterCap, recvQty, recvUnit)
 }

@@ -109,7 +109,11 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 			return ReceiptResult{}, err
 		}
 
-		// Weighted-average maintenance: newAvg = (positiveOnHand·oldAvg + receiptValue) / (positiveOnHand + recvQty).
+		// Weighted-average maintenance: newAvg = (scaledOnHand × oldAvg + scaledRecv × cadUnit) /
+		// (scaledOnHand + scaledRecv), rounded ONCE, half away from zero, in exact integer arithmetic:
+		// every term stays unrounded, so equal-cost stock blends back to exactly its cost (0.29 at 750
+		// received onto 0.29 at 750 averages 750, where rounding a term to whole cents first reads 751
+		// or 752), the single-rounding semantics the float formula's unrounded terms intended.
 		// Serialize the WAC read-modify-write on (product, branch) FIRST so a concurrent landed-cost Apply/Void (or
 		// another receipt) on the same product+branch blocks here instead of reading the same old WAC and clobbering
 		// this update on commit, the lost-update that diverges the subledger from GL 1200 (L8 MONEY-CRITICAL).
@@ -127,11 +131,7 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 		base := math.Max(onHand, 0)
 		newAvg := cadUnit
 		if denom := base + recvQty; denom > 0 {
-			baseValue, err := qtyTimesCents(base, oldAvg)
-			if err != nil {
-				return ReceiptResult{}, err
-			}
-			newAvg, err = centsDivQty(baseValue+recvValue, denom)
+			newAvg, err = blendAvg(base, oldAvg, recvQty, cadUnit)
 			if err != nil {
 				return ReceiptResult{}, err
 			}
@@ -155,7 +155,11 @@ func (s *Service) applyReceipt(ctx context.Context, tx pgx.Tx, poID string, requ
 		if ln.ReceivedBase+recvQty < ln.QtyBase-qtyEpsilon {
 			allFull = false
 		}
-		totalValue += recvValue
+		total, ok := addCents(totalValue, recvValue)
+		if !ok {
+			return ReceiptResult{}, fmt.Errorf("inventory: receipt %s total value exceeds integer cents", hdr.PONo)
+		}
+		totalValue = total
 		linesRecvd++
 		eventLines = append(eventLines, evLine{ProductID: ln.ProductID, QtyBase: recvQty, ValueCents: recvValue})
 	}
@@ -492,7 +496,12 @@ func (s *Service) capitalizeLandedSnap(ctx context.Context, tx pgx.Tx, productID
 	if !ok {
 		return 0, 0, false, fmt.Errorf("inventory: on-hand value for product %s at branch %s exceeds integer cents", productID, branchID)
 	}
-	newAvg, err := centsDivQty(oldValue+allocatedCadCents, onHand)
+	capValue, ok := addCents(oldValue, allocatedCadCents)
+	if !ok {
+		err = fmt.Errorf("inventory: capitalized value for product %s at branch %s exceeds integer cents", productID, branchID)
+		return 0, 0, false, err
+	}
+	newAvg, err := centsDivQty(capValue, onHand)
 	if err != nil {
 		return 0, 0, false, err
 	}
@@ -513,7 +522,10 @@ func (s *Service) capitalizeLandedSnap(ctx context.Context, tx pgx.Tx, productID
 	// error rather than clamping against a number nobody can represent.
 	realizedDelta := func(avg int64) (int64, bool) {
 		v, ok := mulScaledHalfUp(onHandScaled, avg, qtyScale)
-		return v - oldValue, ok
+		if !ok {
+			return 0, false
+		}
+		return subCents(v, oldValue)
 	}
 	if allocatedCadCents >= 0 {
 		for {
@@ -651,9 +663,18 @@ func (s *Service) restoreLandedCost(ctx context.Context, tx pgx.Tx, productID, b
 	if err != nil {
 		return 0, err
 	}
+	// Remove exactly the absorbed value; the subtraction is guarded so an unrepresentable difference errors
+	// instead of wrapping (the helpers guarantee their own results, not the arithmetic between them).
+	remaining, ok := subCents(curValue, absorbed)
+	if !ok {
+		return 0, fmt.Errorf("inventory: post-reversal value for product %s at branch %s exceeds integer cents", productID, branchID)
+	}
 	// On-hand unchanged since Apply → restoring snapAvg verbatim is the cent-exact, drift-0 inverse (round-2 path).
-	if curValue-absorbed == snapValue {
-		delta := snapValue - curValue
+	if remaining == snapValue {
+		delta, ok := subCents(snapValue, curValue)
+		if !ok {
+			return 0, fmt.Errorf("inventory: restore delta for product %s at branch %s exceeds integer cents", productID, branchID)
+		}
 		if err := s.db().UpsertBranchCost(ctx, tx, productID, branchID, snapAvg); err != nil {
 			return 0, err
 		}
@@ -662,7 +683,7 @@ func (s *Service) restoreLandedCost(ctx context.Context, tx pgx.Tx, productID, b
 	// On-hand differs (receipt or sale between Apply and Void): remove EXACTLY the capitalized value, no more. Clamp the
 	// post-reversal value at zero (a void can drain at most all the value in stock, never manufacture a negative one)
 	// and floor the derived WAC at zero (a WAC is a price).
-	newValue := curValue - absorbed
+	newValue := remaining
 	if newValue < 0 {
 		newValue = 0
 	}
@@ -679,7 +700,10 @@ func (s *Service) restoreLandedCost(ctx context.Context, tx pgx.Tx, productID, b
 	if err != nil {
 		return 0, err
 	}
-	delta := realized - curValue
+	delta, ok := subCents(realized, curValue)
+	if !ok {
+		return 0, fmt.Errorf("inventory: realized restore delta for product %s at branch %s exceeds integer cents", productID, branchID)
+	}
 	if err := s.db().UpsertBranchCost(ctx, tx, productID, branchID, newAvg); err != nil {
 		return 0, err
 	}
