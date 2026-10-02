@@ -44,7 +44,11 @@ func TestIntegrationARReminder_NoTransportIsNotADeliveredSendOrAFlag(t *testing.
 
 	var branchID string
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE loc_type='BRANCH' LIMIT 1`).Scan(&branchID); err != nil {
-		t.Skipf("no seeded BRANCH: %v", err)
+		// A gated run against a database with no BRANCH row is a broken fixture, not a skip:
+		// the migrations plant branches, so reaching here means the gate variable points at a
+		// database this suite did not migrate, and a polite skip would let the whole leg go
+		// unasserted while the run reads green.
+		t.Fatalf("no seeded BRANCH (migrate the gate database before this suite): %v", err)
 	}
 	suffix := fmt.Sprintf("%s-%d", t.Name(), time.Now().UnixNano()%1_000_000_000)
 	var customerID string
@@ -60,7 +64,9 @@ func TestIntegrationARReminder_NoTransportIsNotADeliveredSendOrAFlag(t *testing.
 		_, _ = pool.Exec(context.Background(), `DELETE FROM customers WHERE id = $1::uuid`, customerID)
 	})
 
-	// THE PRODUCTION WIRING SHAPE: a nil sender, exactly the service the composition root builds.
+	// THE UNWIRED DEFAULT: no sender injected, the same default the service ships when nothing is
+	// passed, which is also what the composition root now names in words at wire_tops. The nil
+	// sender is UnwiredSender, so every send below is recorded and marked FAILED.
 	landing := NewARLandingService(repo)
 	svc := NewARReminderService(repo, landing, nil, "https://dibbits.example")
 	if _, err := svc.TagAPContact(ctx, APContact{CustomerID: customerID, Name: "AP Desk", Email: "ap@hh185.example"}, ""); err != nil {
@@ -110,5 +116,24 @@ func TestIntegrationARReminder_NoTransportIsNotADeliveredSendOrAFlag(t *testing.
 		if fl.CustomerID == customerID {
 			t.Errorf("flag %s raised on an account that was never contacted: its frozen evidence says %d delivered sends", fl.FlagID, fl.DeliveredSends)
 		}
+	}
+
+	// Round 2, the cadence leg: a FAILED send must not count as a reminder. The work list's
+	// NextAction reads LastReminderAt, and a failed send that advances it moves the account from
+	// "Send reminder" to "Call" for a whole cadence period although nobody was contacted, the same
+	// phantom the DELIVERED rows were. Only a message that left the server is a reminder.
+	eng, err := repo.EngagementFor(ctx, []string{customerID}, p.BlackHoleWindowDays, time.Now())
+	if err != nil {
+		t.Fatalf("engagement: %v", err)
+	}
+	in, ok := eng[customerID]
+	if !ok {
+		t.Fatalf("no engagement row for the seeded customer")
+	}
+	if in.LastReminderAt != nil {
+		t.Errorf("last reminder at %v, want never: a FAILED send is not a reminder and must not advance the cadence", in.LastReminderAt)
+	}
+	if got := NextAction(in, p, time.Now()); got != "Send reminder" {
+		t.Errorf("next action = %q, want %q: the work list moved on a send that never left the server", got, "Send reminder")
 	}
 }

@@ -508,7 +508,7 @@ func TestSend_NoTransportIsNeverADeliveredSend(t *testing.T) {
 	f.apContact = &APContact{CustomerID: "c1", Email: "ap@rood.example"}
 	f.ctxRow = ReminderContext{CustomerID: "c1", InvoiceNo: "INV-1", DueDate: now.AddDate(0, 0, -10)}
 
-	svc := sendService(f, nil, now) // a nil sender, the shape the composition root wires
+	svc := sendService(f, nil, now) // a nil sender resolves to the unwired default, the same transport the composition root names in words
 	got, err := svc.Send(context.Background(), SendReminderInput{CustomerID: "c1", Channel: ChannelEmail}, "u1")
 	if err != nil {
 		t.Fatalf("send: %v", err)
