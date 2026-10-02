@@ -3,6 +3,7 @@ package tax
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
@@ -49,6 +50,23 @@ var evidenceGatedReasons = map[string]bool{
 
 // errNoDB marks a repository call made with no pool (scaffold/offline).
 var errNoDB = errors.New("tax: database not configured")
+
+// ErrNoStandardRate is the sentinel the engine refuses with when no standard
+// STD_ON_HST_13 row is in effect for the as-of date. A sale, a quote, a relief
+// assessment and the counter's tax-rate read must never bind a silent 0% (row
+// 680 item 2): with the standard row deleted, never seeded or fully expired, a
+// zero-rate Quote with a nil error rings every ticket untaxed while the ledger
+// believes a rate is configured. Match with errors.Is; the concrete error
+// carries the jurisdiction and the as-of date in its message (noStandardRate).
+var ErrNoStandardRate = errors.New("tax: no standard rate row in effect")
+
+// noStandardRate builds the refusal the engine returns when a fallback read
+// finds the standard row absent too. The jurisdiction and the as-of date are
+// the two facts an operator needs to seed or re-open the row, and neither can
+// carry a secret.
+func noStandardRate(jurisdiction, asOf string) error {
+	return fmt.Errorf("%w (jurisdiction %s, as of %s)", ErrNoStandardRate, jurisdiction, asOf)
+}
 
 // -- DTOs (JSON is the tax-admin surface; money is integer cents; card numbers are MASKED-only) ------------
 
