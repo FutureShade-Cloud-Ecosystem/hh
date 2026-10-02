@@ -1412,3 +1412,22 @@ branches' address line1 onto invented ones (Trenton: 12 Yard Gate Road,
 Kingston: 9 Yard Gate Road), each update guarded on the value it would write
 so a re-run writes nothing, counted in the run report. Real deployments keep
 their own addresses; migrations stay untouched.
+
+## Counter Till pre-ring and receipts pass, work item B (branch till/receipt-formats): the exit test's two margin glance legs are red on main itself (recorded, routed to the margin surface's owner)
+
+The receipts item's own acceptance legs (the cash receipt document, the
+full page format, the marked reprint) pass on the exit test's box. Two legs
+of other lanes' surfaces fail beside them, and probes prove they fail
+without this branch: a box built from pure origin/main (b8e4009) and a box
+built from pure cd46fd6 each answer the CLERK's margin glance with the
+byte-absent `{}` (10-world's "the clerk's margin glance answers: the
+configuration names who sees cost and margin", and 20-sales' "a contractor's
+pavers: the account price rings, and a below floor line rings too", whose
+staff-side read meets the same answer). The previous train's exit run, on
+the pre cd46fd6 main, held both green. The till-ui-train's P3-10 ruling made
+the surface follow the policy word; the box's word is MANAGER_UP, and the
+clerk's SERVER side glance now refuses too, while these two legs still hold
+the old expectation ("the glance itself still answers the clerk
+server-side"). The two legs' home is the margin surface this lane is
+expressly out of scope of; the owner (or the principal) rules whether the
+legs follow the ruling or the demo box's policy word changes.
