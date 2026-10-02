@@ -60,7 +60,7 @@ func TestIntegrationARReminder_NoTransportIsNotADeliveredSendOrAFlag(t *testing.
 		t.Fatalf("seed customer: %v", err)
 	}
 	// ar_ap_contacts, ar_reminder_sends (and its events) and ar_paper_path_flags all cascade from
-	// customers, so one delete unwinds the whole rig.
+	// customers; the invoices are deleted first (below), then the customer.
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM invoices WHERE customer_id = $1::uuid`, customerID)
 		_, _ = pool.Exec(context.Background(), `DELETE FROM customers WHERE id = $1::uuid`, customerID)

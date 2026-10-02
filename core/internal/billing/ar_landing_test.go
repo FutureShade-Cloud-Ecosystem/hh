@@ -120,6 +120,29 @@ func TestBuildCards_TotalsAndOrder(t *testing.T) {
 	}
 }
 
+// TestBuildCards_NetsACreditMemoAsExposure pins what the landing cards do with a credit memo (a
+// negative open balance): it is netted into its bucket's total and counted as a document, and a
+// credit-only account is still an account on its card. HH-195 changed the escalation QUEUE to skip
+// credit memos; the cards are deliberately untouched, so a change here must be a decision.
+func TestBuildCards_NetsACreditMemoAsExposure(t *testing.T) {
+	asOf := arDay(2026, 8, 27)
+	invs := []OpenInvoice{
+		{InvoiceID: "i1", CustomerID: "c1", CustomerName: "One", DueDate: asOf.AddDate(0, 0, -5), BalanceCents: 1000_00},
+		{InvoiceID: "m1", CustomerID: "c1", CustomerName: "One", DueDate: asOf.AddDate(0, 0, -5), BalanceCents: -300_00},
+		{InvoiceID: "m2", CustomerID: "c2", CustomerName: "Two", DueDate: asOf.AddDate(0, 0, -5), BalanceCents: -50_00},
+	}
+	var late *LandingCard
+	cards := BuildCards(invs, testPolicy(), asOf)
+	for i := range cards {
+		if cards[i].Invoices > 0 {
+			late = &cards[i]
+		}
+	}
+	if late == nil || late.Invoices != 3 || late.Accounts != 2 || late.TotalCents != 650_00 {
+		t.Fatalf("card with the book = %+v, want 3 documents / 2 accounts / 65000 cents (the memos net into exposure)", late)
+	}
+}
+
 // TestBuildCards_RangesAreReadable pins the from/to days each card carries, because the card's
 // subtitle is derived from them and an off-by-one there is a number a customer will read back.
 func TestBuildCards_RangesAreReadable(t *testing.T) {

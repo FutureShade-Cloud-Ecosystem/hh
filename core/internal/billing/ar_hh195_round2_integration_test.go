@@ -1,6 +1,6 @@
 //go:build integration
 
-// ar_hh195_round2_integration_test.go, HH-195 review round 1: the refusal and the escalation queue.
+// ar_hh195_round2_integration_test.go, HH-195 review round 1 findings: the refusal and the escalation queue.
 //
 // Run: DATABASE_URL=... go test -tags integration ./internal/billing/... -run HH195R2 -count=1
 package billing
@@ -110,8 +110,8 @@ func TestIntegrationHH195R2_ReminderRefusesWhenNothingIsDue(t *testing.T) {
 			if err == nil {
 				t.Fatalf("send succeeded, want a refusal: nothing is due")
 			}
-			if !errors.As(err, &se) || se.Status != http.StatusUnprocessableEntity || !strings.Contains(se.Msg, "nothing due") {
-				t.Errorf("err = %v, want a 422 saying the account has nothing due", err)
+			if !errors.As(err, &se) || se.Status != http.StatusUnprocessableEntity || !strings.Contains(se.Msg, "no open invoice") {
+				t.Errorf("err = %v, want a 422 saying there is no open invoice to remind about", err)
 			}
 			if len(snd.msgs) != before {
 				t.Errorf("a message left the building")

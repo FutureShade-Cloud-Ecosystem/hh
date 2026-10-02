@@ -328,7 +328,7 @@ func BuildCards(invs []OpenInvoice, p ARLandingPolicy, asOf time.Time) []Landing
 		buckets[b] = &agg{accounts: map[string]bool{}}
 	}
 	for _, iv := range invs {
-		if iv.BalanceCents <= 0 {
+		if iv.BalanceCents == 0 {
 			continue
 		}
 		a := buckets[BucketFor(DaysPastDue(iv.DueDate, asOf), p)]

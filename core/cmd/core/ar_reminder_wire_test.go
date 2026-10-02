@@ -67,7 +67,18 @@ func TestComposition_HH185ReminderTransport_UnwiredAtTheServedSurface(t *testing
 		 VALUES ($1::uuid, 'AP Desk', 'ap@hh185wire.test')`, customerID); err != nil {
 		t.Fatalf("plant AP contact: %v", err)
 	}
+	// An open invoice: a reminder to an account with nothing due is refused (HH-195), and this leg
+	// is about the transport, so the account owes something.
+	if _, err := graph.pool.Exec(ctx,
+		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		 VALUES ('HH185W-'||$1, $2::uuid, $3::uuid, 'FINALIZED', CURRENT_DATE - 40, CURRENT_DATE - 10,
+		         12345, 0, 12345, 12345, now(), 'INVOICE')`,
+		suffix, customerID, testkit.BranchNorthAID); err != nil {
+		t.Fatalf("plant open invoice: %v", err)
+	}
 	t.Cleanup(func() {
+		_, _ = graph.pool.Exec(context.Background(), `DELETE FROM invoices WHERE customer_id = $1::uuid`, customerID)
 		_, _ = graph.pool.Exec(context.Background(), `DELETE FROM customers WHERE id = $1::uuid`, customerID)
 	})
 

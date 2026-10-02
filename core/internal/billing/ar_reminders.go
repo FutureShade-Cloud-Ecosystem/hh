@@ -459,10 +459,10 @@ func (s *ARReminderService) Send(ctx context.Context, in SendReminderInput, acto
 	}
 	if rc.InvoiceNo == "" {
 		// No qualifying document: the account owes nothing, or the named document is a credit memo,
-		// is paid, or belongs to another account. A reminder about nothing is a confident wrong
+		// is paid, is unknown or belongs to another account. A reminder about nothing is a confident wrong
 		// number, so refuse before any row is written.
 		return ReminderSend{}, settings.Errf(http.StatusUnprocessableEntity,
-			"ar: this account has nothing due, there is no open invoice to remind about")
+			"ar: there is no open invoice to remind about for this request")
 	}
 	target, err := ResolveTarget(in.Channel, rc.APContact, rc.Candidates, p, in.ConfirmFallback)
 	if err != nil {
