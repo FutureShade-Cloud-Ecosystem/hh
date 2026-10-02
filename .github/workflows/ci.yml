@@ -285,10 +285,11 @@ jobs:
       # The integration tag suite runs in its own job beside this one
       # (HH-191): the composition fixture's migration glob, the break
       # that kept the suite out of this job, is fixed there, along with
-      # the printing and reporting breaks the S1 reviews recorded. The
-      # packages the suite cannot yet carry are recorded in
-      # docs/BLOCKERS.md and named inside that job's test step; the rest
-      # of the suite runs there, on its own scratch databases.
+      # the printing, reporting and warranty-path breaks the S1 reviews
+      # and the coder's run recorded. The packages the suite cannot yet
+      # carry are recorded in docs/BLOCKERS.md and named inside that
+      # job's test step; the rest of the suite runs there, on its own
+      # scratch databases.
 
   # The integration tag suite, the leg the note above promised once the
   # composition fixture's glob was fixed: the modules' database legs
@@ -365,19 +366,28 @@ jobs:
           # HH_TILL_DEMO_TEST_DATABASE_URL stays unset, on purpose: the
           # demo world proof gates on its own throwaway Postgres and its
           # legs skip politely without it.
-          # KIT_, HH_B3_ and HH_B4_TEST_DATABASE_URL stay unset as in
-          # the demo job: they gate untagged legs that job already runs
-          # (HH_B4's deliberate omission is explained there).
+          # HH_B3_TEST_DATABASE_URL stays unset because the demo job sets
+          # it for untagged legs this job does not repeat; HH_B4_ stays
+          # unset for the reason the demo job explains at length. KIT_
+          # variables are set by no job at all: the kit's own test file
+          # runs nowhere in ci, the same gap on main this defect's entry
+          # does not open.
         run: |
           set -euo pipefail
           # The suite's recorded-red packages stay out of this run, each
-          # with its verified failure and its owner in docs/BLOCKERS.md
-          # (the HH-191 entry): nothing in the list is this job's
-          # regression, every one of them is red on main against the
-          # same databases this job builds. A package rejoins the run
-          # when its lane lands the fix and drops its line here; the vet
-          # step above keeps every excluded package compiling under the
-          # tag in the meantime.
+          # with its verified failure and its owning lane named in
+          # docs/BLOCKERS.md (the HH-191 entry and its round 2
+          # correction): nothing in the list is this job's regression,
+          # every one of them is red on main against the same databases
+          # this job builds. Read the correction before working from the
+          # entry: the gl package carries two red tests, not one; the
+          # dispatch package has a 403 class beside the bearer 401s; and
+          # the sync package is red only in suite order, green standalone
+          # on a fresh gate of this shape, so reproduce it inside a full
+          # run, not alone. A package rejoins the run when its lane lands
+          # the fix and drops its line here; the vet step above keeps
+          # every excluded package compiling under the tag in the
+          # meantime.
           red='internal/(assist/adapters|billing|compliance|dispatch|gl|messaging|sync|tour)$'
           # -p 1 for the same reason the ci job's untagged run carries
           # it: the module packages share the gate database, and

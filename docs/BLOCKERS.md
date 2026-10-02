@@ -1164,3 +1164,35 @@ it wants the two the migrations plant; with the recorded-red packages
 out of the run the bleed is gone and inventory is green. Which red
 package's cleanup discards the error is not pinned down here; it is
 part of the bearer-class repairs above.
+
+## HH hardening, HH-191 round 2: corrections to the recorded-red entry above, from its review
+
+The round 1 review of the HH-191 pull request re-ran all eight packages
+against a database built the way the integration job builds it. Three of
+the entry's diagnoses above are wrong or incomplete, and an owner working
+from them would mis-repair. This append corrects the record; the entry
+above is never edited.
+
+- The BisTrack tie-out leg named under internal/sync is internal/gl's
+  failure: bistrack_tieout_demo_seed_integration_test.go lives in
+  core/internal/gl. The gl package carries TWO red tests, the recorded
+  filtered-page one (handler_sourcerefid_live_integration_test.go:90,
+  total=0 while the page carries the matching journal) and the tie-out
+  (bistrack_tieout_demo_seed_integration_test.go:72). Fixing only the
+  recorded one and dropping the gl line turns the integration job red.
+- The dispatch diagnosis above says every leg reads the bearer-less 401.
+  That covers the fence legs, but the three freight-raise legs read 403
+  with a bearer present (freightraise_integration_test.go:464, 483, 535;
+  a general manager is refused where the leg expects admission), a second
+  cause the bearer repair will not close, and two further legs die at
+  setup with "testMux needs a staff-stamped context"
+  (integration_test.go:715, 1000). The dispatch owner inherits three
+  classes, not one.
+- The sync package is red only in suite order. Standalone on a fresh
+  job-shaped gate it passes (61 legs, on a used and on a fresh gate
+  alike); inside the job's full run it fails the gap legs
+  (gap_scopes_integration_test.go:753, 23 keyed payment rows where the
+  leg wants exactly its one, and the walkthrough leg with it). An owner
+  reproducing standalone will see green; reproduce inside a full run of
+  the job's shape, or believe the entry and waste the work.
+
