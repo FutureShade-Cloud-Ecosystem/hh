@@ -1028,12 +1028,32 @@ test("End Session is closed on the mount: aria-disabled, grey, focusable, its re
   expect(shape.background).toBe("rgba(0, 0, 0, 0)");
   expect(shape.opacity).toBe("1");
   expect(shape.cursor).toBe("not-allowed");
-  // Focus alone puts the reason on screen, in the till's own message line, and the button points at it.
+  // The button's description is its own always-present element holding the reason, before any focus
+  // and whatever the message line holds, so it never points at a missing or stale element.
+  const description = page.getByTestId("end-session-reason");
+  await expect(description).toHaveText(reason);
+  await expect(page.locator("#till-message")).toHaveCount(0);
+  await expect(button).toHaveAccessibleDescription(reason);
+  // Focus alone puts the reason on screen, in the till's own message line, in a neutral notice style
+  // (not the success green), and the message line does not announce it a second time.
   await button.focus();
   await expect(button).toBeFocused();
   const message = page.locator("#till-message");
   await expect(message).toBeVisible();
   await expect(message).toHaveText(reason);
+  await expect(message).toHaveClass(/\bnote\b/);
+  await expect(message).not.toHaveClass(/\b(ok|bad)\b/);
+  await expect(message).not.toHaveAttribute("role", /.*/);
+  const border = await message.evaluate((el) => getComputedStyle(el).borderTopColor);
+  const success = await message.evaluate((el) => {
+    const probe = document.createElement("div");
+    probe.style.color = "var(--hos-success)";
+    document.body.appendChild(probe);
+    const out = getComputedStyle(probe).color;
+    probe.remove();
+    return out;
+  });
+  expect(border).not.toBe(success);
   await expect(button).toHaveAccessibleDescription(reason);
   // Pressing it ends nothing and calls nothing.
   // (Playwright treats aria-disabled as not actionable, so the press is forced.)
@@ -1041,6 +1061,8 @@ test("End Session is closed on the mount: aria-disabled, grey, focusable, its re
   await page.waitForLoadState("networkidle");
   await expect(page.getByTestId("session-dot")).toContainText("Open");
   await expect(message).toHaveText(reason);
+  // A press is the one announcement: the line becomes a status then.
+  await expect(message).toHaveAttribute("role", "status");
   expect(completeCalls).toEqual([]);
 });
 
