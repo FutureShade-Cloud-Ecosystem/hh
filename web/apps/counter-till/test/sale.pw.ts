@@ -182,15 +182,23 @@ test("a walk-in cash sale of three lines rings, and the sale read equals every f
   // figure the card assembles: the tax and the total are the ring's own
   // answer, named in words, never computed here.
   const totals = page.getByTestId("pos-totals-card");
+  // The card's whole shape: exactly two rows, the Subtotal and the ring-words
+  // row. A third row is a figure the till must not compute (the review's
+  // probe put a plain browser Total row here, and this count is what fails
+  // on it).
+  await expect(totals.locator(".trow")).toHaveCount(2);
   await expect(totals).toContainText("Subtotal");
   await expect(totals).toContainText("CA$64.00");
   await expect(totals.getByTestId("pos-ring-words")).toContainText("added at the ring");
+  // The absences are pinned on locators that hold the content (the review's
+  // P2-1: the step panel is a shadow slot and sees none of this body), and
+  // the positive assertions above prove these locators see the card they
+  // judge: neither the stub's HST figure (CA$8.32) nor its total (CA$72.32)
+  // may stand on the card or on the Complete button.
   await expect(totals).not.toContainText("(est.");
-  // No tax figure and no total figure anywhere on the payment step: neither
-  // the stub's HST line (CA$8.32) nor its total (CA$72.32).
-  const paymentStep = page.getByTestId("step-panel-payment");
-  await expect(paymentStep).not.toContainText("CA$8.32");
-  await expect(paymentStep).not.toContainText("CA$72.32");
+  await expect(totals).not.toContainText("CA$8.32");
+  await expect(totals).not.toContainText("CA$72.32");
+  await expect(page.getByTestId("pos-complete-sale")).not.toContainText("CA$72.32");
   await page.getByLabel("Cash tendered in dollars: optional; leave empty to ring the exact total").fill("80.00");
   await expect(page.getByTestId("cash-change-preview")).toContainText("Change due");
   await expect(page.getByTestId("cash-change-preview")).toContainText("the ring's own answer");
@@ -454,7 +462,7 @@ test("the collapsed Items summary carries the priced lines' subtotal before the 
   // figure is the priced lines' own subtotal (the only figure the till
   // assembles), unmarked: there is no estimate on the sale surface to mark.
   await openStep(page, "customer");
-  await expect(page.getByTestId("step-summary-items")).toHaveText("1 item · CA$4.00");
+  await expect(page.getByTestId("step-summary-items")).toHaveText("1 item · subtotal CA$4.00");
   await expect(page.getByTestId("step-summary-items")).not.toContainText("(est.");
 });
 
@@ -1134,6 +1142,62 @@ test("the split panel shows the typed sum and leaves the settlement to the ring"
   await expect(page.getByTestId("split-ring")).toBeEnabled();
 });
 
+test("a short typed cash amount rides the ring and the server refuses it: nothing commits", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  // CA$1.00 against a line that will ring at CA$4.52: the till computes no
+  // total, so it cannot judge the entry short, and the typed amount rides the
+  // ring for the server to judge.
+  await page
+    .getByLabel("Cash tendered in dollars: optional; leave empty to ring the exact total")
+    .fill("1.00");
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await page.getByTestId("pos-complete-sale").click();
+  const answer = await ringPost;
+  expect(answer.status()).toBe(400);
+  // The refusal is the server's own words, and the ticket stands: no
+  // confirmation exists, the line is still on the Items step, and the sale
+  // can be corrected.
+  await expect(page.getByRole("alert")).toContainText(
+    "the cash tendered does not cover the sale's total",
+  );
+  await expect(page.getByTestId("sold-panel")).toHaveCount(0);
+  await openStep(page, "items");
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
+});
+
+test("a split whose legs miss the total rides the ring and the server refuses it: nothing commits", async ({
+  page,
+}) => {
+  await signIn(page, "Sales");
+  await ensureSession(page);
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await openStep(page, "payment");
+  await page.getByRole("button", { name: "Split" }).click();
+  const panel = page.getByTestId("pos-split-panel");
+  // CA$4.00 and CA$0.40 against a sale the server will total at CA$4.52: the
+  // legs settle the server's total, and the till computed none to check
+  // against, so the miss is the ring's own refusal.
+  await panel.getByTestId("split-amount-0").fill("4.00");
+  await panel.getByTestId("split-amount-1").fill("0.40");
+  await expect(page.getByTestId("split-ring")).toBeEnabled();
+  const ringPost = page.waitForResponse(
+    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+  );
+  await page.getByTestId("split-ring").click();
+  const answer = await ringPost;
+  expect(answer.status()).toBe(400);
+  await expect(page.getByRole("alert")).toContainText("the legs do not sum exactly to the sale's total");
+  // Nothing committed, and the panel stays open and armed for the correction.
+  await expect(page.getByTestId("sold-panel")).toHaveCount(0);
+  await expect(page.getByTestId("split-ring")).toBeEnabled();
+});
+
 test("an empty draft shows the blank marker, never a confident zero, in the linear flow", async ({
   page,
 }) => {
@@ -1207,7 +1271,10 @@ test("the split panel's ring wears the disabled rule's shape until the legs meet
   page,
 }) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
+  // The stub's own Holland line: this suite runs against the stub's world,
+  // whose catalogue names it differently from the demo image's (the demo
+  // image's DEMO-PAV-HOLLAND name belongs to the acceptance run).
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Split" }).click();
   const ring = page.getByTestId("split-ring");

@@ -25,11 +25,12 @@ Money on the counter is integer cents throughout. The figures the core states
 (line prices from the pricing resolve, the committed sale's and return's own
 totals, the account's limit and balance) are what the counter renders; the
 port's host seams (`ports.ts`) assemble those figures for the surface's live
-read-back, and the counter's pre-ring tax and total are marked on the surface
-as estimates: HH's contract gives the till no rate, so the estimate applies
-the counter's 1300 bps default (or the relief flow's assessed rate), and the
-ring's committed figures are the binding ones the confirmation renders. The
-returns desk spells its figures through the one money helper (`src/money.ts`).
+read-back. Before the ring the counter computes no tax and no total (decision
+log row 661): HH's contract gives the till no rate, so the pre-ring surface
+assembles the priced lines' subtotal only and names the ring for the rest,
+and the ring's committed figures are the binding ones the confirmation
+renders. The returns desk spells its figures through the one money helper
+(`src/money.ts`).
 
 ## Running the app against the local stub
 
