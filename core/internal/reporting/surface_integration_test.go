@@ -17,6 +17,14 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 )
 
+// seededSalesByDayTitle is the name migration 0143 plants for sales_by_day.
+// Both title assertions below pin THIS string, not the human title
+// "Sales by Day": the seed's names are scrubbed, so the human title is
+// planted nowhere, and an assertion the seed cannot satisfy fails on
+// every freshly migrated database (which is how this read on main
+// before the pin).
+const seededSalesByDayTitle = "Scrubname0027 by Scrubname0009"
+
 // TestIntegration_Catalog_MatchesSeededTemplates, the two halves of a report definition must agree in
 // BOTH directions, and the parameter schema must line up with the query's bind count.
 //
@@ -121,7 +129,7 @@ func TestIntegration_Print_FreezesArtefactAndEnqueuesREPORTJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stored.HTML, "<table>") || !strings.Contains(stored.HTML, "Sales by Day") {
+	if !strings.Contains(stored.HTML, "<table>") || !strings.Contains(stored.HTML, seededSalesByDayTitle) {
 		t.Error("the stored artefact does not contain a rendered report")
 	}
 	if !strings.Contains(stored.HTML, "367.50") {
@@ -196,7 +204,7 @@ func TestIntegration_Export_CSVCarriesTheSameNumbersAsTheRun(t *testing.T) {
 	if len(recs) != 7 {
 		t.Fatalf("csv has %d records, want 7: %v", len(recs), recs)
 	}
-	if recs[0][0] != "Sales by Day" {
+	if recs[0][0] != seededSalesByDayTitle {
 		t.Errorf("csv title = %q", recs[0][0])
 	}
 	if !strings.Contains(recs[1][1], "branch_id="+trentonBranch) {
