@@ -861,3 +861,52 @@ func TestIntegration_BranchFence_MalformedArtefactRowsFailSafeAndAgree(t *testin
 		}
 	}
 }
+
+// TestIntegration_BranchFence_LegacyArtefactWithNoMatchIsGlobalOnly, round 3 pin: a COMMISSION row
+// printed before the branch stamp exists, whose (rep, window) linkage matches no period at all (the
+// periods are gone), keeps the fallback ruling: underivable is consolidated, global only, fail
+// closed, on the single read and on the list alike, and a caller granted every branch is still not a
+// global caller.
+func TestIntegration_BranchFence_LegacyArtefactWithNoMatchIsGlobalOnly(t *testing.T) {
+	pool := intPool(t)
+	f := newFixture(t, pool)
+	global := globalSvc(t, pool)
+	kingston := scopedSvc(t, pool, kingstonBranch)
+	both := grantsSvc(t, pool, map[string]bool{kingstonBranch: true, trentonBranch: true})
+	ctx := context.Background()
+	from, _ := window()
+
+	repK, _ := twoUsers(t, pool)
+	legacy := f.newID()
+	f.del(`DELETE FROM report_runs WHERE id=$1::uuid`, legacy)
+	f.exec(`INSERT INTO report_runs (id, kind, template_code, params, branch_id)
+	        VALUES ($1::uuid, 'COMMISSION', 'commission_period',
+	                jsonb_build_object('rep_user_id', $2::text, 'period_start', $3::text,
+	                                   'period_end', $4::text),
+	                $5::uuid)`,
+		legacy, repK, addDays(from, 200), addDays(from, 209), kingstonBranch)
+
+	if _, err := kingston.RunArtefact(ctx, legacy); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a Kingston manager read an artefact whose linkage matches nothing (err=%v)", err)
+	}
+	if _, err := both.RunArtefact(ctx, legacy); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a both-branches caller read an underivable artefact, consolidated is GLOBAL only (err=%v)", err)
+	}
+	scopedList, err := kingston.Runs(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runListHas(scopedList, legacy) {
+		t.Error("a Kingston manager's artefact list contains an artefact whose linkage matches nothing")
+	}
+	if _, err := global.RunArtefact(ctx, legacy); err != nil {
+		t.Errorf("a global caller was refused an underivable artefact: %v", err)
+	}
+	globalList, err := global.Runs(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runListHas(globalList, legacy) {
+		t.Error("a global caller's artefact list lost the underivable artefact, fail closed is not deletion")
+	}
+}
