@@ -1475,24 +1475,24 @@ test("a pickup whose prices never answer reads the pending markers, never a figu
       body: JSON.stringify({ error: "line could not be priced by the engine" }),
     });
   });
-  await signIn(page, "Sales");
+  await signIn(page, "Sales manager");
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
   await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
   await page.getByRole("button", { name: "Park ticket" }).click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
   // A fresh window picks the ticket up. The margin glance still answers (it
-  // derives its figures from the server's own prices), but the policy word
-  // refuses this caller, so no margin cell renders at all: the column the
-  // marker used to sit in is gone, and no figure may take its place either.
-  await signIn(page, "Sales");
+  // derives its figures from the server's own prices), and the policy word
+  // allows the manager, so the column renders on this sign-in: the pickup's
+  // markers-versus-figures rule is pinned where it can bite (P3-1).
+  await signIn(page, "Sales manager");
   await page.getByRole("button", { name: /^Parked \(/ }).click();
   const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
   await expect(parkedDialog).toBeVisible();
   // The rail lists the branch's tickets in insertion order, and the suite's
   // earlier stories leave theirs parked: the ticket this test just parked is
   // the rail's last.
-  // The glance is debounced, so the refusal is pinned only once it has
-  // actually answered: without the wait, a count of zero could pass in the
+  // The glance is debounced, so the pins below hold only once it has
+  // actually answered: without the wait, they could pass in the
   // quiet window before the answer lands, which proves nothing.
   const glanceAnswered = page.waitForResponse((r) => r.url().endsWith("/api/v1/pos/margin-glance"));
   await parkedDialog.getByRole("button", { name: "Resume" }).last().click();
@@ -1506,10 +1506,18 @@ test("a pickup whose prices never answer reads the pending markers, never a figu
   // One render beat past the answer: had the surface meant to show the
   // column, the cells would be on screen within it.
   await page.waitForTimeout(400);
-  await expect(page.getByTestId("pos-line-margin")).toHaveCount(0);
-  // The footer bar agrees with the column (ui3d P2-2, and now P3-10's word):
-  // the glance still answers with a ticket margin and a profit figure derived
-  // from the server's own prices, and the refused surface states neither.
+  // The manager's till renders the margin column, and the pending rule is
+  // real there: each cell whose line has no price yet reads the marker,
+  // never a derived figure beside (not priced).
+  const margins = page.getByTestId("pos-line-margin");
+  await expect(margins).toHaveCount(2);
+  for (let index = 0; index < 2; index += 1) {
+    await expect(margins.nth(index)).toHaveText("(none)");
+  }
+  // The footer bar keeps the same rule (ui3d P2-2): the glance answers the
+  // manager with a ticket margin and a profit figure derived from the
+  // server's own prices, and while a line is pending neither segment may
+  // state one.
   const txbar = page.getByTestId("pos-txbar");
   await expect(txbar).toContainText("2 Items");
   await expect(txbar).not.toContainText("Margin");
@@ -1606,11 +1614,11 @@ test("a resumed ticket reads the pending markers from the moment it lands, befor
   await page.route("**/api/v1/pricing/resolve", async (route) => {
     held.push(route); // held in flight: answered only when the test releases it
   });
-  await signIn(page, "Sales");
+  await signIn(page, "Sales manager");
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
   await page.getByRole("button", { name: "Park ticket" }).click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
-  await signIn(page, "Sales");
+  await signIn(page, "Sales manager");
   await page.getByRole("button", { name: /^Parked \(/ }).click();
   const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
   await expect(parkedDialog).toBeVisible();
@@ -1628,19 +1636,19 @@ test("a resumed ticket reads the pending markers from the moment it lands, befor
   await expect(txbar).toContainText("1 Item");
   await expect(txbar).not.toContainText("Margin");
   await expect(txbar).not.toContainText("Est. Profit");
-  // The answer lands: the line's own price returns. The footer's margin and
-  // profit segments do not come back with it: the glance answers this caller
-  // and the policy word refuses it, priced or pending alike (P3-10), so the
-  // bar stays silent on margin at both ends of the story. The glance is
-  // debounced, so the wait pins the silence after its post-price answer, not
-  // in the quiet window ahead of it.
+  // The answer lands: the line's own price returns, and the footer's margin
+  // and profit segments come back with it: the glance answers the manager and
+  // the policy word allows this caller, priced or pending alike (P3-10), so
+  // the bar states the figures exactly when the ticket is priced. The glance
+  // is debounced, so the wait pins the figures after its post-price answer,
+  // not in the quiet window ahead of it.
   const glanceAfterPrices = page.waitForResponse((r) => r.url().endsWith("/api/v1/pos/margin-glance"));
   for (const route of held) await route.fallback().catch(() => undefined);
   await expect(row.locator(".ltot")).toHaveText("CA$4.00");
   await glanceAfterPrices;
   await page.waitForTimeout(400);
-  await expect(txbar).not.toContainText("Margin");
-  await expect(txbar).not.toContainText("Est. Profit");
+  await expect(txbar).toContainText("Margin");
+  await expect(txbar).toContainText("Est. Profit");
 });
 
 test("the top bar is on the till's compact scale: about 48px, small chrome buttons, the banner on one line", async ({
