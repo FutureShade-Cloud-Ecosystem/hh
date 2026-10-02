@@ -223,9 +223,12 @@ func TestMarginGlance_UnreadablePolicy_FailsClosedSilently(t *testing.T) {
 
 // Hiding cost from inside_sales in the configuration is the dealer's edit
 // and the glance obeys it with no code change: the payload comes back the
-// byte-absent zero value.
+// byte-absent zero value. The switch admits the staff (ALL_STAFF), so the
+// edited list is the only gate that can blank the clerk and the leg bites
+// on the list alone.
 func TestMarginGlance_Configured_HidingCostFromTheRoleHidesTheColumn(t *testing.T) {
 	h := newHarness()
+	h.store.policies[""] = PosPolicy{MarginVisibility: MarginVisibilityAllStaff}
 	h.svc = h.svc.WithRoleConfig(modifiedDefault(t, roleconfig.SettingCostVisibility,
 		[]string{"sales_manager", "branch_manager", "general_manager", "financial_controller", "outside_sales"}))
 	h.caller = salesCaller()

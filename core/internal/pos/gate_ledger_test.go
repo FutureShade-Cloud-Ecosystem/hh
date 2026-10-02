@@ -59,6 +59,10 @@ func frontline() identity.StaffContext {
 
 func TestCounterPayloads_ClerkReceivesNoCostOrMarginBytes(t *testing.T) {
 	h := newHarness()
+	// The switch admits the staff, so the LIST is the only gate that can
+	// blank the sweep's caller (frontline() is off the list) and every
+	// byte-absence claim below hangs off the list alone.
+	h.store.policies[""] = PosPolicy{MarginVisibility: MarginVisibilityAllStaff}
 	h.caller = frontline()
 	h.store.branchCosts = map[string]int64{"prod-paver": 60} // a cost EXISTS to be leaked
 	ctx := context.Background()
@@ -143,6 +147,9 @@ func TestCounterPayloads_TheGateRunsBEFOREAnyCostIsRead(t *testing.T) {
 	// blanked it would still read every cost row for a caller who may not have them, and would leak
 	// through any future field somebody forgot to blank. The refusal must happen first.
 	h := newHarness()
+	// The switch admits the staff, so the refusal must come from the LIST
+	// before any cost read: the leg bites on the list alone.
+	h.store.policies[""] = PosPolicy{MarginVisibility: MarginVisibilityAllStaff}
 	h.caller = frontline()
 	h.store.branchCosts = map[string]int64{"prod-paver": 60}
 	h.store.costAsks = 0

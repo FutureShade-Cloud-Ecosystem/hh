@@ -56,8 +56,11 @@ func TestMarginGlance_ManagerGetsServerComputedFields(t *testing.T) {
 
 func TestMarginGlance_RoleOffTheList_FieldsByteAbsent(t *testing.T) {
 	h := newHarness()
-	// A role the decided configuration keeps off the cost and margin list
+	// The dealer's switch admits the staff (ALL_STAFF), so the LIST is the
+	// only gate that can blank this caller and the leg bites on the list:
+	// a role the decided configuration keeps off the cost and margin list
 	// (X3 hides it from the yard team).
+	h.store.policies[""] = PosPolicy{MarginVisibility: MarginVisibilityAllStaff}
 	h.caller = identity.StaffContext{UserID: "u-yard", RoleCode: "YARD_TEAM",
 		Tier: identity.TierFrontline, Scope: identity.ScopeGlobal}
 	h.store.branchCosts = map[string]int64{"prod-paver": 60}
