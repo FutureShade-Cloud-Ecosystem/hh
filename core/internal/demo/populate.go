@@ -315,14 +315,15 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 		return report, err
 	}
 
-	// The dealer's own display words: the org anchor's name and the two
-	// demo branches' names carry the invented trading name, so no screen
-	// (the till's drawer strip and parked list header above all) renders
-	// the first dealer's real trading name from the demo database. The
-	// updates are guarded on the value they would write, so a re-run
-	// touches nothing, the same discipline the planted renames follow.
-	// Recorded in docs/BLOCKERS.md as the lead's granted exception to this
-	// lane's Touches (the review round's P2-1).
+	// The dealer's own display words: the org anchor's name, the two demo
+	// branches' names and the system_settings org_name row carry the
+	// invented trading name, so no screen (the till's drawer strip and
+	// parked list header above all) and no printed document (the receipt's
+	// letterhead) renders the first dealer's real trading name from the
+	// demo database. The updates are guarded on the value they would write,
+	// so a re-run touches nothing, the same discipline the planted renames
+	// follow. Recorded in docs/BLOCKERS.md as the lead's granted exception
+	// to this lane's Touches (the review round's P2-1).
 	dealerNames, err := renameDemoDealer(ctx, tx)
 	report.DealerNamesReplaced = dealerNames
 	if err != nil {
@@ -528,15 +529,17 @@ func scrubPlantedUsers(ctx context.Context, tx pgx.Tx, now time.Time) (renamed, 
 	return renamed, deactivated, moved, cleared, nil
 }
 
-// renameDemoDealer converges the demo database's branch display words onto
+// renameDemoDealer converges the demo database's dealer display words onto
 // the invented trading name. The org anchor's name is already the identity
 // program's to converge (ProvisionOrgAnchor's guarded upsert writes the
 // configured name on every run); what it does not reach are the two demo
 // branches' names, which the migrations plant with the first dealer's real
 // trading name joined to the city by an em dash (migrations 0003 and 0014)
-// and which the till's screens render verbatim (the drawer strip, the parked
-// list header). Each update is guarded on the value it would write, so a
-// re-run writes nothing, and the count is only what this run changed.
+// and which the till's screens render verbatim (the drawer strip, the
+// parked list header), and the system_settings org_name row (0014), which
+// the printed receipt reads verbatim as its letterhead (printing's
+// ReadBranchHeader). Each write is guarded on the value it would write, so
+// a re-run writes nothing, and the count is only what this run changed.
 func renameDemoDealer(ctx context.Context, tx pgx.Tx) (replaced int, err error) {
 	for _, branch := range []struct{ id, name string }{
 		{trentonBranchID, "Hardscape House (demo), Trenton"},
@@ -551,6 +554,20 @@ func renameDemoDealer(ctx context.Context, tx pgx.Tx) (replaced int, err error) 
 		}
 		replaced += int(tag.RowsAffected())
 	}
+	// The settings row the receipt's letterhead reads, converged the way
+	// the identity program converges the org anchor: an upsert whose
+	// update leg fires only when the stored value differs, so a re-run
+	// writes nothing. Real deployments keep their own org_name; only the
+	// demo database is converged.
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO system_settings (key, value) VALUES ('org_name', to_jsonb($1::text))
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+		 WHERE system_settings.value IS DISTINCT FROM EXCLUDED.value`,
+		demoOrgName)
+	if err != nil {
+		return 0, fmt.Errorf("demo-populate: dealer name: %w", err)
+	}
+	replaced += int(tag.RowsAffected())
 	return replaced, nil
 }
 
