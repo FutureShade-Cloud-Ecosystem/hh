@@ -890,7 +890,7 @@ test("the chrome sits above the surface: the demo banner is in the first viewpor
   await second.close();
 });
 
-test("End Session is closed on the mount: disabled, grey, its reason stated, and no complete call is made", async ({
+test("End Session is closed on the mount: aria-disabled, grey, focusable, its reason on screen, and no complete call is made", async ({
   page,
 }) => {
   await signIn(page, "Sales manager");
@@ -905,9 +905,11 @@ test("End Session is closed on the mount: disabled, grey, its reason stated, and
     "Ending the session needs the blind count, the Z report and a manager's sign-off; the drawer close is not on this surface yet.";
   const button = page.getByTestId("end-session");
   await expect(button).toBeVisible();
-  await expect(button).toBeDisabled();
+  // Closed in the accessibility tree, but not natively disabled: it takes focus, so a keyboard or touch clerk reaches it.
+  await expect(button).toHaveAttribute("aria-disabled", "true");
+  await expect(button).not.toHaveAttribute("disabled", /.*/);
+  await expect(button).toHaveAccessibleName("End Session");
   await expect(button).toHaveAttribute("title", reason);
-  await expect(button).toHaveAttribute("aria-label", `End Session. ${reason}`);
   // The disabled rule: grey, no fill, no fade.
   const shape = await button.evaluate((node) => {
     const style = getComputedStyle(node);
@@ -916,10 +918,19 @@ test("End Session is closed on the mount: disabled, grey, its reason stated, and
   expect(shape.background).toBe("rgba(0, 0, 0, 0)");
   expect(shape.opacity).toBe("1");
   expect(shape.cursor).toBe("not-allowed");
-  // Pressing it (forced past the disabled state) ends nothing and calls nothing.
+  // Focus alone puts the reason on screen, in the till's own message line, and the button points at it.
+  await button.focus();
+  await expect(button).toBeFocused();
+  const message = page.locator("#till-message");
+  await expect(message).toBeVisible();
+  await expect(message).toHaveText(reason);
+  await expect(button).toHaveAccessibleDescription(reason);
+  // Pressing it ends nothing and calls nothing.
+  // (Playwright treats aria-disabled as not actionable, so the press is forced.)
   await button.click({ force: true });
-  await page.waitForTimeout(300);
+  await page.waitForLoadState("networkidle");
   await expect(page.getByTestId("session-dot")).toContainText("Open");
+  await expect(message).toHaveText(reason);
   expect(completeCalls).toEqual([]);
 });
 

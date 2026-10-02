@@ -798,14 +798,15 @@ export class HosPosTerminal extends LitElement {
       cursor: pointer;
     }
     /* HH note: disabled drops its fill and goes grey; fade is not a state. */
-    .topbtn:disabled {
+    .topbtn:disabled,
+    .topbtn[aria-disabled='true'] {
       background: transparent;
       border-color: var(--hos-line);
       color: var(--hos-text-dim);
       opacity: 1;
       cursor: not-allowed;
     }
-    .topbtn:hover:not(:disabled) {
+    .topbtn:hover:not(:disabled):not([aria-disabled='true']) {
       border-color: var(--hos-stone-amber);
       color: var(--hos-stone-amber-text);
     }
@@ -2747,7 +2748,7 @@ export class HosPosTerminal extends LitElement {
   // core refuses a complete unless the session is COUNTED (409), and a drawer
   // that does not balance needs a manager's sign-off (row 500), so the mount
   // cannot honestly end a session from here: the button stays visible but is
-  // closed (disabled, with its reason), and the gap is named in CLOSURE.md.
+  // closed (aria-disabled, focusable, its reason shown in the till's message line), and the gap is named in CLOSURE.md.
   // The reference's handler is dropped for the day the close flow is ported.
   private readonly endSessionClosedReason =
     "Ending the session needs the blind count, the Z report and a manager's sign-off; the drawer close is not on this surface yet.";
@@ -4566,9 +4567,11 @@ export class HosPosTerminal extends LitElement {
                 <button
                   class="topbtn"
                   data-testid="end-session"
-                  disabled
+                  aria-disabled="true"
+                  aria-describedby="till-message"
                   title=${this.endSessionClosedReason}
-                  aria-label=${`End Session. ${this.endSessionClosedReason}`}
+                  @click=${() => this.setUtil(this.endSessionClosedReason)}
+                  @focus=${() => this.setUtil(this.endSessionClosedReason)}
                 >End Session</button>`
             : html`<button class="topbtn" @click=${this.openSession}>Open Session</button>`}
           ${/* COUNTER VIEW (R1/R2, the user half). The way back from a dismissed legend
@@ -5828,7 +5831,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
               </button>`
             : nothing}
           ${this.utilMsg
-            ? html`<div class="banner ${this.utilTone}" role="${this.utilTone === 'bad' ? 'alert' : 'status'}">${this.utilMsg}</div>`
+            ? html`<div id="till-message" class="banner ${this.utilTone}" role="${this.utilTone === 'bad' ? 'alert' : 'status'}">${this.utilMsg}</div>`
             : nothing}
 
           
