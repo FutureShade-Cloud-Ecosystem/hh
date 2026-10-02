@@ -6033,12 +6033,17 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     const weights = this.cart.map((l) => this.lineWeight(l));
     const { totalLbs, allKnown } = ticketWeightTotalLbs(weights);
     const anyKnown = weights.some((w) => w !== null);
+    // ui3 visual GAP 2's rule at the ticket line too (ui3d P2-2): the glance derives its figures
+    // from the server's own prices, so while any line's price has not answered neither segment
+    // shows a figure. The building window with the same lines shows neither (its glance never
+    // ran): the two windows agree by the same condition the margin cells read.
+    const ticketPriced = this.hasPricedLine();
     const segs = txbarSegments(
       {
         itemCount: this.cart.length,
         totalWeightLbs: anyKnown ? totalLbs : null,
-        marginBps: this.marginData?.margin_bps,
-        estProfitCents: this.marginData?.est_profit_cents,
+        marginBps: ticketPriced ? this.marginData?.margin_bps : undefined,
+        estProfitCents: ticketPriced ? this.marginData?.est_profit_cents : undefined,
         marginHidden: this.wsMarginHidden,
       },
       money,

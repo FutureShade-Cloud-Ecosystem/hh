@@ -1310,6 +1310,14 @@ test("a pickup whose prices never answer reads the margin marker, never a figure
   for (let index = 0; index < 2; index += 1) {
     await expect(margins.nth(index)).toHaveText("(none)");
   }
+  // The footer bar keeps the same rule (ui3d P2-2): the glance still answers
+  // with a ticket margin and a profit figure derived from the server's own
+  // prices, and while a line is pending neither segment may state one. The
+  // building window's bar shows neither segment with these lines.
+  const txbar = page.getByTestId("pos-txbar");
+  await expect(txbar).toContainText("2 Items");
+  await expect(txbar).not.toContainText("Margin");
+  await expect(txbar).not.toContainText("Est. Profit");
 });
 
 test("the pickup line says the prices are being re-derived while any line is still pending", async ({
