@@ -2,7 +2,7 @@
 
 // _pos-hotkeys.ts: the counter's F-key roster and the legend's availability rules. Pure.
 //
-// THE ASK (Ryan Rood): BisTrack muscle memory: "a function key advances the step, an
+// THE ASK (the counter lead): BisTrack muscle memory: "a function key advances the step, an
 // F12-style key takes payment": plus a PERSISTENT LEGEND pinned at the bottom so nobody has to
 // memorise anything, showing the CURRENT step's keys and dimming what is not available yet.
 //
@@ -56,7 +56,7 @@ export const HOTKEY_LABELS: Record<string, string> = {
  * the server's default so the legend is never blank on a cold mount: and it is a FALLBACK, not the
  * source of truth: the moment the server answers, the dealer's roster replaces it wholesale.
  *
- * THESE ARE BISTRACK'S KEYS, and that is a ruling, not a preference. Ryan Rood, on the call: "for
+ * THESE ARE BISTRACK'S KEYS, and that is a ruling, not a preference. The counter lead, on the call: "for
  * hot keys bistrack does [F]4 to move to the next step and then [F]12 to take a payment. So, it'd
  * be nice if we either hardcoded something like that where, you can hit F4 to move to the next
  * step automatically." Every BisTrack refugee arrives with that muscle memory in their hands, so

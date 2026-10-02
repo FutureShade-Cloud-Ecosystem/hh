@@ -1,11 +1,23 @@
-// The entry view: the tap-a-role chooser. One card per flow the demo routes
-// list (the real table holds Sales and Sales manager), then the other eleven
-// roles of the decided matrix as coming: shown, labelled Coming, and not
-// tappable, because their screens do not exist in this release. When the
-// flows route answers nothing (a default-build core or a non-demo box), there
-// are no cards at all and the page says so plainly.
+// The entry view: the tap-a-role chooser, staged to the till's own polish
+// (the train review's P3-5): a centered column with a headline and a one-line
+// intro, one card per flow the demo routes list (the real table holds Sales
+// and Sales manager) wearing the ported token sheet's surfaces and borders,
+// an icon from the ported icon registry and one line of what the role opens,
+// then the other eleven roles of the decided matrix as coming: shown in a
+// ruled card, labelled Coming, and not tappable, because their screens do not
+// exist in this release. When the flows route answers nothing (a default-build
+// core or a non-demo box), there are no cards at all and the page says so
+// plainly, on the same stage.
+//
+// The cards' accessible names stay the role labels alone: the mark is
+// aria-hidden (a drawing never names a control) and the one-liner sits inside
+// the card without joining the name, which rides aria-label (the gate's own
+// rule admits no bound id here), so the demo adapter's contract with
+// app-root and every name-based selector keep reading exactly "Sales" and
+// "Sales manager".
 import { css, html, nothing, type TemplateResult } from "lit";
 import type { DemoFlow } from "@hardscapehouse/api-client";
+import { drawIcon, iconForId } from "../ported/_icon-consumer.js";
 
 /**
  * The decided matrix's labels for the roles whose screens are not in this
@@ -40,30 +52,100 @@ export interface EntryView {
   message: string | null;
 }
 
+/**
+ * The role cards' marks and one-liners, keyed by the demo flow id. The marks
+ * are the ported registry's own ids: the pos module's default mark for Sales,
+ * the approvals mark for the manager. They resolve through iconForId, so a
+ * flow the map does not know still draws the neutral square, never an empty
+ * box, and carries no one-liner.
+ */
+const FLOW_ICONS: Record<string, string> = {
+  sales: "lucide:receipt",
+  "sales-manager": "lucide:badge-check",
+};
+const FLOW_BLURBS: Record<string, string> = {
+  sales: "The counter sale flow.",
+  "sales-manager": "The counter plus approvals and margins.",
+};
+
 export const entryStyles = css`
+  .stage {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: var(--hh-s-40) var(--hh-s-8) var(--hh-s-64);
+  }
+  .headline {
+    font-size: var(--hos-stat-size);
+    line-height: 1.15;
+    font-weight: 600;
+    margin: 0 0 var(--hh-s-8);
+  }
   .intro {
     color: var(--hh-text-dim);
-    margin: 0 0 var(--hh-s-16);
+    font-size: var(--hh-s-16);
+    margin: 0 0 var(--hh-s-32);
   }
   .cards {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
     gap: var(--hh-s-16);
-    max-width: 560px;
     margin: 0 0 var(--hh-s-24);
   }
+  /* The role card is the till's card: the ported sheet's surface and control
+     boundary, the card radius, the first elevation at rest and the second on
+     hover. Hover and focus speak in the accent: the boundary takes the gold
+     fill and the mark flips to the gold-as-ink role, which is the one accent
+     role that holds in both themes. The busy state needs no rule here: the
+     shared disabled rule drops the fill and goes grey, a token swap, never a
+     fade. */
   .card {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--hh-s-12);
     min-height: 96px;
-    font-size: var(--hh-s-16);
-    font-weight: 600;
+    text-align: start;
+    padding: var(--hh-s-20);
     background: var(--hh-card);
     color: var(--hh-text);
     border: 1px solid var(--hh-control-line);
-    text-align: start;
-    padding: var(--hh-s-16) var(--hh-s-20);
+    border-radius: var(--hh-radius-card);
+    box-shadow: var(--hh-widget-shadow);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
   .card:hover:not(:disabled) {
     border-color: var(--hh-accent);
+    box-shadow: var(--hos-widget-shadow-raised);
+  }
+  .card .mark {
+    color: var(--hh-text-dim);
+    flex: none;
+  }
+  .card:hover:not(:disabled) .mark,
+  .card:focus-visible .mark {
+    color: var(--hh-accent-text);
+  }
+  .card .words {
+    display: grid;
+    gap: var(--hh-s-4);
+  }
+  .card .role {
+    font-size: var(--hh-s-16);
+    font-weight: 600;
+  }
+  .card .what {
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--hh-text-dim);
+    font-weight: 400;
+  }
+  /* The Coming list wears the same card, ruled inside with hairlines: one
+     surface, its rows divided, its tag the surface's own chip. */
+  .coming-card {
+    background: var(--hh-card);
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-card);
+    padding: var(--hh-s-16) var(--hh-s-20) var(--hh-s-4);
+    margin: 0;
   }
   .coming-heading {
     font-size: var(--hh-s-16);
@@ -74,7 +156,6 @@ export const entryStyles = css`
     list-style: none;
     margin: 0;
     padding: 0;
-    max-width: 560px;
   }
   .coming-role {
     display: flex;
@@ -83,6 +164,9 @@ export const entryStyles = css`
     gap: var(--hh-s-12);
     border-bottom: 1px solid var(--hh-line);
     padding: var(--hh-s-8) 0;
+  }
+  .coming li:last-child .coming-role {
+    border-bottom: none;
   }
   .coming-role button {
     flex: 1;
@@ -97,6 +181,7 @@ export const entryStyles = css`
   .coming-tag {
     color: var(--hh-text-dim);
     font-size: var(--hh-s-12);
+    background: var(--hh-row);
     border: 1px solid var(--hh-line);
     border-radius: var(--hh-radius-pill);
     padding: 2px var(--hh-s-8);
@@ -104,12 +189,16 @@ export const entryStyles = css`
   }
   .notice {
     color: var(--hh-text-dim);
+    margin: 0 0 var(--hh-s-24);
   }
 `;
 
+/** The stage column: every state the entry shows lives on it, centred. */
+const stage = (content: TemplateResult): TemplateResult => html`<div class="stage">${content}</div>`;
+
 export function renderEntry(view: EntryView): TemplateResult {
   if (view.flows.kind === "loading") {
-    return html`<p class="notice" role="status">Loading the demo roles.</p>`;
+    return stage(html`<p class="notice" role="status">Loading the demo roles.</p>`);
   }
   if (view.flows.kind === "unavailable") {
     // The failures say different things, so the page does not claim more than
@@ -117,54 +206,66 @@ export function renderEntry(view: EntryView): TemplateResult {
     // default-build core answers exactly that); anything else is an error
     // worth its status, because the demo may be one reload away.
     if (view.flows.status === 404) {
-      return html`<p class="notice" role="status">
+      return stage(html`<p class="notice" role="status">
         This deployment does not serve the demo sign-in, so there are no role cards to tap.
-      </p>`;
+      </p>`);
     }
     if (view.flows.status === null) {
-      return html`<p class="notice" role="status">
+      return stage(html`<p class="notice" role="status">
         The demo roles could not be loaded: the call did not go through. Reload to try again.
-      </p>`;
+      </p>`);
     }
-    return html`<p class="notice" role="status">
+    return stage(html`<p class="notice" role="status">
       The demo roles could not be loaded (HTTP ${view.flows.status}). Reload to try again.
-    </p>`;
+    </p>`);
   }
   if (view.flows.flows.length === 0) {
-    return html`<p class="notice" role="status">
+    return stage(html`<p class="notice" role="status">
       The demo sign-in answered with no roles: there is nothing to tap.
-    </p>`;
+    </p>`);
   }
-  return html`
-    <div class="chooser">
-      <p class="intro">Tap a role to open the till:</p>
-      <div class="cards">
-        ${view.flows.flows.map(
-          (flow) => html`
-            <button
-              type="button"
-              class="card"
-              data-action="choose"
-              data-flow=${flow.flow ?? nothing}
-              ?disabled=${view.busy}
-            >
-              ${flow.label ?? flow.flow}
-            </button>
-          `,
-        )}
-      </div>
-      ${view.message === null ? nothing : html`<p class="notice" role="status">${view.message}</p>`}
+  return stage(html`
+    <h2 class="headline">Who is at the counter?</h2>
+    <p class="intro">Tap a role to open the till:</p>
+    <div class="cards">
+      ${view.flows.flows.map(
+        (flow) => html`
+          <button
+            type="button"
+            class="card"
+            data-action="choose"
+            data-flow=${flow.flow ?? nothing}
+            aria-label=${flow.label ?? flow.flow ?? nothing}
+            ?disabled=${view.busy}
+          >
+            <span class="mark">${drawIcon(iconForId(FLOW_ICONS[flow.flow ?? ""] ?? "lucide:circle-user"), 29)}</span>
+            <span class="words">
+              <span class="role">
+                ${flow.label ?? flow.flow}
+              </span>
+              ${FLOW_BLURBS[flow.flow ?? ""] === undefined
+                ? nothing
+                : html`<span class="what">${FLOW_BLURBS[flow.flow ?? ""]}</span>`}
+            </span>
+          </button>
+        `,
+      )}
+    </div>
+    ${view.message === null ? nothing : html`<p class="notice" role="status">${view.message}</p>`}
+    <section class="coming-card">
       <h2 class="coming-heading">Coming</h2>
       <ul class="coming" aria-label="Coming roles">
         ${COMING_ROLES.map(
           (role) => html`
-            <li class="coming-role">
-              <button type="button" disabled>${role}</button>
-              <span class="coming-tag">Coming</span>
+            <li>
+              <div class="coming-role">
+                <button type="button" disabled>${role}</button>
+                <span class="coming-tag">Coming</span>
+              </div>
             </li>
           `,
         )}
       </ul>
-    </div>
-  `;
+    </section>
+  `);
 }

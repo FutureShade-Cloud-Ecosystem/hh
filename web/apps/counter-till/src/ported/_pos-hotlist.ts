@@ -2,7 +2,7 @@
 
 // _pos-hotlist.ts: the counter's HOT LIST, as a drillable tree. Pure; no DOM, no fetch.
 //
-// THE CLIENT'S ASK (Ryan Rood, and Ryan Bostock's volume note behind it): touchscreen tiles with
+// THE CLIENT'S ASK (the counter lead, and the back-office lead's volume note behind it): touchscreen tiles with
 // photos, drilled category → subcategory → item: "bulk → mulch → black": and "something that
 // BisTrack does not do". Bulk material volume dwarfs contracts and projects at this yard, so this
 // is the HIGH-FREQUENCY path, not decoration. It supersedes the flat quick-pick grid.

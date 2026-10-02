@@ -45,6 +45,7 @@ import {
   restoreParkedCustomer,
   clearSaleNeedsConfirm,
   counterRingMessage, // rev 5: ringErrorMessage in counter wording (module prefix stripped, fixes named)
+  creditBlockMessage, // the credit gate's refusal words, by the policy the gate named
   saleConfirmation, // DIB-444: what the confirmation panel may claim
   salePillLabel, // DIB-512: the counter word for a rung sale's pay-state (never the wire status)
   cleanQty, // rev 5: NaN/garbage in a qty box snaps to 1 instead of corrupting the line
@@ -135,6 +136,9 @@ import {
   payTileStep, // DIB-512: the tender tiles as ONE roving keyboard stop
   type LineWeightFacts,
 } from './_pos-rev8.js';
+// P3-10 (the comprehensive train review): the margin surface follows the policy
+// word /pos/policy answers, not the glance's own serving rule.
+import { marginVisibleToCaller } from './_pos-margin-visibility.js';
 import { printReceipt, openBlankWindow } from './receipt-print.js'; // DIB-410 counter receipt
 import {
   createSale,
@@ -154,6 +158,7 @@ import {
   parkTicket,
   posHotkeys, // the dealer's counter key roster
   counterPrices, // the customer-aware price picture (the pricing engine's answer)
+  searchCustomers, // the account read the card refreshes through after an account sale rings
   accountStanding, // the Customer step's past-due FACT (role-gated at the marshal layer)
   type AccountStanding,
   resolveLine,
@@ -277,7 +282,7 @@ export class HosPosTerminal extends LitElement {
   @state() private requestedDate = '';
   // DIB-200: inline validation hint for the fast (YYYYMMDD) date-entry box. '' = no error.
   @state() private dateError = '';
-  // DIB-196 (Ryan Rood): when true, adding a product jumps focus to its quantity box (BisTrack's
+  // DIB-196 (the counter lead's ask): when true, adding a product jumps focus to its quantity box (BisTrack's
   // per-terminal "ask for quantity" posture) instead of silently defaulting the line to qty 1.
  // In-memory only: a per-terminal preference, deliberately never persisted.
   @state() private promptQtyOnAdd = false;
@@ -398,6 +403,11 @@ export class HosPosTerminal extends LitElement {
 
   // ── DIB-488 rev 8 (item 4): the curated chip categories off pos_policy (hardened at the edge) ──
   @state() private curatedChips: string[] = [];
+
+  // ── P3-10 (the comprehensive train review): the policy word the margin surface obeys. Held
+ // beside the curated chips off the same read; undefined (a policy outage, or a word the
+ // contract does not carry) means the surface refuses: fail closed, never a guessed word. ──
+  @state() private marginVisibility: string | undefined;
 
   // ── DIB-488 rev 8 (item 10): the SERVER's role-gated margin answer. null = absent (not allowed,
  // not loaded, or the read failed): and ABSENT data renders NOTHING (no column, no footer). ──
@@ -1356,6 +1366,55 @@ export class HosPosTerminal extends LitElement {
       grid-template-columns:
         36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
         minmax(52px, auto) minmax(40px, auto) 24px;
+    }
+    /* P3-7: below the desktop breakpoint the eight (nine with margin) tracks
+       cannot fit the card: the table ran past its card's right edge and took
+       the money columns with it. The Weight column drops (its figures stay in
+       the Cards view), and the table scrolls inside its card so the qty
+       stepper, the money and the remove control stay reachable. At 820 and
+       above nothing changes. */
+    @media (max-width: 819px) {
+      .linegrid {
+        grid-template-columns:
+          36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
+          24px;
+      }
+      .linegrid.withmargin {
+        grid-template-columns:
+          36px minmax(110px, 1fr) auto minmax(28px, auto) minmax(52px, auto) minmax(64px, auto)
+          minmax(40px, auto) 24px;
+      }
+      .linehead span:nth-child(7),
+      .linerow .lweight {
+        display: none;
+      }
+      .linegrid {
+        overflow-x: auto;
+      }
+      /* P3-7's page half: the two header rows that cannot shrink on their own
+         were scrolling the whole DOCUMENT sideways at 390 (the step bar's five
+         pills and connectors measured 539, the session bar's row 380). The
+         step bar takes the table's idiom: it scrolls inside its own box, which
+         also zeroes its automatic flex minimum, so the row it sits in can
+         shrink it and the last pills stay reachable by that scroll. The
+         session bar's row WRAPS instead of clipping, because a scroll or clip
+         here would swallow the End Session notice, which hangs below the bar
+         (absolute against the session region): wrapped, nothing the row holds
+         can push the document wide and every control stays in view. At 820
+         and above neither rule applies and the header is untouched. */
+      hos-pos-flow-steps {
+        /* relative: the pills' visually-hidden state text is absolute, and an
+           absolute box takes its containing block from the nearest positioned
+           ancestor: without this it skipped past the scroll box above the bar
+           and still pushed the document wide by its clipped 1px box. */
+        position: relative;
+        min-width: 0;
+        max-width: 100%;
+        overflow-x: auto;
+      }
+      .session {
+        flex-wrap: wrap;
+      }
     }
     .linehead,
     .linerow {
@@ -2743,9 +2802,14 @@ export class HosPosTerminal extends LitElement {
       // rev 8 (item 4): the curated chip set (dealer-authored, or the server's top-sellers
       // derivation). Hardened at the edge; [] = the grid keeps its full chip row.
       this.curatedChips = resolveCuratedChips(p.quick_chip_set);
+      // P3-10: the word the margin surface obeys, held off the same read. An
+      // absent word stays undefined: the helper fails closed on it.
+      this.marginVisibility = p.margin_visibility;
     } catch {
       this.codEnabled = null; // unknown: keep the option disabled rather than wrong
  // presentation/chips keep their defaults (LINES / on): a policy outage must not blank the till
+ // P3-10: marginVisibility stays undefined, so the margin surface refuses: a policy outage
+ // must not blank the till, and it must not show the glance either.
     }
   }
 
@@ -2844,7 +2908,7 @@ export class HosPosTerminal extends LitElement {
 
   // End Session opens the real A-03 close flow (movements → blind count → Z-report → complete);
   // the local chrome resets only once the till actually closes (or the cashier defers: COUNTED
-  // sessions can be completed next morning, per the Dibbits SOP).
+  // sessions can be completed next morning, per the dealer's SOP).
   // HH note: the reference's End Session opened its till-close screen
   // (hos-till-close), a host boundary screen this release does not carry. The
   // core refuses a complete unless the session is COUNTED (409), and a drawer
@@ -3396,6 +3460,33 @@ export class HosPosTerminal extends LitElement {
     this.standing = out;
   }
 
+  /**
+   * HH: after a sale rings, the picked account's card must show the account's figures as the core
+   * now holds them. An account sale grows the open balance (and shrinks the available credit); the
+   * card carried the figures read when the account was picked, so it stood beside the new
+   * confirmation with the OLD balance. This re-reads the account through the same host seam the
+   * picker uses (customer search, branch walled) and replaces the card's credit figures only.
+   * A failed read leaves the card as it was, and an answer for a customer no longer selected is
+   * dropped, as refreshStanding does.
+   */
+  private async refreshCustomerAfterRing(): Promise<void> {
+    const picked = this.customer;
+    if (!picked || !picked.account_no) return;
+    try {
+      const rows = await searchCustomers(picked.account_no, 20, this.branchId);
+      const fresh = rows.find((row) => row.id === picked.id);
+      if (!fresh || this.customer?.id !== picked.id) return;
+      this.customer = {
+        ...picked,
+        credit_limit_cents: fresh.credit_limit_cents,
+        open_balance_cents: fresh.open_balance_cents,
+      };
+    } catch {
+      // the card keeps the figures it has: no fault banner over a fact nobody asked for
+    }
+    void this.refreshStanding();
+  }
+
  /** DIB-488: the customer card's explicit Walk-in tile: clears any account and confirms walk-in. */
   private async chooseWalkIn(): Promise<void> {
     this.walkInConfirmed = true;
@@ -3472,6 +3563,7 @@ export class HosPosTerminal extends LitElement {
         this.ring = { state: 'done', sale: res.sale };
         this.showSplit = false;
         this.revealSaleOutcome();
+        void this.refreshCustomerAfterRing();
         return;
       }
       if (res.err.status === 409 && res.err.error === 'credit_blocked') {
@@ -3482,12 +3574,14 @@ export class HosPosTerminal extends LitElement {
             composed: true,
           }),
         );
- // HH note: the split's credit refusal carries the same reviewed sentence the
- // single ring's does; a price_blocked refusal has no arm (row 481) and falls
+ // HH note: the split's credit refusal words come from the same helper the
+ // single ring's do (creditBlockMessage): the sentence follows the policy the
+ // gate named, so a walk-in COD sale is not told about an account it does not
+ // have. A price_blocked refusal has no arm (row 481) and falls
  // through to the server's own word below.
         this.ring = {
           state: 'error',
-          msg: 'This account cannot carry this sale on account: the credit gate refused it (over the limit, or on a hold). Cash or card still works, and accounts receivable can release or override a hold.',
+          msg: creditBlockMessage(res.err.policy, !!this.customer),
         };
         return;
       }
@@ -3567,13 +3661,17 @@ export class HosPosTerminal extends LitElement {
         this.ringKeyMemo = null; // committed: the next sale mints fresh
         this.ring = { state: 'done', sale: res.sale };
         this.revealSaleOutcome();
+        void this.refreshCustomerAfterRing();
         return;
       }
- // HH note: only the credit gate is worded here, in HH's own reviewed
- // sentence: the gate refused the account sale, cash and card still work, and
- // accounts receivable owns the release or override. A price_blocked refusal
- // has no arm at all (row 481: no margin floor at the till), so it falls
- // through to the server's own word below, like every other refusal.
+ // HH note: only the credit gate is worded here, and its words follow the
+ // policy the gate named (creditBlockMessage, one rule for both ring arms): a
+ // hold or an over-the-limit refusal keeps HH's reviewed account sentence,
+ // which is true there; a walk-in COD sale is refused under the COD
+ // constraint and says so instead, since there is no account to speak of. A
+ // price_blocked refusal has no arm at all (row 481: no margin floor at the
+      // till), so it falls through to the server's own word below, like every
+      // other refusal.
       if (res.err.status === 409 && res.err.error === 'credit_blocked') {
         this.dispatchEvent(
           new CustomEvent('hos-action-blocked', {
@@ -3584,7 +3682,7 @@ export class HosPosTerminal extends LitElement {
         );
         this.ring = {
           state: 'error',
-          msg: 'This account cannot carry this sale on account: the credit gate refused it (over the limit, or on a hold). Cash or card still works, and accounts receivable can release or override a hold.',
+          msg: creditBlockMessage(res.err.policy, !!this.customer),
         };
         return;
       }
@@ -4218,9 +4316,10 @@ export class HosPosTerminal extends LitElement {
 
   /**
  * rev 8 (item 10): ask the SERVER for the ticket's margins. The server computes from its own
-   * engine revenue × its WAC cost source and GATES AT THE MARSHAL LAYER: a non-allowed role
-   * receives `{}`, so this surface simply has no data and renders no margin anywhere. The UI
-   * never computes a margin itself.
+   * engine revenue × its WAC cost source and serves it per its cost and margin configuration:
+   * the demo core answers callers the surface must refuse (the train review's P3-10 finding),
+   * so the SURFACE holds its own half of the rule: marginPolicyAllows() gates everything the
+   * glance drives. The UI never computes a margin itself.
    */
   private async refreshMarginGlance(seq: number): Promise<void> {
     if (this.cart.length === 0) {
@@ -4247,8 +4346,8 @@ export class HosPosTerminal extends LitElement {
    *
    * This is the ask's other half. The search rows and the hot-list tiles show what a product costs
    * this account BEFORE it goes on the ticket; this shows it AFTER, which is where the number is
- * actually read out loud: Ryan Rood wanted the saving visible and printable, and Ryan Bostock
-   * reads the whole ticket back before the customer pays.
+ * actually read out loud: the counter lead wanted the saving visible and printable, and the
+   * back-office lead reads the whole ticket back before the customer pays.
    *
    * Same read, same authority, same rules: retail struck only where they pay less, no zero saving,
  * no arithmetic here. Best-effort: an outage costs the SAVING line, never the ticket.
@@ -4310,9 +4409,28 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
-  /** rev 8: the margin data the ROLE gate actually sent us (footer pair present). */
+  /**
+   * P3-10 (the comprehensive train review): the policy word's own answer for
+   * the signed-in caller. The glance's serving rule is the core's (it keeps
+   * answering to callers the surface must refuse); this is the surface's half
+   * of the ruling: the word held off /pos/policy, fail closed.
+   */
+  private marginPolicyAllows(): boolean {
+    return marginVisibleToCaller(this.marginVisibility, getCurrentUser()?.tier);
+  }
+
+  /**
+   * rev 8: the margin data the ROLE gate actually sent us (footer pair
+   * present), AND the policy word allows this caller (P3-10). One gate for
+   * everything the margin drives: the column, the footer segments and the eye
+   * appear together or not at all.
+   */
   private marginPresent(): boolean {
-    return this.marginData !== null && this.marginData.margin_bps !== undefined;
+    return (
+      this.marginData !== null &&
+      this.marginData.margin_bps !== undefined &&
+      this.marginPolicyAllows()
+    );
   }
 
  /** rev 8: whether the margin COLUMN/footers render: data present AND the quick-hide is off. */
@@ -4786,8 +4904,9 @@ export class HosPosTerminal extends LitElement {
   /**
    * The counter-view menu: two switches, no sentences.
    *
-   * THIS IS THE WAY BACK, and it deliberately does not need an administrator. Ryan Bostock does not
-   * want the legend; Ryan Rood does. Whoever is standing at this till decides, here, in one gesture,
+   * THIS IS THE WAY BACK, and it deliberately does not need an administrator. The back-office lead
+   * does not want the legend; the counter lead does. Whoever is standing at this till decides, here,
+   * in one gesture,
    * and the choice follows them to the next till because it is stored against them and not against
    * the machine.
    */
@@ -5046,19 +5165,29 @@ export class HosPosTerminal extends LitElement {
   }
 
   /**
- * The facts the COLLAPSED cards summarise (summaryFor, _pos-accordion.ts: pure and tested).
+   * The facts the COLLAPSED cards summarise (summaryFor, _pos-accordion.ts: pure and tested).
    *
-   * `totalLabel` is deliberately withheld while Payment is open: the totals card inside that step
-   * is the running total's SOURCE, and the doctrine's say-it-once rule means the Items summary must
- * not echo a number the operator is already looking at. Closed Payment, and the echo comes back:
+   * `totalLabel` is withheld while Payment is open pre-ring: the totals card inside that step is
+   * the running total's SOURCE, and the doctrine's say-it-once rule means the Items summary must
+   * not echo a number the operator is already looking at. Closed Payment, and the echo comes back:
    * which is the same source-and-echo rule the old header chip followed, now with a better echo.
+   *
+   * The echo is an ESTIMATE before the ring (the browser's own arithmetic; the ring is the binding
+   * price), so it carries the same mark the totals rows and both ring buttons carry. After the ring
+   * the summary stops estimating entirely: it reads the sale's committed total, the server's own
+   * figure, with no mark, so the estimate cannot stand on screen beside the confirmation's
+   * committed figure (and they would disagree at any rate other than the preview's).
    */
   private stepFacts(): StepSummaryFacts {
     return {
       customerName: this.customer ? this.customer.name : '',
       walkInConfirmed: this.walkInConfirmed,
       lineCount: this.cart.length,
-      totalLabel: this.openStep === 'payment' ? '' : this.moneyOrMarker(this.total()),
+      totalLabel: this.ringDone()
+        ? money(this.doneSale().total_cents)
+        : this.openStep === 'payment'
+          ? ''
+          : `${this.moneyOrMarker(this.total())}${this.hasPricedLine() ? ' (est.)' : ''}`,
       // DIB-512 (8) · one word per surface. Before the ring the collapsed Payment card says which
       // tender is CHOSEN; after it, salePillLabel decides the counter word for what the sale
  // actually is ('Paid' / 'On account' / 'COD' / 'Deposit'): never the wire status, which is
@@ -5845,8 +5974,8 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
   /**
  * THE READ-BACK: the Summary step BEFORE the money moves.
    *
-   * Ryan Bostock asked for the summary and said exactly when he uses it: "before the person pays
-   * I'm going over all the details." So Summary is not the receipt's card. The receipt is what it
+   * The back-office lead asked for the summary and said exactly when it gets used: "before the person
+   * pays I'm going over all the details." So Summary is not the receipt's card. The receipt is what it
    * BECOMES; what it is for most of its life is the thing a counter person reads aloud with a
  * customer leaning on the counter: and it has to exist while the sale is still changeable,
    * because the whole point of reading it back is to catch what is wrong.
@@ -5921,9 +6050,10 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
       ${/* rev 8 (item 10): the one-click margin quick-hide (eye), re-homed from the retired sale
          panel's bar. It sits with the utilities because the figures it hides live on the ticket
          LINES and in the stat bar, both of which are readable from every step. Offered only while
-         the role-gated data is actually PRESENT: there is nothing to hide otherwise, and the
-         role gate itself is server-side (the payload omits the fields; this is counter privacy,
-         not security). */ ''}
+         the policy word allows this caller AND the data is actually PRESENT (P3-10): a refused
+         caller has nothing to hide and sees no eye. The glance's own serving rule stays the
+         core's (it answers callers the surface refuses); this is counter privacy on top, not
+         security. */ ''}
 ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id input used to
    render below the CTA on EVERY sale (empty included). What earns the always-on row:
    Park / Parked (the mid-rush pair) and: only while the order holds something to
@@ -6031,8 +6161,9 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
   /**
  * rev 8 (item 12): the FOOTER TRANSACTION BAR: the ticket panel's bottom line of truth.
    * "N Items · Total Weight X lbs" always (the blank word when NO line has a weight);
-   * "Margin Y% · Est. Profit CA$Z" segments ONLY while the role-gated server data is present AND
-   * the quick-hide is off. Sits OUTSIDE the panel's internal scroll, so it never leaves view.
+   * "Margin Y% · Est. Profit CA$Z" segments ONLY while the role-gated server data is present,
+   * the policy word allows this caller (P3-10) AND the quick-hide is off. Sits OUTSIDE the
+   * panel's internal scroll, so it never leaves view.
    */
   private renderTxBar() {
     const weights = this.cart.map((l) => this.lineWeight(l));
@@ -6043,12 +6174,16 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     // shows a figure. The building window with the same lines shows neither (its glance never
     // ran): the two windows agree by the same condition the margin cells read.
     const ticketPriced = this.hasPricedLine();
+    // P3-10: the figures pass through the policy word's gate too: a caller it
+    // refuses reads undefined here, so the segments drop, whatever the glance
+    // answered.
+    const marginAllowed = this.marginPolicyAllows();
     const segs = txbarSegments(
       {
         itemCount: this.cart.length,
         totalWeightLbs: anyKnown ? totalLbs : null,
-        marginBps: ticketPriced ? this.marginData?.margin_bps : undefined,
-        estProfitCents: ticketPriced ? this.marginData?.est_profit_cents : undefined,
+        marginBps: ticketPriced && marginAllowed ? this.marginData?.margin_bps : undefined,
+        estProfitCents: ticketPriced && marginAllowed ? this.marginData?.est_profit_cents : undefined,
         marginHidden: this.wsMarginHidden,
       },
       money,
@@ -6233,13 +6368,13 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           </div>
           <div class="cfacts">
             <span>Terms <span class="num">${c.payment_terms_days}d</span></span>
-            <span>Available <span class="num avail">${money(available)}</span></span>
+            <span>Available (derived) <span class="num avail">${money(available)}</span></span>
             ${c.open_balance_cents > 0
               ? html`<span>Outstanding <span class="num out">${money(c.open_balance_cents)}</span></span>`
               : nothing}
-            ${/* THE PAST-DUE FACT (N4). Ryan Bostock starts a counter sale partly because "it also
-               gives me an opportunity to ask them to pay their bill": this is the thing that was
-               missing when he did. It is one more entry in the same quiet fact row, in the same
+            ${/* THE PAST-DUE FACT (N4). The back-office lead starts a counter sale partly because "it
+               also gives me an opportunity to ask them to pay their bill": this is the thing that was
+               missing when they did. It is one more entry in the same quiet fact row, in the same
                clothes as Terms and Outstanding: no banner, no sentence, no call to action, and
                nothing at all when the account is current. The overdue colour is paired with the
                word "Past due", because colour never carries meaning alone. Whether the sale may
@@ -6459,7 +6594,8 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
   }
 
   private renderLinesTable() {
-    // rev 8: the margin column exists only while the role-gated data is present AND un-hidden.
+    // rev 8: the margin column exists only while the role-gated data is present, the policy
+    // word allows this caller (P3-10) AND it is un-hidden.
     const m = this.marginVisible();
     const cols = m ? 'withmargin' : '';
  // DIB-512 · the column is 'Weight' (the LINE's own weight): 'Total Weight' is the footer
@@ -6544,8 +6680,19 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
               </svg>
             </button>
           </div>
+          ${/* P3-10: the breakdown chip's below-floor row is the one other place a margin figure
+               can show on this till (the CARDS presentation). The same policy word gates it:
+               a refused caller reads the below-floor words without the margin figures. The
+               refusal withholds the figures from a COPY of the line's own breakdown (the line's
+               data is untouched): the positions gate admits no new property binding in the
+               templates, so the flag property stays unset here and the absent figures paint the
+               same words. */ ''}
           ${l.breakdown
-            ? html`<hos-price-breakdown .breakdown=${l.breakdown}></hos-price-breakdown>`
+            ? html`<hos-price-breakdown
+                .breakdown=${this.marginPolicyAllows()
+                  ? l.breakdown
+                  : { ...l.breakdown, margin_bps: undefined, floor_bps: undefined }}
+              ></hos-price-breakdown>`
             : nothing}
         </div>`,
       )}

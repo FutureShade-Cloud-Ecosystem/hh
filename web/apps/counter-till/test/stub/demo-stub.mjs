@@ -74,11 +74,15 @@ const FLOWS = [
 ];
 
 // The minted accounts, one per flow, shaped field for field like the staff
-// login user block (core/api/openapi.yaml, IdentityUser). The accounts are
-// demo labels on reserved domains, not people. Each account's grant reaches
-// its own branch only (the demo world's Trenton), which is the branch fence
-// the core's middleware holds: the stub reads the same grant from the token's
-// account, so one branch never answers for another.
+// login user block (core/api/openapi.yaml, IdentityUser). The tiers are the
+// core resolver's own answer (core/internal/identity/authority.go, read only):
+// 1 leadership, 2 manager, 3 frontline; inside_sales is frontline and
+// sales_manager is management, and the real mint carries the resolver's live
+// tier, so the stub says the same. The accounts are demo labels on reserved
+// domains, not people. Each account's grant reaches its own branch only (the
+// demo world's Trenton), which is the branch fence the core's middleware
+// holds: the stub reads the same grant from the token's account, so one branch
+// never answers for another.
 const USERS = {
   sales: {
     user_id: "demo-account-sales",
@@ -86,7 +90,7 @@ const USERS = {
     display_name: "Sales (demo)",
     role_code: "inside_sales",
     role_name: "Inside Sales",
-    tier: 2,
+    tier: 3,
     scope: "BRANCH",
   },
   "sales-manager": {
@@ -95,7 +99,7 @@ const USERS = {
     display_name: "Sales manager (demo)",
     role_code: "sales_manager",
     role_name: "Sales Manager",
-    tier: 3,
+    tier: 2,
     scope: "BRANCH",
   },
 };
@@ -1469,6 +1473,18 @@ const server = createServer(async (request, response) => {
         respondJson(response, 400, { error: "the walk-in has no account to bill" });
         return;
       }
+      // The COD constraint, the core's own gate for an unpaid-at-ring sale: a
+      // COD sale draws on an account, and the walk-in has none (its limit is
+      // no credit at all), so the ring answers the credit gate's refusal
+      // before any money moves: the single tender and the split settle both
+      // pass through here. The same word an on-hold account's sale meets
+      // below; the policy names the constraint, and the account sales keep
+      // their own arms.
+      if (parsed.sale_type === "COD" && customer.id === "") {
+        const blocked = creditBlocked("COD_CONSTRAINT");
+        respondJson(response, blocked.status, blocked.body);
+        return;
+      }
       if (parsed.requested_date !== houseDay()) {
         respondJson(response, 400, {
           error: `the sale's requested date is not the dealer's day in the house zone (${HOUSE_ZONE})`,
@@ -1632,6 +1648,16 @@ const server = createServer(async (request, response) => {
         respondJson(response, 400, { error: "unknown tender" });
         return;
       }
+      // The deposit rides an unpaid-at-ring sale (Charge Account or COD):
+      // the ring's answer carries the figure back, because the
+      // confirmation's balance is the total less this deposit and the wire's
+      // own number is the one the till repeats.
+      const depositCents =
+        typeof parsed.deposit_cents === "number" &&
+        Number.isInteger(parsed.deposit_cents) &&
+        parsed.deposit_cents > 0
+          ? parsed.deposit_cents
+          : 0;
       const orderId = uuidFromCounter(4000 + sales.size + 1);
       // The sale's tender word: with a split settlement the contract says the
       // body's tender field is ignored, so the row derives one word from the
@@ -1661,6 +1687,7 @@ const server = createServer(async (request, response) => {
         status: "COMMITTED",
         cash_tendered_cents: cashTendered,
         change_due_cents: changeDue,
+        deposit_cents: depositCents,
         payment_id: paymentId,
         gateway_ref: gatewayRef,
         tenders,
@@ -1801,7 +1828,12 @@ const server = createServer(async (request, response) => {
       workspace_split_pct: 55,
       workspace_arrangement: "LOOKUP_LEFT",
       lookup_presentation: "CARDS",
-      margin_visibility: "ALL_STAFF",
+      // P3-10 (the comprehensive train review): the real demo box answers
+      // MANAGER_UP here, so the stub does too. The margin glance below KEEPS
+      // answering to every caller (faithful to today's core, which serves it
+      // through the cost and margin configuration): the SURFACE's refusal is
+      // the thing under test, not the glance's.
+      margin_visibility: "MANAGER_UP",
       quick_chip_set: ["Pavers", "Sand and base", "Walls"],
     });
     return;
@@ -2048,6 +2080,7 @@ function saleResponseBody(sale, replayed) {
     replayed,
     cash_tendered_cents: sale.cash_tendered_cents,
     change_due_cents: sale.change_due_cents,
+    deposit_cents: sale.deposit_cents,
     tenders: sale.tenders,
   };
 }

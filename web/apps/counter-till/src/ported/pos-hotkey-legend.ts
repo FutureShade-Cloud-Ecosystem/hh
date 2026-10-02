@@ -35,9 +35,9 @@ import { legendKeys, type PosHotkey, type HotkeyState } from './_pos-hotkeys.js'
  * overlay is reached from anywhere that is not a text field, including the legend's own dismiss
  * button and the counter-view control it hands focus to.
  *
- * ONE THING ON IT IS A CONTROL: DISMISS. Ryan Bostock, asked whether he is hotkey-heavy: "No, I
- * don't even know what that is." He is also the person who asked for screen real estate back, so a
- * strip of keycaps he will never press is rent he is paying for nothing. The × is a real focusable
+ * ONE THING ON IT IS A CONTROL: DISMISS. The back-office lead, asked whether the yard is
+ * hotkey-heavy: "No, I don't even know what that is." The same side asked for screen real estate
+ * back, so a strip of keycaps it will never press is rent paid for nothing. The × is a real focusable
  * button with a real name, it is the ONLY tab stop this bar adds, and it turns off THE STRIP and
  * not the keys: the roster is untouched, F4 still advances and F12 still pays. The way back is the
  * counter-view control in the header, which is where the × puts focus.

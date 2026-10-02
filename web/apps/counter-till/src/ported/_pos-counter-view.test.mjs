@@ -2,10 +2,11 @@
 
 // _pos-counter-view.test.mjs: WHICH PARTS OF THE COUNTER A PERSON KEEPS ON SCREEN (rulings R1 and R2).
 //
-// The ruling's hardest half is that two people at ONE dealer want opposite answers. Ryan Bostock,
-// asked whether he is hotkey-heavy: "No, I don't even know what that is. So, probably not": and he
-// is also the person who wants screen real estate back and said "I wouldn't need it when I'm in my
-// back office" about the hot list. Ryan Rood wants BisTrack's keys in his hands. A dealer-wide
+// The ruling's hardest half is that two people at ONE dealer want opposite answers. The
+// back-office lead, asked whether the yard is hotkey-heavy: "No, I don't even know what that is.
+// So, probably not": the same side that wants screen real estate back and said "I wouldn't need it
+// when I'm in my back office" about the hot list. The counter lead wants BisTrack's keys in hand.
+// A dealer-wide
 // switch has to be wrong for one of them every day, so this is a USER preference on the
 // presentation substrate, resolved user-over-dealer-over-default, whole-or-absent per level.
 //
@@ -49,8 +50,8 @@ test('counter view: the person overrides the dealer WHOLE, never merged', () => 
 });
 
 test('counter view: a back-office desk turns the hot list off and keeps its keys', () => {
- // Ryan Bostock: "I wouldn't need it when I'm in my back office." Ryan Rood: "It could be turned
- // on." One switch each, and neither switch touches the other.
+ // The back-office lead: "I wouldn't need it when I'm in my back office." The counter lead: "It
+ // could be turned on." One switch each, and neither switch touches the other.
   const v = panelView([], [item(PANEL_HOTLIST, false), item(PANEL_LEGEND, true)]);
   assert.equal(v[PANEL_HOTLIST], false);
   assert.equal(v[PANEL_LEGEND], true);

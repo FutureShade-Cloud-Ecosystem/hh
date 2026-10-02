@@ -25,7 +25,7 @@ import {
  *
  * WHY THIS REPLACED A FLAT GRID. The flat quick-pick grid could hold about a dozen tiles before it
  * stopped being faster than typing, which meant it could only ever cover the top of the top. This
- * yard's volume is bulk material: Ryan Bostock confirmed it dwarfs contracts and projects: and
+ * yard's volume is bulk material, confirmed on the call to dwarf contracts and projects: and
  * bulk is exactly the shape a drill fits: a handful of categories, a handful of materials in each,
  * a handful of colours in that. Three taps with a picture at every step, and no reading.
  *

@@ -447,8 +447,9 @@ export class TillClient {
     const lines = record["lines"];
     // The glance's own refusal is the empty object: margin byte-absent for a
     // caller it does not answer. That is a real answer, not an error: every
-    // slot reads unknown and the column renders its placeholder, value
-    // driven, whatever the configuration decides.
+    // slot reads unknown, value driven, whatever the configuration decides.
+    // The surface holds its own gate besides (P3-10): a caller the policy
+    // word refuses sees no margin column at all, placeholder included.
     if (lines === undefined) {
       return ok({ marginBps: items.map(() => null), partial: false });
     }

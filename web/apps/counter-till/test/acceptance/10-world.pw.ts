@@ -6,13 +6,14 @@
 // past the counter's walls and refuses the clerk, the other branch's sale is
 // refused at this counter, the seeded card sale carries no card reference, and
 // the world's newest rows are dated to the moment the box was rebuilt.
-import { expect, test } from "@playwright/test";
 import {
+  expect,
   KINGSTON_ID,
   SEEDED,
   TRENTON_ID,
   houseDay,
   houseDaysAgo,
+  test,
   marginPercent,
   mint,
   openDrawer,
@@ -44,6 +45,12 @@ test("the way in's data: two flows with role codes and labels", async ({ page })
   expect(body.flows.map((row) => row.flow)).toEqual(["sales", "sales-manager"]);
   expect(body.flows.map((row) => row.role_code)).toEqual(["inside_sales", "sales_manager"]);
   expect(body.flows.map((row) => row.label)).toEqual(["Sales", "Sales manager"]);
+  // The picture is the table itself, as the browser shows the core's answer:
+  // the page loads the flows route and waits for its two rows to be on the
+  // screen (the test's own request never loads a page).
+  await page.goto("/api/v1/demo/flows");
+  await expect(page.locator("body")).toContainText('"sales-manager"');
+  await expect(page.locator("body")).toContainText('"inside_sales"');
   await shot(page, "00-world-flows", test.info());
 });
 

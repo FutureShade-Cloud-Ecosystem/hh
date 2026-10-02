@@ -2,6 +2,7 @@
 
 import { LitElement, css, html, nothing } from 'lit';
 import { centsAmount } from './_money-format.js';
+import { belowFloorWords } from './_price-breakdown-words.js';
 import { customElement, property, state } from 'lit/decorators.js';
 import { api } from './ports.js';
 import { priceSourceWord } from './pricing-words-logic.js';
@@ -12,7 +13,7 @@ import { focusRing } from './styles/focus-ring.js';
  *
  * Renders the pre-tax `Breakdown` returned by `POST /api/v1/pricing/resolve`
  * (original → final, discount %, source, detail, price UOM, and the below-floor
- * "manager approval required" state). A read-only inspector (Ryan Rood) can drive
+ * "manager approval required" state). A read-only inspector (the counter lead's ask) can drive
  * the engine here without `go test`. NEVER renders tax: A-07 is pre-tax only (M5
  * owns tax).
  *
@@ -33,8 +34,11 @@ export interface PriceBreakdown {
   price_uom: string;
   qty_base: number;
   line_total_cents: number;
-  margin_bps: number;
-  floor_bps: number;
+  // Optional so a policy-ruled host can withhold the figures from the data it
+  // passes: absent figures render the below-floor words without the margin
+  // pair, the same words marginFiguresVisible=false paints.
+  margin_bps?: number;
+  floor_bps?: number;
   blocked: boolean;
   block_policy?: string;
 }
@@ -61,6 +65,18 @@ export class HosPriceBreakdown extends LitElement {
   @property({ type: Number }) qtyEntered = 1;
   @property() uomEntered = 'SF';
   @property({ type: Number }) costCents = 0;
+
+  /**
+   * P3-10 (the comprehensive train review): whether the below-floor row may
+   * spell its margin figures. The renderer holds no policy of its own. A host
+   * can refuse the figures two ways, and the counter till uses the second:
+   * set this property false, or withhold margin_bps and floor_bps from the
+   * breakdown it passes (the positions gate admits no new property binding in
+   * the till's templates, so the till strips the figures from a copy instead).
+   * Default true: a host that mounts this chip outside a policy-ruled surface
+   * keeps the renderer's own behavior.
+   */
+  @property({ type: Boolean }) marginFiguresVisible = true;
 
   @state() private loading = false;
   @state() private error = '';
@@ -197,11 +213,7 @@ export class HosPriceBreakdown extends LitElement {
                 <span>${b.detail}</span>
               </div>
               ${b.blocked
-                ? html`<div class="blocked">
-                    ${b.detail || 'Below the configured margin floor: manager approval required'}
-                    (margin ${centsAmount(b.margin_bps)}% &lt; floor
-                    ${centsAmount(b.floor_bps)}%)
-                  </div>`
+                ? html`<div class="blocked">${belowFloorWords(b, this.marginFiguresVisible)}</div>`
                 : nothing}
             `
           : html`<div class="label">no breakdown: set inputs and resolve</div>`}

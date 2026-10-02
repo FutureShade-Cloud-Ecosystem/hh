@@ -1,16 +1,16 @@
 #!/bin/bash
 # W9's exit test (plan r7 section 4, item W9): the story end to end and the
-# testers' page, green on the local image built from the goal's integration
-# branch. Run from a checkout of the branch:
+# testers' page, green on the local image built from the merged state. Run
+# from a checkout of the branch:
 #
 #   web/apps/counter-till/test/acceptance/exit-test.sh
 #
-# The image is built from the union the lead's merge will carry: the goal
-# branch's tree (WT_GOAL, branch till/goal) read through git archive, plus this
-# branch's deploy/demo (the W5 image machinery the goal branch does not hold
-# yet), plus this lane's declared Touches, the counter till app directory as
-# this branch has it. The union assembles in the scratch directory the lane
-# was granted (SCRATCH); nothing is ever written into WT_GOAL.
+# The image is built from the union the lead's merge will carry: the hh
+# repository's main tree (MAIN_REF, default origin/main) read through git
+# archive, which already holds the demo image machinery and the core, plus
+# this branch's counter till app directory (the ported POS surface main does
+# not hold yet). The union assembles in the scratch directory (SCRATCH);
+# nothing is ever written into the checkout.
 #
 # Needs: docker, node (22, the version CI names: the stub suite's TypeScript
 # import fails under 20), npm, bun, and network access to pull the base
@@ -28,10 +28,12 @@
 #     behind the gate, and answers the flows table's two rows;
 #   the acceptance run (the eleven screens as each role, the world leg, and
 #     the page's claims held to the ledger) is green, with a screenshot per
-#     screen per role in the untracked acceptance folder;
+#     screen per role in the untracked acceptance folder, no two of them
+#     byte-identical, none of them a blank page, and each taken on a settled
+#     page (the surface's own in-flight word gone, the reads quiet);
 #   the restart leg: the pre restart bearer is refused and a fresh sign in
 #     works (a restart signs everyone out);
-#   both lanes' existing suites stay green (the stub harness, 38 tests);
+#   both lanes' existing suites stay green (the stub harness: Playwright and unit);
 #   the app typechecks;
 #   the root gates pass: bun test, the manifest drift check, the shape check,
 #     the scope check;
@@ -40,9 +42,9 @@ set -eu
 
 cd "$(git rev-parse --show-toplevel)"
 APP=web/apps/counter-till
-GOAL="${WT_GOAL:-/home/colton/Desktop/FBHQ/counter-till/wt-goal}"
-SCRATCH="${W9_SCRATCH:-/home/colton/Desktop/FBHQ/counter-till/scratch/w9}"
-IMAGE=hh-demo-till:w9-exit
+MAIN_REF="${MAIN_REF:-origin/main}"
+SCRATCH="${W9_SCRATCH:-/home/colton/Desktop/FBHQ/counter-till/scratch/ui4}"
+IMAGE=hh-demo-till:ui4-exit
 PG_NAME=hh-till-l5d-pg
 BOX_NAME=hh-till-l5d-box
 NET=hh-till-l5d-net
@@ -81,7 +83,9 @@ cleanup() {
 		docker exec "$PG_NAME" psql -U postgres -q -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" >/dev/null 2>&1 || true
 	done
 	if [ "${KEEP:-0}" != "1" ]; then
-		docker rm -f "$PG_NAME" >/dev/null 2>&1 || true
+		# -v: the postgres image keeps its data in an anonymous volume, and a
+		# plain rm leaves one behind per run.
+		docker rm -f -v "$PG_NAME" >/dev/null 2>&1 || true
 		docker network rm "$NET" >/dev/null 2>&1 || true
 		docker rmi -f "$IMAGE" >/dev/null 2>&1 || true
 		rm -rf "$SCRATCH/context"
@@ -89,38 +93,28 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "== the union context from the goal's head and this lane's Touches"
-[ -d "$GOAL" ] || { fail "the goal worktree is missing at $GOAL"; exit 1; }
+echo "== the union context from main's tree and this branch's app directory"
+git rev-parse --verify -q "$MAIN_REF^{commit}" >/dev/null || { fail "$MAIN_REF does not resolve (run git fetch)"; exit 1; }
 rm -rf "$SCRATCH/context"
 mkdir -p "$SCRATCH/context"
-git -C "$GOAL" archive HEAD | tar -x -C "$SCRATCH/context"
-# The image machinery rides the goal's head since W5 merged there; a goal
-# checkout from before that merge carries none, and this branch's copy stands
-# in for it.
-if [ ! -f "$SCRATCH/context/deploy/demo/Dockerfile" ]; then
-	rm -rf "$SCRATCH/context/deploy"
-	cp -r deploy "$SCRATCH/context/deploy"
-fi
+git archive "$MAIN_REF" | tar -x -C "$SCRATCH/context"
+[ -f "$SCRATCH/context/deploy/demo/Dockerfile" ] || { fail "$MAIN_REF carries no deploy/demo image machinery"; exit 1; }
 rm -rf "$SCRATCH/context/$APP"
 mkdir -p "$SCRATCH/context/$APP"
 tar -C "$APP" --exclude=node_modules --exclude=dist --exclude=test-results --exclude=acceptance-screens -cf - . | tar -C "$SCRATCH/context/$APP" -xf -
-# The review round's one granted exception outside the app: the demo
-# populate's dealer name rename (docs/BLOCKERS.md, the W9 section). This
-# branch's file is the goal's plus exactly that edit, so the overlay is the
-# exception and nothing else, and the lead's merge carries it into till/goal.
-cp core/internal/demo/populate.go "$SCRATCH/context/core/internal/demo/populate.go"
-pass "the union context assembles (goal head, the app and the granted populate file from this lane)"
+pass "the union context assembles ($MAIN_REF with this branch's app directory)"
 
 echo "== building the image"
 docker build -f "$SCRATCH/context/deploy/demo/Dockerfile" -t "$IMAGE" "$SCRATCH/context" >/dev/null || {
 	fail "the image build failed"
 	exit 1
 }
-pass "the image builds from the goal's integration branch and this lane's work"
+pass "the image builds from main's tree and this branch's app"
 
 echo "== the throwaway Postgres"
 docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET" >/dev/null
-docker rm -f "$PG_NAME" >/dev/null 2>&1 || true
+# -v here too: a plain rm would strand the previous run's anonymous volume.
+docker rm -f -v "$PG_NAME" >/dev/null 2>&1 || true
 docker run -d --name "$PG_NAME" --network "$NET" -p "127.0.0.1:$PG_PORT:5432" \
 	-e POSTGRES_PASSWORD=hardscape postgres:16-alpine >/dev/null
 until docker exec "$PG_NAME" pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
@@ -227,6 +221,10 @@ count="$(printf '%s\n' "$actual" | grep -c . || true)"
 	&& pass "the run produced exactly its 30 named screenshots" \
 	|| fail "the screenshots drifted (count $count, missing:$missing, extra:$extra)"
 cd - >/dev/null
+echo "== the screenshots' own rule: no two byte-identical (the story's thirty)"
+dupes="$(cd "$SHOT_DIR" && sha256sum ./*.png | sort | uniq -w64 -D | sed 's/^[0-9a-f]* *//')"
+[ -z "$dupes" ] && pass "no two of the story's screenshots are byte-identical" \
+	|| fail "byte-identical screenshots: $(printf '%s' "$dupes" | tr '\n' ' ')"
 
 echo "== the restart leg: a restart signs everyone out"
 PRIOR_TOKEN="$(curl -s -u "demo:$PHRASE" -H 'Content-Type: application/json' \
@@ -250,6 +248,9 @@ restart_shots="$(cd "$SHOT_DIR" && ls *.png 2>/dev/null | wc -l | tr -d ' ')"
 [ "$restart_shots" = "31" ] \
 	&& pass "the restart leg's own screenshot sits beside the story's thirty" \
 	|| fail "the restart leg left $restart_shots screenshots, want 31"
+dupes="$(cd "$SHOT_DIR" && sha256sum ./*.png | sort | uniq -w64 -D | sed 's/^[0-9a-f]* *//')"
+[ -z "$dupes" ] && pass "no two of the run's 31 screenshots are byte-identical" \
+	|| fail "byte-identical screenshots: $(printf '%s' "$dupes" | tr '\n' ' ')"
 cd - >/dev/null
 
 echo "== both lanes' existing suites (the stub harness)"
@@ -297,10 +298,14 @@ fi
 cd "$APP" >/dev/null
 
 echo "== the two source scans and the sink scan"
-if grep -rnE '_cents[[:space:]]*[-+*/]|[-+*/][[:space:]]*[A-Za-z_.]*_cents' src >/dev/null 2>&1; then
-	fail "the money scan printed something"
+# The money scan is the one rule test/scans.pw.ts holds (ruling 14: the named
+# display helper and the seam file ports.ts are the boundary; tests and the
+# closure prose are not scanned the way the source is). It is called here, not
+# restated, so there is no second divergent grep.
+if CI=true npx --no-install playwright test test/scans.pw.ts -g "the money scan" >/dev/null 2>&1; then
+	pass "the money scan prints nothing (test/scans.pw.ts, the one rule)"
 else
-	pass "the money scan prints nothing"
+	fail "the money scan printed something"
 fi
 if grep -rniE 'card_?number|tokeniz|runner\.js' src >/dev/null 2>&1; then
 	fail "the card scan printed something"

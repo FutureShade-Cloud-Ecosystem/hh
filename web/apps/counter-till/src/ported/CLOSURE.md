@@ -122,7 +122,12 @@ own commit on `till/ui-3-polish`.
   the end of the utility row, so it never shifts Park ticket when the first
   priced line brings margin into view. One constant accessible name ("Hide
   margin and est. profit") with `aria-pressed` (pressed means hidden); pressed
-  wears a tint so a hovered eye does not look pressed.
+  wears a tint so a hovered eye does not look pressed. The whole margin surface
+  (the column, the footer's margin and profit segments, and this eye) renders
+  only while the policy word allows the caller: `/pos/policy` answers
+  `margin_visibility` (`MANAGER_UP` admits the core resolver's tiers 1 and 2;
+  `ALL_STAFF` everyone; `HIDDEN` nobody; absent or unknown fails closed), and
+  the surface follows it even while the glance itself keeps answering (P3-10).
 - Top bar (visual NOTE 3): the bar above the till is on the till's compact
   scale, about 48px, with the till's small-chrome button face and type size and
   a one-line demo banner. The design system's 44px control floor still governs
@@ -380,7 +385,15 @@ formatters, `_pos-rev8.ts` `marginPctLabel`.
   tokens is the reference surface's own vocabulary and stays, flagged for the
   polish item.
 - No Gable name, logo or colour was found in the ported files: the reference's
-  token sheet is already the company's gold-on-navy rebrand.
+  token sheet is already the company's gold-on-navy rebrand. That claim was
+  narrower than the pass: a later sweep took out two real persons' full names
+  and the first dealer's trading name, which had ridden across in comments, one
+  shipped placeholder, the relief dialog's option labels and values and test
+  fixtures. Role words or the demo stub's own invented names stand in their
+  place, and the sweep's method is pinned: a case-insensitive grep for each
+  string over this app's tree (src/ported/name-sweep.test.mjs) now hits only
+  the provenance headers' source repository name, which the porting rule
+  requires and which stays.
 - This app's credential sink rule (no browser storage, console or channel in
   any source) holds over the port: the reference read and wrote the browser's
   local store for the detached panel layout, and that persistence is now the
