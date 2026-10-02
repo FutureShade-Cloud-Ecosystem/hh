@@ -179,10 +179,20 @@ export class HosPosParked extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
-    void this.load();
+    void this.reload();
   }
 
-  private async load(): Promise<void> {
+  /**
+   * The branch's parked list, read again on demand. The dialog reads exactly
+   * once on open (the reference's own shape, hardscapeos_dibbits master
+   * 87d7941b app/src/pos-parked.ts), so a list change landing under the open
+   * dialog left it frozen at the stale rows until close and reopen. The host
+   * calls this when its own parked-list read lands (pos-terminal's
+   * refreshParkedCount, which fires exactly when the list changes through the
+   * terminal), so a park landing while the dialog is open converges the open
+   * rail within one read: no polling loop, no contract change.
+   */
+  async reload(): Promise<void> {
     try {
       this.tickets = await listParked(this.branchId);
     } catch (e) {
@@ -218,7 +228,7 @@ export class HosPosParked extends LitElement {
       );
     } catch (e) {
       this.error = e instanceof Error ? e.message : 'resume failed';
-      void this.load(); // a concurrent resume/discard: refresh the list
+      void this.reload(); // a concurrent resume/discard: refresh the list
     } finally {
       this.busyId = '';
     }
@@ -229,7 +239,7 @@ export class HosPosParked extends LitElement {
     this.error = '';
     try {
       await discardParked(t.id);
-      await this.load();
+      await this.reload();
     } catch (e) {
       this.error = e instanceof Error ? e.message : 'discard failed';
     } finally {
