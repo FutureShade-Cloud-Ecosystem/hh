@@ -126,6 +126,19 @@ func (s *ReceiptService) Receipt(ctx context.Context, id string) (Receipt, error
 		return Receipt{}, err
 	}
 
+	// The cash facts the committed sale itself states: the change due is the core's one derivation
+	// from the order's own cash-tendered figure (pos repository.go reads the same column for the
+	// replay), and the deposit is the ring's own capture, stated only while a balance remains (a
+	// settled sale shows its payments as tenders, an unsettled account shows its balance alone).
+	changeDue := int64(0)
+	if sale.CashTenderedCents > 0 {
+		changeDue = sale.CashTenderedCents - sale.TotalCents
+	}
+	deposit := int64(0)
+	if sale.BalanceCents > 0 {
+		deposit = sale.DepositCents
+	}
+
 	rec := Receipt{
 		OrgName:           head.OrgName,
 		BranchName:        head.Name,
@@ -145,6 +158,8 @@ func (s *ReceiptService) Receipt(ctx context.Context, id string) (Receipt, error
 		TaxCents:          sale.TaxCents,
 		TotalCents:        sale.TotalCents,
 		BalanceCents:      sale.BalanceCents,
+		ChangeDueCents:    changeDue,
+		DepositCents:      deposit,
 		TaxLabel:          hstLabel(head.HSTRateBps),
 		ReprintCount:      priorPrints,
 		PrintedAt:         s.now(),
@@ -250,6 +265,16 @@ type Receipt struct {
 	TotalCents    int64
 	BalanceCents  int64
 	TaxLabel      string // "HST (13%)", the rate comes from system_settings, never a literal
+
+	// ChangeDueCents is the cash over-tender's change (tendered minus total), read from the
+	// committed sale's own cash-tendered fact (orders.metadata), the ring's own derivation. It is
+	// rendered only when it applies: a sale tendered exact or tendered by card carries no row.
+	ChangeDueCents int64
+	// DepositCents is the money the ring itself captured on an unpaid-at-ring sale, read beside the
+	// invoice's balance from the committed rows. It is rendered only when a deposit was taken AND a
+	// balance remains: a settled sale shows its payments as tenders, an unsettled account sale shows
+	// its balance alone.
+	DepositCents int64
 
 	// ReprintCount is how many times this receipt was ALREADY printed before this fetch. 0 → the
 	// original; >0 → the REPRINT marker renders. It is counted from print_queue, so it survives a

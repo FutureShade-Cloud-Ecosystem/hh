@@ -37,7 +37,9 @@
 //   POST /api/v1/pricing/resolve            -> PricingBreakdown
 //   POST /api/v1/pos/signatures(/typed)     -> { signature_ref }
 //   POST /api/v1/pos/assess-relief          -> ReliefOutcome (the standard rate)
-//   GET  /api/v1/pos/sales/{id}/receipt     -> the rendered HTML document
+//   GET  /api/v1/pos/sales/{id}/receipt     -> the rendered HTML document (format=roll, the 80 mm
+//                                              counter receipt, or format=page, the full-page
+//                                              document: the demo mirror of the core's own two)
 // The demo routes are public in the contract (security: []), so they check no
 // credential; the phrase gate in front of the real demo box is Caddy's (W5's
 // image), not the routes'. The staff routes are not public, and they answer
@@ -1596,6 +1598,7 @@ const server = createServer(async (request, response) => {
             method: leg.method,
             amount_cents: leg.amount_cents,
             payment_id: legPaymentId,
+            payment_no: nextDocNo("PMT"),
             ...(leg.method === "CARD" ? { gateway_ref: `rp_sim_${docCounter + 1}` } : {}),
           });
         });
@@ -1614,7 +1617,7 @@ const server = createServer(async (request, response) => {
         }
         changeDue = cashTendered > 0 ? cashTendered - total : 0;
         paymentId = nextDocNo("pay");
-        tenders.push({ seq: 1, method: "CASH", amount_cents: total, payment_id: paymentId });
+        tenders.push({ seq: 1, method: "CASH", amount_cents: total, payment_id: paymentId, payment_no: nextDocNo("PMT") });
       } else if (tender === "CARD") {
         const token = parsed.payment_token;
         if (typeof token !== "string" || token === "") {
@@ -1628,6 +1631,7 @@ const server = createServer(async (request, response) => {
           method: "CARD",
           amount_cents: total,
           payment_id: paymentId,
+          payment_no: nextDocNo("PMT"),
           gateway_ref: gatewayRef,
         });
       } else if (tender === "ACCOUNT") {
@@ -1651,13 +1655,30 @@ const server = createServer(async (request, response) => {
       // The deposit rides an unpaid-at-ring sale (Charge Account or COD):
       // the ring's answer carries the figure back, because the
       // confirmation's balance is the total less this deposit and the wire's
-      // own number is the one the till repeats.
+      // own number is the one the till repeats. The deposit is money taken
+      // through the drawer at ring, so it lands as a tender leg here the way
+      // the core's own capture leg does, and the sale carries the invoice's
+      // balance (the total less every captured leg) for the receipt.
       const depositCents =
         typeof parsed.deposit_cents === "number" &&
         Number.isInteger(parsed.deposit_cents) &&
         parsed.deposit_cents > 0
           ? parsed.deposit_cents
           : 0;
+      if (depositCents > 0) {
+        // The deposit's own capture leg: the till's sole writer shape, the
+        // method the ring named (CASH when the body omits it), its own
+        // payment number for the receipt's tender reference.
+        const depositPaymentId = nextDocNo("pay");
+        tenders.push({
+          seq: tenders.length + 1,
+          method: typeof parsed.deposit_method === "string" && parsed.deposit_method !== "" ? parsed.deposit_method : "CASH",
+          amount_cents: depositCents,
+          payment_id: depositPaymentId,
+          payment_no: nextDocNo("PMT"),
+        });
+        if (paymentId === undefined) paymentId = depositPaymentId;
+      }
       const orderId = uuidFromCounter(4000 + sales.size + 1);
       // The sale's tender word: with a split settlement the contract says the
       // body's tender field is ignored, so the row derives one word from the
@@ -1688,6 +1709,9 @@ const server = createServer(async (request, response) => {
         cash_tendered_cents: cashTendered,
         change_due_cents: changeDue,
         deposit_cents: depositCents,
+        balance_cents: total - tenders.reduce((sum, leg) => sum + leg.amount_cents, 0),
+        created_at: new Date().toISOString(),
+        created_by: caller.userId,
         payment_id: paymentId,
         gateway_ref: gatewayRef,
         tenders,
@@ -2034,25 +2058,14 @@ const server = createServer(async (request, response) => {
       respondJson(response, 403, { error: "that sale is not one your grant reaches" });
       return;
     }
-    const customer = CUSTOMERS.find((c) => c.id === sale.customer_id);
-    const rows = sale.lines
-      .map(
-        (line) =>
-          `<tr><td>${line.qty_entered} ${line.uom_entered}</td><td>${line.description}</td><td>${(
-            line.line_total_cents / 100
-          ).toFixed(2)}</td></tr>`,
-      )
-      .join("");
-    const receiptDocument = `<!doctype html><html><head><title>${sale.order_no}</title></head><body>
-<h1>Hardscape House</h1>
-<p>Counter sale ${sale.order_no} · invoice ${sale.invoice_no}</p>
-${customer ? `<p>Sold to ${customer.name} (${customer.account_no})</p>` : ""}
-<table>${rows}</table>
-<p>Subtotal ${(sale.subtotal_cents / 100).toFixed(2)} · tax ${(sale.tax_cents / 100).toFixed(2)}</p>
-<p>Total ${(sale.total_cents / 100).toFixed(2)} · ${sale.tender}</p>
-</body></html>`;
+    // The reprint marker is a count: the fetch serves the ordinal of the
+    // prints already recorded, then records its own, the core's own shape
+    // (the count lives with the sale, so a later fetch reprints as #N).
+    const priorPrints = sale.prints ?? 0;
+    sale.prints = priorPrints + 1;
+    const document = rollReceiptDocument(receiptView(sale), priorPrints);
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    response.end(receiptDocument);
+    response.end(document);
     return;
   }
 
@@ -2062,6 +2075,241 @@ ${customer ? `<p>Sold to ${customer.name} (${customer.account_no})</p>` : ""}
 // The ring's response body, in the contract's PosSale shape: the committed
 // totals and tenders, the change due on a cash ring, and no line rows (the
 // operator-reopen read carries those).
+// ---------------------------------------------------------------------------
+// The receipt: the demo mirror of the core's printed documents. The core's
+// printing package renders the real paper (the DIB-410 lineage and the
+// full-page format beside it); this mirror keeps the app's suites on the same
+// words and the same layout against the stub, built from the same committed
+// sale shapes this stub serves, the demo branch's invented values only. When
+// the core's template changes its words, this mirror changes with it.
+// ---------------------------------------------------------------------------
+
+// The letterhead's org line: the invented trading name the demo database's
+// own settings row carries (the populate's convergence).
+const RECEIPT_ORG_NAME = "Hardscape House (demo)";
+
+// The fulfilment words the receipt prints, the core's own map keyed on the
+// contract's sale types: the paper speaks the counter's words, never the
+// wire's constants, and an unknown value passes through verbatim.
+function fulfilmentWords(saleType) {
+  switch (saleType) {
+    case "COLLECT_NOW":
+      return "Collected at the counter";
+    case "COLLECT_LATER":
+      return "For later collection";
+    case "DELIVERED":
+      return "Delivery";
+    case "COD":
+      return "Invoice issued, payment before fulfilment";
+    default:
+      return saleType;
+  }
+}
+
+// The receipt's one money rendering: "$1,234.56" from integer cents,
+// thousands separated, never a float.
+function receiptMoney(cents) {
+  const negative = cents < 0;
+  const magnitude = Math.abs(cents);
+  const whole = String(Math.floor(magnitude / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const pennies = String(magnitude % 100).padStart(2, "0");
+  return `${negative ? "-" : ""}$${whole}.${pennies}`;
+}
+
+// The tax line's words, the rate from the demo world's own setting, never a
+// literal in the layout.
+function receiptTaxLabel() {
+  const whole = HST_RATE_BPS / 100;
+  return `HST (${whole}%)`;
+}
+
+// "YYYY-MM-DD HH:MM", the stamp shape the documents print, from an ISO
+// moment.
+function receiptStamp(iso) {
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)}`;
+}
+
+// The one view both receipt documents render: the demo branch's letterhead,
+// the lines with their SKUs, the totals, the tenders with their references,
+// and the cash facts the committed sale itself states (the change due, the
+// deposit taken at ring, the balance that remains). The ON ACCOUNT row is
+// the core's own synthetic tender: a receipt that lists no tender at all
+// reads like an unpaid mistake.
+function receiptView(sale) {
+  const branch = BRANCHES.find((candidate) => candidate.id === sale.branch_id) ?? BRANCHES[0];
+  const customer = CUSTOMERS.find((candidate) => candidate.id === sale.customer_id) ?? null;
+  const operator = Object.values(USERS).find((candidate) => candidate.user_id === sale.created_by) ?? null;
+  const address = [branch.address.line1, branch.address.city, branch.address.province, branch.address.postal]
+    .filter(Boolean)
+    .join(", ");
+  const tenders = sale.tenders.map((leg) => ({
+    label: leg.method,
+    ref: typeof leg.payment_no === "string" ? leg.payment_no : "",
+    amountCents: leg.amount_cents,
+    simulated:
+      leg.method === "CARD" && typeof leg.gateway_ref === "string" && leg.gateway_ref.startsWith("rp_sim_"),
+  }));
+  if (tenders.length === 0) {
+    tenders.push({ label: "ON ACCOUNT", ref: sale.invoice_no, amountCents: sale.total_cents, simulated: false });
+  }
+  const balanceCents = sale.balance_cents ?? 0;
+  return {
+    orgName: RECEIPT_ORG_NAME,
+    branchName: branch.name,
+    branchCode: branch.code,
+    branchAddress: address,
+    orderNo: sale.order_no,
+    invoiceNo: sale.invoice_no,
+    soldAt: receiptStamp(sale.created_at),
+    customerName: customer?.name ?? "",
+    customerAccountNo: customer?.account_no ?? "",
+    fulfilment: fulfilmentWords(sale.sale_type),
+    servedBy: operator?.display_name ?? "",
+    lines: sale.lines.map((line) => {
+      const product = PRODUCTS.find((candidate) => candidate.product_id === line.product_id) ?? null;
+      return {
+        sku: product?.sku ?? "",
+        description: line.description,
+        qty: String(line.qty_entered),
+        uom: line.uom_entered,
+        unitPriceCents: line.unit_price_cents,
+        priceUom: line.price_uom,
+        lineTotalCents: line.line_total_cents,
+      };
+    }),
+    subtotalCents: sale.subtotal_cents,
+    taxLabel: receiptTaxLabel(),
+    taxCents: sale.tax_cents,
+    totalCents: sale.total_cents,
+    tenders,
+    changeDueCents: sale.change_due_cents ?? 0,
+    depositCents: balanceCents > 0 ? sale.deposit_cents ?? 0 : 0,
+    balanceCents,
+    printedAt: receiptStamp(new Date().toISOString()),
+  };
+}
+
+// The 80 mm counter receipt, the demo mirror of the core's roll document:
+// the same blocks in the same order, the print CSS sized for the roll, the
+// Print button that is not printed.
+function rollReceiptDocument(v, priorPrints) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Receipt ${v.orderNo}</title>
+<style>
+  @page { margin: 10mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
+    font-size: 12px; line-height: 1.45; color: #000; background: #fff;
+    max-width: 80mm; margin: 0 auto; padding: 8px;
+  }
+  h1 { font-size: 14px; margin: 0 0 2px; letter-spacing: .02em; }
+  .muted { color: #444; }
+  .center { text-align: center; }
+  .right { text-align: right; }
+  .rule { border-top: 1px dashed #000; margin: 8px 0; }
+  .order-no { font-size: 20px; font-weight: 700; letter-spacing: .04em; margin: 6px 0 2px; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { padding: 1px 0; vertical-align: top; }
+  th { text-align: left; font-weight: 700; border-bottom: 1px solid #000; }
+  .desc { word-break: break-word; }
+  .totals td { padding: 1px 0; }
+  .grand { font-weight: 700; font-size: 14px; border-top: 1px solid #000; }
+  .reprint {
+    border: 2px solid #000; padding: 4px; margin: 6px 0; text-align: center;
+    font-weight: 700; letter-spacing: .12em;
+  }
+  .foot { margin-top: 10px; font-size: 10px; }
+  .mark { margin-top: 4px; font-size: 9px; letter-spacing: .06em; color: #555; }
+  @media print { .noprint { display: none !important; } }
+</style>
+</head>
+<body>
+  <header class="center">
+    <h1>${v.orgName}</h1>
+    <div>${v.branchName} (${v.branchCode})</div>
+    <div class="muted">${v.branchAddress}</div>
+  </header>
+
+  <div class="rule"></div>
+
+  ${priorPrints > 0 ? `<div class="reprint">REPRINT #${priorPrints}</div>` : ""}
+
+  <div class="center">
+    <div class="order-no">${v.orderNo}</div>
+    ${v.invoiceNo ? `<div class="muted">Invoice ${v.invoiceNo}</div>` : ""}
+    <div class="muted">${v.soldAt}</div>
+  </div>
+
+  <div class="rule"></div>
+
+  <div>
+    ${v.customerName ? `<div>Customer: ${v.customerName}${v.customerAccountNo ? ` (${v.customerAccountNo})` : ""}</div>` : ""}
+    ${v.fulfilment ? `<div class="muted">${v.fulfilment}</div>` : ""}
+    ${v.servedBy ? `<div class="muted">Served by ${v.servedBy}</div>` : ""}
+  </div>
+
+  <div class="rule"></div>
+
+  <table>
+    <thead>
+      <tr><th>Item</th><th class="right">Qty</th><th class="right">Unit</th><th class="right">Total</th></tr>
+    </thead>
+    <tbody>
+      ${v.lines
+        .map(
+          (line) => `<tr class="line">
+        <td class="desc" colspan="4">${line.sku ? `${line.sku} · ` : ""}${line.description}</td>
+      </tr>
+      <tr class="line-money">
+        <td></td>
+        <td class="right">${line.qty} ${line.uom}</td>
+        <td class="right">${receiptMoney(line.unitPriceCents)}${line.priceUom ? `/${line.priceUom}` : ""}</td>
+        <td class="right">${receiptMoney(line.lineTotalCents)}</td>
+      </tr>`,
+        )
+        .join("\n")}
+    </tbody>
+  </table>
+
+  <div class="rule"></div>
+
+  <table class="totals">
+    <tr><td>Subtotal</td><td class="right">${receiptMoney(v.subtotalCents)}</td></tr>
+    <tr class="tax"><td>${v.taxLabel}</td><td class="right">${receiptMoney(v.taxCents)}</td></tr>
+    <tr class="grand"><td>Total</td><td class="right">${receiptMoney(v.totalCents)}</td></tr>
+  </table>
+
+  <div class="rule"></div>
+
+  <table class="tenders">
+    ${v.tenders
+      .map(
+        (tender) =>
+          `<tr class="tender"><td>${tender.label}${tender.simulated ? ` <span class="muted">Simulated card: nothing reached a processor.</span>` : ""}${tender.ref ? ` <span class="muted">${tender.ref}</span>` : ""}</td><td class="right">${receiptMoney(tender.amountCents)}</td></tr>`,
+      )
+      .join("\n")}
+    ${v.changeDueCents > 0 ? `<tr class="change-due"><td>Change due</td><td class="right">${receiptMoney(v.changeDueCents)}</td></tr>` : ""}
+    ${v.depositCents > 0 ? `<tr class="deposit"><td>Deposit</td><td class="right">${receiptMoney(v.depositCents)}</td></tr>` : ""}
+    ${v.balanceCents > 0 ? `<tr class="balance"><td>Balance due</td><td class="right">${receiptMoney(v.balanceCents)}</td></tr>` : ""}
+  </table>
+
+  <div class="foot center muted">
+    Printed ${v.printedAt}
+    <div>Keep this receipt, returns require it.</div>
+    <div class="mark">HH Yard · a Hardscape House product</div>
+  </div>
+
+  <div class="noprint center" style="margin-top:12px">
+    <button onclick="window.print()">Print</button>
+  </div>
+</body>
+</html>`;
+}
+
 function saleResponseBody(sale, replayed) {
   return {
     order_id: sale.order_id,

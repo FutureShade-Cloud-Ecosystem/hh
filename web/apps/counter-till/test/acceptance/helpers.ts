@@ -338,6 +338,10 @@ export interface Rung {
   order_no: string;
   invoice_no: string;
   total_cents: number;
+  /** The cash over-tender's change, present on a cash ring with a quick entry. */
+  change_due_cents?: number;
+  /** The deposit taken at ring, present on an unpaid-at-ring sale taken with one. */
+  deposit_cents?: number;
 }
 
 /**

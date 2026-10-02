@@ -1393,3 +1393,22 @@ merge read it before running anything selector-shaped:
   data), so no credential is needed; the ask rides `api()` anyway, which
   sends the bearer harmlessly and keeps the counter's reads on one door.
 Closed by the refund-sum lane: the refund approval gate judged each return alone, so one sale could walk its whole value out of the drawer in approved-sized slices (the comprehensive review's finding, ruled per the principal); the gate now sums the sale's earlier committed returns with the new one against the configured amount and refuses the crossing return with the contract's 409, the returns of one sale serialized by a transaction-scoped advisory lock, on fix/refund-approval-sums-per-sale.
+
+## Counter Till pre-ring and receipts pass, work item B (branch till/receipt-formats): the receipt's letterhead prints the branch address, so the demo address converges too (recorded, one file outside the lane's fence)
+
+The quality receipt item (decision log row 666) makes the branch address a
+printed fact: the 80 mm receipt's letterhead serves the branch row verbatim
+through printing's ReadBranchHeader, and the brief binds the lane to "never a
+real dealer's name" on it. On the demo database migration 0003 plants each
+branch's address line1 as a note to the first dealer, with the first dealer's
+real trading name inside it, so the demo box's receipt would have printed that
+name to its test customers.
+
+The brief's own instruction authorizes the fix, and the mechanism is the
+review round P2-1 precedent recorded above (the branch display words): one
+extension inside core/internal/demo/populate.go, outside this lane's declared
+printing fence. The populate's renameDemoDealer now converges the two demo
+branches' address line1 onto invented ones (Trenton: 12 Yard Gate Road,
+Kingston: 9 Yard Gate Road), each update guarded on the value it would write
+so a re-run writes nothing, counted in the run report. Real deployments keep
+their own addresses; migrations stay untouched.

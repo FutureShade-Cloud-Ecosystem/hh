@@ -204,3 +204,72 @@ func TestHSTLabel_ReadsTheConfiguredRate(t *testing.T) {
 		}
 	}
 }
+
+// THE COMMITTED SALE CARRIES THE CASH FACTS (row 666 item 1). The change due is not recomputed
+// from the tender rows: the order's own cash-tendered figure is the fact, and the change due is the
+// core's one derivation from it (tendered minus total, the ring's own arithmetic, pos
+// repository.go). A sale with no cash tendered carries no change due at all.
+func TestReceipt_ChangeDueFromTheCommittedSale(t *testing.T) {
+	svc, _ := receiptHarness(t)
+	store := svc.store.(*fakeReceiptStore)
+	store.sale.CashTenderedCents = 15000
+
+	rec, err := svc.Receipt(staffFor(trentonID), saleOrderID)
+	if err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	if rec.ChangeDueCents != 1056 {
+		t.Fatalf("tendered 15000 against total 13944 must read change due 1056 from the committed sale, got %d", rec.ChangeDueCents)
+	}
+
+	store.sale.CashTenderedCents = 0
+	rec, err = svc.Receipt(staffFor(trentonID), saleOrderID)
+	if err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	if rec.ChangeDueCents != 0 {
+		t.Fatalf("a sale with no cash tendered must carry no change due, got %d", rec.ChangeDueCents)
+	}
+}
+
+// THE DEPOSIT IS THE RING'S OWN MONEY (row 666 item 1). An unpaid-at-ring sale taken with a
+// deposit carries the deposit the ring itself captured, read from the committed sale beside the
+// invoice's balance: the paper states the deposit and the balance that remains. A settled sale
+// (balance zero) and an unsettled account sale (nothing captured at ring) carry no deposit,
+// whatever else their tender rows say.
+func TestReceipt_DepositFromTheCommittedSale(t *testing.T) {
+	svc, _ := receiptHarness(t)
+	store := svc.store.(*fakeReceiptStore)
+	store.sale.BalanceCents = 6000
+	store.sale.DepositCents = 4000
+
+	rec, err := svc.Receipt(staffFor(trentonID), saleOrderID)
+	if err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	if rec.DepositCents != 4000 {
+		t.Fatalf("a deposit sale must read its deposit from the committed sale, got %d", rec.DepositCents)
+	}
+	if rec.BalanceCents != 6000 {
+		t.Fatalf("the balance rides the invoice unchanged, got %d", rec.BalanceCents)
+	}
+
+	store.sale.BalanceCents = 0
+	rec, err = svc.Receipt(staffFor(trentonID), saleOrderID)
+	if err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	if rec.DepositCents != 0 {
+		t.Fatalf("a settled sale carries no deposit row, got %d", rec.DepositCents)
+	}
+
+	store.sale.BalanceCents = 6000
+	store.sale.DepositCents = 0
+	rec, err = svc.Receipt(staffFor(trentonID), saleOrderID)
+	if err != nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	if rec.DepositCents != 0 {
+		t.Fatalf("an unsettled sale with nothing captured at ring carries no deposit, got %d", rec.DepositCents)
+	}
+}

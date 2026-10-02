@@ -189,6 +189,12 @@ var receiptTmpl = template.Must(template.New("receipt").Funcs(template.FuncMap{
     {{range .Tenders}}
     <tr class="tender"><td>{{.Label}}{{if .Simulated}} <span class="muted">Simulated card: nothing reached a processor.</span>{{end}}{{if .Ref}} <span class="muted">{{.Ref}}</span>{{end}}</td><td class="right">{{money .AmountCents}}</td></tr>
     {{end}}
+    {{if gt .ChangeDueCents 0}}
+    <tr class="change-due"><td>Change due</td><td class="right">{{money .ChangeDueCents}}</td></tr>
+    {{end}}
+    {{if gt .DepositCents 0}}
+    <tr class="deposit"><td>Deposit</td><td class="right">{{money .DepositCents}}</td></tr>
+    {{end}}
     {{if gt .BalanceCents 0}}
     <tr class="balance"><td>Balance due</td><td class="right">{{money .BalanceCents}}</td></tr>
     {{end}}

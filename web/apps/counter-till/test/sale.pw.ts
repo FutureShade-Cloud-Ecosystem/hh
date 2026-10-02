@@ -242,6 +242,26 @@ test("a walk-in cash sale of three lines rings, and the sale read equals every f
   const itemsSummary = page.getByTestId("step-summary-items");
   await expect(itemsSummary).toHaveText(`3 items · CA${dollars(read.total_cents as number)}`);
   await expect(itemsSummary).not.toContainText("(est.)");
+
+  // The printed receipt is the stub's demo mirror of the core's own 80 mm
+  // document, same words, same layout. An over-tendered cash sale carries the
+  // change due row with the ring's own figure, the fulfilment reads as the
+  // counter's plain words and never as the wire's constant, and the totals
+  // and the tender are the sale read's own figures.
+  const receiptPage = page.context().waitForEvent("page");
+  await sold.getByTestId("sold-print").click();
+  const printed = await receiptPage;
+  const printedText = await printed.locator("body").innerText();
+  expect(printedText).toContain(`Change due\t${dollars(sale.change_due_cents as number)}`);
+  expect(printedText).toContain("Collected at the counter");
+  expect(printedText).not.toContain("COLLECT_NOW");
+  expect(printedText).toContain(`Subtotal\t${dollars(read.subtotal_cents as number)}`);
+  expect(printedText).toContain(`\t${dollars(read.tax_cents as number)}`);
+  expect(printedText).toContain(`Total\t${dollars(read.total_cents as number)}`);
+  // The tender row names the method and its payment reference on one line.
+  const cashWords = dollars(read.total_cents as number).replace("$", "\\$");
+  expect(printedText).toMatch(new RegExp(`CASH PMT-\\d+\\t${cashWords}`));
+  await printed.close();
 });
 
 test("the quantity rung is the quantity on the screen, and the requested date is the house zone's day", async ({
@@ -400,16 +420,22 @@ test("an account sale for C02 rings on the account, with its facts beside the na
   expect(read.tender).toBe("ACCOUNT");
   expect(read.invoice_no).toBe(sale.invoice_no);
 
-  // The receipt document, printed from the confirmation: the account it was
-  // sold to, the invoice, the figures.
+  // The receipt document, printed from the confirmation: the demo mirror of
+  // the core's own document, the account it was sold to, the invoice, the
+  // figures, the ON ACCOUNT row where a payments row does not exist.
   const receiptPage = page.context().waitForEvent("page");
   await sold.getByTestId("sold-print").click();
   const printed = await receiptPage;
-  await expect(printed.getByText(`Counter sale ${sale.order_no} · invoice ${sale.invoice_no}`)).toBeVisible();
-  await expect(printed.getByText("Sold to Fenwick Builders Ltd (C02)")).toBeVisible();
-  await expect(
-    printed.getByText(`Total ${dollars(read.total_cents as number).replace("$", "")} · ACCOUNT`),
-  ).toBeVisible();
+  const printedText = await printed.locator("body").innerText();
+  expect(printedText).toContain(`Customer: Fenwick Builders Ltd (C02)`);
+  expect(printedText).toContain(`Invoice ${String(sale.invoice_no)}`);
+  expect(printedText).toContain(`Subtotal\t${dollars(read.subtotal_cents as number)}`);
+  expect(printedText).toContain(`\t${dollars(read.tax_cents as number)}`);
+  expect(printedText).toContain(`Total\t${dollars(read.total_cents as number)}`);
+  // The ON ACCOUNT row is the core's synthetic tender: the account it bills,
+  // the invoice as its reference, the total as its amount.
+  const accountWords = dollars(read.total_cents as number).replace("$", "\\$");
+  expect(printedText).toMatch(new RegExp(`ON ACCOUNT ${String(sale.invoice_no)}\\t${accountWords}`));
   await printed.close();
   // The account card is re-read after the ring: it shows the fresh balance
   // (the old balance plus this sale), not the figure read when it was picked.
