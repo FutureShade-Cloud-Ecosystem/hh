@@ -3876,8 +3876,14 @@ export class HosPosTerminal extends LitElement {
       this.cartReplaced(); // D17: the resumed lines are a different ticket's
       for (const l of this.cart) void this.hydrateLineStock(l.product.id); // DIB-488 stock lines
       for (let i = 0; i < this.cart.length; i++) await this.reprice(i);
+      // ui3 visual GAP 3: the words must be true in both states. While any
+      // line's price is still pending the line says the prices are being
+      // re-derived; it reads "prices re-derived" only once no line is pending
+      // (the old wording claimed the derivation beside cells that still read
+      // (not priced)).
+      const pricesPending = this.cart.some((l) => l.priceMissing);
       this.setUtil(
-        `Resumed ${t.ticket_no}: prices re-derived now.` +
+        `Resumed ${t.ticket_no}: ${pricesPending ? 're-deriving prices' : 'prices re-derived now'}.` +
           (missing.length ? ` ${missing.length} line(s) dropped (product inactive).` : '') +
           (lostToTheRace > 0
             ? ` ${lostToTheRace} line(s) added while this loaded were discarded with the old ticket: re-scan them.`

@@ -452,6 +452,9 @@ test("a ticket parks and resumes with its customer, at the account's price", asy
   await expect(parkedDialog.getByText("PARK-9001")).toHaveCount(0);
   const resumeButton = parkedDialog.getByRole("button", { name: "Resume" }).first();
   await resumeButton.click();
+  // The prices answered (every line repriced), so the pickup line says they
+  // were derived (ui3 visual GAP 3: the words are true in both states).
+  await expect(page.locator("#till-message")).toContainText("prices re-derived now");
 
   // The ticket comes back with its customer (this till picked the account, so
   // the display memory knows it) and reprices at the account's rule price.
@@ -1261,6 +1264,34 @@ test("a pickup whose prices never answer reads the margin marker, never a figure
   for (let index = 0; index < 2; index += 1) {
     await expect(margins.nth(index)).toHaveText("(none)");
   }
+});
+
+test("the pickup line says the prices are being re-derived while any line is still pending", async ({
+  page,
+}) => {
+  // Every price the engine would answer is refused for this whole page: the
+  // pickup's lines stay price pending.
+  await page.route("**/api/v1/pricing/resolve", async (route) => {
+    await route.fulfill({
+      status: 422,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "line could not be priced by the engine" }),
+    });
+  });
+  await signIn(page, "Sales");
+  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await page.getByRole("button", { name: "Park ticket" }).click();
+  await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
+  await signIn(page, "Sales");
+  await page.getByRole("button", { name: /^Parked \(/ }).click();
+  const parkedDialog = page.locator("hos-pos-parked .hos-dialog");
+  await expect(parkedDialog).toBeVisible();
+  await parkedDialog.getByRole("button", { name: "Resume" }).first().click();
+  // The lines above the line still read price pending, so the words say the
+  // derivation is happening, not that it happened (ui3 visual GAP 3).
+  const message = page.locator("#till-message");
+  await expect(message).toContainText(/Resumed PARK-\d+: re-deriving prices\./);
+  await expect(message).not.toContainText("prices re-derived");
 });
 
 test("the top bar is on the till's compact scale: about 48px, small chrome buttons, the banner on one line", async ({
