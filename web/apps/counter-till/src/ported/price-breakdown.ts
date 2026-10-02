@@ -62,6 +62,15 @@ export class HosPriceBreakdown extends LitElement {
   @property() uomEntered = 'SF';
   @property({ type: Number }) costCents = 0;
 
+  /**
+   * P3-10 (the comprehensive train review): whether the below-floor row may
+   * spell its margin figures. The renderer holds no policy of its own; the
+   * host that knows the caller passes the answer (the counter till passes its
+   * margin_visibility gate). Default true: a host that mounts this chip
+   * outside a policy-ruled surface keeps the renderer's own behavior.
+   */
+  @property({ type: Boolean }) marginFiguresVisible = true;
+
   @state() private loading = false;
   @state() private error = '';
 
@@ -198,9 +207,11 @@ export class HosPriceBreakdown extends LitElement {
               </div>
               ${b.blocked
                 ? html`<div class="blocked">
-                    ${b.detail || 'Below the configured margin floor: manager approval required'}
-                    (margin ${centsAmount(b.margin_bps)}% &lt; floor
-                    ${centsAmount(b.floor_bps)}%)
+                    ${b.detail || 'Below the configured margin floor: manager approval required'}${this
+                      .marginFiguresVisible
+                      ? html` (margin ${centsAmount(b.margin_bps)}% &lt; floor
+                          ${centsAmount(b.floor_bps)}%)`
+                      : nothing}
                   </div>`
                 : nothing}
             `

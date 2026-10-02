@@ -136,6 +136,9 @@ import {
   payTileStep, // DIB-512: the tender tiles as ONE roving keyboard stop
   type LineWeightFacts,
 } from './_pos-rev8.js';
+// P3-10 (the comprehensive train review): the margin surface follows the policy
+// word /pos/policy answers, not the glance's own serving rule.
+import { marginVisibleToCaller } from './_pos-margin-visibility.js';
 import { printReceipt, openBlankWindow } from './receipt-print.js'; // DIB-410 counter receipt
 import {
   createSale,
@@ -400,6 +403,11 @@ export class HosPosTerminal extends LitElement {
 
   // ── DIB-488 rev 8 (item 4): the curated chip categories off pos_policy (hardened at the edge) ──
   @state() private curatedChips: string[] = [];
+
+  // ── P3-10 (the comprehensive train review): the policy word the margin surface obeys. Held
+ // beside the curated chips off the same read; undefined (a policy outage, or a word the
+ // contract does not carry) means the surface refuses: fail closed, never a guessed word. ──
+  @state() private marginVisibility: string | undefined;
 
   // ── DIB-488 rev 8 (item 10): the SERVER's role-gated margin answer. null = absent (not allowed,
  // not loaded, or the read failed): and ABSENT data renders NOTHING (no column, no footer). ──
@@ -2770,9 +2778,14 @@ export class HosPosTerminal extends LitElement {
       // rev 8 (item 4): the curated chip set (dealer-authored, or the server's top-sellers
       // derivation). Hardened at the edge; [] = the grid keeps its full chip row.
       this.curatedChips = resolveCuratedChips(p.quick_chip_set);
+      // P3-10: the word the margin surface obeys, held off the same read. An
+      // absent word stays undefined: the helper fails closed on it.
+      this.marginVisibility = p.margin_visibility;
     } catch {
       this.codEnabled = null; // unknown: keep the option disabled rather than wrong
  // presentation/chips keep their defaults (LINES / on): a policy outage must not blank the till
+ // P3-10: marginVisibility stays undefined, so the margin surface refuses: a policy outage
+ // must not blank the till, and it must not show the glance either.
     }
   }
 
@@ -4279,9 +4292,10 @@ export class HosPosTerminal extends LitElement {
 
   /**
  * rev 8 (item 10): ask the SERVER for the ticket's margins. The server computes from its own
-   * engine revenue × its WAC cost source and GATES AT THE MARSHAL LAYER: a non-allowed role
-   * receives `{}`, so this surface simply has no data and renders no margin anywhere. The UI
-   * never computes a margin itself.
+   * engine revenue × its WAC cost source and serves it per its cost and margin configuration:
+   * the demo core answers callers the surface must refuse (the train review's P3-10 finding),
+   * so the SURFACE holds its own half of the rule: marginPolicyAllows() gates everything the
+   * glance drives. The UI never computes a margin itself.
    */
   private async refreshMarginGlance(seq: number): Promise<void> {
     if (this.cart.length === 0) {
@@ -4371,9 +4385,28 @@ export class HosPosTerminal extends LitElement {
     }
   }
 
-  /** rev 8: the margin data the ROLE gate actually sent us (footer pair present). */
+  /**
+   * P3-10 (the comprehensive train review): the policy word's own answer for
+   * the signed-in caller. The glance's serving rule is the core's (it keeps
+   * answering to callers the surface must refuse); this is the surface's half
+   * of the ruling: the word held off /pos/policy, fail closed.
+   */
+  private marginPolicyAllows(): boolean {
+    return marginVisibleToCaller(this.marginVisibility, getCurrentUser()?.tier);
+  }
+
+  /**
+   * rev 8: the margin data the ROLE gate actually sent us (footer pair
+   * present), AND the policy word allows this caller (P3-10). One gate for
+   * everything the margin drives: the column, the footer segments and the eye
+   * appear together or not at all.
+   */
   private marginPresent(): boolean {
-    return this.marginData !== null && this.marginData.margin_bps !== undefined;
+    return (
+      this.marginData !== null &&
+      this.marginData.margin_bps !== undefined &&
+      this.marginPolicyAllows()
+    );
   }
 
  /** rev 8: whether the margin COLUMN/footers render: data present AND the quick-hide is off. */
@@ -5993,9 +6026,10 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
       ${/* rev 8 (item 10): the one-click margin quick-hide (eye), re-homed from the retired sale
          panel's bar. It sits with the utilities because the figures it hides live on the ticket
          LINES and in the stat bar, both of which are readable from every step. Offered only while
-         the role-gated data is actually PRESENT: there is nothing to hide otherwise, and the
-         role gate itself is server-side (the payload omits the fields; this is counter privacy,
-         not security). */ ''}
+         the policy word allows this caller AND the data is actually PRESENT (P3-10): a refused
+         caller has nothing to hide and sees no eye. The glance's own serving rule stays the
+         core's (it answers callers the surface refuses); this is counter privacy on top, not
+         security. */ ''}
 ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id input used to
    render below the CTA on EVERY sale (empty included). What earns the always-on row:
    Park / Parked (the mid-rush pair) and: only while the order holds something to
@@ -6103,8 +6137,9 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
   /**
  * rev 8 (item 12): the FOOTER TRANSACTION BAR: the ticket panel's bottom line of truth.
    * "N Items · Total Weight X lbs" always (the blank word when NO line has a weight);
-   * "Margin Y% · Est. Profit CA$Z" segments ONLY while the role-gated server data is present AND
-   * the quick-hide is off. Sits OUTSIDE the panel's internal scroll, so it never leaves view.
+   * "Margin Y% · Est. Profit CA$Z" segments ONLY while the role-gated server data is present,
+   * the policy word allows this caller (P3-10) AND the quick-hide is off. Sits OUTSIDE the
+   * panel's internal scroll, so it never leaves view.
    */
   private renderTxBar() {
     const weights = this.cart.map((l) => this.lineWeight(l));
@@ -6115,12 +6150,16 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
     // shows a figure. The building window with the same lines shows neither (its glance never
     // ran): the two windows agree by the same condition the margin cells read.
     const ticketPriced = this.hasPricedLine();
+    // P3-10: the figures pass through the policy word's gate too: a caller it
+    // refuses reads undefined here, so the segments drop, whatever the glance
+    // answered.
+    const marginAllowed = this.marginPolicyAllows();
     const segs = txbarSegments(
       {
         itemCount: this.cart.length,
         totalWeightLbs: anyKnown ? totalLbs : null,
-        marginBps: ticketPriced ? this.marginData?.margin_bps : undefined,
-        estProfitCents: ticketPriced ? this.marginData?.est_profit_cents : undefined,
+        marginBps: ticketPriced && marginAllowed ? this.marginData?.margin_bps : undefined,
+        estProfitCents: ticketPriced && marginAllowed ? this.marginData?.est_profit_cents : undefined,
         marginHidden: this.wsMarginHidden,
       },
       money,
@@ -6531,7 +6570,8 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
   }
 
   private renderLinesTable() {
-    // rev 8: the margin column exists only while the role-gated data is present AND un-hidden.
+    // rev 8: the margin column exists only while the role-gated data is present, the policy
+    // word allows this caller (P3-10) AND it is un-hidden.
     const m = this.marginVisible();
     const cols = m ? 'withmargin' : '';
  // DIB-512 · the column is 'Weight' (the LINE's own weight): 'Total Weight' is the footer
@@ -6616,8 +6656,14 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
               </svg>
             </button>
           </div>
+          ${/* P3-10: the breakdown chip's below-floor row is the one other place a margin figure
+               can show on this till (the CARDS presentation). The same policy word gates it:
+               a refused caller reads the below-floor words without the margin figures. */ ''}
           ${l.breakdown
-            ? html`<hos-price-breakdown .breakdown=${l.breakdown}></hos-price-breakdown>`
+            ? html`<hos-price-breakdown
+                .breakdown=${l.breakdown}
+                .marginFiguresVisible=${this.marginPolicyAllows()}
+              ></hos-price-breakdown>`
             : nothing}
         </div>`,
       )}
