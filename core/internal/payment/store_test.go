@@ -33,6 +33,12 @@ type fakeResolver struct {
 	failReencrypt int  // while above zero, reencryptActiveCreds fails and decrements (the retry leg)
 	parkReencrypt bool // while true, reencryptActiveCreds parks until parkRelease closes (the mid-write window legs)
 	parkRelease   chan struct{}
+	// parkFirstReencrypt parks only that many reencryptActiveCreds calls from the first (later calls
+	// run free), so a leg can park exactly the OLDER write while a newer flush runs beside it.
+	parkFirstReencrypt int
+	// reencOrder records the api_keys in the order their writes LAND (completion, not entry): the
+	// stale-flush leg's evidence, since the row answers whichever write lands last.
+	reencOrder []string
 }
 
 // answer is the shared body: a fixed row plus a fresh creds copy.
@@ -67,11 +73,12 @@ func (f *fakeResolver) reencryptActiveCreds(_ context.Context, processor string,
 	fail := f.failReencrypt > 0
 	if fail {
 		f.failReencrypt--
-	} else {
-		f.reencProc = processor
-		f.reencCreds = creds
 	}
 	park := f.parkReencrypt
+	if !park && f.parkFirstReencrypt > 0 {
+		f.parkFirstReencrypt--
+		park = true
+	}
 	f.mu.Unlock()
 	if park {
 		<-f.parkRelease // the write is mid-flight: a rotation can land beside it (the round 4 P2 legs)
@@ -79,6 +86,13 @@ func (f *fakeResolver) reencryptActiveCreds(_ context.Context, processor string,
 	if fail {
 		return errors.New("reencrypt failed: the store is draining (the retry leg's scripted failure)")
 	}
+	// The write has landed: the row answers this set now, and the order record notes which write
+	// landed last.
+	f.mu.Lock()
+	f.reencProc = processor
+	f.reencCreds = creds
+	f.reencOrder = append(f.reencOrder, creds["api_key"])
+	f.mu.Unlock()
 	return nil
 }
 
@@ -622,6 +636,75 @@ func TestService_PoolLandingClearsTheSupersededEntry(t *testing.T) {
 	}
 	if see.gotKey != "expired" {
 		t.Fatalf("the charge presented api_key %q, want the row's own answer (no stale entry may shadow the landed row)", see.gotKey)
+	}
+}
+
+// A stale flush must not land over a newer rotation's landed flush (the round 5 review's P2: nothing
+// ordered one flush against another). The first flush parks mid-write on rotation A; a second charge
+// rotates to B and its own flush, both flushes on the production goroutine, is free to land while
+// A's write is parked: B lands and clears, then A's stale write lands LAST, leaving the ledger empty
+// and the row on A, so the next charge presents the key the processor has already exchanged (the
+// lockout this pull request exists to prevent). The cure orders the flushes end to end: every flush
+// lands in the order it started, the newest rotation's write lands last, and the row answers the
+// newest set.
+func TestService_FlushRotation_NewerRotationsFlushLandsLast(t *testing.T) {
+	fr := &fakeResolver{
+		cfg:                activeCfg{Processor: "run_payments", MerchantID: "MID-1"},
+		creds:              map[string]string{"api_key": "expired"},
+		parkFirstReencrypt: 1,
+		parkRelease:        make(chan struct{}),
+	}
+	rotateA := &spyProcessor{res: ChargeResult{ProcessorRef: "rp_a", Status: "captured"}, mutateKey: "freshA"}
+	svc := &Service{cfg: fr, proc: rotateA}
+	svc.startFlusher = svc.startRotationFlusherGoroutine // both flushes on the production goroutine
+	if _, err := svc.ChargeTx(context.Background(), nil, validInput()); err != nil {
+		t.Fatalf("ChargeTx (rotating to A): %v", err)
+	}
+	// The first flush reads A and parks inside its write.
+	waitFor(t, func() bool {
+		fr.mu.Lock()
+		defer fr.mu.Unlock()
+		return fr.reencryptCall >= 1
+	}, "the first flush's write to start")
+	// A second charge rotates to B and launches its flush beside the parked one.
+	rotateB := &spyProcessor{res: ChargeResult{ProcessorRef: "rp_b", Status: "captured"}, mutateKey: "freshB"}
+	svc.proc = rotateB
+	if _, err := svc.ChargeTx(context.Background(), nil, validInput()); err != nil {
+		t.Fatalf("ChargeTx (rotating to B beside the parked flush): %v", err)
+	}
+	// B's flush gets every chance to overtake the parked write of A (the B-first landing order the
+	// round 5 review reproduced); once flushes are ordered it cannot, the window simply passes and
+	// the leg moves on.
+	for i := 0; i < 500; i++ {
+		fr.mu.Lock()
+		overtaken := len(fr.reencOrder) >= 1
+		fr.mu.Unlock()
+		if overtaken {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// A's parked write lands now, and whichever goroutine still owes a write lands with it.
+	close(fr.parkRelease)
+	waitFor(t, func() bool {
+		fr.mu.Lock()
+		defer fr.mu.Unlock()
+		return len(fr.reencOrder) >= 2
+	}, "both flushes to land")
+	waitFor(t, func() bool {
+		svc.rotMu.Lock()
+		defer svc.rotMu.Unlock()
+		return svc.rotPend == nil
+	}, "the ledger to clear once the newest rotation's own flush lands")
+	fr.mu.Lock()
+	order := append([]string(nil), fr.reencOrder...)
+	row := fr.reencCreds["api_key"]
+	fr.mu.Unlock()
+	if len(order) != 2 || order[0] != "freshA" || order[1] != "freshB" {
+		t.Fatalf("landing order = %v, want [freshA freshB]: a flush that started first must land first, so the stale write cannot land over the newer rotation's landed flush", order)
+	}
+	if row != "freshB" {
+		t.Fatalf("the row carries api_key %q, want freshB (the newest rotation's write must be the last to land)", row)
 	}
 }
 

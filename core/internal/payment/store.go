@@ -275,6 +275,9 @@ type Service struct {
 	rotMu        sync.Mutex
 	rotPend      *rotatedCreds
 	startFlusher func()
+	// flushMu orders the rotation flushes end to end, so a stale flush cannot land over a newer
+	// rotation's landed flush (the round 5 review's P2).
+	flushMu sync.Mutex
 }
 
 // rotatedCreds is one credential rotation observed during an in-transaction charge: the processor
@@ -393,8 +396,15 @@ func (s *Service) freshestCreds(processor string, creds map[string]string) map[s
 // clear an entry a NEWER rotation replaced meanwhile (the round 4 review's P2: the flush read set A,
 // a second rotation held B, and a processor-wide clear from A's landing wiped B, losing the fresh key
 // the rail needs; the pointer compare below is the guard, and it is the ONLY clear on this path).
-// Called by the flusher goroutine and directly by the tests.
+// The whole flush sits under flushMu, so the flushes land in the order they started (the round 5
+// review's P2: with no order between flushes, the first flush parked mid-write on A while a second
+// rotation's flush landed B and cleared, then A's stale write landed LAST, leaving the ledger empty
+// and the row on A, so the next charge presented the key the processor had already exchanged; the
+// lock makes the newest rotation's write the last to land). Called by the flusher goroutine and
+// directly by the tests.
 func (s *Service) flushRotation(ctx context.Context) {
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
 	s.rotMu.Lock()
 	pend := s.rotPend
 	s.rotMu.Unlock()
@@ -511,9 +521,12 @@ func (s *Service) RefundTx(ctx context.Context, tx pgx.Tx, in RefundInput) (Refu
 // writes through the store directly and NEVER through this carrier, because this clear is
 // processor-wide and a landing flush must not clear a newer rotation's entry (the round 4 review's
 // P2; the flusher's own pointer compare is its guard). A successful write clears any pending entry
-// for the same processor: the row now carries this set (or something newer), and a sitting entry
-// must not shadow the row the next read sees (the round 3 review's note: with the overlay handing
-// copies, a stale entry would outlive the pool path's own landing).
+// for the same processor, so a sitting entry cannot shadow the row the next read sees (the round 3
+// review's note: with the overlay handing copies, a stale entry would outlive the pool path's own
+// landing). The clear is processor-wide with no pointer compare: it wipes even a NEWER carried
+// entry whose flush has not yet read the ledger, and the row then carries this set, not something
+// newer (the round 5 review's P3). That reach belongs to the pool entry points alone, which have no
+// production caller today (the recorded follow-up).
 func (s *Service) resealOnPool(ctx context.Context, processor string, creds map[string]string) error {
 	if rs, ok := s.cfg.(credsReencryptor); ok {
 		if err := rs.reencryptActiveCreds(ctx, processor, creds); err != nil {
