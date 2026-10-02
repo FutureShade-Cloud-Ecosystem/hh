@@ -55,9 +55,11 @@ func newPortalPayRig(t *testing.T) *portalPayRig {
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, customerID)
 		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, customerID)
-		// payment_intents rows go BEFORE payments: each settle leaves one intent naming the
-		// customer (that table RESTRICTs the customer delete), so skipping this delete leaves
-		// the customer behind with the errors swallowed. Children before parents from here down.
+		// payment_intents rows go BEFORE payments: a settle leaves the intent SETTLED, and the
+		// SETTLED intent's own CHECK forbids a null payment, so deleting payments first fails on
+		// that CHECK (the intents' payment column cannot SET NULL while the intent stands) and
+		// the chain stops with the customer and its rows behind, the errors swallowed. Children
+		// before parents from here down.
 		_, _ = pool.Exec(c, `DELETE FROM payment_intents WHERE customer_id = $1::uuid`, customerID)
 		_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE payment_id IN
 			(SELECT id FROM payments WHERE customer_id = $1::uuid)`, customerID)
