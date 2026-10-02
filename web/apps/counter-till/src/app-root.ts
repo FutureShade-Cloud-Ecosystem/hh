@@ -2,9 +2,10 @@
 // for. It renders server and package state and calls client actions. The
 // figures the core states (line prices, the ring's and the refund's committed
 // totals, the account's facts) arrive through the ported surface's host seams
-// (src/ported/ports.ts) or the desk's own client; the ported surface's live
-// assemblies over those figures, its pre-ring tax and total included, are
-// marked as estimates on the surface (the contract gives the till no rate).
+// (src/ported/ports.ts) or the desk's own client; the surface's one pre-ring
+// assembly is the priced lines' subtotal, and the tax and the total are named
+// as the ring's own answer, never computed in the browser (the contract gives
+// the till no rate).
 // What lives in this element is the counter's own state machine: which
 // surface is mounted, what is in flight, and what a refusal says.
 //

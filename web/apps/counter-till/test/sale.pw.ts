@@ -241,9 +241,9 @@ test("a walk-in cash sale of three lines rings, and the sale read equals every f
   expect(sale.change_due_cents).toBe(8000 - (read.total_cents as number));
 
   // The collapsed Items card's summary now reads the SERVER's own figure, and
-  // no estimate mark stands beside it: the ring is done, and the browser's
-  // estimate has no business on screen next to the confirmation's committed
-  // total (at any rate other than the stub's the two would disagree).
+  // no mark stands beside it: the ring is done, and no browser assembly has
+  // any business on screen next to the confirmation's committed total (before
+  // the ring the till assembles no total at all to disagree with it).
   const itemsSummary = page.getByTestId("step-summary-items");
   await expect(itemsSummary).toHaveText(`3 items · CA${dollars(read.total_cents as number)}`);
   await expect(itemsSummary).not.toContainText("(est.)");
