@@ -92,6 +92,33 @@ func (l *AddressLimit) Allow(address string) bool {
 	return true
 }
 
+// Peek reports whether one more admission from the address would fit
+// inside the allowance, and records nothing. It is the question half of
+// the mint's two bucket check: a mint that must fit its own key and the
+// address ceiling at once peeks both before anything spends, so a
+// refusal spends nothing anywhere.
+func (l *AddressLimit) Peek(address string) bool {
+	now := l.now()
+	cutoff := now.Add(-l.window)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.live(l.entries[address], cutoff)) < l.allow
+}
+
+// Record spends one admission for the address, the answer half of the
+// peek and record pair: the mint records a bucket only after both peeks
+// fit. The pruning and the sweep are Allow's own, unchanged.
+func (l *AddressLimit) Record(address string) {
+	now := l.now()
+	cutoff := now.Add(-l.window)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.entries[address] = append(l.live(l.entries[address], cutoff), now)
+	if len(l.entries) > maxTrackedAddresses {
+		l.sweep(cutoff)
+	}
+}
+
 // live returns the address's admissions still inside the window, oldest
 // first.
 func (l *AddressLimit) live(stamps []time.Time, cutoff time.Time) []time.Time {

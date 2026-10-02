@@ -19,11 +19,13 @@
 // never enough on its own, the database's live grant decides.
 //
 // The order inside a mint is the plan's own: the limits refuse the burst
-// first (the mint's own key, the visitor id when the request carries a
-// well formed one and the address otherwise, then the address ceiling
-// that stands however the ids rotate), then the audit row is written,
-// and only then is the token minted, so the bypass's trail always exists
-// by the time its credential does, and a burst leaves neither.
+// first (the mint is granted only when its own key, the visitor id when
+// the request carries a well formed one and the address otherwise, and
+// the address ceiling would both admit it, and only a granted mint
+// spends either, so a refusal spends nothing), then the audit row is
+// written, and only then is the token minted, so the bypass's trail
+// always exists by the time its credential does, and a burst leaves
+// neither.
 //
 // Everything after the token is the real path: the token is an ordinary
 // staff bearer the unchanged verifier classifies, and the org, the role
@@ -243,29 +245,31 @@ func (m *Mint) Session(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The limit's key: the visitor id when the request carries a well
-	// formed one, the address exactly as clientAddress spells it
-	// otherwise. Behind a host edge the address is one bucket for every
-	// tester behind it, so the cookie is what separates a team; a forged
-	// or malformed value is taken for nothing and falls back to the
-	// address, and the ceiling below stands however the values rotate.
+	// The two bucket check, in the order the ceiling then the key is
+	// asked: the mint is granted only when BOTH buckets would admit it,
+	// and only a granted mint spends either, so no refusal spends
+	// anything, here or in either bucket. A tester locked out by the
+	// team's ceiling keeps their own allowance, and a spent key
+	// hammering the mint drains no team allowance. The two limits keep
+	// their own mutexes and the peeks and the records are separate
+	// instants, so two concurrent mints at the boundary can both peek
+	// fit and both spend: that is one extra mint, the sweep class's own
+	// looseness, never a wrong refusal.
 	address := clientAddress(r)
 	key := "a:" + address
 	if id := visitorIDFrom(r); id != "" {
 		key = "v:" + id
 	}
-	if !m.limit.Allow(key) {
+	if !m.ceiling.Peek(address) {
 		httpx.Error(w, http.StatusTooManyRequests, "demo: too many sign-in attempts from this address, let the window pass and tap the card again")
 		return
 	}
-	// The address ceiling: every mint also spends the address's own
-	// bucket, so a script juggling many ids stops at the team scale
-	// allowance however it rotates them. The refusal's words are the
-	// limit's own, unchanged.
-	if !m.ceiling.Allow(address) {
+	if !m.limit.Peek(key) {
 		httpx.Error(w, http.StatusTooManyRequests, "demo: too many sign-in attempts from this address, let the window pass and tap the card again")
 		return
 	}
+	m.limit.Record(key)
+	m.ceiling.Record(address)
 
 	orgID, ok, err := m.orgs.ResolveSlug(r.Context(), flows.OrgSlug)
 	if err != nil {
