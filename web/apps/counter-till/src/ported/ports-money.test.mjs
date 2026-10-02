@@ -230,18 +230,53 @@ test('balanceAfterDepositCents answers the balance, never below zero', () => {
 });
 
 // ── the refund estimate and the credit headroom, over the lookup's own figures ───────────────
-test('refundEstimateCents prorates the picked quantities over the sold ones', () => {
+// The shapes below are the contract's PosReturnableLine: unit_price_cents
+// prices ONE unit and line_total_cents is the whole line's, so a line of two
+// Holland pavers at CA$60.00 each carries unit 6000 and line total 12000.
+// The estimate multiplies the UNIT price by the picked quantity, per line,
+// rounded per line, exactly as the binding refund does.
+test('refundEstimateCents prices the picked quantity at the unit price, per line', () => {
+  const holland = { order_line_id: 'a', unit_price_cents: 6000, tax_cents: 0, qty_sold: 2 };
+  // One of two pavers picked: the binding refund is CA$60.00, and the
+  // estimate says CA$60.00 (one unit), never half of one unit.
+  const one = refundEstimateCents([holland], { a: 1 });
+  assert.deepEqual(one, { subtotal: 6000, tax: 0, total: 6000 });
+  // Both picked: the whole line's own total.
+  const both = refundEstimateCents([holland], { a: 2 });
+  assert.deepEqual(both, { subtotal: 12000, tax: 0, total: 12000 });
+
+  const wallblock = { order_line_id: 'b', unit_price_cents: 6000, tax_cents: 0, qty_sold: 6 };
+  // Six wall blocks picked whole: the line's own total comes back.
+  const full = refundEstimateCents([wallblock], { b: 6 });
+  assert.deepEqual(full, { subtotal: 36000, tax: 0, total: 36000 });
+});
+
+test('refundEstimateCents spreads the line tax across the sold quantity, rounded per line', () => {
+  const line = { order_line_id: 't', unit_price_cents: 6000, tax_cents: 780, qty_sold: 2 };
+  // One of two picked: half the line's tax, rounded to the whole cent.
+  const half = refundEstimateCents([line], { t: 1 });
+  assert.deepEqual(half, { subtotal: 6000, tax: 390, total: 6390 });
+  // A line with no sold quantity carries no tax leg (there is nothing to
+  // spread over): its price comes back, its tax does not.
+  const odd = { order_line_id: 'z', unit_price_cents: 5000, tax_cents: 400, qty_sold: 0 };
+  const untaxed = refundEstimateCents([odd], { z: 1 });
+  assert.deepEqual(untaxed, { subtotal: 5000, tax: 0, total: 5000 });
+});
+
+test('refundEstimateCents rounds per line, so fractional picks stay integer cents', () => {
+  // Half of each of two CA$33.33 units rounds per line (1667 and 1667), not
+  // once at the end (which would answer 3333): the reference's discipline.
+  const a = { order_line_id: 'a', unit_price_cents: 3333, tax_cents: 0, qty_sold: 2 };
+  const b = { order_line_id: 'b', unit_price_cents: 3333, tax_cents: 0, qty_sold: 2 };
+  const halves = refundEstimateCents([a, b], { a: 0.5, b: 0.5 });
+  assert.deepEqual(halves, { subtotal: 3334, tax: 0, total: 3334 });
+});
+
+test('refundEstimateCents answers nothing for a draft with no picked line', () => {
   const lines = [
     { order_line_id: 'a', unit_price_cents: 6000, tax_cents: 0, qty_sold: 2 },
-    { order_line_id: 'b', unit_price_cents: 6000, tax_cents: 780, qty_sold: 2 },
+    { order_line_id: 'b', unit_price_cents: 6000, tax_cents: 780, qty_sold: 6 },
   ];
-  // One of two on the first line: half its total, no tax in this world.
-  const half = refundEstimateCents([lines[0]], { a: 1 });
-  assert.deepEqual(half, { subtotal: 3000, tax: 0, total: 3000 });
-  // The whole of the second line: its own total and its own tax back.
-  const whole = refundEstimateCents([lines[1]], { b: 2 });
-  assert.deepEqual(whole, { subtotal: 6000, tax: 780, total: 6780 });
-  // An unpicked line contributes nothing.
   const none = refundEstimateCents(lines, {});
   assert.deepEqual(none, { subtotal: 0, tax: 0, total: 0 });
 });

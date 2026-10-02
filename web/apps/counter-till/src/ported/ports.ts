@@ -693,11 +693,16 @@ export interface ReturnEstimateLine {
 }
 
 /**
- * The returns desk's display estimate for the picked quantities, assembled
- * from the lookup's own per-line figures (the core's unit price and tax,
- * prorated across the line's sold quantity). Display only: the server derives
- * the binding refund inside its own transaction, and the committed return's
- * own totals are what the receipt renders.
+ * The returns desk's display estimate for the picked quantities, in the
+ * reference's own arithmetic (pos-return.ts's estimate, ported exactly): per
+ * line, the picked quantity times the unit price, rounded to the whole cent
+ * as it sums, and the tax leg the same discipline over the line's tax spread
+ * across its sold quantity. unit_price_cents prices ONE unit (the contract's
+ * PosReturnableLine carries line_total_cents separately), so the picked
+ * quantity multiplies it directly; nothing divides by the quantity sold.
+ * Display only: the server derives the binding refund inside its own
+ * transaction, and the committed return's own totals are what the receipt
+ * renders.
  */
 export function refundEstimateCents(
   lines: readonly ReturnEstimateLine[],
@@ -708,15 +713,10 @@ export function refundEstimateCents(
   for (const line of lines) {
     const picked = qty[line.order_line_id];
     if (typeof picked !== "number" || !Number.isFinite(picked) || picked <= 0) continue;
-    const unit = line.unit_price_cents;
-    const lineTax = line.tax_cents;
-    const sold = line.qty_sold > 0 ? line.qty_sold : 1;
-    subtotal += (unit / sold) * picked;
-    tax += (lineTax / sold) * picked;
+    subtotal += Math.round(picked * line.unit_price_cents);
+    if (line.qty_sold > 0) tax += Math.round((line.tax_cents * picked) / line.qty_sold);
   }
-  const roundedSubtotal = Math.round(subtotal);
-  const roundedTax = Math.round(tax);
-  return { subtotal: roundedSubtotal, tax: roundedTax, total: roundedSubtotal + roundedTax };
+  return { subtotal, tax, total: subtotal + tax };
 }
 
 /**
