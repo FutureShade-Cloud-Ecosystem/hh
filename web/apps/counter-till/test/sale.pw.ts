@@ -1157,10 +1157,12 @@ test("a split with a card leg carries the simulated word on the confirmation and
   const sale = (await (await ringPost).json()) as Record<string, unknown>;
 
   // The confirmation: the split touched the simulated rail, so it says so,
-  // exactly as a CARD tender does.
+  // exactly as a CARD tender does, and the tender row names the split and
+  // both its legs, never one leg's word for two legs' money.
   const sold = page.getByTestId("sold-panel");
   await expect(sold).toBeVisible();
   await expect(sold.getByTestId("sold-simulated-notice")).toContainText("Simulated card: no card was charged");
+  await expect(sold).toContainText("Split: Cash and Card");
 
   // The read: the legs are the wire's own, one cash and one card.
   const bearer = await salesBearer(page);

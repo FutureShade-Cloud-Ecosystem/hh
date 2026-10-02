@@ -2473,6 +2473,7 @@ function saleResponseBody(sale, replayed) {
     tax_reason_code: sale.tax_reason_code,
     status: sale.status,
     replayed,
+    split_tender: sale.split_tender === true,
     cash_tendered_cents: sale.cash_tendered_cents,
     change_due_cents: sale.change_due_cents,
     deposit_cents: sale.deposit_cents,
