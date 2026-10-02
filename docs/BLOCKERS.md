@@ -1079,6 +1079,48 @@ the assertions stop pinning the human title, or the seed carries it.
 Recorded so the HH-179 checks can be read honestly: every other test in
 the reporting integration suite passes on the HH-179 branch.
 
+## HH hardening, defect HH-186: the shared dev instance's migration ledger holds a numbering epoch that diverges from main (recorded, D39 territory)
+
+The dev Postgres instance the lane was given (the default DATABASE_URL in
+core/internal/config, the hardscapeos database on the local port 5435)
+carries a schema_migrations ledger from a numbering epoch that differs
+from current main's chain: its rows name a_saved_sort at 0213,
+purchasing_delivery_method at 0214 and pos_counter_layout at 0220, where
+main's chain numbers the same content 0216, 0217 and 0223, and the
+epoch's ledger has no rows for main's 0214_new_entities_and_pricing or
+0215_identity_audit. Because the ledger is keyed by whole filename, a
+migrate run from current main against that instance applies main's
+0214, 0215 and 0216 for real and then fails at main's 0217 with
+"column delivery_method of relation purchasing_pos already exists" (the
+epoch's own 0214 added it). One such run happened from the HH-186
+worktree before the divergence was understood: the instance now also
+records main's 0214 through 0216 in its ledger, 0215 having inserted its
+staff_role and contractor role-map rows. The instance's schema content
+matches its objects either way; no production system and no scratch
+database of this lane was affected (HH-186's own integration legs run
+against a scratch database built from main's chain, which migrates
+cleanly end to end). D39 already assigns the two runners'
+applied-history mechanisms to HH-3.7 to report before HH-5; this entry
+records that the shared dev instance is itself the live example, and
+that rebuilding it from main's chain (rather than patching its ledger)
+is the clean remedy. Lane work should keep using scratch databases.
+
+## HH hardening, HH-186 round 2: the incident's cause, named after the review (the entry above stands)
+
+The round 1 review is right that the entry above records the damage and
+the remedy but not the cause, and the cause is the recurring trap: the
+run set CORE_DATABASE_URL and called the migrate role, which reads
+DATABASE_URL (core/cmd/core/roles_oneshot.go, through the config default
+at core/internal/config/config.go), so the variable the operator set was
+never read and the shared default stood in silently. Nothing refused,
+nothing logged a different target than the one hit: the migrate role does
+not print its target, so the first visible failure is the migration
+error on someone else's ledger. This is defect HH-199's exact class (the
+two names for the database URL), and the trap will recur until that
+defect's fix lands: one-shot roles reading CORE_DATABASE_URL with no
+default and refusing when unset. Until then: always export DATABASE_URL,
+never only CORE_DATABASE_URL, when running the migrate or seed roles
+by hand, and give them a scratch database's URL in full.
 ## HH hardening, HH-180 (audit reopen fence): entity types without an owner resolver fail closed on the reopen route
 
 The reopen route `GET /api/v1/audit/transaction/{entityType}/{entityId}` fences a scoped caller

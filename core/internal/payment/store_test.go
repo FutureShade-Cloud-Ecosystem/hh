@@ -177,6 +177,18 @@ func TestService_Charge_ReencryptsRotatedCreds(t *testing.T) {
 	}
 }
 
+// HH-186, Store.Configure refuses surcharge_enabled=true before touching the pool or the vault:
+// the row can never say enabled while no tender path computes a surcharge, and D18 requires a
+// recorded jurisdiction and cap before enabling (none is). Every caller gets the same answer,
+// not just the HTTP route.
+func TestStore_Configure_RefusesSurchargeEnable(t *testing.T) {
+	st := NewStore(nil, nil)
+	err := st.Configure(context.Background(), "run_payments", "MID-1", "CAD", "", 240, true, map[string]string{"api_key": "k"}, "")
+	if !errors.Is(err, ErrSurchargeNotEnforced) {
+		t.Fatalf("Configure err = %v, want ErrSurchargeNotEnforced", err)
+	}
+}
+
 // credentialKeys strips the injected non-secret keys so they never reach the ciphertext.
 func TestCredentialKeys_StripsInjected(t *testing.T) {
 	got := credentialKeys(map[string]string{
