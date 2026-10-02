@@ -128,10 +128,21 @@ test("a walk-in cash sale of three lines rings, and the sale read equals every f
   }
 
   // The cash quick entry: what the customer hands over names the change due
-  // before anything is rung.
+  // before anything is rung, here CA$7.68 against the estimated total.
   await openStep(page, "payment");
+  // The pre-ring summary, figure by figure, on a ticket the stub's prices
+  // pin: 12.00 + 14.00 + 38.00 is a CA$64.00 subtotal; the estimated tax is
+  // the counter's 1300 bps on it (CA$8.32); the estimated total is CA$72.32.
+  // The rows say they are estimates; the ring's figures are the binding ones.
+  const totals = page.getByTestId("pos-totals-card");
+  await expect(totals).toContainText("CA$64.00");
+  await expect(totals).toContainText("HST 13% (est.)");
+  await expect(totals).toContainText("CA$8.32");
+  await expect(totals).toContainText("Total (est.)");
+  await expect(totals).toContainText("CA$72.32");
   await page.getByLabel("Cash tendered in dollars: optional; leave empty to ring the exact total").fill("80.00");
   await expect(page.getByTestId("cash-change-preview")).toContainText("Change due");
+  await expect(page.getByTestId("cash-change-preview")).toContainText("CA$7.68");
 
   const ringPost = page.waitForResponse(
     (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",

@@ -201,6 +201,12 @@ test('cashTenderedPlan answers the change due only when the entry covers the tot
   }
   // Nothing covers an empty ticket.
   assert.equal(cashTenderedPlan(0, '5').sendable, false);
+  // The change preview's own figures, on a worked ticket: a CA$72.32 total
+  // tendered CA$80.00 shows CA$7.68; the exact total shows none; a cent short
+  // is not sendable and promises nothing.
+  assert.deepEqual(cashTenderedPlan(7232, '80.00'), { tenderedCents: 8000, changeDueCents: 768, sendable: true });
+  assert.deepEqual(cashTenderedPlan(7232, '72.32'), { tenderedCents: 7232, changeDueCents: 0, sendable: true });
+  assert.deepEqual(cashTenderedPlan(7232, '72.31'), { tenderedCents: 7231, changeDueCents: 0, sendable: false });
 });
 
 // ── the ticket assemblies, over core-priced figures ──────────────────────────
@@ -215,8 +221,16 @@ test('cartSubtotalCents sums the priced lines and skips nothing into a guess', (
 
 test('ticketTaxCents and ticketTotalCents assemble the ticket over the stated rate', () => {
   assert.equal(ticketTaxCents(10000, 1300), 1300);
-  assert.equal(ticketTaxCents(1965, 1300), 255); // rounded to the whole cent
+  // The rate is respected: a different rate answers a different line, so a
+  // seam that ignored its parameter for a hardcoded rate fails here.
+  assert.equal(ticketTaxCents(10000, 1500), 1500);
+  assert.equal(ticketTaxCents(10000, 1200), 1200);
+  // Rounded to the whole cent where rounding and flooring disagree:
+  // 1958 at 1300 bps is 254.54, which rounds to 255 and floors to 254.
+  assert.equal(ticketTaxCents(1958, 1300), 255);
+  // The total carries the estimated tax line on the assembled subtotal.
   assert.equal(ticketTotalCents(10000, 1300), 11300);
+  assert.equal(ticketTotalCents(6400, 832), 7232);
 });
 
 test('sumLineSavingCents multiplies per line and sums, skipping what the engine left out', () => {
