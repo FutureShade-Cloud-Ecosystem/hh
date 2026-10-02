@@ -198,6 +198,10 @@ export function mint(page: Page, flow: string): Promise<string> {
         // the mint waits the fixed thirty one seconds and asks once more,
         // failing honestly if the refusal stands.
         await new Promise((resolve) => setTimeout(resolve, WINDOW_PASS_MS));
+        // The window passed, so the held slot is spent history: reserve a
+        // fresh one before the re-ask, or the retry lands back to back with
+        // the next pace and the file stops telling the truth.
+        await paceMintOffPage();
         answer = await ask();
       }
       expect(answer.ok).toBe(true);
