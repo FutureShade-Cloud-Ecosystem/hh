@@ -914,6 +914,11 @@ test("a line the account's price cannot answer reads price pending through ordin
   const cta = page.getByTestId("pos-complete-sale");
   await expect(cta).toContainText("subtotal CA$");
   await expect(cta).toContainText("+ tax at the ring");
+  // The exact shape, both session states: nothing can follow the words, so a
+  // total appended to the button's wording fails here (review round 2, R2-P3-1).
+  await expect(cta).toHaveText(
+    /^(Open session · then complete|Complete sale) · subtotal (CA\$[\d,]+\.\d{2}|\(not priced\)) \+ tax at the ring$/,
+  );
   await expect(cta).not.toContainText("(est.");
 });
 
@@ -1071,7 +1076,7 @@ test("the split state is a status band, not a disabled button", async ({ page })
   await expect(band).toContainText("Split: compose the legs below");
   // The explanation is visible text, not a hover title only.
   await expect(page.getByTestId("cta-split-why")).toBeVisible();
-  await expect(page.getByTestId("cta-split-why")).toContainText("legs must add up");
+  await expect(page.getByTestId("cta-split-why")).toContainText("settle the server's total at the ring");
   await expect(band).not.toHaveAttribute("title", /.*/);
   // A statement, not a control: no button, no disabled state to fake.
   expect(await band.evaluate((el) => el.tagName)).not.toBe("BUTTON");
