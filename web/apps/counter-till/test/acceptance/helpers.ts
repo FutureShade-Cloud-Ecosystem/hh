@@ -93,15 +93,21 @@ export function houseDaysAgo(days: number): string {
 }
 
 /**
- * The demo mint's per-address allowance is the till's own guard: a bounded
- * number of mints from one address inside one window, one bucket behind the
- * proxy. The run paces itself to the human pace the guard assumes before every
- * mint, wherever it happens: a person taps a card, reads the screen, and taps
- * again far slower than this guard's window. The clock lives on the worker's
- * global object, not in module state: the run's spec files each get their own
- * module instance, and the pace is one pace for the whole run.
+ * The demo mint's allowance is the till's own guard: a bounded number of
+ * mints from one key inside one sliding window, with a per address ceiling
+ * beside it. The run paces itself to the human pace the guard assumes before
+ * every mint, wherever it happens: a person taps a card, reads the screen,
+ * and taps again far slower than this guard's window. The arithmetic this
+ * spacing buys: the fourth stamp of a window lands exactly as the first
+ * leaves it, so a bucket holds at most three stamps per window in steady
+ * state, and at most four even with clock skew between the runner and the
+ * box, one full mint of headroom under the allowance of five. A tighter
+ * spacing sits on the knife edge, the fifth stamp at the exact instant the
+ * first expires, the refusal decided by the skew alone. The clock lives on
+ * the worker's global object, not in module state: the run's spec files each
+ * get their own module instance, and the pace is one pace for the whole run.
  */
-const MINT_SPACING_MS = 7500;
+const MINT_SPACING_MS = 10_000;
 type MintClock = { lastMintAt: number };
 
 function mintClock(): MintClock {
