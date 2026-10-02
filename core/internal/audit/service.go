@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 )
 
 // Authenticator resolves the acting user from a request (mirrors gable audit.go). identity.Handler
@@ -30,13 +32,15 @@ type store interface {
 	InsertTx(ctx context.Context, q Execer, e Entry) error
 	List(ctx context.Context, f Filter) ([]Entry, error)
 	ListByEntity(ctx context.Context, entityType, entityID string) ([]Entry, error)
+	ListByEntityFenced(ctx context.Context, entityType, entityID string, branches []string) ([]Entry, error)
 	GetByID(ctx context.Context, id string) (*Entry, error)
 }
 
 // Service holds the audit business rules + the recording middleware.
 type Service struct {
-	repo store
-	log  *slog.Logger
+	repo      store
+	log       *slog.Logger
+	resolvers map[string]EntityBranchResolver
 }
 
 // NewService wires a repo.
@@ -45,6 +49,23 @@ func NewService(repo *Repo, log *slog.Logger) *Service {
 		log = slog.Default()
 	}
 	return &Service{repo: repo, log: log}
+}
+
+// EntityBranchResolver resolves one entity's owning branch: the narrow seam the reopen fence needs
+// from the entity's owner (the order and quote repositories expose the read; cmd/core adapts them
+// here). found is false when no such entity exists, so the reopen read can answer an empty trail
+// without an error and without an existence signal.
+type EntityBranchResolver interface {
+	BranchOf(ctx context.Context, entityID string) (branchID string, found bool, err error)
+}
+
+// WithEntityBranchResolvers attaches the owner resolvers the reopen fence resolves through
+// (HH-180). Setter injection because the integration is genuinely optional: with no resolver, or
+// none for a given entity type, the reopen read fails closed for every scoped caller, it never
+// opens.
+func (s *Service) WithEntityBranchResolvers(resolvers map[string]EntityBranchResolver) *Service {
+	s.resolvers = resolvers
+	return s
 }
 
 // -- request-id correlation (US-A5) -----------------------------------------
@@ -139,6 +160,40 @@ func (s *Service) Get(ctx context.Context, id string) (*Entry, error) { return s
 
 func (s *Service) ReopenTransaction(ctx context.Context, entityType, entityID string) ([]Entry, error) {
 	return s.repo.ListByEntity(ctx, entityType, entityID)
+}
+
+// ReopenTransactionFor is the operator reopen read fenced to the caller's branch reach (HH-180): a
+// global caller keeps the full trail. Every other authority is held to the ENTITY first and the rows
+// second. The entity gate resolves the entity's owning branch through its owner's resolver: the
+// rows' own branch_id is not enough, because most semantic writers (order and quote edits, order
+// status and creation, the till payment allocation) write branch-less rows, so a row-only fence
+// would hand every scoped caller every branch's price-edit trail. An entity whose type carries no
+// resolver, or that does not exist, or whose branch the caller cannot reach answers an EMPTY trail,
+// never a refusal: this surface has no not-found shape of its own (an unknown entity id already
+// answers 200 with no rows), so an unreachable one answers the same and the read is no existence
+// oracle. Only when the entity gate passes does the read run, and it still carries the row fence
+// (branches the grants reach plus branch-less rows; the coarse middleware rows carry no branch), so
+// the gate and the predicate defend together. The in-process seam ReopenTransaction above stays
+// unfenced on purpose: its callers (order history, edit history and activity, quote edit history,
+// till payment history, dispatch, billing and POS policy history, the POS return approval, the
+// customer-quote acceptance load) gate on the owning entity before they ask, each in its owner's
+// way; only the route reached the rows with nobody asking.
+func (s *Service) ReopenTransactionFor(ctx context.Context, caller identity.StaffAuthority, entityType, entityID string) ([]Entry, error) {
+	if caller.Scope == identity.ScopeGlobal {
+		return s.repo.ListByEntity(ctx, entityType, entityID)
+	}
+	if resolve, ok := s.resolvers[entityType]; ok {
+		branchID, found, err := resolve.BranchOf(ctx, entityID)
+		if err != nil {
+			return nil, err
+		}
+		if !found || !caller.CanAccessBranch(branchID) {
+			return []Entry{}, nil
+		}
+		return s.repo.ListByEntityFenced(ctx, entityType, entityID, caller.Branches)
+	}
+	// No resolver for this entity type: fail closed, a scoped caller is answered an empty trail.
+	return []Entry{}, nil
 }
 
 // -- middleware --------------------------------------------------------------
