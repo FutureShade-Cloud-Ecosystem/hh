@@ -756,7 +756,9 @@ export class HosPosTerminal extends LitElement {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
+      /* UI-3 (visual GAP 6): the bar fits one row at the column cap with no session open; the
+         row gap keeps a wrapped bar (an open session adds the dot and End Session) as airy as before. */
+      gap: 16px 12px;
       width: min(100%, var(--pos-column-max));
       margin: 0 auto;
       padding: 12px var(--hos-space-5); /* rev 5: on-scale gutter (was 22px) */
@@ -772,7 +774,7 @@ export class HosPosTerminal extends LitElement {
     .session {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 8px;
       font-size: 13px;
       color: var(--hos-text-dim);
     }
