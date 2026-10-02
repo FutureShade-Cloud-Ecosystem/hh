@@ -26,6 +26,22 @@ import (
 // 41st mint inside one window refuses whatever cookie it carries.
 const teamCeilingMints = 40
 
+// lowerHex is the issued shape as a literal: 32 characters, each a lower
+// case hex digit. Upper case is outside the shape: one id spelled in two
+// cases would be two buckets.
+func lowerHex(value string) bool {
+	if len(value) != 32 {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // visitorJar is one browser's cookie jar for the rig: the flows GET
 // seeds it the way an entry page load does, and every mint afterwards
 // carries the id back. A jar the flows answer left empty carries
@@ -191,8 +207,8 @@ func TestFlowsSetsTheVisitorCookie(t *testing.T) {
 	if c.Name != "demo_visitor" {
 		t.Errorf("cookie name %q, want demo_visitor", c.Name)
 	}
-	if len(c.Value) != 32 {
-		t.Errorf("cookie value %q is %d characters, want the issued shape of 32", c.Value, len(c.Value))
+	if !lowerHex(c.Value) {
+		t.Errorf("cookie value %q is not the issued shape: 32 lower case hex characters", c.Value)
 	}
 	if c.Path != "/" {
 		t.Errorf("cookie path %q, want /", c.Path)
@@ -207,7 +223,7 @@ func TestFlowsSetsTheVisitorCookie(t *testing.T) {
 		t.Errorf("cookie SameSite is %v, want Lax", c.SameSite)
 	}
 	if c.Secure {
-		t.Error("the cookie carries Secure: the demo box serves plain http behind its edge, a Secure cookie would be dropped there")
+		t.Error("the cookie carries Secure: the demo box serves plain http, and a Secure cookie would not be set over http at all")
 	}
 	if strings.Contains(rsp.Body.String(), c.Value) {
 		t.Error("the flows body renders the cookie value")
@@ -228,6 +244,25 @@ func TestFlowsSetsTheVisitorCookie(t *testing.T) {
 	again := get("demo_visitor=" + c.Value)
 	if got := again.Header().Get("Set-Cookie"); got != "" {
 		t.Errorf("a request holding the id was answered with Set-Cookie %q, want no re-issue", got)
+	}
+
+	// A load carrying a value outside the issued shape gets a fresh id,
+	// so that browser recovers onto its own bucket instead of riding the
+	// shared address key: upper case is outside the shape (one id in two
+	// cases would be two buckets), and so is garbage.
+	for _, carried := range []string{strings.ToUpper(c.Value), "garbage-from-a-forged-jar"} {
+		repaired := get(visitorCookieName + "=" + carried)
+		lines := repaired.Header().Values("Set-Cookie")
+		if len(lines) != 1 {
+			t.Fatalf("a load carrying %q was answered with %d cookies, want exactly the fresh id", carried, len(lines))
+		}
+		rc, err := http.ParseSetCookie(lines[0])
+		if err != nil {
+			t.Fatalf("the repair cookie line does not parse: %v", err)
+		}
+		if rc.Name != "demo_visitor" || !lowerHex(rc.Value) {
+			t.Errorf("the repair for %q issued (%s, %q), want a fresh lower case hex id", carried, rc.Name, rc.Value)
+		}
 	}
 }
 
@@ -292,8 +327,10 @@ func TestMintFallsBackToTheAddressKeyOnAMalformedCookie(t *testing.T) {
 	values := []string{
 		"short",
 		"deadbeef",
+		// Upper case hex: the right characters in the wrong case, so it
+		// is outside the issued shape for the key and the re-issue both.
+		strings.Repeat("A", 32),
 		strings.Repeat("z", 32),
-		strings.Repeat("0", 31),
 		strings.Repeat("f", 33),
 	}
 	for i, v := range values {
