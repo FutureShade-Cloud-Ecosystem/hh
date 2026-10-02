@@ -402,7 +402,9 @@ test("a C01 Holland paver line rings at its rule price with its margin shown, an
   // glance's answer rendered beside it.
   const holland = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
   await expect(holland.locator(".lprice")).toHaveText("CA$3.28");
-  await expect(holland.getByTestId("pos-line-margin")).toHaveText("15.8%");
+  // The margin word is the reviewed helper's (half away from zero): 1585 bps
+  // reads 15.9%, the same word every other HH surface spells.
+  await expect(holland.getByTestId("pos-line-margin")).toHaveText("15.9%");
   // The placeholder is real too: the edge restraint carries no cost at this
   // branch, so its margin slot renders the explicit unknown, never a zero.
   await searchAndAdd(page, "edge", "Edge Restraint 8 ft");

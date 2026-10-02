@@ -120,12 +120,15 @@ import {
 } from './_pos-workspace.js';
 // ── DIB-488 rev 8 ── the concept slate: unified field, header bar, weight/margin columns, the
 // footer transaction bar and the DIB-502 add-ons strip. All decisions pure (_pos-rev8.ts).
+// HH note: the margin word routes through the app's reviewed formatMargin
+// (money.ts, half away from zero): the same core figure reads the same word
+// here as everywhere else in HH (1585 bps is 15.9%, not a float's 15.8%).
+import { formatMargin } from '../money.js';
 import {
   clockLabel,
   lineWeightLbs,
   formatLbs,
   ticketWeightTotalLbs,
-  marginPctLabel,
   txbarSegments,
   resolveCuratedChips,
   payTileStep, // DIB-512: the tender tiles as ONE roving keyboard stop
@@ -6248,7 +6251,7 @@ ${/* DIB-512 · the utility diet. Ten always-on buttons + a 13-word order-id inp
           </div>
           ${m
             ? html`<div class="lmargin" data-testid="pos-line-margin" title="Gross margin: computed server-side">
-                ${mb === undefined ? '(none)' : marginPctLabel(mb)}
+                ${mb === undefined ? '(none)' : formatMargin(mb)}
               </div>`
             : nothing}
           <button class="rm" @click=${() => this.removeLine(i)} title="Remove line" aria-label="Remove ${l.product.name}">

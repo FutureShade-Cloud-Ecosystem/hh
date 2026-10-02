@@ -1131,12 +1131,6 @@ merge read it before running anything selector-shaped:
 - **The detached layout's pixel boxes persist in tab memory**, for the same
   sink gate; the layout CHOICE rides the server's workspace row and follows
   the person, which is the part HH's contract carries.
-- **The ported margin column spells 15.8% where the old till spelled 15.9%**
-  for the same 1585 bps: the port kept the reference's display formatter
-  (`_pos-rev8.ts marginPctLabel`), whose float edge rounds that one value
-  down, where the app's own `formatMargin` rounds half away from zero. The
-  polish item may converge the two helpers; the money figures themselves are
-  the core's either way.
 - **`listProducts` in the ported pos-api now rides the authed door**: the
   reference fetched the catalogue list bare of credentials (its core served
   it ungated); HH's contract gates it like every staff read, so the ask rides
