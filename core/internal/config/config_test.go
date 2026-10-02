@@ -39,9 +39,9 @@ func TestValidate_DevAcceptsDefaults(t *testing.T) {
 }
 
 func TestValidate_ProductionWithVaultKey(t *testing.T) {
-	c := Config{Env: "production", PaymentVaultKey: strongVaultKey}
+	c := Config{Env: "production", PaymentVaultKey: strongVaultKey, PortalBaseURL: "https://pro.example.com/portal.html", StaffBaseURL: "https://erp.example.com"}
 	if err := c.Validate(); err != nil {
-		t.Fatalf("production with a valid vault key should pass: %v", err)
+		t.Fatalf("production with a valid vault key and public base URLs should pass: %v", err)
 	}
 }
 

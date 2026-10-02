@@ -630,6 +630,7 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 	pool, testDSN := freshDemoDB(t, ctx, dsn)
 	t.Setenv("DATABASE_URL", testDSN)
 	t.Setenv("PAYMENT_VAULT_KEY", vaultKeyHex)
+	t.Setenv("APP_ENV", "dev") // Validate refuses an unset APP_ENV (HH-198)
 	plan := demoseedRun(t, testDSN)
 	t.Logf("demoseed -plan: clock %s, %d rows planned, dated %s .. %s",
 		plan.clock.Format(time.RFC3339), plan.rows, plan.firstDate, plan.lastDate)

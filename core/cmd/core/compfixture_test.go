@@ -140,6 +140,8 @@ func newCompEnv(t *testing.T) *compEnv {
 	if dsn == "" {
 		t.Skip(coreDBEnvVar + " is not set: the composition suites need the scratch database with the frozen migrations applied")
 	}
+	// Validate refuses an unset APP_ENV (HH-198); the composition suites are dev wiring.
+	t.Setenv("APP_ENV", "dev")
 	ctx := context.Background()
 	fixPool, err := pgxpool.New(ctx, dsn)
 	if err != nil {

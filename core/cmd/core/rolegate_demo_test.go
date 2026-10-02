@@ -104,6 +104,7 @@ func rgHexKey(t *testing.T) string {
 // ride the served handlers.
 func rgDemoGateCase(t *testing.T) (*recordingRegistrar, *appGraph) {
 	t.Helper()
+	t.Setenv("APP_ENV", "dev") // Validate refuses an unset APP_ENV (HH-198)
 	caseURL := rgDemoCaseDatabase(t)
 	pool, err := pgxpool.New(context.Background(), caseURL)
 	if err != nil {
