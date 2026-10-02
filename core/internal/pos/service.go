@@ -140,9 +140,27 @@ type posStore interface {
 	DeleteUserWorkspace(ctx context.Context, userID string) error
 	// returns
 	FindReturnByKey(ctx context.Context, key string) (Return, bool, error)
+	// FindReturnByKeyTx and ReturnOrderContextTx are the open-transaction
+	// twins of the pool reads: the in-transaction same-key replay re-check
+	// must read on ITS transaction, never through the pool while the
+	// transaction holds a connection (a pool of Returns waiting on the same
+	// sale's advisory lock would deadlock the holder waiting for a second
+	// connection).
+	FindReturnByKeyTx(ctx context.Context, tx pgx.Tx, key string) (Return, bool, error)
 	ReturnOrderContext(ctx context.Context, orderID, orderNo string) (returnOrderCtx, bool, error)
+	ReturnOrderContextTx(ctx context.Context, tx pgx.Tx, orderID, orderNo string) (returnOrderCtx, bool, error)
 	ListReturnableLines(ctx context.Context, orderID string) ([]ReturnableLineView, error)
 	LockReturnableLine(ctx context.Context, tx pgx.Tx, orderID, orderLineID string) (returnableLine, bool, error)
+	// the per-sale return sums and lock: the refund approval amount counts
+	// every return against the same sale together, so the gate reads the
+	// sale's earlier committed returns inside its transaction (the Tx read)
+	// and the approval prospect reads them before it opens (the pool read);
+	// every Return transaction first takes the per-sale advisory lock, so
+	// two returns of different lines of one sale cannot each read the prior
+	// sum before the other commits.
+	SumCommittedReturnTotals(ctx context.Context, orderID string) (int64, error)
+	SumCommittedReturnTotalsTx(ctx context.Context, tx pgx.Tx, orderID string) (int64, error)
+	LockSaleForReturn(ctx context.Context, tx pgx.Tx, orderID string) error
 	InsertReturn(ctx context.Context, tx pgx.Tx, r returnRow) (id, no string, err error)
 	InsertReturnLines(ctx context.Context, tx pgx.Tx, returnID string, lines []returnLineRow) error
 	SetReturnRefundPayment(ctx context.Context, tx pgx.Tx, returnID, paymentID string) error
