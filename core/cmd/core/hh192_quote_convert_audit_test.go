@@ -39,7 +39,9 @@ func TestComposition_HH192QuoteConvert_BothDoorsSeedTheCreationRow(t *testing.T)
 		t.Fatalf("raise credit limit: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = graph.pool.Exec(context.Background(), `UPDATE customers SET credit_limit_cents = $2 WHERE id = $1::uuid`, testkit.TenantAlphaID, stashedLimit)
+		if _, err := graph.pool.Exec(context.Background(), `UPDATE customers SET credit_limit_cents = $2 WHERE id = $1::uuid`, testkit.TenantAlphaID, stashedLimit); err != nil {
+			t.Errorf("restore credit limit to %d: %v: the shared fixture account is left raised", stashedLimit, err)
+		}
 	})
 
 	// Two ACCEPTED quotes for the alpha contractor, one per door, each with a priced line.
@@ -65,17 +67,22 @@ func TestComposition_HH192QuoteConvert_BothDoorsSeedTheCreationRow(t *testing.T)
 	var orderIDs []string
 	t.Cleanup(func() {
 		bg := context.Background()
+		step := func(what, stmt string, args ...any) {
+			if _, err := graph.pool.Exec(bg, stmt, args...); err != nil {
+				t.Errorf("cleanup %s: %v", what, err)
+			}
+		}
 		for _, id := range orderIDs {
-			_, _ = graph.pool.Exec(bg, `DELETE FROM audit_log WHERE entity_type = 'order' AND entity_id = $1`, id)
+			step("order audit rows", `DELETE FROM audit_log WHERE entity_type = 'order' AND entity_id = $1`, id)
 		}
-		for _, stmt := range []string{
-			`DELETE FROM order_lines WHERE order_id = ANY($1::uuid[])`,
-			`DELETE FROM orders WHERE id = ANY($1::uuid[])`,
-		} {
-			_, _ = graph.pool.Exec(bg, stmt, orderIDs)
-		}
-		_, _ = graph.pool.Exec(bg, `DELETE FROM quote_lines WHERE quote_id = ANY($1::uuid[])`, []string{contractorQuote, staffQuote})
-		_, _ = graph.pool.Exec(bg, `DELETE FROM quotes WHERE id = ANY($1::uuid[])`, []string{contractorQuote, staffQuote})
+		// Each conversion hard-reserves its line against the order; leave none behind or a reused
+		// database loses the fixture product's available stock on every run.
+		step("order stock reservations", `DELETE FROM stock_reservations WHERE source_type = 'order' AND source_ref_id = ANY($1::uuid[])`, orderIDs)
+		step("order lines", `DELETE FROM order_lines WHERE order_id = ANY($1::uuid[])`, orderIDs)
+		step("orders", `DELETE FROM orders WHERE id = ANY($1::uuid[])`, orderIDs)
+		quoteIDs := []string{contractorQuote, staffQuote}
+		step("quote lines", `DELETE FROM quote_lines WHERE quote_id = ANY($1::uuid[])`, quoteIDs)
+		step("quotes", `DELETE FROM quotes WHERE id = ANY($1::uuid[])`, quoteIDs)
 	})
 
 	do := func(method, path, token string, staff bool) *httptest.ResponseRecorder {
