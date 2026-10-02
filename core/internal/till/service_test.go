@@ -959,9 +959,13 @@ func TestZReport_PerTenderVariance_Derived(t *testing.T) {
 	store.seedPayment(PaymentRow{Method: MethodCash, AmountCents: 6000, Status: PaymentReceived, TillSessionID: sid})
 	store.seedPayment(PaymentRow{Method: MethodCheque, AmountCents: 8000, Status: PaymentReceived, TillSessionID: sid})
 	store.seedPayment(PaymentRow{Method: MethodCard, AmountCents: 12000, Status: PaymentReceived, TillSessionID: sid})
-	// The cashier hand-counts cash short by 50; cheque exact; card hand-count is IGNORED (D-A03-9).
+	store.seedPayment(PaymentRow{Method: MethodEFT, AmountCents: 7000, Status: PaymentReceived, TillSessionID: sid})
+	store.seedPayment(PaymentRow{Method: MethodOther, AmountCents: 2500, Status: PaymentReceived, TillSessionID: sid})
+	// The blind count covers the whole drawer (start float + cash taken): the cashier hand-counts it
+	// short by 50 (25950 against an expected 20000 + 6000); cheque exact; the card/EFT/OTHER
+	// hand-count is IGNORED (D-A03-9).
 	_ = svc.CountTill(ctx, CountInput{TillSessionID: sid, Tenders: []TenderActual{
-		{Method: MethodCash, ActualCents: 5950}, {Method: MethodCheque, ActualCents: 8000}, {Method: MethodCard, ActualCents: 0},
+		{Method: MethodCash, ActualCents: 25950}, {Method: MethodCheque, ActualCents: 8000}, {Method: MethodCard, ActualCents: 0},
 	}})
 
 	z, _ := svc.ZReportFor(ctx, sid)
@@ -972,12 +976,22 @@ func TestZReport_PerTenderVariance_Derived(t *testing.T) {
 	if got[MethodCash].VarianceCents != -50 {
 		t.Fatalf("cash variance want -50, got %d", got[MethodCash].VarianceCents)
 	}
+	if got[MethodCash].ExpectedCents != 26000 {
+		t.Fatalf("per-tender CASH expected carries the float like the summary (26000), got %d", got[MethodCash].ExpectedCents)
+	}
 	if got[MethodCheque].VarianceCents != 0 {
 		t.Fatalf("cheque variance want 0, got %d", got[MethodCheque].VarianceCents)
 	}
 	// Card actual = processor captures = expected, so variance is 0 regardless of any hand-count.
 	if got[MethodCard].ActualCents != 12000 || got[MethodCard].VarianceCents != 0 {
 		t.Fatalf("card actual must equal captures (12000, variance 0), got %+v", got[MethodCard])
+	}
+	// EFT/OTHER are processor-confirmed like card: actual = expected, variance 0.
+	if got[MethodEFT].ActualCents != 7000 || got[MethodEFT].VarianceCents != 0 {
+		t.Fatalf("eft actual must equal captures (7000, variance 0), got %+v", got[MethodEFT])
+	}
+	if got[MethodOther].ActualCents != 2500 || got[MethodOther].VarianceCents != 0 {
+		t.Fatalf("other actual must equal captures (2500, variance 0), got %+v", got[MethodOther])
 	}
 }
 

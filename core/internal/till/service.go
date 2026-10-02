@@ -535,7 +535,7 @@ func (s *Service) deriveZReport(ctx context.Context, sess TillSession) (ZReport,
 	expectedCash := sess.FloatCents + expected[MethodCash] + mv.PaidInCash - mv.PaidOutCash - mv.LodgementCash
 	countedCash := actuals[MethodCash]
 
-	// Per-tender variance, derived. Cash + cheque are physically (blind) counted; card/EFT/OTHER are
+	// Per-tender variance, derived. Cash and cheque are physically (blind) counted; card/EFT/OTHER are
 	// processor-confirmed captures, so their actual = expected captures (variance 0), D-A03-9.
 	var perTender []TenderTotal
 	for _, method := range []string{MethodCash, MethodCheque, MethodCard, MethodEFT, MethodOther} {
@@ -545,8 +545,18 @@ func (s *Service) deriveZReport(ctx context.Context, sess TillSession) (ZReport,
 			continue
 		}
 		switch method {
-		case MethodCash, MethodCheque:
-			// physically counted (blind)
+		case MethodCash:
+			// The per-tender CASH line states the SAME expected the summary above derives (start
+			// float + movements in) against the blind count, so one answer carries ONE expected
+			// cash and this variance equals the summary's OverShortCents by construction. The raw
+			// RECEIVED payments sum is not the expected drawer cash: a refund books a REFUNDED
+			// payments row (excluded from that sum) plus a cash PAID_OUT movement.
+			exp = expectedCash
+			act = countedCash
+		case MethodCheque:
+			// Physically counted (blind) like cash, but no float and no movements accrue to
+			// cheques (the float and drawer movements are cash-only), so expected stays the
+			// RECEIVED payments sum: the asymmetry with CASH is deliberate, not an oversight.
 		default:
 			act = exp // processor-confirmed captures (D-A03-9)
 		}
