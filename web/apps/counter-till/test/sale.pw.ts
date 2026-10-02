@@ -1503,12 +1503,10 @@ test("a pickup whose prices never answer reads the pending markers, never a figu
     await expect(rows.nth(index)).toContainText("(not priced)");
   }
   await glanceAnswered;
-  // One render beat past the answer: had the surface meant to show the
-  // column, the cells would be on screen within it.
-  await page.waitForTimeout(400);
-  // The manager's till renders the margin column, and the pending rule is
-  // real there: each cell whose line has no price yet reads the marker,
-  // never a derived figure beside (not priced).
+  // The answer has landed, and the column renders only once it has (and once
+  // the policy word allows the caller), so the cells' arrival is the
+  // determined wait past it: the same render paints the footer, so the
+  // silence pinned below cannot slip a late render past a fixed beat (P3-3).
   const margins = page.getByTestId("pos-line-margin");
   await expect(margins).toHaveCount(2);
   for (let index = 0; index < 2; index += 1) {
@@ -1630,23 +1628,26 @@ test("a resumed ticket reads the pending markers from the moment it lands, befor
   await openStep(page, "items");
   const row = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
   await expect(row).toHaveCount(1);
-  // Before any answer: the pending marker on the cell, the footer bar silent.
+  // Before any answer: the pending marker on the cell.
   await expect(row.locator(".ltot")).toHaveText("(not priced)");
+  // The column renders only once the resume glance has actually answered and
+  // the policy word allows this caller, so the cell's arrival is the
+  // determined wait (P3-3): the footer's silence below is pinned past the
+  // answer, never inside the quiet window ahead of it, and the render that
+  // painted the cell painted the bar with it.
+  await expect(page.getByTestId("pos-line-margin")).toHaveCount(1);
   const txbar = page.getByTestId("pos-txbar");
   await expect(txbar).toContainText("1 Item");
   await expect(txbar).not.toContainText("Margin");
   await expect(txbar).not.toContainText("Est. Profit");
   // The answer lands: the line's own price returns, and the footer's margin
   // and profit segments come back with it: the glance answers the manager and
-  // the policy word allows this caller, priced or pending alike (P3-10), so
-  // the bar states the figures exactly when the ticket is priced. The glance
-  // is debounced, so the wait pins the figures after its post-price answer,
-  // not in the quiet window ahead of it.
-  const glanceAfterPrices = page.waitForResponse((r) => r.url().endsWith("/api/v1/pos/margin-glance"));
+  // the policy word allows this caller (P3-10), so the bar states the figures
+  // exactly when the ticket is priced. The segments' arrival is itself the
+  // determined wait: the pin retries until the priced render lands, so it
+  // cannot pass inside the quiet window ahead of it.
   for (const route of held) await route.fallback().catch(() => undefined);
   await expect(row.locator(".ltot")).toHaveText("CA$4.00");
-  await glanceAfterPrices;
-  await page.waitForTimeout(400);
   await expect(txbar).toContainText("Margin");
   await expect(txbar).toContainText("Est. Profit");
 });
