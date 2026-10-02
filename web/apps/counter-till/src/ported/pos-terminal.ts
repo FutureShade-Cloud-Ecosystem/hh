@@ -5627,7 +5627,9 @@ ${this.receiptMsg ? html`<div class="banner bad" role="alert">${this.receiptMsg}
               >${l.product.name}
               ${p.showSaving
                 ? html`<span class="rbsave" data-testid="readback-saving"
-                    >Save ${money(p.savingCents * l.qty)}${word ? ` · ${word}` : ''}</span
+                    >Save ${money(sumLineSavingCents([{ saving_cents: p.savingCents, qty: l.qty }]))}${word
+                      ? ` · ${word}`
+                      : ''}</span
                   >`
                 : nothing}</span
             >

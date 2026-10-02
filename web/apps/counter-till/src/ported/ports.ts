@@ -483,21 +483,43 @@ export interface CashTenderedPlan {
 }
 
 /**
- * The quick entry's plan: parse what the cashier typed (through the decimal
- * string, never a float), compare it with the total and derive the change due.
- * The host owns all three steps.
+ * Parse what the cashier typed into cents, through the decimal string, never a
+ * float multiply: "40" becomes 4000, "$1,234.56" becomes 123456. Currency
+ * symbols, spaces and thousands separators are stripped because people paste
+ * from invoices; anything else remaining is refused. NaN rather than 0 on
+ * purpose: an empty box and a deliberate zero are different mistakes, and the
+ * split tender panel words them differently.
  */
-export function cashTenderedPlan(totalCents: number, rawDollars: string): CashTenderedPlan {
-  return unwired('cashTenderedPlan');
+export function parseAmountCents(raw: string): number {
+  const cleaned = raw.replace(/[$,\s]/g, "");
+  if (cleaned === "" || !/^\d*\.?\d*$/.test(cleaned)) return NaN;
+  const point = cleaned.indexOf(".");
+  if (point === -1) return Number(`${cleaned}00`);
+  const whole = cleaned.slice(0, point);
+  const fraction = cleaned.slice(point + 1);
+  if (fraction.length > 2) return NaN;
+  return Number(`${whole}${fraction.padEnd(2, "0")}`);
+}
+
+/** Parse the typed deposit box into cents through the decimal string; 0 when refused. */
+export function depositCentsFromTyped(raw: string): number {
+  const parsed = parseAmountCents(raw);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 /**
- * Parse what the cashier typed into cents, or NaN when it is not an amount.
- * NaN rather than 0 on purpose: an empty box and a deliberate zero are
- * different mistakes, and the split tender panel words them differently.
+ * The quick entry's plan: parse what the cashier typed, compare it with the
+ * total and answer the change due. The total is the ticket's own assembly of
+ * core-priced lines; the tendered figure is the typed string's boundary
+ * conversion; the difference is the same subtraction the core performs at the
+ * ring, where the binding change due is stated and the receipt renders it.
  */
-export function parseAmountCents(raw: string): number {
-  return unwired('parseAmountCents');
+export function cashTenderedPlan(totalCents: number, rawDollars: string): CashTenderedPlan {
+  const parsed = parseAmountCents(rawDollars);
+  const tendered = Number.isNaN(parsed) ? 0 : parsed;
+  const sendable = tendered >= totalCents && totalCents > 0;
+  const changeDueCents = sendable ? tendered - totalCents : 0;
+  return { tenderedCents: tendered, changeDueCents, sendable };
 }
 
 /** One split leg the cashier is composing: the method and what they typed, parsed to cents. */
@@ -518,17 +540,60 @@ export interface SplitReadiness {
   problem: string;
 }
 
+/** The bound on split legs, mirrored from the contract's own ring shape (tenders, 2 to 6). */
+export const MAX_SPLIT_LEGS = 6;
+
+/** The split panel's local money formatter: display of integer cents only. */
+function splitFmt(cents: number): string {
+  const negative = cents < 0;
+  const magnitude = negative ? -cents : cents;
+  const whole = Math.floor(magnitude / 100);
+  const remainder = magnitude - whole * 100;
+  return `CA$${negative ? "-" : ""}${whole}.${String(remainder).padStart(2, "0")}`;
+}
+
 /**
- * The split panel's live verdict: the host sums the typed legs, compares them
- * with the ticket total and words the gap, so the panel enables Ring only on
- * the core's own arithmetic.
+ * The split panel's live verdict: the typed legs are summed, compared with the
+ * ticket total and the gap is worded, so the panel enables Ring only when the
+ * legs settle the sale exactly and the shape is legal (two or more legs, at
+ * most the contract's bound, one account leg at most, an account leg only with
+ * a customer picked). The ring itself re-validates every one of these
+ * server-side; these words are how the cashier learns the shape before the
+ * refusal does.
  */
 export function evaluateSplit(
   legs: readonly SplitLeg[],
   totalCents: number,
   hasCustomer: boolean,
 ): SplitReadiness {
-  return unwired('evaluateSplit');
+  let sum = 0;
+  for (const leg of legs) sum += Number.isFinite(leg.amountCents) ? leg.amountCents : 0;
+  const remainingCents = totalCents - sum;
+  const problem = splitProblem(legs, totalCents, remainingCents, hasCustomer);
+  return { tenderedCents: sum, remainingCents, ready: problem === "", problem };
+}
+
+function splitProblem(
+  legs: readonly SplitLeg[],
+  totalCents: number,
+  remainingCents: number,
+  hasCustomer: boolean,
+): string {
+  if (totalCents <= 0) return "Add a line before splitting the tender.";
+  if (legs.length < 2) return "A split needs at least two tenders.";
+  if (legs.length > MAX_SPLIT_LEGS) return `A split takes at most ${MAX_SPLIT_LEGS} tenders.`;
+  if (legs.some((l) => !Number.isFinite(l.amountCents) || l.amountCents <= 0)) {
+    return "Every tender needs an amount greater than zero.";
+  }
+  if (legs.filter((l) => l.method === "ACCOUNT").length > 1) {
+    return "Only one tender can go on account.";
+  }
+  if (legs.some((l) => l.method === "ACCOUNT") && !hasCustomer) {
+    return "Pick a customer account before putting part of the sale on account.";
+  }
+  if (remainingCents > 0) return `${splitFmt(remainingCents)} still to tender.`;
+  if (remainingCents < 0) return `${splitFmt(-remainingCents)} over-tendered.`;
+  return "";
 }
 
 /**
@@ -540,43 +605,64 @@ export function autoFillRemainder(
   totalCents: number,
   indexBeingFilled: number,
 ): number {
-  return unwired('autoFillRemainder');
+  let others = 0;
+  for (const [index, leg] of legs.entries()) {
+    if (index === indexBeingFilled) continue;
+    others += Number.isFinite(leg.amountCents) ? leg.amountCents : 0;
+  }
+  const remainder = totalCents - others;
+  return remainder > 0 ? remainder : 0;
 }
 
-/** The cart's subtotal, over the line totals the core already priced. */
+/** The cart's subtotal, over the line totals the pricing resolve already priced. */
 export function cartSubtotalCents(lines: readonly { lineTotalCents: number }[]): number {
-  return unwired('cartSubtotalCents');
+  let sum = 0;
+  for (const line of lines) {
+    if (Number.isFinite(line.lineTotalCents)) sum += line.lineTotalCents;
+  }
+  return sum;
 }
 
-/** The ticket's tax line at the given rate in basis points. The core owns tax. */
+/**
+ * The ticket's tax line at the given rate in basis points. The rate is the
+ * core's own word (an engine-assessed relief rate, else the standard rate the
+ * configuration names); the base is the sum of the core-priced lines. The
+ * binding tax is the core's answer at the ring, which the receipt renders.
+ */
 export function ticketTaxCents(subtotalCents: number, rateBps: number): number {
-  return unwired('ticketTaxCents');
+  return Math.round((subtotalCents * rateBps) / 10000);
 }
 
-/** The ticket's total: subtotal plus the tax line the core computed. */
+/** The ticket's total: subtotal plus the tax line. */
 export function ticketTotalCents(subtotalCents: number, taxCents: number): number {
-  return unwired('ticketTotalCents');
-}
-
-/** Parse the typed deposit box into cents through the decimal string; 0 when refused. */
-export function depositCentsFromTyped(raw: string): number {
-  return unwired('depositCentsFromTyped');
+  return subtotalCents + taxCents;
 }
 
 /**
  * One line's contribution to what the ticket saves against retail, as the
- * server priced it: the per-line saving times the quantity, summed by the host
- * because the multiplication is money arithmetic.
+ * server priced it: the per-line saving times the quantity, summed. A line
+ * the engine could not answer contributes nothing: it does not contribute a
+ * guess, and it does not blank the total for the lines that DID answer.
  */
 export function sumLineSavingCents(
   entries: readonly { saving_cents: number; qty: number }[],
 ): number {
-  return unwired('sumLineSavingCents');
+  let sum = 0;
+  for (const entry of entries) {
+    const per = entry.saving_cents;
+    if (Number.isFinite(per) && Number.isFinite(entry.qty)) sum += per * entry.qty;
+  }
+  return sum;
 }
 
-/** A sale's balance once its deposit is taken, clamped by the host's rule. */
+/**
+ * A sale's balance once its deposit is taken, never below zero: the same
+ * subtraction the core states on an unpaid-at-ring sale's own answer, here on
+ * the confirmation card's display figures.
+ */
 export function balanceAfterDepositCents(totalCents: number, depositCents: number): number {
-  return unwired('balanceAfterDepositCents');
+  const balance = totalCents - depositCents;
+  return balance > 0 ? balance : 0;
 }
 
 /** One returnable order line, as the refund estimate reads it. */
@@ -588,25 +674,47 @@ export interface ReturnEstimateLine {
 }
 
 /**
- * The returns desk's display estimate for the picked quantities. Display
- * only: the server derives the binding refund inside its own transaction.
+ * The returns desk's display estimate for the picked quantities, assembled
+ * from the lookup's own per-line figures (the core's unit price and tax,
+ * prorated across the line's sold quantity). Display only: the server derives
+ * the binding refund inside its own transaction, and the committed return's
+ * own totals are what the receipt renders.
  */
 export function refundEstimateCents(
   lines: readonly ReturnEstimateLine[],
   qty: Record<string, number>,
 ): { subtotal: number; tax: number; total: number } {
-  return unwired('refundEstimateCents');
+  let subtotal = 0;
+  let tax = 0;
+  for (const line of lines) {
+    const picked = qty[line.order_line_id];
+    if (typeof picked !== "number" || !Number.isFinite(picked) || picked <= 0) continue;
+    const unit = line.unit_price_cents;
+    const lineTax = line.tax_cents;
+    const sold = line.qty_sold > 0 ? line.qty_sold : 1;
+    subtotal += (unit / sold) * picked;
+    tax += (lineTax / sold) * picked;
+  }
+  const roundedSubtotal = Math.round(subtotal);
+  const roundedTax = Math.round(tax);
+  return { subtotal: roundedSubtotal, tax: roundedTax, total: roundedSubtotal + roundedTax };
 }
 
 /**
- * The account's available headroom for the strip and the picker to display,
- * already clamped by the host's rule: the core computes credit, never the till.
+ * The account's available headroom for the strip and the picker to display:
+ * the limit and the balance are the customer read's own figures, already
+ * server-side facts; the seam clamps the difference at zero. The ring's credit
+ * gate is the enforcement; this is the display beside the name.
  */
 export function availableCreditCents(customer: {
   credit_limit_cents: number;
   open_balance_cents: number;
 }): number {
-  return unwired('availableCreditCents');
+  const limit = customer.credit_limit_cents;
+  const balance = customer.open_balance_cents;
+  if (!Number.isFinite(limit) || !Number.isFinite(balance)) return 0;
+  const available = limit - balance;
+  return available > 0 ? available : 0;
 }
 
 // ---------------------------------------------------------------------------
