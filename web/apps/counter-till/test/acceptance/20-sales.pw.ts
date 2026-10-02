@@ -84,9 +84,9 @@ test("a sale: lines priced by the engine, no price field, and the margin column 
   await expect(holland.locator(".lprice")).toHaveText(cad(595));
   // The box's policy word is MANAGER_UP and the clerk is frontline (tier 3),
   // so the till refuses the whole margin surface (P3-10: the surface follows
-  // the policy word): no margin cells, though the glance itself still answers
-  // the clerk server-side (the world leg holds that half; the surface's
-  // refusal is this story's).
+  // the policy word): no margin cells, and the glance is refused server-side
+  // too (the world leg holds that half; the surface's refusal is this
+  // story's).
   await expect(page.getByTestId("pos-line-margin")).toHaveCount(0);
   // The line carries a quantity input and no price field anywhere: the price
   // is text, and the one textbox of the line is its quantity.
@@ -112,15 +112,18 @@ test("a contractor's pavers: the account price rings, and a below floor line rin
   await shot(page, "sales-04-contractor-pavers", testInfo);
 
   // The floor is the quote flow's: a line priced below the floor margin rings
-  // anyway. The glance's own answer proves the line is genuinely below the
-  // bulk category's floor of 20 percent; the refused surface states no margin
-  // for it (P3-10), and rings it regardless.
+  // anyway. The glance refuses the clerk (the policy word, honoured
+  // server-side since the hardening train, row 651), so the manager's read is
+  // the proof the line is genuinely below the bulk category's floor of 20
+  // percent; the refused surface states no margin for it (P3-10), and rings
+  // it regardless.
   await pickCustomer(page, "Quinte", "Quinte Paving & Design (demo)");
   await searchAndAdd(page, "DEMO-AGG-GA", "Granular A (demo)");
   const granular = lineRow(page, "Granular A (demo)");
   await expect(granular.locator(".lprice")).toHaveText(cad(2925));
   const bearer = await mint(page, "sales");
-  const glanced = await staffPost(page, bearer, "/api/v1/pos/margin-glance", {
+  const manager = await mint(page, "sales-manager");
+  const glanced = await staffPost(page, manager, "/api/v1/pos/margin-glance", {
     branch_id: TRENTON_ID,
     customer_id: SEEDED_IDS.quinteC03,
     customer_type: "CONTRACTOR",
