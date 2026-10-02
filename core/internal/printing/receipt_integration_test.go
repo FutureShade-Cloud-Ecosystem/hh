@@ -428,3 +428,44 @@ func TestIntegration_Receipt_TenderSimulatedFlagFollowsTheRowRef(t *testing.T) {
 		}
 	})
 }
+
+// The tie: the flag must follow a ref the REAL till capture stub minted, not a fixture built from
+// the exported constant. A fixture ref and the repository's check can agree while the stub's own
+// minting has drifted from the constant (the round 1 review's bite), so this leg lets
+// RunPaymentsStub.Charge mint the ref and feeds that ref through ReadReceiptTenders. While the
+// stub mints WITH the constant, the mint and the check cannot disagree: change the constant's
+// value and both halves move together, which is what makes the round 1 bite pass every suite.
+func TestIntegration_Receipt_SimulatedFlagFollowsAStubMintedRef(t *testing.T) {
+	pool := intPool(t)
+	_, branchID := aPaver(t, pool)
+
+	res, err := payment.RunPaymentsStub{}.Charge(context.Background(),
+		map[string]string{"api_key": "test-key"}, "MID-RECEIPT-TIE", 5000, "tok-tie")
+	if err != nil {
+		t.Fatalf("stub charge: %v", err)
+	}
+	if !strings.HasPrefix(res.ProcessorRef, payment.StubCaptureRefPrefix) {
+		t.Fatalf("the stub minted %q, which does not begin with the exported prefix %q: the stub and the constant have drifted", res.ProcessorRef, payment.StubCaptureRefPrefix)
+	}
+	id := newUUID()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO payments (id, payment_no, method, amount_cents, status, branch_id, gateway_ref)
+		 VALUES ($1::uuid, $2, 'CARD', 5000, 'RECEIVED', $3::uuid, $4)`,
+		id, "PMT-SIM-"+id[:8], branchID, res.ProcessorRef); err != nil {
+		t.Fatalf("insert card payment: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM payments WHERE id = $1::uuid`, id)
+	})
+
+	tenders, err := NewRepository(pool).ReadReceiptTenders(context.Background(), id, "")
+	if err != nil {
+		t.Fatalf("read tenders: %v", err)
+	}
+	if len(tenders) != 1 {
+		t.Fatalf("want the one card row, got %d", len(tenders))
+	}
+	if !tenders[0].Simulated {
+		t.Fatalf("a CARD capture minted by the real stub (ref %q) must stamp Simulated, the mint and the receipt's check have drifted", res.ProcessorRef)
+	}
+}
