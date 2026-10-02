@@ -54,6 +54,12 @@ type activeCfg struct {
 // Configure stores merchant id + encrypted creds (write-only; engagement-level). It retires any prior
 // active row for the processor and inserts a new active one (ux_payment_config_active enforces one active).
 func (s *Store) Configure(ctx context.Context, processor, merchantID, currency, baseURL string, mdrBps int64, surchargeEnabled bool, creds map[string]string, actorID string) error {
+	// HH-186: the row can never say enabled while no tender path computes a surcharge and D18's
+	// precondition (a recorded jurisdiction and cap) is unmet. Refused before any pool or vault
+	// touch so every caller gets the same answer, not just the HTTP route.
+	if surchargeEnabled {
+		return ErrSurchargeNotEnforced
+	}
 	if s.pool == nil {
 		return errors.New("payment: database unavailable")
 	}
