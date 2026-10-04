@@ -12,6 +12,7 @@
 // The binding discipline is the app's own (the design system's position gate
 // holds its templates to no property or event bindings): the cards and the
 // chrome controls delegate through data-action on the host.
+import { SIGN_OUT_EVENT, type SignOutDetail } from "./quote-context.js";
 import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
@@ -159,7 +160,8 @@ export class QuoteDeskApp extends HHElement {
     });
     this.#account = new DemoAccount({ client: demoClient });
     this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
-    this.#client = new QdClient(client, () => this.#deskUserId ?? "");
+    // The caller's own id is read from the live session, not from the sign-in answer kept beside it.
+    this.#client = new QdClient(client, () => this.#sessions.current?.user.userId ?? "");
     // The shared kit's host wiring: one door, wired once, reading custody
     // through this element's own closures so the bearer never rests in a
     // second place.
@@ -290,6 +292,10 @@ export class QuoteDeskApp extends HHElement {
     if (this.#busy) return;
     this.#busy = true;
     this.requestUpdate();
+    // Unsent work (a terms edit waiting on its save, the layout) is sent while the session still stands.
+    const detail: SignOutDetail = { waits: [] };
+    window.dispatchEvent(new CustomEvent(SIGN_OUT_EVENT, { detail }));
+    await Promise.allSettled(detail.waits);
     await this.#controller.signOut();
     this.#busy = false;
     this.#roleLabel = null;

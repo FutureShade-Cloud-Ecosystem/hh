@@ -101,7 +101,29 @@ import { FLOOR_REFUSAL_CLOSED_EVENT, floorRefusalMessage, openFloorRefusalDialog
 import { OPEN_SETTINGS_EVENT } from "./panel-seams.js";
 import type { QdClient, SurfaceConfig, TermsRef } from "./qd-client.js";
 import { WorkspaceStore } from "./workspace-store.js";
+import { QuoteScope, SIGN_OUT_EVENT, type QuoteContext, type SignOutDetail } from "./quote-context.js";
 import type { AddonSuggestion } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
+
+/** Thrown inside the send and link paths when the quote changed under them: caught and said nothing. */
+class StaleQuoteError extends Error {}
+
+/** The whole terms row as the save sends it (the core takes the row whole). */
+function termsBody(t: TermsRef): Parameters<QdClient["putTerms"]>[1] {
+  return {
+    depositRequired: t.depositRequired,
+    depositPct: t.depositPct,
+    includeImages: t.includeImages,
+    customerNotes: t.customerNotes,
+    contactName: t.contactName,
+    projectJob: t.projectJob,
+    customerPo: t.customerPo,
+    salespersonId: t.salespersonId,
+    fulfillment: t.fulfillment,
+    deliveryAddress: t.deliveryAddress,
+    requestedDate: t.requestedDate,
+    deliveryFeeCents: t.deliveryFeeCents,
+  };
+}
 
 interface AddonSuggestionRow {
   product_id: string;
@@ -138,6 +160,8 @@ export class QdQuoteWorkarea extends LitElement {
   @state() private columnsError = "";
   @state() private notice = "";
   @state() private busy = false;
+  /** How many writes are out: Send stays disabled until the last of them has answered, not the first. */
+  private busyHolds = 0;
   @state() private term = "";
   @state() private qtyDrafts: Record<number, string> = {};
   @state() private discDrafts: Record<number, string> = {};
@@ -157,6 +181,8 @@ export class QdQuoteWorkarea extends LitElement {
   private clockTimer: ReturnType<typeof setInterval> | undefined;
   private termsTimer: ReturnType<typeof setTimeout> | undefined;
   private mintedToken = "";
+  /** The context of the quote on screen: every read and write captures it at its start and checks it after each await. */
+  private readonly scope = new QuoteScope();
   private dragging = false;
   /** After creating a quote the caret goes to the scan box: the next action is always add. */
   private pendingFocusScan = false;
@@ -1047,6 +1073,7 @@ export class QdQuoteWorkarea extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener(FLOOR_REFUSAL_CLOSED_EVENT, this.onFloorDialogClosed);
+    window.addEventListener(SIGN_OUT_EVENT, this.onSignOut);
     this.startLoads();
     this.clockTimer = setInterval(() => {
       this.clockNow = new Date();
@@ -1071,6 +1098,7 @@ export class QdQuoteWorkarea extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     window.removeEventListener(FLOOR_REFUSAL_CLOSED_EVENT, this.onFloorDialogClosed);
+    window.removeEventListener(SIGN_OUT_EVENT, this.onSignOut);
     this.renderRoot.removeEventListener("click", this.onActionClick as EventListener);
     this.renderRoot.removeEventListener("input", this.onFieldInput as EventListener);
     this.renderRoot.removeEventListener("change", this.onFieldChange as EventListener);
@@ -1093,14 +1121,95 @@ export class QdQuoteWorkarea extends LitElement {
   protected override willUpdate(changed: Map<string, unknown>): void {
     // The host wires the client after this element mounts; the loads start
     // the moment it arrives.
+    if (changed.has("quoteId")) this.leaveQuote(typeof changed.get("quoteId") === "string" ? (changed.get("quoteId") as string) : "");
     if (changed.has("client") && this.client !== null) this.startLoads();
     if (changed.has("quoteId")) {
-      this.converted = null;
-      this.mintedToken = "";
       this.opening = this.loadAll();
-      // Remember what is open so a refresh resumes it.
-      if (changed.get("quoteId") !== undefined || this.quoteId) this.store?.scheduleSave();
+      // Remember what is open so a refresh resumes it, sent now rather than left to the debounce.
+      if (changed.get("quoteId") !== undefined || this.quoteId) {
+        this.store?.scheduleSave();
+        void this.store?.flush();
+      }
     }
+  }
+
+  /** The context of the quote on screen; a quote id that moved without its context following gets a fresh one. */
+  private get ctx(): QuoteContext {
+    const live = this.scope.current;
+    return live.id === this.quoteId && !live.stale ? live : this.scope.open(this.quoteId);
+  }
+
+  /**
+   * The quote on screen changed. What the person left on the old quote goes to
+   * that quote (an unsaved terms edit is sent to the id it was typed on) or is
+   * dropped; the old context is cancelled, so no read or write still out for it
+   * can touch this one; and the work area starts the new quote clean: no error,
+   * notice, busy flag, draft, link or figure of the old quote remains.
+   */
+  private leaveQuote(previousId: string): void {
+    this.flushTermsOf(previousId);
+    this.scope.open(this.quoteId);
+    this.converted = null;
+    this.mintedToken = "";
+    this.error = "";
+    this.notice = "";
+    this.floorSpoken = "";
+    this.busyHolds = 0;
+    this.busy = false;
+    this.sendOpen = false;
+    this.view = null;
+    this.terms = null;
+    this.glance = null;
+    this.addons = [];
+    this.qtyDrafts = {};
+    this.discDrafts = {};
+    this.addonQty = {};
+    this.ticketMoved();
+  }
+
+  /** Hold the Send and add controls while a write is out; the last write to answer lets go. A stale hold was reset with the quote. */
+  private holdBusy(ctx: QuoteContext): () => void {
+    this.busyHolds += 1;
+    this.busy = true;
+    let released = false;
+    return () => {
+      if (released || ctx.stale) return;
+      released = true;
+      this.busyHolds = Math.max(0, this.busyHolds - 1);
+      this.busy = this.busyHolds > 0;
+    };
+  }
+
+  /** The unsaved terms edit of the quote being left is sent to the quote it was typed on, then cleared. */
+  private flushTermsOf(previousId: string): void {
+    const client = this.client;
+    const terms = this.terms;
+    const dirty = this.termsPendingCount() > 0;
+    const label = this.view?.quote_no ?? previousId;
+    if (this.termsTimer !== undefined) {
+      clearTimeout(this.termsTimer);
+      this.termsTimer = undefined;
+    }
+    this.termsPending = {};
+    this.termsUnsaved = false;
+    this.termsEditSeq += 1;
+    if (!dirty || client === null || terms === null || previousId === "") return;
+    void client.putTerms(previousId, termsBody(terms)).then((result) => {
+      // Said plainly, naming the quote it was for, because the person has moved on to another.
+      if (!result.ok) this.error = `The terms you changed on ${label} were not saved: ${spokenRefusal(quoteErrorMessage(result.status, result.error, "save the quote terms"))}`;
+    });
+  }
+
+  /** Sign out: the unsaved terms edit and the layout are sent while the session still stands. */
+  private readonly onSignOut = (event: Event): void => {
+    const detail = (event as CustomEvent<SignOutDetail>).detail;
+    detail.waits.push(this.flushForSignOut());
+  };
+
+  private async flushForSignOut(): Promise<void> {
+    const ctx = this.ctx;
+    if (this.termsPendingCount() > 0 && ctx.id !== "") await this.putTermsNow();
+    await this.store?.flush();
   }
 
   private startLoads(): void {
@@ -1215,6 +1324,7 @@ export class QdQuoteWorkarea extends LitElement {
       }
     }
     this.buildValiditySelect();
+    this.syncTermsBoxes();
     if (view === null) return;
     for (const input of this.renderRoot.querySelectorAll<HTMLInputElement>('[data-field="qty"]')) {
       const lineNo = Number(input.getAttribute("data-line"));
@@ -1240,19 +1350,25 @@ export class QdQuoteWorkarea extends LitElement {
       const canonical = this.addonQty[productId] ?? String(addon.default_qty);
       if (input.value !== canonical) input.value = canonical;
     }
-    for (const input of this.renderRoot.querySelectorAll<HTMLInputElement>('[data-field="terms"]')) {
-      const field = input.getAttribute("data-terms-field") ?? "";
-      const canonical = this.termsTextOf(field);
-      if (canonical !== null && input.value !== canonical && !this.isTypingIn(input)) input.value = canonical;
+  }
+
+  /**
+   * The terms boxes hold the open quote's figures: the server's values once the terms are read, and nothing
+   * while they are not (so a box never keeps what the quote before it held). The box under the caret is left alone.
+   */
+  private syncTermsBoxes(): void {
+    for (const input of this.renderRoot.querySelectorAll<HTMLInputElement>('[data-terms-field]')) {
+      const canonical = this.termsTextOf(input.getAttribute("data-terms-field") ?? "") ?? "";
+      if (input.value !== canonical && !this.isTypingIn(input)) input.value = canonical;
     }
     const deliveryFee = this.renderRoot.querySelector<HTMLInputElement>('[data-field="delivery-fee"]');
-    if (deliveryFee !== null && this.terms !== null) {
-      const canonical = this.terms.deliveryFeeCents > 0 ? (this.terms.deliveryFeeCents / 100).toFixed(2) : "";
+    if (deliveryFee !== null) {
+      const canonical = this.terms !== null && this.terms.deliveryFeeCents > 0 ? (this.terms.deliveryFeeCents / 100).toFixed(2) : "";
       if (deliveryFee.value !== canonical && !this.isTypingIn(deliveryFee)) deliveryFee.value = canonical;
     }
     const depositPct = this.renderRoot.querySelector<HTMLInputElement>('[data-field="deposit-pct"]');
-    if (depositPct !== null && this.terms !== null) {
-      const canonical = this.terms.depositPct > 0 ? String(this.terms.depositPct) : "";
+    if (depositPct !== null) {
+      const canonical = this.terms !== null && this.terms.depositPct > 0 ? String(this.terms.depositPct) : "";
       if (depositPct.value !== canonical && !this.isTypingIn(depositPct)) depositPct.value = canonical;
     }
   }
@@ -1331,7 +1447,8 @@ export class QdQuoteWorkarea extends LitElement {
   async loadAll(): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    if (this.quoteId === "") {
+    const ctx = this.ctx;
+    if (ctx.id === "") {
       this.view = null;
       this.terms = null;
       this.termsUnsaved = false;
@@ -1342,8 +1459,9 @@ export class QdQuoteWorkarea extends LitElement {
     }
     // A refresh never CLEARS the error here: a refusal the user has not read
     // yet must survive the re-read that follows it; errors clear on the next
-    // user gesture.
-    const view = await client.readQuote(this.quoteId);
+    // user gesture. An answer for a quote that is no longer open says nothing.
+    const view = await ctx.guarded(client.readQuote(ctx.id));
+    if (view === undefined) return;
     if (!view.ok) {
       this.error = "Could not read this quote.";
       return;
@@ -1362,7 +1480,8 @@ export class QdQuoteWorkarea extends LitElement {
       this.pendingFocusScan = false;
       void this.updateComplete.then(() => this.focusScan());
     }
-    const terms = await client.readTerms(this.quoteId);
+    const terms = await ctx.guarded(client.readTerms(ctx.id));
+    if (terms === undefined) return;
     if (terms.ok) {
       // A read that was in flight when the person edited must not land over the edit: the unsaved edits ride on top.
       this.terms = { ...terms.value, ...this.termsPending };
@@ -1370,14 +1489,15 @@ export class QdQuoteWorkarea extends LitElement {
     }
     // The margin glance: byte absent fields for a refused caller. An empty
     // object means no margin surface for you, never an error.
-    const glance = await client.marginGlance(this.quoteId);
+    const glance = await ctx.guarded(client.marginGlance(ctx.id));
+    if (glance === undefined) return;
     if (glance.ok) this.glance = glance.value;
-    void this.loadAddons();
-    void this.hydrateCustomer();
+    void this.loadAddons(ctx);
+    void this.hydrateCustomer(ctx);
   }
 
   /** The identity card's credit facts: best effort search by name matched on id. */
-  private async hydrateCustomer(): Promise<void> {
+  private async hydrateCustomer(ctx: QuoteContext): Promise<void> {
     const v = this.view;
     if (v === null) return;
     if (this.customer?.id === v.customer_id) return;
@@ -1385,24 +1505,26 @@ export class QdQuoteWorkarea extends LitElement {
     const name = v.customer_name.trim();
     if (name === "") return;
     try {
-      const hits = await searchCustomers(name, 10, this.branchId);
+      const hits = await ctx.guarded(searchCustomers(name, 10, this.branchId));
+      if (hits === undefined) return;
       this.customer = hits.find((h) => h.id === v.customer_id) ?? null;
     } catch {
-      this.customer = null; // the card renders without the credit line, honest absence
+      if (!ctx.stale) this.customer = null; // the card renders without the credit line, honest absence
     }
   }
 
   /** The add-ons strip: the quote's lines feed the same suggestions read the counter uses. */
-  private async loadAddons(): Promise<void> {
+  private async loadAddons(ctx: QuoteContext): Promise<void> {
     const ids = (this.view?.lines ?? []).map((l) => l.product_id).filter(Boolean);
     if (ids.length === 0) {
       this.addons = [];
       return;
     }
     try {
-      this.addons = await addonSuggestions(ids);
+      const rows = await ctx.guarded(addonSuggestions(ids));
+      if (rows !== undefined) this.addons = rows;
     } catch {
-      this.addons = []; // empty never error: the strip hides entirely
+      if (!ctx.stale) this.addons = []; // empty never error: the strip hides entirely
     }
   }
 
@@ -1731,8 +1853,12 @@ export class QdQuoteWorkarea extends LitElement {
       for (let waited = 0; this.createdQuoteId !== "" && this.quoteId === "" && waited < 50; waited += 1) await new Promise((resolve) => setTimeout(resolve, 20));
       await this.updateComplete;
     }
-    if (this.quoteId !== "" && this.view === null) await this.opening;
-    if (this.quoteId === "" || this.view === null) {
+    const ctx = this.ctx;
+    if (ctx.id !== "" && this.view === null) {
+      await this.opening;
+      if (ctx.stale) return;
+    }
+    if (ctx.id === "" || this.view === null) {
       this.speakAdd("Pick a customer first. The quote starts there.", "warn");
       return;
     }
@@ -1740,14 +1866,15 @@ export class QdQuoteWorkarea extends LitElement {
       this.speakAdd(`This quote is ${quoteStatusPhrase(this.view.status)} and can no longer be changed.`, "err");
       return;
     }
-    this.busy = true;
+    const release = this.holdBusy(ctx);
     this.error = "";
     this.notice = "";
-    const result = await client.addLine(this.quoteId, p.id, String(qty), p.uom);
-    this.busy = false;
+    const result = await ctx.guarded(client.addLine(ctx.id, p.id, String(qty), p.uom));
+    if (result === undefined) return;
+    release();
     if (result.ok) {
       this.speakAdd(p.name !== undefined ? `Added ${p.name}` : "Line added.", "ok");
-      await this.afterCartChange();
+      await this.afterCartChange(ctx);
     } else {
       // The refusal belongs beside the gun, once.
       this.speakAdd(spokenRefusal(quoteErrorMessage(result.status, result.error, "add this line")), "err");
@@ -1763,20 +1890,22 @@ export class QdQuoteWorkarea extends LitElement {
       this.error = "Quantity must be a positive number.";
       return;
     }
-    this.busy = true;
+    const ctx = this.ctx;
+    const release = this.holdBusy(ctx);
     this.error = "";
-    const result = await client.editLine(this.quoteId, line.line_no, { qty });
-    this.busy = false;
+    const result = await ctx.guarded(client.editLine(ctx.id, line.line_no, { qty }));
+    if (result === undefined) return;
+    release();
     if (result.ok) {
       this.ticketMoved();
-      await this.afterCartChange();
+      await this.afterCartChange(ctx);
     } else {
       // The core may answer the typed floor refusal on this arm too: it is parsed like the discount arm's.
       const refusal = result.status === 409 ? parseFloorRefusal(result.error) : null;
       if (refusal !== null) {
         this.error = floorRefusalMessage(refusal);
         this.floorSpoken = this.error;
-        openFloorRefusalDialog(refusal, this.quoteId, line.line_no, this.termsLine(line.line_no)?.discPct ?? 0);
+        openFloorRefusalDialog(refusal, ctx.id, line.line_no, this.termsLine(line.line_no)?.discPct ?? 0);
       } else {
         this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "change this quantity"));
       }
@@ -1805,13 +1934,15 @@ export class QdQuoteWorkarea extends LitElement {
       this.error = "Discount must be a whole percent from 0 to 100.";
       return;
     }
-    this.busy = true;
+    const ctx = this.ctx;
+    const release = this.holdBusy(ctx);
     this.error = "";
-    const result = await client.editLine(this.quoteId, line.line_no, { discPct: n });
-    this.busy = false;
+    const result = await ctx.guarded(client.editLine(ctx.id, line.line_no, { discPct: n }));
+    if (result === undefined) return;
+    release();
     if (result.ok) {
       this.ticketMoved();
-      await this.afterCartChange();
+      await this.afterCartChange(ctx);
       return;
     }
     if (result.status === 409) {
@@ -1819,7 +1950,7 @@ export class QdQuoteWorkarea extends LitElement {
       if (refusal !== null) {
         this.error = floorRefusalMessage(refusal);
         this.floorSpoken = this.error;
-        openFloorRefusalDialog(refusal, this.quoteId, line.line_no, n);
+        openFloorRefusalDialog(refusal, ctx.id, line.line_no, n);
         await this.loadAll();
         return;
       }
@@ -1843,13 +1974,15 @@ export class QdQuoteWorkarea extends LitElement {
   private async removeLine(line: QuoteViewLine): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    this.busy = true;
+    const ctx = this.ctx;
+    const release = this.holdBusy(ctx);
     this.error = "";
-    const result = await client.removeLine(this.quoteId, line.line_no);
-    this.busy = false;
+    const result = await ctx.guarded(client.removeLine(ctx.id, line.line_no));
+    if (result === undefined) return;
+    release();
     if (result.ok) {
       this.ticketMoved();
-      await this.afterCartChange();
+      await this.afterCartChange(ctx);
     } else {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "remove this line"));
       await this.loadAll();
@@ -1914,26 +2047,16 @@ export class QdQuoteWorkarea extends LitElement {
   private async putTermsNow(reloadAfter = false): Promise<void> {
     const client = this.client;
     const t = this.terms;
-    if (client === null || t === null || this.quoteId === "") return;
+    const ctx = this.ctx;
+    if (client === null || t === null || ctx.id === "") return;
     if (this.termsTimer !== undefined) {
       clearTimeout(this.termsTimer);
       this.termsTimer = undefined;
     }
     const sent = this.termsEditSeq;
-    const result = await client.putTerms(this.quoteId, {
-      depositRequired: t.depositRequired,
-      depositPct: t.depositPct,
-      includeImages: t.includeImages,
-      customerNotes: t.customerNotes,
-      contactName: t.contactName,
-      projectJob: t.projectJob,
-      customerPo: t.customerPo,
-      salespersonId: t.salespersonId,
-      fulfillment: t.fulfillment,
-      deliveryAddress: t.deliveryAddress,
-      requestedDate: t.requestedDate,
-      deliveryFeeCents: t.deliveryFeeCents,
-    });
+    const result = await ctx.guarded(client.putTerms(ctx.id, termsBody(t)));
+    // The quote changed while this save was out: its answer is not this screen's to show (leaving the quote already sent any later edit to its own quote).
+    if (result === undefined) return;
     // What was edited while this save was in flight is still unsaved and stays laid over the answer.
     if (this.termsEditSeq === sent) this.termsPending = {};
     if (!result.ok) {
@@ -1944,6 +2067,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.termsUnsaved = this.termsPendingCount() > 0;
     if (reloadAfter) {
       await this.loadAll();
+      if (ctx.stale) return;
       this.quoteChanged();
     }
   }
@@ -1951,12 +2075,15 @@ export class QdQuoteWorkarea extends LitElement {
   private async saveValidity(days: number): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    this.busy = true;
+    const ctx = this.ctx;
+    const release = this.holdBusy(ctx);
     this.error = "";
-    const result = await client.setValidUntil(this.quoteId, validUntilFromDays(days, this.clockNow));
-    this.busy = false;
+    const result = await ctx.guarded(client.setValidUntil(ctx.id, validUntilFromDays(days, this.clockNow)));
+    if (result === undefined) return;
+    release();
     if (result.ok) {
       await this.loadAll();
+      if (ctx.stale) return;
       this.quoteChanged();
     } else {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "change the expiry date"));
@@ -1964,11 +2091,14 @@ export class QdQuoteWorkarea extends LitElement {
   }
 
   /** After any cart change: refresh the terms (the server restamps the totals), then re-read. */
-  private async afterCartChange(): Promise<void> {
+  private async afterCartChange(ctx: QuoteContext): Promise<void> {
+    if (ctx.stale) return;
     if (this.terms !== null && this.view !== null && canEdit(this.view, EDIT_LINE_QTY)) {
       await this.putTermsNow();
+      if (ctx.stale) return;
     }
     await this.loadAll();
+    if (ctx.stale) return;
     this.quoteChanged();
   }
 
@@ -2137,12 +2267,13 @@ export class QdQuoteWorkarea extends LitElement {
   private async createForNow(cust: PickerCustomer): Promise<void> {
     const client = this.client;
     if (client === null || this.busy) return;
-    this.busy = true;
+    const ctx = this.ctx;
+    const release = this.holdBusy(ctx);
     this.error = "";
     this.createdQuoteId = "";
     const days = this.config?.policy?.defaultValidityDays || 30;
     const result = await client.createQuote(cust.id, this.branchId, validUntilFromDays(days, this.clockNow));
-    this.busy = false;
+    release();
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "create a quote"));
       return;
@@ -2162,10 +2293,16 @@ export class QdQuoteWorkarea extends LitElement {
     this.dispatchEvent(new CustomEvent("quote-open", { detail: { quoteId: "" }, bubbles: true, composed: true }));
   }
 
-  private async ensureLink(): Promise<string> {
+  /**
+   * The quote's share link, minted once. It is minted for the quote the context
+   * names, and kept only while that quote is still the one on screen: a mint
+   * that lands after the person moved on is dropped, never held for the next quote.
+   */
+  private async ensureLink(ctx: QuoteContext): Promise<string> {
     const client = this.client;
     if (client === null || this.mintedToken !== "") return this.mintedToken;
-    const result = await client.mintShareLink(this.quoteId);
+    const result = await ctx.guarded(client.mintShareLink(ctx.id));
+    if (result === undefined) throw new StaleQuoteError();
     if (!result.ok) {
       throw new Error(spokenRefusal(quoteErrorMessage(result.status, result.error, "create a share link")));
     }
@@ -2184,27 +2321,35 @@ export class QdQuoteWorkarea extends LitElement {
   }
 
   private async doCopyLink(): Promise<void> {
+    const ctx = this.ctx;
     try {
-      const token = await this.ensureLink();
+      const token = await this.ensureLink(ctx);
       // The clipboard is only there on a secure page: say so rather than claim a copy that did not happen.
       if (navigator.clipboard === undefined) throw new Error("The link was created but could not be copied from this page. Use Preview to open it and copy it from there.");
       await navigator.clipboard.writeText(this.shareUrl(token));
       // Creating a link emails nothing: sending is a different button.
+      if (ctx.stale) return;
       this.notice = "Link copied. Nothing was emailed. Paste the link, or use Send quote.";
       await this.loadAll();
+      if (ctx.stale) return;
       this.quoteChanged();
     } catch (e) {
+      if (ctx.stale) return;
       this.error = e instanceof Error ? e.message : "Could not create the link.";
     }
   }
 
   private async doPreview(print: boolean): Promise<void> {
+    const ctx = this.ctx;
     try {
-      const token = await this.ensureLink();
+      const token = await this.ensureLink(ctx);
+      if (ctx.stale) return;
       window.open(this.shareUrl(token, print), "_blank", "noopener");
       await this.loadAll();
+      if (ctx.stale) return;
       this.quoteChanged();
     } catch (e) {
+      if (ctx.stale) return;
       this.error = e instanceof Error ? e.message : "Could not open the preview.";
     }
   }
@@ -2212,19 +2357,28 @@ export class QdQuoteWorkarea extends LitElement {
   private async doSend(): Promise<void> {
     const client = this.client;
     if (client === null || this.busy) return;
+    const ctx = this.ctx;
     // One send at a time: a second press while the first is out would mint a second live link and start the cadence twice.
-    this.busy = true;
+    const release = this.holdBusy(ctx);
     this.sendOpen = false;
     this.error = "";
     this.notice = "";
     const channels = sendChannels(this.#sendPolicy()).filter((c) => this.sendPick[c]);
     try {
-      await this.ensureLink(); // the core mints a link, moves DRAFT to SENT and starts the cadence; it sends no email
+      // An edit still waiting on its save goes first: the quote the customer is sent holds what was typed.
+      if (this.termsPendingCount() > 0) {
+        await this.putTermsNow();
+        if (ctx.stale) return;
+        if (this.error !== "") return;
+      }
+      await this.ensureLink(ctx); // the core mints a link, moves DRAFT to SENT and starts the cadence; it sends no email
+      if (ctx.stale) return;
       let smsOk = false;
       let smsWhy = "";
       const smsChosen = channels.includes("SMS");
       if (smsChosen) {
-        const sms = await client.shareBySMS(this.quoteId);
+        const sms = await ctx.guarded(client.shareBySMS(ctx.id));
+        if (sms === undefined) return;
         if (sms.ok) {
           smsOk = true;
         } else {
@@ -2233,21 +2387,25 @@ export class QdQuoteWorkarea extends LitElement {
       }
       this.notice = sentConfirmation(smsChosen, smsOk, smsWhy);
       await this.loadAll();
+      if (ctx.stale) return;
       this.quoteChanged();
     } catch (e) {
+      if (ctx.stale) return;
       this.error = e instanceof Error ? e.message : "Could not send the quote.";
     } finally {
-      this.busy = false;
+      release();
     }
   }
 
   private async doConvert(): Promise<void> {
     const client = this.client;
     if (client === null || this.busy || this.quoteId === "") return;
-    this.busy = true;
+    const ctx = this.ctx;
+    const release = this.holdBusy(ctx);
     this.error = "";
-    const result = await client.convertQuote(this.quoteId);
-    this.busy = false;
+    const result = await ctx.guarded(client.convertQuote(ctx.id));
+    if (result === undefined) return;
+    release();
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "convert this quote"));
       await this.loadAll();
@@ -2255,6 +2413,7 @@ export class QdQuoteWorkarea extends LitElement {
     }
     this.converted = { orderNo: result.value.orderNo };
     await this.loadAll();
+    if (ctx.stale) return;
     this.quoteChanged();
   }
 

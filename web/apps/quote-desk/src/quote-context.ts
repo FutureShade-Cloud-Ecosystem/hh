@@ -1,0 +1,75 @@
+// The quote context: the one mechanism that keeps work belonging to one quote
+// from landing on another when the person switches quotes (or scope, or branch).
+//
+// A context is made when a quote is opened and cancelled when it is left. Every
+// read and every write captures the context at its START, binds itself to the
+// context's own id (never to a property read after an await), checks the
+// context after EVERY await, and applies an answer to state, or issues a
+// follow-up write, only while the context is still live.
+//
+//   const ctx = this.ctx;                                  // capture at the start
+//   const result = await ctx.guarded(client.readQuote(ctx.id));
+//   if (result === undefined) return;                      // the quote changed: say nothing
+//
+// guarded() resolves to undefined when the context went stale while the call
+// was out, so a caller cannot forget the check by accident.
+export class QuoteContext {
+  readonly id: string;
+  /** Counts the contexts a scope has opened: a context made later has a bigger epoch. */
+  readonly epoch: number;
+  private aborted = false;
+
+  constructor(id: string, epoch: number) {
+    this.id = id;
+    this.epoch = epoch;
+  }
+
+  /** True once the quote this context belongs to has been left. */
+  get stale(): boolean {
+    return this.aborted;
+  }
+
+  cancel(): void {
+    this.aborted = true;
+  }
+
+  /** The answer, or undefined when the context went stale while the call was in flight. */
+  async guarded<T>(call: Promise<T>): Promise<T | undefined> {
+    const answer = await call;
+    return this.aborted ? undefined : answer;
+  }
+}
+
+/** Resolves to undefined when the context is stale at the time the call answers. */
+export function guarded<T>(ctx: QuoteContext, call: Promise<T>): Promise<T | undefined> {
+  return ctx.guarded(call);
+}
+
+/** Holds the live context for one place that shows a quote, and replaces it (cancelling the old) on each open. */
+export class QuoteScope {
+  private epoch = 0;
+  private live: QuoteContext = new QuoteContext("", 0);
+
+  get current(): QuoteContext {
+    return this.live;
+  }
+
+  /** Cancel the context in use and start a fresh one for the quote now open. */
+  open(id: string): QuoteContext {
+    this.live.cancel();
+    this.epoch += 1;
+    this.live = new QuoteContext(id, this.epoch);
+    return this.live;
+  }
+}
+
+/**
+ * Sign out asks everything that holds unsent work to send it while the session
+ * still stands: a listener pushes its own flush onto detail.waits and the host
+ * waits for them all before it ends the session.
+ */
+export const SIGN_OUT_EVENT = "qd-sign-out";
+
+export interface SignOutDetail {
+  waits: Promise<void>[];
+}

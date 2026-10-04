@@ -947,6 +947,16 @@ const server = createServer(async (request, response) => {
     respondJson(response, 200, { workspaceWrites, itemsWrites, policyWrites, decisions, conversions, switches: { ...switches } });
     return;
   }
+  // Test scaffolding: one more quote with the given status, customer, lines and terms, so a race probe
+  // does not have to build its quotes through the screen.
+  if (path === "/_stub/seed-quote" && request.method === "POST") {
+    readBody(request, response, (body) => {
+      const lines = Array.isArray(body.lines) && body.lines.length > 0 ? body.lines : [{ p: "p-wall-std", q: 4 }];
+      const made = seedQuote(typeof body.status === "string" ? body.status : "DRAFT", String(body.customer_id ?? "c-fenwick"), String(body.owner_flow ?? "sales"), lines, body.terms ?? {});
+      respondJson(response, 200, { id: made.id, quote_no: made.quote_no });
+    });
+    return;
+  }
   if (path === "/_stub/general-manager" && request.method === "PUT") {
     readBody(request, response, (body) => {
       switches.callerIsGeneralManager = body.member === true;
