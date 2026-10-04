@@ -133,3 +133,15 @@ export function scopeRuleSummary(rules: ReadonlyArray<Pick<ScopeRuleRow, "enable
   const total = rules.length;
   return { on, total, anyOff: on < total, line: `${on} of ${total} ${total === 1 ? "rule is" : "rules are"} on.` };
 }
+
+/** The chip vocabulary: every active product's application, unique and sorted. */
+export function chipChoices(products: ReadonlyArray<{ is_active?: boolean; application?: string }>): string[] {
+  const set = new Set<string>();
+  for (const p of products) if (p.is_active === true && p.application !== undefined && p.application !== "") set.add(p.application);
+  return [...set].sort();
+}
+
+/** Picking a category appends it (click order is chip order); picking it again removes it. */
+export function toggleChip(picks: readonly string[], category: string): string[] {
+  return picks.includes(category) ? picks.filter((c) => c !== category) : [...picks, category];
+}

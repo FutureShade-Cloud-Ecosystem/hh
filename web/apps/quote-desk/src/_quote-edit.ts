@@ -205,11 +205,22 @@ export function shareSentence(view: Pick<QuoteView, "status" | "expired">): stri
     : `This quote is ${quoteStatusPhrase(view.status)} and cannot be shared.`;
 }
 
-/** The sentence under a quote the server offers no edit on. */
-export function frozenSentence(view: Pick<QuoteView, "status" | "expired" | "valid_until">): string {
-  return view.expired
-    ? `This quote expired on ${view.valid_until ?? ""} and can no longer be changed.`
-    : `This quote is ${quoteStatusPhrase(view.status)} and can no longer be changed.`;
+/**
+ * The sentence under a quote the server offers this caller no edit on. A
+ * lapsed or settled quote says why it is frozen; an open quote the caller
+ * may read but not change says that no changes are offered, and names its
+ * owner when the server sent one. The app decides nothing here: it only
+ * words what the missing offer means.
+ */
+export function frozenSentence(
+  view: Pick<QuoteView, "status" | "expired" | "valid_until" | "owner_name">,
+): string {
+  if (view.expired) return `This quote expired on ${view.valid_until ?? ""} and can no longer be changed.`;
+  if (view.status === "DRAFT" || view.status === "SENT") {
+    const owner = view.owner_name !== undefined && view.owner_name !== "" ? ` It belongs to ${view.owner_name}.` : "";
+    return `No changes are offered to you on this quote.${owner}`;
+  }
+  return `This quote is ${quoteStatusPhrase(view.status)} and can no longer be changed.`;
 }
 
 /** A share link row's state word. */

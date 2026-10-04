@@ -32,6 +32,8 @@ import {
 import {
   acceptanceNotice,
   buildItemsBody,
+  chipChoices,
+  toggleChip,
   curationDraft,
   moveDraftItem,
   policyBody,
@@ -98,6 +100,15 @@ test("the frozen sentence names the expiry date when the quote lapsed, else the 
     frozenSentence({ status: "SENT", expired: true, valid_until: "2030-01-05" }),
     "This quote expired on 2030-01-05 and can no longer be changed.",
   );
+});
+
+test("a quote the server offers no edit on says so in its own words: lapsed and frozen quotes name why, an open one names its owner", () => {
+  assert.equal(
+    frozenSentence({ status: "SENT", expired: false, valid_until: "", owner_name: "Sales manager (demo)" }),
+    "No changes are offered to you on this quote. It belongs to Sales manager (demo).",
+  );
+  assert.equal(frozenSentence({ status: "DRAFT", expired: false, valid_until: "" }), "No changes are offered to you on this quote.");
+  assert.equal(frozenSentence({ status: "CONVERTED", expired: false, valid_until: "" }), "This quote is converted and can no longer be changed.");
 });
 
 test("share link states: live, revoked, expired", () => {
@@ -245,6 +256,19 @@ test("buildItemsBody writes every kind in draft order with positions, and the mi
   assert.equal(lines.visible, true);
   const first = body.items.filter((i) => i.kind === "column").map((i) => i.position);
   assert.deepEqual(first, QB_COLUMNS.map((_, i) => i));
+});
+
+test("the chip vocabulary is the active products' applications, sorted and unique; picking appends and picking again removes", () => {
+  const products = [
+    { is_active: true, application: "Pavers" },
+    { is_active: true, application: "Aggregate" },
+    { is_active: false, application: "Retired" },
+    { is_active: true, application: "Pavers" },
+    { is_active: true },
+  ];
+  assert.deepEqual(chipChoices(products), ["Aggregate", "Pavers"]);
+  assert.deepEqual(toggleChip(["Pavers"], "Walls"), ["Pavers", "Walls"]);
+  assert.deepEqual(toggleChip(["Pavers", "Walls"], "Pavers"), ["Walls"]);
 });
 
 test("the acceptance notice says what each position of the one switch means", () => {
