@@ -1847,11 +1847,14 @@ export class QdQuoteWorkarea extends LitElement {
     if (client === null) return;
     // A scan right after the customer is picked lands while the quote is still being made or read: it waits
     // for them rather than being told to pick a customer who has just been picked.
-    if (this.creating !== null) {
+    // Only while compose is on screen: a scan on an open quote is for that quote and waits for no create.
+    if (this.creating !== null && this.quoteId === "") {
       await this.creating;
       // The host hands the new quote id down on its own render: wait for it to arrive (bounded).
       for (let waited = 0; this.createdQuoteId !== "" && this.quoteId === "" && waited < 50; waited += 1) await new Promise((resolve) => setTimeout(resolve, 20));
       await this.updateComplete;
+      // The person opened a quote that is not the one just made while the scan waited: it was meant for the new quote.
+      if (this.quoteId !== "" && this.quoteId !== this.createdQuoteId) return;
     }
     const ctx = this.ctx;
     if (ctx.id !== "" && this.view === null) {
@@ -2276,7 +2279,13 @@ export class QdQuoteWorkarea extends LitElement {
     this.error = "";
     this.createdQuoteId = "";
     const days = this.config?.policy?.defaultValidityDays || 30;
-    const result = await client.createQuote(cust.id, this.branchId, validUntilFromDays(days, this.clockNow));
+    const result = await ctx.guarded(client.createQuote(cust.id, this.branchId, validUntilFromDays(days, this.clockNow)));
+    if (result === undefined) {
+      // The person opened another quote while this one was being made: the screen stays where they went, and
+      // the list is told so the new draft shows in it.
+      this.quoteChanged();
+      return;
+    }
     release();
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "create a quote"));

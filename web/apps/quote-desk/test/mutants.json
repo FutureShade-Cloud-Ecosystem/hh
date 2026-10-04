@@ -75,5 +75,26 @@
     "find": "if (released || ctx.stale) return;",
     "replace": "if (released) return;",
     "test": "guard busy release:"
+  },
+  {
+    "id": "wa-create-answer",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(client.createQuote(cust.id, this.branchId, validUntilFromDays(days, this.clockNow)))",
+    "replace": "await client.createQuote(cust.id, this.branchId, validUntilFromDays(days, this.clockNow))",
+    "test": "P2-1 a scan on an open quote"
+  },
+  {
+    "id": "wa-scan-wait-compose-only",
+    "file": "src/quote-workarea.ts",
+    "find": "if (this.creating !== null && this.quoteId === \"\") {",
+    "replace": "if (this.creating !== null) {",
+    "test": "P2-1 a scan on an open quote"
+  },
+  {
+    "id": "wa-scan-wait-target",
+    "file": "src/quote-workarea.ts",
+    "find": "if (this.quoteId !== \"\" && this.quoteId !== this.createdQuoteId) return;",
+    "replace": "",
+    "test": "P2-1 a scan made in compose"
   }
 ]
