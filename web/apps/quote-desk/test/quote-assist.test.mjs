@@ -428,7 +428,7 @@ test("the panel never auto-ticks: the confirm set is emptied on a read and never
 
 test("confirming goes through the client's audited addLine, one line at a time, then announces the change", () => {
   const src = code(PANEL);
-  assert.match(src, /client\.addLine\(this\.quoteId, p\.product_id, p\.qty_entered, p\.uom_entered\)/);
+  assert.match(src, /client\.addLine\(quoteId, p\.product_id, p\.qty_entered, p\.uom_entered\)/);
   assert.match(src, /for \(const p of payloads\)/);
   assert.match(src, /addPayloads\(/);
   assert.match(src, /this\.announceChanged\(\)/);
@@ -436,7 +436,8 @@ test("confirming goes through the client's audited addLine, one line at a time, 
 
 test("the extract call sends use_ai from the helper and the helper starts unticked and available", () => {
   const src = code(PANEL);
-  assert.match(src, /assistExtract\(this\.text, this\.branchId, this\.useAi\)/);
+  assert.match(src, /assistExtract\(this\.text, this\.branchId, asked\)/);
+  assert.match(src, /const asked = this\.useAi && !this\.aiLatched;/);
   assert.match(src, /@state\(\) private useAi = false;/);
   assert.match(src, /@state\(\) private aiLatched = false;/);
 });
