@@ -63,9 +63,11 @@ the claim crossed.
 - No reverse dependency: nothing under src/ imports from any app under
   web/apps/. The app imports the kit; the kit never imports the app.
 - Consumers import deep paths the way they already import the design system:
-  @hardscapehouse/pos-kit/src/ported/<file>.js (Vite and tsc map the .js
-  specifier onto the .ts source; the kit's own tests use the loader in
-  src/_ts-js-loader.mjs).
+  @hardscapehouse/pos-kit/src/ported/<file>.js. The package.json exports map
+  points ./src/*.js at the .ts source and passes every other ./src/ subpath
+  through, so Vite, tsc (bundler resolution), the node --import loaders and
+  Playwright's own loader all land on the same files (the kit's own tests use
+  the loader in src/_ts-js-loader.mjs).
 - The entry exports nothing of its own yet: the till and the quote work area
   both read the pieces by deep path. An index that re-exports a chosen
   surface is the quote lane's to add when its first consumer lands.

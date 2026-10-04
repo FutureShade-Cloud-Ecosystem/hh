@@ -3,6 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./src/*.js": "./src/*.ts",
+    "./src/*": "./src/*"
+  },
   "description": "The shared POS train pieces of the ported counter surface: the scan box, the product grid, the product thumb, the flow steps, the customer picker, the workspace geometry, the icon registry and money format helpers, and the demo way in, moved once out of the Counter Till's app so the Quote Desk work area can import the same pieces (QD-0 plan r1, section 10.1). The till's suites stayed green through the move; the files keep their provenance headers and their ported names under src/ported/.",
   "scripts": {
     "typecheck": "tsc --noEmit",
