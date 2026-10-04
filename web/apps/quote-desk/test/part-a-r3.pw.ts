@@ -135,3 +135,19 @@ test("P2-2 sign out is bounded: a save that never answers does not hold it, and 
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible({ timeout: 10000 });
   await expect(page.getByRole("status").filter({ hasText: "timed out" })).toBeVisible();
 });
+
+test("P2-3 the identity card shows nothing of the previous customer's account while the new customer's facts are read", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1001");
+  await expect(page.getByTestId("qb-identity-credit")).toBeVisible();
+  await expect(page.getByTestId("qb-identity")).toContainText("C01");
+  const held = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "GET" });
+  await row(page, "Q-1004").click();
+  await held.asked;
+  await expect(page.getByTestId("qb-identity")).toContainText("Fenwick");
+  await expect(page.getByTestId("qb-identity-credit")).toHaveCount(0);
+  await expect(page.getByTestId("qb-identity")).not.toContainText("C01");
+  held.open();
+  await expect(page.getByTestId("qb-identity")).toContainText("C02");
+});

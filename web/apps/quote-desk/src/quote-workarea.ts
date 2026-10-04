@@ -1160,6 +1160,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.view = null;
     this.terms = null;
     this.glance = null;
+    this.customer = null; // the card shows nothing of the old account until the new one is read
     this.addons = [];
     this.qtyDrafts = {};
     this.discDrafts = {};
