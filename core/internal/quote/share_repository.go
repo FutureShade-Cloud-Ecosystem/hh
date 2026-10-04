@@ -294,6 +294,25 @@ func (r *Repository) AcceptQuoteGuarded(ctx context.Context, in acceptWrite, hoo
 		if found {
 			return prior, nil
 		}
+		// QD-3d review 3: the link was live when the request resolved it, and may have died while
+		// this request waited for a connection or for this lock. A keyed retry that arrived in that
+		// window was answered 410 (its own lookup found nothing), so this attempt must not commit
+		// behind it: the link is read again here, under the lock, against the database clock read
+		// now (clock_timestamp, never in.Now and not this transaction's start), so whichever request
+		// takes the quote row lock first, a keyed 410 is honest. Keyed attempts only: an unkeyed
+		// accept is unchanged. A link row that is gone counts as dead.
+		var live bool
+		if lerr := tx.QueryRow(ctx, `
+			SELECT revoked_at IS NULL AND expires_at > clock_timestamp()
+			  FROM quote_share_links WHERE id = $1::uuid`, in.ShareLinkID).Scan(&live); lerr != nil {
+			if errors.Is(lerr, pgx.ErrNoRows) {
+				return out, ErrLinkGone
+			}
+			return out, fmt.Errorf("re-read share link for acceptance: %w", lerr)
+		}
+		if !live {
+			return out, ErrLinkGone
+		}
 	}
 	repeat := false
 	if status != "SENT" {

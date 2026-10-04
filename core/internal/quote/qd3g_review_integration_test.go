@@ -18,9 +18,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// P2-A: the exact probe of the review. An outside transaction holds the quote row lock, attempt 1
-// queues behind it, the link is revoked, the keyed retry is sent, the lock is released: the retry
-// answers 200 with the first outcome (never 410) and exactly one acceptance row exists.
+// P2-A: an in flight accept that is past the quote row lock, and the link dies under it. An outside
+// transaction holds the acceptance table against writes (reads still pass), so attempt 1 takes the
+// quote lock, finds the link live, and stalls at its acceptance insert; the link is revoked, the keyed
+// retry is sent and queues behind the quote lock, the table is released: the retry answers 200 with the first outcome (never 410) and
+// exactly one acceptance row exists. (QD-3d review 3: an attempt still waiting FOR the quote lock when
+// the link dies is refused with the 410 itself, see the QD3h tests.)
 func TestIntegration_QD3g_RetryThroughDeadLinkWaitsForInFlightAccept(t *testing.T) {
 	pool := intPool(t)
 	now := qd3fNow()
@@ -38,8 +41,8 @@ func TestIntegration_QD3g_RetryThroughDeadLinkWaitsForInFlightAccept(t *testing.
 				t.Fatalf("begin holder: %v", err)
 			}
 			defer func() { _ = holder.Rollback(ctx) }()
-			if _, err := holder.Exec(ctx, `SELECT 1 FROM quotes WHERE id = $1 FOR UPDATE`, quoteID); err != nil {
-				t.Fatalf("hold the quote row lock: %v", err)
+			if _, err := holder.Exec(ctx, `LOCK TABLE quote_acceptances IN SHARE MODE`); err != nil {
+				t.Fatalf("hold the acceptance table: %v", err)
 			}
 			first := make(chan answerOrErr, 1)
 			go func() {
