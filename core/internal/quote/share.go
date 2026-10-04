@@ -474,7 +474,8 @@ func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedNa
 // revoked or has expired, or reports false and leaves the caller's 410 standing. A keyed 410 means no
 // acceptance exists under this key for this link at that moment: a different typed name (never
 // replayed, never named) and no matching acceptance are both that 410, so a dead link reveals nothing
-// more. The affirmative is checked as on a live link (the same 400).
+// more. The affirmative is checked as on a live link (the same 400). A lookup failure is an error, not
+// the 410: the outcome is unknown, and the 410 must keep its meaning.
 func (s *StaffService) replayThroughDeadLink(ctx context.Context, link ShareLink, quoteID, typedName string, affirmed bool, idemKey string) (AcceptanceResult, bool, error) {
 	name := strings.TrimSpace(typedName)
 	if name == "" || len(name) > maxTypedName {
@@ -486,10 +487,13 @@ func (s *StaffService) replayThroughDeadLink(ctx context.Context, link ShareLink
 	res, found, err := s.shares.ReplayKeyedAcceptance(ctx, acceptWrite{
 		QuoteID: quoteID, ShareLinkID: link.ID, TypedName: name, IdempotencyKey: idemKey,
 	})
-	if err != nil || !found {
+	if errors.Is(err, ErrIdempotencyKeyReused) {
 		return AcceptanceResult{}, false, nil
 	}
-	return res, true, nil
+	if err != nil {
+		return AcceptanceResult{}, false, err
+	}
+	return res, found, nil
 }
 
 // recordAcceptance writes the QUOTE_ACCEPTED audit row on the acceptance's own transaction and returns

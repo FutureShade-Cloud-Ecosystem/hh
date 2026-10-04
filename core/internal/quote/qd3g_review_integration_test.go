@@ -8,6 +8,7 @@ package quote
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -172,5 +173,32 @@ func TestIntegration_QD3g_DeadLinkNeedsTheAffirmative(t *testing.T) {
 	}
 	if n := acceptanceRows(t, pool, quoteID); n != 1 {
 		t.Errorf("acceptance rows = %d, want 1", n)
+	}
+}
+
+// failingReplay is a shareStore whose dead link lookup fails.
+type failingReplay struct {
+	shareStore
+}
+
+func (failingReplay) ReplayKeyedAcceptance(context.Context, acceptWrite) (AcceptanceResult, bool, error) {
+	return AcceptanceResult{}, false, errors.New("injected lookup failure")
+}
+
+// P3-b: a lookup error on the dead link path is an error (a 500, the outcome unknown), never the 410
+// that means "no acceptance exists under this key".
+func TestIntegration_QD3g_DeadLinkLookupErrorIsNotA410(t *testing.T) {
+	pool := intPool(t)
+	now := qd3fNow()
+	setMultiAccept(t, pool, true)
+	svc, _, token, _ := qd3gAccepted(t, pool, now)
+	broken := *svc
+	broken.shares = failingReplay{svc.shares}
+	w := qd3dPost(t, &broken, context.Background(), token, qd3dKeyA, qd3fCustomer)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("lookup failure on a dead link = %d (%s), want 500", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "injected") {
+		t.Errorf("the 500 must not echo the internal error: %s", w.Body.String())
 	}
 }
