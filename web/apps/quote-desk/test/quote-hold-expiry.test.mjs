@@ -55,7 +55,7 @@ test("the lapsed line is named as a rep would say it, with when it lapsed", () =
   assert.equal(expiredLineLabel(hold({ product_name: "", sku: "" })), "12 · an unnamed product");
   assert.equal(expiredLineLabel(hold({ status: "RELEASED" })), "12 · Natural Step · released early");
   assert.equal(expiredLineLabel(hold(), (iso) => `@${iso}`), "12 · Natural Step · lapsed @2026-08-04T13:00:00Z");
-  assert.equal(expiredLineLabel(hold({ expires_at: undefined }), (iso) => iso), "12 · Natural Step");
+  assert.equal(expiredLineLabel(hold({ expires_at: undefined, ended_at: undefined }), (iso) => iso), "12 · Natural Step");
 });
 
 test("formatQty trims trailing zeros and survives garbage", () => {
