@@ -80,12 +80,41 @@ func (r *Repository) findKeyedAcceptance(ctx context.Context, tx rowQuerier, in 
 	return out, true, nil
 }
 
-// ReplayKeyedAcceptance is the read-only lookup behind a retry through a link that has since died
-// (revoked or expired): the caller holds the token that existed and the key, so the first outcome is
-// what they were owed. It writes nothing and takes no lock; the acceptance it reads is committed.
+// ReplayKeyedAcceptance is the lookup behind a retry through a link that has since died (revoked or
+// expired): the caller holds the token that existed and the key, so the first outcome is what they were
+// owed. It writes nothing. It reads under a SHARE lock on the quote row, the row AcceptQuoteGuarded
+// takes FOR UPDATE, so a retry that arrives while the first attempt is still in flight (resolved while
+// the link was live, then the link died) waits for that attempt to commit or abort and then sees the
+// truth. Without the lock it could answer "nothing accepted" a moment before the first attempt commits.
+//
+// WHY FOR SHARE CANNOT DEADLOCK. This transaction holds no lock before it takes the quote row's share
+// lock, takes no other lock afterwards (the rest is plain reads, which lock nothing) and waits on
+// nothing after that point, so it can never sit on a wait cycle: the only thing it ever waits for is
+// the one lock it asks for first, and whoever holds that lock (the accept, the staff edit paths, send,
+// convert and the sync write, all of which lock quote rows FOR UPDATE and take no lock this
+// transaction holds) is not waiting on it. RevokeShareLink is a plain UPDATE of the link row and takes
+// no quote row lock, and the follow-up sweep takes none either, so neither enters the ordering. A share
+// lock is compatible with other share locks and with the key share locks foreign keys take, so
+// concurrent retries do not queue behind each other. READ COMMITTED gives the lookup that follows the
+// lock a fresh snapshot, which is what lets it see the commit it waited for.
 func (r *Repository) ReplayKeyedAcceptance(ctx context.Context, in acceptWrite) (AcceptanceResult, bool, error) {
 	if r.pool == nil {
 		return AcceptanceResult{}, false, errNoDB
 	}
-	return r.findKeyedAcceptance(ctx, r.pool, in)
+	if !looksLikeUUID(in.QuoteID) {
+		return AcceptanceResult{}, false, nil
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return AcceptanceResult{}, false, fmt.Errorf("begin keyed replay: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var one int
+	if err := tx.QueryRow(ctx, `SELECT 1 FROM quotes WHERE id = $1 FOR SHARE`, in.QuoteID).Scan(&one); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return AcceptanceResult{}, false, nil
+		}
+		return AcceptanceResult{}, false, fmt.Errorf("lock quote for keyed replay: %w", err)
+	}
+	return r.findKeyedAcceptance(ctx, tx, in)
 }
