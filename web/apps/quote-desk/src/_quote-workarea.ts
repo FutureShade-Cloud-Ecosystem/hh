@@ -14,6 +14,7 @@
 // (@hardscapehouse/pos-kit's _pos-workspace), reused, not forked.
 
 import type { FlowStep, FlowStepId } from "@hardscapehouse/pos-kit/src/ported/_pos-flow.js";
+import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { clampSplit, splitFromPointer, type Arrangement } from "@hardscapehouse/pos-kit/src/ported/_pos-workspace.js";
 
 // ── the tracked (never gated) stepper: Customer, Products, Review and Send ────
@@ -185,8 +186,9 @@ export const VALIDITY_CHOICES = [7, 14, 30, 60, 90] as const;
 
 /** The YYYY-MM-DD date `days` from an injected now (the injected clock rule). */
 export function validUntilFromDays(days: number, now: Date): string {
-  const d = new Date(now.getTime() + days * 86400000);
-  return d.toISOString().slice(0, 10);
+  // The dealer's own day (the kit's house day), never the UTC clock: after eight in the evening in Toronto UTC has rolled over.
+  const today = Date.parse(`${houseDayInZone(HOUSE_ZONE, now)}T00:00:00Z`);
+  return new Date(today + days * 86400000).toISOString().slice(0, 10);
 }
 
 /**
@@ -197,8 +199,26 @@ export function validityDaysOf(validUntil: string | undefined, now: Date): numbe
   if (!validUntil) return null;
   const target = Date.parse(`${validUntil}T00:00:00Z`);
   if (!Number.isFinite(target)) return null;
-  const today = Date.parse(`${now.toISOString().slice(0, 10)}T00:00:00Z`);
+  const today = Date.parse(`${houseDayInZone(HOUSE_ZONE, now)}T00:00:00Z`);
   return Math.round((target - today) / 86400000);
+}
+
+// ── the delivery fee ───────────────────────────────────────────────────────────
+
+/**
+ * parseDeliveryFee: a typed delivery fee in dollars, as integer cents, or the
+ * words that refuse it. Blank is no fee. Anything that is not plain dollars and
+ * cents ("$25", "1,250") is refused rather than saved as zero.
+ */
+export function parseDeliveryFee(raw: string): { cents: number } | { error: string } {
+  const text = raw.trim();
+  if (text === "") return { cents: 0 };
+  const match = /^(\d{1,7})(?:\.(\d{1,2}))?$/.exec(text);
+  if (match === null) {
+    return { error: `"${text}" is not a dollar amount, so the delivery fee was not changed. Type it as 25 or 25.50.` };
+  }
+  const cents = Number(match[1]) * 100 + Number((match[2] ?? "").padEnd(2, "0"));
+  return { cents };
 }
 
 // ── the workspace (geometry delegated to the kit, reused not forked) ──────────

@@ -275,7 +275,12 @@ function validateView(value: unknown): QuoteView | null {
   };
 }
 
-function validateTerms(value: unknown): TermsRef | null {
+/**
+ * The terms answer, field by field. delivery_fee_cents, deposit_cents and
+ * fulfillment are required in the contract: a missing one refuses the answer
+ * rather than defaulting to zero or to PICKUP.
+ */
+export function validateTerms(value: unknown): TermsRef | null {
   if (!isRecord(value)) return null;
   const linesRaw = value["lines"];
   if (!Array.isArray(linesRaw)) return null;
@@ -303,9 +308,12 @@ function validateTerms(value: unknown): TermsRef | null {
   const taxCents = integerAt(value, "tax_cents");
   const totalCents = integerAt(value, "total_cents");
   const depositCents = integerAt(value, "deposit_cents");
+  const deliveryFeeCents = integerAt(value, "delivery_fee_cents");
   if (
     quoteId === null || depositRequired === null || depositPct === null || includeImages === null ||
-    fulfillmentRaw === null || subtotalCents === null || taxCents === null || totalCents === null
+    fulfillmentRaw === null || (fulfillmentRaw !== "PICKUP" && fulfillmentRaw !== "DELIVERY") ||
+    deliveryFeeCents === null || depositCents === null ||
+    subtotalCents === null || taxCents === null || totalCents === null
   ) {
     return null;
   }
@@ -320,11 +328,11 @@ function validateTerms(value: unknown): TermsRef | null {
     customerPo: typeof value["customer_po"] === "string" ? value["customer_po"] : "",
     salespersonId: typeof value["salesperson_id"] === "string" ? value["salesperson_id"] : "",
     salespersonName: stringAt(value, "salesperson_name"),
-    fulfillment: fulfillmentRaw === "DELIVERY" ? "DELIVERY" : "PICKUP",
+    fulfillment: fulfillmentRaw,
     deliveryAddress: typeof value["delivery_address"] === "string" ? value["delivery_address"] : "",
     requestedDate: typeof value["requested_date"] === "string" ? value["requested_date"] : "",
-    deliveryFeeCents: integerAt(value, "delivery_fee_cents") ?? 0,
-    depositCents: depositCents ?? 0,
+    deliveryFeeCents,
+    depositCents,
     subtotalCents,
     taxCents,
     totalCents,

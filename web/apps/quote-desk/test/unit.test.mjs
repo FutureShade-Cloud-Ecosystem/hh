@@ -169,6 +169,14 @@ test("validity days are whole days from an injected today, and the date writer l
   assert.deepEqual([...VALIDITY_CHOICES], [7, 14, 30, 60, 90]);
 });
 
+test("validity runs on the house day, not the UTC day: nine in the evening in Toronto is still that day", () => {
+  // 01:00 UTC on 10 March is 21:00 on the 9th in Toronto (daylight time began on the 8th).
+  const evening = new Date("2026-03-10T01:00:00Z");
+  assert.equal(validUntilFromDays(30, evening), "2026-04-08");
+  assert.equal(validityDaysOf("2026-04-08", evening), 30);
+  assert.equal(validityDaysOf("2026-03-09", evening), 0);
+});
+
 // ── the workspace geometry ─────────────────────────────────────────────────────
 
 test("the panel tracks follow the arrangement, the split and the collapse state", () => {

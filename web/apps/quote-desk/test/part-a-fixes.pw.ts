@@ -183,3 +183,45 @@ test("the desk raises no Lit change-in-update warning from the customer picker",
   await page.waitForTimeout(500);
   expect(warnings).toEqual([]);
 });
+
+// ── P3: money and dates ──
+
+test("the deposit shown is the server's deposit_cents; an unsaved terms edit shows a labelled estimate", async ({ page }) => {
+  await signIn(page);
+  await startQuote(page);
+  // The server's figure is deliberately not the local arithmetic, so what shows is whose it is.
+  let slowSave = false;
+  await page.route("**/api/v1/quotes/*/terms", async (route) => {
+    if (slowSave && route.request().method() === "PUT") await new Promise((resolve) => setTimeout(resolve, 1500));
+    const response = await route.fetch();
+    const body = (await response.json()) as Record<string, unknown>;
+    if (body.deposit_required === true) body.deposit_cents = 12345;
+    await route.fulfill({ response, json: body });
+  });
+  await page.getByTestId("qb-terms-deposit-toggle").check();
+  await expect(page.getByTestId("qb-deposit-label")).toHaveText("Deposit due");
+  await expect(page.getByTestId("qb-totals")).toContainText("CA$123.45");
+  // A change that has not been saved yet is the local figure, and says so.
+  slowSave = true;
+  await page.getByTestId("qb-terms-deposit").fill("50");
+  await page.getByTestId("qb-terms-deposit").blur();
+  await expect(page.getByTestId("qb-deposit-label")).toHaveText("Deposit due (estimate, not yet saved)");
+  await expect(page.getByTestId("qb-deposit-label")).toHaveText("Deposit due");
+});
+
+test("a typed delivery fee of $25 or 1,250 is refused in words, never saved as zero; 25 saves", async ({ page }) => {
+  await signIn(page);
+  await startQuote(page);
+  const fee = page.getByTestId("qb-delivery-fee");
+  await page.getByTestId("qb-fulfil-delivery").click();
+  await fee.fill("$25");
+  await fee.blur();
+  await expect(page.getByTestId("qb-error")).toContainText("is not a dollar amount");
+  await fee.fill("1,250");
+  await fee.blur();
+  await expect(page.getByTestId("qb-error")).toContainText("is not a dollar amount");
+  await expect(page.getByTestId("qb-totals")).not.toContainText("Delivery");
+  await fee.fill("25");
+  await fee.blur();
+  await expect(page.getByTestId("qb-totals")).toContainText("CA$25.00");
+});

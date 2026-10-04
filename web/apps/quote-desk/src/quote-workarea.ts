@@ -66,6 +66,7 @@ import {
   creditLine,
   customerTypeTag,
   depositCents,
+  parseDeliveryFee,
   freshQuoteState,
   initialsOf,
   lineCostCents,
@@ -1326,6 +1327,7 @@ export class QdQuoteWorkarea extends LitElement {
     if (this.quoteId === "") {
       this.view = null;
       this.terms = null;
+      this.termsUnsaved = false;
       this.glance = null;
       this.addons = [];
       return;
@@ -1353,7 +1355,10 @@ export class QdQuoteWorkarea extends LitElement {
       void this.updateComplete.then(() => this.focusScan());
     }
     const terms = await client.readTerms(this.quoteId);
-    if (terms.ok) this.terms = terms.value;
+    if (terms.ok) {
+      this.terms = terms.value;
+      this.termsUnsaved = this.termsTimer !== undefined;
+    }
     // The margin glance: byte absent fields for a refused caller. An empty
     // object means no margin surface for you, never an error.
     const glance = await client.marginGlance(this.quoteId);
@@ -1554,10 +1559,14 @@ export class QdQuoteWorkarea extends LitElement {
         this.sendPick = { ...this.sendPick, [channel]: control.checked };
       }
       if (field === "delivery-fee") {
-        const dollars = Number(control.value);
-        this.termsEdit({
-          deliveryFeeCents: Number.isFinite(dollars) && dollars > 0 ? Math.round(dollars * 100) : 0,
-        });
+        const fee = parseDeliveryFee(control.value);
+        if ("error" in fee) {
+          // Never saved as zero: refused in words, and the box returns to the saved figure.
+          this.error = fee.error;
+          this.requestUpdate();
+        } else {
+          this.termsEdit({ deliveryFeeCents: fee.cents });
+        }
       }
       if (field === "deposit-pct") {
         const n = Number(control.value);
@@ -1816,8 +1825,12 @@ export class QdQuoteWorkarea extends LitElement {
 
   // ── terms ──────────────────────────────────────────────────────────────────
 
+  /** True from a terms edit until the server has answered its save: the totals card then shows local figures, labelled. */
+  @state() private termsUnsaved = false;
+
   private termsEdit(patch: Partial<TermsRef>): void {
     if (this.terms === null) return;
+    this.termsUnsaved = true;
     this.terms = { ...this.terms, ...patch };
     if (this.termsTimer !== undefined) clearTimeout(this.termsTimer);
     this.termsTimer = setTimeout(() => void this.putTermsNow(true), 600);
@@ -1881,6 +1894,7 @@ export class QdQuoteWorkarea extends LitElement {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "save the quote terms"));
       return;
     }
+    this.termsUnsaved = false;
     this.terms = result.value;
     if (reloadAfter) {
       await this.loadAll();
@@ -2748,7 +2762,13 @@ export class QdQuoteWorkarea extends LitElement {
       t.taxCents,
       t.totalCents,
     );
-    const dep = depositCents(t.depositRequired, t.depositPct, b.totalCents);
+    // The deposit is the server's figure (deposit_cents). Only while a terms edit is unsaved is the local
+    // figure shown, and it is labelled as an estimate, because the server has not seen the edit yet.
+    const dep = this.termsUnsaved
+      ? depositCents(t.depositRequired, t.depositPct, b.totalCents)
+      : t.depositRequired && t.depositCents > 0
+        ? t.depositCents
+        : null;
     const showMargin = marginPresent(this.glance) && !this.ws.costHidden;
     return html`<div class="card totals" data-testid="qb-totals">
       <div class="trow"><span>Products</span><span class="num">${money(b.productsCents)}</span></div>
@@ -2769,7 +2789,7 @@ export class QdQuoteWorkarea extends LitElement {
       </div>
       ${dep !== null
         ? html`<div class="trow">
-            <span>Deposit due</span>
+            <span data-testid="qb-deposit-label">${this.termsUnsaved ? "Deposit due (estimate, not yet saved)" : "Deposit due"}</span>
             <span class="num">${money(dep)}</span>
           </div>`
         : nothing}

@@ -45,7 +45,7 @@ import {
   quoteErrorMessage,
   quoteStatusWord,
 } from "./_quote-edit.js";
-import { spokenRefusal } from "./_quote-workarea.js";
+import { spokenRefusal, validUntilFromDays } from "./_quote-workarea.js";
 import { OPEN_SETTINGS_EVENT } from "./panel-seams.js";
 import type { QdClient, QuoteRow } from "./qd-client.js";
 
@@ -210,10 +210,7 @@ export class QdQuoteBuilder extends LitElement {
     this.startLoads();
     // The expiry defaults to thirty days out so nobody types a date to make
     // the form move.
-    if (this.newExpiry === "") {
-      const d = new Date(Date.now() + 30 * 86400000);
-      this.newExpiry = d.toISOString().slice(0, 10);
-    }
+    if (this.newExpiry === "") this.newExpiry = validUntilFromDays(30, new Date());
     this.renderRoot.addEventListener("click", this.onActionClick as EventListener);
     this.renderRoot.addEventListener("change", this.onFieldChange as EventListener);
     this.renderRoot.addEventListener("quote-changed", this.onQuoteChanged as EventListener);
@@ -354,7 +351,7 @@ export class QdQuoteBuilder extends LitElement {
       return;
     }
     this.newCustomer = null;
-    this.newExpiry = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10); // stays pre-filled for the next quote
+    this.newExpiry = validUntilFromDays(30, new Date()); // stays pre-filled for the next quote
     await this.loadList();
     this.selected = result.value;
   }
