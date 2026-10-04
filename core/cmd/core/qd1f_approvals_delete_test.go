@@ -5,8 +5,8 @@ package main
 // door once fenced the tombstone by org alone, so any staff member withdrew
 // anyone's request, and since the tombstone now takes effect (lists, decide
 // and consumption ignore it) that withdrawal cancelled a seller's pending or
-// already approved clearing. Only the requester withdraws, and only while the
-// request is still pending: a decided or consumed one is a record.
+// already approved clearing. Only the requester withdraws, in any state but a
+// consumed (used up) approval, which is a record the sale stands on.
 
 import (
 	"context"
@@ -49,16 +49,16 @@ func qd1fDelete(t *testing.T, q *qd1bFixture, sub, key, id string) qd1bPushResul
 	return qd1bPush(t, q, sub, qd1bPushOp{ClientID: key, Op: "delete", Payload: map[string]any{"id": id}})
 }
 
-func TestQD1F_ApprovalsSyncDeleteIsTheRequestersOwnAndOnlyWhilePending(t *testing.T) {
+func TestQD1F_ApprovalsSyncDeleteIsTheRequestersOwnUnlessConsumed(t *testing.T) {
 	q := newQD1BFixture(t)
 	clerk := qd1bUserID(t, q.pool, testkit.SubInsideSales)
 
-	// Nobody but the requester tombstones a floor request, pending or approved.
+	// Nobody but the requester tombstones a request, in any state.
 	for i, state := range []struct {
 		name   string
 		status string
 		used   bool
-	}{{"pending", "PENDING", false}, {"approved", "APPROVED", false}} {
+	}{{"pending", "PENDING", false}, {"approved", "APPROVED", false}, {"rejected", "REJECTED", false}, {"consumed", "APPROVED", true}} {
 		for j, sub := range []string{xrSubYardTeam, xrSubHR, testkit.SubSalesManager, testkit.SubGeneralMgr, xrSubFinancialController, xrSubBranchManager} {
 			id := qd1cPlantMargin(t, q, clerk, "0000000f"+string(rune('1'+i))+string(rune('a'+j))+"0")
 			qd1fSetState(t, q, id, state.status, state.used)
@@ -78,18 +78,24 @@ func TestQD1F_ApprovalsSyncDeleteIsTheRequestersOwnAndOnlyWhilePending(t *testin
 		t.Errorf("the requester's own pending request was not withdrawn")
 	}
 
-	// A decided or consumed request is a record, even for its requester.
+	// The requester also withdraws its own approved-unused and rejected
+	// requests, and never a consumed one.
 	for i, state := range []struct {
-		name   string
-		status string
-		used   bool
-	}{{"approved", "APPROVED", false}, {"rejected", "REJECTED", false}, {"consumed", "APPROVED", true}} {
+		name     string
+		status   string
+		used     bool
+		withdraw bool
+	}{{"approved-unused", "APPROVED", false, true}, {"rejected", "REJECTED", false, true}, {"consumed", "APPROVED", true, false}} {
 		id := qd1cPlantMargin(t, q, clerk, "0000000f3"+string(rune('a'+i))+"00")
 		qd1fSetState(t, q, id, state.status, state.used)
 		res := qd1fDelete(t, q, testkit.SubInsideSales, uuid.NewString(), id)
-		qd1bRejected(t, "the requester withdraws a "+state.name+" request", res, "")
-		if qd1fDeleted(t, q, id) {
-			t.Errorf("a %s request was withdrawn", state.name)
+		if state.withdraw {
+			qd1bApplied(t, "the requester withdraws its own "+state.name+" request", res)
+		} else {
+			qd1bRejected(t, "the requester withdraws a "+state.name+" request", res, "")
+		}
+		if qd1fDeleted(t, q, id) != state.withdraw {
+			t.Errorf("the requester's %s request: tombstoned %v, want %v", state.name, !state.withdraw, state.withdraw)
 		}
 	}
 }
