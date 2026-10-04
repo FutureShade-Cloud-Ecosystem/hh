@@ -526,10 +526,15 @@ func rulePriceLogRows(caller identity.StaffContext, quoteID, productID string, d
 // twice. A BYPASS row belongs to the clearing, not to the line moving: the
 // plan carries a clearing only when this write stamped a new one or used up
 // an approval (a write riding a standing clearing carries none), so the row
-// is written whether or not the line moved.
+// is written whether or not the line moved. With no arbiter wired the rows
+// cannot be written, and the hook refuses the write (fails closed) rather
+// than let a below floor price go unlogged.
 func (s *StaffService) pricingLogHook(rows []pricing.FloorRecord) func(context.Context, pgx.Tx, int, bool) error {
-	if s.floor == nil || len(rows) == 0 {
+	if len(rows) == 0 {
 		return nil
+	}
+	if s.floor == nil {
+		return func(context.Context, pgx.Tx, int, bool) error { return ErrEditNotConfigured }
 	}
 	return func(ctx context.Context, tx pgx.Tx, lineNo int, changed bool) error {
 		for _, rec := range rows {
