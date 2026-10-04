@@ -290,3 +290,36 @@ func mustLineID(t *testing.T, pool *pgxpool.Pool, quoteID string) string {
 	}
 	return lineID
 }
+
+// The request lookup's line binding, pinned directly against the store: a
+// request bound to one line's own row answers only that row and that
+// product. Dropping the line_id or the product_id predicate from
+// FloorRequestFor lets a dead line's request answer a new line that reuses
+// the number, so the request door would answer it instead of filing, and
+// this test goes red.
+func TestQD1_FloorRequestForHoldsTheLineBinding(t *testing.T) {
+	pool := intPool(t)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, prod, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+	lineID, _ := qd1LineBinding(t, pool, quoteID, 1)
+	filed := qd1FileAndApprove(t, pool, seller, intTrenton, quoteID, lineID, prod, 1, 40)
+	rail := identity.NewApprovals(identity.NewApprovalRepository(pool))
+	look := func(lineNo int, line, product string) bool {
+		t.Helper()
+		_, ok, err := rail.FloorRequestFor(context.Background(), seller, intTrenton, quoteID, lineNo, line, product)
+		if err != nil {
+			t.Fatalf("FloorRequestFor: %v", err)
+		}
+		return ok
+	}
+	if !look(1, lineID, prod) {
+		t.Fatalf("the request %s must answer its own row and product", filed.ID)
+	}
+	const otherRow = "99999999-9999-4999-8999-999999999999"
+	if look(1, otherRow, prod) {
+		t.Error("a request bound to one row must not answer another row with the same number and product")
+	}
+	if look(1, lineID, otherRow) {
+		t.Error("a request bound to one product must not answer the same row with another product")
+	}
+}

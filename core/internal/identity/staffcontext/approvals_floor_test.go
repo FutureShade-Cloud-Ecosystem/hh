@@ -205,3 +205,28 @@ func TestQD1_GeneralManagerDecidesUnderConfiguredSet(t *testing.T) {
 		t.Fatalf("the General Manager must decide under the configured set: %v", err)
 	}
 }
+
+// The filing's row binding is required: a request without the line's own
+// row id or its product would match a line NUMBER, which a later line can
+// reuse. Dropping the required check lets either filing through, and this
+// test goes red (the store receives the request).
+func TestQD1_FileFloorApprovalRefusesAnUnboundFiling(t *testing.T) {
+	base := FloorApprovalFiling{
+		RequestedBy: "u1", BranchID: "b1", SubjectRef: "quote-1", Detail: "d",
+		LineNo: 1, DiscPct: 25, LineID: qd1LineID, ProductID: "prod-pavers",
+	}
+	noLine, noProduct := base, base
+	noLine.LineID = ""
+	noProduct.ProductID = ""
+	for name, in := range map[string]FloorApprovalFiling{"no line_id": noLine, "no product_id": noProduct} {
+		f := &fakeStore{}
+		_, err := NewApprovals(f).FileFloorApproval(context.Background(), in)
+		var ce clientError
+		if !errors.As(err, &ce) || ce.status != 400 {
+			t.Errorf("%s: want a 400 refusal, got %v", name, err)
+		}
+		if f.lastFiled != nil {
+			t.Errorf("%s: an unbound floor request reached the store", name)
+		}
+	}
+}
