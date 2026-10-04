@@ -705,16 +705,53 @@ func (s *ApprovalsSyncStore) writeNote(ctx context.Context, tx pgx.Tx, f sync.Sc
 // drive-run design note: the last live key still dedups after the
 // delete, and the delete itself is idempotent through the engine's
 // already-tombstoned arm.
+//
+// A withdrawal is the REQUESTER's own act, and only while the request is
+// still PENDING (P2-A, round 4). The tombstone takes effect (the lists,
+// the decide path and the floor consumption all ignore a deleted row), so
+// a door fenced by org alone let any staff member cancel another's
+// request, or an approved clearing the seller had not yet used. A decided
+// or consumed request is a record, refused as the door refuses elsewhere.
 func (s *ApprovalsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key string) (sync.RowState, error) {
 	if _, _, ok := approvalScopePredicate(f); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
 	_ = key
+	writer := ""
+	if s.link != nil && f.Actor != "" {
+		if uid, ok := s.link(ctx, f.Actor); ok {
+			writer = uid
+		}
+	}
+	if writer == "" {
+		return sync.RowState{}, fmt.Errorf("identity: a pushed withdrawal needs the caller's linked staff user: %w", sync.ErrOpRefused)
+	}
+	if !approvalLooksLikeUUID(id) {
+		return sync.RowState{}, sync.ErrRowNotFound
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("identity: begin approvals sync delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	var fromStatus, fromRequester string
+	err = tx.QueryRow(ctx, `
+		SELECT a.status, a.requested_by::text FROM permission_approval_requests a
+		 WHERE a.id = $1::uuid AND a.deleted_at IS NULL
+		   AND EXISTS (SELECT 1 FROM locations l WHERE l.id = a.branch_id AND l.org_id = $2::uuid)
+		 FOR UPDATE OF a`, id, f.OrgID).Scan(&fromStatus, &fromRequester)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sync.RowState{}, sync.ErrRowNotFound
+	}
+	if err != nil {
+		return sync.RowState{}, fmt.Errorf("identity: lock approval %q for sync delete: %w", id, err)
+	}
+	if fromRequester != writer {
+		return sync.RowState{}, fmt.Errorf("identity: only the requester may withdraw a request: %w", sync.ErrOpRefused)
+	}
+	if fromStatus != string(ApprovalPending) {
+		return sync.RowState{}, fmt.Errorf("identity: a decided or used request is a record, not withdrawable: %w", sync.ErrOpRefused)
+	}
 	seq, err := allocateApprovalsSeqTx(ctx, tx)
 	if err != nil {
 		return sync.RowState{}, err
@@ -724,7 +761,7 @@ func (s *ApprovalsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id,
 		UPDATE permission_approval_requests a SET
 			deleted_at = now(),
 			seq        = $3
-		WHERE a.id = $1::uuid AND a.deleted_at IS NULL
+		WHERE a.id = $1::uuid AND a.deleted_at IS NULL AND a.status = 'PENDING'
 		  AND EXISTS (SELECT 1 FROM locations l WHERE l.id = a.branch_id AND l.org_id = $2::uuid)
 		RETURNING (a.deleted_at IS NOT NULL)`, id, f.OrgID, seq).Scan(&deleted)
 	if errors.Is(err, pgx.ErrNoRows) {
