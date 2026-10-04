@@ -232,3 +232,18 @@ test("the acceptance result parses, and an answer without its timestamp is refus
   assert.equal(validateAcceptance(null), null);
   assert.equal(validateAcceptance(undefined), null);
 });
+
+test("the vendored Outfit faces ship with their licence text beside them", async () => {
+  const { readdirSync, readFileSync } = await import("node:fs");
+  const { dirname, join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const fonts = join(dirname(fileURLToPath(import.meta.url)), "..", "public", "fonts");
+  const files = readdirSync(fonts);
+  assert.equal(files.filter((name) => name.startsWith("outfit-") && name.endsWith(".woff2")).length, 4);
+  assert.ok(files.includes("OFL.txt"), "OFL.txt must sit beside the font files");
+  const text = readFileSync(join(fonts, "OFL.txt"), "utf8");
+  assert.match(text, /^Copyright .* The Outfit Project Authors/);
+  assert.match(text, /SIL OPEN FONT LICENSE Version 1\.1/);
+  assert.match(text, /PERMISSION & CONDITIONS/);
+  assert.match(text, /DISCLAIMER/);
+});
