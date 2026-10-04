@@ -32,7 +32,7 @@ import { approverWords, policyLabel, requesterStateWords } from "./_approval-cop
 import { quoteErrorMessage } from "./_quote-edit.js";
 import { spokenRefusal } from "./_quote-workarea.js";
 import { bpsToPercent } from "./_guard-format.js";
-import { FLOOR_REFUSAL_SEAM_EVENT, type FloorRefusalSeamEvent, type FloorRefusalView } from "./floor-refusal.js";
+import { FLOOR_REFUSAL_CLOSED_EVENT, FLOOR_REFUSAL_SEAM_EVENT, type FloorRefusalSeamEvent, type FloorRefusalView } from "./floor-refusal.js";
 
 /** The check-only refusal the guard raises: the seam event plus the server's own sentence, when it wrote one. */
 export interface GuardRefusalEvent extends FloorRefusalSeamEvent {
@@ -240,7 +240,9 @@ export class QdFloorRefusal extends PanelBase {
   }
 
   private close(): void {
+    const wasOpen = this.open;
     this.open = false;
+    if (wasOpen) window.dispatchEvent(new CustomEvent(FLOOR_REFUSAL_CLOSED_EVENT));
     const back = this.returnFocus;
     this.returnFocus = null;
     if (back !== null && back.isConnected) back.focus();

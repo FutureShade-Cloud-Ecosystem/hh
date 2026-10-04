@@ -127,6 +127,14 @@ export interface FloorRefusalSeamEvent {
 
 export const FLOOR_REFUSAL_SEAM_EVENT = "qd-floor-refusal";
 
+/**
+ * The window event the dialog fires when it closes, so the surface that
+ * spoke the refusal's plain message in its outcome line can take it down: the
+ * dialog has said the same words, and a line left under the actions after it
+ * closes only repeats them.
+ */
+export const FLOOR_REFUSAL_CLOSED_EVENT = "qd-floor-refusal-closed";
+
 export function openFloorRefusalDialog(refusal: FloorRefusalView, quoteId: string, lineNo: number, discPct: number): void {
   const detail: FloorRefusalSeamEvent = { refusal, quoteId, lineNo, discPct };
   window.dispatchEvent(new CustomEvent<FloorRefusalSeamEvent>(FLOOR_REFUSAL_SEAM_EVENT, { detail }));

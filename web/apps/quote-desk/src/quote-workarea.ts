@@ -96,7 +96,7 @@ import {
   QB_PANELS,
   type ResolvedItem,
 } from "./quote-surface.js";
-import { floorRefusalMessage, openFloorRefusalDialog, parseFloorRefusal } from "./floor-refusal.js";
+import { FLOOR_REFUSAL_CLOSED_EVENT, floorRefusalMessage, openFloorRefusalDialog, parseFloorRefusal } from "./floor-refusal.js";
 import { OPEN_SETTINGS_EVENT } from "./panel-seams.js";
 import type { QdClient, SurfaceConfig, TermsRef } from "./qd-client.js";
 import { WorkspaceStore } from "./workspace-store.js";
@@ -1027,8 +1027,17 @@ export class QdQuoteWorkarea extends LitElement {
     }
   `;
 
+  /** The floor refusal's plain message as spoken in the outcome line: the dialog repeats it, so closing the dialog takes it down. */
+  private floorSpoken = "";
+
+  private readonly onFloorDialogClosed = (): void => {
+    if (this.floorSpoken !== "" && this.error === this.floorSpoken) this.error = "";
+    this.floorSpoken = "";
+  };
+
   override connectedCallback(): void {
     super.connectedCallback();
+    window.addEventListener(FLOOR_REFUSAL_CLOSED_EVENT, this.onFloorDialogClosed);
     this.startLoads();
     this.clockTimer = setInterval(() => {
       this.clockNow = new Date();
@@ -1052,6 +1061,7 @@ export class QdQuoteWorkarea extends LitElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    window.removeEventListener(FLOOR_REFUSAL_CLOSED_EVENT, this.onFloorDialogClosed);
     this.renderRoot.removeEventListener("click", this.onActionClick as EventListener);
     this.renderRoot.removeEventListener("input", this.onFieldInput as EventListener);
     this.renderRoot.removeEventListener("change", this.onFieldChange as EventListener);
@@ -1737,6 +1747,7 @@ export class QdQuoteWorkarea extends LitElement {
       const refusal = parseFloorRefusal(result.error);
       if (refusal !== null) {
         this.error = floorRefusalMessage(refusal);
+        this.floorSpoken = this.error;
         openFloorRefusalDialog(refusal, this.quoteId, line.line_no, n);
         await this.loadAll();
         return;
