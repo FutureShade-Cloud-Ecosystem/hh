@@ -141,6 +141,8 @@ export class QdQuoteWorkarea extends LitElement {
   @state() private sendOpen = false;
   @state() private sendPick: Record<string, boolean> = { EMAIL: true, SMS: true };
   @state() private columnsOpen = false;
+  /** The product grid's view: cards or one dense row per product (tab memory, the grid's own presentation). */
+  @state() private presentation: "CARDS" | "ROWS" = "CARDS";
   @state() private converted: { orderNo: string } | null = null;
   @state() private clockNow = new Date();
   /** The panel geometry, held on the store and mirrored for the render. */
@@ -342,6 +344,25 @@ export class QdQuoteWorkarea extends LitElement {
     .panelbar.inflow .panelbtns {
       position: static;
       margin-left: auto;
+    }
+    .viewflip {
+      display: inline-flex;
+      border: 1px solid var(--hos-line, var(--hh-line));
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .viewflip button {
+      font: inherit;
+      font-size: var(--qb-caption);
+      padding: var(--hos-s-2, 2px) var(--hos-s-8, 8px);
+      border: none;
+      background: transparent;
+      color: var(--hos-text-dim, var(--hh-text-dim));
+      cursor: pointer;
+    }
+    .viewflip button.active {
+      background: var(--hos-line, var(--hh-line));
+      color: var(--hos-text, var(--hh-text));
     }
     .panelbtns {
       position: absolute;
@@ -1087,6 +1108,7 @@ export class QdQuoteWorkarea extends LitElement {
       grid.externalTerm = this.term;
       grid.curated = this.config?.policy?.effectiveChips ?? [];
       grid.autoCollapse = true;
+      grid.presentation = this.presentation;
       grid.ticketEpoch = this.ticketEpoch;
     }
     const steps = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("hos-pos-flow-steps");
@@ -1364,6 +1386,12 @@ export class QdQuoteWorkarea extends LitElement {
         break;
       case "columns":
         this.columnsOpen = !this.columnsOpen;
+        break;
+      case "view-cards":
+        this.presentation = "CARDS";
+        break;
+      case "view-rows":
+        this.presentation = "ROWS";
         break;
       case "columns-reset":
         void this.resetColumns();
@@ -2165,6 +2193,28 @@ export class QdQuoteWorkarea extends LitElement {
       <section class="panel lines" aria-label="Products">
         <div class="panelbar">
           <h2>Products</h2>
+          <span class="viewflip" role="group" aria-label="Results view">
+            <button
+              type="button"
+              class=${this.presentation === "CARDS" ? "active" : ""}
+              data-action="view-cards"
+              data-testid="qb-view-cards"
+              aria-pressed=${this.presentation === "CARDS" ? "true" : "false"}
+              title="Card view: the product-card grid"
+            >
+              Cards
+            </button>
+            <button
+              type="button"
+              class=${this.presentation === "ROWS" ? "active" : ""}
+              data-action="view-rows"
+              data-testid="qb-view-rows"
+              aria-pressed=${this.presentation === "ROWS" ? "true" : "false"}
+              title="Row view: one product per compact row"
+            >
+              Rows
+            </button>
+          </span>
         </div>
         <hos-pos-scan-box unified defer-outcome autofocus-scan></hos-pos-scan-box>
         <div class="scrollzone">
