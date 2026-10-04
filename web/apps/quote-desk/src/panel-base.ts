@@ -6,9 +6,10 @@
 // root and hands every click, change, input and keydown to the panel by the
 // control's data-action or data-field. A panel answers reload() like every
 // mounted child the quote-changed fan-out reaches.
-import { LitElement } from "lit";
+import { LitElement, type PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
 import type { QdClient } from "./qd-client.js";
+import { QuoteScope, type QuoteContext } from "./quote-context.js";
 
 export type Controls = Record<string, (control: HTMLElement, event: Event) => void>;
 
@@ -21,6 +22,32 @@ export abstract class PanelBase extends LitElement {
   @state() protected busy = false;
   @state() protected error = "";
   @state() protected notice = "";
+
+  /** Holds the context of the quote this panel shows; see quote-context.ts. */
+  private readonly quoteScope = new QuoteScope();
+
+  /**
+   * The context of the quote now shown. Every read and write captures it at its start, binds itself to its
+   * id (never to this.quoteId read after an await) and checks it after every await.
+   */
+  protected get ctx(): QuoteContext {
+    const live = this.quoteScope.current;
+    return live.id === this.quoteId && !live.stale ? live : this.quoteScope.open(this.quoteId);
+  }
+
+  /**
+   * A new quote on screen is a new context: the old one is cancelled before any panel's own willUpdate runs, so
+   * nothing still out for the quote just left can touch this one, and its busy flag, error and notice go with it.
+   */
+  protected override shouldUpdate(changed: PropertyValues): boolean {
+    if (changed.has("quoteId")) {
+      this.quoteScope.open(this.quoteId);
+      this.busy = false;
+      this.error = "";
+      this.notice = "";
+    }
+    return true;
+  }
 
   /** Re-read whatever this panel shows. */
   abstract reload(): void;

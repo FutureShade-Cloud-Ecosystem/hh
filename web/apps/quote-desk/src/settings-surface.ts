@@ -56,6 +56,8 @@ export class QdSurfaceSettings extends PanelBase {
   @state() private policyLocks: Record<string, string> = {};
   /** True from a scope or branch switch until its read lands: the form is disabled, so nothing typed is ever overwritten. */
   @state() private policyLoading = false;
+  /** True when the read for the scope or branch just switched to failed: no form is shown, so no other scope's values sit enabled under this label. */
+  @state() private policyUnread = false;
   /** The scope and branch the form on screen was loaded for; a save is refused when the panel has moved on. */
   private formKey = "";
   @state() private itemsLock = "";
@@ -224,9 +226,16 @@ export class QdSurfaceSettings extends PanelBase {
     this.policyLoading = false;
     if (!result.ok) {
       this.error = writeRefusalLine(result.status, result.error);
+      // The form on screen belongs to the scope or branch before this one: it is taken down, not left enabled.
+      if (force || this.formKey !== key) {
+        this.policy = null;
+        this.formKey = "";
+        this.policyUnread = true;
+      }
       return;
     }
     if (this.policyDirty && !force) return;
+    this.policyUnread = false;
     this.policyDirty = false;
     this.formKey = key;
     this.policy = result.value;
@@ -278,8 +287,9 @@ export class QdSurfaceSettings extends PanelBase {
     const policy = this.policy;
     if (client === null || policy === null || this.busy || this.policyLoading) return;
     if (this.formKey !== this.lockKey()) {
-      // The form was loaded for another scope or branch: never write it to this one.
-      this.error = "These settings were loaded for another branch and were not saved. They are being read again.";
+      // The form was loaded for another scope or branch: never write it to this one, and say which.
+      const which = this.formKey === "dealer" || this.lockKey() === "dealer" ? "scope" : "branch";
+      this.error = `These settings were loaded for another ${which} and were not saved. They are being read again.`;
       this.notice = "";
       this.policyDirty = false;
       void this.loadPolicy(true);
@@ -302,10 +312,13 @@ export class QdSurfaceSettings extends PanelBase {
     this.busy = false;
     if (!result.ok) {
       const line = writeRefusalLine(result.status, result.error);
+      // A refusal stays with the row it was for; it is only said here while that row is still the one on screen.
       if (result.status === 403) this.policyLocks = { ...this.policyLocks, [lockKey]: line };
-      else this.error = line;
+      else if (lockKey === this.lockKey()) this.error = line;
       return;
     }
+    // The scope or branch moved on while this save was out: the saved row is not this form's to fill.
+    if (lockKey !== this.lockKey()) return;
     this.policyDirty = false;
     this.formKey = lockKey;
     this.policy = result.value;
@@ -327,18 +340,24 @@ export class QdSurfaceSettings extends PanelBase {
     this.busy = true;
     this.error = "";
     this.notice = "";
+    const profile = this.profile;
     const drafts: Record<string, ResolvedItem[]> = {};
     for (const kind of CURATION_KINDS) drafts[kind] = this.draftFor(kind);
-    const body = buildItemsBody(this.profile, drafts);
+    const body = buildItemsBody(profile, drafts);
     const result = await client.putRoleItems(body.profile, body.items);
     this.busy = false;
+    // The profile on screen changed while this was out: the answer is for the one it was sent for, and says nothing here.
+    if (profile !== this.profile) {
+      if (result.ok) this.announceChanged();
+      return;
+    }
     if (!result.ok) {
       const line = writeRefusalLine(result.status, result.error);
       if (result.status === 403) this.itemsLock = line;
       else this.error = line;
       return;
     }
-    this.notice = `Screen layout saved for the ${this.profile} profile. It is live now.`;
+    this.notice = `Screen layout saved for the ${profile} profile. It is live now.`;
     await this.loadItems(true);
     this.announceChanged();
   }
@@ -438,7 +457,11 @@ export class QdSurfaceSettings extends PanelBase {
 
   private renderPolicy() {
     const p = this.policy;
-    if (p === null) return html`<div class="box"><p class="dim">Loading the quote settings...</p></div>`;
+    if (p === null) {
+      return this.policyUnread
+        ? html`<div class="box"><p class="err" role="status" data-testid="qs-policy-unread">The quote settings for this scope could not be read, so none are shown.</p></div>`
+        : html`<div class="box"><p class="dim">Loading the quote settings...</p></div>`;
+    }
     const lock = this.policyLocks[this.lockKey()] ?? "";
     const locked = lock !== "" || this.policyLoading;
     return html`<div class="box" data-testid="qs-policy">

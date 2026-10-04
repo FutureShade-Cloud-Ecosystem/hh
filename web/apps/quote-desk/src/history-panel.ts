@@ -83,14 +83,15 @@ export class QdQuoteHistory extends PanelBase {
   private async load(): Promise<void> {
     const client = this.client;
     const seq = ++this.loadSeq;
-    if (client === null || this.quoteId === "") {
+    const ctx = this.ctx;
+    if (client === null || ctx.id === "") {
       this.changes = [];
       this.loaded = false;
       return;
     }
     this.error = "";
-    const result = await client.editHistory(this.quoteId);
-    if (seq !== this.loadSeq) return;
+    const result = await ctx.guarded(client.editHistory(ctx.id));
+    if (result === undefined || seq !== this.loadSeq) return;
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "read this quote's history"));
       return;

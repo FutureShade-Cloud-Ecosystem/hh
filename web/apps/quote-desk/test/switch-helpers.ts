@@ -4,9 +4,9 @@ import { expect, type Page, type Request } from "@playwright/test";
 
 export const SALES = { name: "Sales", exact: true };
 
-export async function signIn(page: Page): Promise<void> {
+export async function signIn(page: Page, role: string = SALES.name): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", SALES).click();
+  await page.getByRole("button", { name: role, exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
 }
 

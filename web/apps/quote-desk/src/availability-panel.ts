@@ -107,15 +107,16 @@ export class QdQuoteAvailability extends PanelBase {
 
   private async load(): Promise<void> {
     const client = this.client;
-    const quoteId = this.quoteId;
-    if (client === null || quoteId === "") {
+    const ctx = this.ctx;
+    if (client === null || ctx.id === "") {
       this.lines = [];
       this.loaded = false;
       return;
     }
     this.error = "";
-    const [result, quote] = await Promise.all([client.availability(quoteId), client.readQuote(quoteId)]);
-    if (quoteId !== this.quoteId) return;
+    const answers = await ctx.guarded(Promise.all([client.availability(ctx.id), client.readQuote(ctx.id)]));
+    if (answers === undefined) return;
+    const [result, quote] = answers;
     this.names = quote.ok ? Object.fromEntries(quote.value.lines.map((line) => [line.line_no, line.description])) : {};
     if (!result.ok) {
       // A failed read shows no lines at all: the previous read's chips would be stale facts under this quote.
@@ -147,7 +148,9 @@ export class QdQuoteAvailability extends PanelBase {
   private async readPeek(productId: string): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    const result = await client.availabilityBranches(productId);
+    const ctx = this.ctx;
+    const result = await ctx.guarded(client.availabilityBranches(productId));
+    if (result === undefined) return;
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "read the other branches' stock"));
       return;
