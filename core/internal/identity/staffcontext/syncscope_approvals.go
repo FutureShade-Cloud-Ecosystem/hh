@@ -49,6 +49,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
 
@@ -92,6 +93,82 @@ func syncFloorApprovers() FloorApprovers {
 		return *f
 	}
 	return defaultFloorApprovers()
+}
+
+// publishedApprovalRoles is the dealer's role configuration the sync door
+// holds its REST routes' role gate with (the round 4 audit): the filing
+// route needs Work and the decide route Manage on named surfaces, a wall the
+// door lacked. The composition root PUBLISHES the configuration it gave the
+// role gate (PublishApprovalRoles, beside PublishFloorApprovers), and the
+// door reads it. Until the root runs the decided default answers, the same
+// carried-default posture the floor set holds above; a configuration that
+// cannot be loaded leaves no level for anyone and the door refuses.
+var publishedApprovalRoles = func() *atomic.Pointer[roleconfig.Config] {
+	p := &atomic.Pointer[roleconfig.Config]{}
+	if d, err := roleconfig.Default(); err == nil {
+		p.Store(d)
+	}
+	return p
+}()
+
+// PublishApprovalRoles publishes the role configuration for the approvals
+// sync door's role walls. A nil configuration unpublishes: no level, every
+// filing and decision refused.
+func PublishApprovalRoles(c *roleconfig.Config) { publishedApprovalRoles.Store(c) }
+
+// The role walls the REST routes carry (the contract's x-access): filing an
+// approval needs Work on one of three surfaces, deciding one needs Manage on
+// one of two. The sync door holds the same two walls.
+var (
+	approvalFileSurfaces   = []string{"counter-till", "quote-desk", "manager-home"}
+	approvalDecideSurfaces = []string{"manager-home", "quote-desk"}
+)
+
+// callerHoldsLevel resolves the caller's authority and answers the route
+// gate's admission rule for it (holdsLevel). An unlinked caller or an
+// unreadable authority fails closed.
+func (s *ApprovalsSyncStore) callerHoldsLevel(ctx context.Context, f sync.ScopeFilter, level roleconfig.Level, surfaces []string, what string) (StaffContext, error) {
+	uid := ""
+	if s.link != nil && f.Actor != "" {
+		if u, ok := s.link(ctx, f.Actor); ok {
+			uid = u
+		}
+	}
+	if uid == "" {
+		return StaffContext{}, fmt.Errorf("identity: a pushed %s needs the caller's linked staff user: %w", what, sync.ErrOpRefused)
+	}
+	caller, err := s.resolve(ctx, uid, f.OrgID)
+	if err != nil {
+		return StaffContext{}, err
+	}
+	if err := holdsLevel(caller, level, surfaces, what); err != nil {
+		return StaffContext{}, err
+	}
+	return caller, nil
+}
+
+// holdsLevel is the route gate's admission rule for one resolved caller: an
+// active user whose role holds at least level on at least one of the
+// surfaces. The platform super admin passes the level check, as the gate
+// passes the platform roles. Everything else fails closed: a role with no
+// ERP name, a role the configuration does not know, an unpublished door.
+func holdsLevel(caller StaffContext, level roleconfig.Level, surfaces []string, what string) error {
+	if caller.Status != StatusActive {
+		return fmt.Errorf("identity: the caller is not an active staff user: %w", sync.ErrOpRefused)
+	}
+	if caller.RoleCode == RoleSuperAdmin {
+		return nil
+	}
+	if cfg := publishedApprovalRoles.Load(); cfg != nil {
+		if canonical, ok := CanonicalForERPCode(caller.RoleCode); ok {
+			for _, surface := range surfaces {
+				if lvl, err := cfg.Level(canonical, surface); err == nil && lvl.AtLeast(level) {
+					return nil
+				}
+			}
+		}
+	}
+	return fmt.Errorf("identity: the caller's role may not %s: %w", what, sync.ErrOpRefused)
 }
 
 // approvalsSeqCTE is the data-modifying CTE the rail's single-statement
@@ -410,6 +487,11 @@ func (s *ApprovalsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key
 	if !approvalBranchInOrg(ctx, s, branchID, f.OrgID) {
 		return sync.RowState{}, fmt.Errorf("identity: the branch is not in this organisation: %w", sync.ErrOpRefused)
 	}
+	// The filing route's own wall (Work on the counter, the Quote Desk or
+	// Manager Home): a role the route answers 403 files nothing from here.
+	if _, err := s.callerHoldsLevel(ctx, f, roleconfig.LevelWork, approvalFileSurfaces, "file an approval request"); err != nil {
+		return sync.RowState{}, err
+	}
 	detail, _ := fields["detail"].(string)
 	subject, _ := fields["subject_ref"].(string)
 	if strings.TrimSpace(subject) != "" && len(strings.TrimSpace(subject)) > 256 {
@@ -582,6 +664,12 @@ func (s *ApprovalsSyncStore) writeDecision(ctx context.Context, tx pgx.Tx, f syn
 	// manager decides from the device exactly what it decides at the desk.
 	if err := r.req.DecideWithFloor(caller, approve, syncFloorApprovers()); err != nil {
 		return sync.RowState{}, fmt.Errorf("identity: %w: %w", sync.ErrOpRefused, err)
+	}
+	// The decide route's own wall (Manage on Manager Home or the Quote
+	// Desk) beside the module's rules above: HR holds the leadership tier
+	// the credit rule admits, and the route refuses it.
+	if err := holdsLevel(caller, roleconfig.LevelManage, approvalDecideSurfaces, "decide an approval request"); err != nil {
+		return sync.RowState{}, err
 	}
 	seq, err := allocateApprovalsSeqTx(ctx, tx)
 	if err != nil {

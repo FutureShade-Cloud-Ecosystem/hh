@@ -158,6 +158,10 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// set the rail was given is published for the door to read (D11): one
 	// authority, one source.
 	identity.PublishFloorApprovers(quoteFloorApprovers)
+	// The approvals sync door holds the REST routes' role walls (Work to
+	// file, Manage to decide) from the same configuration the role gate was
+	// built with, published for the store the operations wire builds.
+	identity.PublishApprovalRoles(roleCfg)
 	// The quotes sync door runs the same ownership ladder the quote
 	// service runs, from the same configuration: the store is built on the
 	// operations wire, so the configuration is published for it (P2-4).
