@@ -337,6 +337,12 @@ func TestQD1_TombstonedFloorRequestIsGoneFromTheRail(t *testing.T) {
 	if l := listed(); !l[approved.ID] || !l[pending.ID] {
 		t.Fatalf("both live requests must be listed before the tombstone, got %v", l)
 	}
+	// The negative reads below mean nothing unless the live request IS
+	// answered first: the approved, unused request stands as line 1's open
+	// request until it is tombstoned.
+	if rec, found, err := rail.FloorRequestFor(ctx, seller, intTrenton, quoteID, 1, lineID, prod); err != nil || !found || rec.ID != approved.ID {
+		t.Fatalf("the live approved request must answer FloorRequestFor before the tombstone, got %+v found %v err %v", rec, found, err)
+	}
 
 	if _, err := pool.Exec(ctx,
 		`UPDATE permission_approval_requests SET deleted_at = to_timestamp(0) WHERE id = ANY($1::uuid[])`,
