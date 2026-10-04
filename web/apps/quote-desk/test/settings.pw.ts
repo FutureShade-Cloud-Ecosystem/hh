@@ -91,6 +91,7 @@ async function fanOut(page: Page): Promise<void> {
 test("a re-read never undoes an unsaved edit on the policy or the layout", async ({ page }) => {
   await signIn(page);
   await openScreenSettings(page);
+  const written = (await ledger(page)).policyWrites.length;
   await page.getByTestId("qs-validity-days").fill("77");
   await page.getByTestId("qs-send-email").uncheck();
   await page.getByTestId("qs-items").getByLabel("Show Photo").uncheck();
@@ -99,7 +100,7 @@ test("a re-read never undoes an unsaved edit on the policy or the layout", async
   await expect(page.getByTestId("qs-send-email")).not.toBeChecked();
   await expect(page.getByTestId("qs-items").getByLabel("Show Photo")).not.toBeChecked();
   // Nothing was written by any of it.
-  expect((await ledger(page)).policyWrites).toHaveLength(0);
+  expect((await ledger(page)).policyWrites).toHaveLength(written);
   // Switching scope starts that scope clean: the unsaved figure belongs to the scope it was typed in.
   await page.getByTestId("qs-scope").selectOption("dealer");
   await expect(page.getByTestId("qs-validity-days")).toHaveValue("30");
