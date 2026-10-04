@@ -167,3 +167,20 @@ test("the Sales manager is offered the price itself and nothing is filed", async
   await dialog(page).getByTestId("fr-close").click();
   await expect(dialog(page).getByTestId("fr-dialog")).toHaveCount(0);
 });
+
+// Visual review round 1, P3: the Check Quote form sat 350 px wide and left
+// aligned in a full-width card. The three fields now share the card's width.
+test("the Check Quote fields share a row across the card at desk width", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  await openQuote(page, "Q-1001");
+  const branch = (await guard(page).getByTestId("qg-branch").boundingBox())!;
+  const price = (await guard(page).getByTestId("qg-price").boundingBox())!;
+  const cost = (await guard(page).getByTestId("qg-cost").boundingBox())!;
+  const card = (await guard(page).getByTestId("qg-box").boundingBox())!;
+  expect(Math.abs(branch.y - price.y)).toBeLessThan(8);
+  expect(Math.abs(price.y - cost.y)).toBeLessThan(8);
+  expect(price.width).toBeGreaterThan(180);
+  // Together the fields reach across most of the card, not a third of it.
+  expect(cost.x + cost.width - branch.x).toBeGreaterThan(card.width * 0.6);
+});

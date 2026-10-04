@@ -39,9 +39,18 @@ export class QdQuoteGuard extends PanelBase {
   static styles = [
     panelStyles,
     css`
+      /* The three fields share the card's width instead of a 22rem column on its left. */
+      .fields {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+        gap: var(--hh-s-12);
+        align-items: end;
+      }
+      .fields label {
+        margin-top: 0;
+      }
       .field {
         position: relative;
-        max-width: 22rem;
       }
       .field input {
         box-sizing: border-box;
@@ -58,7 +67,6 @@ export class QdQuoteGuard extends PanelBase {
       }
       .branch {
         box-sizing: border-box;
-        max-width: 22rem;
         padding: 6px 8px;
         border: 1px solid var(--hos-line, var(--hh-line));
         border-radius: var(--hos-radius-control, var(--hh-radius-control));
@@ -158,12 +166,20 @@ export class QdQuoteGuard extends PanelBase {
       <div class="box" data-testid="qg-box">
         <h3>Check Quote</h3>
         <div class="sub">Check a price against the margin policy. The server answers.</div>
-        <label>Branch</label>
-        <div class="branch" data-testid="qg-branch">${this.branchName !== "" ? this.branchName : "This quote's branch"}</div>
-        <label for="qg-price">Selling price / unit</label>
-        <div class="field"><span class="cur" aria-hidden="true">$</span><input id="qg-price" data-field="price" type="text" inputmode="decimal" data-testid="qg-price" /></div>
-        <label for="qg-cost">Cost / unit</label>
-        <div class="field"><span class="cur" aria-hidden="true">$</span><input id="qg-cost" data-field="cost" type="text" inputmode="decimal" data-testid="qg-cost" /></div>
+        <div class="fields">
+          <div>
+            <label>Branch</label>
+            <div class="branch" data-testid="qg-branch">${this.branchName !== "" ? this.branchName : "This quote's branch"}</div>
+          </div>
+          <div>
+            <label for="qg-price">Selling price / unit</label>
+            <div class="field"><span class="cur" aria-hidden="true">$</span><input id="qg-price" data-field="price" type="text" inputmode="decimal" data-testid="qg-price" /></div>
+          </div>
+          <div>
+            <label for="qg-cost">Cost / unit</label>
+            <div class="field"><span class="cur" aria-hidden="true">$</span><input id="qg-cost" data-field="cost" type="text" inputmode="decimal" data-testid="qg-cost" /></div>
+          </div>
+        </div>
         <div class="row">
           <button type="button" class="primary" data-action="check" aria-busy=${this.busy ? "true" : "false"} data-testid="qg-check">Check quote</button>
         </div>
