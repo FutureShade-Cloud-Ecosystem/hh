@@ -215,7 +215,7 @@ func (f *fakeStaffStore) UpdateLineGuarded(ctx context.Context, w quoteEditWrite
 			return before, after, totals, f.status, err
 		}
 	}
-	if err := runPricingLog(ctx, hooks.pricing, nil, after.LineNo); err != nil {
+	if err := runPricingLog(ctx, hooks.pricing, nil, after.LineNo, before != after); err != nil {
 		f.line = saved
 		return before, after, totals, f.status, err
 	}
@@ -242,7 +242,7 @@ func (f *fakeStaffStore) InsertLineGuarded(ctx context.Context, w quoteEditWrite
 			return after, totals, f.status, err
 		}
 	}
-	if err := runPricingLog(ctx, hooks.pricing, nil, after.LineNo); err != nil {
+	if err := runPricingLog(ctx, hooks.pricing, nil, after.LineNo, true); err != nil {
 		return after, totals, f.status, err
 	}
 	f.writes++

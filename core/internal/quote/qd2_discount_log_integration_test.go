@@ -283,3 +283,71 @@ func TestQD2_PricingLogRow_FailingAppendRollsTheWriteBack(t *testing.T) {
 		t.Fatalf("a rolled back write leaves no pricing log row, got %+v", rows)
 	}
 }
+
+// An idempotent rewrite adds no pricing log row: three re-assertions of the
+// same discount write one UPDATE row (the first), a changed discount writes
+// one more. A retried request must not log twice.
+func TestQD2_IdenticalDiscountRewrite_AddsNoRow(t *testing.T) {
+	pool := intPool(t)
+	now := qd2Clock()
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+	qd2CleanAudit(t, pool, quoteID)
+
+	arb := qd1Arbiter{marginBps: 2000, floorBps: 1200}
+	svc := qd2Svc(t, pool, now, qd2Pricer{}, &arb)
+	ctx := qCtxAs(intStaff(intTrenton))
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
+
+	for i := 0; i < 3; i++ {
+		if _, err := svc.SetLineDiscount(ctx, quoteID, 1, 10); err != nil {
+			t.Fatalf("the same discount re-asserted must be accepted: %v", err)
+		}
+	}
+	if rows := qd2AuditRows(t, pool, quoteID); len(rows) != 1 {
+		t.Fatalf("three identical discount writes must leave one pricing log row, got %+v", rows)
+	}
+	if _, err := svc.SetLineDiscount(ctx, quoteID, 1, 15); err != nil {
+		t.Fatalf("a deeper discount above the floor must be accepted: %v", err)
+	}
+	if rows := qd2AuditRows(t, pool, quoteID); len(rows) != 2 {
+		t.Fatalf("a changed discount writes one more row, got %+v", rows)
+	}
+}
+
+// The same discipline on the reprice arm: a same-quantity reprice that
+// strikes the same rule price adds no second rule price row, a quantity
+// change that re-strikes the below floor rule price does.
+func TestQD2_IdenticalQtyReprice_AddsNoRow(t *testing.T) {
+	pool := intPool(t)
+	now := qd2Clock()
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+	qd2CleanAudit(t, pool, quoteID)
+
+	// The rule price the resolver strikes sits below the floor, so the
+	// first reprice at the same quantity logs it (CP0-3 answer A).
+	pricer := qd2Pricer{blocked: true, finalCents: 600, marginBps: 500, floorBps: 1200}
+	arb := qd1Arbiter{marginBps: 2000, floorBps: 1200}
+	svc := qd2Svc(t, pool, now, pricer, &arb)
+	ctx := qCtxAs(intStaff(intTrenton))
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
+
+	if _, err := svc.EditLineQty(ctx, quoteID, 1, "2"); err != nil {
+		t.Fatalf("the first reprice at the standing quantity must be accepted: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := svc.EditLineQty(ctx, quoteID, 1, "2"); err != nil {
+			t.Fatalf("an identical reprice must be accepted: %v", err)
+		}
+	}
+	if rows := qd2AuditRows(t, pool, quoteID); len(rows) != 1 {
+		t.Fatalf("the first reprice logged the below floor rule price, the identical repeats must add nothing, got %+v", rows)
+	}
+	if _, err := svc.EditLineQty(ctx, quoteID, 1, "5"); err != nil {
+		t.Fatalf("a changed quantity must be accepted: %v", err)
+	}
+	if rows := qd2AuditRows(t, pool, quoteID); len(rows) != 2 {
+		t.Fatalf("a changed quantity that re-strikes the below floor rule price writes one more row, got %+v", rows)
+	}
+}

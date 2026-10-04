@@ -302,8 +302,11 @@ type quoteEditHooks struct {
 	// pricing log rows the write owes, written on the write's own
 	// transaction so a commit with no row cannot happen and a rolled back
 	// write leaves no row. lineNo is fed by the write (the add derives it
-	// inside the lock). nil = this write owes no pricing log row.
-	pricing func(ctx context.Context, tx pgx.Tx, lineNo int) error
+	// inside the lock); changed says whether the write actually moved the
+	// line, and an idempotent rewrite (the standing discount re-asserted,
+	// the standing quantity repriced to the same figures) writes no row.
+	// nil = this write owes no pricing log row.
+	pricing func(ctx context.Context, tx pgx.Tx, lineNo int, changed bool) error
 }
 
 // quoteDateHooks is the record-only hook for the valid_until write.
@@ -322,8 +325,9 @@ type quoteDiscountHooks struct {
 	// pricing is the pricing log row the discount write owes, on the same
 	// transaction as the record above (plan 4.2): the BYPASS row for a
 	// cleared below floor price, the UPDATE row for a below rule above
-	// floor write. nil = this write owes no pricing log row.
-	pricing func(ctx context.Context, tx pgx.Tx, lineNo int) error
+	// floor write, none for an idempotent re-assertion of the standing
+	// discount. nil = this write owes no pricing log row.
+	pricing func(ctx context.Context, tx pgx.Tx, lineNo int, changed bool) error
 }
 
 // - expiry (D2) -
