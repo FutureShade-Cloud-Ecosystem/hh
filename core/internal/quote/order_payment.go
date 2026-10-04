@@ -105,6 +105,9 @@ func (e *OrderPaymentConflictError) Error() string { return e.Msg }
 // order or billing refusal across the seam without the quote package importing either module.
 func NewOrderPaymentConflict(msg string) error { return &OrderPaymentConflictError{Msg: msg} }
 
+// yardManagerRole is the one role the cash customer's combined action admits beyond the selling roles.
+const yardManagerRole = "YARD_MANAGER"
+
 // counterTenders are the tenders the payments settle accepts at a desk (payments.CounterTenders).
 // Declared here because the quote package imports no money module; the settle validates the same
 // set again, so a drift here is a refusal in the wrong place, never a wrong posting.
@@ -242,9 +245,12 @@ func (s *StaffService) takeOrderPaymentTx(ctx context.Context, tx pgx.Tx, ps ord
 			return OrderPaymentResult{}, &OrderPaymentConflictError{
 				Msg: "convert this quote to an order first; a customer with a credit account converts through the conversion door and then pays"}
 		}
-		// The customer with no credit: this one action converts, bills and pays. The conversion half
-		// keeps its own role rule, so a role that cannot convert cannot do it through here either.
-		if !identity.CanSellOnCredit(caller) {
+		// The customer with no credit: this one action converts, bills and pays. Converting an
+		// ACCEPTED quote at its agreed totals as part of taking its payment asks no more authority
+		// than ringing a sale, so the Yard manager, who rings sales on the till, is admitted here
+		// (the principal's ruling on decision 3); nothing in the action is editable. The separate
+		// conversion of a quote, with no payment, keeps the selling role rule and still refuses it.
+		if !identity.CanSellOnCredit(caller) && caller.RoleCode != yardManagerRole {
 			return OrderPaymentResult{}, &NotSellingRoleError{RoleCode: caller.RoleCode}
 		}
 		if in.AmountCents != pf.TotalCents {

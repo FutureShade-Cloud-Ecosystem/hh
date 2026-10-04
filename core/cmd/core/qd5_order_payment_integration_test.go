@@ -484,21 +484,60 @@ func TestQD5_CounterRolesAdmittedAtTheirOwnBranchAndRefusedAtAnothers(t *testing
 	}
 }
 
-func TestQD5_Row14_YardManagerCannotConvertEitherWay(t *testing.T) {
+// TestQD5_YardManagerCannotConvertOnItsOwnButIsAdmittedAtTheCashCustomersOneAction: the separate
+// conversion of a quote (no payment) keeps the selling role rule, so the Yard manager still cannot
+// convert on its own (row 14); the one action that converts an ACCEPTED quote at its agreed totals as
+// part of taking its payment admits the Yard manager (ruling on decision 3), nothing in it editable.
+func TestQD5_YardManagerCannotConvertOnItsOwnButIsAdmittedAtTheCashCustomersOneAction(t *testing.T) {
 	e := qd5Setup(t)
 	yard := e.as("YARD_MANAGER", qd5Trenton)
 	q := e.seedQuote(1_000_000, 0, qd5Trenton)
 	var ns *quote.NotSellingRoleError
 	if _, err := e.svc.ConvertQuote(yard, q.QuoteID, quote.ConvertOptions{}); !errors.As(err, &ns) {
-		t.Fatalf("row 14: the Yard manager converting must be refused naming the role, got %v", err)
+		t.Fatalf("row 14: the Yard manager converting on its own must be refused naming the role, got %v", err)
 	}
-	// The cash customer's one action converts too, so it keeps the same rule: nothing is written.
+	if c := e.counts(q); c != (qd5Counts{}) || e.quoteStatus(q) != "ACCEPTED" {
+		t.Fatalf("a refused conversion wrote rows: %+v status %s", c, e.quoteStatus(q))
+	}
 	cash := e.seedQuote(0, 0, qd5Trenton)
-	if _, err := e.svc.TakeOrderPayment(yard, cash.QuoteID, pay("CASH", cash.Total, "k-yard-cash")); !errors.As(err, &ns) {
-		t.Fatalf("the Yard manager must not convert through the payment door either, got %v", err)
+	out, err := e.svc.TakeOrderPayment(yard, cash.QuoteID, pay("CASH", cash.Total, "k-yard-cash"))
+	if err != nil || !out.Converted || out.BalanceCents != 0 {
+		t.Fatalf("the Yard manager is admitted at the cash customer's one action: %+v %v", out, err)
 	}
-	if c := e.counts(cash); c != (qd5Counts{}) || e.quoteStatus(cash) != "ACCEPTED" {
-		t.Fatalf("a refused cash action wrote rows: %+v status %s", c, e.quoteStatus(cash))
+	if c := e.counts(cash); c != (qd5Counts{Orders: 1, Invoices: 1, Payments: 1}) || e.quoteStatus(cash) != "CONVERTED" {
+		t.Fatalf("after: %+v status %s", c, e.quoteStatus(cash))
+	}
+	// Only an ACCEPTED quote: a quote in any other state takes nothing from the Yard manager either.
+	sent := e.seedQuote(0, 0, qd5Trenton)
+	if _, err := e.pool.Exec(context.Background(), `UPDATE quotes SET status = 'SENT' WHERE id = $1`, sent.QuoteID); err != nil {
+		t.Fatal(err)
+	}
+	var c *quote.OrderPaymentConflictError
+	if _, err := e.svc.TakeOrderPayment(yard, sent.QuoteID, pay("CASH", sent.Total, "k-yard-sent")); !errors.As(err, &c) {
+		t.Fatalf("a quote that is not accepted takes no payment, got %v", err)
+	}
+}
+
+// TestQD5_TheCashCustomersOneActionAtTheServiceByRole pins the service half of the role rule at one
+// branch: the four counter roles are admitted at their own branch and refused (not found or forbidden)
+// at another's, for the one action. The gate's half (Outside Sales, the General Manager, HR and the
+// rest refused) is proven on the real route in authz.
+func TestQD5_TheCashCustomersOneActionAtTheServiceByRole(t *testing.T) {
+	e := qd5Setup(t)
+	for _, role := range []string{"INSIDE_SALES", "SALES_MANAGER", "BRANCH_MANAGER", "YARD_MANAGER"} {
+		t.Run(role, func(t *testing.T) {
+			q := e.seedQuote(0, 0, qd5Trenton)
+			_, err := e.svc.TakeOrderPayment(e.as(role, qd5Kingston), q.QuoteID, pay("CASH", q.Total, "k-"+role+"-away"))
+			if !errors.Is(err, quote.ErrNotFound) && !errors.Is(err, quote.ErrForbidden) {
+				t.Fatalf("%s at another branch must be refused, got %v", role, err)
+			}
+			if c := e.counts(q); c != (qd5Counts{}) {
+				t.Fatalf("a refused caller wrote rows: %+v", c)
+			}
+			if _, err := e.svc.TakeOrderPayment(e.as(role, qd5Trenton), q.QuoteID, pay("CASH", q.Total, "k-"+role)); err != nil {
+				t.Fatalf("%s at its own branch: %v", role, err)
+			}
+		})
 	}
 }
 
@@ -704,5 +743,69 @@ func TestQD5_QuoteInAnyOtherStateTakesNoPayment(t *testing.T) {
 	var c *quote.OrderPaymentConflictError
 	if !errors.As(err, &c) {
 		t.Fatalf("a quote that is not converted takes no payment, got %v", err)
+	}
+}
+
+// - review round 1, P3: tax as agreed, and the replay answers what is stored -
+
+// TestQD5_TheInvoiceCarriesTheTaxTheQuoteAgreedNotAFreshAssessment pins "tax as agreed": the fixture's
+// agreed tax (400) differs from a flat 13 percent assessment of its lines (611), so an invoice that
+// re-assessed the tax would total 5311 against the quote's 5100.
+func TestQD5_TheInvoiceCarriesTheTaxTheQuoteAgreedNotAFreshAssessment(t *testing.T) {
+	e := qd5Setup(t)
+	q := e.seedQuote(1_000_000, 0, qd5Trenton)
+	if _, err := e.pool.Exec(context.Background(),
+		`UPDATE quotes SET tax_cents = 400, total_cents = subtotal_cents + delivery_fee_cents + 400 WHERE id = $1`, q.QuoteID); err != nil {
+		t.Fatal(err)
+	}
+	q.Tax, q.Total = 400, q.Subtotal+q.Fee+400
+	if flat := (q.Subtotal*1300 + 5000) / 10000; flat == q.Tax {
+		t.Fatalf("the fixture must differ from a flat 13 percent assessment, both are %d", flat)
+	}
+	e.convert(q)
+	out, err := e.svc.TakeOrderPayment(e.counter(), q.QuoteID, pay("CASH", q.Total, "k-agreed-tax"))
+	if err != nil {
+		t.Fatalf("pay: %v", err)
+	}
+	var tax, total int64
+	if err := e.pool.QueryRow(context.Background(),
+		`SELECT tax_cents, total_cents FROM invoices WHERE customer_id = $1`, q.CustomerID).Scan(&tax, &total); err != nil {
+		t.Fatal(err)
+	}
+	if tax != 400 || total != q.Total || out.InvoiceTotalCents != q.Total || out.BalanceCents != 0 {
+		t.Fatalf("the invoice must carry the agreed tax: tax %d total %d (quote total %d), answer %+v", tax, total, q.Total, out)
+	}
+}
+
+// TestQD5_AReplayAnswersTheStoredReferenceAndTheReceiver: the replay's reference is the first payment's,
+// not the one the repeated request carries, and the receiver is the staff member who took the first.
+func TestQD5_AReplayAnswersTheStoredReferenceAndTheReceiver(t *testing.T) {
+	e := qd5Setup(t)
+	q := e.seedQuote(1_000_000, 0, qd5Trenton)
+	e.convert(q)
+	first, err := e.svc.TakeOrderPayment(e.counter(), q.QuoteID,
+		quote.OrderPaymentInput{Method: "CHEQUE", AmountCents: 1000, Reference: "cheque 4411", IdempotencyKey: "k-stored"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Reference != "cheque 4411" || first.ReceivedBy != e.userID {
+		t.Fatalf("the first answer names the reference and the receiver: %+v", first)
+	}
+	var other string
+	if err := e.pool.QueryRow(context.Background(),
+		`SELECT id::text FROM users WHERE status='ACTIVE' AND id::text <> $1 ORDER BY created_at LIMIT 1`, e.userID).Scan(&other); err != nil {
+		t.Skipf("no second staff user: %v", err)
+	}
+	second := identity.ContextWithStaff(context.Background(), identity.StaffContext{
+		UserID: other, RoleCode: "INSIDE_SALES", Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
+		Status: identity.StatusActive, Branches: map[string]bool{qd5Trenton: true},
+	})
+	again, err := e.svc.TakeOrderPayment(second, q.QuoteID,
+		quote.OrderPaymentInput{Method: "CHEQUE", AmountCents: 1000, Reference: "a different words", IdempotencyKey: "k-stored"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !again.Replayed || again.Reference != "cheque 4411" || again.ReceivedBy != e.userID {
+		t.Fatalf("a replay answers the stored reference and receiver, got %+v", again)
 	}
 }
