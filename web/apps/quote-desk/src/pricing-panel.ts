@@ -174,6 +174,10 @@ export class QdPricingPanel extends PanelBase {
 
   /** The wiring pass: the active tab receives what a binding would have given it. */
   protected override updated(): void {
+    // The tab pattern's one tab stop: the selected tab is in the tab order, the others are reached by the arrows.
+    for (const button of this.renderRoot.querySelectorAll<HTMLElement>('[role="tab"]')) {
+      button.tabIndex = button.getAttribute("aria-selected") === "true" ? 0 : -1;
+    }
     const child = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>(TAG[this.tab]);
     if (child === null) return;
     if (child["pricing"] !== this.pricing) child["pricing"] = this.pricing;
@@ -221,7 +225,7 @@ export class QdPricingPanel extends PanelBase {
         </div>
         <div class="subnav" role="tablist" aria-label="Pricing sections" data-testid="pricing-tablist">
           ${TABS.map(
-            (t) => html`<button type="button" role="tab" id="pricing-tab-${t.id}" class="${t.id === this.tab ? "active" : ""}" aria-selected=${t.id === this.tab ? "true" : "false"} aria-controls="pricing-tabpanel" tabindex=${t.id === this.tab ? "0" : "-1"} data-action="tab" data-tab="${t.id}" data-testid="pricing-tab-${t.id}">${t.label}</button>`,
+            (t) => html`<button type="button" role="tab" class="${t.id === this.tab ? "active" : ""}" aria-selected=${t.id === this.tab ? "true" : "false"} aria-controls="pricing-tabpanel" data-action="tab" data-tab="${t.id}" data-testid="pricing-tab-${t.id}">${t.label}</button>`,
           )}
         </div>
         ${this.leaveWarned
@@ -234,7 +238,7 @@ export class QdPricingPanel extends PanelBase {
               The server refused a change from this login: ${this.readOnly}. The prices stay readable and the controls are off.
             </p>`
           : nothing}
-        <div role="tabpanel" id="pricing-tabpanel" aria-labelledby="pricing-tab-${this.tab}">${this.renderTab()}</div>
+        <div role="tabpanel" id="pricing-tabpanel" aria-label=${TABS.find((t) => t.id === this.tab)?.label ?? "Pricing"}>${this.renderTab()}</div>
       </div>
     `;
   }
