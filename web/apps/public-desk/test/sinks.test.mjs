@@ -11,7 +11,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const srcDir = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
+const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+const srcDir = join(appDir, "src");
 
 // A place a credential could rest in or surface from: no storage accessor, no
 // printed word, no cookie, no channel, no beacon, no URL or history write.
@@ -25,18 +26,22 @@ const AUTH_PACKAGE = /@hardscapehouse\/auth/;
 const SESSION_MACHINERY = /SessionStore|authHeaderProvider|AuthController/;
 const CREDENTIAL_HEADER = /authorization|bearer|x-org/i;
 
+// Every file the browser is served from source: the TypeScript, the
+// stylesheets, and the entry page itself (its inline script runs before any
+// module and is as good a place for a credential sink as any module).
 function* sources(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) yield* sources(path);
-    else if (entry.name.endsWith(".ts")) yield path;
+    else if (entry.name.endsWith(".ts") || entry.name.endsWith(".css")) yield path;
   }
+  if (dir === srcDir) yield join(appDir, "index.html");
 }
 
 function scan(pattern, label) {
   const offenders = [];
   for (const path of sources(srcDir)) {
-    const rel = relative(srcDir, path);
+    const rel = relative(appDir, path);
     const lines = readFileSync(path, "utf8").split("\n");
     lines.forEach((line, index) => {
       if (pattern.test(line)) offenders.push(`${rel}:${index + 1}: ${line.trim()}`);
@@ -56,4 +61,11 @@ test("no source of the page reaches for the auth package or the session machiner
 
 test("no source of the page names a credential header", () => {
   scan(CREDENTIAL_HEADER, "the credential header scan");
+});
+
+test("the scan covers the entry page and every stylesheet, not the TypeScript alone", () => {
+  const scanned = [...sources(srcDir)].map((path) => relative(appDir, path));
+  assert.ok(scanned.includes("index.html"), "index.html (its inline script) must be scanned");
+  assert.ok(scanned.includes(join("src", "fonts.css")), "src/fonts.css must be scanned");
+  assert.ok(scanned.some((path) => path.endsWith(".ts")), "the TypeScript must still be scanned");
 });
