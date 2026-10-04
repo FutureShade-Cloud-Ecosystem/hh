@@ -159,7 +159,7 @@ export class QuoteDeskApp extends HHElement {
     });
     this.#account = new DemoAccount({ client: demoClient });
     this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
-    this.#client = new QdClient(client);
+    this.#client = new QdClient(client, () => this.#deskUserId ?? "");
     // The shared kit's host wiring: one door, wired once, reading custody
     // through this element's own closures so the bearer never rests in a
     // second place.

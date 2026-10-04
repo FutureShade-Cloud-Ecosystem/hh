@@ -10,9 +10,12 @@
 // against the floor), its status in words, and Approve and Refuse buttons on
 // PENDING rows only. The app never decides who may decide: the contract
 // carries no may_decide flag, so a pending row offers the controls, and when a
-// decision answers 403 the server's refusal text is shown verbatim and the
-// decide controls leave the list from then on for this sign in. Nothing is
-// shown or hidden by role name. A decision updates the row and announces
+// decision answers 403 the server's refusal text is shown verbatim on that row
+// and that row's decide controls leave for this sign in (the other rows keep
+// theirs). Where the session carries the caller's own user id, a row the
+// caller filed offers no decide: four eyes is an identity fact, not a role
+// rule. The reason box is cleared after every decision, so one decision's
+// reason is never filed with the next. Nothing is shown or hidden by role name. A decision updates the row and announces
 // quote-changed so the sibling panels re-read.
 //
 // The templates carry no property or event bindings: the panel base delegates
@@ -31,8 +34,8 @@ export class QdApprovals extends PanelBase {
   /** A decision refusal keyed by the row that refused; the other rows stay as they were. */
   @state() private rowError: Record<string, string> = {};
   @state() private busyId = "";
-  /** The server's 403 text, once a decision was refused: the decide controls leave the list for this sign in. */
-  @state() private refusedText = "";
+  /** The server's 403 text per row that refused a decision: only that row loses its decide controls for this sign in. */
+  @state() private refusedRows: Record<string, string> = {};
   private lastClient: unknown = null;
 
   static styles = [
@@ -111,7 +114,7 @@ export class QdApprovals extends PanelBase {
   protected override willUpdate(changed: Map<string, unknown>): void {
     if (changed.has("client")) {
       // A new client is a new sign in: a refusal no longer stands.
-      if (this.lastClient !== this.client) this.refusedText = "";
+      if (this.lastClient !== this.client) this.refusedRows = {};
       this.lastClient = this.client;
       this.reload();
     }
@@ -144,6 +147,21 @@ export class QdApprovals extends PanelBase {
     return this.renderRoot.querySelector<HTMLInputElement>('[data-field="reason"]')?.value.trim() ?? "";
   }
 
+  private clearReason(): void {
+    const input = this.renderRoot.querySelector<HTMLInputElement>('[data-field="reason"]');
+    if (input !== null) input.value = "";
+  }
+
+  /** Four eyes is an identity fact: where the session carries the caller's own id, a row the caller filed offers no decide. */
+  private isOwn(row: IdentityApproval): boolean {
+    const me = this.client?.callerId() ?? "";
+    return me !== "" && row.requested_by === me;
+  }
+
+  private offers(row: IdentityApproval): boolean {
+    return isDecidable(row.status) && this.refusedRows[row.id] === undefined && !this.isOwn(row);
+  }
+
   private async decide(id: string, approve: boolean): Promise<void> {
     const client = this.client;
     if (client === null || id === "" || this.busyId !== "") return;
@@ -152,10 +170,12 @@ export class QdApprovals extends PanelBase {
     this.rowError = { ...this.rowError, [id]: "" };
     const result = await client.decideApproval(id, approve, this.reasonText());
     this.busyId = "";
+    // The reason belongs to the decision it was typed for: the next one starts empty.
+    this.clearReason();
     if (!result.ok) {
       // The server's own text, verbatim.
       this.rowError = { ...this.rowError, [id]: result.error };
-      if (result.status === 403) this.refusedText = result.error;
+      if (result.status === 403) this.refusedRows = { ...this.refusedRows, [id]: result.error };
       if (result.status === 409) await this.load();
       return;
     }
@@ -168,7 +188,8 @@ export class QdApprovals extends PanelBase {
     const label = policyLabel(row.policy_type);
     const detail = approvalDetail(row.detail);
     const refusal = this.rowError[row.id] ?? "";
-    const offer = isDecidable(row.status) && this.refusedText === "";
+    const offer = this.offers(row);
+    const own = isDecidable(row.status) && this.isOwn(row);
     const tone = row.status === "APPROVED" ? "good" : row.status === "PENDING" ? "wait" : "";
     return html`
       <div class="req" data-testid="ap-row" data-status=${row.status}>
@@ -183,6 +204,7 @@ export class QdApprovals extends PanelBase {
               <button type="button" class="danger" data-action="refuse" data-id=${row.id} ?disabled=${this.busyId !== ""} data-testid="ap-refuse">Refuse<span class="sr"> ${detail}</span></button>
             </div>`
           : nothing}
+        ${own ? html`<p class="dim" data-testid="ap-own">You filed this request. Another person decides it.</p>` : nothing}
         ${refusal !== "" ? html`<div class="row-error" role="alert" data-testid="ap-row-error">${refusal}</div>` : nothing}
       </div>
     `;
@@ -190,7 +212,7 @@ export class QdApprovals extends PanelBase {
 
   override render() {
     const pending = this.items.filter((row) => isDecidable(row.status)).length;
-    const decidable = this.items.some((row) => isDecidable(row.status)) && this.refusedText === "";
+    const decidable = this.items.some((row) => this.offers(row));
     return html`
       <div class="box" data-testid="ap-box">
         <div class="head">
@@ -200,7 +222,6 @@ export class QdApprovals extends PanelBase {
         <div class="sub">Margin floor requests for your branch. The server says who may decide.</div>
         <div class="ok outcome" role="status" data-testid="ap-outcome">${this.notice}</div>
         ${this.error !== "" ? html`<p class="err" role="alert" data-testid="ap-error">${this.error}</p>` : nothing}
-        ${this.refusedText !== "" ? html`<p class="lock" role="status" data-testid="ap-refused">${this.refusedText}</p>` : nothing}
         ${decidable
           ? html`<div class="reason"><label for="ap-reason">Reason for the decision (optional)</label><input id="ap-reason" data-field="reason" type="text" maxlength="300" data-testid="ap-reason" /></div>`
           : nothing}

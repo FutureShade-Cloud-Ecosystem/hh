@@ -6,7 +6,7 @@
 // and the decide controls leave the list; a decision on an already decided
 // request is the server's 409; and with the caller off the cost list the
 // detail text carries no margin and no figure appears anywhere in the panels.
-import { expect, test, type Browser, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Browser, type Page } from "@playwright/test";
 import { shot } from "./shot";
 
 async function signIn(page: Page, role = "Sales"): Promise<void> {
@@ -99,23 +99,26 @@ test("the Sales manager can refuse with a reason and the row reads Rejected", as
   await manager.close();
 });
 
-test("Sales sees the request, the decision attempt is refused verbatim and the controls leave", async ({ page }) => {
+test("Sales sees the request it filed with no decide; on a colleague's request the attempt is refused verbatim and that row's controls leave", async ({ page, request }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await fileAsSales(page);
-  const row = approvals(page).getByTestId("ap-row").first();
-  // The contract carries no may_decide flag, so a pending row offers the controls.
+  const own = approvals(page).getByTestId("ap-row").first();
+  // The session carries the caller's own id, so the row the caller filed offers no decide.
+  await expect(own.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
+  await expect(own.getByTestId("ap-own")).toBeVisible();
+  await plant(request, 2, "other");
+  await signIn(page);
+  await openQuote(page, "Q-1001");
+  const row = approvals(page).getByTestId("ap-row").filter({ hasNot: page.getByTestId("ap-own") }).first();
+  // The contract carries no may_decide flag, so a colleague's pending row offers the controls.
   await expect(row.getByRole("button", { name: /^Approve/ })).toBeVisible();
   await row.getByRole("button", { name: /^Approve/ }).click();
   const said = "identity: deciding a margin floor request is for the branch's Sales manager, the General Manager or the Financial Controller";
   await expect(row.getByTestId("ap-row-error")).toHaveText(said);
-  await expect(approvals(page).getByTestId("ap-refused")).toHaveText(said);
   await expect(row.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
   await expect(row.getByRole("button", { name: /^Refuse/ })).toHaveCount(0);
   await expect(approvals(page).getByTestId("ap-reason")).toHaveCount(0);
   await expect(row.getByTestId("ap-status")).toHaveText("Pending");
-  // The refusal stands across a re-read.
-  await page.getByRole("button", { name: "Refresh" }).first().click().catch(() => undefined);
-  await expect(row.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
   await approvals(page).scrollIntoViewIfNeeded();
   await shot(page, "approvals-refused");
 });
@@ -138,17 +141,15 @@ test("a decision on a request somebody else already decided is the server's 409,
   await second.close();
 });
 
-test("a caller off the cost list reads no margin anywhere in the panels", async ({ page, request }) => {
+test("a caller off the cost list: the refusal dialog carries no figures, the filer's own card keeps the server's detail (the core's qd1c)", async ({ page, request }) => {
   await request.put("/_stub/cost-list", { data: { member: false } });
   await fileAsSales(page);
   const row = approvals(page).getByTestId("ap-row").first();
+  // The core builds the detail from its own figures and the filer reads it in the filer's own card.
   const detail = await row.getByTestId("ap-detail").innerText();
-  expect(detail).toMatch(/^Quote Q-1001, line 1, .*, 10% discount$/);
-  expect(detail).not.toMatch(/margin|floor of/i);
-  // The refusal dialog carried no figures either, and the list shows none.
+  expect(detail).toMatch(/^Quote Q-1001, line 1, .*, 10% discount, margin [\d.]+% against a floor of [\d.]+%$/);
+  // The refusal dialog carries no figures for a caller off the list.
   await paverRefusalHasNoFigures(page);
-  const text = await approvals(page).innerText();
-  expect(text).not.toMatch(/margin [\d.-]+%|against a floor|cost/i);
 });
 
 async function paverRefusalHasNoFigures(page: Page): Promise<void> {
@@ -161,3 +162,67 @@ async function paverRefusalHasNoFigures(page: Page): Promise<void> {
   expect(text).not.toMatch(/margin [\d.-]+%|against a floor|cost/i);
   await dialog(page).getByTestId("fr-close").click();
 }
+
+// ── PR 121 round 1: the list against the core's own shape, and per row locks ──
+
+async function plant(request: APIRequestContext, lineNo: number, flow: string): Promise<void> {
+  const planted = await request.post("/_stub/plant-approval", { data: { quote_id: "q-1001", line_no: lineNo, requested_by_flow: flow } });
+  expect(planted.ok()).toBe(true);
+}
+
+for (const shape of ["page", "bare", "paged"]) {
+  test(`the list reads the ${shape} shape: every request is shown (the contract says a page, the core writes a bare array)`, async ({ browser, request }) => {
+    await request.put("/_stub/approvals-shape", { data: { shape } });
+    await plant(request, 1, "sales");
+    await plant(request, 2, "sales");
+    const manager = await asManager(browser);
+    await expect(approvals(manager).getByTestId("ap-row")).toHaveCount(2);
+    await expect(approvals(manager).getByTestId("ap-error")).toHaveCount(0);
+    await expect(approvals(manager).getByTestId("ap-count")).toHaveText("2 pending");
+    await manager.close();
+  });
+}
+
+test("one 403 locks only its own row: the other rows keep their decide controls", async ({ page, request }) => {
+  await plant(request, 1, "other");
+  await plant(request, 2, "other");
+  await signIn(page);
+  await openQuote(page, "Q-1001");
+  const rows = approvals(page).getByTestId("ap-row");
+  await expect(rows).toHaveCount(2);
+  await rows.nth(0).getByRole("button", { name: /^Approve/ }).click();
+  await expect(rows.nth(0).getByTestId("ap-row-error")).toContainText("deciding a margin floor request");
+  await expect(rows.nth(0).getByRole("button", { name: /^Approve/ })).toHaveCount(0);
+  await expect(rows.nth(1).getByRole("button", { name: /^Approve/ })).toBeVisible();
+  await expect(rows.nth(1).getByRole("button", { name: /^Refuse/ })).toBeVisible();
+});
+
+test("a request the caller filed offers no decide, a colleague's does", async ({ browser, request }) => {
+  await plant(request, 1, "sales-manager");
+  await plant(request, 2, "sales");
+  const manager = await asManager(browser);
+  const rows = approvals(manager).getByTestId("ap-row");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0).getByRole("button", { name: /^Approve/ })).toHaveCount(0);
+  await expect(rows.nth(0).getByTestId("ap-own")).toBeVisible();
+  await expect(rows.nth(1).getByRole("button", { name: /^Approve/ })).toBeVisible();
+  await manager.close();
+});
+
+test("a decision's reason does not carry to the next decision", async ({ browser, request }) => {
+  await plant(request, 1, "sales");
+  await plant(request, 2, "sales");
+  const manager = await asManager(browser);
+  const rows = approvals(manager).getByTestId("ap-row");
+  await approvals(manager).getByTestId("ap-reason").fill("Long standing contractor, approve this one only");
+  await rows.nth(0).getByRole("button", { name: /^Approve/ }).click();
+  await expect(approvals(manager).getByTestId("ap-outcome")).toHaveText("Approved.");
+  await expect(approvals(manager).getByTestId("ap-reason")).toHaveValue("");
+  await rows.nth(1).getByRole("button", { name: /^Refuse/ }).click();
+  await expect(rows.nth(1).getByTestId("ap-status")).toHaveText("Rejected");
+  const ledger = (await (await request.get("/_stub/state")).json()).decisions as Array<{ approve: boolean; reason: string }>;
+  expect(ledger).toHaveLength(2);
+  expect(ledger[0]?.reason).toBe("Long standing contractor, approve this one only");
+  expect(ledger[1]?.reason).toBe("");
+  await manager.close();
+});

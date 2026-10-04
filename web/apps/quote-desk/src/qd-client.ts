@@ -52,7 +52,7 @@ import {
   type ShareLinkRow,
 } from "./_panel-wire.js";
 import {
-  readApprovals,
+  readApprovalsPage,
   readAvailability,
   readBranchStocks,
   readExtraction,
@@ -410,11 +410,21 @@ function validateEditOutcome(value: unknown): EditOutcome | null {
   return { subtotalCents, totalCents, status };
 }
 
+const MAX_APPROVAL_PAGES = 40;
+
 export class QdClient {
   readonly #client: ApiClient;
+  readonly #callerId: () => string;
 
-  constructor(client: ApiClient) {
+  /** callerId reads the signed in person's own user id from the session, "" when none is carried. */
+  constructor(client: ApiClient, callerId: () => string = () => "") {
     this.#client = client;
+    this.#callerId = callerId;
+  }
+
+  /** The caller's own user id as the session carries it; "" when it does not. */
+  callerId(): string {
+    return this.#callerId();
   }
 
   /**
@@ -912,10 +922,25 @@ export class QdClient {
 
   /** The approval requests the server returns for this caller, optionally by status. */
   async listApprovals(status: "PENDING" | "APPROVED" | "REJECTED" | ""): Promise<Result<IdentityApproval[]>> {
-    const result = await staffIdentity.identityListApprovals(this.#client, status === "" ? undefined : { status });
-    if (!result.ok) return result;
-    const rows = readApprovals(result.value);
-    return rows === null ? err("the approvals list is not readable") : ok(rows);
+    // A page object carries next_cursor and is followed to its end; the core's bare array has none (see readApprovalsPage).
+    const rows: IdentityApproval[] = [];
+    const seen = new Set<string>();
+    let cursor: string | undefined;
+    for (let pages = 0; pages < MAX_APPROVAL_PAGES; pages += 1) {
+      const query: { status?: "PENDING" | "APPROVED" | "REJECTED"; cursor?: string } = {};
+      if (status !== "") query.status = status;
+      if (cursor !== undefined) query.cursor = cursor;
+      const result = await staffIdentity.identityListApprovals(this.#client, Object.keys(query).length === 0 ? undefined : query);
+      if (!result.ok) return result;
+      const page = readApprovalsPage(result.value);
+      if (page === null) return err("the approvals list is not readable");
+      rows.push(...page.items);
+      if (page.nextCursor === undefined) return ok(rows);
+      if (seen.has(page.nextCursor)) return err("the approvals list repeated a page cursor");
+      seen.add(page.nextCursor);
+      cursor = page.nextCursor;
+    }
+    return err("the approvals list has more pages than this screen reads");
   }
 
   /** Decide one approval. The server decides whether this caller may; its refusal comes back verbatim. */

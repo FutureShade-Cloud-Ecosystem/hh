@@ -371,11 +371,37 @@ export function readFloorAnswer(value: unknown): QuoteFloorApprovalAnswer | null
 
 const POLICY_TYPES = new Set(["MARGIN_BELOW_MINIMUM", "CREDIT_LIMIT_EXCEEDED", "COD_CONSTRAINT", "JE_OVER_THRESHOLD", "FREIGHT_ABOVE_QUOTE"]);
 
-/** The approvals the server returns. One unreadable row refuses the page rather than showing it short. */
-export function readApprovals(value: unknown): IdentityApproval[] | null {
-  if (!isRecord(value)) return null;
-  const items = list(value, "items");
-  if (items === null) return null;
+/** One page of approvals: the rows and the cursor to the next page, when the server sent one. */
+export interface ApprovalsPage {
+  items: IdentityApproval[];
+  nextCursor?: string;
+}
+
+/**
+ * The approvals the server returns, in either shape. The contract says the
+ * list answers an IdentityApprovalPage ({items, next_cursor}); the core's
+ * handler (staffcontext/approvals_handler.go listApprovals) writes a BARE JSON
+ * array. The two disagree, so the reader takes both: a bare array, or the page
+ * object with items and an optional next_cursor. Every row is validated field
+ * by field, and one unreadable row refuses the page rather than showing it short.
+ */
+export function readApprovalsPage(value: unknown): ApprovalsPage | null {
+  let items: unknown[];
+  let nextCursor: string | undefined;
+  if (Array.isArray(value)) {
+    items = value;
+  } else if (isRecord(value)) {
+    const rows = list(value, "items");
+    if (rows === null) return null;
+    items = rows;
+    const cursor = value["next_cursor"];
+    if (cursor !== undefined && cursor !== null) {
+      if (typeof cursor !== "string") return null;
+      if (cursor !== "") nextCursor = cursor;
+    }
+  } else {
+    return null;
+  }
   const out: IdentityApproval[] = [];
   for (const raw of items) {
     if (!isRecord(raw)) return null;
@@ -402,5 +428,5 @@ export function readApprovals(value: unknown): IdentityApproval[] | null {
       ...(typeof raw["decided_by"] === "string" ? { decided_by: raw["decided_by"] } : {}),
     });
   }
-  return out;
+  return { items: out, ...(nextCursor !== undefined ? { nextCursor } : {}) };
 }

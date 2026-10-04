@@ -252,13 +252,17 @@ const HST_RATE_BPS = 1300;
 // The floor raise: a test lifts every category floor by a whole number of
 // basis points, so a discount that was inside the floor when it was set lands
 // below it on a later quantity reprice (the qty arm of the typed refusal).
-const switches = { callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0 };
+// approvalsShape: "page" is the contract's IdentityApprovalPage, "bare" is what
+// the core's handler writes today (a bare array), "paged" is the page object
+// split into pages of one row with next_cursor.
+const switches = { callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0, approvalsShape: "page", quotePageSize: 0 };
 
 // Every write the stub sees, for the suite's layout save assertions. The
 // ledger is test scaffolding: no contract path reads it.
 const workspaceWrites = [];
 const itemsWrites = [];
 const policyWrites = [];
+const decisions = [];
 // The share links minted, by quote id (a list), and the request door's filed requests.
 const shareLinks = new Map();
 const floorRequests = new Map(); // `${quoteId}:${lineNo}` -> request row
@@ -582,10 +586,10 @@ function seedWorld() {
 }
 seedWorld();
 
-function renumber(quote) {
-  quote.lines.forEach((line, index) => {
-    line.line_no = index + 1;
-  });
+// The core does not renumber after a removal (DeleteLineGuarded): a removed
+// line leaves a gap and a new line takes the next number past the highest.
+function nextLineNo(quote) {
+  return quote.lines.reduce((high, line) => Math.max(high, line.line_no), 0) + 1;
 }
 
 function restamp(quote) {
@@ -940,13 +944,43 @@ const server = createServer(async (request, response) => {
   // the cost list switch the wrong-role page flips. Test scaffolding; no
   // contract path shares the namespace.
   if (path === "/_stub/state") {
-    respondJson(response, 200, { workspaceWrites, itemsWrites, policyWrites, conversions, switches: { ...switches } });
+    respondJson(response, 200, { workspaceWrites, itemsWrites, policyWrites, decisions, conversions, switches: { ...switches } });
     return;
   }
   if (path === "/_stub/general-manager" && request.method === "PUT") {
     readBody(request, response, (body) => {
       switches.callerIsGeneralManager = body.member === true;
       respondJson(response, 200, { member: switches.callerIsGeneralManager });
+    });
+    return;
+  }
+  if (path === "/_stub/approvals-shape" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      switches.approvalsShape = ["bare", "paged"].includes(body.shape) ? body.shape : "page";
+      respondJson(response, 200, { shape: switches.approvalsShape });
+    });
+    return;
+  }
+  // File a floor request on a line as the user of a named flow, so a list can
+  // hold rows the caller filed and rows somebody else did.
+  if (path === "/_stub/plant-approval" && request.method === "POST") {
+    readBody(request, response, (body) => {
+      const quote = quoteOr404(String(body.quote_id));
+      const lineNo = Number(body.line_no);
+      const line = quote === null ? undefined : quote.lines.find((row) => row.line_no === lineNo);
+      if (quote === null || line === undefined) {
+        respondJson(response, 404, { error: "no such line" });
+        return;
+      }
+      const key = `${quote.id}:${lineNo}`;
+      const request = { id: `fr-${key}`, status: "PENDING", line_no: lineNo, disc_pct: Number(body.disc_pct) || 10 };
+      floorRequests.set(key, request);
+      approvalCards.set(request.id, {
+        quote_id: quote.id,
+        requested_by: USERS[body.requested_by_flow]?.user_id ?? "u-another-seller",
+        detail: `Quote ${quote.quote_no}, line ${lineNo}, ${line.description}, ${request.disc_pct}% discount`,
+      });
+      respondJson(response, 200, request);
     });
     return;
   }
@@ -970,6 +1004,7 @@ const server = createServer(async (request, response) => {
     workspaceWrites.length = 0;
     itemsWrites.length = 0;
     policyWrites.length = 0;
+    decisions.length = 0;
     conversions.length = 0;
     acceptance.allow_multi_accept = false;
     resetPolicy();
@@ -977,6 +1012,8 @@ const server = createServer(async (request, response) => {
     switches.callerOnCostList = true;
     switches.callerIsGeneralManager = false;
     switches.floorRaiseBps = 0;
+    switches.approvalsShape = "page";
+    switches.quotePageSize = 0;
     respondJson(response, 200, { reset: true });
     return;
   }
@@ -1231,7 +1268,7 @@ const server = createServer(async (request, response) => {
       }
       const customer = customerById.get(quote.customer_id);
       const before = snapshotOf(quote, null);
-      const line = newLine(product, customer, body.qty_entered, { lineNo: quote.lines.length + 1 });
+      const line = newLine(product, customer, body.qty_entered, { lineNo: nextLineNo(quote) });
       quote.lines.push(line);
       restamp(quote);
       audit(quote, caller, [
@@ -1266,7 +1303,6 @@ const server = createServer(async (request, response) => {
       }
       const before = snapshotOf(quote, line);
       quote.lines = quote.lines.filter((row) => row.line_no !== lineNo);
-      renumber(quote);
       restamp(quote);
       audit(quote, caller, [{ field: "line_removed", line_no: lineNo, before: line.product_id }, ...moneyRows(quote, before, null, lineNo)]);
       respondJson(response, 200, editResult(quote, null));
@@ -1566,7 +1602,7 @@ const server = createServer(async (request, response) => {
       quote.status = "CONVERTED";
       quote.fulfilment = body.fulfillment === "WILL_CALL" ? "WILL_CALL" : "PICKUP";
       conversions.push({ quote_id: quote.id, fulfillment: body.fulfillment ?? null });
-      respondJson(response, 200, { order_id: `o-${quote.id}`, order_no: `SO-${quote.id.slice(-4)}` });
+      respondJson(response, 201, { order_id: `o-${quote.id}`, order_no: `SO-${quote.id.slice(-4)}` });
     });
     return;
   }
@@ -1594,28 +1630,30 @@ const server = createServer(async (request, response) => {
         return;
       }
       if (decision.cleared) {
-        respondJson(response, 200, { filed: false, may_clear_itself: true });
+        respondJson(response, 201, { filed: false, may_clear_itself: true });
         return;
       }
       const key = `${quote.id}:${lineNo}`;
       const standing = floorRequests.get(key);
       if (standing !== undefined && standing.status !== "REJECTED") {
-        respondJson(response, 200, { filed: true, may_clear_itself: false, request: standing });
+        // The core answers a standing request as filed:false with the request.
+        respondJson(response, 201, { filed: false, may_clear_itself: false, request: standing });
         return;
       }
       const request = { id: `fr-${key}`, status: "PENDING", line_no: lineNo, disc_pct: disc };
       floorRequests.set(key, request);
       const askedUnit = netUnitCents(ruleUnitCents(product, customer), disc);
       const askedMargin = marginBps(askedUnit, product.branch_cost_cents[TRENTON_ID] ?? 0);
-      // The detail is the server's own sentence: the line, the discount and, for a
-      // caller on the cost list only, the margin against the floor.
+      // The detail is the server's own sentence, built from its own figures: the
+      // line, the discount and the margin against the floor. The core files it
+      // for the filer, who reads it in the filer's own card (qd1c).
       approvalCards.set(request.id, {
         quote_id: quote.id,
         requested_by: userId,
         detail: `Quote ${quote.quote_no}, line ${lineNo}, ${product.name}, ${disc}% discount` +
-          (switches.callerOnCostList ? `, margin ${(askedMargin / 100).toFixed(1)}% against a floor of ${((product.floor_bps + switches.floorRaiseBps) / 100).toFixed(1)}%` : ""),
+          `, margin ${(askedMargin / 100).toFixed(1)}% against a floor of ${((product.floor_bps + switches.floorRaiseBps) / 100).toFixed(1)}%`,
       });
-      respondJson(response, 200, { filed: true, may_clear_itself: false, request });
+      respondJson(response, 201, { filed: true, may_clear_itself: false, request });
     });
     return;
   }
@@ -2045,6 +2083,16 @@ const server = createServer(async (request, response) => {
       });
       void key;
     }
+    if (switches.approvalsShape === "bare") {
+      respondJson(response, 200, items);
+      return;
+    }
+    if (switches.approvalsShape === "paged") {
+      const start = Number(url.searchParams.get("cursor") ?? "0") || 0;
+      const next = start + 1;
+      respondJson(response, 200, { items: items.slice(start, next), ...(next < items.length ? { next_cursor: String(next) } : {}) });
+      return;
+    }
     respondJson(response, 200, { items });
     return;
   }
@@ -2068,7 +2116,7 @@ const server = createServer(async (request, response) => {
         return;
       }
       if (card.requested_by === caller.account.user_id) {
-        respondJson(response, 403, { error: "identity: you cannot decide your own request" });
+        respondJson(response, 403, { error: "separation of duties: you cannot approve your own request" });
         return;
       }
       if (row.status !== "PENDING") {
@@ -2078,6 +2126,7 @@ const server = createServer(async (request, response) => {
       row.status = body.approve ? "APPROVED" : "REJECTED";
       card.decided_by = caller.account.user_id;
       card.reason = body.reason;
+      decisions.push({ id: approvalId, approve: body.approve, reason: body.reason });
       respondJson(response, 200, { status: row.status });
     });
     return;
