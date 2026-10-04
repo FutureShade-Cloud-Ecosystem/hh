@@ -279,6 +279,22 @@ func (r *Repository) AcceptQuoteGuarded(ctx context.Context, in acceptWrite, hoo
 		}
 		return out, fmt.Errorf("lock quote for acceptance: %w", err)
 	}
+	// QD-3d: a retry under the key of an earlier acceptance through this link answers that first
+	// outcome and writes nothing, whatever the quote's status is now. It runs here, under the lock and
+	// before every status check, because a request that timed out at the client may have committed
+	// after the client looked again (share_idempotency.go). The deferred rollback ends this tx.
+	if in.IdempotencyKey != "" {
+		if hooks.record == nil {
+			return out, errors.New("quote acceptance: an idempotency key needs the audit hook")
+		}
+		prior, found, ferr := r.findKeyedAcceptance(ctx, tx, in)
+		if ferr != nil {
+			return AcceptanceResult{}, ferr
+		}
+		if found {
+			return prior, nil
+		}
+	}
 	repeat := false
 	if status != "SENT" {
 		// DIB-491 (D-097): a quote that was ALREADY accepted may be accepted again, but only when
@@ -319,7 +335,7 @@ func (r *Repository) AcceptQuoteGuarded(ctx context.Context, in acceptWrite, hoo
 	out = AcceptanceResult{
 		QuoteNo: quoteNo, TypedName: in.TypedName, AcceptedAt: in.Now,
 		SubtotalCents: subtotal, TaxCents: tax, TotalCents: total,
-		Repeat: repeat, priorStatus: status,
+		Repeat: repeat, priorStatus: status, idemKey: in.IdempotencyKey,
 	}
 	var seq int64
 	if hooks.record != nil {

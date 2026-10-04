@@ -186,6 +186,9 @@ type AcceptanceResult struct {
 	// ACCEPTED/CONVERTED for a repeat). Unexported: it exists for the audit hook, which must record
 	// the true before→after rather than hardcoding SENT→ACCEPTED, and it never crosses the wire.
 	priorStatus string
+	// idemKey is the Idempotency-Key this acceptance carried, for the audit hook only (QD-3d). Unexported,
+	// it never crosses the wire.
+	idemKey string
 }
 
 // shareStore is the persistence the share surface needs.
@@ -211,6 +214,9 @@ type acceptWrite struct {
 	ShareLinkID string
 	TypedName   string
 	Now         time.Time
+	// IdempotencyKey is the optional, already validated and lowercased Idempotency-Key. Empty means
+	// the caller sent none and the acceptance behaves exactly as it did before the key existed.
+	IdempotencyKey string
 }
 
 // acceptHooks folds the audit row into the acceptance transaction, exactly as the edit hooks do.
@@ -405,6 +411,15 @@ func (s *StaffService) PublicQuoteByToken(ctx context.Context, rawToken string) 
 // row lock (R3), so an acceptance is exactly as reconstructable as a staff edit, and an acceptance
 // can never exist without the trail that explains it, or vice versa.
 func (s *StaffService) AcceptByToken(ctx context.Context, rawToken, typedName string, affirmed bool) (AcceptanceResult, error) {
+	return s.AcceptByTokenKeyed(ctx, rawToken, typedName, affirmed, "")
+}
+
+// AcceptByTokenKeyed is AcceptByToken carrying the optional Idempotency-Key (see share_idempotency.go).
+func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedName string, affirmed bool, idemKey string) (AcceptanceResult, error) {
+	idemKey, kerr := normalizeIdempotencyKey(idemKey)
+	if kerr != nil {
+		return AcceptanceResult{}, kerr
+	}
 	link, quoteID, err := s.resolveLive(ctx, rawToken)
 	if err != nil {
 		return AcceptanceResult{}, err
@@ -423,6 +438,7 @@ func (s *StaffService) AcceptByToken(ctx context.Context, rawToken, typedName st
 	}
 	res, err := s.shares.AcceptQuoteGuarded(ctx, acceptWrite{
 		QuoteID: quoteID, ShareLinkID: link.ID, TypedName: name, Now: s.now(),
+		IdempotencyKey: idemKey,
 	}, acceptHooks{
 		record: func(ctx context.Context, tx pgx.Tx, r AcceptanceResult) (int64, error) {
 			return s.recordAcceptance(ctx, tx, quoteID, link.ID, r)
@@ -442,6 +458,10 @@ func (s *StaffService) AcceptByToken(ctx context.Context, rawToken, typedName st
 // staff id here would misattribute a customer's decision to whoever happened to mint the link.
 func (s *StaffService) recordAcceptance(ctx context.Context, tx pgx.Tx, quoteID, linkID string, r AcceptanceResult) (int64, error) {
 	if s.auditTx == nil {
+		if r.idemKey != "" {
+			// A keyed acceptance with no trail to carry the key could not be replayed safely.
+			return 0, errors.New("quote-acceptance audit: an idempotency key needs the audit trail")
+		}
 		return 0, nil
 	}
 	// DIB-491: the before→after pair is the TRUE transition, not a hardcoded SENT→ACCEPTED. A repeat
@@ -454,18 +474,23 @@ func (s *StaffService) recordAcceptance(ctx context.Context, tx pgx.Tx, quoteID,
 	if r.Repeat {
 		after = before
 	}
+	extra := map[string]any{
+		"field":  "status",
+		"before": before,
+		"after":  after,
+		// amount_cents and ref_type are already on the audit allowlist; the typed name is NOT
+		// recorded here, it lives on quote_acceptances, which is the artifact built to hold it.
+		"amount_cents": r.TotalCents,
+		"ref_type":     "quote_share_link",
+	}
+	if r.idemKey != "" {
+		// QD-3d: the Idempotency-Key rides the allowlisted client_id (share_idempotency.go).
+		extra["client_id"] = r.idemKey
+	}
 	err := s.auditTx.RecordTx(ctx, tx, audit.SensitiveAccess{
 		Action: audit.ActQuoteAccepted, EntityType: "quote", EntityID: quoteID,
 		Purpose: "CUSTOMER_QUOTE_ACCEPTANCE", Reason: "status",
-		Extra: map[string]any{
-			"field":  "status",
-			"before": before,
-			"after":  after,
-			// amount_cents and ref_type are already on the audit allowlist; the typed name is NOT
-			// recorded here, it lives on quote_acceptances, which is the artifact built to hold it.
-			"amount_cents": r.TotalCents,
-			"ref_type":     "quote_share_link",
-		},
+		Extra: extra,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("quote-acceptance audit: %w", err)
@@ -475,6 +500,10 @@ func (s *StaffService) recordAcceptance(ctx context.Context, tx pgx.Tx, quoteID,
 	if serr := tx.QueryRow(ctx,
 		`SELECT seq FROM audit_log WHERE entity_type='quote' AND entity_id=$1 AND action=$2
 		  ORDER BY seq DESC LIMIT 1`, quoteID, audit.ActQuoteAccepted).Scan(&seq); serr != nil {
+		if r.idemKey != "" {
+			// The key is found through the anchor, so a keyed acceptance without one is refused.
+			return 0, fmt.Errorf("quote-acceptance audit anchor: %w", serr)
+		}
 		// A missing seq is not grounds to refuse an acceptance the customer legitimately made, the
 		// audit row itself is already written and is the authoritative trail. Anchor degrades to 0.
 		return 0, nil

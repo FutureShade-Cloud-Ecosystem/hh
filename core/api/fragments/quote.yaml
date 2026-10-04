@@ -856,6 +856,14 @@ paths:
         the quote row lock. A 409 names why the quote is not awaiting
         acceptance, including the order a first acceptance became when
         multi-accept is off.
+        An optional Idempotency-Key header (a UUID) makes a retry safe: a
+        request that timed out at the client may still have committed, so
+        every retry of one acceptance carries the same key. A repeat under
+        the same key, on the same quote and share link, answers the first
+        outcome with the same confirmation, writes nothing, and does so
+        whatever the quote's status is by then, multi-accept on or off. The
+        same key with a different typed name is a 409. A malformed key is a
+        400. Without the header the acceptance behaves as it always has.
       x-role: public
       security: []
       parameters:
@@ -864,6 +872,13 @@ paths:
           required: true
           description: The share-link token; it is the credential
           schema: { type: string }
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: >-
+            A UUID chosen once per acceptance and resent unchanged on every
+            retry of it. Scoped to the quote and the share link.
+          schema: { type: string, format: uuid }
       requestBody:
         required: true
         content:
