@@ -24,6 +24,7 @@ import "./assist-panel.js";
 import "./followups-panel.js";
 import "./hold-expiry-panel.js";
 import "./availability-panel.js";
+import "./guard-panel.js";
 import "./approvals-panel.js";
 import "./floor-refusal-dialog.js";
 import {
@@ -255,7 +256,7 @@ export class QdQuoteBuilder extends LitElement {
     // quote the same way: the edit panel, the change history and the settings
     // also take the validated client.
     for (const seam of this.renderRoot.querySelectorAll<HTMLElement & Record<string, unknown>>(
-      "qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-approvals, qd-floor-refusal",
+      "qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals, qd-floor-refusal",
     )) {
       seam.quoteId = this.selected;
       seam.branchId = this.selectedBranch() || this.newBranch;
@@ -366,7 +367,7 @@ export class QdQuoteBuilder extends LitElement {
   private reloadDetailPanels(): void {
     this.renderRoot
       ?.querySelectorAll<HTMLElement & { reload?: () => void }>(
-        "qd-quote-workarea, qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-approvals",
+        "qd-quote-workarea, qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals",
       )
       .forEach((el) => el.reload?.());
   }
@@ -497,6 +498,7 @@ export class QdQuoteBuilder extends LitElement {
                 <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>
                 <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>
                 <qd-quote-availability data-seam=${SEAM_AVAILABILITY}></qd-quote-availability>
+                <qd-quote-guard></qd-quote-guard>
               `
             : html`<div class="box"><p class="empty">Select a quote to open it.</p></div>`}
           <qd-approvals data-seam=${SEAM_APPROVALS}></qd-approvals>
