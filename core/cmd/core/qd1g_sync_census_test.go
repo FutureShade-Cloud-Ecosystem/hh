@@ -880,6 +880,49 @@ func qd1gApprovalsFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 	}
 }
 
+// TestQD1G_ApprovalsFindAppliedProjectionIsMasked: the replay lookup carries
+// a projection only of a request the caller may read, the same reader Load
+// uses (defence in depth: the engine never reads Data on a replay).
+func TestQD1G_ApprovalsFindAppliedProjectionIsMasked(t *testing.T) {
+	q := newQD1BFixture(t)
+	c := qd1gPlantStaff(t, q)
+	clerk := qd1bUserID(t, q.pool, testkit.SubInsideSales)
+	id, _ := qd1gFloor(t, c, clerk, testkit.BranchNorthAID)
+	key := uuid.NewString()
+	if _, err := q.pool.Exec(context.Background(),
+		`UPDATE permission_approval_requests SET idempotency_key = $2::uuid WHERE id = $1`, id, key); err != nil {
+		t.Fatalf("stamp the key: %v", err)
+	}
+	link := func(ctx context.Context, sub string) (string, bool) {
+		var uid string
+		if err := q.pool.QueryRow(ctx, `SELECT id::text FROM users WHERE platform_user_id = $1`, sub).Scan(&uid); err != nil {
+			return "", false
+		}
+		return uid, true
+	}
+	store := identity.NewApprovalsSyncStore(q.pool, link)
+	var readers, masked int
+	for _, who := range c.roles {
+		f := syncpkg.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: who.sub}
+		row, found, err := store.FindApplied(context.Background(), f, key)
+		if err != nil || !found {
+			t.Fatalf("FindApplied as %s: found %v err %v", who.role, found, err)
+		}
+		want := qd1gLoad(t, c, "approvals", who, id)
+		if (row.Data != nil) != want {
+			t.Errorf("approvals.FindApplied as %s: projection present %v, but Load (the reader) says %v", who.role, row.Data != nil, want)
+		}
+		if want {
+			readers++
+		} else {
+			masked++
+		}
+	}
+	if readers == 0 || masked == 0 {
+		t.Errorf("the masked projection test is vacuous: %d readers, %d masked", readers, masked)
+	}
+}
+
 // ---- the census ----------------------------------------------------------
 
 // qd1gDocRows reads the first column of every table row of the census
