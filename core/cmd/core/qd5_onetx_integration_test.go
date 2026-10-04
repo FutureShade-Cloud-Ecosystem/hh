@@ -71,6 +71,9 @@ func qd5SetupWith(t *testing.T, maxConns int32, withStock bool) *qd5Env {
 	invoicer, payer := quoteMoneyDoor(pool, orderSvc)
 	svc := quote.NewStaffService(repo).WithAudit(aud).WithAuditTrail(aud).
 		WithOrderInvoicer(invoicer).WithCounterPayer(payer)
+	if withStock {
+		svc.WithStockReserver(w5aQuoteStockReserver{svc: inv})
+	}
 	return &qd5Env{t: t, pool: pool, svc: svc, orderSvc: orderSvc, userID: userID}
 }
 
@@ -134,7 +137,7 @@ var qd5FaultSeq int
 // injectFaultAfter installs the fault trigger on table for op, scoped to q's customer and (for the
 // two tables that need it) to a second argument: the subledger row type, or the outbox topic. The
 // trigger is dropped with the test.
-func (e *qd5Env) injectFaultAfter(q qd5Quote, table, op, arg string) {
+func (e *qd5Env) injectFaultAfter(q qd5Quote, table, op, arg string, deferred bool) {
 	e.t.Helper()
 	ctx := context.Background()
 	if _, err := e.pool.Exec(ctx, qd5Boom); err != nil {
@@ -142,9 +145,16 @@ func (e *qd5Env) injectFaultAfter(q qd5Quote, table, op, arg string) {
 	}
 	qd5FaultSeq++
 	name := fmt.Sprintf("qd5_fault_%d", qd5FaultSeq)
+	kind := "TRIGGER"
+	timing := ""
+	if deferred {
+		// A deferred constraint trigger runs when the transaction commits, after every statement of the
+		// action has been written: the last place a fault can land.
+		kind, timing = "CONSTRAINT TRIGGER", " DEFERRABLE INITIALLY DEFERRED"
+	}
 	if _, err := e.pool.Exec(ctx, fmt.Sprintf(
-		`CREATE TRIGGER %s AFTER %s ON %s FOR EACH ROW EXECUTE FUNCTION qd5_boom('%s', '%s')`,
-		name, op, table, q.CustomerID, arg)); err != nil {
+		`CREATE %s %s AFTER %s ON %s%s FOR EACH ROW EXECUTE FUNCTION qd5_boom('%s', '%s')`,
+		kind, name, op, table, timing, q.CustomerID, arg)); err != nil {
 		e.t.Fatalf("install the fault on %s %s: %v", op, table, err)
 	}
 	e.t.Cleanup(func() {
@@ -240,21 +250,24 @@ func sameHolds(a, b map[string]int) bool {
 	return true
 }
 
-// seedSoftHold plants the quote's own soft hold, the one a conversion turns into a commitment; a
-// fault must leave it exactly as it was.
-func (e *qd5Env) seedSoftHold(q qd5Quote, branch string) {
+// seedSoftHold gives the quote its own soft hold the way a live quote has one: through the quote
+// service's own hold sync (res_type QUOTE, source_type 'quote', raised by inventory's reserve), not a
+// row shaped by hand, so the conversion finds and consumes it exactly as it does a real one. A fault
+// must leave it exactly as it was.
+func (e *qd5Env) seedSoftHold(q qd5Quote) {
 	e.t.Helper()
-	if _, err := e.pool.Exec(context.Background(), `
-		INSERT INTO stock_reservations (product_id, branch_id, location_id, res_type, hold_mode, qty_base, source_type, source_ref_id, reason)
-		SELECT ql.product_id, $2::uuid, $2::uuid, 'QUOTE', 'SOFT', ql.qty_base, 'QUOTE', ql.quote_id, 'QD-5 test'
-		  FROM quote_lines ql WHERE ql.quote_id = $1::uuid AND ql.line_no = 1`, q.QuoteID, branch); err != nil {
-		e.t.Fatalf("seed a soft hold: %v", err)
+	if n, err := e.svc.ResyncQuoteHolds(e.counter(), q.QuoteID); err != nil || n == 0 {
+		e.t.Fatalf("the quote's own soft hold could not be raised (applied %d): %v", n, err)
 	}
-	e.t.Cleanup(func() {
-		_, _ = e.pool.Exec(context.Background(), `DELETE FROM stock_reservations WHERE source_ref_id = $1::uuid`, q.QuoteID)
-		_, _ = e.pool.Exec(context.Background(),
-			`DELETE FROM stock_reservations WHERE source_ref_id IN (SELECT id FROM orders WHERE quote_id = $1)`, q.QuoteID)
-	})
+	var mode, source string
+	if err := e.pool.QueryRow(context.Background(), `
+		SELECT hold_mode, source_type FROM stock_reservations
+		 WHERE source_ref_id = $1::uuid AND res_type = 'QUOTE' AND status = 'ACTIVE'`, q.QuoteID).Scan(&mode, &source); err != nil {
+		e.t.Fatalf("read the quote's soft hold: %v", err)
+	}
+	if mode != "SOFT" || source != "quote" {
+		e.t.Fatalf("the planted hold is shaped %s/%s, a real quote hold is SOFT/quote", mode, source)
+	}
 }
 
 // qd5Fault is one injection point: where the fault lands, and which actions pass it (a conversion
@@ -262,6 +275,7 @@ func (e *qd5Env) seedSoftHold(q qd5Quote, branch string) {
 type qd5Fault struct {
 	name       string
 	table, op  string // a trigger fault, after this write
+	deferred   bool   // the trigger is a deferred constraint trigger: it fires at commit
 	arg        string
 	afterFacts int  // a seam fault, after the n-th read of the agreed facts
 	afterRaise bool // a seam fault, after the invoice was raised
@@ -286,6 +300,7 @@ var qd5Faults = []qd5Fault{
 	{name: "balance: the invoice balance moved", table: "invoices", op: "UPDATE"},
 	{name: "balance: the AR subledger payment row", table: "customer_transactions", op: "INSERT", arg: "PAYMENT"},
 	{name: "receipt: the payment event", table: "events_outbox", op: "INSERT", arg: "payment.received"},
+	{name: "commit: a deferred constraint raises when the transaction commits", table: "payments", op: "INSERT", deferred: true},
 }
 
 func (e *qd5Env) withFailingInvoicer(f qd5Fault) {
@@ -299,7 +314,7 @@ func (e *qd5Env) withFailingInvoicer(f qd5Fault) {
 func (e *qd5Env) injectFault(q qd5Quote, f qd5Fault) {
 	e.t.Helper()
 	if f.table != "" {
-		e.injectFaultAfter(q, f.table, f.op, f.arg)
+		e.injectFaultAfter(q, f.table, f.op, f.arg, f.deferred)
 		return
 	}
 	e.withFailingInvoicer(f)
@@ -320,13 +335,16 @@ func TestQD5OneTx_AFaultAfterEachWriteOfTheCashCustomersActionLeavesNothingBehin
 			e := qd5SetupSized(t, 0)
 			e.stockFor(qd5Trenton)
 			q := e.seedQuote(0, 0, qd5Trenton)
-			e.seedSoftHold(q, qd5Trenton)
+			e.seedSoftHold(q)
 			before := e.footprint(q)
 			e.injectFault(q, f)
 
 			_, err := e.svc.TakeOrderPayment(e.counter(), q.QuoteID, pay("CASH", q.Total, "k-fault"))
 			if err == nil || !strings.Contains(err.Error(), "injected fault") {
 				t.Fatalf("the fault must reach the caller as the action's failure, got %v", err)
+			}
+			if before.Holds["QUOTE/ACTIVE"] == 0 {
+				t.Fatalf("the quote's own soft hold must be there before the fault: %v", before.Holds)
 			}
 			after := e.footprint(q)
 			if after.Orders != 0 || after.OrderLines != 0 || after.Invoices != 0 || after.InvoiceLines != 0 ||
@@ -351,6 +369,10 @@ func TestQD5OneTx_AFaultAfterEachWriteOfTheCashCustomersActionLeavesNothingBehin
 			if c := e.counts(q); c != (qd5Counts{Orders: 1, Invoices: 1, Payments: 1}) {
 				t.Fatalf("after the repeat: %+v", c)
 			}
+			// The successful repeat consumes the quote's soft hold and raises the order's hard ones.
+			if h := e.footprint(q).Holds; h["QUOTE/ACTIVE"] != 0 || h["ORDER/ACTIVE"] == 0 {
+				t.Fatalf("the repeat must consume the quote's soft hold and hold the order's stock: %v", h)
+			}
 		})
 	}
 }
@@ -367,7 +389,7 @@ func TestQD5OneTx_AFaultAfterEachWriteOfTheCreditCustomersPaymentLeavesTheConver
 			e := qd5SetupSized(t, 0)
 			e.stockFor(qd5Trenton)
 			q := e.seedQuote(1_000_000, 0, qd5Trenton)
-			e.seedSoftHold(q, qd5Trenton)
+			e.seedSoftHold(q)
 			e.convert(q)
 			before := e.footprint(q)
 			e.injectFault(q, f)
