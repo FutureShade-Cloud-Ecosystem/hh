@@ -198,7 +198,7 @@ func TestQD2_MarginAgreement_ScreenAndFloorDecision(t *testing.T) {
 		UserID: alice, RoleCode: "INSIDE_SALES", Tier: identity.TierFrontline,
 		Scope: identity.ScopeBranch, Status: identity.StatusActive,
 		Branches: map[string]bool{intTrenton: true},
-	}, quoteID, branchID, prod, 2, 10, uom, 1000, 2000, uom, nil)
+	}, quoteID, branchID, prod, 2, 10, "", uom, 1000, 2000, uom, nil)
 	if err != nil {
 		t.Fatalf("floor decision: %v", err)
 	}
