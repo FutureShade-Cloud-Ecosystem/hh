@@ -348,7 +348,7 @@ func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPrevie
 				if berr == nil {
 					it.PreviousFinalCents, it.PreviousMarginBps, it.AlreadyUnderFloor = before.FinalCents, before.MarginBps, before.Blocked
 				}
-				if worst == nil || it.MarginBps < worst.MarginBps {
+				if worst == nil || worseBreach(it, *worst) {
 					worst = &it
 				}
 			}
@@ -364,6 +364,16 @@ func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPrevie
 	}
 	sort.SliceStable(out.Items, func(i, j int) bool { return out.Items[i].MarginBps < out.Items[j].MarginBps })
 	return out, nil
+}
+
+// worseBreach orders two breaches of one product: a newly under case outranks one that was
+// under already, because the warning is about what this change does; among the same kind
+// the lower margin is worse.
+func worseBreach(a, b FloorPreviewItem) bool {
+	if a.AlreadyUnderFloor != b.AlreadyUnderFloor {
+		return !a.AlreadyUnderFloor
+	}
+	return a.MarginBps < b.MarginBps
 }
 
 // RecordFloorConfirmation writes the editor's confirmation of a floor warning into the

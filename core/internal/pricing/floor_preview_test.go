@@ -259,3 +259,24 @@ func TestRecordFloorConfirmation_RefusesAnUnknownRecordOrNoProducts(t *testing.T
 		t.Errorf("refusals write nothing, got %+v", st.audits)
 	}
 }
+
+// A product can be under the floor for one kind of customer already and newly under it for
+// another. The warning names the newly under case: reporting the old problem alone would
+// hide what this change does.
+func TestPreviewFloor_ANewBreachIsNotHiddenBehindAnOldOne(t *testing.T) {
+	old := tierRule(4000)
+	old.ID, old.IsActive = "r-old", true // CONTRACTOR already prices under the 1200 floor
+	st := &fakeStore{rules: []Rule{*old}}
+	s := previewSvc(st)
+	out, err := s.PreviewFloor(context.Background(), FloorChange{Kind: "category_policy",
+		Policy: &CategoryPolicy{CategoryID: "pavers", MarginTargetBps: 5000, MarginFloorBps: 4000}})
+	if err != nil {
+		t.Fatalf("PreviewFloor: %v", err)
+	}
+	if len(out.Items) != 1 {
+		t.Fatalf("one product, one item: %+v", out)
+	}
+	if out.Items[0].AlreadyUnderFloor {
+		t.Fatalf("the item must be the newly under case (a customer at list price), not the contractor who was already under: %+v", out.Items[0])
+	}
+}

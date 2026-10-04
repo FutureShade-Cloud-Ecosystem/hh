@@ -66,6 +66,7 @@
 // QuoteFloorRefusal, field for field, with no error field, exactly as the
 // core's own FloorRefusalError marshals.
 import { createServer } from "node:http";
+import { handlePricing, resetPricing } from "./pricing-stub.mjs";
 
 const port = Number(process.env.QD_STUB_PORT ?? 4839);
 
@@ -1014,6 +1015,7 @@ const server = createServer(async (request, response) => {
     decisions.length = 0;
     conversions.length = 0;
     acceptance.allow_multi_accept = false;
+    resetPricing();
     resetPolicy();
     resetScopeRules();
     switches.callerOnCostList = true;
@@ -1120,6 +1122,9 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+
+  // The pricing console's routes and switches (QD-4), behind the same bearer check.
+  if (handlePricing({ request, response, path, url, callerOf, readBody, respondJson })) return;
 
   // The staff routes, behind the minted bearer and the demo org header.
   const caller = callerOf(request);
