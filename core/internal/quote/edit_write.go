@@ -106,6 +106,11 @@ func (s *StaffService) AddLine(ctx context.Context, quoteID, productID, descript
 	if err != nil {
 		return QuoteEditResult{}, err
 	}
+	// CP0-3 answer A: an accepted line at a below floor rule price is
+	// logged for the pricing editors (the mark rides the read). The row
+	// rides the write's own transaction, named by the line the insert
+	// derived under the lock.
+	pricingRows := rulePriceLogRows(caller, quoteID, productID, lp.Breakdown)
 	after, totals, status, err := s.store.InsertLineGuarded(ctx, quoteEditWrite{
 		QuoteID: quoteID, AllowedFrom: rule.fromList(),
 		ProductID: productID, Description: description,
@@ -113,15 +118,13 @@ func (s *StaffService) AddLine(ctx context.Context, quoteID, productID, descript
 		UnitPriceCents: lp.UnitPriceCents, PriceUOM: lp.PriceUOM, LineTotalCents: lp.LineTotalCents,
 		ActorID: caller.UserID,
 	}, quoteEditHooks{
-		record: s.lineAuditHook(caller.UserID, quoteID, FieldQuoteLineAdd),
-		holds:  s.holdSyncHook(quoteID, caller.UserID),
+		record:  s.lineAuditHook(caller.UserID, quoteID, FieldQuoteLineAdd),
+		holds:   s.holdSyncHook(quoteID, caller.UserID),
+		pricing: s.pricingLogHook(pricingRows),
 	})
 	if err != nil {
 		return QuoteEditResult{}, nameQuoteField(err, FieldQuoteLineAdd)
 	}
-	// CP0-3 answer A: an accepted line at a below floor rule price is
-	// logged for the pricing editors (the mark rides the read).
-	s.recordRulePriceBelowFloor(ctx, caller, quoteID, productID, after.LineNo, lp.Breakdown)
 	return QuoteEditResult{Line: &after, Totals: totals, Status: status}, nil
 }
 
@@ -182,24 +185,27 @@ func (s *StaffService) EditLineQty(ctx context.Context, quoteID string, lineNo i
 			plan.expectedDisc = disc
 		}
 	}
+	// The pricing log rows the reprice owes, on the write's own
+	// transaction (plan 4.2 and CP0-3 answer A): the floor row for a
+	// repriced discounted line, and the rule price row when the reprice
+	// struck a below floor rule price, logged like the add that first
+	// wrote it. The add's own row is named by the line the write locked.
+	rows := append(
+		floorLogRows(caller, quoteID, cur.ProductID, plan.expectedDisc, out),
+		rulePriceLogRows(caller, quoteID, cur.ProductID, lp.Breakdown)...)
 	_, after, totals, status, err := s.store.UpdateLineGuarded(ctx, quoteEditWrite{
 		QuoteID: quoteID, LineNo: lineNo, AllowedFrom: rule.fromList(),
 		QtyEntered: strings.TrimSpace(qtyEntered), QtyBase: formatQty(lp.QtyBase),
 		UnitPriceCents: lp.UnitPriceCents, PriceUOM: lp.PriceUOM, LineTotalCents: lp.LineTotalCents,
 		ActorID: caller.UserID,
 	}, plan, quoteEditHooks{
-		record: s.lineAuditHook(caller.UserID, quoteID, FieldQuoteLineQty),
-		holds:  s.holdSyncHook(quoteID, caller.UserID),
+		record:  s.lineAuditHook(caller.UserID, quoteID, FieldQuoteLineQty),
+		holds:   s.holdSyncHook(quoteID, caller.UserID),
+		pricing: s.pricingLogHook(rows),
 	})
 	if err != nil {
 		return QuoteEditResult{}, nameQuoteField(err, FieldQuoteLineQty)
 	}
-	if out != nil {
-		s.completeFloorWrite(ctx, caller, quoteID, cur.ProductID, lineNo, out.plan.expectedDisc, out)
-	}
-	// CP0-3 answer A: a reprice that struck a below floor rule price is
-	// logged for the pricing editors like the add that first wrote it.
-	s.recordRulePriceBelowFloor(ctx, caller, quoteID, cur.ProductID, lineNo, lp.Breakdown)
 	return QuoteEditResult{Line: &after, Totals: totals, Status: status}, nil
 }
 

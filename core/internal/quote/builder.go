@@ -492,12 +492,12 @@ func (s *StaffService) SetLineDiscount(ctx context.Context, quoteID string, line
 	}
 	res, err := b.UpdateLineDiscountGuarded(ctx, quoteID, lineNo, discPct, rule.fromList(), caller.UserID, plan, quoteDiscountHooks{
 		record: s.discountAuditHook(caller.UserID, quoteID),
+		// The BYPASS or UPDATE row the decision owes rides the write's own
+		// transaction (plan 4.2): a commit with no log row cannot happen.
+		pricing: s.pricingLogHook(floorLogRows(caller, quoteID, productID, discPct, out)),
 	})
 	if err != nil {
 		return QuoteEditResult{}, nameQuoteField(err, FieldQuoteLineQty)
-	}
-	if out != nil {
-		s.completeFloorWrite(ctx, caller, quoteID, productID, lineNo, discPct, out)
 	}
 	return res, nil
 }

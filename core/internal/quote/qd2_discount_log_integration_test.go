@@ -16,9 +16,15 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// qd2Clock is the suite's fixed decision clock: the injected `now` every qd2
+// test pins its repository and service to (the qd1 pattern). One literal, in
+// one helper, so a new fixture adds no calendar date of its own.
+func qd2Clock() time.Time { return time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC) }
 
 // qd2TrailField reads one QUOTE_CHANGED row's before and after for a field
 // on one line of one quote. ok=false when no such row stands.
@@ -162,5 +168,118 @@ func TestQD2_BypassRowStillCorrect_NoRowForStandingClearing(t *testing.T) {
 	}
 	if rows := qd2AuditRows(t, pool, quoteID); len(rows) != 1 {
 		t.Fatalf("a standing clearing is not re-logged, got %+v", rows)
+	}
+}
+
+// qd2CancelOnCommitStore cancels the request context the instant the guarded
+// write returns: the line is committed, and everything the write still owed
+// at that point runs on a context that is now dead. A log row that rides the
+// write's own transaction is already committed with it; a best-effort append
+// after the fact is not.
+type qd2CancelOnCommitStore struct {
+	*Repository
+	cancel context.CancelFunc
+}
+
+func (w *qd2CancelOnCommitStore) UpdateLineDiscountGuarded(ctx context.Context, quoteID string, lineNo, discPct int, allowedFrom []string, actorID string, plan floorWritePlan, hooks quoteDiscountHooks) (QuoteEditResult, error) {
+	res, err := w.Repository.UpdateLineDiscountGuarded(ctx, quoteID, lineNo, discPct, allowedFrom, actorID, plan, hooks)
+	w.cancel()
+	return res, err
+}
+
+// The pricing log row must survive a request context that dies the moment
+// the write commits (plan 4.2: the row rides the write's own transaction, so
+// a client disconnect between commit and log cannot lose it).
+func TestQD2_PricingLogRow_SurvivesContextCancelledAfterCommit(t *testing.T) {
+	pool := intPool(t)
+	now := qd2Clock()
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+	qd2CleanAudit(t, pool, quoteID)
+
+	arb := qd1Arbiter{marginBps: 2000, floorBps: 1200}
+	arb.records = pricing.NewService(pricing.NewRepository(pool))
+	repo := NewRepository(pool).withNow(func() time.Time { return now })
+	wrapped := &qd2CancelOnCommitStore{Repository: repo}
+	aud := audit.NewService(audit.NewRepository(pool), nil)
+	svc := NewStaffService(wrapped).
+		WithAudit(aud).WithAuditTrail(aud).
+		WithPricing(qd2Pricer{}).WithCostBasis(qInv{}).WithCustomerType(qCustType{}).
+		WithActorNamer(repo).WithRoleConfig(qd1Cfg).
+		WithFloorArbiter(&arb).
+		withCaller(qCallerFrom).
+		withNow(func() time.Time { return now })
+
+	// The cancel wraps the FINAL caller context: qCtxAs re-roots on
+	// Background, so a cancel layered before the role stamp would be
+	// discarded with it.
+	ctx, cancel := context.WithCancel(qd1WithRole(qCtxAs(intStaff(intTrenton)), "INSIDE_SALES", intTrenton, seller))
+	defer cancel()
+	wrapped.cancel = cancel
+
+	res, err := svc.SetLineDiscount(ctx, quoteID, 1, 10)
+	if err != nil {
+		t.Fatalf("the discount write itself is committed, the refusal cannot come from it: %v", err)
+	}
+	if res.Line.LineTotalCents != 1800 {
+		t.Errorf("the discounted total must be 1800, got %d", res.Line.LineTotalCents)
+	}
+	rows := qd2AuditRows(t, pool, quoteID)
+	if len(rows) != 1 || rows[0].Action != "UPDATE" {
+		t.Fatalf("the pricing log row rode the write's commit, a context cancelled after it cannot lose the row, got %+v", rows)
+	}
+}
+
+// qd2FailAppendArbiter writes the row through the real pricing service on
+// the caller's transaction and then reports the append failed: the INSERT
+// has ridden the write, and its error must take the whole write with it.
+type qd2FailAppendArbiter struct{ qd1Arbiter }
+
+func (a *qd2FailAppendArbiter) RecordFloorDecisionTx(ctx context.Context, tx pgx.Tx, rec pricing.FloorRecord) error {
+	if a.records != nil {
+		if err := a.records.RecordFloorDecisionTx(ctx, tx, rec); err != nil {
+			return err
+		}
+	}
+	return errors.New("qd2: the pricing log append failed on purpose")
+}
+
+// A failed pricing log append must refuse the write it rides and leave no
+// row behind: the write and its row are one unit, a committed line with no
+// log row (or a log row for a rolled back line) cannot happen.
+func TestQD2_PricingLogRow_FailingAppendRollsTheWriteBack(t *testing.T) {
+	pool := intPool(t)
+	now := qd2Clock()
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+	qd2CleanAudit(t, pool, quoteID)
+
+	arb := qd2FailAppendArbiter{qd1Arbiter{marginBps: 2000, floorBps: 1200}}
+	arb.records = pricing.NewService(pricing.NewRepository(pool))
+	repo := NewRepository(pool).withNow(func() time.Time { return now })
+	aud := audit.NewService(audit.NewRepository(pool), nil)
+	svc := NewStaffService(repo).
+		WithAudit(aud).WithAuditTrail(aud).
+		WithPricing(qd2Pricer{}).WithCostBasis(qInv{}).WithCustomerType(qCustType{}).
+		WithActorNamer(repo).WithRoleConfig(qd1Cfg).
+		WithFloorArbiter(&arb).
+		withCaller(qCallerFrom).
+		withNow(func() time.Time { return now })
+	ctx := qCtxAs(intStaff(intTrenton))
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
+
+	if _, err := svc.SetLineDiscount(ctx, quoteID, 1, 10); err == nil {
+		t.Fatal("a failed pricing log append must refuse the write it was riding")
+	}
+	var disc int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT disc_pct FROM quote_lines WHERE quote_id = $1 AND line_no = 1`, quoteID).Scan(&disc); err != nil {
+		t.Fatalf("read the line back: %v", err)
+	}
+	if disc != 0 {
+		t.Errorf("the rolled back write must leave the line undiscounted, disc_pct %d", disc)
+	}
+	if rows := qd2AuditRows(t, pool, quoteID); len(rows) != 0 {
+		t.Fatalf("a rolled back write leaves no pricing log row, got %+v", rows)
 	}
 }

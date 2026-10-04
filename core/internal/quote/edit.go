@@ -298,6 +298,12 @@ type quoteEditHooks struct {
 	// change whose hold never landed is a quote holding a quantity nobody quoted, and the visibility
 	// surface stops being believed the first time anyone notices. nil = the reservation seam is off.
 	holds func(ctx context.Context, tx pgx.Tx) error
+	// pricing runs LAST before commit, on the SAME tx (plan 4.2): the
+	// pricing log rows the write owes, written on the write's own
+	// transaction so a commit with no row cannot happen and a rolled back
+	// write leaves no row. lineNo is fed by the write (the add derives it
+	// inside the lock). nil = this write owes no pricing log row.
+	pricing func(ctx context.Context, tx pgx.Tx, lineNo int) error
 }
 
 // quoteDateHooks is the record-only hook for the valid_until write.
@@ -313,6 +319,11 @@ type quoteDateHooks struct {
 // half-populated snapshot invites a confident wrong read.
 type quoteDiscountHooks struct {
 	record func(ctx context.Context, tx pgx.Tx, lineNo, beforeDisc, afterDisc int, beforeTotal, afterTotal int64, totals QuoteTotals) error
+	// pricing is the pricing log row the discount write owes, on the same
+	// transaction as the record above (plan 4.2): the BYPASS row for a
+	// cleared below floor price, the UPDATE row for a below rule above
+	// floor write. nil = this write owes no pricing log row.
+	pricing func(ctx context.Context, tx pgx.Tx, lineNo int) error
 }
 
 // - expiry (D2) -

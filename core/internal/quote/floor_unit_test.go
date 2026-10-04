@@ -8,6 +8,7 @@ import (
 	"context"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
+	"github.com/jackc/pgx/v5"
 )
 
 // unitFloorArbiter answers fixed figures; the zero value answers above the
@@ -34,6 +35,7 @@ func (a *unitFloorArbiter) EvaluateLineFloor(_ context.Context, in pricing.Floor
 	}, nil
 }
 
-func (a *unitFloorArbiter) RecordFloorDecision(_ context.Context, rec pricing.FloorRecord) {
+func (a *unitFloorArbiter) RecordFloorDecisionTx(_ context.Context, _ pgx.Tx, rec pricing.FloorRecord) error {
 	a.recorded = append(a.recorded, rec)
+	return nil
 }

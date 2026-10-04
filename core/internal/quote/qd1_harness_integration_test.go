@@ -17,6 +17,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -184,11 +185,12 @@ func (a *qd1Arbiter) EvaluateLineFloor(_ context.Context, in pricing.FloorQuesti
 	}, nil
 }
 
-func (a *qd1Arbiter) RecordFloorDecision(ctx context.Context, rec pricing.FloorRecord) {
+func (a *qd1Arbiter) RecordFloorDecisionTx(ctx context.Context, tx pgx.Tx, rec pricing.FloorRecord) error {
 	a.recorded = append(a.recorded, rec)
 	if a.records != nil {
-		a.records.RecordFloorDecision(ctx, rec)
+		return a.records.RecordFloorDecisionTx(ctx, tx, rec)
 	}
+	return nil
 }
 
 // qd1SetDisc writes a stored discount on a seeded line directly, the

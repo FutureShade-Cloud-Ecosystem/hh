@@ -365,6 +365,11 @@ func (r *Repository) UpdateLineDiscountGuarded(ctx context.Context, quoteID stri
 			return QuoteEditResult{}, err
 		}
 	}
+	// The BYPASS or UPDATE row the floor decision owes rides the same
+	// transaction as the trail above (plan 4.2).
+	if err := runPricingLog(ctx, hooks.pricing, tx, lineNo); err != nil {
+		return QuoteEditResult{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return QuoteEditResult{}, fmt.Errorf("commit quote line discount: %w", err)
 	}
