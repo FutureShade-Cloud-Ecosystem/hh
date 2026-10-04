@@ -297,8 +297,15 @@ export class QuotePublicPage extends HHElement {
   private readonly client: PublicQuoteClient;
   private token = "";
   private autoPrint = false;
-  /** Object URLs minted for thumbnails; revoked when the next load replaces them. */
-  private thumbUrls: string[] = [];
+  /**
+   * Object URLs minted for thumbnails, keyed by image reference. They live as
+   * long as the page does: a reload after a refused accept reuses them and
+   * fetches only the references it has not seen, so no image ever points at a
+   * revoked URL. They are all revoked together when the page goes.
+   */
+  private thumbUrls: Map<string, string> = new Map();
+  /** Bumped when the page goes, so a fetch still running knows its URLs are orphans. */
+  private epoch = 0;
 
   constructor() {
     super();
@@ -373,7 +380,9 @@ export class QuotePublicPage extends HHElement {
       const ref = slot.getAttribute("data-thumb");
       const url = ref !== null && ref !== "" ? (this.thumbs.get(ref) ?? null) : null;
       const existing = slot.querySelector("img");
-      if (url !== null && existing === null) {
+      if (url !== null && existing !== null && existing.getAttribute("src") !== url) {
+        existing.src = url;
+      } else if (url !== null && existing === null) {
         const img = document.createElement("img");
         img.className = "thumb";
         img.src = url;
@@ -389,8 +398,10 @@ export class QuotePublicPage extends HHElement {
   }
 
   private revokeThumbs(): void {
-    for (const url of this.thumbUrls) URL.revokeObjectURL(url);
-    this.thumbUrls = [];
+    this.epoch += 1;
+    for (const url of this.thumbUrls.values()) URL.revokeObjectURL(url);
+    this.thumbUrls = new Map();
+    this.thumbs = new Map();
   }
 
   /**
@@ -411,7 +422,6 @@ export class QuotePublicPage extends HHElement {
       this.fatal = result.status === 410 ? LINK_GONE : result.status === 404 ? NOT_FOUND : LOAD_FAILED;
       return;
     }
-    this.revokeThumbs();
     this.quote = result.value;
     void this.fetchThumbs(this.quote);
   }
@@ -419,17 +429,20 @@ export class QuotePublicPage extends HHElement {
   private async fetchThumbs(q: QuoteViewRef): Promise<void> {
     if (!showsImages(q)) return;
     const refs = new Set(q.lines.map((l) => l.imageRef).filter((ref): ref is string => ref !== null));
-    const next = new Map<string, string>();
+    const epoch = this.epoch;
     for (const ref of refs) {
+      if (this.thumbUrls.has(ref)) continue;
       const result = await this.client.productImage(ref);
-      if (!result.ok) continue;
+      // The page went while the image was in flight: nothing may keep a URL
+      // that the page's own revoke has already passed over.
+      if (epoch !== this.epoch || !result.ok || this.thumbUrls.has(ref)) continue;
       // The bytes the image read answers are a fresh ArrayBuffer view; the
       // type is only wider than the platform's BlobPart.
       const url = URL.createObjectURL(new Blob([result.value as unknown as BlobPart]));
-      this.thumbUrls.push(url);
-      next.set(ref, url);
+      this.thumbUrls.set(ref, url);
+      // Each thumbnail paints as it lands, not all together at the end.
+      this.thumbs = new Map(this.thumbUrls);
     }
-    this.thumbs = next;
   }
 
   private async accept(): Promise<void> {

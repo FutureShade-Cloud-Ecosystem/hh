@@ -80,6 +80,47 @@ test("the line thumbnails ride the product image read, when the dealer chose ima
   }
 });
 
+test("thumbnail object URLs live until the page goes: a refused accept never revokes them, leaving the page does", async ({ page }) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __revoked: number };
+    w.__revoked = 0;
+    const real = URL.revokeObjectURL.bind(URL);
+    URL.revokeObjectURL = (url: string) => {
+      w.__revoked += 1;
+      real(url);
+    };
+  });
+  await page.goto(`/?t=${GOOD_TOKEN}`);
+  const thumbs = page.locator("img.thumb");
+  await expect(thumbs).toHaveCount(3);
+  await page.route("**/accept", (route) => route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "This quote has already been accepted." }) }));
+  await page.locator("#name").fill("Sample Customer");
+  await page.locator("#affirm").check();
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toContainText("already been accepted");
+  // The refused accept reloaded the quote: every image still points at a live
+  // URL and nothing was revoked.
+  await expect(thumbs).toHaveCount(3);
+  const stillLive = await page.evaluate(async () => {
+    const imgs = [...(document.querySelector("pd-quote-public")?.shadowRoot?.querySelectorAll<HTMLImageElement>("img.thumb") ?? [])];
+    const loaded = await Promise.all(
+      imgs.map(async (img) => {
+        const res = await fetch(img.src).then((r) => r.ok, () => false);
+        return res && img.complete && img.naturalWidth > 0;
+      }),
+    );
+    return { loaded, revoked: (window as unknown as { __revoked: number }).__revoked };
+  });
+  expect(stillLive.loaded).toEqual([true, true, true]);
+  expect(stillLive.revoked).toBe(0);
+  // Leaving the page releases them, once each.
+  const revoked = await page.evaluate(() => {
+    document.querySelector("pd-quote-public")?.remove();
+    return (window as unknown as { __revoked: number }).__revoked;
+  });
+  expect(revoked).toBe(3);
+});
+
 test("the accept area says why the button is not disabled on a blank form", async ({ page }) => {
   await page.goto(`/?t=${GOOD_TOKEN}`);
   // The ERP behaviour is kept: the button stays clickable and the refusal is
