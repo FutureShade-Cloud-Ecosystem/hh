@@ -80,6 +80,33 @@ test("the line thumbnails ride the product image read, when the dealer chose ima
   }
 });
 
+test("the line table never overflows its card or the page, with thumbnails, at phone and tablet widths", async ({ page }) => {
+  for (const width of [390, 820]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto(`/?t=${GOOD_TOKEN}`);
+    await expect(page.getByRole("heading", { name: "Quote #Q-25" })).toBeVisible();
+    // The thumbnail column is the one that broke the card on a phone, so the
+    // hold is WITH the three thumbnails painted, not on the bare table.
+    await expect(page.locator("img.thumb")).toHaveCount(3);
+
+    const overflow = await page.evaluate(() => {
+      const root = document.querySelector("pd-quote-public")?.shadowRoot;
+      const card = root?.querySelector(".card");
+      const table = root?.querySelector("table");
+      if (!card || !table) return null;
+      const cardBox = card.getBoundingClientRect();
+      const tableBox = table.getBoundingClientRect();
+      return {
+        pageOverhang: document.documentElement.scrollWidth - window.innerWidth,
+        cardOverhang: Math.ceil(tableBox.right - cardBox.right),
+      };
+    });
+    expect(overflow, `the quote card and table must exist at ${width}px`).not.toBeNull();
+    expect(overflow!.pageOverhang, `page body must not scroll sideways at ${width}px`).toBeLessThanOrEqual(0);
+    expect(overflow!.cardOverhang, `table must not pass the card's right edge at ${width}px`).toBeLessThanOrEqual(0);
+  }
+});
+
 test("an expired quote refuses acceptance in its own words", async ({ page }) => {
   await page.goto("/?t=q-expired-25");
   await expect(page.getByRole("heading", { name: "Quote #Q-24" })).toBeVisible();

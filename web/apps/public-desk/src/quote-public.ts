@@ -73,6 +73,28 @@ export class QuotePublicPage extends HHElement {
         border-collapse: collapse;
         font-size: 0.88rem;
       }
+      /* The phone guard's last resort: if the table's own minimum still cannot
+         fit (an unusually wide face on some visitor's machine), it scrolls
+         INSIDE the card rather than pushing the card past the viewport. */
+      .tablewrap {
+        overflow-x: auto;
+      }
+      /* The reading column: the item names the line and must never be crushed
+         to nothing by the figure columns' minimums. */
+      th.item,
+      td.item {
+        min-width: 6rem;
+      }
+      /* The phone fold: at the design system's small breakpoint the UoM column
+         (redundant with the item's own words for a customer) folds away, so
+         the thumbnail column plus four columns fit a 390px card. CSS mirrors
+         the px of --hh-bp-sm, the sheet's own convention. */
+      @media (max-width: 480px) {
+        th.uom,
+        td.uom {
+          display: none;
+        }
+      }
       th {
         text-align: left;
         color: var(--hh-text-dim);
@@ -527,35 +549,37 @@ export class QuotePublicPage extends HHElement {
         ${q.validUntil ? html` · ${q.expired ? "expired" : "valid until"} ${q.validUntil}` : nothing}
       </div>
       <div class="card">
-        <table>
-          <thead>
-            <tr>
-              ${withImages ? html`<th></th>` : nothing}
-              <th>Item</th>
-              <th class="num">Qty</th>
-              <th>UoM</th>
-              <th class="num">Unit</th>
-              <th class="num">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${q.lines.map(
-              (l) => html`<tr>
-                ${withImages
-                  ? html`<td><span class="thumbslot" data-thumb=${l.imageRef}></span></td>`
-                  : nothing}
-                <td>
-                  ${l.description}
-                  ${(l.discPct ?? 0) > 0 ? html`<div class="discnote">${l.discPct}% discount applied</div>` : nothing}
-                </td>
-                <td class="num">${l.qtyEntered}</td>
-                <td>${l.uomEntered}</td>
-                <td class="num">${formatMoney(l.unitPriceCents)}</td>
-                <td class="num">${formatMoney(l.lineTotalCents)}</td>
-              </tr>`,
-            )}
-          </tbody>
-        </table>
+        <div class="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                ${withImages ? html`<th></th>` : nothing}
+                <th class="item">Item</th>
+                <th class="num">Qty</th>
+                <th class="uom">UoM</th>
+                <th class="num">Unit</th>
+                <th class="num">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${q.lines.map(
+                (l) => html`<tr>
+                  ${withImages
+                    ? html`<td><span class="thumbslot" data-thumb=${l.imageRef}></span></td>`
+                    : nothing}
+                  <td class="item">
+                    ${l.description}
+                    ${(l.discPct ?? 0) > 0 ? html`<div class="discnote">${l.discPct}% discount applied</div>` : nothing}
+                  </td>
+                  <td class="num">${l.qtyEntered}</td>
+                  <td class="uom">${l.uomEntered}</td>
+                  <td class="num">${formatMoney(l.unitPriceCents)}</td>
+                  <td class="num">${formatMoney(l.lineTotalCents)}</td>
+                </tr>`,
+              )}
+            </tbody>
+          </table>
+        </div>
         ${this.renderTermsFacts(q)}
         ${this.renderTotals(q)}
       </div>
