@@ -208,5 +208,12 @@
     "find": "if (result.status === 403 || result.status === 409) this.clearReason();",
     "replace": "if (result.status === 403) this.clearReason();",
     "test": "P2-2 a reason typed for a row whose decision clashed"
+  },
+  {
+    "id": "ap-failed-read-unloaded",
+    "file": "src/approvals-panel.ts",
+    "find": "      this.loaded = false; // no count is shown beside a failed read\n",
+    "replace": "",
+    "test": "an approvals read that answers late never overwrites"
   }
 ]

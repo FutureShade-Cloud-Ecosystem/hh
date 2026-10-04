@@ -137,6 +137,7 @@ export class QdApprovals extends PanelBase {
       // The rows of the read before this one are not shown under the failure: they may be stale, and a
       // decision offered on a stale row is the server's to refuse.
       this.items = [];
+      this.loaded = false; // no count is shown beside a failed read
       this.error = result.error;
       return;
     }

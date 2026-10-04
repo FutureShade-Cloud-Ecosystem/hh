@@ -335,6 +335,8 @@ test("an approvals read that answers late never overwrites the newer read, and a
   await expect(panel.getByTestId("ap-row")).toHaveCount(2);
   await panel.evaluate((el) => (el as unknown as { reload: () => void }).reload());
   await expect(panel.getByTestId("ap-error")).toBeVisible();
+  // A failed read says nothing of how many are pending: no "0 pending" beside the failure.
+  await expect(panel.getByTestId("ap-count")).toHaveCount(0);
   await expect(panel.getByTestId("ap-row")).toHaveCount(0);
   await manager.context().close();
 });
