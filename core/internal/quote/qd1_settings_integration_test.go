@@ -141,8 +141,11 @@ func TestQD1_AcceptanceSettingsReadAndSave(t *testing.T) {
 		_, _ = pool.Exec(context.Background(),
 			`DELETE FROM system_settings WHERE key = 'allow_quote_multi_accept'`)
 	})
-	if _, err := svc.SetAllowMultiAccept(mgrCtx, true, "qd1"); err != nil {
-		t.Fatalf("a Sales manager must save the acceptance settings: %v", err)
+	// The switch is DEALER WIDE, so CP0-5 answer A gives it to the General
+	// Manager alone: a Sales manager sets its own branch's settings, not
+	// the one switch every branch reads.
+	if _, err := svc.SetAllowMultiAccept(mgrCtx, true, "qd1"); err == nil {
+		t.Fatal("a Sales manager must not flip the dealer wide acceptance switch")
 	}
 	if _, err := svc.SetAllowMultiAccept(gmCtx, false, "qd1"); err != nil {
 		t.Fatalf("the General Manager must save the acceptance settings: %v", err)

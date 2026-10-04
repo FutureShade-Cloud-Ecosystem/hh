@@ -51,7 +51,8 @@ func TestQD1_FileFloorApprovalBindsSubjectAndFigures(t *testing.T) {
 	rec, err := s.FileFloorApproval(context.Background(), FloorApprovalFiling{
 		RequestedBy: "u1", BranchID: "b1", SubjectRef: "quote-1",
 		Detail: "quote #Q-9 line 2 pavers at 25 percent, margin 500 bps, floor 1200 bps",
-		LineNo: 2, DiscPct: 25, Note: "customer pushed hard",
+		LineNo: 2, DiscPct: 25, LineID: "22222222-2222-4222-8222-222222222222", ProductID: "prod-pavers",
+		Note: "customer pushed hard",
 	})
 	if err != nil {
 		t.Fatalf("FileFloorApproval: %v", err)
@@ -71,6 +72,9 @@ func TestQD1_FileFloorApprovalBindsSubjectAndFigures(t *testing.T) {
 	}
 	if got.LineNo != 2 || got.DiscPct != 25 || got.Note != "customer pushed hard" {
 		t.Errorf("the binding figures must ride the request, got %+v", got)
+	}
+	if got.LineID != "22222222-2222-4222-8222-222222222222" || got.ProductID != "prod-pavers" {
+		t.Errorf("the line's own row and product must ride the request, got %+v", got)
 	}
 }
 

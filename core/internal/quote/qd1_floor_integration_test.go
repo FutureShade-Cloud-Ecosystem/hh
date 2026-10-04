@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -31,14 +32,14 @@ import (
 func TestQD1_Row5_BelowFloorRefusedTypedForSales(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
+	seller := qd1User(t, pool, "seller")
 
 	for _, role := range []string{"INSIDE_SALES", "OUTSIDE_SALES"} {
-		_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+		_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 		arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
 		svc := qd1SvcFloor(t, pool, now, arb, qd1Cfg)
 		ctx := qCtxAs(intStaff(intTrenton))
-		ctx = qd1WithRole(ctx, role, intTrenton, alice)
+		ctx = qd1WithRole(ctx, role, intTrenton, seller)
 
 		_, err := svc.SetLineDiscount(ctx, quoteID, 1, 25)
 		var ref *FloorRefusalError
@@ -149,9 +150,9 @@ func TestQD1_BelowFloorBranchManagerClearsOwnQuote(t *testing.T) {
 func TestQD1_BelowFloorSalesManagerClearsAnyQuoteInBranch(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
+	seller := qd1User(t, pool, "seller")
 	mgr := qd1User(t, pool, "mgr")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 
 	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
 	svc := qd1SvcFloor(t, pool, now, arb, qd1Cfg)
@@ -173,13 +174,13 @@ func TestQD1_BelowFloorSalesManagerClearsAnyQuoteInBranch(t *testing.T) {
 func TestQD1_BelowRuleAboveFloorAcceptedNoManager(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 
 	arb := qd1Arbiter{marginBps: 2000, floorBps: 1200}
 	svc := qd1SvcFloor(t, pool, now, arb, qd1Cfg)
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, alice)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
 	res, err := svc.SetLineDiscount(ctx, quoteID, 1, 10)
 	if err != nil {
@@ -202,20 +203,21 @@ func TestQD1_BelowRuleAboveFloorAcceptedNoManager(t *testing.T) {
 func TestQD1_Row10_ApprovedRequestUsedUpByFirstWrite(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
-	_, otherQuote, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+	_, otherQuote, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 
 	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
 	svc := qd1SvcFloor(t, pool, now, arb, qd1Cfg)
 	rail := identity.NewApprovals(identity.NewApprovalRepository(pool))
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, alice)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
 	// File and approve a request for line 1 of the first quote at 25 percent.
+	lineID, prodID := qd1LineBinding(t, pool, quoteID, 1)
 	filed, err := rail.FileFloorApproval(context.Background(), identity.FloorApprovalFiling{
-		RequestedBy: alice, BranchID: intTrenton, SubjectRef: quoteID,
-		Detail: "qd1: below floor request", LineNo: 1, DiscPct: 25,
+		RequestedBy: seller, BranchID: intTrenton, SubjectRef: quoteID,
+		Detail: "qd1: below floor request", LineNo: 1, DiscPct: 25, LineID: lineID, ProductID: prodID,
 	})
 	if err != nil {
 		t.Fatalf("file floor approval: %v", err)
@@ -268,8 +270,8 @@ func TestQD1_Row10_ApprovedRequestUsedUpByFirstWrite(t *testing.T) {
 func TestQD1_QtyRepriceOfDiscountedLineRunsFloorDecision(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 	qd1SetDisc(t, pool, quoteID, 1, 20)
 
 	// The reprice at the new quantity lands below the floor (the arbiter's
@@ -277,7 +279,7 @@ func TestQD1_QtyRepriceOfDiscountedLineRunsFloorDecision(t *testing.T) {
 	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
 	svc := qd1SvcFloor(t, pool, now, arb, qd1Cfg)
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, alice)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
 	if _, err := svc.EditLineQty(ctx, quoteID, 1, "5"); err == nil {
 		t.Fatal("D5: a quantity reprice that repriced a discounted line below the floor went through")
@@ -365,6 +367,12 @@ func TestQD1_ReadMarks_ClearedByForCostListOnly(t *testing.T) {
 	if len(view.Lines) != 1 || view.Lines[0].FloorClearedBy != bm {
 		t.Fatalf("a cost list caller must see who cleared the below floor price, got %+v", view.Lines)
 	}
+	// CP0-3's mark rides for the same caller: this line's rule price sits
+	// below the floor (the arbiter's figures), and the cost list caller is
+	// told so.
+	if view.Lines[0].RulePriceBelowFloor == nil || !*view.Lines[0].RulePriceBelowFloor {
+		t.Fatalf("a cost list caller must see that the rule price sits below the floor, got %+v", view.Lines[0].RulePriceBelowFloor)
+	}
 
 	hrCtx := qCtxAs(intStaff(intTrenton))
 	hrCtx = qd1WithRole(hrCtx, "HR", intTrenton, hr)
@@ -377,5 +385,149 @@ func TestQD1_ReadMarks_ClearedByForCostListOnly(t *testing.T) {
 	}
 	if hview.Lines[0].FloorClearedBy != "" || hview.Lines[0].RulePriceBelowFloor != nil {
 		t.Fatalf("a caller off the cost list must learn neither mark, got %+v", hview.Lines[0])
+	}
+}
+
+// qd1StaleDiscStore is the real repository with one lie: its floor state
+// read always answers disc 0, the discount the decision saw a moment
+// before another write set one. It simulates the race the lock time
+// re-check exists for, deterministically.
+type qd1StaleDiscStore struct {
+	*Repository
+}
+
+func (r qd1StaleDiscStore) LineFloorState(ctx context.Context, quoteID string, lineNo int) (string, int, int64, int64, string, *floorClearingStamp, error) {
+	lineID, _, unit, gross, uom, clearing, err := r.Repository.LineFloorState(ctx, quoteID, lineNo)
+	return lineID, 0, unit, gross, uom, clearing, err
+}
+
+// TestQD1_QtyRepriceRecordsTheDiscountItRead (P2-6): the quantity arm
+// always records the stored discount it read, even 0, so the guarded
+// write re-checks it under the lock. A discount set between the read and
+// the commit used to ride the reprice unchecked, because a disc of 0
+// recorded nothing and the lock time check never ran.
+func TestQD1_QtyRepriceRecordsTheDiscountItRead(t *testing.T) {
+	pool := intPool(t)
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	bm := qd1User(t, pool, "bm")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", bm, true)
+	// The row carries a 25 percent discount the decision did not see.
+	qd1SetDisc(t, pool, quoteID, 1, 25)
+
+	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
+	repo := NewRepository(pool).withNow(func() time.Time { return now })
+	aud := audit.NewService(audit.NewRepository(pool), nil)
+	svc := NewStaffService(qd1StaleDiscStore{repo}).
+		WithAudit(aud).
+		WithAuditTrail(aud).
+		WithPricing(qPricer{}).
+		WithCostBasis(qInv{}).
+		WithCustomerType(qCustType{}).
+		WithActorNamer(repo).
+		WithRoleConfig(qd1Cfg).
+		WithFloorArbiter(&arb).
+		WithFloorRail(identity.NewApprovals(identity.NewApprovalRepository(pool))).
+		withCaller(qCallerFrom).
+		withNow(func() time.Time { return now })
+	ctx := qCtxAs(intStaff(intTrenton))
+	ctx = qd1WithRole(ctx, "BRANCH_MANAGER", intTrenton, bm)
+
+	_, err := svc.EditLineQty(ctx, quoteID, 1, "5")
+	if err == nil {
+		t.Fatal("a discount set between the floor read and the lock must refuse the reprice, the figures nobody decided on cannot ride it")
+	}
+}
+
+// The availability reads gate avg_cost_cents by the cost list (X3, the
+// review's P2-8): under the default every Quote Desk role is on the list,
+// but a dealer who removes one would read cost through the availability
+// chips. The stock view still renders for the off-list caller, the cost
+// figure does not.
+func TestQD1_AvailabilityCostGatedByCostList(t *testing.T) {
+	pool := intPool(t)
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	hidden := qd1User(t, pool, "hiddensales")
+	onList := qd1User(t, pool, "onlist")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", hidden, true)
+
+	cfg := qd1CfgCostHiddenFrom(t, "inside_sales")
+	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
+	svc := qd1SvcFloor(t, pool, now, arb, cfg)
+	svc.WithAvailability(qd1CostAvail{cost: 4321})
+
+	// A caller OFF the list: the grades render, the cost does not.
+	hidCtx := qCtxAs(intStaff(intTrenton))
+	hidCtx = qd1WithRole(hidCtx, "INSIDE_SALES", intTrenton, hidden)
+	rows, _, err := svc.QuoteAvailability(hidCtx, quoteID)
+	if err != nil {
+		t.Fatalf("availability for an off-list caller: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Grade == "" {
+		t.Fatalf("the stock view must still render for an off-list caller, got %+v", rows)
+	}
+	if rows[0].Branch.AvgCostCents != 0 {
+		t.Errorf("a caller off the cost list must not read avg_cost_cents through the availability chips, got %d",
+			rows[0].Branch.AvgCostCents)
+	}
+	peek, err := svc.CrossBranchPeek(hidCtx, "00000000-0000-4000-8000-0000000000aa")
+	if err != nil {
+		t.Fatalf("cross branch peek for an off-list caller: %v", err)
+	}
+	for _, b := range peek {
+		if b.AvgCostCents != 0 {
+			t.Errorf("a caller off the cost list must not read avg_cost_cents through the branch peek, got %d", b.AvgCostCents)
+		}
+	}
+
+	// A caller ON the list still reads it.
+	onCtx := qCtxAs(intStaff(intTrenton))
+	onCtx = qd1WithRole(onCtx, "BRANCH_MANAGER", intTrenton, onList)
+	rows, _, err = svc.QuoteAvailability(onCtx, quoteID)
+	if err != nil {
+		t.Fatalf("availability for an on-list caller: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Branch.AvgCostCents != 4321 {
+		t.Fatalf("a caller on the cost list must read avg_cost_cents, got %+v", rows)
+	}
+}
+
+// The refusal's margin figures ride for callers on the cost list alone
+// (plan 1.2): the figures are cost information, and a dealer who narrows
+// the list must not read them out of a 409 body.
+func TestQD1_RefusalFiguresForCostListOnly(t *testing.T) {
+	pool := intPool(t)
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+
+	cfg := qd1CfgCostHiddenFrom(t, "inside_sales")
+	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
+	svc := qd1SvcFloor(t, pool, now, arb, cfg)
+	ctx := qCtxAs(intStaff(intTrenton))
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
+
+	_, err := svc.SetLineDiscount(ctx, quoteID, 1, 25)
+	ref, ok := err.(*FloorRefusalError)
+	if !ok {
+		t.Fatalf("want the typed refusal, got %T: %v", err, err)
+	}
+	if ref.ShowFigures || ref.MarginBps != 0 || ref.FloorBps != 0 {
+		t.Fatalf("a caller off the cost list must not receive the refusal's margin figures, got %+v", ref)
+	}
+
+	// The same refusal as a caller on the list carries them. The yard
+	// manager is on the list and never clears the floor itself, and the
+	// second quote is its own, so the ownership rung does not answer first.
+	ym := qd1User(t, pool, "ym")
+	_, ymQuote, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", ym, true)
+	ymCtx := qCtxAs(intStaff(intTrenton))
+	ymCtx = qd1WithRole(ymCtx, "YARD_MANAGER", intTrenton, ym)
+	_, yerr := svc.SetLineDiscount(ymCtx, ymQuote, 1, 25)
+	yref, ok := yerr.(*FloorRefusalError)
+	if !ok {
+		t.Fatalf("want the typed refusal for the yard manager, got %T: %v", yerr, yerr)
+	}
+	if !yref.ShowFigures || yref.MarginBps != 500 || yref.FloorBps != 1200 {
+		t.Fatalf("a caller on the cost list must receive the refusal's margin figures, got %+v", yref)
 	}
 }

@@ -5927,7 +5927,7 @@ export type QuoteBranchStock = {
   in_transit_base: number;
   available_base: number;
   soft_held_base: number;
-  avg_cost_cents: number;
+  avg_cost_cents?: number;
 };
 export type QuoteBranchStockList = {
   branches: QuoteBranchStock[];

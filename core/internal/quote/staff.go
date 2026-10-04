@@ -328,7 +328,7 @@ func (s *StaffService) StaffQuoteRead(ctx context.Context, quoteID string) (Staf
 	// Plan 3.3: a Work caller still READS any quote in its branch, but the
 	// offer is empty on a quote it does not own (the write would refuse it,
 	// and a control that appears must be a control that works).
-	view.EditableFields = s.editableFieldsFor(view.Status, view.validUntil, s.ownsQuote(caller, view.OwnerID))
+	view.EditableFields = s.editableFieldsFor(view.Status, view.validUntil, s.quoteDeskLevel(caller), s.ownsQuote(caller, view.OwnerID))
 	view.OwnerName = s.ownerName(ctx, view.OwnerID)
 	// Per line, for callers on the cost and margin list (X3): whether the
 	// rule price itself sits below the floor (CP0-3's mark), and who cleared
@@ -434,7 +434,7 @@ func (s *StaffService) markLineFloors(ctx context.Context, view *StaffQuoteView)
 		if ln.ProductID == "" || ln.UnitPriceCents <= 0 {
 			continue
 		}
-		if _, _, _, _, clearing, err := fs.LineFloorState(ctx, view.ID, ln.LineNo); err == nil && clearing != nil {
+		if _, _, _, _, _, clearing, err := fs.LineFloorState(ctx, view.ID, ln.LineNo); err == nil && clearing != nil {
 			ln.FloorClearedBy = clearing.By
 		}
 		qty, err := parseQuoteQty(ln.QtyEntered)

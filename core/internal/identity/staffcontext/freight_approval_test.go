@@ -87,7 +87,7 @@ func TestCreateApproval_SystemOnlyPoliciesAreRefusedOnTheCallerPath(t *testing.T
 	// stopped creating anything. D7 moved the margin policy to the quote
 	// module's door (FileFloorApproval), so that door is the control.
 	if _, err := s.FileFloorApproval(context.Background(), FloorApprovalFiling{
-		RequestedBy: "u1", BranchID: trt, SubjectRef: "q1", Detail: "below floor", LineNo: 1, DiscPct: 25,
+		RequestedBy: "u1", BranchID: trt, SubjectRef: "q1", Detail: "below floor", LineNo: 1, DiscPct: 25, LineID: "11111111-1111-4111-8111-111111111111", ProductID: "prod-1",
 	}); err != nil {
 		t.Fatalf("positive control failed: a margin override must still file: %v", err)
 	}

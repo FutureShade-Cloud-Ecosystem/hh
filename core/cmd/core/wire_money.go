@@ -87,7 +87,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithCostVisibility(pricingCostVisibility{}).
 		WithVendorDirectory(pricingVendorDirectory{pool: pool}).
 		WithCatalogSKUs(pricingCatalogSKUs{pool: pool}).
-		WithOverrideAuthority(w5cOverrideAuthority{svc: approvals, log: log}).
+		WithOverrideAuthority(w5cOverrideAuthority{roles: roleCfg, log: log}).
 		WithLogger(log)
 	pricing.NewHandler(pricingSvc, log).WithUserLinker(link).RegisterW4Routes(r, g)
 
@@ -152,6 +152,12 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		}
 	}
 	approvals.WithFloorApprovers(quoteFloorApprovers)
+	// The approvals sync door decides through the same configured
+	// authority the rail now holds: its store is constructed on another
+	// wire (wire_operations) the role configuration does not pass, so the
+	// set the rail was given is published for the door to read (D11): one
+	// authority, one source.
+	identity.PublishFloorApprovers(quoteFloorApprovers)
 	quoteStaffSvc := quote.NewStaffService(quoteRepo).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
@@ -435,13 +441,24 @@ func (a pricingCatalogSKUs) LookupSKUs(ctx context.Context, skus []string) (map[
 }
 
 // w5cOverrideAuthority satisfies pricing.OverrideAuthority over the
-// approvals rail plus the bridged caller stamp: an APPROVED margin override
-// first, then the caller's own manager scope, checked against the branch
-// being priced (carried verbatim from the pin's adapter belt, re-pointed at
-// the bridge).
+// bridged caller stamp and the dealer's role configuration: the caller's
+// own manager scope, held to the CONFIGURED floor clearers
+// (floor_clearers_own_branch under the manager_own_branch_floor_clearing
+// setting, D6) and to the branch being priced. The arm once cleared for
+// any manager that reached the branch, the Yard manager included, where
+// the configuration names the Sales manager and the Branch manager alone.
+//
+// The approvals substrate arms NOTHING here. A generic resolve carries no
+// document, so an approval lookup would match an EMPTY subject: through
+// the preview route's body flag any approved margin card answered
+// "granted" whatever its subject and however used up (D3, the QD-1
+// review's P2-5; the flag no longer reaches the resolver either, the
+// pricing handler reads and drops it). Until a live caller can bind its
+// request to a document, no approval arm may grant; the quote floor path
+// consumes subject narrowed requests on its own transaction instead.
 type w5cOverrideAuthority struct {
-	svc *identity.Approvals
-	log *slog.Logger
+	roles *roleconfig.Config
+	log   *slog.Logger
 }
 
 func (a w5cOverrideAuthority) MarginOverrideAuthority(ctx context.Context, userID, branchID string) (pricing.OverrideGrant, error) {
@@ -450,31 +467,28 @@ func (a w5cOverrideAuthority) MarginOverrideAuthority(ctx context.Context, userI
 		// wrong, there is simply nobody to grant anything to.
 		return pricing.OverrideGrant{}, nil
 	}
-	// 1. the approvals substrate. The subject is EMPTY by design here: a
-	// generic resolve carries no document to bind (and no till or generic
-	// route ever sets OverrideRequested, DIB-420), so the empty subject is
-	// stated at the call site rather than hidden in the lookup (D3). Every
-	// quote floor path consumes subject narrowed requests instead.
-	has, err := a.svc.HasApprovedOverride(ctx, userID, branchID, "", identity.PolicyMargin)
-	if err != nil {
-		// Propagated, NOT swallowed. pricing fails closed on an error, which is what we want when the
-		// approvals substrate is unreachable, an outage must not become a pricing hole.
-		return pricing.OverrideGrant{}, err
+	// No configuration, no grant: the configured list IS the authority.
+	if a.roles == nil {
+		return pricing.OverrideGrant{}, nil
 	}
-	if has {
-		return pricing.OverrideGrant{Granted: true, Source: pricing.AuthorityApproval}, nil
-	}
-	// 2. the caller's own manager scope.
 	caller, ok := identity.StaffContextFromContext(ctx)
 	if !ok || caller.UserID != userID {
 		return pricing.OverrideGrant{}, nil
 	}
-	if caller.IsManager() && caller.CanAccessBranch(branchID) {
-		if a.log != nil {
-			a.log.Info("pricing: below-floor price cleared on MANAGER SCOPE (no approval record)",
-				"user_id", userID, "branch_id", branchID, "role", caller.RoleCode)
-		}
-		return pricing.OverrideGrant{Granted: true, Source: pricing.AuthorityManagerScope}, nil
+	if !caller.CanAccessBranch(branchID) {
+		return pricing.OverrideGrant{}, nil
 	}
-	return pricing.OverrideGrant{}, nil
+	role, ok := identity.CanonicalForERPCode(caller.RoleCode)
+	if !ok {
+		return pricing.OverrideGrant{}, nil
+	}
+	clears, err := a.roles.ClearsOwnBranchFloor(role)
+	if err != nil || !clears {
+		return pricing.OverrideGrant{}, nil
+	}
+	if a.log != nil {
+		a.log.Info("pricing: below-floor price cleared on MANAGER SCOPE (no approval record)",
+			"user_id", userID, "branch_id", branchID, "role", caller.RoleCode)
+	}
+	return pricing.OverrideGrant{Granted: true, Source: pricing.AuthorityManagerScope}, nil
 }

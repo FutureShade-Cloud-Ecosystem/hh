@@ -424,36 +424,42 @@ func runFloorPlan(ctx context.Context, tx pgx.Tx, plan *floorWritePlan) error {
 		return err
 	}
 	if !found {
+		if plan.refusal != nil {
+			return plan.refusal
+		}
 		return &FloorRefusalError{Policy: string(identity.PolicyMargin)}
 	}
 	return nil
 }
 
-// LineFloorState reads one line's floor facts (floor.go's seam): the stored
-// discount, the rule unit price, the pre-discount gross, the price uom, and
-// the line's stamped clearing (nil when none).
-func (r *Repository) LineFloorState(ctx context.Context, quoteID string, lineNo int) (int, int64, int64, string, *floorClearingStamp, error) {
+// LineFloorState reads one line's floor facts (floor.go's seam): the line's
+// OWN row id (the approval's binding; a line number is reused by the next
+// line added after a delete, the row id never is), the stored discount, the
+// rule unit price, the pre-discount gross, the price uom, and the line's
+// stamped clearing (nil when none).
+func (r *Repository) LineFloorState(ctx context.Context, quoteID string, lineNo int) (string, int, int64, int64, string, *floorClearingStamp, error) {
 	if r.pool == nil {
-		return 0, 0, 0, "", nil, errNoDB
+		return "", 0, 0, 0, "", nil, errNoDB
 	}
 	if !looksLikeUUID(quoteID) {
-		return 0, 0, 0, "", nil, ErrNotFound
+		return "", 0, 0, 0, "", nil, ErrNotFound
 	}
+	var lineID string
 	var discPct int
 	var unitPrice, gross int64
 	var priceUOM string
 	var metadata []byte
 	err := r.pool.QueryRow(ctx, `
-		SELECT disc_pct, unit_price_cents, price_uom::text,
+		SELECT id::text, disc_pct, unit_price_cents, price_uom::text,
 		       CASE WHEN pre_discount_total_cents > 0 THEN pre_discount_total_cents ELSE line_total_cents END,
 		       metadata
 		  FROM quote_lines WHERE quote_id = $1 AND line_no = $2`, quoteID, lineNo).
-		Scan(&discPct, &unitPrice, &priceUOM, &gross, &metadata)
+		Scan(&lineID, &discPct, &unitPrice, &priceUOM, &gross, &metadata)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, 0, 0, "", nil, ErrLineNotFound
+		return "", 0, 0, 0, "", nil, ErrLineNotFound
 	}
 	if err != nil {
-		return 0, 0, 0, "", nil, fmt.Errorf("read quote line floor state: %w", err)
+		return "", 0, 0, 0, "", nil, fmt.Errorf("read quote line floor state: %w", err)
 	}
 	var clearing *floorClearingStamp
 	if len(metadata) > 0 {
@@ -467,5 +473,5 @@ func (r *Repository) LineFloorState(ctx context.Context, quoteID string, lineNo 
 			}
 		}
 	}
-	return discPct, unitPrice, gross, priceUOM, clearing, nil
+	return lineID, discPct, unitPrice, gross, priceUOM, clearing, nil
 }

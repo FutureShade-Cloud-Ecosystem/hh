@@ -90,7 +90,11 @@ func w6bApprovalsWaiting(svc *identity.Approvals) dashboard.NeedsFunc {
 			if r.RequestedBy == caller.UserID {
 				continue
 			}
-			if identity.CanApprove(caller, r.Policy, r.BranchID) {
+			// The same decide rule the service enforces, read off the
+			// configured service itself (the margin arm's authority is the
+			// dealer's configured floor set, D11): the queue counts what
+			// waits on THIS person and nothing it cannot decide.
+			if svc.CanDecide(caller, r.Policy, r.BranchID) {
 				n++
 			}
 		}

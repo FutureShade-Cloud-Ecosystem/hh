@@ -421,7 +421,7 @@ func (s *StaffService) authorizeQuoteEdit(ctx context.Context, quoteID string, f
 		return identity.StaffContext{}, quoteEditRule{}, "", ErrForbidden
 	}
 	if level == roleconfig.LevelWork && !s.ownsQuote(caller, ownerID) {
-		return identity.StaffContext{}, quoteEditRule{}, "", &NotQuoteOwnerError{}
+		return identity.StaffContext{}, quoteEditRule{}, "", &NotQuoteOwnerError{OwnerName: s.ownerName(ctx, ownerID)}
 	}
 	if !rule.from[status] {
 		return identity.StaffContext{}, quoteEditRule{}, quoteID, &NotEditableError{Field: field, Status: status}
@@ -464,10 +464,15 @@ func (s *StaffService) ownsQuote(c identity.StaffContext, ownerID string) bool {
 // NotQuoteOwnerError is the refusal a Work caller gets editing a quote it
 // does not own. Typed so the message can name the way forward: the quote's
 // owner or the branch's Sales manager. Mapped to 403.
-type NotQuoteOwnerError struct{}
+// NotQuoteOwnerError names the quote's owner when the store can resolve
+// it, so the caller is sent to a person and not to a role (plan 3.4).
+type NotQuoteOwnerError struct{ OwnerName string }
 
 func (e *NotQuoteOwnerError) Error() string {
-	return "quote: this quote belongs to another salesperson, ask the branch's Sales manager to take it over"
+	if e.OwnerName == "" {
+		return "quote: this quote belongs to another salesperson, ask the branch's Sales manager to take it over"
+	}
+	return fmt.Sprintf("quote: this quote belongs to %s, ask the branch's Sales manager to take it over", e.OwnerName)
 }
 
 // callerBranchScope projects a caller onto the branch filter ResolveQuoteID needs: a GLOBAL caller
@@ -703,14 +708,19 @@ func (s *StaffService) recordIntChange(ctx context.Context, q audit.Execer, acto
 // expired or frozen quote simply OFFERS NOTHING, none of it may fail the quote read. The 409 belongs
 // exclusively to an actual edit attempt.
 //
-// Since plan 3.3 the caller's authority contributes the ownership axis: a
-// Work caller who does not own the quote is offered nothing, because the
-// write path would refuse it, and a button that appears must be a button
-// that works.
-func (s *StaffService) editableFieldsFor(status string, validUntil *time.Time, owns bool) []string {
+// Since plan 3.3 the caller's authority contributes the ownership axis, and
+// the axis is the WRITE LADDER's own: below Work edits nothing, a Work
+// caller edits only its own quotes, and a Manage caller edits any quote in
+// its branch. A Sales manager reading another salesperson's quote is
+// therefore offered the fields, because a button that appears must be a
+// button that works.
+func (s *StaffService) editableFieldsFor(status string, validUntil *time.Time, level roleconfig.Level, owns bool) []string {
 	out := make([]string, 0, len(quoteFieldOrder))
-	if quoteExpired(validUntil, s.now()) || !owns {
-		return out // an expired quote, or one this caller may not edit, offers nothing (D2), [] not null
+	if quoteExpired(validUntil, s.now()) {
+		return out // an expired quote offers nothing (D2), [] not null
+	}
+	if !level.AtLeast(roleconfig.LevelWork) || (level == roleconfig.LevelWork && !owns) {
+		return out // a caller the write ladder would refuse offers nothing, [] not null
 	}
 	for _, f := range quoteFieldOrder {
 		if !quoteEditRules[f].from[status] {

@@ -100,6 +100,64 @@ func qd1CfgNoManagerClearing(t *testing.T) *roleconfig.Config {
 	return cfg
 }
 
+// qd1CfgCostHiddenFrom builds the decided default with one role taken
+// OFF the cost and margin list, the configuration a dealer who narrows
+// who sees cost holds (X3): everything else stands as decided.
+func qd1CfgCostHiddenFrom(t *testing.T, hidden string) *roleconfig.Config {
+	t.Helper()
+	doc := roleconfig.Document{
+		Cells: qd1Cfg.Cells(),
+		Lists: roleconfig.Lists{
+			ExceptionApprovers: map[roleconfig.ExceptionKind][]string{
+				roleconfig.ExceptionFloorQuote: {"financial_controller", "general_manager"},
+				roleconfig.ExceptionJournal:    {"financial_controller", "general_manager"},
+				roleconfig.ExceptionFreight:    {"financial_controller", "general_manager"},
+				roleconfig.ExceptionCreditCOD:  {"financial_controller", "general_manager"},
+			},
+			FloorClearersOwnBranch:    []string{"sales_manager", "branch_manager"},
+			DeliveryDateCommitters:    []string{"yard_manager", "logistics_manager", "branch_manager"},
+			QuoteFloorBranchApprovers: []string{"sales_manager"},
+		},
+		Settings: map[string]json.RawMessage{
+			roleconfig.SettingCostVisibility:                json.RawMessage(`["outside_sales","sales_manager","yard_manager","logistics_manager","branch_manager","procurement_manager","payables_receivables","financial_controller","general_manager"]`),
+			roleconfig.SettingCreditAtTill:                  json.RawMessage(`true`),
+			roleconfig.SettingRefundAmountWithoutApproval:   json.RawMessage(`25000`),
+			roleconfig.SettingRefundApprovers:               json.RawMessage(`["sales_manager","branch_manager"]`),
+			roleconfig.SettingManagerOwnBranchFloorClearing: json.RawMessage(`true`),
+			roleconfig.SettingPricingEditors:                json.RawMessage(`["sales_manager","general_manager"]`),
+			roleconfig.SettingShortageResolvers:             json.RawMessage(`["yard_team","yard_manager"]`),
+			roleconfig.SettingDispatchPolicySetters:         json.RawMessage(`["logistics_manager","branch_manager"]`),
+			roleconfig.SettingGeneralManagerSelling:         json.RawMessage(`false`),
+			roleconfig.SettingRefundApprovalWindowSeconds:   json.RawMessage(`300`),
+		},
+	}
+	cfg, err := roleconfig.Validate(&doc)
+	if err != nil {
+		t.Fatalf("qd1: configuration with %s off the cost list: %v", hidden, err)
+	}
+	return cfg
+}
+
+// qd1CostAvail is an availability double whose every bucket answers a
+// fixed figure, so a cost visibility assertion is about the gate and not
+// about the stock fixtures of the day.
+type qd1CostAvail struct{ cost int64 }
+
+func (a qd1CostAvail) AvailabilityAtBranch(_ context.Context, productID, branchID string) (BranchStock, error) {
+	return BranchStock{
+		ProductID: productID, BranchID: branchID, BranchCode: "TRT", BranchName: "Trenton",
+		OnHandBase: 10, AvailableBase: 10, AvgCostCents: a.cost,
+	}, nil
+}
+
+func (a qd1CostAvail) AvailabilityAllBranches(ctx context.Context, productID string) ([]BranchStock, error) {
+	one, err := a.AvailabilityAtBranch(ctx, productID, "b1")
+	if err != nil {
+		return nil, err
+	}
+	return []BranchStock{one}, nil
+}
+
 // qd1Arbiter is a deterministic FloorArbiter double. belowFloor is derived
 // from the two figures, so a test states the margin and the floor and the
 // ladder under test decides.

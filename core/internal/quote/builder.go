@@ -471,7 +471,7 @@ func (s *StaffService) SetLineDiscount(ctx context.Context, quoteID string, line
 		if !ok {
 			return QuoteEditResult{}, ErrEditNotConfigured
 		}
-		_, ruleUnit, gross, priceUOM, clearing, ferr := fs.LineFloorState(ctx, quoteID, lineNo)
+		lineID, _, ruleUnit, gross, priceUOM, clearing, ferr := fs.LineFloorState(ctx, quoteID, lineNo)
 		if ferr != nil {
 			return QuoteEditResult{}, ferr
 		}
@@ -480,7 +480,7 @@ func (s *StaffService) SetLineDiscount(ctx context.Context, quoteID string, line
 			return QuoteEditResult{}, lerr
 		}
 		productID = snap.ProductID
-		out, err = s.decideLineFloor(ctx, caller, quoteID, branchID, snap.ProductID, lineNo, discPct, "",
+		out, err = s.decideLineFloor(ctx, caller, quoteID, branchID, snap.ProductID, lineNo, discPct, lineID, "",
 			ruleUnit, gross, priceUOM, clearing)
 		if err != nil {
 			return QuoteEditResult{}, err
