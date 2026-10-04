@@ -214,6 +214,17 @@ func (s *Approvals) resolveApproverIDs(ctx context.Context, policy PolicyType, b
 	return ResolveApproversFloor(candidates, policy, branchID, s.floorApprovers), nil
 }
 
+// CanDecide answers whether the caller's authority decides the policy in
+// the branch under the CONFIGURED floor set the service was wired with
+// (D11): the same rule the Decide path runs (four eyes and PENDING are
+// the caller's own to check), offered so a surface that must show what
+// waits on this person (the Home queue's approvals count) reads the
+// configured authority and never a second copy derived from the carried
+// default.
+func (s *Approvals) CanDecide(caller StaffContext, policy PolicyType, branchID string) bool {
+	return CanApproveFloor(caller, policy, branchID, s.floorApprovers)
+}
+
 // ApprovalReconcilePending is one still-PENDING request the messaging sweep must ensure has a card in each
 // currently-eligible approver's channel (identity-owned type; the wire adapter maps it into messaging).
 type ApprovalReconcilePending struct {
