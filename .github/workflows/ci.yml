@@ -277,11 +277,21 @@ jobs:
           # held before this job existed, and till_b4_gate stays migrated
           # above for the lane that adapts the fixture.
         run: go test ./... -count=1 -p 1
+      # The demo world proofs (TestDemoWorld_Quotes, TestDemoWorld_CounterTill)
+      # gate on their own throwaway Postgres: a database made fresh here for
+      # the next step alone and shared with no other leg. The proofs build
+      # and drop their own databases beside it on this service.
+      - name: Create the fresh database for the demo world proofs
+        run: |
+          set -euo pipefail
+          psql "$BASE/postgres?sslmode=disable" -v ON_ERROR_STOP=1 \
+            -c 'CREATE DATABASE hh_demo_world_proof'
       - name: Demo tag suite with the gate variable set
         working-directory: core
         env:
           DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_base?sslmode=disable
           HH_CORE_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_core_gate?sslmode=disable
+          HH_TILL_DEMO_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/hh_demo_world_proof?sslmode=disable
         run: go test -tags demo ./... -count=1 -p 1
       # The integration tag suite runs in its own job beside this one
       # (HH-191): the composition fixture's migration glob, the break
