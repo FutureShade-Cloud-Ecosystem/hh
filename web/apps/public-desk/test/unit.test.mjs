@@ -15,7 +15,7 @@ import {
   showsImages,
   totalsBlock,
 } from "../src/_quote-public.js";
-import { formatMoney, quoteStatusPhrase } from "../src/format.js";
+import { formatMoney, quoteStatusPhrase, withFullStop } from "../src/format.js";
 import { validateAcceptance, validateQuoteView } from "../src/quote-client.js";
 
 const TAXED = { subtotalCents: 9665, taxCents: 1257, totalCents: 10922 };
@@ -98,6 +98,23 @@ test("the status words read mid-sentence, and an unknown state degrades honestly
   assert.equal(quoteStatusPhrase("EXPIRED"), "expired");
   assert.equal(quoteStatusPhrase("LOST"), "lost");
   assert.equal(quoteStatusPhrase("SOME_NEW_STATE"), "some new state");
+});
+
+test("a sentence ending on the timestamp carries one full stop, never two", () => {
+  // The en-CA locale time already ends in a period ("2:51:42 a.m."), which is
+  // how the thank-you line grew a double full stop: the sentence must keep
+  // the timestamp's own stop and add nothing.
+  assert.equal(
+    withFullStop("Accepted by Sample Customer on 2026-10-04, 2:51:42 a.m."),
+    "Accepted by Sample Customer on 2026-10-04, 2:51:42 a.m.",
+  );
+  // A clock style without one still ends its sentence.
+  assert.equal(
+    withFullStop("Accepted by Sample Customer on 2026-10-04, 14:51:42"),
+    "Accepted by Sample Customer on 2026-10-04, 14:51:42.",
+  );
+  assert.equal(withFullStop("Already a full sentence."), "Already a full sentence.");
+  assert.equal(withFullStop("Ends on a question?"), "Ends on a question?");
 });
 
 test("money renders from integer cents, and the unknown renders as a placeholder, never zero", () => {

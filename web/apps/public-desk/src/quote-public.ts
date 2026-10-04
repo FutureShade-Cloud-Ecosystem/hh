@@ -26,7 +26,7 @@ import {
   totalsBlock,
   type QuoteMoney,
 } from "./_quote-public.js";
-import { formatMoney, quoteStatusPhrase } from "./format.js";
+import { formatMoney, quoteStatusPhrase, withFullStop } from "./format.js";
 import { PublicQuoteClient, type AcceptanceRef, type QuoteViewRef } from "./quote-client.js";
 
 const LINK_GONE =
@@ -502,7 +502,7 @@ export class QuotePublicPage extends HHElement {
     return html`
       <div class="card ok">
         <h2>Thank you: quote ${a.quoteNo} accepted</h2>
-        <p class="sub">Accepted by ${a.typedName} on ${this.when(a.acceptedAt)}.</p>
+        <p class="sub">${withFullStop(`Accepted by ${a.typedName} on ${this.when(a.acceptedAt)}`)}</p>
         ${this.renderTotals(a)}
         <p class="note">
           We have recorded your acceptance and our team will be in touch. Please keep this page or the confirmation for
@@ -535,8 +535,9 @@ export class QuotePublicPage extends HHElement {
         <div class="check">
           <input id="affirm" type="checkbox" />
           <label for="affirm" class="check-label">
-            I accept this quote for ${acceptanceAmountPhrase(q)} and confirm I am authorised to do so on behalf of
-            ${q.customerName}.
+            ${withFullStop(
+              `I accept this quote for ${acceptanceAmountPhrase(q)} and confirm I am authorised to do so on behalf of ${q.customerName}`,
+            )}
           </label>
         </div>
         <button type="button" data-action="accept" ?disabled=${this.busy}>

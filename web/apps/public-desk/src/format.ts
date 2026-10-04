@@ -47,3 +47,15 @@ export const QUOTE_STATUS_PHRASE: Record<string, string> = {
 export function quoteStatusPhrase(status: string): string {
   return QUOTE_STATUS_PHRASE[status] ?? status.toLowerCase().replace(/_/g, " ");
 }
+
+/**
+ * End a customer sentence exactly once. The page's sentences often end on
+ * something that carries its own full stop (the en-CA locale time renders
+ * "2:51:42 a.m.", a company name can render "Inc."), and appending the
+ * sentence's period blindly is how the thank-you line grew "a.m.". The
+ * timestamp's own style is kept untouched: this only decides whether one more
+ * period is owed.
+ */
+export function withFullStop(text: string): string {
+  return /[.!?…]\s*$/.test(text) ? text : `${text}.`;
+}
