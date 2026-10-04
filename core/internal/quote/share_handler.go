@@ -116,6 +116,8 @@ func (h *StaffHandler) writeShareErr(w http.ResponseWriter, err error) {
 		httpx.Error(w, http.StatusNotFound, "not found")
 	case errors.Is(err, ErrNotAcceptable):
 		httpx.Error(w, http.StatusConflict, err.Error())
+	case errors.Is(err, ErrIdempotencyKeyReused):
+		httpx.Error(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrEmptyQuote):
 		httpx.Error(w, http.StatusConflict, err.Error())
 	case errors.As(err, &notEditable):
