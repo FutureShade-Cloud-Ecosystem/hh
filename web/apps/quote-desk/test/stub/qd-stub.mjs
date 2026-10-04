@@ -2051,8 +2051,10 @@ const server = createServer(async (request, response) => {
   match = /^\/api\/v1\/staff\/approvals\/([^/]+)\/decide$/.exec(path);
   if (match !== null && request.method === "POST") {
     readBody(request, response, (body) => {
-      const card = approvalCards.get(match[1]);
-      const row = [...floorRequests.values()].find((r) => r.id === match[1]);
+      // The id rides the path percent encoded (the stub's ids carry a colon).
+      const approvalId = decodeURIComponent(match[1]);
+      const card = approvalCards.get(approvalId);
+      const row = [...floorRequests.values()].find((r) => r.id === approvalId);
       if (card === undefined || row === undefined) {
         respondJson(response, 404, { error: "no approval with that id" });
         return;
