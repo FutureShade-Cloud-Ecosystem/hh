@@ -347,3 +347,28 @@ test("the whole network going down after the quote loaded keeps the quote and th
   await expect(page.getByText("Quote link unavailable")).toHaveCount(0);
   await context.setOffline(false);
 });
+
+test("a double click on Accept sends exactly one POST while the first is in flight", async ({ page }) => {
+  await readyToAccept(page, "q-terms-28");
+  let posts = 0;
+  await page.route("**/accept", async (route) => {
+    posts += 1;
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ quote_no: "Q-28", typed_name: "Sample Customer", accepted_at: new Date().toISOString(), subtotal_cents: 52000, tax_cents: 6760, total_cents: 58760 }),
+    });
+  });
+  const button = page.getByRole("button", { name: "Accept quote" });
+  await button.dblclick();
+  // Two synchronous clicks too: the first sets the busy flag before the
+  // disabled attribute can render, so only the guard stops the second.
+  await page.locator("pd-quote-public").evaluate((host) => {
+    const inner = host.shadowRoot?.querySelector<HTMLButtonElement>("button[data-action=accept]");
+    inner?.click();
+    inner?.click();
+  });
+  await expect(page.getByRole("heading", { name: "Thank you: quote Q-28 accepted" })).toBeVisible();
+  expect(posts).toBe(1);
+});
