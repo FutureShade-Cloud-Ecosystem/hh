@@ -189,6 +189,12 @@ type OrderInvoiceFacts struct {
 	// are echoed back by MarkGroupsInvoiced and they key the idempotency.
 	GroupIDs []string
 	Lines    []OrderInvoiceLine
+	// FreightCents is the delivery fee the agreed price carries, written as its own line. Zero for
+	// every caller but the counter's agreed invoice.
+	FreightCents int64
+	// AgreedTaxCents, when set, is the tax the customer was shown, billed as stated. Nil for every
+	// caller but the counter's agreed invoice.
+	AgreedTaxCents *int64
 }
 
 // OrderInvoiceLine is one billable line, in the shape invoice_lines stores. Quantities are DECIMAL
@@ -604,4 +610,21 @@ func nullUUID(s string) any {
 // isUniqueViolation reports a Postgres 23505 anywhere in the error chain.
 func isUniqueViolation(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "23505")
+}
+
+// AgreedOrderSource is the optional order seam the counter's agreed invoice reads: every line at
+// its agreed total with the delivery fee and the agreed tax stated. A source that does not answer
+// it cannot raise the counter's invoice.
+type AgreedOrderSource interface {
+	AgreedInvoiceableOrder(ctx context.Context, orderID string) (OrderInvoiceFacts, error)
+}
+
+// AgreedOrderInvoice is the counter's read (stub, red first).
+func (w *InvoiceWriter) AgreedOrderInvoice(ctx context.Context, orderID string) (InvoiceDoc, bool, error) {
+	return InvoiceDoc{}, false, errors.New("billing: agreed invoice not built")
+}
+
+// InvoiceOrderAtAgreed is the counter's writer (stub, red first).
+func (w *InvoiceWriter) InvoiceOrderAtAgreed(ctx context.Context, orderID string) (InvoiceDoc, error) {
+	return InvoiceDoc{}, errors.New("billing: agreed invoice not built")
 }

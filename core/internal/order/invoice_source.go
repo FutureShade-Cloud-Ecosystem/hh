@@ -56,6 +56,12 @@ type InvoiceFacts struct {
 	ClosesOrder bool
 	GroupIDs    []string
 	Lines       []InvoiceLine
+	// FreightCents is the delivery fee the order's agreed price carries (the frozen quoted fee),
+	// stated as its own document line. Zero for every caller but the counter's agreed invoice.
+	FreightCents int64
+	// AgreedTaxCents, when set, is the tax the customer was shown, billed as stated instead of
+	// assessed again. Nil for every caller but the counter's agreed invoice.
+	AgreedTaxCents *int64
 }
 
 // InvoiceLine is one billable line. Quantities are DECIMAL strings, never floats.
@@ -318,3 +324,14 @@ SELECT ol.id::text, COALESCE(ol.product_id::text,''), ol.line_no, ol.description
 // column's own DECIMAL(19,4) precision. Never a float on the wire: billing casts these straight into
 // numeric columns, and a quantity that has been through a float64's text form is a quantity somebody
 // will argue about.
+
+// AgreedBillingRefusal is the order module's refusal to answer the counter's agreed invoice: the
+// order is in a state that cannot be billed, or its own header disagrees with its lines.
+type AgreedBillingRefusal struct{ Msg string }
+
+func (e *AgreedBillingRefusal) Error() string { return e.Msg }
+
+// AgreedInvoiceableOrder is the counter's agreed invoice facts (stub, red first).
+func (s *Service) AgreedInvoiceableOrder(ctx context.Context, orderID string) (InvoiceFacts, error) {
+	return InvoiceFacts{}, fmt.Errorf("order: agreed invoice facts not built")
+}

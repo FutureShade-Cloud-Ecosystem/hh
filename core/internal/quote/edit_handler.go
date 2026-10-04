@@ -51,6 +51,7 @@ func (h *StaffHandler) RegisterStaffRoutes(r httpx.Registrar, g *guards.Guards) 
 	// Registering this at requireManager instead would have been the wrong gate, inside/outside
 	// sales are Tier-3 frontline roles and they are the people who do this.
 	r.Handle("POST /api/v1/quotes/{id}/convert", g.RequireStaff(h.staff(h.convertQuote)))
+	r.Handle("POST /api/v1/quotes/{id}/order-payment", g.RequireStaff(h.staff(h.takeOrderPayment)))
 	// DIB-59 comparison. A POST because the alternates are a request BODY, not a filter, but it is a
 	// strictly read-only operation: it writes nothing, to any table, including pricing_audit_log.
 	r.Handle("POST /api/v1/quotes/{id}/lines/{lineNo}/compare", g.RequireStaff(h.staff(h.compareLine)))
@@ -333,6 +334,31 @@ func (h *StaffHandler) convertQuote(w http.ResponseWriter, r *http.Request, _ gu
 	httpx.WriteJSON(w, http.StatusCreated, res)
 }
 
+// takeOrderPayment is the QD-5 counter door: take payment on a converted quote's order (or, for a
+// customer with no credit, convert and pay as one action). The body is required: a payment with no
+// tender, amount and key is not a payment.
+func (h *StaffHandler) takeOrderPayment(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	var body struct {
+		Method         string `json:"method"`
+		AmountCents    int64  `json:"amount_cents"`
+		Reference      string `json:"reference"`
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	if err := decodeBody(w, r, &body); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	res, err := h.svc.TakeOrderPayment(r.Context(), r.PathValue("id"), OrderPaymentInput{
+		Method: body.Method, AmountCents: body.AmountCents, Reference: body.Reference,
+		IdempotencyKey: body.IdempotencyKey,
+	})
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
 // - DIB-491: related documents + acceptance settings -
 
 func (h *StaffHandler) quoteRelatedDocs(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
@@ -408,7 +434,14 @@ func (h *StaffHandler) writeErr(w http.ResponseWriter, err error) {
 	var notOwner *NotQuoteOwnerError
 	var floorRefusal *FloorRefusalError
 	var nothingToApprove *NothingToApproveError
+	var paymentConflict *OrderPaymentConflictError
+	var notRecorded *PaymentNotRecordedError
 	switch {
+	case errors.As(err, &paymentConflict):
+		httpx.Error(w, http.StatusConflict, paymentConflict.Error())
+	case errors.As(err, &notRecorded):
+		// Between two commits: say exactly what exists and how to finish. A 503, never a generic 500.
+		httpx.Error(w, http.StatusServiceUnavailable, notRecorded.Error())
 	// - DIB-483 / M3-G7B: the credit refusal keeps its REASON -
 	// This case sits ABOVE the generic ErrInvalidTransition case below, and the ordering is the
 	// entire fix. ErrCreditBlocked.Unwrap() returns ErrInvalidTransition on purpose (it is how the
