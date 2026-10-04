@@ -46,8 +46,8 @@ so the generator needs its install first: `npm --prefix core/api/tools ci`.
   till supplies for one call (the generated operation's note names it).
   The one header that is a generated argument is `Idempotency-Key`: an
   operation whose contract declares it (the public quote accept) takes
-  `call.idempotencyKey`, a UUID chosen once per attempt and resent unchanged
-  on every retry, because a client-wide provider cannot say which attempt a
+  `call.idempotencyKey`, a UUID chosen once per acceptance and resent unchanged
+  on every retry (never a new key per try), because a client-wide provider cannot say which attempt a
   call belongs to.
   A header provider that throws or rejects resolves an error Result; it never
   surfaces as a rejected promise. A header value the platform would refuse

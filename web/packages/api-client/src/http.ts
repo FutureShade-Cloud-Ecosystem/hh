@@ -71,7 +71,7 @@ export interface ApiCallOptions {
 
 /**
  * Call options for the operations whose contract declares an Idempotency-Key header (QD-3d, the public
- * quote accept). The key is a UUID chosen once per attempt and resent unchanged on every retry of it.
+ * quote accept). The key is a UUID chosen once per acceptance and resent unchanged on every retry of it, never a new key per try.
  */
 export interface ApiKeyedCallOptions extends ApiCallOptions {
   idempotencyKey?: string;
