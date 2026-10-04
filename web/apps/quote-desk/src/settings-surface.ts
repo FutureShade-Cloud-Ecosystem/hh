@@ -104,8 +104,15 @@ export class QdSurfaceSettings extends PanelBase {
         border-color: var(--hos-safety-red, var(--hh-danger));
         outline: 1px solid var(--hos-safety-red, var(--hh-danger));
       }
+      .checks {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+        gap: var(--hh-s-12) var(--hos-space-5, 20px);
+        align-items: center;
+      }
       .saverow {
         align-items: center;
+        margin-top: var(--hos-space-5, 20px);
       }
       .saverow .err {
         margin: 0;
@@ -452,10 +459,6 @@ export class QdSurfaceSettings extends PanelBase {
             ${this.chipsPick.length === 0 ? html`<span class="picked" style="align-self:center">None picked: top sellers show.</span>` : nothing}
           </div>
         </div>
-        <label class="check"><input type="checkbox" data-field="line_discounts_enabled" data-testid="qs-line-discounts" ?disabled=${locked} /> Per-line discounts</label>
-        <label class="check"><input type="checkbox" data-field="include_product_images" ?disabled=${locked} /> Product images on sent quotes (default)</label>
-        <label class="check"><input type="checkbox" data-field="send_email_enabled" data-testid="qs-send-email" ?disabled=${locked} /> Send by email</label>
-        <label class="check"><input type="checkbox" data-field="send_sms_enabled" data-testid="qs-send-sms" ?disabled=${locked} /> Send by text (SMS)</label>
         <div>
           <label class="f" for="qs-split">Default panel split %</label>
           <input id="qs-split" data-field="workspace_split_pct" aria-invalid=${this.invalidMark("workspace_split_pct")} inputmode="numeric" ?disabled=${locked} />
@@ -466,6 +469,12 @@ export class QdSurfaceSettings extends PanelBase {
             <option value="PRIMARY_LEFT">Products left</option>
             <option value="PRIMARY_RIGHT">Products right</option>
           </select>
+        </div>
+        <div class="span checks">
+          <label class="check"><input type="checkbox" data-field="line_discounts_enabled" data-testid="qs-line-discounts" ?disabled=${locked} /> Per-line discounts</label>
+          <label class="check"><input type="checkbox" data-field="include_product_images" ?disabled=${locked} /> Product images on sent quotes (default)</label>
+          <label class="check"><input type="checkbox" data-field="send_email_enabled" data-testid="qs-send-email" ?disabled=${locked} /> Send by email</label>
+          <label class="check"><input type="checkbox" data-field="send_sms_enabled" data-testid="qs-send-sms" ?disabled=${locked} /> Send by text (SMS)</label>
         </div>
       </div>
       ${locked ? html`<p class="lock" role="status" data-testid="qs-policy-lock">${lock}</p>` : nothing}
