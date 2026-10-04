@@ -223,11 +223,20 @@ test("policyBody carries the scope: a branch row names the branch, the dealer de
   assert.equal("effective_chips" in policyBody({ ...POLICY, effective_chips: ["Pavers"] }, ""), false);
 });
 
-test("writeRefusalLine speaks the server's sentence, or a plain one when it sent none", () => {
-  assert.equal(writeRefusalLine(403, "only the General Manager sets the dealer default"), "only the General Manager sets the dealer default");
+test("writeRefusalLine speaks the server's sentence the way a counter person reads it, or a plain one when it sent none", () => {
+  assert.equal(
+    writeRefusalLine(403, "quote: the dealer wide default is set by the General Manager"),
+    "The dealer wide default is set by the General Manager",
+  );
+  assert.equal(writeRefusalLine(403, "quoteassist: only an administrator changes the scope rules"), "Only an administrator changes the scope rules");
   assert.equal(writeRefusalLine(403, ""), "The server refused this change for your role.");
-  assert.equal(writeRefusalLine(422, "default validity must be between 1 and 365 days"), "default validity must be between 1 and 365 days");
-  assert.equal(writeRefusalLine(undefined, "no route"), "no route");
+  assert.equal(writeRefusalLine(422, "quote: default validity must be between 1 and 365 days"), "Default validity must be between 1 and 365 days");
+  assert.equal(writeRefusalLine(undefined, "no route"), "No route");
+  assert.equal(writeRefusalLine(500, ""), "The change was not saved.");
+});
+
+test("a zero difference reads as a plain amount, not a signed one", () => {
+  assert.equal(comparisonDeltaLabel({ is_current: false, delta_cents: 0 }), "CA$0.00");
 });
 
 test("the curation draft resolves the registry, hides cost columns by default, and moves and toggles without touching the minimum panels", () => {

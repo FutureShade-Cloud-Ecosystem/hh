@@ -94,7 +94,7 @@ test("the dealer wide default is refused by the server for this role: the scope 
   await openScreenSettings(page);
   await page.getByTestId("qs-scope").selectOption("dealer");
   await page.getByTestId("qs-policy-save").click();
-  await expect(page.getByTestId("qs-policy-lock")).toContainText("the dealer wide default is set by the General Manager");
+  await expect(page.getByTestId("qs-policy-lock")).toContainText("The dealer wide default is set by the General Manager");
   await expect(page.getByTestId("qs-policy-save")).toBeDisabled();
   await expect(page.getByTestId("qs-validity-days")).toBeDisabled();
   await expect(page.getByTestId("qs-cost-visibility")).toBeDisabled();
@@ -203,17 +203,17 @@ test("a caller outside the settings roles sees the server's sentences in place o
   // The acceptance switch and the scope rules: the server refused the read, so its sentence stands.
   await expect(page.getByTestId("qa-refused")).toContainText("may not read them");
   await expect(page.getByTestId("qa-switch")).toHaveCount(0);
-  await expect(page.getByTestId("qr-refused")).toContainText("only an administrator reads the scope rules");
+  await expect(page.getByTestId("qr-refused")).toContainText("Only an administrator reads the scope rules");
   await expect(page.getByTestId("qr-row")).toHaveCount(0);
   // The policy reads; its write is refused, and the screen locks with the server's sentence.
   await expect(page.getByTestId("qs-policy")).toBeVisible();
   const before = (await ledger(page)).policyWrites.length;
   await page.getByTestId("qs-policy-save").click();
-  await expect(page.getByTestId("qs-policy-lock")).toContainText("Inside Sales role may not change the quote policy");
+  await expect(page.getByTestId("qs-policy-lock")).toContainText("The Inside Sales role may not change the quote policy");
   await expect(page.getByTestId("qs-policy-save")).toBeDisabled();
   expect((await ledger(page)).policyWrites).toHaveLength(before);
   // The curation write is refused the same way.
   await page.getByTestId("qs-items-save").click();
-  await expect(page.getByTestId("qs-items-lock")).toContainText("only an administrator saves the dealer's screen layout");
+  await expect(page.getByTestId("qs-items-lock")).toContainText("Only an administrator saves the dealer's screen layout");
   await expect(page.getByTestId("qs-items-save")).toBeDisabled();
 });

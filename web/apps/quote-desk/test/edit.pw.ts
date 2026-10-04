@@ -66,6 +66,28 @@ test("the panel shows the quote's lines with the controls the server offers", as
   await expect(panel(page).locator('[data-seam="payment"]')).toBeAttached();
 });
 
+test("a notice or a refusal does not follow the person to another quote", async ({ page }) => {
+  await signIn(page);
+  await openQuote(page, "Draft");
+  const sand = panel(page).getByTestId("qe-line").nth(1);
+  await sand.locator('[data-field="qty"]').fill("0");
+  await sand.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("qe-error")).toContainText("Quantity must be more than zero");
+  await sand.locator('[data-field="qty"]').fill("3");
+  await sand.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("qe-notice")).toContainText("Saved.");
+  await panel(page).locator('[data-field="add-search"]').fill("edge");
+  await expect(panel(page).getByRole("option")).toHaveCount(1);
+  await page.getByTestId("qb-list-row").filter({ hasText: "Accepted" }).first().click();
+  await expect(page.getByTestId("qe-title")).toContainText("Q-1003");
+  await expect(page.getByTestId("qe-notice")).toHaveText("");
+  await expect(page.getByTestId("qe-error")).toHaveText("");
+  // The add box a person left half typed does not follow either.
+  await page.getByTestId("qb-list-row").filter({ hasText: "Draft" }).first().click();
+  await expect(panel(page).locator('[data-field="add-search"]')).toHaveValue("");
+  await expect(panel(page).getByRole("option")).toHaveCount(0);
+});
+
 test("a quantity save reprices from the server's answer, and bad input is refused before any request", async ({ page }) => {
   await signIn(page);
   await openQuote(page, "Draft");

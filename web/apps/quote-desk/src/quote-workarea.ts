@@ -1174,6 +1174,14 @@ export class QdQuoteWorkarea extends LitElement {
     }
   }
 
+  /** The quantity or discount box holding focus, with what is in it, or null. */
+  private typingDraft(): { field: "qty" | "disc"; line: number; value: string } | null {
+    const active = this.renderRoot.querySelector<HTMLInputElement>('[data-field="qty"]:focus, [data-field="disc"]:focus');
+    if (active === null) return null;
+    const field = active.getAttribute("data-field") === "disc" ? "disc" : "qty";
+    return { field, line: Number(active.getAttribute("data-line")), value: active.value };
+  }
+
   async loadAll(): Promise<void> {
     const client = this.client;
     if (client === null) return;
@@ -1193,8 +1201,12 @@ export class QdQuoteWorkarea extends LitElement {
       return;
     }
     this.view = view.value;
-    this.qtyDrafts = {};
-    this.discDrafts = {};
+    // Drafts return to the server's truth after a re-read, except the box the
+    // person is typing in right now: a late re-read must never wipe the figure
+    // under their hands, or the blur that should save it sees an empty box.
+    const typing = this.typingDraft();
+    this.qtyDrafts = typing !== null && typing.field === "qty" ? { [typing.line]: typing.value } : {};
+    this.discDrafts = typing !== null && typing.field === "disc" ? { [typing.line]: typing.value } : {};
     if (this.pendingFocusScan) {
       // The mandatory first action (picking the customer) just finished: the
       // next action is always add products, so the scanner gun's box takes

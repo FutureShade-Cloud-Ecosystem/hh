@@ -15,6 +15,7 @@ import {
   type SurfaceItemKind,
   type WireItem,
 } from "./quote-surface.js";
+import { spokenRefusal } from "./_quote-workarea.js";
 import { ARRANGEMENTS, COST_VISIBILITIES, type QuotePolicyWire, type ScopeRuleRow } from "./_panel-wire.js";
 
 /** The role profiles the curation page edits, in the reference's order. */
@@ -62,9 +63,13 @@ export function policyBody(p: QuotePolicyWire, branchId: string): QuotePolicyWir
   return branchId === "" ? { ...rest } : { ...rest, branch_id: branchId };
 }
 
-/** A refusal on a write, in the server's words, or a plain sentence when it sent none. */
+/**
+ * A refusal on a write or a read, in the server's words as a counter person
+ * reads them (module prefixes and internal enums peeled), or a plain sentence
+ * when the server sent none.
+ */
 export function writeRefusalLine(status: number | undefined, detail: string): string {
-  const d = detail.trim();
+  const d = spokenRefusal(detail);
   if (d !== "") return d;
   if (status === 403) return "The server refused this change for your role.";
   return "The change was not saved.";

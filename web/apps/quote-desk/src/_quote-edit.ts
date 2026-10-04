@@ -232,6 +232,7 @@ export function shareLinkState(link: { live: boolean; revokedAt: string | null }
 /** The comparison row's difference: none for the current line, else a signed amount. */
 export function comparisonDeltaLabel(row: { is_current: boolean; delta_cents: number }): string {
   if (row.is_current) return "none";
+  if (row.delta_cents === 0) return moneyWord(0);
   return `${row.delta_cents < 0 ? "-" : "+"}${moneyWord(Math.abs(row.delta_cents))}`;
 }
 

@@ -113,11 +113,22 @@ export class QdQuoteEdit extends PanelBase {
 
   protected override willUpdate(changed: Map<string, unknown>): void {
     if (changed.has("quoteId") || changed.has("client")) {
+      // Everything a person left on the last quote stays with that quote: the
+      // outcome lines, the half typed add box, the open comparison, the link.
+      this.error = "";
+      this.notice = "";
       this.mintedToken = "";
       this.converted = null;
       this.compareLine = null;
       this.compareRows = [];
       this.compareAlts = [];
+      this.compareHits = [];
+      this.compareQuery = "";
+      this.addQuery = "";
+      this.addQty = "";
+      this.addActive = -1;
+      this.hits = [];
+      this.picked = null;
       this.reload();
     }
   }
@@ -142,11 +153,26 @@ export class QdQuoteEdit extends PanelBase {
     }
     this.view = result.value;
     // Drafts return to the server's truth after every load, so a refused edit
-    // never leaves a stale value sitting in a box looking saved.
-    this.qtyDraft = {};
-    this.discDraft = {};
-    this.expiryDraft = result.value.valid_until ?? "";
+    // never leaves a stale value sitting in a box looking saved. The one
+    // exception is the box under the person's hands: a late re-read must not
+    // wipe the figure being typed.
+    const typing = this.typingField();
+    this.qtyDraft = typing !== null && typing.field === "qty" ? { [typing.line]: typing.value } : {};
+    this.discDraft = typing !== null && typing.field === "disc" ? { [typing.line]: typing.value } : {};
+    this.expiryDraft = typing !== null && typing.field === "expiry" ? typing.value : (result.value.valid_until ?? "");
     await Promise.all([this.loadDiscounts(), this.loadLinks()]);
+  }
+
+  /** The quantity, discount or expiry box holding focus, with what is in it, or null. */
+  private typingField(): { field: "qty" | "disc" | "expiry"; line: number; value: string } | null {
+    const active = this.renderRoot.querySelector<HTMLInputElement>('[data-field="qty"]:focus, [data-field="disc"]:focus, [data-field="expiry"]:focus');
+    if (active === null) return null;
+    const field = active.getAttribute("data-field");
+    return {
+      field: field === "disc" ? "disc" : field === "expiry" ? "expiry" : "qty",
+      line: Number(active.getAttribute("data-line") ?? "0"),
+      value: active.value,
+    };
   }
 
   /**

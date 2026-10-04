@@ -19,7 +19,6 @@ import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-co
 import { listProducts } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
 import { PanelBase } from "./panel-base.js";
 import { panelStyles } from "./panel-styles.js";
-import { spokenRefusal } from "./_quote-workarea.js";
 import type { QuotePolicyWire } from "./_panel-wire.js";
 import type { ResolvedItem, SurfaceItemKind, WireItem } from "./quote-surface.js";
 import {
@@ -171,7 +170,7 @@ export class QdSurfaceSettings extends PanelBase {
     if (client === null) return;
     const result = await client.readPolicy(this.scopeBranch());
     if (!result.ok) {
-      this.error = spokenRefusal(writeRefusalLine(result.status, result.error));
+      this.error = writeRefusalLine(result.status, result.error);
       return;
     }
     this.policy = result.value;
@@ -184,7 +183,7 @@ export class QdSurfaceSettings extends PanelBase {
     if (client === null) return;
     const result = await client.surfaceConfig(this.branchId, this.profile);
     if (!result.ok) {
-      this.error = spokenRefusal(writeRefusalLine(result.status, result.error));
+      this.error = writeRefusalLine(result.status, result.error);
       return;
     }
     this.roleItems = result.value.roleItems;

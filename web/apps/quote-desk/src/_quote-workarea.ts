@@ -292,7 +292,7 @@ export function spokenRefusal(msg: string): string {
   let m = (msg || "").trim();
   for (let peeled = true; peeled; ) {
     const next = m.replace(
-      /^(quote|order|settings|customer|pricing|inventory|billing|pos|tax|gl|dispatch|purchasing|portal|identity|payment|till|finstmt|reporting):\s*/i,
+      /^(quoteassist|quote|order|settings|customer|pricing|inventory|billing|pos|tax|gl|dispatch|purchasing|portal|identity|payment|till|finstmt|reporting):\s*/i,
       "",
     );
     peeled = next !== m;
