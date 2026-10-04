@@ -186,6 +186,11 @@ func (s *StaffService) EditLineQty(ctx context.Context, quoteID string, lineNo i
 			plan = out.plan
 			plan.expectedDisc = disc
 		}
+	} else {
+		// Fail closed: the floor state read is how the reprice learns the
+		// line carries a discount at all, so a store that cannot answer
+		// must refuse rather than reprice a discounted line unchecked.
+		return QuoteEditResult{}, ErrEditNotConfigured
 	}
 	// The pricing log rows the reprice owes, on the write's own
 	// transaction (plan 4.2 and CP0-3 answer A): the floor row for a

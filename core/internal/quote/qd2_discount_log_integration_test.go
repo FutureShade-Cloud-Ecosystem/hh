@@ -22,10 +22,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// qd2Clock is the suite's fixed decision clock: the injected `now` every qd2
-// test pins its repository and service to (the qd1 pattern). One literal, in
-// one helper, so a new fixture adds no calendar date of its own.
-func qd2Clock() time.Time { return time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC) }
+// qd2Clock is the suite's decision clock: the injected `now` every qd2 test
+// pins its repository and service to (the qd1 pattern). It is the real
+// instant, truncated to the hour, never a calendar literal, so no fixture
+// carries a fixed date and nothing in the suite can rot with the calendar.
+func qd2Clock() time.Time { return time.Now().UTC().Truncate(time.Hour) }
 
 // qd2TrailField reads one QUOTE_CHANGED row's before and after for a field
 // on one line of one quote. ok=false when no such row stands.
@@ -51,7 +52,7 @@ func qd2TrailField(t *testing.T, pool *pgxpool.Pool, quoteID, field string, line
 // and the line total) on the write's own transaction.
 func TestQD2_DiscountAboveFloor_UpdateRowAndTrail(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	now := qd2Clock()
 	seller := qd1User(t, pool, "seller")
 	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 	qd2CleanAudit(t, pool, quoteID)
@@ -113,7 +114,7 @@ func TestQD2_DiscountAboveFloor_UpdateRowAndTrail(t *testing.T) {
 // reprice that leaves the line above the floor writes the UPDATE row.
 func TestQD2_QtyRepriceAboveFloor_UpdateRow(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	now := qd2Clock()
 	seller := qd1User(t, pool, "seller")
 	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 	qd1SetDisc(t, pool, quoteID, 1, 20)
@@ -141,7 +142,7 @@ func TestQD2_QtyRepriceAboveFloor_UpdateRow(t *testing.T) {
 // clearing adds no UPDATE row beside it.
 func TestQD2_BypassRowStillCorrect_NoRowForStandingClearing(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	now := qd2Clock()
 	bm := qd1User(t, pool, "bm")
 	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", bm, true)
 	qd2CleanAudit(t, pool, quoteID)

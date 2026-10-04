@@ -120,7 +120,7 @@ func qd2CleanAudit(t *testing.T, pool *pgxpool.Pool, quoteID string) {
 // branch), the line landing at the resolver's own price.
 func TestQD2_RulePriceBelowFloor_AddLineAcceptedAsSalesAndManager(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	now := qd2Clock()
 	seller := qd1User(t, pool, "seller")
 	mgr := qd1User(t, pool, "mgr")
 	_, quoteID, prod, uom := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
@@ -157,7 +157,7 @@ func TestQD2_RulePriceBelowFloor_AddLineAcceptedAsSalesAndManager(t *testing.T) 
 // entity type.
 func TestQD2_RulePriceBelowFloor_MarkedAndLogged(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	now := qd2Clock()
 	seller := qd1User(t, pool, "seller")
 	_, quoteID, prod, uom := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 	qd2CleanAudit(t, pool, quoteID)

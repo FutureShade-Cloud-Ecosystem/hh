@@ -117,7 +117,7 @@ func qd2SeedMarginQuote(t *testing.T, pool *pgxpool.Pool, seller string) (quoteI
 
 func TestQD2_MarginAgreement_ScreenAndFloorDecision(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	now := qd2Clock()
 	seller := qd1User(t, pool, "seller")
 	quoteID, prod, uom := qd2SeedMarginQuote(t, pool, seller)
 
