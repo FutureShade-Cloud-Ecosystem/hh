@@ -273,7 +273,7 @@ const conversions = [];
 // ---------------------------------------------------------------------------
 
 const BELLEVILLE_ID = "6f1c2b3a-0000-4000-8000-000000000002";
-const seamSwitches = { aiConfigured: false };
+const seamSwitches = { aiConfigured: false, seamWired: true };
 const followPlans = new Map(); // quote id -> plan row
 const followEvents = new Map(); // quote id -> events
 const lapsedHolds = new Map(); // quote id -> expired hold rows
@@ -288,6 +288,7 @@ const productApps = {
 };
 function resetSeamWorld() {
   seamSwitches.aiConfigured = false;
+  seamSwitches.seamWired = true;
   followPlans.clear();
   followEvents.clear();
   lapsedHolds.clear();
@@ -319,6 +320,7 @@ function branchStockRow(productId, branchId, caller) {
 }
 
 function gradeOf(available, qty) {
+  if (!seamSwitches.seamWired) return "UNKNOWN";
   if (available <= 0) return "NONE";
   return available >= qty ? "GREEN" : "THIN";
 }
@@ -351,7 +353,7 @@ function holdExpiryView(quote) {
   const expired = lapsedHolds.get(quote.id) ?? [];
   const lapsedIds = new Set(expired.map((row) => row.product_id));
   const active = quote.lines.filter((line) => !lapsedIds.has(line.product_id)).length;
-  return { expiry: { quote_id: quote.id, active_count: active, expired, any_expired: expired.length > 0 }, seam_wired: true };
+  return { expiry: { quote_id: quote.id, active_count: active, expired, any_expired: expired.length > 0 }, seam_wired: seamSwitches.seamWired };
 }
 
 function lineAppsOf(line) {
@@ -1014,7 +1016,7 @@ const server = createServer(async (request, response) => {
       const at = new Date().toISOString();
       lapsedHolds.set(
         quote.id,
-        quote.lines.map((line) => ({
+        quote.lines.filter((line) => body.line_no === undefined || line.line_no === Number(body.line_no)).map((line) => ({
           reservation_id: `res-${quote.id}-${line.line_no}`,
           product_id: line.product_id,
           product_name: line.description,
@@ -1026,7 +1028,7 @@ const server = createServer(async (request, response) => {
           ended_at: at,
         })),
       );
-      respondJson(response, 200, { lapsed: quote.lines.length });
+      respondJson(response, 200, { lapsed: (lapsedHolds.get(quote.id) ?? []).length });
     });
     return;
   }
@@ -1040,6 +1042,13 @@ const server = createServer(async (request, response) => {
       if (Number.isFinite(body.trenton)) row.trenton = body.trenton;
       if (Number.isFinite(body.belleville)) row.belleville = body.belleville;
       respondJson(response, 200, row);
+    });
+    return;
+  }
+  if (path === "/_stub/seam-wired" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      seamSwitches.seamWired = body.wired !== false;
+      respondJson(response, 200, { wired: seamSwitches.seamWired });
     });
     return;
   }
@@ -1986,7 +1995,7 @@ const server = createServer(async (request, response) => {
           branch,
         };
       }),
-      seam_wired: true,
+      seam_wired: seamSwitches.seamWired,
     });
     return;
   }

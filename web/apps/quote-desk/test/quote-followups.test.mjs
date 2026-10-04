@@ -74,7 +74,7 @@ test("summaryLine states the cadence in days and the channel in words", () => {
 
 test("no sentence carries an em or en dash", () => {
   const lines = [summaryLine(null), summaryLine(HISTORY), shareErrorMessage(409, ""), shareErrorMessage(503, ""), contactLine(HISTORY, String), contactLine(null, String)];
-  for (const line of lines) assert.doesNotMatch(line, /[–—]/);
+  for (const line of lines) assert.doesNotMatch(line, /[\u2013\u2014]/);
 });
 
 test("channelWords never leaks an enum", () => {
@@ -95,16 +95,15 @@ test("shareErrorMessage keeps the server's own words, with a fallback only when 
 test("contactLine: heard from us (the latest queued step) and when next (the earliest upcoming)", () => {
   const when = (iso) => `@${iso}`;
   const line = contactLine(HISTORY, when);
-  assert.match(line, /Heard from us: day 3 email, queued @2026-08-04T14:01:00Z/);
-  assert.match(line, /Next: day 7 text, @2026-08-08T13:00:00Z/);
+  assert.match(line, /Heard from us: day 3 email, queued @2026-08-04T14:01:00Z; next: day 7 text, @2026-08-08T13:00:00Z$/);
 });
 
 test("contactLine: a skipped step is not hearing from us; nothing sent says so; nothing next says so", () => {
   const when = (iso) => iso;
   const skippedOnly = { ...HISTORY, events: [HISTORY.events[0]] };
-  assert.match(contactLine(skippedOnly, when), /Not heard from us yet/);
+  assert.match(contactLine(skippedOnly, when), /^Not heard from us yet; next:/);
   const noneNext = { ...HISTORY, upcoming: [] };
-  assert.match(contactLine(noneNext, when), /Nothing further is scheduled/);
+  assert.match(contactLine(noneNext, when), /; nothing further is scheduled$/);
   assert.equal(contactLine({ quote_id: "q", events: [], upcoming: [], automated: false }, when), "");
   assert.equal(contactLine(null, when), "");
 });

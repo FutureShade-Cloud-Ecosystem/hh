@@ -84,5 +84,5 @@ test("reholdResultNote reports what the re-hold did", () => {
 
 test("no sentence carries an em or en dash", () => {
   const all = [expiryHeadline(st()), reholdResultNote(0), reholdRefusal(500, ""), expiryBanner(st()).headline];
-  for (const line of all) assert.doesNotMatch(line, /[–—]/);
+  for (const line of all) assert.doesNotMatch(line, /[\u2013\u2014]/);
 });

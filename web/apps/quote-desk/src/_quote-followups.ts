@@ -147,10 +147,11 @@ export function contactLine(h: FollowUpHistory | null | undefined, whenLabel: (i
   const next = upcoming.slice().sort((a, b) => Date.parse(a.due_at) - Date.parse(b.due_at))[0];
   const heard =
     sent === undefined
-      ? "Not heard from us yet."
-      : `Heard from us: day ${sent.step_day} ${stepWords(sent.channel)}, queued ${whenLabel(sent.occurred_at)}.`;
-  const after = next === undefined ? "Nothing further is scheduled." : `Next: day ${next.step_day} ${stepWords(next.channel)}, ${whenLabel(next.due_at)}.`;
-  return `${heard} ${after}`;
+      ? "Not heard from us yet"
+      : `Heard from us: day ${sent.step_day} ${stepWords(sent.channel)}, queued ${whenLabel(sent.occurred_at)}`;
+  // A semicolon, not a full stop: a locale's own timestamp can end in a full stop ("a.m.").
+  const after = next === undefined ? "nothing further is scheduled" : `next: day ${next.step_day} ${stepWords(next.channel)}, ${whenLabel(next.due_at)}`;
+  return `${heard}; ${after}`;
 }
 
 /**

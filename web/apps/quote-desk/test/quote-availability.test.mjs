@@ -81,5 +81,5 @@ test("formatQty trims zeros and survives garbage", () => {
 
 test("no word carries an em or en dash", () => {
   const all = [availabilityLabel(line("THIN", 1, 2)), branchRowLabel(branch({ available_base: 1, in_transit_base: 2, avg_cost_cents: 5 }), "b1"), softHeldNote(line("GREEN", 1, 1, { soft_held_base: 3 }))];
-  for (const s of all) assert.doesNotMatch(s, /[–—]/);
+  for (const s of all) assert.doesNotMatch(s, /[\u2013\u2014]/);
 });
