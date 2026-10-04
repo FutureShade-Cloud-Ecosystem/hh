@@ -55,6 +55,7 @@ func qd5SetupWith(t *testing.T, maxConns int32, withStock bool) *qd5Env {
 		t.Fatalf("pool: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	qd5KeepSequences(t, pool)
 	var userID string
 	if err := pool.QueryRow(context.Background(),
 		`SELECT id::text FROM users WHERE status='ACTIVE' ORDER BY created_at LIMIT 1`).Scan(&userID); err != nil {
@@ -77,6 +78,14 @@ func qd5SetupWith(t *testing.T, maxConns int32, withStock bool) *qd5Env {
 // be raised against it.
 func (e *qd5Env) stockFor(branch string) {
 	e.t.Helper()
+	var prod string
+	if err := e.pool.QueryRow(context.Background(), `
+		SELECT p.id::text FROM products p
+		  JOIN product_uoms pu ON pu.product_id = p.id AND pu.qty_in_base = 1
+		 WHERE p.is_active ORDER BY p.sku LIMIT 1`).Scan(&prod); err != nil {
+		e.t.Skipf("no factor-1 anchored product seeded: %v", err)
+	}
+	qd5KeepStockRow(e.t, e.pool, prod) // the row goes back exactly as it was when the test ends
 	if _, err := e.pool.Exec(context.Background(), `
 		INSERT INTO stock_balances (product_id, location_id, branch_id, on_hand_base, allocated_base)
 		SELECT p.id, $1::uuid, $1::uuid, 100000, 0 FROM products p

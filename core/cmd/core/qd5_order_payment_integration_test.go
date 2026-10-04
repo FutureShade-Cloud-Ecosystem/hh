@@ -54,6 +54,7 @@ func qd5Setup(t *testing.T) *qd5Env {
 		t.Fatalf("pool: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	qd5KeepSequences(t, pool)
 	var userID string
 	if err := pool.QueryRow(context.Background(),
 		`SELECT id::text FROM users WHERE status='ACTIVE' ORDER BY created_at LIMIT 1`).Scan(&userID); err != nil {
@@ -94,6 +95,7 @@ func (e *qd5Env) seedQuote(creditLimit, fee int64, branch string) qd5Quote {
 		 WHERE p.is_active ORDER BY p.sku LIMIT 1`).Scan(&prod, &uom); err != nil {
 		e.t.Skipf("no factor-1 anchored product seeded: %v", err)
 	}
+	qd5KeepStockRow(e.t, e.pool, prod)
 	tag := fmt.Sprintf("QD5-%d", time.Now().UnixNano())
 	var q qd5Quote
 	if err := e.pool.QueryRow(ctx,
@@ -129,39 +131,7 @@ func (e *qd5Env) seedQuote(creditLimit, fee int64, branch string) qd5Quote {
 	return q
 }
 
-func (e *qd5Env) cleanup(q qd5Quote) {
-	c := context.Background()
-	orders := `SELECT id FROM orders WHERE quote_id = $1`
-	invoices := `SELECT id FROM invoices WHERE customer_id = $1`
-	for _, s := range []string{
-		`DELETE FROM payment_allocations WHERE invoice_id IN (` + invoices + `)`,
-		`DELETE FROM payments WHERE customer_id = $1`,
-		`DELETE FROM customer_transactions WHERE customer_id = $1`,
-		`DELETE FROM invoice_lines WHERE invoice_id IN (` + invoices + `)`,
-		`DELETE FROM invoices WHERE customer_id = $1`,
-		`UPDATE shipment_groups SET invoice_id = NULL WHERE order_id IN (` + orders + `)`,
-	} {
-		arg := q.CustomerID
-		if strings.Contains(s, "shipment_groups") {
-			arg = q.QuoteID
-		}
-		_, _ = e.pool.Exec(c, s, arg)
-	}
-	for _, s := range []string{
-		`DELETE FROM shipment_group_lines WHERE shipment_group_id IN (SELECT id FROM shipment_groups WHERE order_id IN (` + orders + `))`,
-		`DELETE FROM shipment_groups WHERE order_id IN (` + orders + `)`,
-		`DELETE FROM audit_log WHERE entity_id IN (` + orders + `)`,
-		`DELETE FROM quote_accept_provenance WHERE quote_id = $1`,
-		`DELETE FROM order_lines WHERE order_id IN (` + orders + `)`,
-		`DELETE FROM orders WHERE quote_id = $1`,
-		`DELETE FROM audit_log WHERE entity_id = $1`,
-		`DELETE FROM quote_lines WHERE quote_id = $1`,
-		`DELETE FROM quotes WHERE id = $1`,
-	} {
-		_, _ = e.pool.Exec(c, s, q.QuoteID)
-	}
-	_, _ = e.pool.Exec(c, `DELETE FROM customers WHERE id = $1`, q.CustomerID)
-}
+func (e *qd5Env) cleanup(q qd5Quote) { qd5Sweep(e.t, e.pool, q.CustomerID, q.QuoteID) }
 
 // - reads straight off the rows -
 

@@ -99,6 +99,8 @@ func (e *qd5e2e) seedQuote(creditLimit int64) qd5e2eQuote {
 		tag, creditLimit).Scan(&q.CustomerID); err != nil {
 		e.t.Fatalf("seed customer: %v", err)
 	}
+	qd5KeepStockRow(e.t, e.pool, testkit.ProductID) // the row goes back exactly as it was when the test ends
+	qd5KeepSequences(e.t, e.pool)
 	if _, err := e.pool.Exec(ctx, `
 		INSERT INTO stock_balances (product_id, location_id, branch_id, on_hand_base, allocated_base)
 		VALUES ($1, $2, $2, 1000, 0)
@@ -124,32 +126,7 @@ func (e *qd5e2e) seedQuote(creditLimit int64) qd5e2eQuote {
 	return q
 }
 
-func (e *qd5e2e) cleanup(q qd5e2eQuote) {
-	c := context.Background()
-	orders := `SELECT id FROM orders WHERE quote_id = $1`
-	invoices := `SELECT id FROM invoices WHERE customer_id = $2`
-	for _, s := range []string{
-		`DELETE FROM payment_allocations WHERE invoice_id IN (` + invoices + `)`,
-		`DELETE FROM payments WHERE customer_id = $2`,
-		`DELETE FROM customer_transactions WHERE customer_id = $2`,
-		`DELETE FROM invoice_lines WHERE invoice_id IN (` + invoices + `)`,
-		`UPDATE shipment_groups SET invoice_id = NULL WHERE order_id IN (` + orders + `)`,
-		`DELETE FROM invoices WHERE customer_id = $2`,
-		`DELETE FROM stock_reservations WHERE source_ref_id IN (` + orders + `) OR source_ref_id = $1::uuid`,
-		`DELETE FROM shipment_group_lines WHERE shipment_group_id IN (SELECT id FROM shipment_groups WHERE order_id IN (` + orders + `))`,
-		`DELETE FROM shipment_groups WHERE order_id IN (` + orders + `)`,
-		`DELETE FROM audit_log WHERE entity_id IN (` + orders + `)`,
-		`DELETE FROM quote_accept_provenance WHERE quote_id = $1`,
-		`DELETE FROM order_lines WHERE order_id IN (` + orders + `)`,
-		`DELETE FROM orders WHERE quote_id = $1`,
-		`DELETE FROM audit_log WHERE entity_id = $1`,
-		`DELETE FROM quote_lines WHERE quote_id = $1`,
-		`DELETE FROM quotes WHERE id = $1`,
-		`DELETE FROM customers WHERE id = $2`,
-	} {
-		_, _ = e.pool.Exec(c, s, q.QuoteID, q.CustomerID)
-	}
-}
+func (e *qd5e2e) cleanup(q qd5e2eQuote) { qd5Sweep(e.t, e.pool, q.CustomerID, q.QuoteID) }
 
 func (e *qd5e2e) orderOf(q qd5e2eQuote) (id, status string) {
 	e.t.Helper()
