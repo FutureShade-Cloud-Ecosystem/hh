@@ -18,6 +18,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,12 +43,19 @@ type qd1bFixture struct {
 // manager and the financial controller legs ride plantMatrixStaff).
 func newQD1BFixture(t *testing.T) *qd1bFixture {
 	t.Helper()
-	env := newCompEnv(t)
-	rec := &recordingRegistrar{inner: http.NewServeMux()}
 	cfg, err := roleconfig.Default()
 	if err != nil {
 		t.Fatalf("role configuration: %v", err)
 	}
+	return newQD1BFixtureWith(t, cfg)
+}
+
+// newQD1BFixtureWith is newQD1BFixture over a given role configuration, the
+// floor approver ruling's setting on and off legs.
+func newQD1BFixtureWith(t *testing.T, cfg *roleconfig.Config) *qd1bFixture {
+	t.Helper()
+	env := newCompEnv(t)
+	rec := &recordingRegistrar{inner: http.NewServeMux()}
 	graph, err := registerRoutesWithRoleConfig(rec, env.getenv, cfg)
 	if err != nil {
 		t.Fatalf("registerRoutesWithRoleConfig: %v", err)
@@ -273,6 +281,106 @@ func TestQD1B_SalesManagerHeldToOwnBranchAndOtherKinds(t *testing.T) {
 	}
 }
 
+// qd1bPlantUnboundMargin plants one LEGACY margin card: a PENDING
+// MARGIN_BELOW_MINIMUM row with no line_id in its data and a subject and
+// detail of the filer's choosing, the shape a live database carries from
+// before the quote desk's floor door bound margin filings to a line. No
+// door files one anymore (the create route and the sync door both refuse
+// margin), so the row is planted the way the ones already sitting there
+// sit, and it is cleaned by id.
+func qd1bPlantUnboundMargin(t *testing.T, pool *pgxpool.Pool, requester, branchID string) string {
+	t.Helper()
+	var id string
+	// The seq allocation mirrors the approvalsSeqCTE every rail door runs:
+	// the sync projection scans the seq column, so a hand-planted row
+	// without one breaks the door's load rather than testing its rule.
+	if err := pool.QueryRow(context.Background(), `
+		WITH aseq AS (
+			INSERT INTO scope_sequences (scope) VALUES ('approvals')
+			ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
+			RETURNING next_value
+		)
+		INSERT INTO permission_approval_requests (requested_by, branch_id, policy_type, detail, subject_ref, status, seq)
+		VALUES ($1::uuid, $2::uuid, 'MARGIN_BELOW_MINIMUM', 'a legacy margin card, no line binding',
+		        'a subject of the filers choosing', 'PENDING', (SELECT next_value FROM aseq))
+		RETURNING id::text`, requester, branchID).Scan(&id); err != nil {
+		t.Fatalf("plant the legacy margin card: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM permission_approval_requests WHERE id = $1`, id)
+	})
+	return id
+}
+
+// TestQD1B_UnboundMarginCardStaysRefusedToTheSalesManager is P2-C's route
+// leg: a margin card filed before the floor door bound margin filings to a
+// line carries no line_id, a subject and detail of the filer's choosing,
+// and the branch Sales manager's widened reach must not decide it. The
+// dealer wide floor set keeps the card: the Financial Controller's reach
+// is unchanged by the branch rule.
+func TestQD1B_UnboundMarginCardStaysRefusedToTheSalesManager(t *testing.T) {
+	q := newQD1BFixture(t)
+	clerk := qd1bUserID(t, q.pool, testkit.SubInsideSales)
+
+	legacy := qd1bPlantUnboundMargin(t, q.pool, clerk, testkit.BranchNorthAID)
+	code, body := qd1bCall(t, q, http.MethodPost, qd1bDecidePath(legacy), testkit.SubSalesManager,
+		map[string]any{"approve": true})
+	if code != http.StatusForbidden || body == string(authz.BodyForbidden) {
+		t.Fatalf("the Sales manager decides an unbound margin card over the widened route: %d %s, want the service's refusal, not the gate's",
+			code, body)
+	}
+	if !strings.Contains(body, "no line binding") {
+		t.Fatalf("the refusal must name the line-bound rule, got %s", body)
+	}
+	// The refused decision decided nothing: the card stays PENDING.
+	var status string
+	if err := q.pool.QueryRow(context.Background(),
+		`SELECT status FROM permission_approval_requests WHERE id = $1`, legacy).Scan(&status); err != nil {
+		t.Fatalf("read the legacy card back: %v", err)
+	}
+	if status != string(identity.ApprovalPending) {
+		t.Fatalf("the refused legacy card is %s, want PENDING", status)
+	}
+
+	// The dealer wide floor set keeps the card.
+	wide := qd1bPlantUnboundMargin(t, q.pool, clerk, testkit.BranchNorthAID)
+	code, body = qd1bCall(t, q, http.MethodPost, qd1bDecidePath(wide), xrSubFinancialController,
+		map[string]any{"approve": true})
+	if code != http.StatusOK {
+		t.Fatalf("the Financial Controller keeps the dealer wide floor authority over an unbound card: %d %s", code, body)
+	}
+}
+
+// TestQD1B_SalesManagerRefusedTheirOwnFloorRequestOverTheRoute is four
+// eyes by request for the Sales manager (the review's P3): the manager
+// reaches the decide route and holds the branch arm for the request's
+// branch, so the only thing refusing the decision is that they filed the
+// request. The service's refusal, not the gate's, and the card stays
+// PENDING.
+func TestQD1B_SalesManagerRefusedTheirOwnFloorRequestOverTheRoute(t *testing.T) {
+	q := newQD1BFixture(t)
+	manager := qd1bUserID(t, q.pool, testkit.SubSalesManager)
+	own := qd1bPlantFloor(t, q, manager, testkit.BranchNorthAID, "000000000b09")
+
+	code, body := qd1bCall(t, q, http.MethodPost, qd1bDecidePath(own), testkit.SubSalesManager,
+		map[string]any{"approve": true})
+	if code != http.StatusForbidden || body == string(authz.BodyForbidden) {
+		t.Fatalf("the Sales manager decides their own floor request: %d %s, want the service's refusal, not the gate's", code, body)
+	}
+	if !strings.Contains(body, "separation of duties") {
+		t.Fatalf("the refusal must be the four eyes rule's, got %s", body)
+	}
+	var status string
+	if err := q.pool.QueryRow(context.Background(),
+		`SELECT status FROM permission_approval_requests WHERE id = $1`, own).Scan(&status); err != nil {
+		t.Fatalf("read the request back: %v", err)
+	}
+	if status != string(identity.ApprovalPending) {
+		t.Fatalf("the refused request is %s, want PENDING", status)
+	}
+}
+
 // TestQD1B_DecideRouteReachIsExactlyTheConfiguredSet pins the widening's
 // blast radius over the whole decided default, planted roles and
 // unplanted ones together: the roles whose rows reach the decide route
@@ -304,5 +412,39 @@ func TestQD1B_DecideRouteReachIsExactlyTheConfiguredSet(t *testing.T) {
 		if !reached[role] {
 			t.Fatalf("the decide route lost the reach of %s: %v", role, reached)
 		}
+	}
+}
+
+// TestQD1B_SalesManagerRefusedTheDealerWideMultiAcceptSwitch is the CP0-5
+// route test for the dealer wide switch (the review's P3): the gate lets
+// the Sales manager REACH the write (the gate sits at read so the General
+// Manager does), so the rule runs in the service, in words, and the Sales
+// manager is refused there, not at the gate. Reverting SetAllowMultiAccept
+// to settingsAdmin lets the Sales manager flip what every branch reads, and
+// this test goes red.
+func TestQD1B_SalesManagerRefusedTheDealerWideMultiAcceptSwitch(t *testing.T) {
+	q := newQD1BFixture(t)
+	const path = "/api/v1/quotes/settings/acceptance"
+
+	read := func(sub string) string {
+		t.Helper()
+		code, body := qd1bCall(t, q, http.MethodGet, path, sub, nil)
+		if code != http.StatusOK {
+			t.Fatalf("read the switch as %s: %d %s", sub, code, body)
+		}
+		return body
+	}
+	before := read(testkit.SubGeneralMgr)
+
+	code, body := qd1bCall(t, q, http.MethodPut, path, testkit.SubSalesManager,
+		map[string]any{"allow_multi_accept": true})
+	if code != http.StatusForbidden || body == string(authz.BodyForbidden) {
+		t.Fatalf("the Sales manager flips the dealer wide switch: %d %s, want the service's refusal, not the gate's", code, body)
+	}
+	if !strings.Contains(body, "administrators") {
+		t.Fatalf("the refusal must be the service's words naming the rule, got %s", body)
+	}
+	if after := read(testkit.SubGeneralMgr); after != before {
+		t.Fatalf("a refused flip changed the switch: %s then %s", before, after)
 	}
 }

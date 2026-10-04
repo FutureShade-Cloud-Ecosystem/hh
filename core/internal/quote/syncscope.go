@@ -93,30 +93,36 @@ type syncQuoteView struct {
 
 // syncColumns is the pull projection: the module's quoteColumns plus
 // the sync legs (seq, tombstone flag).
-const syncColumns = quoteColumns + `, seq, (deleted_at IS NOT NULL) AS deleted`
+// The branch and the owner (the salesperson, else the creator) ride along
+// so the door can decide, per row, what the caller may read.
+const syncColumns = quoteColumns + `, seq, (deleted_at IS NOT NULL) AS deleted,
+	branch_id::text, COALESCE(salesperson_id::text, COALESCE(created_by::text, ''))`
 
 // syncRow is one scanned row of the sync projection.
 type syncRow struct {
-	quote   syncQuoteView
-	seq     int64
-	deleted bool
+	quote    syncQuoteView
+	seq      int64
+	deleted  bool
+	branchID string
+	ownerID  string
 }
 
-// scanSyncRow reads the row: the nine Quote targets re-declared beside
+// scanSyncRow reads the row: the nine Quote targets (plus the sync legs) re-declared beside
 // scanQuote's (pgx cannot split one row across scanners; the shared
 // quoteColumns constant is the guard against drift).
 func scanSyncRow(row pgx.Row) (syncRow, error) {
 	var q syncQuoteView
 	var seq int64
 	var deleted bool
+	var branchID, ownerID string
 	if err := row.Scan(
 		&q.ID, &q.QuoteNo, &q.CustomerID, &q.Status, &q.ValidUntil,
 		&q.SubtotalCents, &q.TaxCents, &q.TotalCents, &q.CreatedAt,
-		&seq, &deleted,
+		&seq, &deleted, &branchID, &ownerID,
 	); err != nil {
 		return syncRow{}, err
 	}
-	return syncRow{quote: q, seq: seq, deleted: deleted}, nil
+	return syncRow{quote: q, seq: seq, deleted: deleted, branchID: branchID, ownerID: ownerID}, nil
 }
 
 // quoteData projects one row through its json tags into the wire map
@@ -178,17 +184,24 @@ func (s *SyncStore) WithNow(f func() time.Time) *SyncStore { s.now = f; return s
 
 // Pull returns the page of quote changes past since, live rows and
 // tombstones in seq order, at most limit rows total, under the org
-// predicate.
+// predicate and the caller's read rung (syncReadScope).
 func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, limit int) ([]sync.Entity, []sync.Tombstone, error) {
 	where, args, ok := quoteScopePredicate(f)
 	if !ok {
 		return []sync.Entity{}, []sync.Tombstone{}, nil
 	}
+	// Only the quotes the caller could list through REST (P2-C): the read
+	// rung is part of the query, so a hidden row never shortens a page.
+	read := s.syncReadScope(ctx, f)
+	if !read.ok {
+		return []sync.Entity{}, []sync.Tombstone{}, nil
+	}
+	readSQL, readArgs := read.predicate(4)
 	q := fmt.Sprintf(`SELECT %s FROM quotes
-		WHERE %s AND seq IS NOT NULL AND seq > $2
+		WHERE %s AND seq IS NOT NULL AND seq > $2%s
 		ORDER BY seq ASC
-		LIMIT $3`, syncColumns, where)
-	args = append(args, since, limit)
+		LIMIT $3`, syncColumns, where, readSQL)
+	args = append(append(args, since, limit), readArgs...)
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("quote: sync pull: %w", err)
@@ -240,7 +253,25 @@ func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key str
 		return sync.RowState{}, false, fmt.Errorf("quote: sync find applied: %w", err)
 	}
 	rs, err := rowStateOf(r)
+	if err == nil {
+		s.maskUnreadable(ctx, f, r, &rs)
+	}
 	return rs, true, err
+}
+
+// maskUnreadable drops the projection of a quote the caller may not read
+// (P2-C): the engine still needs the row's id and seq (the stale check, the
+// idempotent replay), but the projection travels in a conflict envelope or
+// a replayed answer, and a quote the caller cannot list through REST carries
+// no data out of this door.
+func (s *SyncStore) maskUnreadable(ctx context.Context, f sync.ScopeFilter, r syncRow, rs *sync.RowState) {
+	if r.deleted {
+		return
+	}
+	read := s.syncReadScope(ctx, f)
+	if !read.ok || !read.reaches(r.branchID, r.ownerID) {
+		rs.Data = nil
+	}
 }
 
 // Load reads one quote by id under the org predicate; a row outside
@@ -261,6 +292,9 @@ func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sy
 		return sync.RowState{}, false, fmt.Errorf("quote: sync load: %w", err)
 	}
 	rs, err := rowStateOf(r)
+	if err == nil {
+		s.maskUnreadable(ctx, f, r, &rs)
+	}
 	return rs, true, err
 }
 
@@ -326,7 +360,9 @@ func (s *SyncStore) quoteActor(ctx context.Context, f sync.ScopeFilter) string {
 	return ""
 }
 
-// Create inserts one DRAFT quote from a pushed create: the branch must
+// Create inserts one DRAFT quote from a pushed create: the caller needs
+// Work on the Quote Desk and the branch in reach (the REST create's rule),
+// and becomes the quote's salesperson as it does there; the branch must
 // sit in the caller's org (the fence every module write honours, read
 // off locations the same way the drive-run adapters do), the customer
 // validates through the table's own FK exactly as the module's REST
@@ -347,6 +383,11 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 	branchID, _ := fields["branch_id"].(string)
 	if !looksLikeUUID(branchID) {
 		return sync.RowState{}, fmt.Errorf("quote: branch_id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	// The REST create route's rule (P2-C): Work on the Quote Desk and the
+	// branch in the caller's reach, before anything is read or written.
+	if err := s.authorizeSyncCreate(ctx, f, branchID); err != nil {
+		return sync.RowState{}, err
 	}
 	var inOrg bool
 	if err := s.pool.QueryRow(ctx,
@@ -386,9 +427,9 @@ func (s *SyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, 
 		return sync.RowState{}, err
 	}
 	r, err := scanSyncRow(tx.QueryRow(ctx, `
-		INSERT INTO quotes (id, quote_no, customer_id, branch_id, status, valid_until, created_by, org_id, seq, idempotency_key)
+		INSERT INTO quotes (id, quote_no, customer_id, branch_id, status, valid_until, created_by, salesperson_id, org_id, seq, idempotency_key)
 		VALUES (COALESCE(NULLIF($1,'')::uuid, gen_random_uuid()), '#Q-' || nextval('quote_no_seq'),
-		        $2::uuid, $3::uuid, 'DRAFT', NULLIF($4,'')::date, NULLIF($5,'')::uuid, $6::uuid, $7, $8::uuid)
+		        $2::uuid, $3::uuid, 'DRAFT', NULLIF($4,'')::date, NULLIF($5,'')::uuid, NULLIF($5,'')::uuid, $6::uuid, $7, $8::uuid)
 		ON CONFLICT (id) DO NOTHING
 		RETURNING `+syncColumns,
 		id, customerID, branchID, validUntil, actor, f.OrgID, seq, key))
@@ -441,16 +482,22 @@ func (s *SyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var status string
+	var status, branchID, ownerID string
 	var current *time.Time
 	if err := tx.QueryRow(ctx,
-		`SELECT status, valid_until FROM quotes
+		`SELECT status, valid_until, branch_id::text,
+		        COALESCE(salesperson_id::text, COALESCE(created_by::text, ''))
+		 FROM quotes
 		 WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL FOR UPDATE`,
-		id, f.OrgID).Scan(&status, &current); err != nil {
+		id, f.OrgID).Scan(&status, &current, &branchID, &ownerID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, fmt.Errorf("quote: lock %q for sync write: %w", id, err)
+	}
+	// The ownership ladder first, as the REST edit path runs it (P2-4).
+	if err := s.authorizeSyncWrite(ctx, f, branchID, ownerID); err != nil {
+		return sync.RowState{}, err
 	}
 	if rule, ok := quoteEditRules[FieldQuoteValidUntil]; ok && !rule.from[status] {
 		return sync.RowState{}, quoteRefused(fmt.Errorf("the quote is %s and its expiry date is frozen", status))
@@ -518,14 +565,20 @@ func (s *SyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key stri
 		return sync.RowState{}, fmt.Errorf("quote: begin sync delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var status string
+	var status, branchID, ownerID string
 	if err := tx.QueryRow(ctx,
-		`SELECT status FROM quotes WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL FOR UPDATE`,
-		id, f.OrgID).Scan(&status); err != nil {
+		`SELECT status, branch_id::text,
+		        COALESCE(salesperson_id::text, COALESCE(created_by::text, ''))
+		 FROM quotes WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL FOR UPDATE`,
+		id, f.OrgID).Scan(&status, &branchID, &ownerID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, fmt.Errorf("quote: lock %q for sync delete: %w", id, err)
+	}
+	// The same ladder as the write (P2-4): withdrawing is an edit.
+	if err := s.authorizeSyncWrite(ctx, f, branchID, ownerID); err != nil {
+		return sync.RowState{}, err
 	}
 	if status != "DRAFT" {
 		return sync.RowState{}, quoteRefused(fmt.Errorf("a %s quote is a record, withdrawal is the desk's own path", status))

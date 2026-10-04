@@ -248,10 +248,10 @@ type quoteEditWrite struct {
 	QuoteID        string
 	LineNo         int
 	AllowedFrom    []string
-	ProductID      string
+	ProductID      string // a reprice: the product the price was read for, pinned under the lock
 	Description    string
 	QtyEntered     string
-	UOMEntered     string
+	UOMEntered     string // a reprice: the unit the price was read for, pinned under the lock beside the product
 	QtyBase        string
 	UnitPriceCents int64
 	PriceUOM       string
@@ -404,14 +404,13 @@ func (s *StaffService) authorizeQuoteEdit(ctx context.Context, quoteID string, f
 	if !caller.CanAccessBranch(branchID) {
 		return identity.StaffContext{}, quoteEditRule{}, "", ErrForbidden
 	}
-	// The ownership rung (plan 3.3). Level first: under Work edits nothing,
-	// a flat 403 like the branch rung.
-	level := s.quoteDeskLevel(caller)
-	if !level.AtLeast(roleconfig.LevelWork) {
-		return identity.StaffContext{}, quoteEditRule{}, "", ErrForbidden
-	}
-	if level == roleconfig.LevelWork && !s.ownsQuote(caller, ownerID) {
-		return identity.StaffContext{}, quoteEditRule{}, "", &NotQuoteOwnerError{OwnerName: s.ownerName(ctx, ownerID)}
+	// The ownership rung (plan 3.3), shared with the quotes sync door.
+	if err := ownershipRung(s.quoteDeskLevel(caller), caller, ownerID); err != nil {
+		var notOwner *NotQuoteOwnerError
+		if errors.As(err, &notOwner) {
+			notOwner.OwnerName = s.ownerName(ctx, ownerID)
+		}
+		return identity.StaffContext{}, quoteEditRule{}, "", err
 	}
 	if !rule.from[status] {
 		return identity.StaffContext{}, quoteEditRule{}, quoteID, &NotEditableError{Field: field, Status: status}
@@ -428,18 +427,39 @@ func (s *StaffService) authorizeQuoteEdit(ctx context.Context, quoteID string, f
 // unmapped or unknown role, or a service with no configuration, answers
 // none: the gated paths fail closed, never permissively.
 func (s *StaffService) quoteDeskLevel(c identity.StaffContext) roleconfig.Level {
-	if s.roles == nil || c.RoleCode == "" {
+	return deskLevelFor(s.roles, c)
+}
+
+// deskLevelFor is the Quote Desk level the configuration gives the caller's
+// role; no configuration, no role or an unmapped role answers no level.
+func deskLevelFor(cfg *roleconfig.Config, c identity.StaffContext) roleconfig.Level {
+	if cfg == nil || c.RoleCode == "" {
 		return roleconfig.LevelNone
 	}
 	canonical, ok := identity.CanonicalForERPCode(c.RoleCode)
 	if !ok {
 		return roleconfig.LevelNone
 	}
-	level, err := s.roles.Level(canonical, "quote-desk")
+	level, err := cfg.Level(canonical, "quote-desk")
 	if err != nil {
 		return roleconfig.LevelNone
 	}
 	return level
+}
+
+// ownershipRung is plan 3.3's ladder for a write on one quote: under Work
+// edits nothing (a flat 403), Work edits its own quotes, Manage edits any
+// quote of a branch the caller reaches. One rung for the REST edit path and
+// the quotes sync door, so the two doors cannot drift. A non-owner at Work
+// gets the typed refusal without the owner's name; the REST path names it.
+func ownershipRung(level roleconfig.Level, c identity.StaffContext, ownerID string) error {
+	if !level.AtLeast(roleconfig.LevelWork) {
+		return ErrForbidden
+	}
+	if level == roleconfig.LevelWork && !(ownerID != "" && c.UserID == ownerID) {
+		return &NotQuoteOwnerError{}
+	}
+	return nil
 }
 
 // ownsQuote answers whether the caller owns the quote whose owner is ownerID

@@ -180,6 +180,7 @@ func (s *StaffService) EditLineQty(ctx context.Context, quoteID string, lineNo i
 	}
 	_, after, totals, status, err := s.store.UpdateLineGuarded(ctx, quoteEditWrite{
 		QuoteID: quoteID, LineNo: lineNo, AllowedFrom: rule.fromList(),
+		ProductID: cur.ProductID, UOMEntered: uom,
 		QtyEntered: strings.TrimSpace(qtyEntered), QtyBase: formatQty(lp.QtyBase),
 		UnitPriceCents: lp.UnitPriceCents, PriceUOM: lp.PriceUOM, LineTotalCents: lp.LineTotalCents,
 		ActorID: caller.UserID,

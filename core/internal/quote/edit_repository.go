@@ -173,16 +173,45 @@ func (r *Repository) UpdateLineGuarded(ctx context.Context, w quoteEditWrite, pl
 		}
 		return before, after, totals, status, fmt.Errorf("read quote line pre-image: %w", err)
 	}
-	if plan.expectedDisc >= 0 {
-		// The floor decision priced THIS stored discount; a different one
-		// under the lock means the figures nobody decided on, refuse the
-		// write rather than re-discount it blind.
-		var disc int
+	// The price was read for the product the caller saw on this line; a row
+	// holding another product under the lock (a delete and a re-add inside
+	// the pricing window) must never take that price, with or without a
+	// floor question (P2-1, round 3).
+	if before.ProductID != w.ProductID {
+		return before, after, totals, status, errFloorStateChanged
+	}
+	// And the same product re-added in another unit inside that window: the
+	// price and qty_base were resolved for the unit the caller saw, so a row
+	// entered in another unit under the lock would show an entered quantity
+	// and unit that disagree with both (review round 4, P3-6).
+	if w.UOMEntered != "" {
+		var rowUOM string
 		if err := tx.QueryRow(ctx,
-			`SELECT disc_pct FROM quote_lines WHERE quote_id = $1 AND line_no = $2`, w.QuoteID, w.LineNo).Scan(&disc); err != nil {
+			`SELECT uom_entered::text FROM quote_lines WHERE quote_id = $1 AND line_no = $2`,
+			w.QuoteID, w.LineNo).Scan(&rowUOM); err != nil {
+			return before, after, totals, status, fmt.Errorf("read quote line unit: %w", err)
+		}
+		if rowUOM != w.UOMEntered {
+			return before, after, totals, status, errFloorStateChanged
+		}
+	}
+	if plan.expectedDisc >= 0 || plan.lineID != "" {
+		// The floor decision priced THIS stored discount on THIS row; a
+		// different one under the lock means figures nobody decided on (a
+		// discount moved between the read and the lock, or the number was
+		// reused by another row inside the evaluation window, P2-A), refuse
+		// the write rather than re-discount it blind.
+		var disc int
+		var rowID string
+		if err := tx.QueryRow(ctx,
+			`SELECT disc_pct, id::text FROM quote_lines WHERE quote_id = $1 AND line_no = $2`,
+			w.QuoteID, w.LineNo).Scan(&disc, &rowID); err != nil {
 			return before, after, totals, status, fmt.Errorf("read quote line discount: %w", err)
 		}
-		if disc != plan.expectedDisc {
+		if plan.expectedDisc >= 0 && disc != plan.expectedDisc {
+			return before, after, totals, status, errFloorStateChanged
+		}
+		if plan.lineID != "" && plan.lineID != rowID {
 			return before, after, totals, status, errFloorStateChanged
 		}
 	}
@@ -228,9 +257,11 @@ func (r *Repository) UpdateLineGuarded(ctx context.Context, w quoteEditWrite, pl
 	return before, after, totals, status, nil
 }
 
-// errFloorStateChanged is the refusal a guarded write answers when the
-// line's discount moved between the floor decision and the lock: the
-// decision priced figures that are no longer the line's.
+// errFloorStateChanged is the refusal a guarded write answers when the row
+// under the lock is not the row the floor decision priced: the stored
+// discount moved between the read and the lock, or the line number was
+// reused by another row inside the evaluation window. The decision priced
+// figures that are no longer the line's.
 var errFloorStateChanged = errors.New("quote: the line changed while its price was being decided, try again")
 
 // InsertLineGuarded appends a line under the lock.

@@ -18898,7 +18898,6 @@ paths:
         - staff-quote
       summary: Move or clear a quote's valid_until
       description: An empty valid_until clears the expiry, after which the quote never expires. Refused with 409 when the quote is frozen (accepted, converted, or terminal) or already expired.
-      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -18942,7 +18941,6 @@ paths:
         - staff-quote
       summary: Append a priced line to a dealer quote
       description: The line is priced at current rates through the shared pricing seam and the quote's soft stock holds are re-derived in the same transaction. Quantities are decimal strings, never floats.
-      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -18986,7 +18984,6 @@ paths:
         - staff-quote
       summary: Change a quote line's quantity, or set its discount percent
       description: A body with qty_entered reprices the line at current rates. A body carrying disc_pct without qty_entered is a discount-only write, gated by the dealer's line_discounts_enabled policy knob.
-      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19042,7 +19039,6 @@ paths:
       tags:
         - staff-quote
       summary: Remove a line from a dealer quote
-      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19488,7 +19484,6 @@ paths:
         - staff-quote
       summary: Write a quote's terms strip
       description: Authorized on the edit matrix's header row (DRAFT and SENT only), re-checked inside the transaction. The write also stamps the header tax from the configured flat rate. Out-of-bounds fields are refused in words with 422; the 422 body is the shared Error envelope.
-      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19565,7 +19560,6 @@ paths:
         - staff-quote
       summary: Mint a public share link for a dealer quote
       description: The raw token is returned exactly once, here, and is unrecoverable afterwards (only its hash is stored). Minting moves a DRAFT quote to SENT and starts its follow-up cadence. A 409 answers a quote that is empty, frozen, or expired. The link's underlying states are ACTIVE, CONFIRMED, REVOKED; the wire shape carries the computed live flag instead.
-      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19641,7 +19635,6 @@ paths:
         - staff-quote
       summary: Revoke one share link immediately
       description: Subsequent use of the revoked link answers 410, not 404
-      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19707,7 +19700,7 @@ paths:
       tags:
         - public
       summary: Accept a dealer quote through a share link
-      description: "Pre-auth: the opaque token in the path is the credential. Acceptance is a typed full name plus an explicit affirmative, recorded as an electronic attestation. The status flip, the acceptance record and the audit row land on one transaction under the quote row lock. A 409 names why the quote is not awaiting acceptance, including the order a first acceptance became when multi-accept is off."
+      description: "Pre-auth: the opaque token in the path is the credential. Acceptance is a typed full name plus an explicit affirmative, recorded as an electronic attestation. The status flip, the acceptance record and the audit row land on one transaction under the quote row lock. A 409 names why the quote is not awaiting acceptance, including the order a first acceptance became when multi-accept is off. An optional Idempotency-Key header (a UUID) makes a retry safe: a request that timed out at the client may still have committed, so every retry of one acceptance carries the same key. A repeat under the same key, on the same quote and share link, answers the first outcome with the same confirmation, writes nothing, and does so whatever the quote's status is by then, multi-accept on or off. The same key with a different typed name is a 409. A retry through a link that was revoked or has expired since the first attempt still answers that first outcome with a 200 when the acceptance under the key is found for that link, and stays a 410 otherwise. A malformed key is a 400. Without the header the acceptance behaves as it always has."
       x-role: public
       security: []
       parameters:
@@ -19717,6 +19710,13 @@ paths:
           description: The share-link token; it is the credential
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: A UUID chosen once per acceptance and resent unchanged on every retry of it. Scoped to the quote and the share link.
+          schema:
+            type: string
+            format: uuid
       requestBody:
         required: true
         content:
@@ -19749,7 +19749,6 @@ paths:
         - staff-quote
       summary: Text a quote's share link to the customer
       description: Consent is checked before anything is minted; a customer without SMS consent (or opted out) is a 409 in words. The answer is 202 because the message is queued, not sent. No payment link is ever included; the payload type has no field for one.
-      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19825,7 +19824,6 @@ paths:
       tags:
         - staff-quote
       summary: Stop a quote's follow-up cadence
-      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19859,7 +19857,6 @@ paths:
         - staff-quote
       summary: Start or resume a quote's follow-up cadence
       description: Enabling a quote that never had a plan creates one
-      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19992,7 +19989,6 @@ paths:
         - staff-quote
       summary: Re-derive a quote's soft holds from its current lines
       description: "The explicit form of the sync every line write already runs: release all, then reserve what the quote now has, under the quote row lock."
-      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -20026,7 +20022,6 @@ paths:
         - staff-quote
       summary: Close a quote's soft holds (lost or withdrawn)
       description: The only terminal status this endpoint writes is RELEASED; CONSUMED is written by the conversion path and nowhere else.
-      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
