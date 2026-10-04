@@ -201,5 +201,12 @@
     "find": "          if (added > 0) this.dispatchEvent(new CustomEvent(\"quote-changed\", { detail: { quoteId: ctx.id }, bubbles: true, composed: true }));\n",
     "replace": "",
     "test": "P2-1 an add that was out when the person left lands"
+  },
+  {
+    "id": "ap-reason-clears-on-409",
+    "file": "src/approvals-panel.ts",
+    "find": "if (result.status === 403 || result.status === 409) this.clearReason();",
+    "replace": "if (result.status === 403) this.clearReason();",
+    "test": "P2-2 a reason typed for a row whose decision clashed"
   }
 ]

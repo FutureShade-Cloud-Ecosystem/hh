@@ -1,7 +1,7 @@
 // PR 121 round 3, Part B findings: the panels. Every test holds an answer back behind a delayed route, so the order
 // of events is exact on any machine.
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { hold, row, seed, settle, signIn as signInAs, writes } from "./switch-helpers.js";
+import { hold, row, settle, signIn as signInAs, writes } from "./switch-helpers.js";
 
 // The Sales manager sees every quote in the list, so the probes can move between quotes of either owner.
 const signIn = (page: Page, role = "Sales manager") => signInAs(page, role);
@@ -61,6 +61,34 @@ test("P2-1 an add that was out when the person left lands, and the note counts i
   await expect(edit(page).getByTestId("qe-line")).toHaveCount(3);
 });
 
-void hold;
-void seed;
-void ({} as Browser);
+async function plantAndOpenAsManager(browser: Browser, page: Page): Promise<Page> {
+  for (const lineNo of [1, 2]) await page.request.post("/_stub/plant-approval", { data: { quote_id: "q-1001", line_no: lineNo, disc_pct: 10, requested_by_flow: "sales" } });
+  const manager = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
+  await signIn(manager, "Sales manager");
+  await openQuote(manager, "Q-1001");
+  await expect(manager.locator("qd-approvals").getByTestId("ap-row")).toHaveCount(2);
+  return manager;
+}
+
+test("P2-2 a reason typed for a row whose decision clashed (409) is not filed with the next row's decision", async ({ page, browser }) => {
+  const manager = await plantAndOpenAsManager(browser, page);
+  const panel = manager.locator("qd-approvals");
+  const bodies: string[] = [];
+  let first = true;
+  await manager.route(/\/api\/v1\/staff\/approvals\/[^/]+\/decide$/, async (route) => {
+    if (first) {
+      first = false;
+      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "identity: another approver decided this request" }) });
+      return;
+    }
+    bodies.push(route.request().postData() ?? "");
+    await route.continue();
+  });
+  await panel.getByTestId("ap-reason").fill("Repeat buyer on row one");
+  await panel.getByTestId("ap-approve").first().click();
+  await expect(panel.getByTestId("ap-row-error")).toContainText("another approver");
+  await panel.getByTestId("ap-approve").nth(1).click();
+  await expect.poll(() => bodies.length).toBe(1);
+  expect(bodies[0]).not.toContain("Repeat buyer on row one");
+  await manager.context().close();
+});

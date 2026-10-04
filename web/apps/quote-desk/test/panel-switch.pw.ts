@@ -258,7 +258,7 @@ async function plantAndOpenAsManager(browser: Browser, page: Page): Promise<Page
   return manager;
 }
 
-test("a typed approval reason survives a 503 and a 409, and clears on a 403 and on success", async ({ page, browser }) => {
+test("a typed approval reason survives a 503, and clears on a 409, on a 403 and on success", async ({ page, browser }) => {
   const manager = await plantAndOpenAsManager(browser, page);
   const reason = manager.locator("qd-approvals").getByTestId("ap-reason");
   const statuses = [503, 409, 403];
@@ -275,9 +275,11 @@ test("a typed approval reason survives a 503 and a 409, and clears on a 403 and 
   await approve();
   await expect(manager.locator("qd-approvals").getByTestId("ap-row-error")).toContainText("503");
   await expect(reason).toHaveValue("Customer is a repeat buyer");
+  // A clash with another decision ends this try on the row: the reason typed for it is not left for the next row.
   await approve();
   await expect(manager.locator("qd-approvals").getByTestId("ap-row-error")).toContainText("409");
-  await expect(reason).toHaveValue("Customer is a repeat buyer");
+  await expect(reason).toHaveValue("");
+  await reason.fill("Customer is a repeat buyer");
   await approve();
   await expect(manager.locator("qd-approvals").getByTestId("ap-row-error")).toContainText("403");
   await expect(reason).toHaveValue("");

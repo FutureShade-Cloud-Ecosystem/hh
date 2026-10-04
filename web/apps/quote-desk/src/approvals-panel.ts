@@ -179,13 +179,12 @@ export class QdApprovals extends PanelBase {
     const result = await client.decideApproval(id, approve, this.reasonText());
     this.busyId = "";
     if (!result.ok) {
-      // The server's own text, verbatim. A refusal that is not final (the store down, a clash with another
-      // decision) keeps the reason typed, so the retry files it; only a 403 ends the person's try on this row.
+      // The server's own text, verbatim. A refusal that is not final (the store down, a transport failure) keeps
+      // the reason typed, so the retry files it. A 403 or a 409 ends the person's try on this row, and the reason
+      // typed for it must not be filed with the next row's decision.
       this.rowError = { ...this.rowError, [id]: result.error };
-      if (result.status === 403) {
-        this.refusedRows = { ...this.refusedRows, [id]: result.error };
-        this.clearReason();
-      }
+      if (result.status === 403) this.refusedRows = { ...this.refusedRows, [id]: result.error };
+      if (result.status === 403 || result.status === 409) this.clearReason();
       if (result.status === 409) await this.load();
       return;
     }
