@@ -306,6 +306,7 @@ export class QdQuoteWorkarea extends LitElement {
       flex: 1;
       min-height: 0;
       overflow-y: auto;
+      container: zone / inline-size;
     }
     .foot {
       flex: none;
@@ -404,6 +405,66 @@ export class QdQuoteWorkarea extends LitElement {
       padding: var(--hos-s-8, 8px) var(--hos-s-4, 4px);
       border-bottom: 1px solid var(--hos-line, var(--hh-line));
       vertical-align: middle;
+    }
+    /* A narrow panel (the tablet width, or the split dragged in): the photo
+       goes, the item takes its own line and the figures wrap under it, each
+       with its column's name above it, so Disc %, Total and the remove control
+       stay on screen instead of scrolling away out of sight (visual review
+       round 1, P2-2). */
+    @container zone (max-width: 560px) {
+      table.lines,
+      table.lines tbody {
+        display: block;
+      }
+      table.lines thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+      }
+      table.lines tr {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: var(--hos-s-4, 4px) var(--hos-s-8, 8px);
+        padding: var(--hos-s-8, 8px) var(--hos-s-4, 4px);
+        border-bottom: 1px solid var(--hos-line, var(--hh-line));
+      }
+      table.lines td {
+        padding: 0;
+        border: none;
+      }
+      table.lines td[data-role="thumb"] {
+        display: none;
+      }
+      table.lines td[data-role="item"] {
+        flex: 1 1 100%;
+      }
+      table.lines td[data-label]::before {
+        content: attr(data-label);
+        display: block;
+        font-size: var(--qb-caption);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        text-align: left;
+        color: var(--hos-text-dim, var(--hh-text-dim));
+      }
+      table.lines td.num::before {
+        text-align: right;
+      }
+      table.lines .stepper input {
+        width: 3rem;
+      }
+      table.lines input.disc {
+        width: 2.8rem;
+      }
+      table.lines td[data-role="remove"] {
+        margin-left: auto;
+      }
+      table.lines td[data-role="empty-cell"] {
+        flex: 1 1 100%;
+      }
     }
     .num {
       text-align: right;
@@ -2222,9 +2283,9 @@ export class QdQuoteWorkarea extends LitElement {
     const cells = cols.map((c) => {
       switch (c.id) {
         case "line.thumb":
-          return html`<td><span data-thumb=${l.product_id}></span></td>`;
+          return html`<td data-role="thumb"><span data-thumb=${l.product_id}></span></td>`;
         case "line.item":
-          return html`<td>
+          return html`<td data-role="item">
             <div class="iname">
               ${l.description === "" ? l.product_id.slice(0, 8) : l.description}
               ${l.rule_price_below_floor === true
@@ -2237,7 +2298,7 @@ export class QdQuoteWorkarea extends LitElement {
             ${extra?.sku != null ? html`<div class="isku">${extra.sku}</div>` : nothing}
           </td>`;
         case "line.qty":
-          return html`<td class="num">
+          return html`<td class="num" data-label=${c.label}>
             ${o.mayQty
               ? html`<span class="stepper">
                   <button
@@ -2269,13 +2330,13 @@ export class QdQuoteWorkarea extends LitElement {
               : qtyLabel(l.qty_entered)}
           </td>`;
         case "line.uom":
-          return html`<td>${l.uom_entered}</td>`;
+          return html`<td data-label=${c.label}>${l.uom_entered}</td>`;
         case "line.unit_price":
-          return html`<td class="num">${money(l.unit_price_cents)}</td>`;
+          return html`<td class="num" data-label=${c.label}>${money(l.unit_price_cents)}</td>`;
         case "line.disc_pct":
           // No discount renders EMPTY, never a 0 for typed digits to append
           // to, and focus selects all: typing replaces.
-          return html`<td class="num">
+          return html`<td class="num" data-label=${c.label}>
             ${o.mayQty && o.discEnabled
               ? html`<input
                     class="disc"
@@ -2290,14 +2351,14 @@ export class QdQuoteWorkarea extends LitElement {
                 : "(none)"}
           </td>`;
         case "line.total":
-          return html`<td class="num" data-testid="qb-line-total">${money(l.line_total_cents)}</td>`;
+          return html`<td class="num" data-label=${c.label} data-testid="qb-line-total">${money(l.line_total_cents)}</td>`;
         case "line.unit_cost": {
           const cost = lineCostCents(this.glance, l.line_no);
-          return html`<td class="num">${cost === null ? "(none)" : money(cost)}</td>`;
+          return html`<td class="num" data-label=${c.label}>${cost === null ? "(none)" : money(cost)}</td>`;
         }
         case "line.margin_pct": {
           const m = lineMarginLabel(this.glance, l.line_no);
-          return html`<td class="num" data-testid="qb-line-margin">${m === "" ? "(none)" : m}</td>`;
+          return html`<td class="num" data-label=${c.label} data-testid="qb-line-margin">${m === "" ? "(none)" : m}</td>`;
         }
         default:
           return nothing; // an id this build does not know renders NOTHING, silently
@@ -2306,7 +2367,7 @@ export class QdQuoteWorkarea extends LitElement {
     return html`<tr data-testid="qb-line">
       ${cells}
       ${o.mayRemove
-        ? html`<td>
+        ? html`<td data-role="remove">
             <button
               type="button"
               class="trash"
