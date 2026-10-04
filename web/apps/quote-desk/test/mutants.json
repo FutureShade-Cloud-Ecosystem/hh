@@ -1,0 +1,79 @@
+[
+  {
+    "id": "wa-terms-read",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(client.readTerms(ctx.id))",
+    "replace": "await client.readTerms(ctx.id)",
+    "test": "guard terms read:"
+  },
+  {
+    "id": "wa-margin-glance",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(client.marginGlance(ctx.id))",
+    "replace": "await client.marginGlance(ctx.id)",
+    "test": "guard margin glance:"
+  },
+  {
+    "id": "wa-terms-save",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(client.putTerms(ctx.id, termsBody(t)))",
+    "replace": "await client.putTerms(ctx.id, termsBody(t))",
+    "test": "guard terms save answer:"
+  },
+  {
+    "id": "wa-add-line",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(client.addLine(ctx.id, p.id, String(qty), p.uom))",
+    "replace": "await client.addLine(ctx.id, p.id, String(qty), p.uom)",
+    "test": "guard add line:"
+  },
+  {
+    "id": "wa-qty-edit",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(client.editLine(ctx.id, line.line_no, { qty }))",
+    "replace": "await client.editLine(ctx.id, line.line_no, { qty })",
+    "test": "guard quantity edit:"
+  },
+  {
+    "id": "wa-remove-line",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(client.removeLine(ctx.id, line.line_no))",
+    "replace": "await client.removeLine(ctx.id, line.line_no)",
+    "test": "guard remove line:"
+  },
+  {
+    "id": "wa-validity",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(client.setValidUntil(ctx.id, validUntilFromDays(days, this.clockNow)))",
+    "replace": "await client.setValidUntil(ctx.id, validUntilFromDays(days, this.clockNow))",
+    "test": "guard validity:"
+  },
+  {
+    "id": "wa-convert",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(client.convertQuote(ctx.id))",
+    "replace": "await client.convertQuote(ctx.id)",
+    "test": "guard convert:"
+  },
+  {
+    "id": "wa-customer-search",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(searchCustomers(name, 10, this.branchId))",
+    "replace": "await searchCustomers(name, 10, this.branchId)",
+    "test": "guard customer search:"
+  },
+  {
+    "id": "wa-addons",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guarded(addonSuggestions(ids))",
+    "replace": "await addonSuggestions(ids)",
+    "test": "guard add-ons:"
+  },
+  {
+    "id": "wa-busy-release",
+    "file": "src/quote-workarea.ts",
+    "find": "if (released || ctx.stale) return;",
+    "replace": "if (released) return;",
+    "test": "guard busy release:"
+  }
+]

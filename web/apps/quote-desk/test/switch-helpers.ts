@@ -53,3 +53,48 @@ export function writes(page: Page): string[] {
   });
   return seen;
 }
+
+export interface Held {
+  /** Resolves when the first matching request has reached the route and is being held. */
+  asked: Promise<void>;
+  /** Let the held request(s) go; the answer is the server's own, or the refusal given. */
+  open: () => void;
+  /** The held requests that have been opened, as "METHOD url". */
+  seen: string[];
+}
+
+/**
+ * Hold back the requests that match, until the test opens the gate. With `refuse` the answer, once opened, is that
+ * refusal rather than the stub's own; with `times` only that many matching requests are held and the rest pass.
+ */
+export async function hold(
+  page: Page,
+  url: RegExp,
+  options: { method?: string; times?: number; refuse?: { status: number; error: string }; match?: (request: Request) => boolean } = {},
+): Promise<Held> {
+  const door = gate();
+  const seen: string[] = [];
+  let held = 0;
+  let askedNow: () => void = () => undefined;
+  const asked = new Promise<void>((resolve) => {
+    askedNow = resolve;
+  });
+  await page.route(url, async (route) => {
+    const request = route.request();
+    const wanted = (options.method === undefined || request.method() === options.method) && (options.match === undefined || options.match(request));
+    if (!wanted || (options.times !== undefined && held >= options.times)) {
+      await route.continue();
+      return;
+    }
+    held += 1;
+    seen.push(`${request.method()} ${request.url()}`);
+    askedNow();
+    await door.opened;
+    if (options.refuse !== undefined) {
+      await route.fulfill({ status: options.refuse.status, contentType: "application/json", body: JSON.stringify({ error: options.refuse.error }) });
+    } else {
+      await route.continue();
+    }
+  });
+  return { asked, open: door.open, seen };
+}
