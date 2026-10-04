@@ -8,8 +8,8 @@
 // and a refused request in words under the one role=alert. The screenshots
 // are headless and prefixed assist-.
 import { expect, test, type Page } from "@playwright/test";
+import { shot } from "./shot";
 
-const SHOTS = "/home/colton/Desktop/FBHQ/hh-rd2/scratch-app";
 const TEXT = "3 yd clear stone, 20 sf holland stone, jointing sand, a bobcat for the day";
 
 async function openDraft(page: Page): Promise<void> {
@@ -185,17 +185,17 @@ test("screenshots: the state of the reference shot", async ({ page }) => {
   await page.setViewportSize({ width: 1340, height: 900 });
   await openDraft(page);
   await assist(page).scrollIntoViewIfNeeded();
-  await assist(page).screenshot({ path: `${SHOTS}/assist-initial.png` });
+  await shot(assist(page), "assist-initial");
   await paste(page, "Back patio about 400 sq ft of pavers with a 30 ft border, jointing sand for the joints");
   await expect(proposals(page)).toHaveCount(1);
-  await assist(page).screenshot({ path: `${SHOTS}/assist-proposals.png` });
+  await shot(assist(page), "assist-proposals");
   await assist(page).getByTestId("qa-ai").check();
   await assist(page).getByRole("button", { name: "Suggest lines from this text" }).click();
   await expect(assist(page).getByTestId("qa-ai-note")).toBeVisible();
-  await assist(page).screenshot({ path: `${SHOTS}/assist-latched.png` });
+  await shot(assist(page), "assist-latched");
   const row = proposals(page).first();
   await row.locator('[data-field="qty"]').fill("4");
   await row.locator('[data-field="uom"]').fill("bag");
   await row.locator('input[type="checkbox"]').check();
-  await assist(page).screenshot({ path: `${SHOTS}/assist-ticked.png` });
+  await shot(assist(page), "assist-ticked");
 });

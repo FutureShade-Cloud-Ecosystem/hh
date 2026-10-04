@@ -5,8 +5,7 @@
 // discount below the floor and the requester's view of it, and the server's
 // offer to clear the price itself for the Sales manager.
 import { expect, test, type Page } from "@playwright/test";
-
-const SHOTS = "/home/colton/Desktop/FBHQ/hh-rd2/scratch-app";
+import { shot } from "./shot";
 
 async function signIn(page: Page, role = "Sales"): Promise<void> {
   await page.goto("/");
@@ -43,7 +42,7 @@ test("the form opens at its defaults with the branch named and no verdict", asyn
   await expect(guard(page).getByTestId("qg-result")).toHaveCount(0);
   await expect(dialog(page).getByTestId("fr-dialog")).toHaveCount(0);
   await guard(page).scrollIntoViewIfNeeded();
-  await guard(page).screenshot({ path: `${SHOTS}/guard-clear.png` });
+  await shot(guard(page), "guard-clear");
 });
 
 test("a price the server clears says so in percent and opens no dialog", async ({ page }) => {
@@ -82,8 +81,8 @@ test("below the floor opens the refusal dialog as a check only, and it closes by
   // A check only files nothing: no request button, no note field.
   await expect(dialog(page).getByTestId("fr-request")).toHaveCount(0);
   await expect(dialog(page).getByTestId("fr-close")).toBeFocused();
-  await page.screenshot({ path: `${SHOTS}/guard-blocked.png` });
-  await page.screenshot({ path: `${SHOTS}/refusal-check-only.png` });
+  await shot(page, "guard-blocked");
+  await shot(page, "refusal-check-only");
   await dialog(page).getByTestId("fr-close").click();
   await expect(dlg).toHaveCount(0);
   await expect(guard(page).getByTestId("qg-check")).toBeFocused();
@@ -125,13 +124,13 @@ test("Sales files a request through a discount below the floor and sees the requ
   await expect(dialog(page).getByTestId("fr-figures")).toContainText("against a floor of");
   await expect(dialog(page).getByTestId("fr-request-state")).toHaveCount(0);
   await dialog(page).locator('[data-field="note"]').fill("Contractor is waiting on the price");
-  await page.screenshot({ path: `${SHOTS}/refusal-before-filing.png` });
+  await shot(page, "refusal-before-filing");
   await dialog(page).getByTestId("fr-request").click();
   await expect(dialog(page).getByTestId("fr-request-state")).toContainText("Your request is pending");
   await expect(dialog(page).getByTestId("fr-request-state")).toHaveAttribute("data-status", "PENDING");
   await expect(dialog(page).getByTestId("fr-notice")).toContainText("Sent.");
   await expect(dialog(page).getByTestId("fr-request")).toHaveCount(0);
-  await page.screenshot({ path: `${SHOTS}/refusal-filed.png` });
+  await shot(page, "refusal-filed");
   await dialog(page).getByTestId("fr-close").click();
   await expect(dlg).toHaveCount(0);
   // The standing request rides the next refusal as existing_request: shown, not refiled.
@@ -163,7 +162,7 @@ test("the Sales manager is offered the price itself and nothing is filed", async
   await expect(dialog(page).getByTestId("fr-may-clear")).toContainText("You may set this price yourself");
   await expect(dialog(page).getByTestId("fr-request-state")).toHaveCount(0);
   await expect(dialog(page).getByTestId("fr-request")).toHaveCount(0);
-  await page.screenshot({ path: `${SHOTS}/refusal-may-clear.png` });
+  await shot(page, "refusal-may-clear");
   await dialog(page).getByTestId("fr-close").click();
   await expect(dialog(page).getByTestId("fr-dialog")).toHaveCount(0);
 });

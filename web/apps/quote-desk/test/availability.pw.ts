@@ -5,9 +5,7 @@
 // when the server sends one (never a zero), the unwired seam saying "not
 // reported", and the panel re-reading when a line changes elsewhere.
 import { expect, test, type Page } from "@playwright/test";
-import { mkdirSync } from "node:fs";
-
-const SHOTS = "/home/colton/Desktop/FBHQ/hh-rd2/scratch-app";
+import { shot } from "./shot";
 
 async function signIn(page: Page, role = "Sales manager"): Promise<void> {
   await page.goto("/");
@@ -23,10 +21,6 @@ async function openQuote(page: Page, text: string): Promise<void> {
 }
 
 const panel = (page: Page) => page.locator("qd-quote-availability");
-
-test.beforeAll(async ({ request }) => {
-  mkdirSync(SHOTS, { recursive: true });
-});
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -57,7 +51,7 @@ test("a thin line says so in words and its peek shows every branch the server re
   await expect(rows.nth(1)).toContainText("BEL: 60 available");
   // The caller is on the cost list: the average cost rides, in money words.
   await expect(rows.nth(1)).toContainText("avg cost CA$");
-  await panel(page).screenshot({ path: `${SHOTS}/availability-peek.png` });
+  await shot(panel(page), "availability-peek");
   // The peek closes again.
   await thin.getByRole("button", { name: "Other branches" }).click();
   await expect(panel(page).getByTestId("av-peek")).toHaveCount(0);

@@ -7,8 +7,7 @@
 // request is the server's 409; and with the caller off the cost list the
 // detail text carries no margin and no figure appears anywhere in the panels.
 import { expect, test, type Browser, type Page } from "@playwright/test";
-
-const SHOTS = "/home/colton/Desktop/FBHQ/hh-rd2/scratch-app";
+import { shot } from "./shot";
 
 async function signIn(page: Page, role = "Sales"): Promise<void> {
   await page.goto("/");
@@ -75,7 +74,7 @@ test("Sales files a request and the Sales manager sees it with the server's deta
   await expect(mrow.getByTestId("ap-status")).toHaveText("Pending");
   await expect(approvals(manager).getByTestId("ap-count")).toHaveText("1 pending");
   await approvals(manager).scrollIntoViewIfNeeded();
-  await manager.screenshot({ path: `${SHOTS}/approvals-pending.png` });
+  await shot(manager, "approvals-pending");
   await approvals(manager).getByTestId("ap-reason").fill("Contractor account, fine");
   await mrow.getByRole("button", { name: /^Approve/ }).click();
   await expect(approvals(manager).getByTestId("ap-outcome")).toHaveText("Approved.");
@@ -83,7 +82,7 @@ test("Sales files a request and the Sales manager sees it with the server's deta
   await expect(mrow.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
   await expect(mrow.getByRole("button", { name: /^Refuse/ })).toHaveCount(0);
   await expect(approvals(manager).getByTestId("ap-count")).toHaveText("0 pending");
-  await manager.screenshot({ path: `${SHOTS}/approvals-approved.png` });
+  await shot(manager, "approvals-approved");
 
   await manager.close();
 });
@@ -118,7 +117,7 @@ test("Sales sees the request, the decision attempt is refused verbatim and the c
   await page.getByRole("button", { name: "Refresh" }).first().click().catch(() => undefined);
   await expect(row.getByRole("button", { name: /^Approve/ })).toHaveCount(0);
   await approvals(page).scrollIntoViewIfNeeded();
-  await page.screenshot({ path: `${SHOTS}/approvals-refused.png` });
+  await shot(page, "approvals-refused");
 });
 
 test("a decision on a request somebody else already decided is the server's 409, verbatim", async ({ page, browser }) => {

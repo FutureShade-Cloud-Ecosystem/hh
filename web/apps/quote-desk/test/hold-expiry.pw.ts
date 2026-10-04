@@ -4,9 +4,7 @@
 // re-reading), shows the server's own refusal verbatim on an expired quote,
 // and says nothing at all when the seam is not wired.
 import { expect, test, type Page } from "@playwright/test";
-import { mkdirSync } from "node:fs";
-
-const SHOTS = "/home/colton/Desktop/FBHQ/hh-rd2/scratch-app";
+import { shot } from "./shot";
 
 async function signIn(page: Page, role = "Sales manager"): Promise<void> {
   await page.goto("/");
@@ -22,10 +20,6 @@ async function openQuote(page: Page, text: string): Promise<void> {
 }
 
 const panel = (page: Page) => page.locator("qd-quote-hold-expiry");
-
-test.beforeAll(async ({ request }) => {
-  mkdirSync(SHOTS, { recursive: true });
-});
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -53,7 +47,7 @@ test("a lapsed hold is said in words, with the line named and the re-hold offere
   await expect(panel(page).getByTestId("he-line")).toContainText("Polymeric");
   await expect(panel(page).getByTestId("he-line")).toContainText("lapsed");
   await expect(panel(page).getByRole("button", { name: "Re-hold these lines" })).toBeEnabled();
-  await box.screenshot({ path: `${SHOTS}/hold-expiry-lapsed.png` });
+  await shot(box, "hold-expiry-lapsed");
 });
 
 test("every line lapsed reads in the plural", async ({ page, request }) => {
@@ -88,7 +82,7 @@ test("a re-hold on an expired quote is refused in the server's own words, and th
   await expect(panel(page).getByTestId("he-error")).toHaveText("This quote has expired; extend its expiry date before holding stock again");
   await expect(panel(page).getByTestId("he-headline")).toBeVisible();
   await expect(panel(page).getByTestId("he-notice")).toHaveCount(0);
-  await panel(page).getByTestId("he-box").screenshot({ path: `${SHOTS}/hold-expiry-refused.png` });
+  await shot(panel(page).getByTestId("he-box"), "hold-expiry-refused");
 });
 
 test("an unwired seam says nothing, even with a lapse in the database", async ({ page, request }) => {

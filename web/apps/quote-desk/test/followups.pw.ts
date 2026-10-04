@@ -4,9 +4,7 @@
 // from us line, the text leg refuses in the server's own words, and stopping
 // then resuming the cadence round trips through the server.
 import { expect, test, type Page } from "@playwright/test";
-import { mkdirSync } from "node:fs";
-
-const SHOTS = "/home/colton/Desktop/FBHQ/hh-rd2/scratch-app";
+import { shot } from "./shot";
 
 async function signIn(page: Page, role = "Sales manager"): Promise<void> {
   await page.goto("/");
@@ -24,7 +22,6 @@ async function openQuote(page: Page, text: string): Promise<void> {
 const panel = (page: Page) => page.locator("qd-quote-followups");
 
 test.beforeAll(async ({ request }) => {
-  mkdirSync(SHOTS, { recursive: true });
   await request.post("/_stub/reset");
 });
 
@@ -43,7 +40,7 @@ test("a draft quote has no cadence and says so, and offers the text leg", async 
   await expect(panel(page).getByTestId("fu-empty")).toContainText("Nothing has been sent yet, and nothing is scheduled.");
   await expect(panel(page).getByRole("button", { name: "Text the quote link" })).toBeEnabled();
   await expect(panel(page).getByRole("button", { name: /follow-ups/i })).toHaveCount(0);
-  await panel(page).screenshot({ path: `${SHOTS}/followups-empty-draft.png` });
+  await shot(panel(page), "followups-empty-draft");
 });
 
 test("a sent quote shows its cadence and the steps to come; the empty look is the seed's", async ({ page }) => {
@@ -54,7 +51,7 @@ test("a sent quote shows its cadence and the steps to come; the empty look is th
   await expect(panel(page).getByTestId("fu-row").first()).toContainText("Scheduled");
   await expect(panel(page).getByTestId("fu-contact")).toContainText("Not heard from us yet; next: day 3 email");
   await expect(panel(page).getByRole("button", { name: "Stop follow-ups" })).toBeEnabled();
-  await panel(page).screenshot({ path: `${SHOTS}/followups-empty-seed-sent.png` });
+  await shot(panel(page), "followups-empty-seed-sent");
 });
 
 test("a step that went out is a heard from us line and reads Queued, never Sent", async ({ page, request }) => {
@@ -68,7 +65,7 @@ test("a step that went out is a heard from us line and reads Queued, never Sent"
   await expect(first).toContainText("Queued");
   await expect(panel(page).getByTestId("fu-box")).not.toContainText(/\bSent\b/);
   await expect(panel(page).getByTestId("fu-row")).toHaveCount(3);
-  await panel(page).screenshot({ path: `${SHOTS}/followups-heard.png` });
+  await shot(panel(page), "followups-heard");
 });
 
 test("a skipped step is not hearing from us", async ({ page, request }) => {
@@ -86,7 +83,7 @@ test("the text leg's refusal shows the server's words and changes nothing", asyn
   await expect(panel(page).getByTestId("fu-error")).toHaveText("The customer has not opted in to text messages");
   await expect(panel(page).getByTestId("fu-notice")).toHaveCount(0);
   await expect(panel(page).getByTestId("fu-summary")).toContainText("Follow-ups are on");
-  await panel(page).screenshot({ path: `${SHOTS}/followups-refused.png` });
+  await shot(panel(page), "followups-refused");
 });
 
 test("stop then resume the automatic follow-ups", async ({ page }) => {
@@ -98,7 +95,7 @@ test("stop then resume the automatic follow-ups", async ({ page }) => {
   await expect(panel(page).getByTestId("fu-summary")).toContainText("Nothing further will be sent.");
   await expect(panel(page).getByTestId("fu-contact")).toContainText("nothing further is scheduled");
   await expect(panel(page).getByRole("button", { name: "Stop follow-ups" })).toHaveCount(0);
-  await panel(page).screenshot({ path: `${SHOTS}/followups-stopped.png` });
+  await shot(panel(page), "followups-stopped");
   await panel(page).getByRole("button", { name: "Restart follow-ups" }).click();
   await expect(panel(page).getByTestId("fu-notice")).toHaveText("Follow-ups turned on.");
   await expect(panel(page).getByTestId("fu-summary")).toContainText("Follow-ups are on: day 3, day 7, day 14");
