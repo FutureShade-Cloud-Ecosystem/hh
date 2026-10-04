@@ -121,12 +121,11 @@ test("thumbnail object URLs live until the page goes: a refused accept never rev
   expect(revoked).toBe(3);
 });
 
-test("the accept area says why the button is not disabled on a blank form", async ({ page }) => {
+test("the accept area speaks to the customer, with no word about the page's own design", async ({ page }) => {
   await page.goto(`/?t=${GOOD_TOKEN}`);
-  // The ERP behaviour is kept: the button stays clickable and the refusal is
-  // the red inline line, so the area must SAY that is deliberate, not look
-  // like the lane's disabled-look rule was forgotten.
-  await expect(page.getByText(/never greyed out/)).toBeVisible();
+  await expect(page.getByText(/Accepting records your typed name, the date and time, and the link you used/)).toBeVisible();
+  await expect(page.getByText(/greyed out/)).toHaveCount(0);
+  await expect(page.getByText(/unfinished/)).toHaveCount(0);
 });
 
 test("a dead link reads as a deliberate page: heading on the refusal, room above it", async ({ page }) => {

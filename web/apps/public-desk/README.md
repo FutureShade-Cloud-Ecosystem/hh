@@ -37,7 +37,10 @@ tokens. Two deliberate departures, both house rules:
   swap, not a fade. Disabled must look disabled: colour, not opacity.
 - Every sentence is carried across without a dash of the forbidden kinds, so
   a few copy strings re-punctuate the reference's wording (colons and
-  parentheses in its place). The words are otherwise the reference's.
+  parentheses in its place). The words are otherwise the reference's, except the
+  plain sentences for a failed accept (the server's words show only when it
+  sent the JSON error envelope). The page carries no copy addressed to its
+  builders: everything on it is written for the customer.
 
 ## Testing
 
