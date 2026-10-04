@@ -130,6 +130,7 @@ export const pricingStyles = [
     .scopechip {
       font-family: var(--pr-mono);
       font-size: 11px;
+      white-space: nowrap;
       color: var(--hos-info-blue, var(--hh-accent-text));
     }
     /* buttons: the console's sizes, over the shared sheet's compact ones */
@@ -149,9 +150,23 @@ export const pricingStyles = [
     button.danger {
       border-color: var(--hos-safety-red, var(--hh-danger));
     }
+    /* the console's inputs are filled boxes, not outlined pills: the striped row's own tint
+       fills them, so they read in light and dark alike */
+    .panel td input,
+    .field input,
+    .toolbar input {
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--hos-text, var(--hh-text)) 5%, var(--hos-row-alt, var(--hh-row-alt)));
+    }
     input.mono,
     td input.mono {
       font-family: var(--pr-mono);
+      text-align: left;
+    }
+    /* figures sit right, ids and codes sit left */
+    input.mono[inputmode],
+    td input.mono[inputmode],
+    input.cell {
       text-align: right;
     }
     input.bad {
@@ -168,9 +183,9 @@ export const pricingStyles = [
       margin-top: 4px;
     }
     .pct {
-      color: var(--hos-text-dim, var(--hh-text-dim));
+      color: color-mix(in srgb, var(--hos-text, var(--hh-text)) 78%, transparent);
       font-family: var(--pr-mono);
-      font-size: 12px;
+      font-size: 13px;
     }
     .cellnum {
       display: inline-flex;
@@ -178,7 +193,9 @@ export const pricingStyles = [
       gap: 6px;
     }
     input.cell {
-      width: 78px;
+      width: 100px;
+      padding: 8px 10px;
+      font-size: 13px;
     }
     .flagrow {
       display: flex;
@@ -493,6 +510,10 @@ export const pricingStyles = [
       gap: 6px;
       max-height: 14rem;
       overflow-y: auto;
+    }
+    .settled {
+      color: var(--hos-text-dim, var(--hh-text-dim));
+      font-size: 12px;
     }
     .floor-list li {
       border: 1px solid var(--hos-line, var(--hh-line));

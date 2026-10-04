@@ -24,14 +24,38 @@ async function setTheme(page: Page, word: "Light" | "Dark"): Promise<void> {
   await expect(control).toContainText(word);
 }
 
+/** What each tab shows once it has loaded and holds rows: the shots and the checks are of these, never of a loading line. */
+async function populated(page: Page, tab: "margin" | "rules" | "customers" | "breaks" | "audit"): Promise<void> {
+  await openTab(page, tab);
+  if (tab === "margin") await expect(page.getByTestId("pm-row")).toHaveCount(6);
+  if (tab === "rules") await expect(page.getByTestId("pr-row")).toHaveCount(5);
+  if (tab === "customers") {
+    const picker = page.locator("qd-pricing-customers hos-customer-picker");
+    await picker.getByPlaceholder("Search name or account #…").fill("Maple");
+    await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
+    await page.getByTestId("pc-add").click();
+    await page.getByTestId("pc-value").fill("6");
+    await page.getByTestId("pc-save").click();
+    await expect(page.getByTestId("pc-edit")).toHaveCount(1);
+  }
+  if (tab === "breaks") await expect(page.getByTestId("pb-schedule")).toHaveCount(2);
+  if (tab === "audit") await expect(page.getByTestId("pa-row").first()).toBeVisible();
+  await expect(page.getByText(/^Loading the /)).toHaveCount(0);
+}
+
 for (const theme of ["Light", "Dark"] as const) {
-  test(`every tab fits 1440 wide and reads in ${theme}`, async ({ page }) => {
+  test(`every tab, loaded and populated, fits 1440 wide and reads in ${theme}`, async ({ page }) => {
     await signIn(page);
     await setTheme(page, theme);
     await openPricing(page);
     const tag = theme.toLowerCase();
+    // the log has rows to show once a price has been saved: a margin policy row saved first
+    await openTab(page, "margin");
+    await page.locator('input[data-field="target-ca700000-0000-4000-9000-000000000001"]').fill("34");
+    await page.locator('tr[data-category-id="ca700000-0000-4000-9000-000000000001"]').getByTestId("pm-save").click();
+    await expect(page.getByTestId("pm-saved")).toBeVisible();
     for (const tab of ["margin", "rules", "customers", "breaks", "audit"] as const) {
-      await openTab(page, tab);
+      await populated(page, tab);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       expect(overflow).toBeLessThanOrEqual(0);
       const colours = await page.getByTestId("pricing-panel").evaluate((el) => {
@@ -43,6 +67,47 @@ for (const theme of ["Light", "Dark"] as const) {
     }
   });
 }
+
+test.describe("at the tablet's 820 wide", () => {
+  test.use({ viewport: { width: 820, height: 1000 } });
+
+  test("the scope chip stays on one line and no tab overflows", async ({ page }) => {
+    await signIn(page);
+    await openPricing(page);
+    await openTab(page, "rules");
+    await expect(page.getByTestId("pr-row")).toHaveCount(5);
+    const chips = page.locator("qd-pricing-rules .scopechip");
+    for (let i = 0; i < (await chips.count()); i += 1) {
+      const box = await chips.nth(i).boundingBox();
+      const line = await chips.nth(i).evaluate((el) => parseFloat(getComputedStyle(el).lineHeight) || 16);
+      expect(box === null ? 0 : box.height).toBeLessThanOrEqual(line * 1.6);
+    }
+    await shot(page, "pricing-rules-820-light");
+    for (const tab of ["margin", "rules", "breaks"] as const) {
+      await populated(page, tab);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+    }
+  });
+});
+
+test("the margin boxes are filled boxes, and the code and id inputs sit left", async ({ page }) => {
+  await signIn(page);
+  await openPricing(page);
+  await openTab(page, "margin");
+  const cell = page.locator('input[data-field^="target-"]').first();
+  const look = await cell.evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return { radius: parseFloat(cs.borderTopLeftRadius), back: cs.backgroundColor, card: getComputedStyle(el.closest("tr") as Element).backgroundColor, width: el.getBoundingClientRect().width };
+  });
+  expect(look.radius).toBeLessThan(12);
+  expect(look.width).toBeGreaterThanOrEqual(96);
+  expect(look.back).not.toBe("rgba(0, 0, 0, 0)");
+  await openTab(page, "breaks");
+  await page.getByTestId("pb-new").click();
+  expect(await page.getByTestId("pb-code").evaluate((el) => getComputedStyle(el).textAlign)).toBe("left");
+  await page.getByTestId("pb-scope").selectOption("product");
+  expect(await page.getByTestId("pb-product").evaluate((el) => getComputedStyle(el).textAlign)).toBe("left");
+});
 
 test("the rule editor and the floor warning in dark", async ({ page }) => {
   await signIn(page);
