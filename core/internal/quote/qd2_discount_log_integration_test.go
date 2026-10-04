@@ -393,3 +393,56 @@ func TestQD2_QtyRepriceRulePriceRow_CarriesTheLinesDiscount(t *testing.T) {
 		}
 	}
 }
+
+// The change trail rides the write's own transaction: a record hook that
+// fails refuses the discount, the line stands undiscounted, and the pricing
+// log row the same transaction had already inserted goes with it. Moving
+// either hook after the commit fails this test.
+func TestQD2_DiscountTrail_RidesTheWriteTransaction(t *testing.T) {
+	pool := intPool(t)
+	now := qd2Clock()
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, prod, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+	qd2CleanAudit(t, pool, quoteID)
+
+	repo := NewRepository(pool).withNow(func() time.Time { return now })
+	realPricing := pricing.NewService(pricing.NewRepository(pool))
+	hooks := quoteDiscountHooks{
+		record: func(context.Context, pgx.Tx, int, int, int, int64, int64, QuoteTotals) error {
+			return errors.New("qd2: the trail write failed on purpose")
+		},
+		pricing: func(ctx context.Context, tx pgx.Tx, lineNo int, changed bool) error {
+			if !changed {
+				return nil
+			}
+			return realPricing.RecordFloorDecisionTx(ctx, tx, pricing.FloorRecord{
+				UserID: seller, QuoteID: quoteID, ProductID: prod,
+				RuleUnitCents: 1000, NetUnitCents: 900, DiscPct: 10,
+				MarginBps: 2000, FloorBps: 1200, Action: "UPDATE",
+			})
+		},
+	}
+	if _, err := repo.UpdateLineDiscountGuarded(context.Background(), quoteID, 1, 10,
+		[]string{"DRAFT"}, seller, floorWritePlan{}, hooks); err == nil {
+		t.Fatal("a failed trail write must refuse the discount it was recording")
+	}
+	var disc int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT disc_pct FROM quote_lines WHERE quote_id = $1 AND line_no = 1`, quoteID).Scan(&disc); err != nil {
+		t.Fatalf("read the line back: %v", err)
+	}
+	if disc != 0 {
+		t.Errorf("the refused write must leave the line undiscounted, disc_pct %d", disc)
+	}
+	if rows := qd2AuditRows(t, pool, quoteID); len(rows) != 0 {
+		t.Fatalf("the pricing log row the same transaction inserted is gone with it, got %+v", rows)
+	}
+	var trail int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_log WHERE entity_id = $1`, quoteID).Scan(&trail); err != nil {
+		t.Fatalf("count trail rows: %v", err)
+	}
+	if trail != 0 {
+		t.Fatalf("the failed trail hook leaves no trail row, got %d", trail)
+	}
+}
