@@ -199,7 +199,7 @@ export abstract class PricingTabBase extends PanelBase {
     if (!checked.ok) {
       this.saving = false;
       if (this.noteRefusal(checked, true)) return;
-      this.formError = `${spokenRefusal(checked.error)} Nothing was saved, because the floor check could not run.`;
+      this.formError = `${spokenRefusal(checked.error).replace(/\.+$/, "")}. Nothing was saved, because the floor check could not run.`;
       return;
     }
     if (!needsConfirm(checked.value)) {

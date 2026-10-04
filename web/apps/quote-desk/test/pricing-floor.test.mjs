@@ -71,6 +71,11 @@ test("a product's line gives the figures the server graded, in words", () => {
     "HPV-60, Holland Stone 60 mm: margin 8.00% against a floor of 25.00% for Contractor, price CA$3.00 per sf (was CA$4.00)",
   );
   assert.equal(itemLine(item({ customerType: "" })).includes("for "), false);
+  // A margin policy change moves the floor, not the price: the line says the price is unchanged.
+  assert.equal(
+    itemLine(item({ customerType: "RETAIL", finalCents: 400, previousFinalCents: 400, marginBps: 3100, floorBps: 4000 })),
+    "HPV-60, Holland Stone 60 mm: margin 31.00% against a floor of 40.00% for Retail, price CA$4.00 per sf, unchanged",
+  );
   assert.match(itemLine(item({ customerType: "RETAIL" })), /for Retail/);
 });
 

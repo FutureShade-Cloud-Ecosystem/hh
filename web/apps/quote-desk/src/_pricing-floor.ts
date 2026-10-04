@@ -74,7 +74,7 @@ export function itemLine(i: FloorItem): string {
   const who = i.customerType === "" ? "" : ` for ${TYPE_WORDS[i.customerType] ?? i.customerType}`;
   return (
     `${i.sku}, ${i.name}: margin ${formatPct(i.marginBps)} against a floor of ${formatPct(i.floorBps)}${who}, ` +
-    `price ${formatMoney(i.finalCents)} per ${i.priceUom} (was ${formatMoney(i.previousFinalCents)})`
+    `price ${formatMoney(i.finalCents)} per ${i.priceUom}${i.finalCents === i.previousFinalCents ? ", unchanged" : ` (was ${formatMoney(i.previousFinalCents)})`}`
   );
 }
 

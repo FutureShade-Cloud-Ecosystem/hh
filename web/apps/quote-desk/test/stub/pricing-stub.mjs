@@ -232,7 +232,8 @@ function floorPreview(body) {
           final_cents: a.price, margin_bps: a.margin, floor_bps: a.floor, price_uom: product.uom.toLowerCase(), source: a.source,
           previous_final_cents: b.price, previous_margin_bps: b.margin, already_under_floor: b.blocked,
         };
-        if (worst === null || item.margin_bps < worst.margin_bps) worst = item;
+        // A newly under case outranks one that was under already; among the same kind the lower margin.
+        if (worst === null || (item.already_under_floor !== worst.already_under_floor ? !item.already_under_floor : item.margin_bps < worst.margin_bps)) worst = item;
       }
     }
     if (worst !== null) items.push(worst);
@@ -292,6 +293,16 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
     respondJson(response, 200, {
       rules: world.rules, policies: [...world.policies.values()], overrides: world.overrides, breaks: world.breaks,
       audit: world.audit, confirmations: world.ledger.confirmations, previews: world.ledger.previews, writes: world.ledger.writes,
+    });
+    return true;
+  }
+  // Another editor saved first: the record's version moves under an open form.
+  if (path === "/_stub/pricing-bump" && request.method === "POST") {
+    readBody(request, response, (body) => {
+      const target = [...world.rules, ...world.overrides, ...world.breaks].find((x) => x.id === body.id);
+      if (target === undefined) return respondJson(response, 404, { error: "no such record" });
+      target.version += 1;
+      respondJson(response, 200, { version: target.version });
     });
     return true;
   }
