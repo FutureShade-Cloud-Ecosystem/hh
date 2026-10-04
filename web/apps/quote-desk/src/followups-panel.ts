@@ -159,7 +159,7 @@ export class QdQuoteFollowups extends PanelBase {
         </thead>
         <tbody>
           ${rows.map(
-            (r) => html`<tr class=${r.future ? "future" : ""} data-testid="fu-row">
+            (r) => html`<tr class="${r.future ? "future" : ""}" data-testid="fu-row">
               <td>Day ${r.day}</td>
               <td>${r.channel === "SMS" ? "Text" : "Email"}</td>
               <td>${stateLabel(r.state)}</td>

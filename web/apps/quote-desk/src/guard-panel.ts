@@ -161,9 +161,9 @@ export class QdQuoteGuard extends PanelBase {
         <label>Branch</label>
         <div class="branch" data-testid="qg-branch">${this.branchName !== "" ? this.branchName : "This quote's branch"}</div>
         <label for="qg-price">Selling price / unit</label>
-        <div class="field"><span class="cur" aria-hidden="true">$</span><input id="qg-price" data-field="price" type="text" inputmode="decimal" value=${DEFAULT_PRICE} data-testid="qg-price" /></div>
+        <div class="field"><span class="cur" aria-hidden="true">$</span><input id="qg-price" data-field="price" type="text" inputmode="decimal" data-testid="qg-price" /></div>
         <label for="qg-cost">Cost / unit</label>
-        <div class="field"><span class="cur" aria-hidden="true">$</span><input id="qg-cost" data-field="cost" type="text" inputmode="decimal" value=${DEFAULT_COST} data-testid="qg-cost" /></div>
+        <div class="field"><span class="cur" aria-hidden="true">$</span><input id="qg-cost" data-field="cost" type="text" inputmode="decimal" data-testid="qg-cost" /></div>
         <div class="row">
           <button type="button" class="primary" data-action="check" aria-busy=${this.busy ? "true" : "false"} data-testid="qg-check">Check quote</button>
         </div>

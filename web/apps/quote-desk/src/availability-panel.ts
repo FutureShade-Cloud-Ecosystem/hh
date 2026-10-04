@@ -149,7 +149,7 @@ export class QdQuoteAvailability extends PanelBase {
         <td>${l.line_no}</td>
         <td class="num">${formatQty(l.qty_base)}</td>
         <td>
-          <span class=${availabilityChip(l.grade)} data-testid="av-chip" data-avail-grade=${l.grade}>${availabilityLabel(l)}</span>
+          <span class="${availabilityChip(l.grade)}" data-testid="av-chip" data-avail-grade=${l.grade}>${availabilityLabel(l)}</span>
           ${held !== "" ? html`<span class="label" data-testid="av-soft-held">${held}</span>` : nothing}
         </td>
         <td>

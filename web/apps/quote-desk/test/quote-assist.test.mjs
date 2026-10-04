@@ -412,8 +412,8 @@ test("the proposal list is real checkboxes and buttons, labelled, with no div cl
   assert.match(src, /<input\s+type="checkbox"/);
   assert.doesNotMatch(src, /<div[^>]*@click=/);
   assert.doesNotMatch(src, /\s@(click|change|input)=/, "no event bindings in the template, host delegation only");
-  assert.match(src, /<label class="sr" for=\$\{`qty-\$\{p\.ref\}`\}>/);
-  assert.match(src, /<label class="sr" for=\$\{`uom-\$\{p\.ref\}`\}>/);
+  assert.match(src, /<label class="inline"><span class="sr">Quantity for/);
+  assert.match(src, /<label class="inline"><span class="sr">Unit for/);
   assert.match(src, /<label class="sr" for="jobtext">/);
 });
 

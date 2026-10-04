@@ -306,9 +306,9 @@ export class QdQuoteAssist extends PanelBase {
     // Uncontrolled fields follow the state's value unless they already hold it.
     this.syncValue("#jobtext", this.text);
     for (const p of this.proposals) {
-      this.syncValue(`#qty-${p.ref}`, p.qty_entered ?? "");
-      this.syncValue(`#uom-${p.ref}`, p.uom_entered ?? "");
-      const tick = this.renderRoot.querySelector<HTMLInputElement>(`#tick-${p.ref}`);
+      this.syncValue(`[data-field="qty"][data-ref="${p.ref}"]`, p.qty_entered ?? "");
+      this.syncValue(`[data-field="uom"][data-ref="${p.ref}"]`, p.uom_entered ?? "");
+      const tick = this.renderRoot.querySelector<HTMLInputElement>(`[data-field="tick"][data-ref="${p.ref}"]`);
       const want = this.selected.includes(p.ref);
       if (tick !== null && tick.checked !== want) tick.checked = want;
     }
@@ -488,19 +488,19 @@ export class QdQuoteAssist extends PanelBase {
     const reason = blockedReason(p);
     return html`<li class="proposal" data-testid="qa-proposal" data-confirmable=${confirmable ? "true" : "false"} data-ref=${p.ref}>
       <div class="phead">
-        <input type="checkbox" id=${`tick-${p.ref}`} data-field="tick" data-ref=${p.ref} ?disabled=${!confirmable} />
         <div class="pbody">
-          <label for=${`tick-${p.ref}`}>
+          <label>
+            <input type="checkbox" data-field="tick" data-ref=${p.ref} ?disabled=${!confirmable} />
             <span class="pname">${p.name}</span>
             <span class="sku"> · ${p.sku}</span>
           </label>
           <div class="said">you wrote: “${p.source_text}”</div>
           <div class="qty">
-            <span class=${`chip${p.confidence === "HIGH" ? " high" : ""}`}>${confidenceLabel(p.confidence)}</span>
-            <label class="sr" for=${`qty-${p.ref}`}>Quantity for ${p.name}</label>
-            <input type="text" id=${`qty-${p.ref}`} data-field="qty" data-ref=${p.ref} inputmode="decimal" placeholder="qty" />
-            <label class="sr" for=${`uom-${p.ref}`}>Unit for ${p.name}</label>
-            <input type="text" id=${`uom-${p.ref}`} data-field="uom" data-ref=${p.ref} placeholder="unit" />
+            <span class="${`chip${p.confidence === "HIGH" ? " high" : ""}`}">${confidenceLabel(p.confidence)}</span>
+            <label class="inline"><span class="sr">Quantity for ${p.name}</span>
+              <input type="text" data-field="qty" data-ref=${p.ref} inputmode="decimal" placeholder="qty" /></label>
+            <label class="inline"><span class="sr">Unit for ${p.name}</span>
+              <input type="text" data-field="uom" data-ref=${p.ref} placeholder="unit" /></label>
             <button type="button" class="link" data-action="reject" data-ref=${p.ref}>Not this</button>
           </div>
           ${p.unit_note !== undefined && p.unit_note !== "" ? html`<div class="note">${p.unit_note}</div>` : nothing}
@@ -539,7 +539,7 @@ export class QdQuoteAssist extends PanelBase {
         <button type="button" class="primary" data-action="read" ?disabled=${this.reading || this.text.trim() === ""}>
           ${this.reading ? "Reading..." : READ_LABEL}
         </button>
-        <label class=${`switch${this.aiLatched ? " latched" : ""}`} title=${AI_OFF_HINT}>
+        <label class="${`switch${this.aiLatched ? " latched" : ""}`}">
           <input type="checkbox" data-field="use-ai" data-testid="qa-ai" ?disabled=${this.aiLatched} />
           Use AI to help split the text
         </label>
