@@ -80,6 +80,23 @@ test("the line thumbnails ride the product image read, when the dealer chose ima
   }
 });
 
+test("the page stands on the token's pale ground so the white cards lift off it", async ({ page }) => {
+  await page.goto(`/?t=${GOOD_TOKEN}`);
+  await expect(page.getByRole("heading", { name: "Quote #Q-25" })).toBeVisible();
+  // The light half of --hh-page is #F5F7FA: the reference's grey-blue ground
+  // under white cards. The page pinned light in index.html, so the body must
+  // resolve exactly that token, not the default white canvas.
+  const ground = await page.evaluate(() => ({
+    body: getComputedStyle(document.body).backgroundColor,
+    card: (() => {
+      const card = document.querySelector("pd-quote-public")?.shadowRoot?.querySelector(".card");
+      return card ? getComputedStyle(card).backgroundColor : null;
+    })(),
+  }));
+  expect(ground.body).toBe("rgb(245, 247, 250)");
+  expect(ground.card).toBe("rgb(255, 255, 255)");
+});
+
 test("the page's UI face is Outfit itself, self-hosted, not a system fallback", async ({ page }) => {
   await page.goto(`/?t=${GOOD_TOKEN}`);
   await expect(page.getByRole("heading", { name: "Quote #Q-25" })).toBeVisible();

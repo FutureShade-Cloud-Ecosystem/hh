@@ -17,6 +17,19 @@
     <script>
       document.documentElement.setAttribute('data-theme', 'light');
     </script>
+    <!-- The page's own chrome, the design-system harness's one line: the body
+         stands on the token's ground (--hh-page, pale grey-blue in the light
+         half this page pins), so the white quote cards stand OFF the page
+         instead of dissolving into it. The component paints only its own
+         reading column; the canvas behind it is the document's. -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: var(--hh-page);
+        color: var(--hh-text);
+      }
+    </style>
   </head>
   <body>
     <pd-quote-public></pd-quote-public>
