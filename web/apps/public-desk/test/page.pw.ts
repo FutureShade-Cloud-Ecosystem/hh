@@ -467,3 +467,17 @@ test("two synchronous clicks send one POST: the busy guard stands alone, before 
   await expect(page.getByRole("heading", { name: "Thank you: quote Q-28 accepted" })).toBeVisible();
   expect(posts()).toBe(1);
 });
+
+test("a refused accept whose re-read fails keeps the page: only a dead link replaces it", async ({ page }) => {
+  await readyToAccept(page, "q-terms-28");
+  await page.route("**/accept", (route) =>
+    route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "This quote has already been accepted." }) }),
+  );
+  await page.route("**/api/public/v1/quotes/q-terms-28", (route) =>
+    route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) }),
+  );
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText("This quote has already been accepted.");
+  await expectFormKept(page);
+  await expect(page.getByText("Quote link unavailable")).toHaveCount(0);
+});
