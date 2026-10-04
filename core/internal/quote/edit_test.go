@@ -90,7 +90,7 @@ type fakeStaffStore struct {
 	writes    int
 	validSet  string
 	// disc and clearing back the floor seam's store read.
-	disc int
+	disc     int
 	clearing *floorClearingStamp
 	// floorReadErr, when set, is the floor state read failing: the read
 	// error leg of the quantity reprice (P2-6).
