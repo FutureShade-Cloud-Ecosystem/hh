@@ -214,3 +214,71 @@ test("P3 the fulfilment chosen for one conversion is not preselected on the next
   await openQuote(page, "Q-1004");
   await expect(edit(page).getByTestId("qe-fulfilment")).toHaveValue("");
 });
+
+async function openScreenSettings(page: Page): Promise<void> {
+  await page.getByText("Quote detail & admin").click();
+  await page.locator("qd-quote-settings").getByTestId("qs-screen").locator("summary").click();
+  await expect(page.getByTestId("qs-policy")).toBeVisible();
+}
+
+async function signInAsGeneralManager(page: Page): Promise<void> {
+  await page.request.put("/_stub/general-manager", { data: { member: true } });
+  await signIn(page);
+  await openScreenSettings(page);
+}
+
+test("P3 the policy form is held while its save is out, so nothing typed meanwhile can be lost", async ({ page }) => {
+  await signInAsGeneralManager(page);
+  await page.getByTestId("qs-validity-days").fill("55");
+  const put = await hold(page, /\/api\/v1\/quotes\/policy/, { method: "PUT" });
+  await page.getByTestId("qs-policy-save").click();
+  await put.asked;
+  await expect(page.getByTestId("qs-validity-days")).toBeDisabled();
+  put.open();
+  await expect(page.getByTestId("qs-notice")).toContainText("Quote settings saved");
+  await expect(page.getByTestId("qs-validity-days")).toBeEnabled();
+  await expect(page.getByTestId("qs-validity-days")).toHaveValue("55");
+  await page.request.put("/_stub/general-manager", { data: { member: false } });
+});
+
+test("P3 the screen layout is held while its save is out, so the answer's re-read cannot wipe a change made meanwhile", async ({ page }) => {
+  await signInAsGeneralManager(page);
+  const put = await hold(page, /\/api\/v1\/surfaces\/[^/]+\/items$/, { method: "PUT" });
+  await page.getByTestId("qs-items-save").click();
+  await put.asked;
+  await expect(page.getByTestId("qs-items").getByLabel("Show Photo")).toBeDisabled();
+  put.open();
+  await expect(page.getByTestId("qs-notice")).toContainText("Screen layout saved");
+  await expect(page.getByTestId("qs-items").getByLabel("Show Photo")).toBeEnabled();
+  await page.request.put("/_stub/general-manager", { data: { member: false } });
+});
+
+test("P3 a policy save that succeeds after the scope moved on tells the other screens", async ({ page }) => {
+  await signInAsGeneralManager(page);
+  await page.getByTestId("qs-validity-days").fill("55");
+  const put = await hold(page, /\/api\/v1\/quotes\/policy/, { method: "PUT" });
+  await page.getByTestId("qs-policy-save").click();
+  await put.asked;
+  await page.getByTestId("qs-scope").selectOption("dealer");
+  await page.evaluate(() => {
+    (window as unknown as { __changed: number }).__changed = 0;
+    window.addEventListener("quote-changed", () => ((window as unknown as { __changed: number }).__changed += 1), true);
+  });
+  put.open();
+  await settle(page);
+  expect(await page.evaluate(() => (window as unknown as { __changed: number }).__changed)).toBeGreaterThan(0);
+  await page.request.put("/_stub/general-manager", { data: { member: false } });
+});
+
+test("P3 a policy save refused after the scope moved on says which settings were not saved", async ({ page }) => {
+  await signInAsGeneralManager(page);
+  await page.getByTestId("qs-validity-days").fill("55");
+  const put = await hold(page, /\/api\/v1\/quotes\/policy/, { method: "PUT", refuse: { status: 500, error: "quote: the policy store is down" } });
+  await page.getByTestId("qs-policy-save").click();
+  await put.asked;
+  await page.getByTestId("qs-scope").selectOption("dealer");
+  put.open();
+  await expect(page.getByTestId("qs-error")).toContainText("were not saved");
+  await expect(page.getByTestId("qs-error")).toContainText("branch you left");
+  await page.request.put("/_stub/general-manager", { data: { member: false } });
+});

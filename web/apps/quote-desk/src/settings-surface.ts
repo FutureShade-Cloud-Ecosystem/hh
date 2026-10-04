@@ -315,10 +315,15 @@ export class QdSurfaceSettings extends PanelBase {
       // A refusal stays with the row it was for; it is only said here while that row is still the one on screen.
       if (result.status === 403) this.policyLocks = { ...this.policyLocks, [lockKey]: line };
       else if (lockKey === this.lockKey()) this.error = line;
+      else this.error = `The settings you changed for ${lockKey === "dealer" ? "the dealer wide default" : "the branch you left"} were not saved: ${line}`;
       return;
     }
-    // The scope or branch moved on while this save was out: the saved row is not this form's to fill.
-    if (lockKey !== this.lockKey()) return;
+    // The scope or branch moved on while this save was out: the saved row is not this form's to fill, but it did
+    // change, so the other screens are told, as a layout save for another profile does.
+    if (lockKey !== this.lockKey()) {
+      this.announceChanged();
+      return;
+    }
     this.policyDirty = false;
     this.formKey = lockKey;
     this.policy = result.value;
@@ -463,7 +468,7 @@ export class QdSurfaceSettings extends PanelBase {
         : html`<div class="box"><p class="dim">Loading the quote settings...</p></div>`;
     }
     const lock = this.policyLocks[this.lockKey()] ?? "";
-    const locked = lock !== "" || this.policyLoading;
+    const locked = lock !== "" || this.policyLoading || this.busy; // held while a save is out: nothing typed meanwhile is lost to its answer
     return html`<div class="box" data-testid="qs-policy">
       <h3>
         Quote policy
@@ -547,7 +552,7 @@ export class QdSurfaceSettings extends PanelBase {
     const items = this.draftFor(kind);
     if (items.length === 0) return nothing;
     const heading = kindHeading(kind);
-    const locked = this.itemsLock !== "";
+    const locked = this.itemsLock !== "" || this.busy;
     return html`<table aria-label=${heading}>
       <thead>
         <tr>
@@ -582,7 +587,7 @@ export class QdSurfaceSettings extends PanelBase {
   }
 
   private renderItems() {
-    const locked = this.itemsLock !== "";
+    const locked = this.itemsLock !== "" || this.busy;
     return html`<div class="box" data-testid="qs-items">
       <h3>
         Screen layout (per role profile)

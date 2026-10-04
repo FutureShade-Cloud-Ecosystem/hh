@@ -271,5 +271,33 @@
     "find": "      this.convertFulfilment = \"\";\n",
     "replace": "",
     "test": "P3 the fulfilment chosen for one conversion"
+  },
+  {
+    "id": "ss-policy-held-while-saving",
+    "file": "src/settings-surface.ts",
+    "find": " || this.policyLoading || this.busy; // held while a save is out",
+    "replace": " || this.policyLoading; // held while a save is out",
+    "test": "P3 the policy form is held while its save is out"
+  },
+  {
+    "id": "ss-items-held-while-saving",
+    "file": "src/settings-surface.ts",
+    "find": "    const heading = kindHeading(kind);\n    const locked = this.itemsLock !== \"\" || this.busy;",
+    "replace": "    const heading = kindHeading(kind);\n    const locked = this.itemsLock !== \"\";",
+    "test": "P3 the screen layout is held while its save is out"
+  },
+  {
+    "id": "ss-moved-save-announces",
+    "file": "src/settings-surface.ts",
+    "find": "    if (lockKey !== this.lockKey()) {\n      this.announceChanged();\n      return;\n    }",
+    "replace": "    if (lockKey !== this.lockKey()) {\n      return;\n    }",
+    "test": "P3 a policy save that succeeds after the scope moved on"
+  },
+  {
+    "id": "ss-moved-refusal-says",
+    "file": "src/settings-surface.ts",
+    "find": "      else this.error = `The settings you changed for ${lockKey",
+    "replace": "      else if (false) this.error = `The settings you changed for ${lockKey",
+    "test": "P3 a policy save refused after the scope moved on"
   }
 ]
