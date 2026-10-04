@@ -50,19 +50,21 @@ type FloorArbiter interface {
 // Satisfied by *identity.Approvals. Nil fails closed.
 type FloorApprovalRail interface {
 	FileFloorApproval(ctx context.Context, in identity.FloorApprovalFiling) (identity.FloorRequestRecord, error)
-	FloorRequestFor(ctx context.Context, requestedBy, branchID, subjectRef string, lineNo int) (identity.FloorRequestRecord, bool, error)
-	ConsumeApprovedFloorTx(ctx context.Context, tx pgx.Tx, requestedBy, branchID, subjectRef string, lineNo, discPct int) (identity.FloorRequestRecord, identity.FloorConsumption, error)
+	FloorRequestFor(ctx context.Context, requestedBy, branchID, subjectRef string, lineNo int, lineID, productID string) (identity.FloorRequestRecord, bool, error)
+	ConsumeApprovedFloorTx(ctx context.Context, tx pgx.Tx, requestedBy, branchID, subjectRef string, lineNo, discPct int, lineID, productID string) (identity.FloorRequestRecord, identity.FloorConsumption, error)
 }
 
 // floorStore is the line state the floor decision reads (type-asserted off
 // the store, the builderStore pattern, so a store that predates the floor
 // surface degrades to the not-configured refusal rather than breaking).
 type floorStore interface {
-	// LineFloorState reads one line's floor facts: the stored discount, the
+	// LineFloorState reads one line's floor facts: the line's OWN row id
+	// (the approval's binding; a line number is reused by the next line
+	// added after a delete, the row id never is), the stored discount, the
 	// rule unit price (the discount is struck from the stored gross), the
 	// pre-discount gross total, the price uom, and the line's stamped
 	// clearing (nil when none).
-	LineFloorState(ctx context.Context, quoteID string, lineNo int) (discPct int, unitPriceCents, grossCents int64, priceUOM string, clearing *floorClearingStamp, err error)
+	LineFloorState(ctx context.Context, quoteID string, lineNo int) (lineID string, discPct int, unitPriceCents, grossCents int64, priceUOM string, clearing *floorClearingStamp, err error)
 }
 
 func (s *StaffService) floorStore() (floorStore, bool) {
@@ -263,10 +265,12 @@ type floorOutcome struct {
 // decideLineFloor runs the ruled ladder for one below-rule write. q carries
 // the line's figures (rule unit price, candidate unit price, price uom,
 // cost); clearing is the line's stamped clearing (nil when none); discPct
-// is the discount the write would set. The caller has already passed the
-// edit ladder (own or Manage) and the branch reach.
+// is the discount the write would set. lineID is the line's OWN row id: it
+// binds any approval to this row, not to a number the next line added
+// after a delete can reuse. The caller has already passed the edit ladder
+// (own or Manage) and the branch reach.
 func (s *StaffService) decideLineFloor(ctx context.Context, caller identity.StaffContext,
-	quoteID, branchID, productID string, lineNo, discPct int, uomEntered string,
+	quoteID, branchID, productID string, lineNo, discPct int, lineID, uomEntered string,
 	ruleUnitCents, grossCents int64, priceUOM string, clearing *floorClearingStamp,
 ) (*floorOutcome, error) {
 	out := &floorOutcome{plan: floorWritePlan{expectedDisc: -1}}
@@ -351,10 +355,11 @@ func (s *StaffService) decideLineFloor(ctx context.Context, caller identity.Staf
 		return out, nil
 	}
 
-	// (c) an approved and unused request for exactly that quote, that line,
-	// no deeper a discount than was asked, consumed by this write on its
-	// own transaction. Anything short of it is the typed refusal, carrying
-	// the caller's pending or approved request if one stands.
+	// (c) an approved and unused request for exactly that quote, that
+	// line's own row, no deeper a discount than was asked, consumed by this
+	// write on its own transaction. Anything short of it is the typed
+	// refusal, carrying the caller's pending or approved request if one
+	// stands.
 	refusal := &FloorRefusalError{
 		Policy:        string(identity.PolicyMargin),
 		Approvers:     s.floorApprovers(),
@@ -366,17 +371,18 @@ func (s *StaffService) decideLineFloor(ctx context.Context, caller identity.Staf
 		refusal.FloorBps = answer.FloorBps
 	}
 	if s.floorRail != nil {
-		if rec, ok, rerr := s.floorRail.FloorRequestFor(ctx, caller.UserID, branchID, quoteID, lineNo); rerr == nil && ok {
+		if rec, ok, rerr := s.floorRail.FloorRequestFor(ctx, caller.UserID, branchID, quoteID, lineNo, lineID, productID); rerr == nil && ok {
 			st := &FloorRequestState{ID: rec.ID, Status: string(rec.Status), LineNo: rec.LineNo, DiscPct: rec.DiscPct}
 			if rec.Status == identity.ApprovalApproved && rec.DiscPct >= discPct {
 				// The request covers this write: consume it on the write's
 				// own transaction, stamping the line with the APPROVAL
 				// authority.
 				out.approved = true
-				rail, quoteID_, branchID_, lineNo_, discPct_ := s.floorRail, quoteID, branchID, lineNo, discPct
+				rail, quoteID_, branchID_, lineNo_, lineID_, productID_, discPct_ :=
+					s.floorRail, quoteID, branchID, lineNo, lineID, productID, discPct
 				requester := caller.UserID
 				out.plan.consume = func(ctx context.Context, tx pgx.Tx) (identity.FloorConsumption, bool, error) {
-					_, c, err := rail.ConsumeApprovedFloorTx(ctx, tx, requester, branchID_, quoteID_, lineNo_, discPct_)
+					_, c, err := rail.ConsumeApprovedFloorTx(ctx, tx, requester, branchID_, quoteID_, lineNo_, discPct_, lineID_, productID_)
 					return c, c.ApprovalID != "", err
 				}
 				out.plan.clearing = &floorClearingStamp{
@@ -486,7 +492,7 @@ func (s *StaffService) RequestFloorApproval(ctx context.Context, quoteID string,
 	if !ok || s.floor == nil {
 		return FloorApprovalAnswer{}, ErrEditNotConfigured
 	}
-	disc, ruleUnit, _, priceUOM, clearing, err := fs.LineFloorState(ctx, quoteID, lineNo)
+	lineID, disc, ruleUnit, _, priceUOM, clearing, err := fs.LineFloorState(ctx, quoteID, lineNo)
 	if err != nil {
 		return FloorApprovalAnswer{}, err
 	}
@@ -500,7 +506,7 @@ func (s *StaffService) RequestFloorApproval(ctx context.Context, quoteID string,
 		return FloorApprovalAnswer{}, err
 	}
 
-	out, err := s.decideLineFloor(ctx, caller, quoteID, branchID, snap.ProductID, lineNo, discPct, "",
+	out, err := s.decideLineFloor(ctx, caller, quoteID, branchID, snap.ProductID, lineNo, discPct, lineID, "",
 		ruleUnit, 0, priceUOM, nil)
 	if err != nil {
 		return FloorApprovalAnswer{}, err
@@ -517,7 +523,7 @@ func (s *StaffService) RequestFloorApproval(ctx context.Context, quoteID string,
 	}
 	// An open request for this line already stands: answer its state rather
 	// than filing a twin.
-	if rec, ok, rerr := s.floorRail.FloorRequestFor(ctx, caller.UserID, branchID, quoteID, lineNo); rerr == nil && ok {
+	if rec, ok, rerr := s.floorRail.FloorRequestFor(ctx, caller.UserID, branchID, quoteID, lineNo, lineID, snap.ProductID); rerr == nil && ok {
 		return FloorApprovalAnswer{Request: &FloorRequestState{
 			ID: rec.ID, Status: string(rec.Status), LineNo: rec.LineNo, DiscPct: rec.DiscPct,
 		}}, nil
@@ -533,7 +539,8 @@ func (s *StaffService) RequestFloorApproval(ctx context.Context, quoteID string,
 		view.QuoteNo, lineNo, snap.ProductID, discPct, out.answer.MarginBps, out.answer.FloorBps)
 	rec, err := s.floorRail.FileFloorApproval(ctx, identity.FloorApprovalFiling{
 		RequestedBy: caller.UserID, BranchID: branchID, SubjectRef: quoteID,
-		Detail: detail, LineNo: lineNo, DiscPct: discPct, Note: note,
+		Detail: detail, LineNo: lineNo, DiscPct: discPct, LineID: lineID, ProductID: snap.ProductID,
+		Note: note,
 	})
 	if err != nil {
 		return FloorApprovalAnswer{}, err

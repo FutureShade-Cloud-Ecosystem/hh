@@ -169,7 +169,7 @@ func TestCreateApproval_FansOutToEligibleApprovers(t *testing.T) {
 	// D7: the margin request is filed by the quote module alone, so this
 	// test files through the quote module's door.
 	if _, err := s.FileFloorApproval(context.Background(), FloorApprovalFiling{
-		RequestedBy: "clerk", BranchID: trt, SubjectRef: "q1", Detail: "6% margin", LineNo: 1, DiscPct: 25,
+		RequestedBy: "clerk", BranchID: trt, SubjectRef: "q1", Detail: "6% margin", LineNo: 1, DiscPct: 25, LineID: "11111111-1111-4111-8111-111111111111", ProductID: "prod-1",
 	}); err != nil {
 		t.Fatalf("create should succeed: %v", err)
 	}

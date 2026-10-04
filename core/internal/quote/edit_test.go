@@ -155,12 +155,13 @@ func (f *fakeStaffStore) QuotePricingContext(_ context.Context, _ string) (strin
 }
 
 // LineFloorState satisfies the floor seam's store read (floor.go): the
-// fake's line is undiscounted unless a test sets disc.
-func (f *fakeStaffStore) LineFloorState(_ context.Context, quoteID string, lineNo int) (int, int64, int64, string, *floorClearingStamp, error) {
+// fake's line is undiscounted unless a test sets disc. The line's own row
+// id is a fixed fixture string: no test here relies on row identity.
+func (f *fakeStaffStore) LineFloorState(_ context.Context, quoteID string, lineNo int) (string, int, int64, int64, string, *floorClearingStamp, error) {
 	if quoteID != qOrg || f.lineGone || lineNo != f.line.LineNo {
-		return 0, 0, 0, "", nil, ErrLineNotFound
+		return "", 0, 0, 0, "", nil, ErrLineNotFound
 	}
-	return f.disc, 1000, 2000, "EA", f.clearing, nil
+	return "11111111-1111-4111-8111-111111111111", f.disc, 1000, 2000, "EA", f.clearing, nil
 }
 
 // Convert satisfies the DIB-483 conversion seam embedded in staffStore. The edit tests never call it;

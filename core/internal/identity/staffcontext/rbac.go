@@ -486,6 +486,14 @@ type ApprovalRequest struct {
 	// uses it uses it up.
 	LineNo  int `json:"line_no,omitempty"`
 	DiscPct int `json:"disc_pct,omitempty"`
+	// LineID and ProductID bind a quote floor request to the line's OWN row
+	// (quote_lines.id) and its product. A line number is not an identity: a
+	// new line takes MAX(line_no)+1, so deleting a line frees its number
+	// for the next line added, and an approval that matched on the number
+	// alone could clear a line that did not exist when it was filed. They
+	// ride the `data` JSONB like the figures above.
+	LineID    string `json:"line_id,omitempty"`
+	ProductID string `json:"product_id,omitempty"`
 	// Note is the requester's bounded free text on a quote floor request.
 	// It rides `data`; it is never the detail the approver reads as the
 	// server's own figures (D7).

@@ -212,9 +212,10 @@ func TestQD1_Row10_ApprovedRequestUsedUpByFirstWrite(t *testing.T) {
 	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, alice)
 
 	// File and approve a request for line 1 of the first quote at 25 percent.
+	lineID, prodID := qd1LineBinding(t, pool, quoteID, 1)
 	filed, err := rail.FileFloorApproval(context.Background(), identity.FloorApprovalFiling{
 		RequestedBy: alice, BranchID: intTrenton, SubjectRef: quoteID,
-		Detail: "qd1: below floor request", LineNo: 1, DiscPct: 25,
+		Detail: "qd1: below floor request", LineNo: 1, DiscPct: 25, LineID: lineID, ProductID: prodID,
 	})
 	if err != nil {
 		t.Fatalf("file floor approval: %v", err)

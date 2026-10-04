@@ -169,7 +169,9 @@ func (s *Approvals) CreateApproval(ctx context.Context, requestedBy, branchID st
 // FloorApprovalFiling is the quote module's floor request (D7, plan 1.1):
 // every binding figure arrives from the quote module's own state, never
 // from a caller's body. SubjectRef is the quote id; LineNo and DiscPct bind
-// the request to exactly one line at exactly the discount that was asked.
+// the request to one line at exactly the discount that was asked, and
+// LineID and ProductID bind it to the line's OWN row: a line number is
+// reused by the next line added after a delete, the row id never is.
 type FloorApprovalFiling struct {
 	RequestedBy string
 	BranchID    string
@@ -177,6 +179,8 @@ type FloorApprovalFiling struct {
 	Detail      string
 	LineNo      int
 	DiscPct     int
+	LineID      string
+	ProductID   string
 	Note        string
 }
 
@@ -201,6 +205,14 @@ func (s *Approvals) FileFloorApproval(ctx context.Context, in FloorApprovalFilin
 	if in.DiscPct < 0 || in.DiscPct > 100 {
 		return FloorRequestRecord{}, clientErr(http.StatusBadRequest, "disc_pct must be between 0 and 100")
 	}
+	// The row binding is the request's identity: without it the request
+	// matches a line NUMBER, which a later line can reuse, and an approval
+	// could clear a line that did not exist when it was filed. A filing
+	// without the row id and the product is refused, never stored unbound.
+	if in.LineID == "" || in.ProductID == "" {
+		return FloorRequestRecord{}, clientErr(http.StatusBadRequest,
+			"line_id and product_id are required: a floor request is bound to the line's own row")
+	}
 	req, err := s.fileApproval(ctx, ApprovalRequest{
 		RequestedBy: in.RequestedBy,
 		BranchID:    in.BranchID,
@@ -209,6 +221,8 @@ func (s *Approvals) FileFloorApproval(ctx context.Context, in FloorApprovalFilin
 		SubjectRef:  in.SubjectRef,
 		LineNo:      in.LineNo,
 		DiscPct:     in.DiscPct,
+		LineID:      in.LineID,
+		ProductID:   in.ProductID,
 		Note:        in.Note,
 		Status:      ApprovalPending,
 	})
@@ -219,31 +233,33 @@ func (s *Approvals) FileFloorApproval(ctx context.Context, in FloorApprovalFilin
 }
 
 // FloorRequestFor answers the caller's open request for one quote line: a
-// PENDING or APPROVED and unused request bound to that subject and line, so
-// the typed refusal can carry it (plan 1.1's refusal body) and the request
-// door can answer an existing request's state instead of filing a twin.
-func (s *Approvals) FloorRequestFor(ctx context.Context, requestedBy, branchID, subjectRef string, lineNo int) (FloorRequestRecord, bool, error) {
-	if requestedBy == "" || branchID == "" || subjectRef == "" || lineNo <= 0 {
+// PENDING or APPROVED and unused request bound to that subject and that
+// line's own row, so the typed refusal can carry it (plan 1.1's refusal
+// body) and the request door can answer an existing request's state instead
+// of filing a twin. lineID and productID are the line's OWN identity: a
+// line number alone is not, the next line added after a delete reuses it.
+func (s *Approvals) FloorRequestFor(ctx context.Context, requestedBy, branchID, subjectRef string, lineNo int, lineID, productID string) (FloorRequestRecord, bool, error) {
+	if requestedBy == "" || branchID == "" || subjectRef == "" || lineNo <= 0 || lineID == "" || productID == "" {
 		return FloorRequestRecord{}, false, nil
 	}
 	r, ok := s.store.(floorRequestReader)
 	if !ok {
 		return FloorRequestRecord{}, false, nil
 	}
-	return r.FloorRequestFor(ctx, requestedBy, branchID, subjectRef, lineNo)
+	return r.FloorRequestFor(ctx, requestedBy, branchID, subjectRef, lineNo, lineID, productID)
 }
 
 // floorRequestReader is the store's subject narrowed floor request lookup
 // (D3: the store already narrows on a subject when given one).
 type floorRequestReader interface {
-	FloorRequestFor(ctx context.Context, requestedBy, branchID, subjectRef string, lineNo int) (FloorRequestRecord, bool, error)
+	FloorRequestFor(ctx context.Context, requestedBy, branchID, subjectRef string, lineNo int, lineID, productID string) (FloorRequestRecord, bool, error)
 }
 
 // floorTxConsumer is the store's transactional consumption of an approved
 // floor request: the quote module's own transaction carries it, so the used
 // up stamp commits or rolls back with the write that used it.
 type floorTxConsumer interface {
-	ConsumeApprovedFloorTx(ctx context.Context, tx pgx.Tx, requestedBy, branchID, subjectRef string, lineNo, discPct int) (FloorRequestRecord, FloorConsumption, error)
+	ConsumeApprovedFloorTx(ctx context.Context, tx pgx.Tx, requestedBy, branchID, subjectRef string, lineNo, discPct int, lineID, productID string) (FloorRequestRecord, FloorConsumption, error)
 }
 
 // FloorConsumption names what a consumed approval was: the request and who
@@ -254,17 +270,17 @@ type FloorConsumption struct {
 }
 
 // ConsumeApprovedFloorTx consumes the caller's APPROVED and unused floor
-// request for exactly that quote, that line, at no deeper a discount than
-// was asked, ON the transaction the quote write holds (D3): the first write
-// that uses the request uses it up, in the same commit as the line it
-// cleared. ok is false when no such request stands.
-func (s *Approvals) ConsumeApprovedFloorTx(ctx context.Context, tx pgx.Tx, requestedBy, branchID, subjectRef string, lineNo, discPct int) (FloorRequestRecord, FloorConsumption, error) {
+// request for exactly that quote, that line's own row, at no deeper a
+// discount than was asked, ON the transaction the quote write holds (D3):
+// the first write that uses the request uses it up, in the same commit as
+// the line it cleared. ok is false when no such request stands.
+func (s *Approvals) ConsumeApprovedFloorTx(ctx context.Context, tx pgx.Tx, requestedBy, branchID, subjectRef string, lineNo, discPct int, lineID, productID string) (FloorRequestRecord, FloorConsumption, error) {
 	c, ok := s.store.(floorTxConsumer)
 	if !ok {
 		return FloorRequestRecord{}, FloorConsumption{}, clientErr(http.StatusServiceUnavailable,
 			"the approvals store cannot consume a floor request on this transaction")
 	}
-	return c.ConsumeApprovedFloorTx(ctx, tx, requestedBy, branchID, subjectRef, lineNo, discPct)
+	return c.ConsumeApprovedFloorTx(ctx, tx, requestedBy, branchID, subjectRef, lineNo, discPct, lineID, productID)
 }
 
 // fileApproval is the shared create path for every trigger (the margin override from CreateApproval, the
@@ -465,7 +481,8 @@ func (r *ApprovalRepository) CreateApproval(ctx context.Context, req ApprovalReq
 	}
 	// AmountCents has no dedicated column (0016): persist it into the existing `data` JSONB so the rail
 	// card + the reconcile re-fan can read it back (0075). Zero/absent leaves data as the '{}' default.
-	// The quote floor binding (D3, D7) rides the same column: line_no, disc_pct and the requester's note.
+	// The quote floor binding (D3, D7) rides the same column: line_no, disc_pct, the line's own row id
+	// and product, and the requester's note.
 	data := map[string]any{}
 	if req.AmountCents != 0 {
 		data["amount_cents"] = req.AmountCents
@@ -473,6 +490,12 @@ func (r *ApprovalRepository) CreateApproval(ctx context.Context, req ApprovalReq
 	if req.LineNo > 0 || req.DiscPct != 0 || req.Note != "" {
 		data["line_no"] = req.LineNo
 		data["disc_pct"] = req.DiscPct
+		if req.LineID != "" {
+			data["line_id"] = req.LineID
+		}
+		if req.ProductID != "" {
+			data["product_id"] = req.ProductID
+		}
 		if req.Note != "" {
 			data["note"] = req.Note
 		}
@@ -635,7 +658,9 @@ func (r *ApprovalRepository) HasApprovedOverride(ctx context.Context, requestedB
 // has used up (the used state lives in the data JSON column, D3: no schema
 // change, no new status word). D3's narrowing is here: the subject and the
 // line are always given, one approved card clears one line of one quote.
-func (r *ApprovalRepository) FloorRequestFor(ctx context.Context, requestedBy, branchID, subjectRef string, lineNo int) (FloorRequestRecord, bool, error) {
+// The line match is the line's OWN row id and product, never the number
+// alone: the next line added after a delete reuses the number.
+func (r *ApprovalRepository) FloorRequestFor(ctx context.Context, requestedBy, branchID, subjectRef string, lineNo int, lineID, productID string) (FloorRequestRecord, bool, error) {
 	if r.pool == nil {
 		return FloorRequestRecord{}, false, errNoDB
 	}
@@ -646,9 +671,11 @@ func (r *ApprovalRepository) FloorRequestFor(ctx context.Context, requestedBy, b
 		FROM permission_approval_requests
 		WHERE requested_by = $1 AND branch_id = $2 AND policy_type = 'MARGIN_BELOW_MINIMUM'
 		  AND subject_ref = $3 AND COALESCE((data->>'line_no')::int, 0) = $4
+		  AND COALESCE(data->>'line_id', '') = $5
+		  AND COALESCE(data->>'product_id', '') = $6
 		  AND (status = 'PENDING' OR (status = 'APPROVED' AND (data->>'used') IS NULL))
 		ORDER BY requested_at DESC LIMIT 1`,
-		requestedBy, branchID, subjectRef, lineNo).Scan(&rec.ID, &status, &rec.LineNo, &rec.DiscPct)
+		requestedBy, branchID, subjectRef, lineNo, lineID, productID).Scan(&rec.ID, &status, &rec.LineNo, &rec.DiscPct)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return FloorRequestRecord{}, false, nil
 	}
@@ -660,13 +687,13 @@ func (r *ApprovalRepository) FloorRequestFor(ctx context.Context, requestedBy, b
 }
 
 // ConsumeApprovedFloorTx consumes the caller's APPROVED and unused floor
-// request for exactly that subject and line, at no deeper a discount than
-// the request was filed at (a shallower write is covered, a deeper one is
-// not), ON the caller's transaction: the used up stamp (the data JSON
-// column, D3) commits or rolls back with the quote write that used it. The
-// compare-and-swap on the unused state is what makes the request usable
-// once: two racing writes, one stamp.
-func (r *ApprovalRepository) ConsumeApprovedFloorTx(ctx context.Context, tx pgx.Tx, requestedBy, branchID, subjectRef string, lineNo, discPct int) (FloorRequestRecord, FloorConsumption, error) {
+// request for exactly that subject and line's own row, at no deeper a
+// discount than the request was filed at (a shallower write is covered, a
+// deeper one is not), ON the caller's transaction: the used up stamp (the
+// data JSON column, D3) commits or rolls back with the quote write that
+// used it. The compare-and-swap on the unused state is what makes the
+// request usable once: two racing writes, one stamp.
+func (r *ApprovalRepository) ConsumeApprovedFloorTx(ctx context.Context, tx pgx.Tx, requestedBy, branchID, subjectRef string, lineNo, discPct int, lineID, productID string) (FloorRequestRecord, FloorConsumption, error) {
 	var rec FloorRequestRecord
 	var status, decidedBy string
 	err := tx.QueryRow(ctx, approvalsSeqCTE+`
@@ -679,12 +706,14 @@ func (r *ApprovalRepository) ConsumeApprovedFloorTx(ctx context.Context, tx pgx.
 			  AND subject_ref = $3 AND status = 'APPROVED' AND (data->>'used') IS NULL
 			  AND COALESCE((data->>'line_no')::int, 0) = $4
 			  AND COALESCE((data->>'disc_pct')::int, 0) >= $5
+			  AND COALESCE(data->>'line_id', '') = $7
+			  AND COALESCE(data->>'product_id', '') = $8
 			ORDER BY requested_at DESC LIMIT 1
 			FOR UPDATE
 		)
 		RETURNING id::text, status, COALESCE((data->>'line_no')::int, 0), COALESCE((data->>'disc_pct')::int, 0),
 		          COALESCE(decided_by::text, '')`,
-		requestedBy, branchID, subjectRef, lineNo, discPct, fmt.Sprintf("%d", discPct)).
+		requestedBy, branchID, subjectRef, lineNo, discPct, fmt.Sprintf("%d", discPct), lineID, productID).
 		Scan(&rec.ID, &status, &rec.LineNo, &rec.DiscPct, &decidedBy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return FloorRequestRecord{}, FloorConsumption{}, nil

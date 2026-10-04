@@ -280,6 +280,8 @@ func TestDashboardUserLinkerWiring_NeedsFourEyesSkipsTheManagersOwnRequest(t *te
 		Detail:      "HH-189 fixture: the general manager's own pending request",
 		LineNo:      1,
 		DiscPct:     40,
+		LineID:      "11111111-1111-4111-8111-111111001101",
+		ProductID:   "prod-189-own",
 	})
 	if err != nil {
 		t.Fatalf("plant own pending approval: %v", err)
@@ -314,6 +316,8 @@ func TestDashboardUserLinkerWiring_NeedsFourEyesSkipsTheManagersOwnRequest(t *te
 		Detail:      "HH-189 fixture: another user's pending request",
 		LineNo:      1,
 		DiscPct:     40,
+		LineID:      "11111111-1111-4111-8111-111111001102",
+		ProductID:   "prod-189-other",
 	})
 	if err != nil {
 		t.Fatalf("plant the other user's pending approval: %v", err)

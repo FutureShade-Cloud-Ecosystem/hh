@@ -155,8 +155,8 @@ func (s *StaffService) EditLineQty(ctx context.Context, quoteID string, lineNo i
 	plan := floorWritePlan{expectedDisc: -1}
 	var out *floorOutcome
 	if fs, ok := s.floorStore(); ok {
-		if disc, _, _, _, clearing, ferr := fs.LineFloorState(ctx, quoteID, lineNo); ferr == nil && disc > 0 {
-			out, err = s.decideLineFloor(ctx, caller, quoteID, branchID, cur.ProductID, lineNo, disc, uom,
+		if lineID, disc, _, _, _, clearing, ferr := fs.LineFloorState(ctx, quoteID, lineNo); ferr == nil && disc > 0 {
+			out, err = s.decideLineFloor(ctx, caller, quoteID, branchID, cur.ProductID, lineNo, disc, lineID, uom,
 				lp.UnitPriceCents, lp.LineTotalCents, lp.PriceUOM, clearing)
 			if err != nil {
 				return QuoteEditResult{}, err
