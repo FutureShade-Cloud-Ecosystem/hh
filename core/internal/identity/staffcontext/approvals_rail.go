@@ -233,11 +233,37 @@ func (s *Approvals) CanDecide(caller StaffContext, policy PolicyType, branchID s
 // counts exactly what the caller could decide, nothing it would only
 // appear to hold.
 func (s *Approvals) CanDecideRequest(caller StaffContext, r ApprovalRequest) bool {
-	if !s.CanDecide(caller, r.Policy, r.BranchID) {
+	return canDecideRequestWith(s.floorApprovers, caller, r)
+}
+
+// canDecideRequestWith is CanDecideRequest over an explicit floor set, the
+// one rule the rail and the sync door both hold.
+func canDecideRequestWith(fa FloorApprovers, caller StaffContext, r ApprovalRequest) bool {
+	if !CanApproveFloor(caller, r.Policy, r.BranchID, fa) {
 		return false
 	}
-	return !(r.Policy == PolicyMargin && r.LineID == "" &&
-		!s.floorApprovers.mayDecideDealerWide(caller.RoleCode))
+	return !(r.Policy == PolicyMargin && r.LineID == "" && !fa.mayDecideDealerWide(caller.RoleCode))
+}
+
+// MayReadRequest answers whether the caller may read one request's card.
+// A floor request's detail carries the resulting margin and the floor in
+// basis points, which with the discount and the product name the cost, and
+// the approvals reads have no money gate of their own (P2-3, round 3): the
+// caller reads a floor request only when it could decide it or filed it
+// itself. Every other policy reads as before.
+func (s *Approvals) MayReadRequest(caller StaffContext, r ApprovalRequest) bool {
+	return mayReadRequestWith(s.floorApprovers, caller, r)
+}
+
+// mayReadRequestWith is MayReadRequest over an explicit floor set.
+func mayReadRequestWith(fa FloorApprovers, caller StaffContext, r ApprovalRequest) bool {
+	if r.Policy != PolicyMargin {
+		return true
+	}
+	if caller.UserID != "" && r.RequestedBy == caller.UserID {
+		return true
+	}
+	return canDecideRequestWith(fa, caller, r)
 }
 
 // ApprovalReconcilePending is one still-PENDING request the messaging sweep must ensure has a card in each

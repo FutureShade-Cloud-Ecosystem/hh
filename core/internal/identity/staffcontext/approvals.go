@@ -334,17 +334,34 @@ func (s *Approvals) HasApprovedOverride(ctx context.Context, requestedBy, branch
 // scaffold read is gone from the decide path and nothing on it derives
 // authority from the scaffold tables.
 func (s *Approvals) ListApprovals(ctx context.Context, caller StaffContext, status string) ([]ApprovalRequest, error) {
+	var (
+		list []ApprovalRequest
+		err  error
+	)
 	if caller.Scope == ScopeGlobal {
-		return s.store.ListApprovals(ctx, status, nil)
+		list, err = s.store.ListApprovals(ctx, status, nil)
+	} else {
+		branches := make([]string, 0, len(caller.Branches))
+		for b := range caller.Branches {
+			branches = append(branches, b)
+		}
+		if len(branches) == 0 {
+			return []ApprovalRequest{}, nil
+		}
+		list, err = s.store.ListApprovals(ctx, status, branches)
 	}
-	branches := make([]string, 0, len(caller.Branches))
-	for b := range caller.Branches {
-		branches = append(branches, b)
+	if err != nil {
+		return nil, err
 	}
-	if len(branches) == 0 {
-		return []ApprovalRequest{}, nil
+	// A floor request's margin figures are read by whoever could decide it
+	// or filed it, never by the rest of the branch (P2-3, round 3).
+	kept := make([]ApprovalRequest, 0, len(list))
+	for _, r := range list {
+		if s.MayReadRequest(caller, r) {
+			kept = append(kept, r)
+		}
 	}
-	return s.store.ListApprovals(ctx, status, branches)
+	return kept, nil
 }
 
 // DecideApproval enforces the authority model, bridges a JE decision to the GL maker-checker (GL first),

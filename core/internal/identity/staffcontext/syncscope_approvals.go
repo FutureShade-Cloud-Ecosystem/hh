@@ -211,41 +211,78 @@ const approvalSyncQuery = `SELECT ` + approvalSyncColumns + `
 
 // Pull returns the page of approval changes past since, live rows and
 // tombstones in seq order, at most limit rows total, under the org
-// fence.
+// fence. A floor request is a live row only for a caller that could
+// decide it or filed it (P2-3, round 3): its detail carries the margin
+// figures and this door has no money gate. Rows the caller may not read
+// are skipped and the page keeps filling, so a hidden row never shortens
+// a page that has a follower. A tombstone names an id alone and stays.
 func (s *ApprovalsSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, limit int) ([]sync.Entity, []sync.Tombstone, error) {
 	where, args, ok := approvalScopePredicate(f)
 	if !ok {
 		return []sync.Entity{}, []sync.Tombstone{}, nil
 	}
-	rows, err := s.pool.Query(ctx, approvalSyncQuery+`
-		WHERE `+where+` AND a.seq IS NOT NULL AND a.seq > $2
-		ORDER BY a.seq ASC
-		LIMIT $3`, append(args, since, limit)...)
-	if err != nil {
-		return nil, nil, fmt.Errorf("identity: approvals sync pull: %w", err)
-	}
-	defer rows.Close()
+	reader := s.readerFor(ctx, f)
 	items := []sync.Entity{}
 	tombstones := []sync.Tombstone{}
-	for rows.Next() {
-		r, err := scanApprovalSync(rows)
+	for {
+		rows, err := s.pool.Query(ctx, approvalSyncQuery+`
+			WHERE `+where+` AND a.seq IS NOT NULL AND a.seq > $2
+			ORDER BY a.seq ASC
+			LIMIT $3`, append(append([]any{}, args...), since, limit)...)
 		if err != nil {
-			return nil, nil, fmt.Errorf("identity: approvals sync pull scan: %w", err)
+			return nil, nil, fmt.Errorf("identity: approvals sync pull: %w", err)
 		}
-		if r.deleted {
-			tombstones = append(tombstones, sync.Tombstone{ID: r.req.ID, Seq: r.seq})
-			continue
+		scanned := 0
+		for rows.Next() {
+			r, err := scanApprovalSync(rows)
+			if err != nil {
+				rows.Close()
+				return nil, nil, fmt.Errorf("identity: approvals sync pull scan: %w", err)
+			}
+			scanned++
+			since = r.seq
+			if r.deleted {
+				tombstones = append(tombstones, sync.Tombstone{ID: r.req.ID, Seq: r.seq})
+			} else {
+				if !reader(r.req) {
+					continue
+				}
+				data, err := approvalData(r.req)
+				if err != nil {
+					rows.Close()
+					return nil, nil, err
+				}
+				items = append(items, sync.Entity{ID: r.req.ID, Seq: r.seq, Data: data})
+			}
+			if len(items)+len(tombstones) >= limit {
+				break
+			}
 		}
-		data, err := approvalData(r.req)
-		if err != nil {
-			return nil, nil, err
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, nil, fmt.Errorf("identity: approvals sync pull: %w", err)
 		}
-		items = append(items, sync.Entity{ID: r.req.ID, Seq: r.seq, Data: data})
+		if len(items)+len(tombstones) >= limit || scanned < limit {
+			return items, tombstones, nil
+		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("identity: approvals sync pull: %w", err)
+}
+
+// readerFor resolves the caller's authority once and answers, per request,
+// whether the caller may read its card (mayReadRequestWith under the
+// published floor set). A caller with no linked user, or whose authority
+// cannot be read, reads no floor request: the door fails closed.
+func (s *ApprovalsSyncStore) readerFor(ctx context.Context, f sync.ScopeFilter) func(ApprovalRequest) bool {
+	fa := syncFloorApprovers()
+	var caller StaffContext
+	if s.link != nil && f.Actor != "" {
+		if uid, ok := s.link(ctx, f.Actor); ok && uid != "" {
+			if c, err := s.resolve(ctx, uid, f.OrgID); err == nil {
+				caller = c
+			}
+		}
 	}
-	return items, tombstones, nil
+	return func(r ApprovalRequest) bool { return mayReadRequestWith(fa, caller, r) }
 }
 
 // FindApplied resolves one idempotency key to the row it applied,
@@ -284,6 +321,13 @@ func (s *ApprovalsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id st
 		return sync.RowState{}, false, fmt.Errorf("identity: approvals sync load: %w", err)
 	}
 	rs, err := approvalStateOf(r)
+	if err == nil && !r.deleted && !s.readerFor(ctx, f)(r.req) {
+		// The row exists and the engine still needs its id and seq (the
+		// stale check, the write's own refusal words), but its projection
+		// travels in a conflict envelope: a card the caller may not read
+		// carries no data out of this door (P2-3, round 3).
+		rs.Data = nil
+	}
 	return rs, true, err
 }
 
