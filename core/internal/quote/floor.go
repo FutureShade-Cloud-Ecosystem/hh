@@ -485,11 +485,13 @@ func floorLogRows(caller identity.StaffContext, quoteID, productID string, discP
 // accepts a line at a rule price that sits below the floor (CP0-3 answer
 // A): accepted with no manager, logged for the pricing editors so a rule
 // that sells under the floor is seen. bd is the resolver's own answer, so
-// the row carries the same figures the resolve struck; the rule and the net
-// are the same price (no discount was asked), and the row names the product
-// when no category rode the breakdown, the FloorRecord fallback that keeps
-// the NOT NULL entity id honest.
-func rulePriceLogRows(caller identity.StaffContext, quoteID, productID string, bd pricing.Breakdown) []pricing.FloorRecord {
+// the row's margin and floor are the figures the resolve struck at the rule
+// price. discPct is the discount the line carries (0 for a fresh add): the
+// row records the line's real discount and the net that discount leaves,
+// not a undiscounted line that is not the one standing. The row names the
+// product when no category rode the breakdown, the FloorRecord fallback
+// that keeps the NOT NULL entity id honest.
+func rulePriceLogRows(caller identity.StaffContext, quoteID, productID string, discPct int, bd pricing.Breakdown) []pricing.FloorRecord {
 	if !bd.Blocked {
 		return nil
 	}
@@ -497,8 +499,8 @@ func rulePriceLogRows(caller identity.StaffContext, quoteID, productID string, b
 		UserID: caller.UserID, QuoteID: quoteID,
 		ProductID:     productID,
 		RuleUnitCents: bd.FinalCents,
-		NetUnitCents:  bd.FinalCents,
-		DiscPct:       0,
+		NetUnitCents:  discountUnitCents(bd.FinalCents, discPct),
+		DiscPct:       discPct,
 		MarginBps:     bd.MarginBps,
 		FloorBps:      bd.FloorBps,
 		Action:        "UPDATE",

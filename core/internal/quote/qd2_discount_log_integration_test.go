@@ -12,6 +12,7 @@ package quote
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -349,5 +350,46 @@ func TestQD2_IdenticalQtyReprice_AddsNoRow(t *testing.T) {
 	}
 	if rows := qd2AuditRows(t, pool, quoteID); len(rows) != 2 {
 		t.Fatalf("a changed quantity that re-strikes the below floor rule price writes one more row, got %+v", rows)
+	}
+}
+
+// The reprice's rule price row (CP0-3 answer A) on a line that carries a
+// discount: the row must record the line's real discount and the net that
+// discount leaves, not disc 0 with the net equal to the rule. Removing the
+// row from the reprice path fails this test, and so does misstating it.
+func TestQD2_QtyRepriceRulePriceRow_CarriesTheLinesDiscount(t *testing.T) {
+	pool := intPool(t)
+	now := qd2Clock()
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+	qd1SetDisc(t, pool, quoteID, 1, 20)
+	qd2CleanAudit(t, pool, quoteID)
+
+	// The reprice strikes a 600 cent rule price that sits below the floor
+	// (the resolver says blocked) on a line carrying a 20 percent stored
+	// discount, and the floor question at the discounted candidate answers
+	// above the floor: the write owes its UPDATE row AND the rule price
+	// row, and both carry the line's real figures (600 at 20 percent nets
+	// 480).
+	pricer := qd2Pricer{blocked: true, finalCents: 600, marginBps: 500, floorBps: 1200}
+	arb := qd1Arbiter{marginBps: 2000, floorBps: 1200}
+	svc := qd2Svc(t, pool, now, pricer, &arb)
+	ctx := qCtxAs(intStaff(intTrenton))
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
+
+	if _, err := svc.EditLineQty(ctx, quoteID, 1, "5"); err != nil {
+		t.Fatalf("the reprice above the floor must be accepted: %v", err)
+	}
+	rows := qd2AuditRows(t, pool, quoteID)
+	if len(rows) != 2 {
+		t.Fatalf("the reprice owes its floor UPDATE row and the rule price row beside it, got %+v", rows)
+	}
+	for _, r := range rows {
+		if r.OldValue != "rule 600 at 20%" {
+			t.Errorf("both rows carry the line's real discount (20 percent of a 600 cent rule), got %q", r.OldValue)
+		}
+		if !strings.HasPrefix(r.NewValue, "net 480 margin ") {
+			t.Errorf("both rows carry the net the line's discount leaves (480), got %q", r.NewValue)
+		}
 	}
 }

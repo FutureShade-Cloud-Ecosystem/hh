@@ -109,8 +109,8 @@ func (s *StaffService) AddLine(ctx context.Context, quoteID, productID, descript
 	// CP0-3 answer A: an accepted line at a below floor rule price is
 	// logged for the pricing editors (the mark rides the read). The row
 	// rides the write's own transaction, named by the line the insert
-	// derived under the lock.
-	pricingRows := rulePriceLogRows(caller, quoteID, productID, lp.Breakdown)
+	// derived under the lock. A fresh line carries no discount.
+	pricingRows := rulePriceLogRows(caller, quoteID, productID, 0, lp.Breakdown)
 	after, totals, status, err := s.store.InsertLineGuarded(ctx, quoteEditWrite{
 		QuoteID: quoteID, AllowedFrom: rule.fromList(),
 		ProductID: productID, Description: description,
@@ -166,11 +166,13 @@ func (s *StaffService) EditLineQty(ctx context.Context, quoteID string, lineNo i
 	// must not answer itself "no discount".
 	plan := floorWritePlan{expectedDisc: -1}
 	var out *floorOutcome
+	disc := 0
 	if fs, ok := s.floorStore(); ok {
-		lineID, disc, _, _, _, clearing, ferr := fs.LineFloorState(ctx, quoteID, lineNo)
+		lineID, storedDisc, _, _, _, clearing, ferr := fs.LineFloorState(ctx, quoteID, lineNo)
 		if ferr != nil {
 			return QuoteEditResult{}, ferr
 		}
+		disc = storedDisc
 		plan.expectedDisc = disc
 		if disc > 0 {
 			out, err = s.decideLineFloor(ctx, caller, quoteID, branchID, cur.ProductID, lineNo, disc, lineID, uom,
@@ -189,10 +191,10 @@ func (s *StaffService) EditLineQty(ctx context.Context, quoteID string, lineNo i
 	// transaction (plan 4.2 and CP0-3 answer A): the floor row for a
 	// repriced discounted line, and the rule price row when the reprice
 	// struck a below floor rule price, logged like the add that first
-	// wrote it. The add's own row is named by the line the write locked.
+	// wrote it and carrying the line's real stored discount.
 	rows := append(
-		floorLogRows(caller, quoteID, cur.ProductID, plan.expectedDisc, out),
-		rulePriceLogRows(caller, quoteID, cur.ProductID, lp.Breakdown)...)
+		floorLogRows(caller, quoteID, cur.ProductID, disc, out),
+		rulePriceLogRows(caller, quoteID, cur.ProductID, disc, lp.Breakdown)...)
 	_, after, totals, status, err := s.store.UpdateLineGuarded(ctx, quoteEditWrite{
 		QuoteID: quoteID, LineNo: lineNo, AllowedFrom: rule.fromList(),
 		QtyEntered: strings.TrimSpace(qtyEntered), QtyBase: formatQty(lp.QtyBase),
