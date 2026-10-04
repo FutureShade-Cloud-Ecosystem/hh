@@ -25,7 +25,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"sort"
@@ -317,19 +319,43 @@ func (c *qd1gCensus) ownerFor(who qd1gRole, own bool) string {
 	return c.seller
 }
 
-// qd1gRestQuoteList answers whether REST's list shows each planted quote.
+// qd1gRestQuoteList answers whether REST's list shows each planted quote. It
+// follows next_cursor to the end, so a long lived gate with many quotes
+// cannot push a planted one off the first page.
 func qd1gRestQuoteList(t *testing.T, c *qd1gCensus, who qd1gRole, ids []string) map[string]bool {
 	t.Helper()
-	code, body := qd1bCall(t, c.q, http.MethodGet, "/api/v1/quotes?limit=100", who.sub, nil)
 	out := map[string]bool{}
-	if code == http.StatusForbidden {
-		return out
-	}
-	if code != http.StatusOK {
-		t.Fatalf("REST quote list as %s: %d %s", who.role, code, body)
+	var all strings.Builder
+	cursor := ""
+	for page := 0; ; page++ {
+		path := "/api/v1/quotes?limit=200"
+		if cursor != "" {
+			path += "&cursor=" + url.QueryEscape(cursor)
+		}
+		code, body := qd1bCall(t, c.q, http.MethodGet, path, who.sub, nil)
+		if code == http.StatusForbidden {
+			return out
+		}
+		if code != http.StatusOK {
+			t.Fatalf("REST quote list as %s: %d %s", who.role, code, body)
+		}
+		all.WriteString(body)
+		var env struct {
+			Next *string `json:"next_cursor"`
+		}
+		if err := json.Unmarshal([]byte(body), &env); err != nil {
+			t.Fatalf("decode the REST quote page as %s: %v", who.role, err)
+		}
+		if env.Next == nil || *env.Next == "" {
+			break
+		}
+		if page > 1000 {
+			t.Fatalf("REST quote list as %s did not end", who.role)
+		}
+		cursor = *env.Next
 	}
 	for _, id := range ids {
-		out[id] = strings.Contains(body, id)
+		out[id] = strings.Contains(all.String(), id)
 	}
 	return out
 }
@@ -403,17 +429,36 @@ func qd1gRestApprovalList(t *testing.T, c *qd1gCensus, who qd1gRole, ids []strin
 	return out, true
 }
 
-// qd1gSyncPull answers the body of one scope's pull.
+// qd1gSyncPull answers the bodies of one scope's pull, every page joined: it
+// follows next_cursor (the resume is since=<cursor>) to the end.
 func qd1gSyncPull(t *testing.T, c *qd1gCensus, scope string, who qd1gRole) string {
 	t.Helper()
-	code, body := qd1bCall(t, c.q, http.MethodGet, "/api/v1/sync/"+scope+"?since=0&limit=500", who.sub, nil)
-	if code == http.StatusForbidden {
-		return ""
+	var all strings.Builder
+	since := "0"
+	for page := 0; ; page++ {
+		code, body := qd1bCall(t, c.q, http.MethodGet, "/api/v1/sync/"+scope+"?since="+since+"&limit=500", who.sub, nil)
+		if code == http.StatusForbidden {
+			return ""
+		}
+		if code != http.StatusOK {
+			t.Fatalf("pull %s as %s: %d %s", scope, who.role, code, body)
+		}
+		all.WriteString(body)
+		var env struct {
+			Next *string `json:"next_cursor"`
+		}
+		if err := json.Unmarshal([]byte(body), &env); err != nil {
+			t.Fatalf("decode the %s pull page as %s: %v", scope, who.role, err)
+		}
+		if env.Next == nil || *env.Next == "" {
+			break
+		}
+		if page > 1000 {
+			t.Fatalf("pull %s as %s did not end", scope, who.role)
+		}
+		since = *env.Next
 	}
-	if code != http.StatusOK {
-		t.Fatalf("pull %s as %s: %d %s", scope, who.role, code, body)
-	}
-	return body
+	return all.String()
 }
 
 // ---- the doors -----------------------------------------------------------
@@ -805,6 +850,78 @@ func qd1gApprovalsFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 			t.Errorf("CENSUS RULE approvals.FindApplied as %s (%s): the replay rewrote the request", who.role, k.name)
 		}
 	}
+	// The dedup leg proper: a request the caller filed itself, plain, so the
+	// replayed note edit would be ADMITTED if the lookup missed. The key is
+	// already applied, so the replay must answer applied and rewrite nothing.
+	// A FindApplied that always misses lets the edit through and fails here.
+	id, marker := qd1gPlain(t, c, who.user, testkit.BranchNorthAID)
+	key := uuid.NewString()
+	if _, err := c.q.pool.Exec(context.Background(),
+		`UPDATE permission_approval_requests SET idempotency_key = $2::uuid WHERE id = $1`, id, key); err != nil {
+		t.Fatalf("stamp the key: %v", err)
+	}
+	code, body := qd1bCall(t, c.q, http.MethodPost, "/api/v1/sync/approvals", who.sub, map[string]any{"ops": []any{
+		map[string]any{"client_id": key, "op": "update", "payload": map[string]any{"id": id, "detail": "qd1g dedup rewrite"}}}})
+	if code != http.StatusOK {
+		t.Fatalf("dedup replay as %s: %d %s", who.role, code, body)
+	}
+	var detail string
+	if err := c.q.pool.QueryRow(context.Background(),
+		`SELECT detail FROM permission_approval_requests WHERE id = $1`, id).Scan(&detail); err != nil {
+		t.Fatalf("read the request back: %v", err)
+	}
+	if detail != marker {
+		t.Errorf("CENSUS RULE approvals.FindApplied as %s (its own plain request, dedup): the replay of an applied key was applied again (detail is now %q)", who.role, detail)
+	}
+	var resp struct {
+		Results []qd1bPushResult `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil || len(resp.Results) != 1 || resp.Results[0].Status != "applied" {
+		t.Errorf("CENSUS RULE approvals.FindApplied as %s (its own plain request, dedup): the replay did not answer applied: %s", who.role, body)
+	}
+}
+
+// TestQD1G_ApprovalsFindAppliedProjectionIsMasked: the replay lookup carries
+// a projection only of a request the caller may read, the same reader Load
+// uses (defence in depth: the engine never reads Data on a replay).
+func TestQD1G_ApprovalsFindAppliedProjectionIsMasked(t *testing.T) {
+	q := newQD1BFixture(t)
+	c := qd1gPlantStaff(t, q)
+	clerk := qd1bUserID(t, q.pool, testkit.SubInsideSales)
+	id, _ := qd1gFloor(t, c, clerk, testkit.BranchNorthAID)
+	key := uuid.NewString()
+	if _, err := q.pool.Exec(context.Background(),
+		`UPDATE permission_approval_requests SET idempotency_key = $2::uuid WHERE id = $1`, id, key); err != nil {
+		t.Fatalf("stamp the key: %v", err)
+	}
+	link := func(ctx context.Context, sub string) (string, bool) {
+		var uid string
+		if err := q.pool.QueryRow(ctx, `SELECT id::text FROM users WHERE platform_user_id = $1`, sub).Scan(&uid); err != nil {
+			return "", false
+		}
+		return uid, true
+	}
+	store := identity.NewApprovalsSyncStore(q.pool, link)
+	var readers, masked int
+	for _, who := range c.roles {
+		f := syncpkg.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: who.sub}
+		row, found, err := store.FindApplied(context.Background(), f, key)
+		if err != nil || !found {
+			t.Fatalf("FindApplied as %s: found %v err %v", who.role, found, err)
+		}
+		want := qd1gLoad(t, c, "approvals", who, id)
+		if (row.Data != nil) != want {
+			t.Errorf("approvals.FindApplied as %s: projection present %v, but Load (the reader) says %v", who.role, row.Data != nil, want)
+		}
+		if want {
+			readers++
+		} else {
+			masked++
+		}
+	}
+	if readers == 0 || masked == 0 {
+		t.Errorf("the masked projection test is vacuous: %d readers, %d masked", readers, masked)
+	}
 }
 
 // ---- the census ----------------------------------------------------------
@@ -903,6 +1020,8 @@ func TestQD1G_SyncDoorCensus(t *testing.T) {
 		}
 	}
 	qd1gNotVacuous(t)
+	qd1gMatchMatrices(t)
+	qd1gScopesGuard(t)
 }
 
 // qd1gNotVacuous runs after the census and requires that
@@ -957,6 +1076,167 @@ func qd1gNotVacuous(t *testing.T) {
 		}
 		if err := os.WriteFile(path, raw, 0o600); err != nil {
 			t.Fatalf("write the dump: %v", err)
+		}
+	}
+}
+
+// ---- the document's matrices ---------------------------------------------
+
+// qd1gDocCells reads section 3 of the census document: every matrix row of a
+// `### door` block is a role and its A or R cells, cell n answering leg n.
+func qd1gDocCells(t *testing.T) map[string]string {
+	t.Helper()
+	raw, err := os.ReadFile("../../internal/quote/SYNC-DOOR-CENSUS.md")
+	if err != nil {
+		t.Fatalf("read the census document: %v", err)
+	}
+	section := string(raw)
+	if i := strings.Index(section, "\n## 3. "); i >= 0 {
+		section = section[i:]
+	}
+	if i := strings.Index(section, "\n## 4. "); i >= 0 {
+		section = section[:i]
+	}
+	cells := map[string]string{}
+	door := ""
+	heading := regexp.MustCompile("^### `([a-z]+\\.[A-Za-z]+)`")
+	for _, line := range strings.Split(section, "\n") {
+		if m := heading.FindStringSubmatch(line); m != nil {
+			door = m[1]
+			continue
+		}
+		if door == "" || !strings.HasPrefix(line, "| ") {
+			continue
+		}
+		parts := strings.Split(strings.Trim(strings.TrimSpace(line), "|"), "|")
+		role := strings.TrimSpace(parts[0])
+		isRole := false
+		for _, r := range qd1gRoleSubs() {
+			isRole = isRole || r.role == role
+		}
+		if !isRole {
+			continue
+		}
+		for i, cell := range parts[1:] {
+			cell = strings.TrimSpace(cell)
+			if cell != "A" && cell != "R" {
+				t.Errorf("census document: %s %s leg %d holds %q, want A or R", door, role, i+1, cell)
+				continue
+			}
+			cells[fmt.Sprintf("%s|%s|%d", door, role, i+1)] = cell
+		}
+	}
+	return cells
+}
+
+// qd1gMatchMatrices requires the document's section 3 to equal what the census
+// observed, cell for cell and in both directions. The observed answer is the
+// sync door's own (the REST answer, or the stated rule, equals it whenever the
+// census is otherwise green), so a rule changed on both sides at once, which
+// leaves REST equal to sync, still turns the document stale and fails here.
+func qd1gMatchMatrices(t *testing.T) {
+	t.Helper()
+	verb := map[bool]string{true: "A", false: "R"}
+	doc := qd1gDocCells(t)
+	leg := map[string]int{}
+	seen := map[string]bool{}
+	for _, a := range qd1gAnswers {
+		leg[a.Door+"|"+a.Role]++
+		key := fmt.Sprintf("%s|%s|%d", a.Door, a.Role, leg[a.Door+"|"+a.Role])
+		seen[key] = true
+		documented, ok := doc[key]
+		switch {
+		case !ok:
+			t.Errorf("CENSUS DOCUMENT %s as %s, leg %d (%s): the census observed %s and the document has no cell",
+				a.Door, a.Role, leg[a.Door+"|"+a.Role], a.Leg, verb[a.Sync])
+		case documented != verb[a.Sync]:
+			t.Errorf("CENSUS DOCUMENT %s as %s, leg %d (%s): the document says %s, the census observed %s",
+				a.Door, a.Role, leg[a.Door+"|"+a.Role], a.Leg, documented, verb[a.Sync])
+		}
+	}
+	for key, cell := range doc {
+		if !seen[key] {
+			p := strings.Split(key, "|")
+			t.Errorf("CENSUS DOCUMENT %s as %s, leg %s: the document says %s and the census observed no such cell", p[0], p[1], p[2], cell)
+		}
+	}
+}
+
+// ---- the registered scopes -----------------------------------------------
+
+// qd1gScopesOnQuoteTables are the registered sync scopes allowed to touch the
+// quote or approval tables, each with the reason (the document repeats them).
+// quotes and approvals are the two stores the census drives door by door.
+var qd1gScopesOnQuoteTables = map[string]string{
+	"quotes":          "the quotes store, every door ruled by this census",
+	"approvals":       "the approvals store, every door ruled by this census",
+	"customer_quotes": "a separate table (the customer quote record), not the staff quotes table",
+	"orders":          "the tenant plan table; reads no quote or approval column",
+	"widget_measures": "reads only the layout tables; no quote or approval column",
+	"attachments":     "carries owner_kind quote links, fenced by org only, no quote field today",
+}
+
+// qd1gScopesClear are the other registered scopes, reviewed as touching
+// neither table. A scope on neither list fails the census by name.
+var qd1gScopesClear = map[string]bool{
+	"aging": true, "catalog": true, "customers": true, "cycle_counts": true,
+	"delivery_instructions": true, "delivery_stops": true, "drivers": true,
+	"inventory_lookup": true, "invoices": true, "loads": true, "parked_tickets": true,
+	"payment_methods": true, "payments": true, "pick_tasks": true, "pickups": true,
+	"pod": true, "price_matrix": true, "products": true, "projects": true,
+	"purchase_orders": true, "runs": true, "scope_items": true, "shortages": true,
+	"stops": true, "team": true, "trucks": true, "vendors": true, "warranty_board": true,
+	"warranty_claims": true, "weights": true, "will_call": true,
+}
+
+// qd1gScopesGuard reads every RegisterScope in this package's source and
+// requires each scope to be ruled: allowed on the quote and approval tables
+// (with a reason, in the census document too) or reviewed clear of them.
+func qd1gScopesGuard(t *testing.T) {
+	t.Helper()
+	files, err := filepath.Glob("*.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("list the cmd/core sources: %v", err)
+	}
+	re := regexp.MustCompile(`RegisterScope\("([a-z_]+)"`)
+	registered := map[string]bool{}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		for _, m := range re.FindAllStringSubmatch(string(raw), -1) {
+			registered[m[1]] = true
+		}
+	}
+	doc, err := os.ReadFile("../../internal/quote/SYNC-DOOR-CENSUS.md")
+	if err != nil {
+		t.Fatalf("read the census document: %v", err)
+	}
+	for name := range registered {
+		_, touches := qd1gScopesOnQuoteTables[name]
+		if !touches && !qd1gScopesClear[name] {
+			t.Errorf("sync census: the registered sync scope %q is on neither list: decide whether it touches the quote or approval tables, "+
+				"and list it in qd1gScopesOnQuoteTables (with a reason, and in the census document) or qd1gScopesClear", name)
+		}
+		if touches && qd1gScopesClear[name] {
+			t.Errorf("sync census: scope %q is on both lists", name)
+		}
+	}
+	for name := range qd1gScopesOnQuoteTables {
+		if !registered[name] {
+			t.Errorf("sync census: scope %q is listed as touching quote or approval tables but is no longer registered", name)
+		}
+		if !strings.Contains(string(doc), "`"+name+"`") {
+			t.Errorf("sync census: scope %q has no reason in the census document", name)
+		}
+	}
+	for name := range qd1gScopesClear {
+		if !registered[name] {
+			t.Errorf("sync census: scope %q is listed as clear but is no longer registered", name)
 		}
 	}
 }

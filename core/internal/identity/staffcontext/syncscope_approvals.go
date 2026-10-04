@@ -398,6 +398,11 @@ func (s *ApprovalsSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter
 		return sync.RowState{}, false, fmt.Errorf("identity: approvals sync find applied: %w", err)
 	}
 	rs, err := approvalStateOf(r)
+	if err == nil && !r.deleted && !s.readerFor(ctx, f)(r.req) {
+		// The engine never reads Data on a replay, but the projection of a
+		// card the caller may not read leaves nothing through this door.
+		rs.Data = nil
+	}
 	return rs, true, err
 }
 

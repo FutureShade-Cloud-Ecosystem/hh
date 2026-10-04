@@ -431,7 +431,11 @@ func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedNa
 		if errors.Is(err, ErrLinkGone) && idemKey != "" {
 			// QD-3d: the retry of a committed acceptance can arrive after its link died. Its first
 			// outcome is replayed (read only, nothing written); anything else stays the 410.
-			if res, ok := s.replayThroughDeadLink(ctx, link, quoteID, typedName, idemKey); ok {
+			res, ok, rerr := s.replayThroughDeadLink(ctx, link, quoteID, typedName, affirmed, idemKey)
+			if rerr != nil {
+				return AcceptanceResult{}, rerr
+			}
+			if ok {
 				return res, nil
 			}
 		}
@@ -467,20 +471,31 @@ func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedNa
 }
 
 // replayThroughDeadLink answers the first outcome of a keyed acceptance whose link has since been
-// revoked or has expired, or reports false and leaves the caller's 410 standing. A lookup error, a
-// different typed name or no matching acceptance are all the 410: a dead link reveals nothing more.
-func (s *StaffService) replayThroughDeadLink(ctx context.Context, link ShareLink, quoteID, typedName, idemKey string) (AcceptanceResult, bool) {
+// revoked or has expired, or reports false and leaves the caller's 410 standing. A keyed 410 is never
+// followed by a commit under that key (AcceptQuoteGuarded refuses an attempt whose link died before it
+// took the quote lock), so it means no acceptance exists under this key for this link at that moment
+// and none is recorded afterwards. A different typed name (never replayed, never named), an empty or
+// over long typed name and no matching acceptance are all that 410, so a dead link reveals nothing
+// more. The affirmative is checked as on a live link (the same 400). A lookup failure is an error, not
+// the 410: the outcome is unknown, and the 410 must keep its meaning.
+func (s *StaffService) replayThroughDeadLink(ctx context.Context, link ShareLink, quoteID, typedName string, affirmed bool, idemKey string) (AcceptanceResult, bool, error) {
 	name := strings.TrimSpace(typedName)
 	if name == "" || len(name) > maxTypedName {
-		return AcceptanceResult{}, false
+		return AcceptanceResult{}, false, nil
+	}
+	if !affirmed {
+		return AcceptanceResult{}, false, httpx.BadRequestf("you must confirm that you accept this quote")
 	}
 	res, found, err := s.shares.ReplayKeyedAcceptance(ctx, acceptWrite{
 		QuoteID: quoteID, ShareLinkID: link.ID, TypedName: name, IdempotencyKey: idemKey,
 	})
-	if err != nil || !found {
-		return AcceptanceResult{}, false
+	if errors.Is(err, ErrIdempotencyKeyReused) {
+		return AcceptanceResult{}, false, nil
 	}
-	return res, true
+	if err != nil {
+		return AcceptanceResult{}, false, err
+	}
+	return res, found, nil
 }
 
 // recordAcceptance writes the QUOTE_ACCEPTED audit row on the acceptance's own transaction and returns

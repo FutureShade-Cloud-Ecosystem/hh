@@ -80,12 +80,46 @@ func (r *Repository) findKeyedAcceptance(ctx context.Context, tx rowQuerier, in 
 	return out, true, nil
 }
 
-// ReplayKeyedAcceptance is the read-only lookup behind a retry through a link that has since died
-// (revoked or expired): the caller holds the token that existed and the key, so the first outcome is
-// what they were owed. It writes nothing and takes no lock; the acceptance it reads is committed.
+// ReplayKeyedAcceptance is the lookup behind a retry through a link that has since died (revoked or
+// expired): the caller holds the token that existed and the key, so the first outcome is what they were
+// owed. It writes nothing. It reads under a SHARE lock on the quote row, the row AcceptQuoteGuarded
+// takes FOR UPDATE, so a retry that arrives while the first attempt is still in flight (resolved while
+// the link was live, then the link died) waits for that attempt to commit or abort and then sees the
+// truth. Without the lock it could answer "nothing accepted" a moment before the first attempt commits.
+//
+// WHY FOR SHARE ADDS NO DEADLOCK. This transaction holds no lock before it takes the quote row's share
+// lock and takes no other lock afterwards (the rest is plain reads, which lock nothing), so it is
+// never the holder of an edge in a wait cycle. It can still be a victim: a queued row lock waiter
+// holds the row's tuple lock while it waits, so it can sit inside a cycle that two OTHER transactions
+// form on the quote and link rows, and be the one Postgres aborts (SQLSTATE 40P01). That answers 500,
+// an honest unknown outcome, never the 410. No pair of product paths forms such a cycle on quote or
+// link rows: the accept takes the quote FOR UPDATE and its foreign key inserts then take KEY SHARE on
+// the link and the quote; RevokeShareLink updates only the link row; mint, the share events and the
+// follow-up writes take only KEY SHARE through foreign keys, which is compatible with FOR SHARE; and
+// the other quote writers (send, convert and the sync write lock FOR UPDATE, while transition,
+// which serves reject and the other status moves, and the builder repricing use plain UPDATEs) take
+// a row lock that waits on this lookup and never the reverse. A share lock is compatible with other
+// share locks and with the key share locks foreign keys take, so concurrent retries do not queue
+// behind each other. READ COMMITTED gives the lookup that follows the lock a fresh snapshot, which is
+// what lets it see the commit it waited for.
 func (r *Repository) ReplayKeyedAcceptance(ctx context.Context, in acceptWrite) (AcceptanceResult, bool, error) {
 	if r.pool == nil {
 		return AcceptanceResult{}, false, errNoDB
 	}
-	return r.findKeyedAcceptance(ctx, r.pool, in)
+	if !looksLikeUUID(in.QuoteID) {
+		return AcceptanceResult{}, false, nil
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return AcceptanceResult{}, false, fmt.Errorf("begin keyed replay: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var one int
+	if err := tx.QueryRow(ctx, `SELECT 1 FROM quotes WHERE id = $1 FOR SHARE`, in.QuoteID).Scan(&one); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return AcceptanceResult{}, false, nil
+		}
+		return AcceptanceResult{}, false, fmt.Errorf("lock quote for keyed replay: %w", err)
+	}
+	return r.findKeyedAcceptance(ctx, tx, in)
 }
