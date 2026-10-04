@@ -3,9 +3,8 @@
 package pricing
 
 // The editors' floor warning against the real Repository and the seeded catalogue
-// (CP0-6): the product source reads the products and their branch cost, the preview
-// grades them through the real resolver and gate, a preview writes nothing, and the
-// confirmation lands in the real pricing log where ListAudit reads it back.
+// (CP0-6): the preview grades the products through the real resolver and gate, a preview
+// writes nothing, and the confirmation lands in the real pricing log where ListAudit reads it back.
 //
 // Run with: DATABASE_URL=... go test -tags integration -count=1 -run FloorWarning ./internal/pricing/
 
@@ -13,7 +12,36 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// poolCandidates is this test's own product source over the test pool. In the served core the
+// composition root implements the seam over the product and inventory services (tested in
+// cmd/core); pricing's repository no longer reads either table.
+type poolCandidates struct{ pool *pgxpool.Pool }
+
+func (c poolCandidates) CandidateProducts(ctx context.Context, categoryID, productID, _ string, limit int) ([]CandidateProduct, error) {
+	rows, err := c.pool.Query(ctx, `
+		SELECT p.id::text, COALESCE(p.category_id::text, ''), p.sku::text, p.name, p.base_uom::text,
+		       COALESCE(MAX(pbc.avg_unit_cost_cents), 0)
+		  FROM products p LEFT JOIN product_branch_costs pbc ON pbc.product_id = p.id
+		 WHERE p.is_active AND ($1 = '' OR p.category_id::text = $1) AND ($2 = '' OR p.id::text = $2)
+		 GROUP BY p.id ORDER BY p.sku, p.id LIMIT $3`, categoryID, productID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CandidateProduct
+	for rows.Next() {
+		var p CandidateProduct
+		if err := rows.Scan(&p.ProductID, &p.CategoryID, &p.SKU, &p.Name, &p.BaseUOM, &p.CostCents); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
 
 func auditCount(t *testing.T, svc *Service) int {
 	t.Helper()
@@ -28,7 +56,7 @@ func TestIntegration_FloorWarning_ADeepDiscountNamesSeededProductsAndWritesNothi
 	ctx := context.Background()
 	pool := intPool(t)
 	f := newAuditRefFixture(t, pool)
-	svc := realSvc(pool)
+	svc := realSvc(pool).WithCandidateSource(poolCandidates{pool})
 	before := auditCount(t, svc)
 
 	out, err := svc.PreviewFloor(ctx, FloorChange{Kind: "rule", Rule: &Rule{
@@ -57,30 +85,6 @@ func TestIntegration_FloorWarning_ADeepDiscountNamesSeededProductsAndWritesNothi
 	}
 	if len(gentle.Items) >= len(out.Items) {
 		t.Errorf("1 percent off must warn of fewer products than 95 percent: %d vs %d", len(gentle.Items), len(out.Items))
-	}
-}
-
-func TestIntegration_FloorWarning_ProductSourceFencesByProductAndCategory(t *testing.T) {
-	ctx := context.Background()
-	pool := intPool(t)
-	f := newAuditRefFixture(t, pool)
-	repo := NewRepository(pool)
-	one, err := repo.CandidateProducts(ctx, "", f.productID, "", 10)
-	if err != nil || len(one) != 1 || one[0].ProductID != f.productID || one[0].BaseUOM == "" {
-		t.Fatalf("by product: %+v, %v", one, err)
-	}
-	cat, err := repo.CandidateProducts(ctx, f.categoryID, "", "", 1000)
-	if err != nil || len(cat) == 0 {
-		t.Fatalf("by category: %+v, %v", cat, err)
-	}
-	for _, c := range cat {
-		if c.CategoryID != f.categoryID {
-			t.Errorf("a category query returned another category's product: %+v", c)
-		}
-	}
-	capped, err := repo.CandidateProducts(ctx, "", "", "", 3)
-	if err != nil || len(capped) != 3 {
-		t.Fatalf("the limit must hold: %d, %v", len(capped), err)
 	}
 }
 
