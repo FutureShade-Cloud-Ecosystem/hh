@@ -118,15 +118,15 @@ func (r *Repository) WithCreditGate(g CreditGate) *Repository { r.credit = g; re
 
 // checkCredit runs the gate over the facts and returns ErrCreditBlocked when it refuses.
 //
-// termsAreCredit is TRUE unconditionally: a converted order is unpaid at creation and therefore draws on
+// termsAreCredit is TRUE for every conversion except the one QD-5 pays in full in the same action: a converted order is unpaid at creation and therefore draws on
 // the account, there is no cash/card tender at conversion to exempt it (the POS ring passes true for the
 // same unpaid-at-ring posture, pos/service.go:403).
 //
 // hasApprovedOverride is FALSE, exactly as the POS ring passes it: this path claims no override, so the
 // gate's override branch stays the caller's to exercise, and a hold blocks regardless of one anyway
 // (till/holds.go:59).
-func (r *Repository) checkCredit(ctx context.Context, f creditFacts) error {
-	blk := r.creditGate().Check(ctx, f.CustomerID, f.TotalCents, f.OpenBalanceCents, f.CreditLimitCents, true, f.BranchID, false)
+func (r *Repository) checkCredit(ctx context.Context, f creditFacts, termsAreCredit bool) error {
+	blk := r.creditGate().Check(ctx, f.CustomerID, f.TotalCents, f.OpenBalanceCents, f.CreditLimitCents, termsAreCredit, f.BranchID, false)
 	if blk == nil {
 		return nil
 	}

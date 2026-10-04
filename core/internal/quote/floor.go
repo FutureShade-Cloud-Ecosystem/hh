@@ -4,11 +4,12 @@ package quote
 // line below its rule price (defects D2, D5, D6) and the request door of
 // plan 1.1. Three cases:
 //
-//	at the rule price           the decision is not asked (QD-2 owns the read
-//	                             side of a rule price below the floor)
-//	below rule, above floor     accepted, no manager; the UPDATE log row is
-//	                             QD-2's half and rides the one call site
-//	                             below (recordFloorDecision)
+//	at the rule price           the decision is not asked; a rule price
+//	                             below the floor is accepted, marked on the
+//	                             read and logged (CP0-3 answer A,
+//	                             rulePriceLogRows)
+//	below rule, above floor     accepted, no manager; one UPDATE log row
+//	                             (floorLogRows) and the change trail
 //	below floor                 refused with a typed 409 unless (a) the
 //	                             caller clears the floor itself
 //	                             (floor_clearers_own_branch, in its own
@@ -41,7 +42,10 @@ import (
 // writes below. Satisfied by *pricing.Service. Nil fails closed.
 type FloorArbiter interface {
 	EvaluateLineFloor(ctx context.Context, in pricing.FloorQuestion) (pricing.FloorAnswer, error)
-	RecordFloorDecision(ctx context.Context, rec pricing.FloorRecord)
+	// RecordFloorDecisionTx writes the pricing log row a finished write owes
+	// ON that write's own transaction (plan 4.2): the row commits with the
+	// line it describes or not at all, and a failed append refuses the write.
+	RecordFloorDecisionTx(ctx context.Context, tx pgx.Tx, rec pricing.FloorRecord) error
 }
 
 // FloorApprovalRail is the identity approvals rail as the quote module
@@ -350,8 +354,8 @@ func (s *StaffService) decideLineFloor(ctx context.Context, caller identity.Staf
 
 	if !answer.BelowFloor || answer.EnforcementDisabled {
 		// Below the rule price, above the floor (or no floor question):
-		// accepted, no manager. The UPDATE log row is QD-2's half; it rides
-		// the one call site in completeFloorWrite.
+		// accepted, no manager. The UPDATE log row rides the one hook
+		// floorLogRows builds for the guarded write.
 		return out, nil
 	}
 	out.belowFloor = true
@@ -442,23 +446,22 @@ func (s *StaffService) lineQtyUom(ctx context.Context, quoteID string, lineNo in
 	return qty, uom, nil
 }
 
-// completeFloorWrite writes the pricing log row a finished floor write
-// owes: the BYPASS row for a cleared below floor price (the honoured
-// override's shape), and the UPDATE row for a below rule above floor write,
-// which QD-2 completes. THE single call site for both.
-func (s *StaffService) completeFloorWrite(ctx context.Context, caller identity.StaffContext,
-	quoteID, productID string, lineNo, discPct int, out *floorOutcome,
-) {
-	if s.floor == nil || out == nil || !out.asked {
-		return
+// floorLogRows returns the pricing log rows a finished floor write owes: the
+// BYPASS row for a cleared below floor price (the honoured override's
+// shape), and the UPDATE row for a below rule above floor write (plan 4.2).
+// THE single builder for both; the rows ride the write's own transaction
+// through pricingLogHook.
+func floorLogRows(caller identity.StaffContext, quoteID, productID string, discPct int, out *floorOutcome) []pricing.FloorRecord {
+	if out == nil || !out.asked {
+		return nil
 	}
 	if out.belowFloor && out.plan.clearing != nil {
 		reason := pricing.BypassManagerScope
 		if out.approved {
 			reason = pricing.BypassApprovedOverr
 		}
-		s.floor.RecordFloorDecision(ctx, pricing.FloorRecord{
-			UserID: caller.UserID, QuoteID: quoteID, LineNo: lineNo,
+		return []pricing.FloorRecord{{
+			UserID: caller.UserID, QuoteID: quoteID,
 			ProductID:     productID,
 			CategoryID:    out.answer.CategoryID,
 			RuleUnitCents: out.ruleUnitCents,
@@ -467,12 +470,90 @@ func (s *StaffService) completeFloorWrite(ctx context.Context, caller identity.S
 			MarginBps:     out.answer.MarginBps,
 			FloorBps:      out.answer.FloorBps,
 			Action:        "BYPASS", BypassReason: reason,
-		})
-		return
+		}}
 	}
-	// The below rule above floor UPDATE row: QD-2 completes this half. The
-	// call site is here and only here, so the row lands in one place when
-	// that half turns on.
+	// The below rule above floor UPDATE row (plan 4.2): accepted, no
+	// manager, logged for the pricing editors through the same seam. A
+	// write that rode a standing clearing (below floor, no new stamp) and
+	// a write on a category with the floor question switched off write no
+	// row here: the first already has its BYPASS row from the clearing
+	// that stamped it, the second was never asked a floor question.
+	if !out.belowFloor && !out.answer.EnforcementDisabled {
+		return []pricing.FloorRecord{{
+			UserID: caller.UserID, QuoteID: quoteID,
+			ProductID:     productID,
+			CategoryID:    out.answer.CategoryID,
+			RuleUnitCents: out.ruleUnitCents,
+			NetUnitCents:  out.netUnitCents,
+			DiscPct:       discPct,
+			MarginBps:     out.answer.MarginBps,
+			FloorBps:      out.answer.FloorBps,
+			Action:        "UPDATE",
+		}}
+	}
+	return nil
+}
+
+// rulePriceLogRows returns the pricing log row a finished write owes when it
+// accepts a line at a rule price that sits below the floor (CP0-3 answer
+// A): accepted with no manager, logged for the pricing editors so a rule
+// that sells under the floor is seen. bd is the resolver's own answer, so
+// the row's margin and floor are the figures the resolve struck at the rule
+// price. discPct is the discount the line carries (0 for a fresh add): the
+// row records the line's real discount and the net that discount leaves,
+// not a undiscounted line that is not the one standing. The row names the
+// product when no category rode the breakdown, the FloorRecord fallback
+// that keeps the NOT NULL entity id honest.
+func rulePriceLogRows(caller identity.StaffContext, quoteID, productID string, discPct int, bd pricing.Breakdown) []pricing.FloorRecord {
+	if !bd.Blocked {
+		return nil
+	}
+	return []pricing.FloorRecord{{
+		UserID: caller.UserID, QuoteID: quoteID,
+		ProductID:     productID,
+		RuleUnitCents: bd.FinalCents,
+		NetUnitCents:  discountUnitCents(bd.FinalCents, discPct),
+		DiscPct:       discPct,
+		MarginBps:     bd.MarginBps,
+		FloorBps:      bd.FloorBps,
+		Action:        "UPDATE",
+	}}
+}
+
+// pricingLogHook chains the pricing log rows a guarded write owes into the
+// hook the write runs on its own transaction (plan 4.2): each row commits
+// with the line it describes or not at all, and a failed append refuses the
+// write rather than being swallowed after the commit. lineNo is fed by the
+// write itself: the add learns its line number only inside the lock, so the
+// rows are built without one and named here. changed is the write's own
+// verdict on whether it moved the line. It gates the UPDATE rows only: an
+// idempotent rewrite (the same discount or the same quantity at the same
+// resolved figures) owes no UPDATE row, so a retried request does not log
+// twice. A BYPASS row belongs to the clearing, not to the line moving: the
+// plan carries a clearing only when this write stamped a new one or used up
+// an approval (a write riding a standing clearing carries none), so the row
+// is written whether or not the line moved. With no arbiter wired the rows
+// cannot be written, and the hook refuses the write (fails closed) rather
+// than let a below floor price go unlogged.
+func (s *StaffService) pricingLogHook(rows []pricing.FloorRecord) func(context.Context, pgx.Tx, int, bool) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	if s.floor == nil {
+		return func(context.Context, pgx.Tx, int, bool) error { return ErrEditNotConfigured }
+	}
+	return func(ctx context.Context, tx pgx.Tx, lineNo int, changed bool) error {
+		for _, rec := range rows {
+			if !changed && rec.Action != "BYPASS" {
+				continue
+			}
+			rec.LineNo = lineNo
+			if err := s.floor.RecordFloorDecisionTx(ctx, tx, rec); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 }
 
 // - the note bound -
