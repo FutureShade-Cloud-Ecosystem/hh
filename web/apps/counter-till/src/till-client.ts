@@ -83,11 +83,6 @@ export interface TicketItem {
   uom: string;
 }
 
-/**
- * The card tender's token: see @hardscapehouse/pos-kit's host-facts.ts, which
- * owns the constant now and which the re-export above carries.
- */
-
 /** What the till sends to ring one sale: no price anywhere in it. */
 export interface SaleRing {
   idempotencyKey: string;

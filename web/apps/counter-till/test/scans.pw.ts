@@ -45,13 +45,15 @@ const MONEY_HELPER = "money.ts";
 // and a third file that divides figures by hand must still face the scan.
 // HH note: the display helper and the seam file moved into
 // @hardscapehouse/pos-kit (web/packages/pos-kit, src/ported, same names)
-// with the shared pieces, so the two exclusions name the kit's copies now.
-// The app's own walk below keeps owing the scan zero hits: no app tree file
-// may join the list, and the kit's scan copy (the kit's scans.test.mjs)
-// makes the same claim over the kit's tree with the same two exclusions.
+// with the shared pieces, so the two names point across at the kit's
+// copies: they sit OUTSIDE the walked tree and suppress nothing here, they
+// only keep the boundary where the reroute lands named beside the claim.
+// The kit's scan copy (the kit's scans.test.mjs) makes the same claim over
+// the kit's tree and carries the working exclusions; the app's own walk
+// below keeps owing the scan zero hits: no app tree file may join the list.
 const NAMED_HELPERS = [
-  join(SRC, "..", "..", "packages", "pos-kit", "src", "ported", "_money-format.ts"),
-  join(SRC, "..", "..", "packages", "pos-kit", "src", "ported", "ports.ts"),
+  join(SRC, "..", "..", "..", "packages", "pos-kit", "src", "ported", "_money-format.ts"),
+  join(SRC, "..", "..", "..", "packages", "pos-kit", "src", "ported", "ports.ts"),
 ];
 
 function walkSources(dir: string, out: string[] = []): string[] {
