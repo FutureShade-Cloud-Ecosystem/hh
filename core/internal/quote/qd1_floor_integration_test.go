@@ -366,6 +366,12 @@ func TestQD1_ReadMarks_ClearedByForCostListOnly(t *testing.T) {
 	if len(view.Lines) != 1 || view.Lines[0].FloorClearedBy != bm {
 		t.Fatalf("a cost list caller must see who cleared the below floor price, got %+v", view.Lines)
 	}
+	// CP0-3's mark rides for the same caller: this line's rule price sits
+	// below the floor (the arbiter's figures), and the cost list caller is
+	// told so.
+	if view.Lines[0].RulePriceBelowFloor == nil || !*view.Lines[0].RulePriceBelowFloor {
+		t.Fatalf("a cost list caller must see that the rule price sits below the floor, got %+v", view.Lines[0].RulePriceBelowFloor)
+	}
 
 	hrCtx := qCtxAs(intStaff(intTrenton))
 	hrCtx = qd1WithRole(hrCtx, "HR", intTrenton, hr)
@@ -481,5 +487,46 @@ func TestQD1_AvailabilityCostGatedByCostList(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].Branch.AvgCostCents != 4321 {
 		t.Fatalf("a caller on the cost list must read avg_cost_cents, got %+v", rows)
+	}
+}
+
+// The refusal's margin figures ride for callers on the cost list alone
+// (plan 1.2): the figures are cost information, and a dealer who narrows
+// the list must not read them out of a 409 body.
+func TestQD1_RefusalFiguresForCostListOnly(t *testing.T) {
+	pool := intPool(t)
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+
+	cfg := qd1CfgCostHiddenFrom(t, "inside_sales")
+	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
+	svc := qd1SvcFloor(t, pool, now, arb, cfg)
+	ctx := qCtxAs(intStaff(intTrenton))
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
+
+	_, err := svc.SetLineDiscount(ctx, quoteID, 1, 25)
+	ref, ok := err.(*FloorRefusalError)
+	if !ok {
+		t.Fatalf("want the typed refusal, got %T: %v", err, err)
+	}
+	if ref.ShowFigures || ref.MarginBps != 0 || ref.FloorBps != 0 {
+		t.Fatalf("a caller off the cost list must not receive the refusal's margin figures, got %+v", ref)
+	}
+
+	// The same refusal as a caller on the list carries them. The yard
+	// manager is on the list and never clears the floor itself, and the
+	// second quote is its own, so the ownership rung does not answer first.
+	ym := qd1User(t, pool, "ym")
+	_, ymQuote, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", ym, true)
+	ymCtx := qCtxAs(intStaff(intTrenton))
+	ymCtx = qd1WithRole(ymCtx, "YARD_MANAGER", intTrenton, ym)
+	_, yerr := svc.SetLineDiscount(ymCtx, ymQuote, 1, 25)
+	yref, ok := yerr.(*FloorRefusalError)
+	if !ok {
+		t.Fatalf("want the typed refusal for the yard manager, got %T: %v", yerr, yerr)
+	}
+	if !yref.ShowFigures || yref.MarginBps != 500 || yref.FloorBps != 1200 {
+		t.Fatalf("a caller on the cost list must receive the refusal's margin figures, got %+v", yref)
 	}
 }

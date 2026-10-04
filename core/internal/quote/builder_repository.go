@@ -418,6 +418,9 @@ func runFloorPlan(ctx context.Context, tx pgx.Tx, plan *floorWritePlan) error {
 		return err
 	}
 	if !found {
+		if plan.refusal != nil {
+			return plan.refusal
+		}
 		return &FloorRefusalError{Policy: string(identity.PolicyMargin)}
 	}
 	return nil

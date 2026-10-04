@@ -411,7 +411,7 @@ func (s *StaffService) authorizeQuoteEdit(ctx context.Context, quoteID string, f
 		return identity.StaffContext{}, quoteEditRule{}, "", ErrForbidden
 	}
 	if level == roleconfig.LevelWork && !s.ownsQuote(caller, ownerID) {
-		return identity.StaffContext{}, quoteEditRule{}, "", &NotQuoteOwnerError{}
+		return identity.StaffContext{}, quoteEditRule{}, "", &NotQuoteOwnerError{OwnerName: s.ownerName(ctx, ownerID)}
 	}
 	if !rule.from[status] {
 		return identity.StaffContext{}, quoteEditRule{}, quoteID, &NotEditableError{Field: field, Status: status}
@@ -454,10 +454,15 @@ func (s *StaffService) ownsQuote(c identity.StaffContext, ownerID string) bool {
 // NotQuoteOwnerError is the refusal a Work caller gets editing a quote it
 // does not own. Typed so the message can name the way forward: the quote's
 // owner or the branch's Sales manager. Mapped to 403.
-type NotQuoteOwnerError struct{}
+// NotQuoteOwnerError names the quote's owner when the store can resolve
+// it, so the caller is sent to a person and not to a role (plan 3.4).
+type NotQuoteOwnerError struct{ OwnerName string }
 
 func (e *NotQuoteOwnerError) Error() string {
-	return "quote: this quote belongs to another salesperson, ask the branch's Sales manager to take it over"
+	if e.OwnerName == "" {
+		return "quote: this quote belongs to another salesperson, ask the branch's Sales manager to take it over"
+	}
+	return fmt.Sprintf("quote: this quote belongs to %s, ask the branch's Sales manager to take it over", e.OwnerName)
 }
 
 // callerBranchScope projects a caller onto the branch filter ResolveQuoteID needs: a GLOBAL caller

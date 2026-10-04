@@ -102,6 +102,7 @@ paths:
         An empty valid_until clears the expiry, after which the quote never
         expires. Refused with 409 when the quote is frozen (accepted,
         converted, or terminal) or already expired.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -140,6 +141,7 @@ paths:
         The line is priced at current rates through the shared pricing seam
         and the quote's soft stock holds are re-derived in the same
         transaction. Quantities are decimal strings, never floats.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -178,6 +180,7 @@ paths:
         A body with qty_entered reprices the line at current rates. A body
         carrying disc_pct without qty_entered is a discount-only write, gated
         by the dealer's line_discounts_enabled policy knob.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -226,6 +229,7 @@ paths:
       operationId: quoteRemoveQuoteLine
       tags: [staff-quote]
       summary: Remove a line from a dealer quote
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -378,6 +382,7 @@ paths:
         detail from its own figures; the caller supplies neither. A caller
         who may clear the floor itself is told so and no request is filed.
         A line not below the floor is a 409: nothing to approve.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -649,6 +654,7 @@ paths:
         re-checked inside the transaction. The write also stamps the header
         tax from the configured flat rate. Out-of-bounds fields are refused in
         words with 422; the 422 body is the shared Error envelope.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -722,6 +728,7 @@ paths:
         empty, frozen, or expired. The link's underlying states are ACTIVE,
         CONFIRMED, REVOKED; the wire shape carries the computed live flag
         instead.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -786,6 +793,7 @@ paths:
       tags: [staff-quote]
       summary: Revoke one share link immediately
       description: Subsequent use of the revoked link answers 410, not 404
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -896,6 +904,7 @@ paths:
         consent (or opted out) is a 409 in words. The answer is 202 because
         the message is queued, not sent. No payment link is ever included; the
         payload type has no field for one.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -960,6 +969,7 @@ paths:
       operationId: quoteDisableFollowUps
       tags: [staff-quote]
       summary: Stop a quote's follow-up cadence
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -987,6 +997,7 @@ paths:
       tags: [staff-quote]
       summary: Start or resume a quote's follow-up cadence
       description: Enabling a quote that never had a plan creates one
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -1108,6 +1119,7 @@ paths:
       description: >-
         The explicit form of the sync every line write already runs: release
         all, then reserve what the quote now has, under the quote row lock.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -1137,6 +1149,7 @@ paths:
       description: >-
         The only terminal status this endpoint writes is RELEASED; CONSUMED is
         written by the conversion path and nowhere else.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]

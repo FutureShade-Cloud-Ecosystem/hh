@@ -209,6 +209,12 @@ func TestQD1_ConsumePin_EightWayRaceOneWinner(t *testing.T) {
 			wins++
 		case errors.As(err, new(*FloorRefusalError)):
 			refusals++
+			// The loser's refusal is the typed one in full: the approvers
+			// are named, so the loser knows who to ask (plan 3.4).
+			var ref *FloorRefusalError
+			if errors.As(err, &ref) && len(ref.Approvers) == 0 {
+				t.Error("a race loser's refusal must list the approvers, got the bare policy refusal")
+			}
 		default:
 			other++
 			t.Errorf("unexpected error from a race writer: %T: %v", err, err)

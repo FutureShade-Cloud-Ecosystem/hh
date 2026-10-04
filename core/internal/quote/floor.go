@@ -111,6 +111,10 @@ type floorWritePlan struct {
 	consume func(ctx context.Context, tx pgx.Tx) (identity.FloorConsumption, bool, error)
 	// clearing is stamped into the line's metadata; nil stamps nothing.
 	clearing *floorClearingStamp
+	// refusal is the typed refusal the decision built. The consume arm
+	// answers it when the request is gone under the lock (the race
+	// loser), so a loser is told who may approve, not only that it lost.
+	refusal *FloorRefusalError
 	// asked marks a below-rule write the decision was consulted on.
 	asked bool
 }
@@ -370,6 +374,10 @@ func (s *StaffService) decideLineFloor(ctx context.Context, caller identity.Staf
 		refusal.MarginBps = answer.MarginBps
 		refusal.FloorBps = answer.FloorBps
 	}
+	// The refusal rides the plan from the moment it is built: a writer
+	// whose consume loses the race under the lock answers THIS refusal,
+	// approvers and all, not a bare policy word.
+	out.plan.refusal = refusal
 	if s.floorRail != nil {
 		if rec, ok, rerr := s.floorRail.FloorRequestFor(ctx, caller.UserID, branchID, quoteID, lineNo, lineID, productID); rerr == nil && ok {
 			st := &FloorRequestState{ID: rec.ID, Status: string(rec.Status), LineNo: rec.LineNo, DiscPct: rec.DiscPct}

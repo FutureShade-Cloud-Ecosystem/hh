@@ -128,6 +128,9 @@ func TestQD1_Row3_WorkCallerCannotEditAnotherSalespersonsQuote(t *testing.T) {
 	if !strings.Contains(owner.Error(), "Sales manager") {
 		t.Errorf("row 3: the refusal must name the Sales manager as the way forward, got %q", owner.Error())
 	}
+	if !strings.Contains(owner.Error(), "seller") {
+		t.Errorf("row 3: the refusal must name the quote's owner (plan 3.4), got %q", owner.Error())
+	}
 	// The row is untouched.
 	if got := liveLine(t, pool, quoteID, 1); got.QtyEntered != "2.0000" {
 		t.Errorf("row 3: a refused edit changed the line, qty now %s", got.QtyEntered)
@@ -486,4 +489,79 @@ func TestQD1_RoleConfigHoldsQuoteDeskCells(t *testing.T) {
 			t.Errorf("quote-desk level for %s: want %s got %s", role, want, got)
 		}
 	}
+}
+
+// The create stamp pins the COLUMN, not the ownership answer: a mutation
+// that drops the salesperson stamp still leaves the caller as creator, and
+// the creator fallback would answer ownership exactly the same. The stamp
+// must be there in its own right, because a quote whose salesperson is
+// later re-assigned must follow the salesperson, and a NULL column cannot.
+func TestQD1_CreateStampsTheSalespersonColumn(t *testing.T) {
+	pool := intPool(t)
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	seller := qd1User(t, pool, "seller")
+	svc := qd1Svc(t, pool, now)
+	ctx := qCtxAs(intStaff(intTrenton))
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
+
+	var cust string
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO customers (account_no, name, customer_type)
+		VALUES ('QD1-STAMP', 'QD1 stamp customer', 'CONTRACTOR')
+		ON CONFLICT (account_no) DO UPDATE SET name = EXCLUDED.name
+		RETURNING id::text`).Scan(&cust); err != nil {
+		t.Fatalf("seed customer: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM quotes WHERE customer_id = $1`, cust)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, cust)
+	})
+	view, err := svc.CreateQuote(ctx, QuoteCreate{CustomerID: cust, BranchID: intTrenton})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	var salesperson, creator any
+	if err := pool.QueryRow(context.Background(),
+		`SELECT salesperson_id::text, created_by::text FROM quotes WHERE id = $1`, view.ID).
+		Scan(&salesperson, &creator); err != nil {
+		t.Fatalf("read the stamps: %v", err)
+	}
+	if salesperson != seller {
+		t.Fatalf("create must stamp the salesperson column itself (the creator fallback must not be what answers), salesperson=%v want %s", salesperson, seller)
+	}
+	if creator != seller {
+		t.Fatalf("create stamps the creator too, got %v", creator)
+	}
+}
+
+// Ownership prefers the SALESPERSON over the creator when both stand on
+// the row: the stamp, not the fallback, is the owner.
+func TestQD1_OwnershipPrefersSalespersonOverCreator(t *testing.T) {
+	pool := intPool(t)
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	creator := qd1User(t, pool, "creator")
+	salesperson := qd1User(t, pool, "assignee")
+	cust, quoteID, prod, uom := qd1SeedOwnedQuote(t, pool, "DRAFT", creator, false)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE quotes SET salesperson_id = $2 WHERE id = $1`, quoteID, salesperson); err != nil {
+		t.Fatalf("stamp the salesperson: %v", err)
+	}
+	_ = cust
+
+	svc := qd1Svc(t, pool, now)
+	// The salesperson edits it.
+	spCtx := qCtxAs(intStaff(intTrenton))
+	spCtx = qd1WithRole(spCtx, "INSIDE_SALES", intTrenton, salesperson)
+	if _, err := svc.EditLineQty(spCtx, quoteID, 1, "5"); err != nil {
+		t.Fatalf("the stamped salesperson must own the quote: %v", err)
+	}
+	// The creator, no longer the salesperson, is refused at Work.
+	crCtx := qCtxAs(intStaff(intTrenton))
+	crCtx = qd1WithRole(crCtx, "INSIDE_SALES", intTrenton, creator)
+	if _, err := svc.EditLineQty(crCtx, quoteID, 1, "6"); err == nil {
+		t.Fatal("the creator must not own a quote whose salesperson is someone else")
+	}
+	_ = prod
+	_ = uom
 }
