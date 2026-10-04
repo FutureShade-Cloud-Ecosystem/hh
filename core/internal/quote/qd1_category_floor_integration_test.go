@@ -299,3 +299,46 @@ func TestQD1_CategoryFloor_ReadMarkUsesTheCategorysFloor(t *testing.T) {
 		t.Fatalf("the decision must agree with the mark and refuse, got %T: %v", err, err)
 	}
 }
+
+// qd1FailingCategory is a catalog whose category read fails.
+type qd1FailingCategory struct{}
+
+func (qd1FailingCategory) GetCategory(context.Context, string) (string, error) {
+	return "", errors.New("catalog down")
+}
+func (qd1FailingCategory) GetBaseUOM(context.Context, string) (string, error) {
+	return "", errors.New("catalog down")
+}
+
+// P2-2 (round 3): a failed category read refuses the write. No line change,
+// no log row, and an approved request for the line stays unused.
+func TestQD1_CategoryReadErrorRefusesAndConsumesNothing(t *testing.T) {
+	pool := intPool(t)
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, prod, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+	lineID, _ := qd1LineBinding(t, pool, quoteID, 1)
+	filed := qd1FileAndApprove(t, pool, seller, intTrenton, quoteID, lineID, prod, 1, 40)
+
+	real := pricing.NewService(pricing.NewRepository(pool)).WithCategoryResolver(qd1FailingCategory{})
+	svc := qd1SvcArbiter(t, pool, now, real)
+	ctx := qd1WithRole(qCtxAs(intStaff(intTrenton)), "INSIDE_SALES", intTrenton, seller)
+
+	_, err := svc.SetLineDiscount(ctx, quoteID, 1, 40)
+	if err == nil {
+		t.Fatal("a failed category read must refuse the write")
+	}
+	var refusal *FloorRefusalError
+	if errors.As(err, &refusal) {
+		t.Fatalf("a failed read is an error, not a floor refusal answered from a default: %v", err)
+	}
+	if got := liveLine(t, pool, quoteID, 1); got.LineTotalCents != 2000 {
+		t.Fatalf("the line must be untouched, got total %d", got.LineTotalCents)
+	}
+	if n := qd1ApprovalUnused(t, pool, filed.ID); n != 0 {
+		t.Fatalf("no approval may be consumed, got %d used stamps", n)
+	}
+	if rows := qd1BypassRows(t, pool, quoteID); len(rows) != 0 {
+		t.Fatalf("a refused write logs nothing, got %v", rows)
+	}
+}

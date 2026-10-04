@@ -334,17 +334,34 @@ func (s *Approvals) HasApprovedOverride(ctx context.Context, requestedBy, branch
 // scaffold read is gone from the decide path and nothing on it derives
 // authority from the scaffold tables.
 func (s *Approvals) ListApprovals(ctx context.Context, caller StaffContext, status string) ([]ApprovalRequest, error) {
+	var (
+		list []ApprovalRequest
+		err  error
+	)
 	if caller.Scope == ScopeGlobal {
-		return s.store.ListApprovals(ctx, status, nil)
+		list, err = s.store.ListApprovals(ctx, status, nil)
+	} else {
+		branches := make([]string, 0, len(caller.Branches))
+		for b := range caller.Branches {
+			branches = append(branches, b)
+		}
+		if len(branches) == 0 {
+			return []ApprovalRequest{}, nil
+		}
+		list, err = s.store.ListApprovals(ctx, status, branches)
 	}
-	branches := make([]string, 0, len(caller.Branches))
-	for b := range caller.Branches {
-		branches = append(branches, b)
+	if err != nil {
+		return nil, err
 	}
-	if len(branches) == 0 {
-		return []ApprovalRequest{}, nil
+	// A floor request's margin figures are read by whoever could decide it
+	// or filed it, never by the rest of the branch (P2-3, round 3).
+	kept := make([]ApprovalRequest, 0, len(list))
+	for _, r := range list {
+		if s.MayReadRequest(caller, r) {
+			kept = append(kept, r)
+		}
 	}
-	return s.store.ListApprovals(ctx, status, branches)
+	return kept, nil
 }
 
 // DecideApproval enforces the authority model, bridges a JE decision to the GL maker-checker (GL first),
@@ -509,8 +526,9 @@ func (r *ApprovalRepository) CreateApproval(ctx context.Context, req ApprovalReq
 	var id string
 	err := r.pool.QueryRow(ctx, approvalsSeqCTE+`
 		INSERT INTO permission_approval_requests (requested_by, branch_id, policy_type, detail, subject_ref, data, status, seq)
-		VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', (SELECT next_value FROM aseq)) RETURNING id::text`,
-		req.RequestedBy, req.BranchID, string(req.Policy), req.Detail, subject, raw).Scan(&id)
+		VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', (SELECT next_value FROM aseq))
+		RETURNING id::text, `+requesterRoleSQL("requested_by"),
+		req.RequestedBy, req.BranchID, string(req.Policy), req.Detail, subject, raw).Scan(&id, &req.RequesterRole)
 	if err != nil {
 		return ApprovalRequest{}, fmt.Errorf("create approval: %w", err)
 	}
@@ -518,6 +536,30 @@ func (r *ApprovalRepository) CreateApproval(ctx context.Context, req ApprovalReq
 	req.Status = ApprovalPending
 	return req, nil
 }
+
+// requesterRoleSQL is the SQL that reads the ERP role code of the user a
+// request's requested_by names (row 743): the user's platform link, the
+// live staff_role_grant rows of that platform user, the role's origin_code
+// (the ERP name the carried predicates key on). The user must hold exactly
+// ONE role across its grants and that role must carry an ERP name, else the
+// answer is the empty string, which the floor arm reads as no salesperson:
+// the request reaches leadership only. col is the requester's user id column
+// or parameter (a uuid); the expression is a scalar subquery.
+func requesterRoleSQL(col string) string {
+	return requesterRoleHead + col + requesterRoleTail
+}
+
+// requesterRoleHead and requesterRoleTail are the two halves of the
+// expression around the requester column, constants so a const projection
+// (the sync door's column list) can carry the same read.
+const (
+	requesterRoleHead = `COALESCE((SELECT CASE WHEN COUNT(DISTINCT g.role_id) = 1 THEN MIN(sr.origin_code) END
+		FROM users ru
+		JOIN staff_role_grant g ON g.platform_user_id = ru.platform_user_id AND g.deleted_at IS NULL
+		JOIN staff_role sr ON sr.id = g.role_id
+		WHERE ru.id = `
+	requesterRoleTail = `), '')`
+)
 
 // ListApprovals returns requests filtered by status (empty = any) and, when branches
 // is non-nil, restricted to those branches.
@@ -531,8 +573,8 @@ func (r *ApprovalRepository) ListApprovals(ctx context.Context, status string, b
 	q := `SELECT id::text, requested_by::text, branch_id::text, policy_type, detail,
 	             COALESCE(subject_ref,''), COALESCE((data->>'amount_cents')::bigint, 0),
 	             COALESCE(data->>'line_id',''),
-	             status, COALESCE(decided_by::text,'')
-	      FROM permission_approval_requests WHERE ($1 = '' OR status = $1)`
+	             status, COALESCE(decided_by::text,''), ` + requesterRoleSQL("requested_by") + `
+	      FROM permission_approval_requests WHERE deleted_at IS NULL AND ($1 = '' OR status = $1)`
 	args := []any{status}
 	if branches != nil {
 		q += ` AND branch_id = ANY($2::uuid[])`
@@ -549,7 +591,7 @@ func (r *ApprovalRepository) ListApprovals(ctx context.Context, status string, b
 		var a ApprovalRequest
 		var policy, st string
 		if err := rows.Scan(&a.ID, &a.RequestedBy, &a.BranchID, &policy, &a.Detail,
-			&a.SubjectRef, &a.AmountCents, &a.LineID, &st, &a.DecidedBy); err != nil {
+			&a.SubjectRef, &a.AmountCents, &a.LineID, &st, &a.DecidedBy, &a.RequesterRole); err != nil {
 			return nil, err
 		}
 		a.Policy = PolicyType(policy)
@@ -575,10 +617,10 @@ func (r *ApprovalRepository) GetApproval(ctx context.Context, id string) (Approv
 		SELECT id::text, requested_by::text, branch_id::text, policy_type, detail,
 		       COALESCE(subject_ref,''), COALESCE((data->>'amount_cents')::bigint, 0),
 		       COALESCE(data->>'line_id',''),
-		       status, COALESCE(decided_by::text,'')
-		FROM permission_approval_requests WHERE id = $1`, id).Scan(
+		       status, COALESCE(decided_by::text,''), `+requesterRoleSQL("requested_by")+`
+		FROM permission_approval_requests WHERE id = $1 AND deleted_at IS NULL`, id).Scan(
 		&a.ID, &a.RequestedBy, &a.BranchID, &policy, &a.Detail,
-		&a.SubjectRef, &a.AmountCents, &a.LineID, &st, &a.DecidedBy)
+		&a.SubjectRef, &a.AmountCents, &a.LineID, &st, &a.DecidedBy, &a.RequesterRole)
 	if err != nil {
 		// A well-formed-but-absent id maps to a clean 404 (not a raw 500), matching the module's
 		// clientError taxonomy. (Malformed non-UUID ids are rejected upstream in DecideApproval.)
@@ -675,6 +717,7 @@ func (r *ApprovalRepository) FloorRequestFor(ctx context.Context, requestedBy, b
 		SELECT id::text, status, COALESCE((data->>'line_no')::int, 0), COALESCE((data->>'disc_pct')::int, 0)
 		FROM permission_approval_requests
 		WHERE requested_by = $1 AND branch_id = $2 AND policy_type = 'MARGIN_BELOW_MINIMUM'
+		  AND deleted_at IS NULL
 		  AND subject_ref = $3 AND COALESCE((data->>'line_no')::int, 0) = $4
 		  AND COALESCE(data->>'line_id', '') = $5
 		  AND COALESCE(data->>'product_id', '') = $6
@@ -711,6 +754,7 @@ func (r *ApprovalRepository) ConsumeApprovedFloorTx(ctx context.Context, tx pgx.
 		WHERE id = (
 			SELECT id FROM permission_approval_requests
 			WHERE requested_by = $1 AND branch_id = $2 AND policy_type = 'MARGIN_BELOW_MINIMUM'
+			  AND deleted_at IS NULL
 			  AND subject_ref = $3 AND status = 'APPROVED' AND (data->>'used') IS NULL
 			  AND COALESCE((data->>'line_no')::int, 0) = $4
 			  AND COALESCE((data->>'disc_pct')::int, 0) >= $5
@@ -973,7 +1017,7 @@ func (r *ApprovalRepository) ApprovalsForReconcile(ctx context.Context, decidedS
 	rows, err := r.pool.Query(ctx, `
 		SELECT id::text, requested_by::text, branch_id::text, policy_type, detail,
 		       COALESCE(subject_ref,''), COALESCE((data->>'amount_cents')::bigint, 0),
-		       status, COALESCE(decided_by::text,'')
+		       status, COALESCE(decided_by::text,''), `+requesterRoleSQL("requested_by")+`
 		FROM permission_approval_requests
 		WHERE status = 'PENDING' OR (decided_at IS NOT NULL AND decided_at >= $1)
 		ORDER BY requested_at DESC`, decidedSince)
@@ -986,7 +1030,7 @@ func (r *ApprovalRepository) ApprovalsForReconcile(ctx context.Context, decidedS
 		var a ApprovalRequest
 		var policy, st string
 		if err := rows.Scan(&a.ID, &a.RequestedBy, &a.BranchID, &policy, &a.Detail,
-			&a.SubjectRef, &a.AmountCents, &st, &a.DecidedBy); err != nil {
+			&a.SubjectRef, &a.AmountCents, &st, &a.DecidedBy, &a.RequesterRole); err != nil {
 			return nil, fmt.Errorf("scan reconcile row: %w", err)
 		}
 		a.Policy = PolicyType(policy)

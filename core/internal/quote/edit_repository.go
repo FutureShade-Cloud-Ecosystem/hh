@@ -187,6 +187,13 @@ func (r *Repository) UpdateLineGuarded(ctx context.Context, w quoteEditWrite, pl
 		}
 		return before, after, totals, status, fmt.Errorf("read quote line pre-image: %w", err)
 	}
+	// The price was read for the product the caller saw on this line; a row
+	// holding another product under the lock (a delete and a re-add inside
+	// the pricing window) must never take that price, with or without a
+	// floor question (P2-1, round 3).
+	if before.ProductID != w.ProductID {
+		return before, after, totals, status, errFloorStateChanged
+	}
 	if plan.expectedDisc >= 0 || plan.lineID != "" {
 		// The floor decision priced THIS stored discount on THIS row; a
 		// different one under the lock means figures nobody decided on (a

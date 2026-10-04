@@ -323,3 +323,44 @@ func TestQD1_FloorRequestForHoldsTheLineBinding(t *testing.T) {
 		t.Error("a request bound to one product must not answer the same row with another product")
 	}
 }
+
+// A tombstoned request does not stand as the line's open request: the door's
+// existing-request check must not answer the dead row's state, it files a
+// fresh request in its place.
+func TestQD1_RequestDoor_TombstonedRequestIsNotTheOpenOne(t *testing.T) {
+	pool := intPool(t)
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+
+	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
+	svc := qd1SvcFloor(t, pool, now, arb, qd1Cfg)
+	ctx := qCtxAs(intStaff(intTrenton))
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
+
+	first, err := svc.RequestFloorApproval(ctx, quoteID, 1, 25, "")
+	if err != nil || !first.Filed || first.Request == nil {
+		t.Fatalf("the first request must be filed, got %+v err %v", first, err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM permission_approval_requests WHERE subject_ref = $1`, quoteID)
+	})
+	// The live request stands: asking again answers its state, files nothing.
+	again, err := svc.RequestFloorApproval(ctx, quoteID, 1, 25, "")
+	if err != nil || again.Filed || again.Request == nil || again.Request.ID != first.Request.ID {
+		t.Fatalf("a live request must be answered, not twinned, got %+v err %v", again, err)
+	}
+
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE permission_approval_requests SET deleted_at = to_timestamp(0) WHERE id = $1`, first.Request.ID); err != nil {
+		t.Fatalf("tombstone the request: %v", err)
+	}
+	fresh, err := svc.RequestFloorApproval(ctx, quoteID, 1, 25, "")
+	if err != nil {
+		t.Fatalf("the door after the tombstone: %v", err)
+	}
+	if !fresh.Filed || fresh.Request == nil || fresh.Request.ID == first.Request.ID {
+		t.Fatalf("a tombstoned request must not satisfy the existing-request check: want a fresh filing, got %+v", fresh)
+	}
+}

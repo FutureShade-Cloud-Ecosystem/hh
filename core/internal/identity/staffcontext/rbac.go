@@ -286,10 +286,25 @@ func (f FloorApprovers) mayDecideDealerWide(roleCode string) bool {
 	return false
 }
 
+// floorBranchFilerRoles are the filer roles whose below floor requests the
+// branch scoped arm may answer (decision log row 743, plan 3.3 and CP0-1 B):
+// the branch Sales manager decides what Inside Sales and Outside Sales file in
+// its own branch, and nothing else. A request filed by a Branch manager, a
+// Sales manager (a peer's included) or the Yard manager, or by any role this
+// vocabulary does not name, goes to the dealer wide approvers alone, whether
+// manager_own_branch_floor_clearing is on or off (that setting only decides
+// whether a manager may clear its own price itself). A role code allowlist,
+// so an empty or unknown filer role fails closed to leadership.
+var floorBranchFilerRoles = map[string]bool{
+	"INSIDE_SALES":  true,
+	"OUTSIDE_SALES": true,
+}
+
 // MayDecideInBranch reports whether the role is on the branch scoped list.
 // The branch REACH itself is the caller's to prove (CanApprove checks it
 // before the arm is consulted), a listed role with no grant over the
-// request's branch decides nothing.
+// request's branch decides nothing. The filer's role is the caller's to
+// prove as well: MayDecideInBranchFor.
 func (f FloorApprovers) MayDecideInBranch(roleCode string) bool {
 	for _, r := range f.OwnBranch {
 		if r == roleCode {
@@ -297,6 +312,14 @@ func (f FloorApprovers) MayDecideInBranch(roleCode string) bool {
 		}
 	}
 	return false
+}
+
+// MayDecideInBranchFor is MayDecideInBranch for one request: the role is on
+// the branch scoped list AND the request was filed by a salesperson role
+// (floorBranchFilerRoles). The branch scoped arm decides nothing a leader or
+// a peer manager filed.
+func (f FloorApprovers) MayDecideInBranchFor(roleCode, requesterRole string) bool {
+	return f.MayDecideInBranch(roleCode) && floorBranchFilerRoles[requesterRole]
 }
 
 // sellingRoles is the authority set for COMMITTING AN ORDER AGAINST A CUSTOMER'S CREDIT from a staff
@@ -407,15 +430,16 @@ func DispatchCommittingRoles() []string {
 // be waved through by whoever happened to be looking. 0195 added FREIGHT_ABOVE_QUOTE to the CHECK and
 // to the arm below in the same change, for exactly this reason.
 func CanApprove(approver StaffContext, policy PolicyType, requestBranchID string) bool {
-	return CanApproveFloor(approver, policy, requestBranchID, defaultFloorApprovers())
+	return CanApproveFloor(approver, policy, requestBranchID, "", defaultFloorApprovers())
 }
 
 // CanApproveFloor is CanApprove with the margin arm's authority supplied
 // from the dealer's role configuration (D11): a dealer wide approver decides
 // anywhere it reaches; a branch scoped approver (CP0-1 answer B) decides
-// only inside a branch it reaches. Four eyes is NOT checked here, it is the
+// only inside a branch it reaches, and only a request a salesperson role
+// filed (requesterRole, row 743). Four eyes is NOT checked here, it is the
 // Decide path's own rule and holds whichever set answers.
-func CanApproveFloor(approver StaffContext, policy PolicyType, requestBranchID string, floor FloorApprovers) bool {
+func CanApproveFloor(approver StaffContext, policy PolicyType, requestBranchID, requesterRole string, floor FloorApprovers) bool {
 	if !approver.CanAccessBranch(requestBranchID) {
 		return false
 	}
@@ -424,7 +448,7 @@ func CanApproveFloor(approver StaffContext, policy PolicyType, requestBranchID s
 		if floor.mayDecideDealerWide(approver.RoleCode) {
 			return true
 		}
-		return floor.MayDecideInBranch(approver.RoleCode)
+		return floor.MayDecideInBranchFor(approver.RoleCode, requesterRole)
 	case PolicyJEThreshold, PolicyFreightAboveQuote:
 		return isRailApprover(approver.RoleCode)
 	case PolicyCredit, PolicyCOD:
@@ -440,18 +464,19 @@ func CanApproveFloor(approver StaffContext, policy PolicyType, requestBranchID s
 // truth), so the target set is unit-tested against the same matrix decide enforces. An empty result is the
 // zero-eligible-approver edge (the caller logs it; the request stays decidable and re-fans on the sweep).
 func ResolveApprovers(candidates []StaffContext, policy PolicyType, branchID string) []string {
-	return ResolveApproversFloor(candidates, policy, branchID, defaultFloorApprovers())
+	return ResolveApproversFloor(candidates, policy, branchID, "", defaultFloorApprovers())
 }
 
 // ResolveApproversFloor is ResolveApprovers over a configured FloorApprovers
-// set (D11): the fan-out resolves the same authority the decide path holds.
-func ResolveApproversFloor(candidates []StaffContext, policy PolicyType, branchID string, floor FloorApprovers) []string {
+// set (D11): the fan-out resolves the same authority the decide path holds,
+// the requester's role included (row 743).
+func ResolveApproversFloor(candidates []StaffContext, policy PolicyType, branchID, requesterRole string, floor FloorApprovers) []string {
 	var out []string
 	for _, c := range candidates {
 		if c.UserID == "" {
 			continue
 		}
-		if CanApproveFloor(c, policy, branchID, floor) {
+		if CanApproveFloor(c, policy, branchID, requesterRole, floor) {
 			out = append(out, c.UserID)
 		}
 	}
@@ -500,6 +525,13 @@ type ApprovalRequest struct {
 	Note      string         `json:"note,omitempty"`
 	Status    ApprovalStatus `json:"status"`
 	DecidedBy string         `json:"decided_by,omitempty"`
+	// RequesterRole is the ERP role code of the user who filed the request,
+	// read by the store from the requester's role grant (never from the
+	// request body). It decides which floor arm may answer a margin request:
+	// the branch Sales manager answers a salesperson's alone. It is empty
+	// when the requester holds no single ERP named role, and an empty or
+	// unknown filer role reaches leadership only. It stays off the wire.
+	RequesterRole string `json:"-"`
 }
 
 // Decide applies an approver's decision, enforcing the authority model, the
@@ -524,7 +556,7 @@ func (r *ApprovalRequest) DecideWithFloor(approver StaffContext, approve bool, f
 	if approver.UserID != "" && approver.UserID == r.RequestedBy {
 		return clientErr(http.StatusForbidden, "separation of duties: you cannot approve your own request")
 	}
-	if !CanApproveFloor(approver, r.Policy, r.BranchID, floor) {
+	if !CanApproveFloor(approver, r.Policy, r.BranchID, r.RequesterRole, floor) {
 		return clientErr(http.StatusForbidden, "approver %s (tier %d) not authorized for %s in branch %s", approver.RoleCode, approver.Tier, r.Policy, r.BranchID)
 	}
 	// The branch scoped floor arm decides LINE-BOUND requests alone (P2-C,
