@@ -207,3 +207,15 @@ test("P3 Reset columns with the config re-read refused still shows the default c
   await settle(page);
   expect(await box.isChecked()).toBe(before);
 });
+
+test("P3 the scan box's outcome line clears when another quote opens", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1001");
+  const scan = page.getByTestId("pos-scan-input");
+  await scan.fill("PSN-100");
+  await scan.press("Enter");
+  await expect(page.getByTestId("pos-scan-msg")).toContainText("Added Polymeric Locking Sand");
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("pos-scan-msg")).toHaveText("");
+});

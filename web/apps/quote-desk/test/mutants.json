@@ -159,5 +159,12 @@
     "find": "      this.columnsDraft = null; // a draft left by an earlier press must not outlive the reset\n",
     "replace": "",
     "test": "P3 Reset columns takes"
+  },
+  {
+    "id": "wa-leave-clears-scan-line",
+    "file": "src/quote-workarea.ts",
+    "find": "?.announce?.(\"\", \"ok\"); // the gun's outcome line is the old quote's\n",
+    "replace": ";\n",
+    "test": "P3 the scan box's outcome line clears"
   }
 ]

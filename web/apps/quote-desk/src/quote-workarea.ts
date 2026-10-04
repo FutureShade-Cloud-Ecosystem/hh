@@ -1155,6 +1155,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.error = "";
     this.notice = "";
     this.floorSpoken = "";
+    this.renderRoot.querySelector<HTMLElement & { announce?: (msg: string, kind: "ok") => void }>("hos-pos-scan-box")?.announce?.("", "ok"); // the gun's outcome line is the old quote's
     this.busyHolds = 0;
     this.busy = false;
     this.sendOpen = false;
