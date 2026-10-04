@@ -66,6 +66,8 @@ test("the create form makes a quote and opens it", async ({ page }) => {
 
 test("the detail disclosure hosts the named seams and reaches them on the fan-out", async ({ page }) => {
   await signIn(page);
+  // The seams are mounted for an open quote only: open the Draft row first.
+  await page.getByTestId("qb-list-row").filter({ hasText: "Draft" }).first().click();
   await page.getByText("Quote detail & admin").click();
   await expect(page.locator('[data-seam="edit-panel"]')).toBeAttached();
   await expect(page.locator('[data-seam="history"]')).toBeAttached();

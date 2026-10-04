@@ -139,13 +139,13 @@ test("margin surfaces render only when the server sends them", async ({ page }) 
   // On the cost list (the shipped configuration): the margin pill shows, and
   // the cost class columns stay hidden until this person curates them on.
   await expect(page.getByTestId("qb-margin-pill")).toBeVisible();
-  expect(await page.getByTestId("qb-lines").locator("th[data-column=line.unit_cost]").count()).toBe(0);
-  expect(await page.getByTestId("qb-lines").locator("th[data-column=line.margin_pct]").count()).toBe(0);
+  expect(await page.getByTestId("qb-lines").locator('th[data-column="line.unit_cost"]').count()).toBe(0);
+  expect(await page.getByTestId("qb-lines").locator('th[data-column="line.margin_pct"]').count()).toBe(0);
 
   // Curate the cost columns on through the Columns popover.
   await page.getByTestId("qb-columns-btn").click();
   await page.locator('[data-field="column"][data-column="line.margin_pct"]').check();
-  await expect(page.getByTestId("qb-lines").locator("th[data-column=line.margin_pct]")).toBeVisible();
+  await expect(page.getByTestId("qb-lines").locator('th[data-column="line.margin_pct"]')).toBeVisible();
   await expect(page.getByTestId("qb-line-margin").first()).not.toHaveText("(none)");
 
   // Off the list (the wrong-role page): the glance answers byte absent and
@@ -156,8 +156,8 @@ test("margin surfaces render only when the server sends them", async ({ page }) 
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Maple");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
   await expect(page.getByTestId("qb-margin-pill")).toHaveCount(0);
-  expect(await page.getByTestId("qb-lines").locator("th[data-column=line.unit_cost]").count()).toBe(0);
-  expect(await page.getByTestId("qb-lines").locator("th[data-column=line.margin_pct]").count()).toBe(0);
+  expect(await page.getByTestId("qb-lines").locator('th[data-column="line.unit_cost"]').count()).toBe(0);
+  expect(await page.getByTestId("qb-lines").locator('th[data-column="line.margin_pct"]').count()).toBe(0);
   await page.getByTestId("qb-columns-btn").click();
   await expect(page.locator('[data-field="column"][data-column="line.margin_pct"]')).toHaveCount(0);
   await expect(page.getByTestId("qb-cost-toggle")).toHaveCount(0);

@@ -520,8 +520,8 @@ function workspaceRow(userId, defaults) {
   const saved = workspaces.get(userId);
   if (saved) return { ...saved, source: "user" };
   return {
-    split_pct: defaults.split_pct,
-    arrangement: defaults.arrangement,
+    split_pct: defaults.workspace_split_pct,
+    arrangement: defaults.workspace_arrangement,
     primary_collapsed: false,
     secondary_collapsed: false,
     cost_hidden: false,
