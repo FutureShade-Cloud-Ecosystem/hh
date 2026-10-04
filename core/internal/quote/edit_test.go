@@ -899,7 +899,10 @@ func TestQuoteQty_RejectsNonPositive(t *testing.T) {
 // not to the resolve.
 func TestQuoteEdit_RulePriceBelowFloorIsAccepted(t *testing.T) {
 	svc, store, _ := qFixture(t, "DRAFT")
-	svc.WithPricing(qPricer{blocked: true, finalCents: 600, marginBps: 500, floorBps: 1200})
+	// The arbiter is wired: the rule price row cannot be logged without one,
+	// and the write then fails closed (qd2_floor_source_integration_test.go).
+	svc.WithPricing(qPricer{blocked: true, finalCents: 600, marginBps: 500, floorBps: 1200}).
+		WithFloorArbiter(&unitFloorArbiter{})
 	if err := applyQuoteEdit(svc, qCtxAs(qStaff()), FieldQuoteLineQty); err != nil {
 		t.Fatalf("a line at its rule price must be accepted wherever the floor sits: %v", err)
 	}
