@@ -215,13 +215,19 @@ test("the typed name acceptance is refused when blank, then when unticked, then 
   await expect(page.getByRole("heading", { name: "Thank you: quote Q-25 accepted" })).toBeVisible();
   await expect(page.getByText("Accepted by Sample Customer on")).toBeVisible();
   await expect(page.getByText("Total $109.22")).toHaveCount(2);
+  // The success is MARKED, not bare body text: the check rides the heading's
+  // words (colour never encodes state alone).
+  await expect(page.locator("svg.okmark")).toHaveCount(1);
 });
 
 test("a second accept is shown as already accepted", async ({ page }) => {
   // The same link after acceptance: the quote left the acceptable state, so
-  // the page says the quote is accepted instead of offering the form again.
+  // the page says the quote is accepted instead of offering the form again,
+  // under the success mark: the customer's own action, acknowledged.
   await page.goto(`/?t=${GOOD_TOKEN}`);
   await expect(page.getByText("This quote is accepted and is not awaiting acceptance.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
+  await expect(page.locator("svg.okmark")).toHaveCount(1);
   await expect(page.locator("#name")).toHaveCount(0);
 
   // A link whose accept refuses meets the server's own words, inline: the
@@ -237,6 +243,7 @@ test("a second accept is shown as already accepted", async ({ page }) => {
   // A quote that was accepted elsewhere loads in the accepted state too.
   await page.goto("/?t=q-accepted-26");
   await expect(page.getByText("This quote is accepted and is not awaiting acceptance.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
 });
 
 test("the quote's terms are spoken to the customer: delivery, deposit, notes, discount", async ({ page }) => {

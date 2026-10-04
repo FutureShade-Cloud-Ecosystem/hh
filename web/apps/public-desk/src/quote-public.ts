@@ -215,6 +215,16 @@ export class QuotePublicPage extends HHElement {
         font-size: 1.05rem;
         margin: 0 0 6px;
       }
+      /* The success mark rides the heading's words (colour never encodes
+         state alone): the design system's done-marker path in the success
+         ink, sized to the text it sits beside. */
+      .okmark {
+        width: 1.05em;
+        height: 1.05em;
+        color: var(--hh-success);
+        vertical-align: -0.14em;
+        margin-right: 6px;
+      }
       .ok .sub {
         margin-bottom: 12px;
       }
@@ -495,13 +505,30 @@ export class QuotePublicPage extends HHElement {
     </div>`;
   }
 
+  /** The success mark: the design system's done-marker check, success ink. */
+  private renderOkMark(): TemplateResult {
+    return html`<svg
+      class="okmark"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="3"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+      role="presentation"
+    >
+      <path d="M5 12l5 5 9-10" />
+    </svg>`;
+  }
+
   private renderAccepted(a: AcceptanceRef): TemplateResult {
     // The confirmation ECHOES the totals, so the customer's own record of what
     // they agreed to does not depend on their having read the page carefully
     // before clicking.
     return html`
       <div class="card ok">
-        <h2>Thank you: quote ${a.quoteNo} accepted</h2>
+        <h2>${this.renderOkMark()}Thank you: quote ${a.quoteNo} accepted</h2>
         <p class="sub">${withFullStop(`Accepted by ${a.typedName} on ${this.when(a.acceptedAt)}`)}</p>
         ${this.renderTotals(a)}
         <p class="note">
@@ -517,9 +544,12 @@ export class QuotePublicPage extends HHElement {
     if (!q.acceptable) {
       // The customer reads this alone, with no staff beside them to translate,
       // so the state is SAID, in the same six states said mid-sentence: under
-      // a heading, so the closed door reads deliberate rather than broken.
+      // a heading, so the closed door reads deliberate rather than broken. An
+      // ACCEPTED quote is not a refusal at all: it is the customer's own
+      // earlier action, acknowledged under the success mark.
+      const acceptedElsewhere = q.status === "ACCEPTED";
       return html`<div class="card closed">
-        <h2>Acceptance closed</h2>
+        <h2>${acceptedElsewhere ? this.renderOkMark() : nothing}${acceptedElsewhere ? "Already accepted" : "Acceptance closed"}</h2>
         <p class="gone">
           ${q.expired
             ? `This quote expired on ${q.validUntil} and can no longer be accepted online. Please contact us for an updated quote.`
