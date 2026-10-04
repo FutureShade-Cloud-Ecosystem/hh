@@ -2215,9 +2215,13 @@ export class QdQuoteWorkarea extends LitElement {
       return;
     }
     this.columnsError = "";
+    // The save landed. The box keeps what was saved until a good read of the config brings the same figures:
+    // a failed re-read must not hand the box back to the state before the save.
     const config = await client.surfaceConfig(this.branchId);
-    if (config.ok) this.config = config.value;
-    this.columnsDraft = null;
+    if (config.ok) {
+      this.config = config.value;
+      this.columnsDraft = null;
+    }
   }
 
   private toggleColumn(id: string): void {

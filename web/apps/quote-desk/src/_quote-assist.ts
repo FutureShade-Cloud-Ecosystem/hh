@@ -283,7 +283,7 @@ export function sourceText(ex: Extraction | null | undefined): string {
 
 /** The one-line explanation beside the AI helper. */
 export const AI_OFF_HINT =
-  "Off: your text is read here, with no AI and no cost. On: an AI pass helps split awkward wording, and it counts against your monthly allowance.";
+  "Off: your text is read here, with no AI and no cost. On: an AI pass helps split awkward wording, and it counts against your AI allowance.";
 
 /** The label of the button that reads the paste box. */
 export const READ_LABEL = "Suggest lines from this text";

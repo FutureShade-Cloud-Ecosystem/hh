@@ -19,6 +19,7 @@ import { dirname, join } from "node:path";
 
 import {
   AI_OFF_HINT,
+  interruptedAddText,
   CONFIDENCE_HIGH,
   CONFIDENCE_LOW,
   CONFIDENCE_MEDIUM,
@@ -297,7 +298,8 @@ test('a partial add names the lines that failed', () => {
 
 test('the AI switch explains the cost before it is flipped', () => {
   assert.match(AI_OFF_HINT, /no AI and no cost/);
-  assert.match(AI_OFF_HINT, /monthly allowance/);
+  assert.match(AI_OFF_HINT, /AI allowance/);
+  assert.doesNotMatch(AI_OFF_HINT, /month|week|day|year|daily/i);
 });
 
 // ── 5 · SUGGESTIONS ARE DISMISSIBLE, AND SILENT WHEN THERE IS NOTHING TO SAY ───────────
@@ -428,7 +430,7 @@ test("the panel never auto-ticks: the confirm set is emptied on a read and never
 
 test("confirming goes through the client's audited addLine, one line at a time, then announces the change", () => {
   const src = code(PANEL);
-  assert.match(src, /client\.addLine\(quoteId, p\.product_id, p\.qty_entered, p\.uom_entered\)/);
+  assert.match(src, /client\.addLine\(ctx\.id, p\.product_id, p\.qty_entered, p\.uom_entered\)/);
   assert.match(src, /for \(const p of payloads\)/);
   assert.match(src, /addPayloads\(/);
   assert.match(src, /this\.announceChanged\(\)/);
@@ -449,4 +451,11 @@ test("a gap's Find puts its query in the paste box and reads it, and never adds 
   assert.match(block, /this\.text = f\.suggest_query/);
   assert.match(block, /this\.readDescription\(\)/);
   assert.doesNotMatch(block, /addLine/);
+});
+
+test("interruptedAddText says how far a cut short confirm run got and names no quote", () => {
+  assert.match(interruptedAddText(1, 3), /1 of the 3 selected lines were added to the quote you left, and the rest were not added/);
+  assert.match(interruptedAddText(0, 2), /None of the 2 selected lines were added/);
+  assert.match(interruptedAddText(0, 1), /None of the 1 selected line was added/);
+  assert.doesNotMatch(interruptedAddText(1, 3), /q-\d|Q-\d/);
 });

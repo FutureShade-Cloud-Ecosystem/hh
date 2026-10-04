@@ -854,8 +854,8 @@ export class QdQuoteEdit extends PanelBase {
       <fieldset>
         <legend>Convert to order</legend>
         <p class="sub">
-          This quote is accepted. Converting it commits the order against the customer's account: their credit is checked at that
-          moment, and the stock this quote is holding becomes a firm reservation.
+          This quote is accepted. Converting it commits the order, and the stock this quote is holding becomes a firm
+          reservation. On an account customer the credit is checked at that moment, and a refusal names the limit and the shortfall.
         </p>
         <label for="convert-fulfilment">How is it leaving?</label>
         <div class="row flush-top">
