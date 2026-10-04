@@ -290,11 +290,15 @@ func (b *builder) quoteWorld() {
 
 		// The pricing log, one row per decision the floor seam would have written for these lines.
 		for _, f := range lines {
-			entity := b.in.Categories[b.prod[f.spec.Prod].Category]
-			if entity == "" {
-				entity = demoID("product:" + f.spec.Prod) // FloorRecord's fallback keeps the NOT NULL id honest
+			// The row's entity is what pricing.entityIDOf names: the category when the decision carried
+			// one (the discount rows), else the product (the rule price row, floor.go rulePriceLogRows
+			// sets no category). The pricing log reader filters on entity_id, so the wrong one hides
+			// the row from the editors it is for.
+			category := b.in.Categories[b.prod[f.spec.Prod].Category]
+			if category == "" {
+				category = demoID("product:" + f.spec.Prod) // FloorRecord's fallback keeps the NOT NULL id honest
 			}
-			logRow := func(suffix, action, reason, user string, ruleU, netU int64, disc int, margin int64) {
+			logRow := func(entity, suffix, action, reason, user string, ruleU, netU int64, disc int, margin int64) {
 				cols := []any{
 					"id", demoID(fmt.Sprintf("quotelog:%s:%d:%s", q.Key, f.no, suffix)),
 					"entity_type", "margin_enforcement",
@@ -314,13 +318,13 @@ func (b *builder) quoteWorld() {
 			}
 			switch {
 			case f.belowRule && f.belowFloor && f.spec.Cleared:
-				logRow("bypass", "BYPASS", "MANAGER_SCOPE_OVERRIDE", manager, f.rule, f.netUnit, f.spec.DiscPct, f.netMargin)
+				logRow(category, "bypass", "BYPASS", "MANAGER_SCOPE_OVERRIDE", manager, f.rule, f.netUnit, f.spec.DiscPct, f.netMargin)
 			case f.belowRule && !f.belowFloor:
-				logRow("update", "UPDATE", "", owner, f.rule, f.netUnit, f.spec.DiscPct, f.netMargin)
+				logRow(category, "update", "UPDATE", "", owner, f.rule, f.netUnit, f.spec.DiscPct, f.netMargin)
 			case !f.belowRule && f.ruleBelowFloor:
 				// A line accepted at a rule price under the floor (CP0-3 answer A): the rule and the net
 				// are the same price, logged for the pricing editors.
-				logRow("rule", "UPDATE", "", owner, f.rule, f.rule, 0, f.ruleMargin)
+				logRow(demoID("product:"+f.spec.Prod), "rule", "UPDATE", "", owner, f.rule, f.rule, 0, f.ruleMargin)
 			}
 		}
 

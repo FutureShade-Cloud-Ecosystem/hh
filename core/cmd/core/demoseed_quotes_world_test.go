@@ -501,6 +501,72 @@ func TestDemoWorld_Quotes(t *testing.T) {
 		t.Errorf("the request's requester reads as %q (%v), want INSIDE_SALES", requesterRole, err)
 	}
 
+	// 11b. every seeded pricing log row is the row the real write path produces: the same lines are
+	// written through the real routes (as the roles the story names) on scratch quotes, and the real
+	// rows' entity type, entity id, action, field and bypass reason are compared with the seeded rows.
+	// The rule price row names the PRODUCT (no category rides the rule price answer), the discount
+	// rows name the CATEGORY.
+	type logShape struct{ EntityType, EntityID, Action, Field, Reason string }
+	shapesOf := func(refQuote string) []logShape {
+		t.Helper()
+		rows, err := pool.Query(ctx, `
+			SELECT entity_type, entity_id::text, action, field_name, COALESCE(bypass_reason, '')
+			  FROM pricing_audit_log WHERE ref_entity_type = 'quote' AND ref_entity_id = $1::uuid
+			 ORDER BY field_name, action`, refQuote)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []logShape
+		for rows.Next() {
+			var l logShape
+			if err := rows.Scan(&l.EntityType, &l.EntityID, &l.Action, &l.Field, &l.Reason); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, l)
+		}
+		return out
+	}
+	for _, c := range []struct {
+		name, seededQuote, cust, prod, qty, uom string
+		disc                                    int
+		by                                      *tillClient
+		seededLine                              string
+	}{
+		{"rule price under the floor (Q2 line 1)", "Q2", "C01", "P01", "240", "PC", 0, manager, "line_1"},
+		{"discount above the floor (Q1 line 2)", "Q1", "C02", "P10", "30", "EA", 4, sales, "line_2"},
+		{"discount under the floor cleared by the manager (Q3 line 1)", "Q3", "C02", "P02", "150", "PC", 12, manager, "line_1"},
+	} {
+		mk := c.by.call("POST", "/api/v1/quotes", map[string]any{"customer_id": custID(c.cust), "branch_id": trentonBranchID})
+		mk.ok(t, http.StatusCreated)
+		var made struct {
+			ID string `json:"id"`
+		}
+		mk.decode(t, &made)
+		add := c.by.call("POST", "/api/v1/quotes/"+made.ID+"/lines", map[string]any{
+			"product_id": demoID("product:" + c.prod), "qty_entered": c.qty, "uom_entered": c.uom})
+		add.ok(t, http.StatusOK)
+		if c.disc > 0 {
+			ed := c.by.call("PATCH", "/api/v1/quotes/"+made.ID+"/lines/1", map[string]any{"disc_pct": c.disc})
+			ed.ok(t, http.StatusOK)
+		}
+		real := shapesOf(made.ID)
+		var seededRows []logShape
+		for _, l := range shapesOf(quoteID(c.seededQuote)) {
+			if l.Field == c.seededLine {
+				l.Field = "line_1"
+				seededRows = append(seededRows, l)
+			}
+		}
+		if len(real) != 1 || len(seededRows) != 1 {
+			t.Errorf("%s: the real write left %d log rows (%+v) and the seed holds %d (%+v), want one each", c.name, len(real), real, len(seededRows), seededRows)
+			continue
+		}
+		if real[0] != seededRows[0] {
+			t.Errorf("%s: the seeded log row is %+v, the real write path writes %+v", c.name, seededRows[0], real[0])
+		}
+	}
+
 	// 12. the accepted quote converts through the real service, at its own price.
 	if !seeded["Q3"].CanConvert {
 		t.Error("the ACCEPTED quote reads can_convert false for the Sales manager")

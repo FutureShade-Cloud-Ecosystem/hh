@@ -193,6 +193,24 @@ func TestQuotePlan_TheFloorStoriesAreAllThere(t *testing.T) {
 	if l["bypass_reason"] != "MANAGER_SCOPE_OVERRIDE" || l["user_id"] != manager {
 		t.Errorf("the BYPASS row is %v by %v", l["bypass_reason"], l["user_id"])
 	}
+	// What the log row names as its entity is what the real write path names (pricing.entityIDOf):
+	// the PRODUCT for the rule price row (no category rides the rule price answer, floor.go
+	// rulePriceLogRows), the CATEGORY for the rows that come from a discount decision. The pricing
+	// log reader filters on entity_id, so a row naming the wrong one is invisible to its editors.
+	wantEntity := map[string]string{
+		demoID("quote:Q2") + "/line_1/UPDATE": demoID("product:P01"),
+		demoID("quote:Q1") + "/line_2/UPDATE": in.Categories[quoteProdCategory(t, "P10")],
+		demoID("quote:Q3") + "/line_1/BYPASS": in.Categories[quoteProdCategory(t, "P02")],
+		demoID("quote:Q3") + "/line_2/UPDATE": in.Categories[quoteProdCategory(t, "P10")],
+	}
+	if len(wantEntity) != len(q["pricing_audit_log"]) {
+		t.Errorf("the plan holds %d pricing log rows, the entity pin covers %d", len(q["pricing_audit_log"]), len(wantEntity))
+	}
+	for k, want := range wantEntity {
+		if row := logs[k]; row == nil || row["entity_id"] != want || row["entity_type"] != "margin_enforcement" {
+			t.Errorf("log row %s names entity %v, the real write path names %s", k, row["entity_id"], want)
+		}
+	}
 	// Q3 line 2 and Q1 line 2: below the rule price, above the floor, accepted with no manager.
 	for _, k := range []string{demoID("quote:Q3") + "/line_2/UPDATE", demoID("quote:Q1") + "/line_2/UPDATE"} {
 		u := logs[k]
@@ -285,4 +303,16 @@ func TestQuotePlan_RulePricesAreTheOrderBooksPrices(t *testing.T) {
 			t.Errorf("%s %s rule price %d, the quote stories assume %d", c.cust, c.prod, got, c.want)
 		}
 	}
+}
+
+// quoteProdCategory is the category key a demo product belongs to.
+func quoteProdCategory(t *testing.T, prod string) string {
+	t.Helper()
+	for _, p := range demoProducts {
+		if p.Key == prod {
+			return p.Category
+		}
+	}
+	t.Fatalf("no demo product %s", prod)
+	return ""
 }
