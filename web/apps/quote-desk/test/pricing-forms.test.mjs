@@ -154,7 +154,7 @@ test("the note says the whole of it: never changes a price, why, and that nothin
   assert.match(BREAK_SURCHARGE_NOTE, /never change a price/i);
   assert.match(BREAK_SURCHARGE_NOTE, /cheaper/i);
   assert.match(BREAK_SURCHARGE_NOTE, /nothing is deleted/i);
-  assert.equal(/[–—]/.test(BREAK_SURCHARGE_NOTE), false);
+  assert.equal(/[\u2013\u2014]/.test(BREAK_SURCHARGE_NOTE), false);
 });
 
 test("schedules with an unapplied tier are counted so the note can name how many", () => {
