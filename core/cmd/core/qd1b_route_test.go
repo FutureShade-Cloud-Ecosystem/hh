@@ -378,3 +378,37 @@ func TestQD1B_DecideRouteReachIsExactlyTheConfiguredSet(t *testing.T) {
 		}
 	}
 }
+
+// TestQD1B_SalesManagerRefusedTheDealerWideMultiAcceptSwitch is the CP0-5
+// route test for the dealer wide switch (the review's P3): the gate lets
+// the Sales manager REACH the write (the gate sits at read so the General
+// Manager does), so the rule runs in the service, in words, and the Sales
+// manager is refused there, not at the gate. Reverting SetAllowMultiAccept
+// to settingsAdmin lets the Sales manager flip what every branch reads, and
+// this test goes red.
+func TestQD1B_SalesManagerRefusedTheDealerWideMultiAcceptSwitch(t *testing.T) {
+	q := newQD1BFixture(t)
+	const path = "/api/v1/quotes/settings/acceptance"
+
+	read := func(sub string) string {
+		t.Helper()
+		code, body := qd1bCall(t, q, http.MethodGet, path, sub, nil)
+		if code != http.StatusOK {
+			t.Fatalf("read the switch as %s: %d %s", sub, code, body)
+		}
+		return body
+	}
+	before := read(testkit.SubGeneralMgr)
+
+	code, body := qd1bCall(t, q, http.MethodPut, path, testkit.SubSalesManager,
+		map[string]any{"allow_multi_accept": true})
+	if code != http.StatusForbidden || body == string(authz.BodyForbidden) {
+		t.Fatalf("the Sales manager flips the dealer wide switch: %d %s, want the service's refusal, not the gate's", code, body)
+	}
+	if !strings.Contains(body, "administrators") {
+		t.Fatalf("the refusal must be the service's words naming the rule, got %s", body)
+	}
+	if after := read(testkit.SubGeneralMgr); after != before {
+		t.Fatalf("a refused flip changed the switch: %s then %s", before, after)
+	}
+}
