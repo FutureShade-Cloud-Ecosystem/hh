@@ -325,13 +325,15 @@ func (w *InvoiceWriter) InvoiceOrderGroups(ctx context.Context, orderID string, 
 	if w.source == nil {
 		return InvoiceDoc{}, ErrOrderSourceUnwired
 	}
-	// An order already billed whole at its agreed price (the counter's invoice, QD-5, raised under
-	// the whole order key) is not billed again under a shipment plan's group key: the plan's groups
-	// are covered by that document, so they are linked to it and nothing new is written.
+	// An order already billed whole at its agreed price BY THE COUNTER (QD-5, raised under the whole
+	// order key and marked as the counter's) is not billed again under a shipment plan's group key:
+	// the plan's groups are covered by that document, so they are linked to it and nothing new is
+	// written. Any other whole order document (the fulfilment path's, the sync door's) may bill only
+	// part of the order, so it covers nothing here and the groups are billed as they always were.
 	if w.pool != nil {
 		if whole, ok, err := w.findByKey(ctx, wholeOrderKey(orderID)); err != nil {
 			return InvoiceDoc{}, err
-		} else if ok {
+		} else if ok && whole.AtCounter {
 			whole.Reused = true
 			if len(groupIDs) > 0 {
 				if err := w.source.MarkGroupsInvoiced(ctx, groupIDs, whole.InvoiceID, w.now()); err != nil {
@@ -683,6 +685,37 @@ func (w *InvoiceWriter) agreedFacts(ctx context.Context, ctxTx pgx.Tx, orderID s
 	return src.AgreedInvoiceableOrderTx(ctx, ctxTx, orderID)
 }
 
+// OrderAlreadyInvoicedError is the counter's refusal to raise an invoice for an order that already has
+// one raised another way (by shipment group, say): billing the whole order again would bill the lines
+// the earlier document already carries.
+type OrderAlreadyInvoicedError struct {
+	InvoiceNo string
+}
+
+func (e *OrderAlreadyInvoicedError) Error() string {
+	return "this order is already invoiced as " + e.InvoiceNo + " by another route, so the counter cannot bill it again; " +
+		"record the payment against that invoice from the receivables register"
+}
+
+// otherLiveInvoice names an invoice of the order that is not the counter's whole order document: any
+// live INVOICE of the order under any other key (a shipment group's, a fulfilment document raised before
+// the counter's key existed). "" when there is none.
+func otherLiveInvoice(ctx context.Context, q keyQuerier, orderID string) (string, error) {
+	var no string
+	err := q.QueryRow(ctx, `
+SELECT invoice_no::text FROM invoices
+ WHERE order_id = $1::uuid AND doc_type = 'INVOICE' AND status <> 'VOID'
+   AND idempotency_key IS DISTINCT FROM $2
+ ORDER BY created_at LIMIT 1`, orderID, wholeOrderKey(orderID)).Scan(&no)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("billing: look up the order's other invoices: %w", err)
+	}
+	return no, nil
+}
+
 // AgreedOrderInvoice answers, read only, what the order's invoice at its agreed totals is: the
 // document itself when one exists under the whole order key (exists true), else the document that
 // would be raised (exists false, no id, balance equal to the total).
@@ -703,6 +736,11 @@ func (w *InvoiceWriter) agreedOrderInvoice(ctx context.Context, ctxTx pgx.Tx, q 
 		return InvoiceDoc{}, false, err
 	} else if ok {
 		return doc, true, nil
+	}
+	if no, err := otherLiveInvoice(ctx, q, orderID); err != nil {
+		return InvoiceDoc{}, false, err
+	} else if no != "" {
+		return InvoiceDoc{}, false, &OrderAlreadyInvoicedError{InvoiceNo: no}
 	}
 	facts, err := w.agreedFacts(ctx, ctxTx, orderID)
 	if err != nil {
@@ -747,6 +785,11 @@ func (w *InvoiceWriter) invoiceOrderAtAgreed(ctx context.Context, ctxTx pgx.Tx, 
 	} else if ok {
 		doc.Reused = true
 		return doc, nil
+	}
+	if no, err := otherLiveInvoice(ctx, q, orderID); err != nil {
+		return InvoiceDoc{}, err
+	} else if no != "" {
+		return InvoiceDoc{}, &OrderAlreadyInvoicedError{InvoiceNo: no}
 	}
 	facts, err := w.agreedFacts(ctx, ctxTx, orderID)
 	if err != nil {

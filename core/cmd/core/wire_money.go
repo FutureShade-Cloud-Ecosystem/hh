@@ -598,6 +598,10 @@ func mapBillingRefusal(err error) error {
 	if errors.Is(err, billing.ErrNothingToInvoice) {
 		return quote.NewOrderPaymentConflict("the order has no billable lines")
 	}
+	var already *billing.OrderAlreadyInvoicedError
+	if errors.As(err, &already) {
+		return quote.NewOrderPaymentConflict(already.Error())
+	}
 	return err
 }
 
