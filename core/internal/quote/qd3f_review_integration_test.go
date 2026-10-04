@@ -7,11 +7,14 @@ package quote
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -199,5 +202,116 @@ func TestIntegration_QD3f_AnchorIsTheRowCarryingThisKey(t *testing.T) {
 	}
 	if n := qd3fKeyedAuditRows(t, pool, quoteID, qd3dKeyB); n != 0 {
 		t.Errorf("keyed audit rows for the refused key = %d, want 0", n)
+	}
+}
+
+// P2-3 (condition 1 of the approval): a rolled back accept leaves no key behind. The forced failure
+// comes AFTER the audit insert on the same transaction, so the keyed audit row existed inside it.
+func TestIntegration_QD3f_RolledBackAcceptLeavesNoKey(t *testing.T) {
+	pool := intPool(t)
+	now := qd3fNow()
+	for _, multi := range []bool{true, false} {
+		setMultiAccept(t, pool, multi)
+		svc, quoteID, token, linkID := qd3fMinted(t, pool, now)
+		ctx := context.Background()
+		boom := errors.New("forced failure after the audit insert")
+		_, err := svc.shares.AcceptQuoteGuarded(ctx, acceptWrite{
+			QuoteID: quoteID, ShareLinkID: linkID, TypedName: qd3fCustomer, Now: now, IdempotencyKey: qd3dKeyA,
+		}, acceptHooks{
+			record: func(ctx context.Context, tx pgx.Tx, r AcceptanceResult) (int64, error) {
+				seq, rerr := svc.recordAcceptance(ctx, tx, quoteID, linkID, r)
+				if rerr != nil {
+					return 0, rerr
+				}
+				var inside int
+				if qerr := tx.QueryRow(ctx, `SELECT COUNT(*) FROM audit_log
+					WHERE entity_type='quote' AND entity_id=$1 AND changes->>'client_id'=$2`,
+					quoteID, qd3dKeyA).Scan(&inside); qerr != nil || inside != 1 || seq == 0 {
+					t.Errorf("the keyed audit row must exist inside the transaction: n=%d seq=%d err=%v", inside, seq, qerr)
+				}
+				return seq, boom
+			},
+		})
+		if !errors.Is(err, boom) {
+			t.Fatalf("multi=%v: accept error = %v, want the forced failure", multi, err)
+		}
+		if n := qd3fKeyedAuditRows(t, pool, quoteID, qd3dKeyA); n != 0 {
+			t.Errorf("multi=%v: keyed audit rows after the rollback = %d, want 0", multi, n)
+		}
+		if n := acceptanceRows(t, pool, quoteID); n != 0 {
+			t.Errorf("multi=%v: acceptance rows after the rollback = %d, want 0", multi, n)
+		}
+		if got := qd3dStatus(t, pool, quoteID); got != "SENT" {
+			t.Errorf("multi=%v: status after the rollback = %s, want SENT", multi, got)
+		}
+		// The retry under the same key records fresh: it is the first acceptance, not a replay.
+		res, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA)
+		if err != nil {
+			t.Fatalf("multi=%v: retry: %v", multi, err)
+		}
+		if res.Repeat {
+			t.Errorf("multi=%v: the retry after a rollback is a first acceptance, got a repeat", multi)
+		}
+		if n := acceptanceRows(t, pool, quoteID); n != 1 {
+			t.Errorf("multi=%v: acceptance rows = %d, want 1", multi, n)
+		}
+		if n := qd3fKeyedAuditRows(t, pool, quoteID, qd3dKeyA); n != 1 {
+			t.Errorf("multi=%v: keyed audit rows = %d, want 1", multi, n)
+		}
+	}
+}
+
+// silentRecorder is an audit recorder whose RecordTx writes nothing: a trail that lost the row.
+type silentRecorder struct{}
+
+func (silentRecorder) RecordTx(context.Context, audit.Execer, audit.SensitiveAccess) error {
+	return nil
+}
+
+// P2-3: the anchor-missing refusal. The keyed audit row never landed, so a keyed accept is refused and
+// writes nothing; the same loss on an unkeyed accept degrades to a zero anchor, as it always did.
+func TestIntegration_QD3f_AnchorMissingRefusesKeyedAccept(t *testing.T) {
+	pool := intPool(t)
+	now := qd3fNow()
+	setMultiAccept(t, pool, true)
+	svc, quoteID, token, _ := qd3fMinted(t, pool, now)
+	svc.auditTx = silentRecorder{}
+	ctx := context.Background()
+	_, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA)
+	if err == nil || !strings.Contains(err.Error(), "audit anchor") {
+		t.Fatalf("a keyed accept with no anchor must be refused naming the anchor, got %v", err)
+	}
+	if n := acceptanceRows(t, pool, quoteID); n != 0 {
+		t.Errorf("acceptance rows = %d, want 0", n)
+	}
+	if got := qd3dStatus(t, pool, quoteID); got != "SENT" {
+		t.Errorf("status = %s, want SENT", got)
+	}
+	if _, err := svc.AcceptByToken(ctx, token, qd3fCustomer, true); err != nil {
+		t.Errorf("an unkeyed accept with the same lost row still degrades, got %v", err)
+	}
+}
+
+// P2-3: the guard for a missing audit trail (share.go recordAcceptance, auditTx nil): a keyed accept
+// has nowhere to carry its key, so it is refused and writes nothing; an unkeyed one is unchanged.
+func TestIntegration_QD3f_MissingAuditTrailRefusesKeyedAccept(t *testing.T) {
+	pool := intPool(t)
+	now := qd3fNow()
+	setMultiAccept(t, pool, true)
+	svc, quoteID, token, _ := qd3fMinted(t, pool, now)
+	svc.auditTx = nil
+	ctx := context.Background()
+	_, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA)
+	if err == nil || !strings.Contains(err.Error(), "needs the audit trail") {
+		t.Fatalf("a keyed accept with no audit trail must be refused, got %v", err)
+	}
+	if n := acceptanceRows(t, pool, quoteID); n != 0 {
+		t.Errorf("acceptance rows = %d, want 0", n)
+	}
+	if got := qd3dStatus(t, pool, quoteID); got != "SENT" {
+		t.Errorf("status = %s, want SENT", got)
+	}
+	if _, err := svc.AcceptByToken(ctx, token, qd3fCustomer, true); err != nil {
+		t.Errorf("an unkeyed accept with no audit trail is unchanged, got %v", err)
 	}
 }
