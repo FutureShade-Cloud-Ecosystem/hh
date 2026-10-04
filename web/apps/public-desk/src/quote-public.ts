@@ -1,0 +1,539 @@
+// The customer's quote page, reached by an opaque share-link token in the URL,
+// BEFORE any authentication: no session, no nav shell, no toast host, so every
+// message is surfaced inline. It never attaches a credential: the page's
+// client is built with an empty base URL and no header provider at all, and
+// the token in the link is the credential.
+//
+// A port of the older product's customer quote page, never from scratch: the
+// structure, the states and the words carry over, mapped onto this
+// repository's design system tokens. The acceptance is a TYPED NAME
+// ATTESTATION, not a signature: there is deliberately no drawing pad here, and
+// what an acceptance records is stated on the page in plain words, so the
+// customer knows exactly what they are giving.
+//
+// The page is light theme, pinned in index.html before any stylesheet: a
+// customer document must look identical to everyone and must print correctly,
+// so there is no theme preference to read.
+import { css, html, nothing, type TemplateResult } from "lit";
+import { state } from "lit/decorators.js";
+import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
+import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
+import { ApiClient } from "@hardscapehouse/api-client";
+import {
+  acceptanceAmountPhrase,
+  acceptanceRefusal,
+  showsImages,
+  totalsBlock,
+  type QuoteMoney,
+} from "./_quote-public.js";
+import { formatMoney, quoteStatusPhrase } from "./format.js";
+import { PublicQuoteClient, type AcceptanceRef, type QuoteViewRef } from "./quote-client.js";
+
+const LINK_GONE =
+  "This link is no longer valid. Quote links expire, and can also be turned off by our team. Please contact us for an up-to-date link.";
+const LINK_GONE_SHORT = "This link is no longer valid. Please contact us for an up-to-date link.";
+const NOT_FOUND = "We could not find this quote. Please check the link you were sent.";
+const LOAD_FAILED = "We could not load this quote right now. Please try again shortly.";
+const NOT_RECORDED = "We could not record your acceptance. Please try again.";
+
+export class QuotePublicPage extends HHElement {
+  static styles = [
+    baseStyles,
+    css`
+      :host {
+        display: block;
+        /* The reference's finish: one reading column, centred, at the width
+           the reference page finishes at. */
+        max-width: 780px;
+        margin: 0 auto;
+        padding: 24px 18px 60px;
+        font-family: var(--hh-font-ui);
+        color: var(--hh-text);
+      }
+      h1 {
+        font-size: 1.3rem;
+        margin: 0 0 2px;
+      }
+      /* Full text ink, NOT the dimmed one: this line sits on the page rather
+         than on a card, and it is load bearing information, not decoration. */
+      .sub {
+        color: var(--hh-text);
+        font-size: 0.88rem;
+        margin-bottom: 18px;
+      }
+      .card {
+        border: 1px solid var(--hh-line);
+        border-radius: 10px;
+        padding: 16px 18px;
+        background: var(--hh-card);
+        margin-bottom: 16px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88rem;
+      }
+      th {
+        text-align: left;
+        color: var(--hh-text-dim);
+        font-weight: 600;
+        border-bottom: 1px solid var(--hh-line);
+        padding: 6px 4px;
+      }
+      td {
+        padding: 7px 4px;
+        border-bottom: 1px solid var(--hh-line);
+      }
+      td.num,
+      th.num {
+        text-align: right;
+      }
+      /* The row stripe, ported: the design system's row pair on the body's
+         rows, header and totals excluded by the child combinator, zero
+         specificity so any row state wins by existing. */
+      :where(tbody > tr) {
+        background: var(--hh-row);
+      }
+      :where(tbody > tr:nth-child(even)) {
+        background: var(--hh-row-alt);
+      }
+      .totals {
+        margin-top: 12px;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 3px;
+        font-size: 0.9rem;
+      }
+      .totals .grand {
+        font-size: 1.05rem;
+        font-weight: 700;
+      }
+      .totals .taxnote {
+        color: var(--hh-text-dim);
+        font-size: 0.78rem;
+        font-weight: 400;
+        margin-top: 2px;
+      }
+      label {
+        display: block;
+        font-size: 0.86rem;
+        margin-bottom: 4px;
+        font-weight: 600;
+      }
+      input[type="text"] {
+        font: inherit;
+        box-sizing: border-box;
+        width: 100%;
+        max-width: 22rem;
+        padding: 7px 9px;
+        border: 1px solid var(--hh-line);
+        border-radius: 6px;
+        background: var(--hh-card);
+        color: var(--hh-text);
+      }
+      .check {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        margin: 14px 0;
+        font-size: 0.88rem;
+        line-height: 1.45;
+      }
+      /* The attestation is a sentence, not a field title: regular weight. */
+      .check-label {
+        font-weight: 400;
+      }
+      /* Shadow roots do not inherit the document's focus rule: the accept
+         button must show the same ring as every staff surface, and this page
+         is often driven by keyboard. */
+      button:focus-visible,
+      input:focus-visible,
+      textarea:focus-visible,
+      [tabindex]:focus-visible {
+        outline: 2px solid var(--hh-focus-ring);
+        outline-offset: 2px;
+      }
+      /* The brand gold is a fill, never an ink: its ink is the invariant
+         accent ink, in both themes. */
+      button {
+        font: inherit;
+        font-weight: 600;
+        padding: 9px 18px;
+        border-radius: 7px;
+        border: 1px solid transparent;
+        background: var(--hh-accent);
+        color: var(--hh-accent-ink);
+        cursor: pointer;
+      }
+      /* Disabled must LOOK disabled: the fill drops and goes grey, a token
+         swap, never a fade. */
+      button:disabled {
+        background: var(--hh-disabled-fill);
+        color: var(--hh-disabled-ink);
+        border-color: var(--hh-disabled-line);
+        cursor: default;
+      }
+      .err {
+        color: var(--hh-danger);
+        font-size: 0.9rem;
+        margin-top: 10px;
+      }
+      .note {
+        color: var(--hh-text-dim);
+        font-size: 0.78rem;
+        margin-top: 10px;
+        line-height: 1.5;
+      }
+      .card-h2 {
+        font-size: 1rem;
+        margin: 0 0 10px;
+      }
+      .ok h2 {
+        font-size: 1.05rem;
+        margin: 0 0 6px;
+      }
+      .ok .sub {
+        margin-bottom: 12px;
+      }
+      .gone {
+        font-size: 0.95rem;
+        line-height: 1.55;
+      }
+      .thumb {
+        width: 36px;
+        height: 36px;
+        object-fit: cover;
+        border-radius: 6px;
+        border: 1px solid var(--hh-line);
+        display: block;
+      }
+      .discnote {
+        font-size: 0.76rem;
+        color: var(--hh-text-dim);
+      }
+      .termsfacts {
+        border-top: 1px solid var(--hh-line);
+        margin-top: 10px;
+      }
+      .termsfacts p {
+        margin: 8px 0 0;
+      }
+    `,
+  ];
+
+  @state()
+  private quote: QuoteViewRef | null = null;
+  @state()
+  private accepted: AcceptanceRef | null = null;
+  @state()
+  private error = "";
+  @state()
+  private fatal = "";
+  @state()
+  private busy = false;
+  @state()
+  private typedName = "";
+  @state()
+  private affirmed = false;
+  /** Line thumbnails fetched through the image read, by image reference. */
+  @state()
+  private thumbs: Map<string, string> = new Map();
+
+  private readonly client: PublicQuoteClient;
+  private token = "";
+  private autoPrint = false;
+  /** Object URLs minted for thumbnails; revoked when the next load replaces them. */
+  private thumbUrls: string[] = [];
+
+  constructor() {
+    super();
+    // Same origin, same origin relative calls, and no header provider at all:
+    // a customer on a share link holds no credential to attach.
+    this.client = new PublicQuoteClient(new ApiClient({ baseUrl: "" }));
+  }
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    const params = new URLSearchParams(location.search);
+    this.token = params.get("t") ?? "";
+    // The staff print action opens this page and asks the browser to print it
+    // once the quote has rendered. Guarded: a failed load never opens an
+    // empty print dialog.
+    this.autoPrint = params.get("print") === "1";
+    void this.load();
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.revokeThumbs();
+  }
+
+  /** Fire the one-shot print once the loaded quote has painted. */
+  updated(): void {
+    if (this.autoPrint && this.quote) {
+      this.autoPrint = false;
+      try {
+        window.print();
+      } catch {
+        // printing refused: the page itself is the fallback
+      }
+    }
+  }
+
+  private revokeThumbs(): void {
+    for (const url of this.thumbUrls) URL.revokeObjectURL(url);
+    this.thumbUrls = [];
+  }
+
+  private async load(): Promise<void> {
+    if (!this.token) {
+      this.fatal = "This link is missing its access code. Please use the full link you were sent.";
+      return;
+    }
+    const result = await this.client.viewQuote(this.token);
+    if (!result.ok) {
+      // Gone, not found: the link EXISTED and died, or it never did. Say
+      // which, and say what to do next.
+      this.fatal = result.status === 410 ? LINK_GONE : result.status === 404 ? NOT_FOUND : LOAD_FAILED;
+      return;
+    }
+    this.revokeThumbs();
+    this.quote = result.value;
+    void this.fetchThumbs(this.quote);
+  }
+
+  private async fetchThumbs(q: QuoteViewRef): Promise<void> {
+    if (!showsImages(q)) return;
+    const refs = new Set(q.lines.map((l) => l.imageRef).filter((ref): ref is string => ref !== null));
+    const next = new Map<string, string>();
+    for (const ref of refs) {
+      const result = await this.client.productImage(ref);
+      if (!result.ok) continue;
+      // The bytes the image read answers are a fresh ArrayBuffer view; the
+      // type is only wider than the platform's BlobPart.
+      const url = URL.createObjectURL(new Blob([result.value as unknown as BlobPart]));
+      this.thumbUrls.push(url);
+      next.set(ref, url);
+    }
+    this.thumbs = next;
+  }
+
+  private async accept(): Promise<void> {
+    if (this.busy) return;
+    const refusal = acceptanceRefusal(this.typedName, this.affirmed);
+    if (refusal !== null) {
+      this.error = refusal;
+      return;
+    }
+    this.busy = true;
+    this.error = "";
+    try {
+      const result = await this.client.acceptQuote(this.token, this.typedName.trim());
+      if (!result.ok) {
+        if (result.status === 410) {
+          this.fatal = LINK_GONE_SHORT;
+          return;
+        }
+        // The server's refusal is the informative one: an already accepted
+        // quote names its state. Show that rather than replacing it with
+        // canned text, and refresh the page's figures from the source.
+        this.error = result.error || NOT_RECORDED;
+        await this.load();
+        return;
+      }
+      this.accepted = result.value;
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  private when(iso: string): string {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? iso : d.toLocaleString("en-CA");
+  }
+
+  /**
+   * The ONE place the totals block is drawn. Both the quote itself and the
+   * acceptance echo render through here, from the same pure decision, so the
+   * two surfaces cannot drift apart on the question of whether HST is already
+   * in the number.
+   */
+  private renderTotals(m: QuoteMoney): TemplateResult {
+    const block = totalsBlock(m);
+    return html`
+      <div class="totals">
+        ${block.rows.map((r) => (r.grand ? html`<span class="grand">${r.label}</span>` : html`<span>${r.label}</span>`))}
+        ${block.note ? html`<span class="taxnote">${block.note}</span>` : nothing}
+      </div>
+    `;
+  }
+
+  /**
+   * The terms the quote carries, spoken to the customer: the delivery, the
+   * deposit ask, and the staff notes. Every row is conditional: an untouched
+   * quote prints none of this.
+   */
+  private renderTermsFacts(q: QuoteViewRef): typeof nothing | TemplateResult {
+    const delivery = q.fulfillment === "DELIVERY";
+    const deposit = q.depositRequired === true && (q.depositCents ?? 0) > 0;
+    const notes = (q.customerNotes ?? "").trim();
+    if (!delivery && !deposit && !notes) return nothing;
+    return html`<div class="termsfacts">
+      ${delivery
+        ? html`<p class="note">
+            <b>Delivery</b> to ${q.deliveryAddress || "the address on file"}${q.requestedDate
+              ? html` · requested ${q.requestedDate}`
+              : nothing}${(q.deliveryFeeCents ?? 0) > 0
+              ? html` · delivery fee ${formatMoney(q.deliveryFeeCents ?? 0)} (included in the total)`
+              : nothing}
+          </p>`
+        : nothing}
+      ${deposit
+        ? html`<p class="note">
+            <b>Deposit</b>: a ${q.depositPct ?? 0}% deposit of ${formatMoney(q.depositCents ?? 0)} is required to
+            schedule this work.
+          </p>`
+        : nothing}
+      ${notes ? html`<p class="note"><b>Notes</b>: ${notes}</p>` : nothing}
+    </div>`;
+  }
+
+  private renderAccepted(a: AcceptanceRef): TemplateResult {
+    // The confirmation ECHOES the totals, so the customer's own record of what
+    // they agreed to does not depend on their having read the page carefully
+    // before clicking.
+    return html`
+      <div class="card ok">
+        <h2>Thank you: quote ${a.quoteNo} accepted</h2>
+        <p class="sub">Accepted by ${a.typedName} on ${this.when(a.acceptedAt)}.</p>
+        ${this.renderTotals(a)}
+        <p class="note">
+          We have recorded your acceptance and our team will be in touch. Please keep this page or the confirmation for
+          your records.
+        </p>
+      </div>
+    `;
+  }
+
+  private renderAcceptForm(q: QuoteViewRef): typeof nothing | TemplateResult {
+    if (this.accepted) return nothing;
+    if (!q.acceptable) {
+      // The customer reads this alone, with no staff beside them to translate,
+      // so the state is SAID, in the same six states said mid-sentence.
+      return html`<div class="card">
+        <p class="gone">
+          ${q.expired
+            ? `This quote expired on ${q.validUntil} and can no longer be accepted online. Please contact us for an updated quote.`
+            : `This quote is ${quoteStatusPhrase(q.status)} and is not awaiting acceptance.`}
+        </p>
+      </div>`;
+    }
+    return html`
+      <div class="card">
+        <h2 class="card-h2">Accept this quote</h2>
+        <label for="name">Your full name</label>
+        <input
+          id="name"
+          type="text"
+          autocomplete="name"
+          .value=${this.typedName}
+          @input=${(e: Event) => {
+            this.typedName = (e.target as HTMLInputElement).value;
+          }}
+        />
+        <div class="check">
+          <input
+            id="affirm"
+            type="checkbox"
+            .checked=${this.affirmed}
+            @change=${(e: Event) => {
+              this.affirmed = (e.target as HTMLInputElement).checked;
+            }}
+          />
+          <label for="affirm" class="check-label">
+            I accept this quote for ${acceptanceAmountPhrase(q)} and confirm I am authorised to do so on behalf of
+            ${q.customerName}.
+          </label>
+        </div>
+        <button ?disabled=${this.busy} @click=${() => void this.accept()}>
+          ${this.busy ? "Recording…" : "Accept quote"}
+        </button>
+        ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}
+        <p class="note">
+          Accepting records your typed name, the date and time, and the link you used. This is an electronic
+          acceptance: we do not collect a handwritten signature.
+        </p>
+      </div>
+    `;
+  }
+
+  render(): TemplateResult {
+    if (this.fatal) {
+      return html`<div class="card"><p class="gone">${this.fatal}</p></div>`;
+    }
+    const q = this.quote;
+    if (!q) return html`<p class="sub">Loading your quote…</p>`;
+    const withImages = showsImages(q);
+    return html`
+      <h1>Quote #${q.quoteNo}</h1>
+      <div class="sub">
+        Prepared for ${q.customerName} · as of ${this.when(q.asOf)}
+        ${q.validUntil ? html` · ${q.expired ? "expired" : "valid until"} ${q.validUntil}` : nothing}
+      </div>
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              ${withImages ? html`<th></th>` : nothing}
+              <th>Item</th>
+              <th class="num">Qty</th>
+              <th>UoM</th>
+              <th class="num">Unit</th>
+              <th class="num">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${q.lines.map(
+              (l) => html`<tr>
+                ${withImages
+                  ? html`<td>
+                      ${l.imageRef && this.thumbs.get(l.imageRef)
+                        ? html`<img
+                            class="thumb"
+                            src=${this.thumbs.get(l.imageRef)}
+                            alt=""
+                            loading="lazy"
+                            width="36"
+                            height="36"
+                          />`
+                        : nothing}
+                    </td>`
+                  : nothing}
+                <td>
+                  ${l.description}
+                  ${(l.discPct ?? 0) > 0 ? html`<div class="discnote">${l.discPct}% discount applied</div>` : nothing}
+                </td>
+                <td class="num">${l.qtyEntered}</td>
+                <td>${l.uomEntered}</td>
+                <td class="num">${formatMoney(l.unitPriceCents)}</td>
+                <td class="num">${formatMoney(l.lineTotalCents)}</td>
+              </tr>`,
+            )}
+          </tbody>
+        </table>
+        ${this.renderTermsFacts(q)}
+        ${this.renderTotals(q)}
+      </div>
+      ${this.accepted ? this.renderAccepted(this.accepted) : this.renderAcceptForm(q)}
+    `;
+  }
+}
+
+defineElement("pd-quote-public", QuotePublicPage);
+
+declare global {
+  interface HTMLElementTagNameMap {
+    "pd-quote-public": QuotePublicPage;
+  }
+}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Your Quote: Hardscape House</title>
+    <!-- This page is reached by an opaque share-link token and runs BEFORE any
+         authentication: there is no session, no nav shell and no toast host, so
+         the component surfaces all feedback inline. The token in the link is the
+         credential; no other credential exists here. -->
+    <!-- Pin LIGHT unconditionally, before the stylesheet link so no mode ever
+         flashes. Deliberately NOT a preference-reading bootstrap: this page is
+         pre-auth, so there is no session and no theme preference that could
+         belong to the person reading it. A customer document must look
+         identical to everyone and must print correctly. One line, no branching
+         (the ERP's own DIB-399 ruling, carried). -->
+    <script>
+      document.documentElement.setAttribute('data-theme', 'light');
+    </script>
+  </head>
+  <body>
+    <pd-quote-public></pd-quote-public>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

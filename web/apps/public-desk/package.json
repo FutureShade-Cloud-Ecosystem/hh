@@ -1,0 +1,24 @@
+{
+  "name": "@hardscapehouse/public-desk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Public Desk micro-app: the customer's quote page on a share link token, its lines, its terms, and the typed name acceptance. Pre-auth by rule: the token in the link is the credential, so no session code and no staff token ride this bundle",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs test/sinks.test.mjs"
+  },
+  "dependencies": {
+    "@hardscapehouse/api-client": "0.0.0",
+    "@hardscapehouse/design-system": "0.0.0",
+    "lit": "3.3.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.20.4",
+    "typescript": "5.9.3",
+    "vite": "8.3.1"
+  }
+}
