@@ -94,11 +94,11 @@ test("thumbnail object URLs live until the page goes: a refused accept never rev
   await page.goto(`/?t=${GOOD_TOKEN}`);
   const thumbs = page.locator("img.thumb");
   await expect(thumbs).toHaveCount(3);
-  await page.route("**/accept", (route) => route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "This quote has already been accepted." }) }));
+  await page.route("**/accept", (route) => route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "quote: this quote is not awaiting acceptance (it is SENT)" }) }));
   await page.locator("#name").fill("Sample Customer");
   await page.locator("#affirm").check();
   await page.getByRole("button", { name: "Accept quote" }).click();
-  await expect(page.getByRole("alert")).toContainText("already been accepted");
+  await expect(page.getByRole("alert")).toHaveText("This quote cannot be accepted right now. Please contact us.");
   // The refused accept reloaded the quote: every image still points at a live
   // URL and nothing was revoked.
   await expect(thumbs).toHaveCount(3);
@@ -271,15 +271,16 @@ test("a second accept is shown as already accepted", async ({ page }) => {
   await expect(page.locator("svg.okmark")).toHaveCount(1);
   await expect(page.locator("#name")).toHaveCount(0);
 
-  // A link whose accept refuses meets the server's own words, inline: the
-  // page shows the refusal rather than replacing it with canned text.
+  // A link whose accept refuses gets the page's OWN sentence, inline: the
+  // core's refusal is written for staff and never reaches a customer.
   await page.goto("/?t=q-refuse-27");
   await page.locator("#name").fill("Sample Customer");
   await page.locator("#affirm").check();
   const posted = acceptCall(page);
   await page.getByRole("button", { name: "Accept quote" }).click();
   await posted;
-  await expect(page.getByRole("alert")).toContainText("This quote has already been accepted.");
+  await expect(page.getByRole("alert")).toHaveText("This quote cannot be accepted right now. Please contact us.");
+  await expect(page.locator("body")).not.toContainText(/not awaiting acceptance|quote:/);
 
   // A quote that was accepted elsewhere loads in the accepted state too.
   await page.goto("/?t=q-accepted-26");
@@ -332,8 +333,16 @@ test("no credential header rides any call, every call is a public route or the i
 // other failure is an unknown outcome, said as such, and a retry is safe: it
 // carries the same idempotency key, so the server never records it twice.
 const UNCONFIRMED =
-  "We could not confirm whether your acceptance was recorded. Trying again is safe: it will not be recorded twice.";
+  "We could not confirm whether your acceptance was recorded. Trying again with the same name is safe: it will not be recorded twice.";
 const NOT_RECORDED_SUFFIX = "Your acceptance was not recorded.";
+// The page's own sentences for a definite refusal: the core's words are written for staff.
+const CANNOT_ACCEPT = "This quote cannot be accepted right now. Please contact us.";
+const CHECK_FIELDS = "Please check your full name and the confirmation, then try again.";
+const REFUSED_GENERIC = "We could not accept this quote right now. Please contact us.";
+const NOT_FOUND_SENTENCE = "We could not find this quote. Please check the link you were sent.";
+const REPEAT_NOTE =
+  "This quote was already accepted. Accepting again with the same name confirms the earlier acceptance; a different name records another acceptance.";
+const STAFF_WORDS = /convert it at the counter|administrator|quote:|acceptance settings|order SO-1/i;
 
 async function readyToAccept(page: Page, token: string): Promise<void> {
   await page.goto(`/?t=${token}`);
@@ -380,11 +389,12 @@ test("an accept answered by a proxy's HTML page shows neither the page nor its h
   await expectFormKept(page);
 });
 
-test("a refusal that carries the server's JSON error envelope shows the server's words", async ({ page }) => {
+test("a 4xx refusal that carries the JSON error envelope is said in the page's own words, never the core's", async ({ page }) => {
   await readyToAccept(page, "q-terms-28");
-  await page.route("**/accept", (route) => route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: "The typed name must match the contact on the quote." }) }));
+  await page.route("**/accept", (route) => route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: "quote: staff only wording about the contact on the quote" }) }));
   await page.getByRole("button", { name: "Accept quote" }).click();
-  await expect(page.getByRole("alert")).toHaveText(`The typed name must match the contact on the quote. ${NOT_RECORDED_SUFFIX}`);
+  await expect(page.getByRole("alert")).toHaveText(`${REFUSED_GENERIC} ${NOT_RECORDED_SUFFIX}`);
+  await expect(page.locator("body")).not.toContainText("staff only wording");
 });
 
 test("the whole network going down after the quote loaded keeps the quote and the typed name", async ({ page, context }) => {
@@ -477,16 +487,16 @@ test("two synchronous clicks send one POST: the busy guard stands alone, before 
   expect(posts()).toBe(1);
 });
 
-test("a definite refusal is final whatever the re-read does: the server's words, kept page, only a dead link replaces it", async ({ page }) => {
+test("a definite refusal is final whatever the re-read does: the page's own sentence, kept page, only a dead link replaces it", async ({ page }) => {
   await readyToAccept(page, "q-terms-28");
   await page.route("**/accept", (route) =>
-    route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "This quote has already been accepted." }) }),
+    route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "quote: this quote is not awaiting acceptance (it is SENT)" }) }),
   );
   await page.route("**/api/public/v1/quotes/q-terms-28", (route) =>
     route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) }),
   );
   await page.getByRole("button", { name: "Accept quote" }).click();
-  await expect(page.getByRole("alert")).toHaveText(`This quote has already been accepted. ${NOT_RECORDED_SUFFIX}`);
+  await expect(page.getByRole("alert")).toHaveText(CANNOT_ACCEPT);
   await expectFormKept(page);
   await expect(page.getByText("Quote link unavailable")).toHaveCount(0);
 });
@@ -581,7 +591,7 @@ test("multi-accept on: a failed repeat accept, with the quote already ACCEPTED b
   await expect(page.getByRole("button", { name: "Accept quote" })).toBeEnabled();
 });
 
-test("multi-accept on: an ACCEPTED quote that is still acceptable says it was already accepted and that accepting again records another", async ({ page }) => {
+test("multi-accept on: an ACCEPTED quote that is still acceptable says what accepting again does, by name", async ({ page }) => {
   await page.route("**/api/public/v1/quotes/q-terms-28", async (route) => {
     const response = await route.fetch();
     const body = (await response.json()) as { status: string; acceptable: boolean };
@@ -591,7 +601,8 @@ test("multi-accept on: an ACCEPTED quote that is still acceptable says it was al
   });
   await page.goto("/?t=q-terms-28");
   await expect(page.getByRole("heading", { name: "Accept this quote" })).toBeVisible();
-  await expect(page.getByText("This quote was already accepted. Accepting again records another acceptance.")).toBeVisible();
+  await expect(page.getByText(REPEAT_NOTE)).toBeVisible();
+  await expect(page.getByText("Accepting again records another acceptance")).toHaveCount(0);
 });
 
 test("a quote still awaiting its first acceptance carries no repeat note", async ({ page }) => {
@@ -750,7 +761,7 @@ test("a different typed name sends a different key and, with multi-accept on, a 
   await expect(page.getByRole("heading", { name: "Thank you: quote Q-28 accepted" })).toBeVisible();
 
   await page.reload();
-  await expect(page.getByText("Accepting again records another acceptance.")).toBeVisible();
+  await expect(page.getByText(REPEAT_NOTE)).toBeVisible();
   await page.locator("#name").fill("Another Customer");
   await page.locator("#affirm").check();
   await page.getByRole("button", { name: "Accept quote" }).click();
@@ -774,11 +785,11 @@ test("the key is the typed name AS SENT: stray white space around it does not ch
   expect(keys[0]).toBe(expectedKey("q-terms-28", "Sample Customer"));
 });
 
-test("a definite refusal says it was not recorded, in the server's words, and keeps the form", async ({ page }) => {
-  for (const [status, words] of [
-    [400, "the acceptance carries no typed name"],
-    [409, "This quote has already been accepted."],
-    [404, "not found"],
+test("a definite 400 or 404 says it was not recorded, in the page's own words, and keeps the form", async ({ page }) => {
+  for (const [status, words, sentence] of [
+    [400, "enter your full name to accept this quote", CHECK_FIELDS],
+    [400, "Idempotency-Key must be a UUID", CHECK_FIELDS],
+    [404, "not found", NOT_FOUND_SENTENCE],
   ] as const) {
     await page.unroute("**/accept");
     await readyToAccept(page, "q-terms-28");
@@ -786,7 +797,8 @@ test("a definite refusal says it was not recorded, in the server's words, and ke
       route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ error: words }) }),
     );
     await page.getByRole("button", { name: "Accept quote" }).click();
-    await expect(page.getByRole("alert")).toHaveText(`${words}${words.endsWith(".") ? "" : "."} ${NOT_RECORDED_SUFFIX}`);
+    await expect(page.getByRole("alert")).toHaveText(`${sentence} ${NOT_RECORDED_SUFFIX}`);
+    await expect(page.locator("body")).not.toContainText(words);
     await expectFormKept(page);
   }
 });
@@ -854,4 +866,305 @@ test("crypto.subtle absent: the fallback key is one random UUID, stable across r
   expect(keys[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   expect(keys[1]).toBe(keys[0]);
   expect(keys[0]).not.toBe(expectedKey("q-key-nosubtle", "Sample Customer"));
+});
+
+// -- round four, the second pass: an unknown outcome locks the name, a definite
+// refusal never shows staff wording, an envelope-less 4xx is unknown, and a
+// dead link after an unknown outcome re-sends the keyed accept to learn it.
+
+interface SentAccept {
+  key: string | undefined;
+  typedName: string | undefined;
+}
+
+/** Every accept POST the page sends: its key and the typed name in its body. */
+function trackAccepts(page: Page): SentAccept[] {
+  const sent: SentAccept[] = [];
+  page.on("request", (request) => {
+    if (request.method() !== "POST" || !request.url().endsWith("/accept")) return;
+    const body = JSON.parse(request.postData() ?? "{}") as { typed_name?: string };
+    sent.push({ key: request.headers()["idempotency-key"], typedName: body.typed_name });
+  });
+  return sent;
+}
+
+/** A person (or a tampered page) forcing a new name into a locked field. */
+async function forceName(page: Page, name: string): Promise<void> {
+  await page.locator("pd-quote-public").evaluate((host, value) => {
+    const input = host.shadowRoot?.querySelector<HTMLInputElement>("#name");
+    if (input === null || input === undefined) throw new Error("no name field");
+    input.readOnly = false;
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }, name);
+}
+
+test("after an unknown outcome the name is locked and says why, and a retry carries the same name and key", async ({ page }) => {
+  const token = "q-lock-keys";
+  const sent = trackAccepts(page);
+  await readyToAccept(page, token);
+  await page.route("**/accept", (route) => route.abort("timedout"));
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  await expect(page.getByRole("alert")).toContainText("with the same name");
+
+  // Locked, with the reason on the page.
+  await expect(page.locator("#name")).toHaveJSProperty("readOnly", true);
+  await expect(page.locator("#name")).toHaveValue("Sample Customer");
+  await expect(page.getByText(/name is kept as you first entered it/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accept quote" })).toBeEnabled();
+
+  // Even if the field is forced open and edited, nothing but the first name and key is ever sent.
+  await forceName(page, "Another Customer");
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect.poll(() => sent.length).toBe(2);
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect.poll(() => sent.length).toBe(3);
+  for (const attempt of sent) {
+    expect(attempt.key).toBe(expectedKey(token, "Sample Customer"));
+    expect(attempt.typedName).toBe("Sample Customer");
+  }
+  await expect(page.locator("#name")).toHaveValue("Sample Customer");
+});
+
+test("an unknown outcome that later shows the quote accepted closes the form: nothing is left to lock", async ({ page }) => {
+  const token = "q-lock-refusal";
+  await readyToAccept(page, token);
+  const abandoned = await abandonFirstAccept(page);
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  await expect(page.locator("#name")).toHaveJSProperty("readOnly", true);
+  // The abandoned request commits late; the retry replays it and the page ends on the accepted state.
+  await commitLate(page, token, abandoned() as Abandoned);
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("heading", { name: "Thank you: quote Q-28 accepted" })).toBeVisible();
+  expect(await acceptanceRows(page, token)).toHaveLength(1);
+});
+
+test("a definite refusal after an unknown outcome unlocks the name, and a new name then sends a new key", async ({ page }) => {
+  const sent = trackAccepts(page);
+  await readyToAccept(page, "q-terms-28");
+  await page.route("**/accept", (route) => route.abort("timedout"));
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  await expect(page.locator("#name")).toHaveJSProperty("readOnly", true);
+
+  await page.unroute("**/accept");
+  await page.route("**/accept", (route) =>
+    route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: "name is too long" }) }),
+  );
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText(`${CHECK_FIELDS} ${NOT_RECORDED_SUFFIX}`);
+  await expect(page.locator("#name")).toHaveJSProperty("readOnly", false);
+  await expect(page.getByText(/name is kept as you first entered it/)).toHaveCount(0);
+
+  await page.locator("#name").fill("Another Customer");
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect.poll(() => sent.length).toBe(3);
+  expect(sent[2]?.typedName).toBe("Another Customer");
+  expect(sent[2]?.key).toBe(expectedKey("q-terms-28", "Another Customer"));
+  expect(sent[2]?.key).not.toBe(sent[0]?.key);
+});
+
+test("a fresh page has an editable name", async ({ page }) => {
+  await page.goto("/?t=q-terms-28");
+  await expect(page.locator("#name")).toHaveJSProperty("readOnly", false);
+  await expect(page.getByText(/name is kept as you first entered it/)).toHaveCount(0);
+});
+
+test("a 409 whose re-read shows ACCEPTED ends on the closed accepted card, with no staff wording anywhere", async ({ page }) => {
+  const token = "q-stale-tab";
+  await page.goto(`/?t=${token}`);
+  await expect(page.getByRole("heading", { name: "Quote #Q-28" })).toBeVisible();
+  // Someone else accepts with another name while this tab is open: multi-accept is off.
+  const other = await page.request.post(ACCEPT_PATH(token), {
+    headers: { "content-type": "application/json" },
+    data: { typed_name: "Another Customer", accepted: true },
+  });
+  expect(other.status()).toBe(200);
+  await page.locator("#name").fill("Sample Customer");
+  await page.locator("#affirm").check();
+  const refused = page.waitForResponse((r) => r.url().endsWith("/accept") && r.status() === 409);
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  // The stub serves the core's real staff wording; the customer never sees it.
+  const words = ((await (await refused).json()) as { error: string }).error;
+  expect(words).toMatch(STAFF_WORDS);
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator("#name")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Accept quote" })).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText(STAFF_WORDS);
+  await expect(page.locator("pd-quote-public")).not.toContainText(STAFF_WORDS);
+  await expect(page.getByText("not recorded", { exact: false })).toHaveCount(0);
+});
+
+test("a 409 whose re-read shows CONVERTED also ends on the closed accepted card", async ({ page }) => {
+  await readyToAccept(page, "q-terms-28");
+  await page.route("**/accept", (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "quote: this quote was already accepted as order SO-1 on today and is CONVERTED, open that order to keep working, or have an administrator allow accepting a quote more than once in the acceptance settings" }),
+    }),
+  );
+  let reads = 0;
+  await page.route("**/api/public/v1/quotes/q-terms-28", async (route) => {
+    reads += 1;
+    const response = await route.fetch();
+    const body = (await response.json()) as { status: string; acceptable: boolean };
+    if (reads > 0) {
+      body.status = "CONVERTED";
+      body.acceptable = false;
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator("pd-quote-public")).not.toContainText(STAFF_WORDS);
+});
+
+test("a 409 whose re-read shows ACCEPTED yet still acceptable ends on the closed accepted card, not the form", async ({ page }) => {
+  await readyToAccept(page, "q-terms-28");
+  await page.route("**/accept", (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "quote: this quote was already ACCEPTED on today and is waiting to become an order, convert it at the counter" }),
+    }),
+  );
+  await page.route("**/api/public/v1/quotes/q-terms-28", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { status: string; acceptable: boolean };
+    body.status = "ACCEPTED";
+    body.acceptable = true;
+    await route.fulfill({ response, json: body });
+  });
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
+  await expect(page.locator("#name")).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("an unknown outcome whose re-read shows CONVERTED ends on the closed accepted card", async ({ page }) => {
+  await readyToAccept(page, "q-terms-28");
+  await page.route("**/accept", (route) =>
+    route.fulfill({ status: 504, contentType: "text/html", body: "<html><body>504</body></html>" }),
+  );
+  await page.route("**/api/public/v1/quotes/q-terms-28", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { status: string; acceptable: boolean };
+    body.status = "CONVERTED";
+    body.acceptable = false;
+    await route.fulfill({ response, json: body });
+  });
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("a 409 for a quote that is expired ends on the closed expired card, in the page's words", async ({ page }) => {
+  await readyToAccept(page, "q-terms-28");
+  await page.route("**/accept", (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "quote: this quote expired on today, request an updated quote" }),
+    }),
+  );
+  await page.route("**/api/public/v1/quotes/q-terms-28", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { acceptable: boolean; expired: boolean };
+    body.acceptable = false;
+    body.expired = true;
+    await route.fulfill({ response, json: body });
+  });
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("heading", { name: "Acceptance closed" })).toBeVisible();
+  await expect(page.getByText(/can no longer be accepted online/)).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator("pd-quote-public")).not.toContainText(/request an updated quote/);
+});
+
+test("the closed card of an accepted quote that is also expired says one thing, not two", async ({ page }) => {
+  await page.route("**/api/public/v1/quotes/q-accepted-26", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { expired: boolean };
+    body.expired = true;
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto("/?t=q-accepted-26");
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
+  await expect(page.getByText("This quote is accepted and is not awaiting acceptance.")).toBeVisible();
+  await expect(page.locator("pd-quote-public")).not.toContainText(/expired on|can no longer be accepted online/);
+});
+
+for (const [token, status] of [
+  ["q-proxy-403", 403],
+  ["q-proxy-408", 408],
+  ["q-proxy-429", 429],
+] as const) {
+  test(`a proxy's HTML ${status} with no JSON envelope is an unknown outcome: re-read, unconfirmed, never not recorded`, async ({ page }) => {
+    await readyToAccept(page, token);
+    let reads = 0;
+    await page.route(`**/api/public/v1/quotes/${token}`, async (route) => {
+      reads += 1;
+      await route.continue();
+    });
+    await page.route("**/accept", (route) =>
+      route.fulfill({ status, contentType: "text/html", body: `<html><body><h1>${status}</h1><p>edge.internal.example</p></body></html>` }),
+    );
+    await page.getByRole("button", { name: "Accept quote" }).click();
+    await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+    await expect(page.getByRole("alert")).not.toContainText(/not recorded/i);
+    await expect(page.locator("body")).not.toContainText("edge.internal.example");
+    // The initial read, and the re-read of an unknown outcome.
+    expect(reads).toBe(1);
+    await expect(page.locator("#name")).toHaveJSProperty("readOnly", true);
+  });
+}
+
+test("the link dying after a landed accept: the re-read says gone, the keyed re-send learns it landed", async ({ page }) => {
+  const token = "q-dead-landed";
+  const sent = trackAccepts(page);
+  await readyToAccept(page, token);
+  await page.route("**/accept", async (route) => {
+    if (sent.length > 1) {
+      await route.continue();
+      return;
+    }
+    // The first accept commits at the core, then the answer is lost and the link is revoked.
+    await route.fetch();
+    await page.request.post(`/_stub/revoke?token=${token}`);
+    await route.abort("connectionreset");
+  });
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("heading", { name: "Thank you: quote Q-28 accepted" })).toBeVisible();
+  await expect(page.getByText("Quote link unavailable")).toHaveCount(0);
+  expect(sent).toHaveLength(2);
+  expect(sent[1]?.key).toBe(sent[0]?.key);
+  expect(sent[1]?.typedName).toBe(sent[0]?.typedName);
+  expect(await acceptanceRows(page, token)).toHaveLength(1);
+});
+
+test("the link dying after an accept that never landed: the keyed re-send answers 410 and the dead link card shows", async ({ page }) => {
+  const token = "q-dead-unrecorded";
+  const sent = trackAccepts(page);
+  await readyToAccept(page, token);
+  await page.route("**/accept", async (route) => {
+    if (sent.length > 1) {
+      await route.continue();
+      return;
+    }
+    await page.request.post(`/_stub/revoke?token=${token}`);
+    await route.abort("timedout");
+  });
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByText("Quote link unavailable")).toBeVisible();
+  await expect(page.getByText(/no longer valid/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Thank you/ })).toHaveCount(0);
+  expect(sent).toHaveLength(2);
+  expect(sent[1]?.key).toBe(sent[0]?.key);
+  expect(await acceptanceRows(page, token)).toHaveLength(0);
 });

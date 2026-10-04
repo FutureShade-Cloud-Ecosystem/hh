@@ -56,7 +56,9 @@ export interface AcceptKeys {
  * context), derivation is impossible, so the fallback is one random UUID per
  * distinct acceptance (token and typed name) kept IN MEMORY for the page's
  * life: retries within this page life still share a key, though a reload gets
- * a fresh one. Memory only, never storage.
+ * a fresh one. Memory only, never storage. An insecure context therefore loses
+ * the key on reload, which is accepted: the page is served over HTTPS only
+ * (crypto.subtle is always present there).
  */
 export function createAcceptKeys(cryptoImpl: Crypto | undefined = globalThis.crypto): AcceptKeys {
   const remembered = new Map<string, string>();

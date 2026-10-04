@@ -33,7 +33,8 @@ import {
   isDefiniteRefusal,
   isKeyReuseRefusal,
   PublicQuoteClient,
-  serverWords, type AcceptanceRef, type QuoteViewRef,
+  type AcceptanceRef,
+  type QuoteViewRef,
 } from "./quote-client.js";
 
 const LINK_GONE =
@@ -44,8 +45,19 @@ const LOAD_FAILED = "We could not load this quote right now. Please try again sh
 // Said ONLY after the server's own definite refusal. Every other failure is an
 // unknown outcome: the retry carries the same idempotency key, so it is safe.
 const NOT_RECORDED = "Your acceptance was not recorded.";
+// "With the same name": the key is the token plus the typed name, so a new name is a
+// new acceptance. The name field is locked while the outcome is unknown.
 const UNCONFIRMED =
-  "We could not confirm whether your acceptance was recorded. Trying again is safe: it will not be recorded twice.";
+  "We could not confirm whether your acceptance was recorded. Trying again with the same name is safe: it will not be recorded twice.";
+const NAME_LOCKED =
+  "Your name is kept as you first entered it until we know whether your acceptance was recorded, so a retry counts as the same acceptance. Reload this page to change it.";
+// The core words its refusals for staff ("convert it at the counter", "ask an administrator"), so
+// the customer only ever reads these sentences, chosen by status, never the server's text.
+const CANNOT_ACCEPT = "This quote cannot be accepted right now. Please contact us.";
+const CHECK_FIELDS = "Please check your full name and the confirmation, then try again.";
+const REFUSED_GENERIC = "We could not accept this quote right now. Please contact us.";
+const REPEAT_NOTE =
+  "This quote was already accepted. Accepting again with the same name confirms the earlier acceptance; a different name records another acceptance.";
 const KEY_REUSED =
   "This quote was already accepted with a different name on this attempt, so nothing more was recorded.";
 
@@ -291,6 +303,13 @@ export class QuotePublicPage extends HHElement {
   private keyReused = false;
   @state()
   private typedName = "";
+  /**
+   * The first attempt's name while its outcome is UNKNOWN, else null. The key is the token plus
+   * the typed name, so only this name keeps a retry the same acceptance: the field is read only
+   * and every retry sends this name and its key. Cleared when the outcome becomes known.
+   */
+  @state()
+  private lockedName: string | null = null;
   @state()
   private affirmed = false;
   /** Line thumbnails fetched through the image read, by image reference. */
@@ -359,8 +378,21 @@ export class QuotePublicPage extends HHElement {
     if (action !== null && action.getAttribute("data-action") === "accept") void this.accept();
   };
 
+  /**
+   * The name lock is applied here, not bound in the template (the design system's template
+   * gate allows no property bindings): the field reads only, and shows the locked name.
+   */
+  private syncNameLock(): void {
+    const input = this.renderRoot.querySelector<HTMLInputElement>("#name");
+    if (input === null) return;
+    const locked = this.lockedName !== null;
+    if (input.readOnly !== locked) input.readOnly = locked;
+    if (this.lockedName !== null && input.value !== this.lockedName) input.value = this.lockedName;
+  }
+
   /** Fire the one-shot print once the loaded quote has painted. */
   updated(): void {
+    this.syncNameLock();
     if (this.autoPrint && this.quote) {
       this.autoPrint = false;
       try {
@@ -413,7 +445,7 @@ export class QuotePublicPage extends HHElement {
    * the customer is looking at: only a dead link does, any other failure
    * leaves the quote and the typed name where they are.
    */
-  private async load(refresh = false): Promise<boolean> {
+  private async load(refresh = false, holdGone = false): Promise<boolean | "gone"> {
     if (!this.token) {
       this.fatal = "This link is missing its access code. Please use the full link you were sent.";
       return false;
@@ -421,6 +453,9 @@ export class QuotePublicPage extends HHElement {
     const result = await this.client.viewQuote(this.token);
     if (!result.ok) {
       if (refresh && result.status !== 410 && result.status !== 404) return false;
+      // A dead link on the re-read of an unknown outcome is not shown yet: the caller learns the
+      // outcome first (the core replays a keyed accept through a dead link).
+      if (holdGone && result.status === 410) return "gone";
       // Gone, not found: the link EXISTED and died, or it never did. Say
       // which, and say what to do next.
       this.fatal = result.status === 410 ? LINK_GONE : result.status === 404 ? NOT_FOUND : LOAD_FAILED;
@@ -461,7 +496,9 @@ export class QuotePublicPage extends HHElement {
     this.error = "";
     const before = this.quote?.status;
     try {
-      const typedName = this.typedName.trim();
+      // While an outcome is unknown the first attempt's name is the only name ever sent, so the
+      // key is the same one and the server answers a repeat with the first outcome.
+      const typedName = this.lockedName ?? this.typedName.trim();
       const key = await this.acceptKeys.keyFor(this.token, typedName);
       const result = await this.client.acceptQuote(this.token, typedName, key);
       if (!result.ok) {
@@ -481,17 +518,38 @@ export class QuotePublicPage extends HHElement {
           return;
         }
         if (isDefiniteRefusal(result)) {
-          // The server's own refusal, in its envelope: nothing was recorded,
-          // and the page may say so, in the server's words.
-          this.error = `${withFullStop(serverWords(result) ?? "")} ${NOT_RECORDED}`;
+          // The server's own refusal, in its envelope: this attempt recorded nothing, and the
+          // outcome is known, so the name unlocks. The words are the page's own, by status.
+          this.lockedName = null;
+          if (result.status === 409) {
+            // The quote may have been accepted by an earlier attempt or another tab: ask it.
+            await this.load(true);
+            if (this.fatal !== "") return;
+            const now = this.quote;
+            if (now !== null && (now.status === "ACCEPTED" || now.status === "CONVERTED")) {
+              this.landed = true;
+              this.error = "";
+              return;
+            }
+            this.error = CANNOT_ACCEPT;
+            return;
+          }
+          const sentence = result.status === 400 ? CHECK_FIELDS : result.status === 404 ? NOT_FOUND : REFUSED_GENERIC;
+          this.error = `${sentence} ${NOT_RECORDED}`;
           return;
         }
         // Anything else may hide a recorded acceptance (a proxy's page after
         // the core committed, a body lost on the way back, a request that
         // timed out here and commits there later), so the outcome is UNKNOWN.
         // A re-read showing SENT does not prove nothing was recorded, so the
-        // page never says it; the retry carries the same key and is safe.
-        const reread = await this.load(true);
+        // page never says it; the retry carries the same key and name, so it is safe.
+        this.lockedName = typedName;
+        this.typedName = typedName;
+        const reread = await this.load(true, true);
+        if (reread === "gone") {
+          await this.learnThroughDeadLink(typedName, key);
+          return;
+        }
         if (this.fatal !== "") return;
         const now = this.quote;
         if (reread && now !== null && before === "SENT" && (now.status === "ACCEPTED" || now.status === "CONVERTED")) {
@@ -509,6 +567,20 @@ export class QuotePublicPage extends HHElement {
     } finally {
       this.busy = false;
     }
+  }
+
+  /**
+   * The re-read of an unknown outcome found the link dead. The core replays a keyed accept through
+   * a dead link (a 200 is the first outcome, read only; a 410 means nothing was recorded under this
+   * key), so the same keyed accept is sent once to learn which.
+   */
+  private async learnThroughDeadLink(typedName: string, key: string): Promise<void> {
+    const result = await this.client.acceptQuote(this.token, typedName, key);
+    if (result.ok) {
+      this.accepted = result.value;
+      return;
+    }
+    this.fatal = LINK_GONE;
   }
 
   private when(iso: string): string {
@@ -609,7 +681,7 @@ export class QuotePublicPage extends HHElement {
         <h2>${acceptedElsewhere ? this.renderOkMark() : nothing}${acceptedElsewhere ? "Already accepted" : "Acceptance closed"}</h2>
         ${this.keyReused ? html`<p class="gone">${KEY_REUSED}</p>` : nothing}
         <p class="gone">
-          ${q.expired
+          ${q.expired && !acceptedElsewhere
             ? `This quote expired on ${q.validUntil} and can no longer be accepted online. Please contact us for an updated quote.`
             : `This quote is ${quoteStatusPhrase(q.status)} and is not awaiting acceptance.`}
         </p>
@@ -618,11 +690,10 @@ export class QuotePublicPage extends HHElement {
     return html`
       <div class="card">
         <h2 class="card-h2">Accept this quote</h2>
-        ${q.status === "ACCEPTED" || q.status === "CONVERTED"
-          ? html`<p class="note">This quote was already accepted. Accepting again records another acceptance.</p>`
-          : nothing}
+        ${q.status === "ACCEPTED" || q.status === "CONVERTED" ? html`<p class="note">${REPEAT_NOTE}</p>` : nothing}
         <label for="name">Your full name</label>
         <input id="name" type="text" autocomplete="name" />
+        ${this.lockedName !== null ? html`<p class="note">${NAME_LOCKED}</p>` : nothing}
         <div class="check">
           <input id="affirm" type="checkbox" />
           <label for="affirm" class="check-label">

@@ -192,6 +192,14 @@ for (const token of [
   "q-key-names",
   "q-key-nosubtle",
   "q-key-reuse",
+  "q-lock-keys",
+  "q-lock-refusal",
+  "q-stale-tab",
+  "q-proxy-403",
+  "q-proxy-408",
+  "q-proxy-429",
+  "q-dead-landed",
+  "q-dead-unrecorded",
 ]) {
   QUOTES[token] = structuredClone(QUOTES["q-terms-28"]);
 }
@@ -289,8 +297,18 @@ function readBody(request) {
   });
 }
 
-function alreadyAccepted() {
-  return { status: 409, body: { error: "This quote has already been accepted." } };
+// The core's own 409 wording, written for STAFF (acceptcontrols.go, share_repository.go, edit.go): the
+// page must never put any of it in front of a customer, and the suite proves it by serving it as is.
+function refusalFor(quote) {
+  if (quote.status === "ACCEPTED" || quote.status === "CONVERTED") {
+    return {
+      status: 409,
+      body: {
+        error: `quote: this quote was already ${quote.status} on ${nowIso().slice(0, 10)} and is waiting to become an order, convert it at the counter, or have an administrator allow accepting a quote more than once in the acceptance settings`,
+      },
+    };
+  }
+  return { status: 409, body: { error: `quote: this quote is not awaiting acceptance (it is ${quote.status})` } };
 }
 
 const server = createServer(async (request, response) => {
@@ -313,6 +331,11 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  if (request.method === "POST" && path === "/_stub/revoke") {
+    REVOKED_TOKENS.add(url.searchParams.get("token") ?? "");
+    respondJson(response, 200, { ok: true });
+    return;
+  }
   if (request.method === "POST" && path === "/_stub/multi-accept") {
     const token = url.searchParams.get("token") ?? "";
     if (url.searchParams.get("on") === "0") MULTI_TOKENS.delete(token);
@@ -325,12 +348,12 @@ const server = createServer(async (request, response) => {
   if (request.method === "GET" && viewMatch !== null) {
     const token = decodeURIComponent(viewMatch[1]);
     if (REVOKED_TOKENS.has(token)) {
-      respondJson(response, 410, { error: "this share link was turned off" });
+      respondJson(response, 410, { error: "this link is no longer valid, ask for a new link to view this quote" });
       return;
     }
     const quote = QUOTES[token];
     if (quote === undefined) {
-      respondJson(response, 404, { error: "no quote answers on this link" });
+      respondJson(response, 404, { error: "not found" });
       return;
     }
     respondJson(response, 200, quote);
@@ -341,12 +364,27 @@ const server = createServer(async (request, response) => {
   if (request.method === "POST" && acceptMatch !== null) {
     const token = decodeURIComponent(acceptMatch[1]);
     if (REVOKED_TOKENS.has(token)) {
-      respondJson(response, 410, { error: "this share link was turned off" });
+      // The core replays a keyed acceptance through a dead link (the first outcome, read only);
+      // anything else is the 410.
+      const rawDeadKey = request.headers["idempotency-key"];
+      let deadBody = null;
+      try {
+        deadBody = JSON.parse(await readBody(request));
+      } catch {
+        // an unreadable body is the 410
+      }
+      const deadName = typeof deadBody?.typed_name === "string" ? deadBody.typed_name.trim() : "";
+      const first = typeof rawDeadKey === "string" ? KEYED.get(`${token}|${rawDeadKey.toLowerCase()}`) : undefined;
+      if (first !== undefined && first.typedName === deadName) {
+        respondJson(response, 200, first.outcome);
+        return;
+      }
+      respondJson(response, 410, { error: "this link is no longer valid, ask for a new link to view this quote" });
       return;
     }
     const quote = QUOTES[token];
     if (quote === undefined) {
-      respondJson(response, 404, { error: "no quote answers on this link" });
+      respondJson(response, 404, { error: "not found" });
       return;
     }
     const rawKey = request.headers["idempotency-key"];
@@ -359,15 +397,15 @@ const server = createServer(async (request, response) => {
     try {
       body = JSON.parse(await readBody(request));
     } catch {
-      respondJson(response, 400, { error: "the request body is not JSON" });
+      respondJson(response, 400, { error: "malformed request body" });
       return;
     }
     if (body === null || typeof body !== "object" || typeof body.typed_name !== "string" || body.typed_name.trim() === "") {
-      respondJson(response, 400, { error: "the acceptance carries no typed name" });
+      respondJson(response, 400, { error: "enter your full name to accept this quote" });
       return;
     }
     if (body.accepted !== true) {
-      respondJson(response, 400, { error: "the acceptance is not affirmed" });
+      respondJson(response, 400, { error: "you must confirm that you accept this quote" });
       return;
     }
     const typedName = body.typed_name.trim();
@@ -387,7 +425,7 @@ const server = createServer(async (request, response) => {
       }
     }
     if (token === "q-refuse-27" || (quote.status === "ACCEPTED" && !MULTI_TOKENS.has(token))) {
-      const refusal = alreadyAccepted();
+      const refusal = refusalFor(quote);
       respondJson(response, refusal.status, refusal.body);
       return;
     }

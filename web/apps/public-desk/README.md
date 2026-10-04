@@ -49,6 +49,16 @@ tokens. Two deliberate departures, both house rules:
   sent the JSON error envelope). The page carries no copy addressed to its
   builders: everything on it is written for the customer.
 
+## The acceptance key
+
+Every attempt of one acceptance carries the same idempotency key, derived from the
+share token and the typed name with SHA-256, so a retry after a lost answer is
+answered with the first outcome and never recorded twice. While an outcome is
+unknown the name field is locked to the first attempt's name (a new name is a new
+key); it unlocks when the outcome becomes known or the page is reloaded. Without
+`crypto.subtle` (an insecure context) the key is a random UUID kept in memory, so a
+reload loses it; that is accepted because the page is served over HTTPS only.
+
 ## Testing
 
 - `test/unit.test.mjs`: the pure logic in Node, against the workspace's
