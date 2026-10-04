@@ -8,6 +8,8 @@
 // "offer nothing", never "offer everything": an older server that does not
 // send the field must not unlock the whole surface.
 
+import { centsAmount } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
+
 /** The edit field vocabulary the server's editable_fields list carries. */
 export const EDIT_LINE_QTY = "line_qty";
 export const EDIT_LINE_ADD = "line_add";
@@ -145,4 +147,101 @@ export function quoteErrorMessage(status: number | undefined, detail: string, wh
 /** canConvert reads the server's own flag, the one true spelling of it. */
 export function canConvert(view: QuoteView | null): boolean {
   return view?.can_convert === true;
+}
+
+/** The one money word this panel and the history speak: integer cents in, CA$ out, a minus when negative. */
+export function moneyWord(cents: number): string {
+  return `${cents < 0 ? "-" : ""}CA$${centsAmount(cents)}`;
+}
+
+/** validateDate accepts an empty value (which clears the expiry) or a real YYYY-MM-DD date. */
+export function validateDate(raw: string): string | null {
+  const s = raw.trim();
+  if (s === "") return null; // clearing the expiry is deliberate, not an error
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return "Use the date format YYYY-MM-DD.";
+  const d = new Date(`${s}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return "That is not a real date.";
+  // The round trip guards a well formed but non-existent day.
+  if (d.toISOString().slice(0, 10) !== s) return "That is not a real date.";
+  return null;
+}
+
+/** The shortest query the catalogue boxes send, named so the announcement and the call cannot drift. */
+export const CATALOGUE_MIN_QUERY = 2;
+
+/**
+ * catalogHitStatus is what a screen reader hears while typing in a product
+ * search box. Silence is the failure mode: a list that changes under the
+ * cursor with no announcement is nothing to someone who cannot see it.
+ */
+export function catalogHitStatus(opts: { query: string; count: number; subject?: string }): string {
+  const subject = opts.subject !== undefined && opts.subject.trim() !== "" ? opts.subject.trim() : "products";
+  const q = opts.query.trim();
+  if (q.length < CATALOGUE_MIN_QUERY) return `Type at least ${CATALOGUE_MIN_QUERY} characters to search ${subject}.`;
+  if (opts.count === 0) return `No ${subject} match ${q}.`;
+  const one = subject.endsWith("s") ? subject.slice(0, -1) : subject;
+  return `${opts.count} ${opts.count === 1 ? one : subject} match. Use the up and down arrows to choose.`;
+}
+
+/** The discount arm's own bound, mirrored for an immediate answer; blank clears the discount. */
+export function validateDiscPct(raw: string): string | null {
+  const s = raw.trim();
+  if (s === "") return null;
+  const n = Number(s);
+  if (!Number.isInteger(n) || n < 0 || n > 100) return "Discount must be a whole percent from 0 to 100.";
+  return null;
+}
+
+/** Only a quote still being offered can be shared: sharing an accepted or converted one invites an acceptance that can never be honoured. */
+export function isShareable(view: Pick<QuoteView, "status" | "expired">): boolean {
+  return (view.status === "DRAFT" || view.status === "SENT") && !view.expired;
+}
+
+/** Why a quote cannot be shared, or an empty string when it can. */
+export function shareSentence(view: Pick<QuoteView, "status" | "expired">): string {
+  if (isShareable(view)) return "";
+  return view.expired
+    ? "This quote has expired and cannot be shared."
+    : `This quote is ${quoteStatusPhrase(view.status)} and cannot be shared.`;
+}
+
+/** The sentence under a quote the server offers no edit on. */
+export function frozenSentence(view: Pick<QuoteView, "status" | "expired" | "valid_until">): string {
+  return view.expired
+    ? `This quote expired on ${view.valid_until ?? ""} and can no longer be changed.`
+    : `This quote is ${quoteStatusPhrase(view.status)} and can no longer be changed.`;
+}
+
+/** A share link row's state word. */
+export function shareLinkState(link: { live: boolean; revokedAt: string | null }): "Active" | "Revoked" | "Expired" {
+  if (link.live) return "Active";
+  return link.revokedAt !== null ? "Revoked" : "Expired";
+}
+
+/** The comparison row's difference: none for the current line, else a signed amount. */
+export function comparisonDeltaLabel(row: { is_current: boolean; delta_cents: number }): string {
+  if (row.is_current) return "none";
+  return `${row.delta_cents < 0 ? "-" : "+"}${moneyWord(Math.abs(row.delta_cents))}`;
+}
+
+/** The comparison row's basis: the pricing source, or the floor block with its policy. */
+export function comparisonBasis(row: { blocked: boolean; source: string; block_policy?: string }): string {
+  if (!row.blocked) return row.source;
+  return row.block_policy !== undefined && row.block_policy !== "" ? `below floor (${row.block_policy})` : "below floor";
+}
+
+/**
+ * The fulfilment choices at conversion. The default is the empty option, not
+ * Pickup: an unchosen fulfilment says nothing to the server and lets its own
+ * default apply. Delivery is deliberately absent: a delivery is a scheduled
+ * stop booked in dispatch, not a word typed here.
+ */
+export const FULFILMENT_CHOICES: ReadonlyArray<{ value: "" | "WILL_CALL"; label: string }> = [
+  { value: "", label: "Pickup at the counter (default)" },
+  { value: "WILL_CALL", label: "Will-call: hold it on the rack" },
+];
+
+/** The convert request body: empty when nothing was chosen, the choice otherwise. */
+export function convertBody(choice: string): { fulfillment?: "WILL_CALL" } {
+  return choice === "WILL_CALL" ? { fulfillment: "WILL_CALL" } : {};
 }
