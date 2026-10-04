@@ -42,6 +42,17 @@
 //   GET  /api/v1/products/counter-search         -> ProductCounterSearchResults
 //   GET  /api/v1/products/scan                   -> CounterHit | 404
 //   GET  /api/v1/products/{id}/image             -> 404 (the placeholder thumb)
+//   POST /api/v1/quote-assist/extract            -> QuoteAssistExtraction
+//   GET  /api/v1/quote-assist/scope-gaps         -> QuoteAssistScopeGaps
+//   GET  /api/v1/quotes/{id}/followups           -> QuoteFollowUpHistory
+//   POST /api/v1/quotes/{id}/followups/{disable|enable} -> QuoteFollowUpHistory | 409
+//   GET  /api/v1/quotes/{id}/hold-expiry         -> QuoteHoldExpiryView
+//   POST /api/v1/quotes/{id}/holds/resync        -> QuoteHoldResyncResult | 409
+//   GET  /api/v1/quotes/{id}/availability        -> QuoteLineAvailabilityList
+//   GET  /api/v1/quote-availability/{id}/branches -> QuoteBranchStockList
+//   POST /api/v1/staff/policy/check              -> IdentityPolicyCheckResponse
+//   GET  /api/v1/staff/approvals                 -> IdentityApprovalPage
+//   POST /api/v1/staff/approvals/{id}/decide     -> IdentityStatusResponse | 403 | 409
 //
 // The demo routes are public in the contract (security: []), so they check no
 // credential. The staff routes read the minted bearer the way the core's
@@ -253,6 +264,176 @@ const shareLinks = new Map();
 const floorRequests = new Map(); // `${quoteId}:${lineNo}` -> request row
 // The conversions seen, for the suite's fulfilment assertion (scaffolding).
 const conversions = [];
+
+// ---------------------------------------------------------------------------
+// The third coder's panels' world: the assist key switch, the follow-up
+// plans and events, the soft holds, the branch stock, and the approval cards
+// the floor request door files. Every figure is the stub's own, standing in
+// for the core; nothing in the app imports any of it.
+// ---------------------------------------------------------------------------
+
+const BELLEVILLE_ID = "6f1c2b3a-0000-4000-8000-000000000002";
+const seamSwitches = { aiConfigured: false };
+const followPlans = new Map(); // quote id -> plan row
+const followEvents = new Map(); // quote id -> events
+const lapsedHolds = new Map(); // quote id -> expired hold rows
+const approvalCards = new Map(); // request id -> the card the server wrote
+const stockByProduct = new Map(); // product id -> { trenton, belleville }
+const productApps = {
+  "p-holland-60": ["PAVER"],
+  "p-polymer-sand": ["JOINTING"],
+  "p-edge-8": ["EDGING"],
+  "p-wall-std": ["WALL"],
+  "p-clear-stone": ["BASE"],
+};
+function resetSeamWorld() {
+  seamSwitches.aiConfigured = false;
+  followPlans.clear();
+  followEvents.clear();
+  lapsedHolds.clear();
+  approvalCards.clear();
+  stockByProduct.clear();
+  for (const product of PRODUCTS) stockByProduct.set(product.product_id, { trenton: 400, belleville: 400 });
+  // One short product on purpose: the seeded accepted quote asks for three of it.
+  stockByProduct.set("p-clear-stone", { trenton: 2, belleville: 60 });
+}
+resetSeamWorld();
+
+function branchStockRow(productId, branchId, caller) {
+  const stock = stockByProduct.get(productId) ?? { trenton: 0, belleville: 0 };
+  const here = branchId === TRENTON_ID;
+  const available = here ? stock.trenton : stock.belleville;
+  const product = productById.get(productId);
+  return {
+    product_id: productId,
+    branch_id: branchId,
+    branch_code: here ? "TRE" : "BEL",
+    branch_name: here ? "Trenton" : "Belleville",
+    on_hand_base: available,
+    reserved_base: 0,
+    in_transit_base: 0,
+    available_base: available,
+    soft_held_base: 0,
+    ...(switches.callerOnCostList && product !== undefined ? { avg_cost_cents: product.branch_cost_cents[TRENTON_ID] ?? 0 } : {}),
+  };
+}
+
+function gradeOf(available, qty) {
+  if (available <= 0) return "NONE";
+  return available >= qty ? "GREEN" : "THIN";
+}
+
+function followUpView(quote) {
+  const plan = followPlans.get(quote.id) ?? (quote.status === "SENT" ? ensurePlan(quote) : undefined);
+  const events = followEvents.get(quote.id) ?? [];
+  const upcoming = [];
+  if (plan !== undefined && plan.enabled) {
+    for (const day of plan.offsets_days) {
+      if (events.some((event) => event.step_day === day)) continue;
+      upcoming.push({
+        step_day: day,
+        channel: plan.channel,
+        due_at: new Date(Date.parse(plan.started_at) + day * 86400000).toISOString(),
+        scheduled: true,
+      });
+    }
+  }
+  return { quote_id: quote.id, ...(plan === undefined ? {} : { plan }), events, upcoming, automated: plan !== undefined && plan.enabled };
+}
+
+function ensurePlan(quote) {
+  const plan = { quote_id: quote.id, enabled: true, channel: "EMAIL", offsets_days: [3, 7, 14], started_at: new Date().toISOString() };
+  followPlans.set(quote.id, plan);
+  return plan;
+}
+
+function holdExpiryView(quote) {
+  const expired = lapsedHolds.get(quote.id) ?? [];
+  const lapsedIds = new Set(expired.map((row) => row.product_id));
+  const active = quote.lines.filter((line) => !lapsedIds.has(line.product_id)).length;
+  return { expiry: { quote_id: quote.id, active_count: active, expired, any_expired: expired.length > 0 }, seam_wired: true };
+}
+
+function lineAppsOf(line) {
+  return productApps[line.product_id] ?? [];
+}
+
+function scopeGapsOf(quote) {
+  const findings = [];
+  const have = new Set(quote.lines.flatMap(lineAppsOf));
+  for (const rule of scopeRules) {
+    if (!rule.enabled) continue;
+    const triggered = quote.lines.filter((line) => lineAppsOf(line).some((app) => rule.when_apps.includes(app)));
+    if (triggered.length === 0) continue;
+    if (rule.expect_apps.some((app) => have.has(app))) continue;
+    findings.push({
+      rule_code: rule.code,
+      title: rule.title,
+      advice: rule.advice,
+      triggered_by: triggered.map((line) => ({ line_no: line.line_no, name: line.description })),
+      missing: rule.expect_apps.map((app) => app.toLowerCase()),
+      suggest_query: rule.suggest_query,
+    });
+  }
+  return { quote_id: quote.id, findings, lines_checked: quote.lines.length, rules_evaluated: scopeRules.filter((r) => r.enabled).length };
+}
+
+// The plain parser: one segment per line or comma, a product by alias, name or
+// sku, a quantity by the first number, a unit by the word after it.
+function extractOf(text, useAi) {
+  const proposals = [];
+  const unmatched = [];
+  const segments = text.split(/[\n,;]+/).map((segment) => segment.trim()).filter((segment) => segment !== "");
+  segments.forEach((segment, index) => {
+    const lowered = segment.toLowerCase();
+    const product = PRODUCTS.find(
+      (p) => lowered.includes(p.name.toLowerCase()) || lowered.includes(p.sku.toLowerCase()) || p.aliases.some((alias) => lowered.includes(alias)),
+    );
+    if (product === undefined) {
+      unmatched.push({ source_text: segment, reason: "No product in the catalogue matches this text." });
+      return;
+    }
+    const numberMatch = /(\d+(?:\.\d+)?)\s*([a-z]+)?/.exec(lowered);
+    const qty = numberMatch === null ? "" : numberMatch[1];
+    const unitWord = numberMatch === null || numberMatch[2] === undefined ? "" : numberMatch[2];
+    const uom = unitWord === product.sold_by ? product.sold_by : "";
+    const alternates = PRODUCTS.filter((p) => p.product_id !== product.product_id && p.category === product.category).map((p) => ({
+      product_id: p.product_id,
+      sku: p.sku,
+      name: p.name,
+      match_reason: "SAME_CATEGORY",
+      sell_uom: p.sold_by,
+      base_uom: p.base_uom,
+    }));
+    proposals.push({
+      ref: `r${index + 1}`,
+      source_text: segment,
+      product_id: product.product_id,
+      sku: product.sku,
+      name: product.name,
+      sell_uom: product.sold_by,
+      base_uom: product.base_uom,
+      qty_entered: qty,
+      uom_entered: uom,
+      confidence: qty !== "" && uom !== "" ? "HIGH" : "MEDIUM",
+      match_reason: "ALIAS",
+      why: ["Matched by its name in your text."],
+      needs_qty: qty === "",
+      needs_uom: uom === "",
+      alternates,
+    });
+  });
+  const aiRan = useAi && seamSwitches.aiConfigured;
+  return {
+    proposals,
+    unmatched,
+    source: aiRan ? "ai-assisted" : "deterministic",
+    ...(useAi && !seamSwitches.aiConfigured
+      ? { ai_note: "AI-assisted reading isn't switched on here, so I used the plain parser." }
+      : {}),
+  };
+}
+
 
 // ---------------------------------------------------------------------------
 // The pricing and floor rules, in the plan's own rows (section 3.3). All
@@ -780,6 +961,7 @@ const server = createServer(async (request, response) => {
     seedWorld();
     shareLinks.clear();
     floorRequests.clear();
+    resetSeamWorld();
     workspaces.clear();
     myItems.clear();
     roleItemsByProfile.clear();
@@ -794,6 +976,71 @@ const server = createServer(async (request, response) => {
     switches.callerIsGeneralManager = false;
     switches.floorRaiseBps = 0;
     respondJson(response, 200, { reset: true });
+    return;
+  }
+  // The third coder's peek routes: the assist key, a follow-up that went out,
+  // a quote's holds lapsing, and the branch stock a chip grades against.
+  if (path === "/_stub/ai-key" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      seamSwitches.aiConfigured = body.configured === true;
+      respondJson(response, 200, { configured: seamSwitches.aiConfigured });
+    });
+    return;
+  }
+  if (path === "/_stub/followup-event" && request.method === "POST") {
+    readBody(request, response, (body) => {
+      const quote = quoteOr404(String(body.quote_id));
+      if (quote === null) {
+        respondJson(response, 404, { error: "no quote with that id" });
+        return;
+      }
+      ensurePlan(quote);
+      const events = followEvents.get(quote.id) ?? [];
+      const at = new Date().toISOString();
+      events.push({ step_day: Number(body.step_day ?? 3), channel: body.channel ?? "EMAIL", status: body.status ?? "SENT", scheduled_for: at, occurred_at: at });
+      followEvents.set(quote.id, events);
+      respondJson(response, 200, { events: events.length });
+    });
+    return;
+  }
+  if (path === "/_stub/hold-lapse" && request.method === "POST") {
+    readBody(request, response, (body) => {
+      const quote = quoteOr404(String(body.quote_id));
+      if (quote === null) {
+        respondJson(response, 404, { error: "no quote with that id" });
+        return;
+      }
+      if (body.quote_expired === true) quote.expired = true;
+      const at = new Date().toISOString();
+      lapsedHolds.set(
+        quote.id,
+        quote.lines.map((line) => ({
+          reservation_id: `res-${quote.id}-${line.line_no}`,
+          product_id: line.product_id,
+          product_name: line.description,
+          sku: productById.get(line.product_id)?.sku ?? "",
+          branch_id: quote.branch_id,
+          qty_base: Number(line.qty_base),
+          status: "EXPIRED",
+          expires_at: at,
+          ended_at: at,
+        })),
+      );
+      respondJson(response, 200, { lapsed: quote.lines.length });
+    });
+    return;
+  }
+  if (path === "/_stub/stock" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      const row = stockByProduct.get(String(body.product_id));
+      if (row === undefined) {
+        respondJson(response, 404, { error: "no product with that id" });
+        return;
+      }
+      if (Number.isFinite(body.trenton)) row.trenton = body.trenton;
+      if (Number.isFinite(body.belleville)) row.belleville = body.belleville;
+      respondJson(response, 200, row);
+    });
     return;
   }
   if (path === "/_stub/cost-list" && request.method === "PUT") {
@@ -1349,6 +1596,16 @@ const server = createServer(async (request, response) => {
       }
       const request = { id: `fr-${key}`, status: "PENDING", line_no: lineNo, disc_pct: disc };
       floorRequests.set(key, request);
+      const askedUnit = netUnitCents(ruleUnitCents(product, customer), disc);
+      const askedMargin = marginBps(askedUnit, product.branch_cost_cents[TRENTON_ID] ?? 0);
+      // The detail is the server's own sentence: the line, the discount and, for a
+      // caller on the cost list only, the margin against the floor.
+      approvalCards.set(request.id, {
+        quote_id: quote.id,
+        requested_by: userId,
+        detail: `Quote ${quote.quote_no}, line ${lineNo}, ${product.name}, ${disc}% discount` +
+          (switches.callerOnCostList ? `, margin ${(askedMargin / 100).toFixed(1)}% against a floor of ${((product.floor_bps + switches.floorRaiseBps) / 100).toFixed(1)}%` : ""),
+      });
       respondJson(response, 200, { filed: true, may_clear_itself: false, request });
     });
     return;
@@ -1628,6 +1885,190 @@ const server = createServer(async (request, response) => {
         ]
       : [];
     respondJson(response, 200, { suggestions });
+    return;
+  }
+
+  // ── the third coder's panels' routes ───────────────────────────────────────
+
+  if (path === "/api/v1/quote-assist/extract" && request.method === "POST") {
+    readBody(request, response, (body) => {
+      if (typeof body.text !== "string" || body.text.trim() === "" || typeof body.branch_id !== "string" || typeof body.use_ai !== "boolean") {
+        respondJson(response, 400, { error: "quoteassist: text, branch_id and use_ai are required" });
+        return;
+      }
+      respondJson(response, 200, extractOf(body.text, body.use_ai));
+    });
+    return;
+  }
+  if (path === "/api/v1/quote-assist/scope-gaps" && request.method === "GET") {
+    const quote = quoteOr404(url.searchParams.get("quote_id") ?? "");
+    if (quote === null) {
+      respondJson(response, 404, { error: "no quote with that id" });
+      return;
+    }
+    respondJson(response, 200, scopeGapsOf(quote));
+    return;
+  }
+
+  match = /^\/api\/v1\/quotes\/([^/]+)\/followups(?:\/(disable|enable))?$/.exec(path);
+  if (match !== null) {
+    const quote = quoteOr404(match[1]);
+    if (quote === null) {
+      respondJson(response, 404, { error: "no quote with that id" });
+      return;
+    }
+    if (match[2] === undefined && request.method === "GET") {
+      respondJson(response, 200, followUpView(quote));
+      return;
+    }
+    if (match[2] !== undefined && request.method === "POST") {
+      const plan = followPlans.get(quote.id) ?? (quote.status === "SENT" ? ensurePlan(quote) : undefined);
+      if (plan === undefined) {
+        respondJson(response, 409, { error: "quote: this quote has no follow-ups to change; they begin when the quote is sent" });
+        return;
+      }
+      if (match[2] === "disable") {
+        plan.enabled = false;
+        plan.disabled_at = new Date().toISOString();
+        plan.disabled_why = `Stopped by ${caller.account.display_name}`;
+      } else {
+        plan.enabled = true;
+        delete plan.disabled_at;
+        delete plan.disabled_why;
+      }
+      respondJson(response, 200, followUpView(quote));
+      return;
+    }
+  }
+
+  match = /^\/api\/v1\/quotes\/([^/]+)\/hold-expiry$/.exec(path);
+  if (match !== null && request.method === "GET") {
+    const quote = quoteOr404(match[1]);
+    if (quote === null) {
+      respondJson(response, 404, { error: "no quote with that id" });
+      return;
+    }
+    respondJson(response, 200, holdExpiryView(quote));
+    return;
+  }
+  match = /^\/api\/v1\/quotes\/([^/]+)\/holds\/resync$/.exec(path);
+  if (match !== null && request.method === "POST") {
+    const quote = quoteOr404(match[1]);
+    if (quote === null) {
+      respondJson(response, 404, { error: "no quote with that id" });
+      return;
+    }
+    if (quote.expired) {
+      respondJson(response, 409, { error: "quote: this quote has expired; extend its expiry date before holding stock again" });
+      return;
+    }
+    const lapsed = lapsedHolds.get(quote.id) ?? [];
+    lapsedHolds.delete(quote.id);
+    respondJson(response, 200, { holds_applied: lapsed.length });
+    return;
+  }
+
+  match = /^\/api\/v1\/quotes\/([^/]+)\/availability$/.exec(path);
+  if (match !== null && request.method === "GET") {
+    const quote = quoteOr404(match[1]);
+    if (quote === null) {
+      respondJson(response, 404, { error: "no quote with that id" });
+      return;
+    }
+    respondJson(response, 200, {
+      lines: quote.lines.map((line) => {
+        const branch = branchStockRow(line.product_id, quote.branch_id, caller);
+        return {
+          line_no: line.line_no,
+          product_id: line.product_id,
+          qty_base: Number(line.qty_base),
+          grade: gradeOf(branch.available_base, Number(line.qty_base)),
+          branch,
+        };
+      }),
+      seam_wired: true,
+    });
+    return;
+  }
+  match = /^\/api\/v1\/quote-availability\/([^/]+)\/branches$/.exec(path);
+  if (match !== null && request.method === "GET") {
+    if (!productById.has(match[1])) {
+      respondJson(response, 404, { error: "no product with that id" });
+      return;
+    }
+    respondJson(response, 200, {
+      branches: [branchStockRow(match[1], TRENTON_ID, caller), branchStockRow(match[1], BELLEVILLE_ID, caller)],
+      seam_wired: true,
+    });
+    return;
+  }
+
+  if (path === "/api/v1/staff/policy/check" && request.method === "POST") {
+    readBody(request, response, (body) => {
+      if (!Number.isInteger(body.price_cents) || !Number.isInteger(body.cost_cents) || typeof body.branch_id !== "string") {
+        respondJson(response, 400, { error: "identity: price_cents, cost_cents and branch_id are required" });
+        return;
+      }
+      const margin = marginBps(body.price_cents, body.cost_cents);
+      const override = caller.account.role_code === "sales_manager";
+      respondJson(response, 200, { allowed: margin >= 2000 || override, margin_bps: margin, override });
+    });
+    return;
+  }
+
+  if (path === "/api/v1/staff/approvals" && request.method === "GET") {
+    const wanted = url.searchParams.get("status") ?? "";
+    const items = [];
+    for (const [key, row] of floorRequests) {
+      const card = approvalCards.get(row.id);
+      if (card === undefined) continue;
+      if (wanted !== "" && row.status !== wanted) continue;
+      const quote = quotes.get(card.quote_id);
+      items.push({
+        id: row.id,
+        requested_by: card.requested_by,
+        branch_id: quote === undefined ? TRENTON_ID : quote.branch_id,
+        policy_type: "MARGIN_BELOW_MINIMUM",
+        detail: card.detail,
+        subject_ref: `quote:${card.quote_id}`,
+        status: row.status,
+        ...(card.decided_by === undefined ? {} : { decided_by: card.decided_by }),
+      });
+      void key;
+    }
+    respondJson(response, 200, { items });
+    return;
+  }
+  match = /^\/api\/v1\/staff\/approvals\/([^/]+)\/decide$/.exec(path);
+  if (match !== null && request.method === "POST") {
+    readBody(request, response, (body) => {
+      const card = approvalCards.get(match[1]);
+      const row = [...floorRequests.values()].find((r) => r.id === match[1]);
+      if (card === undefined || row === undefined) {
+        respondJson(response, 404, { error: "no approval with that id" });
+        return;
+      }
+      if (typeof body.approve !== "boolean" || typeof body.reason !== "string") {
+        respondJson(response, 400, { error: "identity: approve and reason are required" });
+        return;
+      }
+      if (caller.account.role_code !== "sales_manager") {
+        respondJson(response, 403, { error: "identity: deciding a margin floor request is for the branch's Sales manager, the General Manager or the Financial Controller" });
+        return;
+      }
+      if (card.requested_by === caller.account.user_id) {
+        respondJson(response, 403, { error: "identity: you cannot decide your own request" });
+        return;
+      }
+      if (row.status !== "PENDING") {
+        respondJson(response, 409, { error: "identity: this request has already been decided" });
+        return;
+      }
+      row.status = body.approve ? "APPROVED" : "REJECTED";
+      card.decided_by = caller.account.user_id;
+      card.reason = body.reason;
+      respondJson(response, 200, { status: row.status });
+    });
     return;
   }
 

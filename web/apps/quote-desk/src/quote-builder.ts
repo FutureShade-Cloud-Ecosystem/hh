@@ -20,6 +20,12 @@ import "./panel-seams.js";
 import "./edit-panel.js";
 import "./history-panel.js";
 import "./settings-panel.js";
+import "./assist-panel.js";
+import "./followups-panel.js";
+import "./hold-expiry-panel.js";
+import "./availability-panel.js";
+import "./approvals-panel.js";
+import "./floor-refusal-dialog.js";
 import {
   SEAM_APPROVALS,
   SEAM_ASSIST,
@@ -249,7 +255,7 @@ export class QdQuoteBuilder extends LitElement {
     // quote the same way: the edit panel, the change history and the settings
     // also take the validated client.
     for (const seam of this.renderRoot.querySelectorAll<HTMLElement & Record<string, unknown>>(
-      "qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings",
+      "qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-approvals, qd-floor-refusal",
     )) {
       seam.quoteId = this.selected;
       seam.branchId = this.selectedBranch() || this.newBranch;
@@ -360,7 +366,7 @@ export class QdQuoteBuilder extends LitElement {
   private reloadDetailPanels(): void {
     this.renderRoot
       ?.querySelectorAll<HTMLElement & { reload?: () => void }>(
-        "qd-quote-workarea, qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings",
+        "qd-quote-workarea, qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-approvals",
       )
       .forEach((el) => el.reload?.());
   }
@@ -478,6 +484,7 @@ export class QdQuoteBuilder extends LitElement {
     return html`
       ${this.error !== "" ? html`<header><span class="err" role="alert">${this.error}</span></header>` : nothing}
       <qd-quote-workarea></qd-quote-workarea>
+      <qd-floor-refusal></qd-floor-refusal>
       <div style="margin-top: 12px">${this.renderList()}</div>
       <details class="box" style="margin-top: 12px" data-testid="qb-detail">
         <summary style="cursor: pointer">Quote detail &amp; admin</summary>
@@ -485,14 +492,14 @@ export class QdQuoteBuilder extends LitElement {
           ${this.selected !== ""
             ? html`
                 <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>
-                ${this.renderSeam(SEAM_ASSIST, "The assist panel (the third coder's panel)")}
+                <qd-quote-assist data-seam=${SEAM_ASSIST}></qd-quote-assist>
                 <qd-quote-history data-seam=${SEAM_HISTORY}></qd-quote-history>
-                ${this.renderSeam(SEAM_FOLLOWUPS, "The follow-ups panel (the third coder's panel)")}
-                ${this.renderSeam(SEAM_HOLD_EXPIRY, "The hold expiry status (the third coder's panel)")}
-                ${this.renderSeam(SEAM_AVAILABILITY, "The availability chips (the third coder's panel)")}
-                ${this.renderSeam(SEAM_APPROVALS, "The approvals list (the third coder's panel)")}
+                <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>
+                <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>
+                <qd-quote-availability data-seam=${SEAM_AVAILABILITY}></qd-quote-availability>
               `
             : html`<div class="box"><p class="empty">Select a quote to open it.</p></div>`}
+          <qd-approvals data-seam=${SEAM_APPROVALS}></qd-approvals>
           <qd-quote-settings data-seam=${SEAM_SETTINGS}></qd-quote-settings>
         </div>
       </details>
