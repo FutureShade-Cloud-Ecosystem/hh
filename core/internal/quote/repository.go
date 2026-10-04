@@ -255,11 +255,17 @@ func (r *Repository) Convert(ctx context.Context, customerID, quoteID string, op
 		return ConvertResult{}, err
 	}
 
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return ConvertResult{}, fmt.Errorf("convert quote %q: begin: %w", quoteID, err)
+	// QD-5: when the payment door carries its transaction, the conversion runs on it and commits with
+	// it (or not at all); every other caller gets the transaction of its own, exactly as before.
+	tx, carried := txFrom(ctx)
+	if !carried {
+		var err error
+		tx, err = r.pool.Begin(ctx)
+		if err != nil {
+			return ConvertResult{}, fmt.Errorf("convert quote %q: begin: %w", quoteID, err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Lock the quote row and verify it is convertible. quote_no rides along for the provenance row
 	// (DIB-491), read under the same lock so the snapshot cannot tear against the INSERT below.
@@ -371,8 +377,10 @@ func (r *Repository) Convert(ctx context.Context, customerID, quoteID string, op
 		return ConvertResult{}, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return ConvertResult{}, fmt.Errorf("convert quote %q: commit: %w", quoteID, err)
+	if !carried {
+		if err := tx.Commit(ctx); err != nil {
+			return ConvertResult{}, fmt.Errorf("convert quote %q: commit: %w", quoteID, err)
+		}
 	}
 	return res, nil
 }

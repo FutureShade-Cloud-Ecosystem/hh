@@ -31,6 +31,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // - the shape order OWNS and main.go converts -
@@ -147,11 +149,22 @@ UPDATE shipment_groups
 
 // - the reads -
 
+// invoiceQuerier is what the invoice facts are read through: the pool, or a caller's transaction
+// (QD-5), so an order written a moment ago in that transaction can be read before it commits.
+type invoiceQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
 // orderBillingHeader is the customer/branch/terms facts every invoice needs.
 func (r *Repository) orderBillingHeader(ctx context.Context, orderID string) (InvoiceFacts, error) {
+	return orderBillingHeaderOn(ctx, r.pool, orderID)
+}
+
+func orderBillingHeaderOn(ctx context.Context, q invoiceQuerier, orderID string) (InvoiceFacts, error) {
 	var f InvoiceFacts
 	f.OrderID = orderID
-	err := r.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 SELECT o.order_no::text, o.customer_id::text, o.branch_id::text,
        COALESCE(c.payment_terms_days, 0)
   FROM orders o
@@ -369,19 +382,44 @@ func (s *Service) AgreedInvoiceableOrder(ctx context.Context, orderID string) (I
 	return st.AgreedOrderInvoiceFacts(ctx, orderID)
 }
 
+// agreedInvoiceTxStore is the transaction half of the same capability (QD-5): the facts read on the
+// caller's transaction.
+type agreedInvoiceTxStore interface {
+	AgreedOrderInvoiceFactsTx(ctx context.Context, tx pgx.Tx, orderID string) (InvoiceFacts, error)
+}
+
+// AgreedInvoiceableOrderTx is AgreedInvoiceableOrder read on the caller's transaction, for an order
+// written in that same transaction and not yet visible to the pool.
+func (s *Service) AgreedInvoiceableOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (InvoiceFacts, error) {
+	st, ok := s.store.(agreedInvoiceTxStore)
+	if !ok {
+		return InvoiceFacts{}, ErrShipNotConfigured
+	}
+	return st.AgreedOrderInvoiceFactsTx(ctx, tx, orderID)
+}
+
 // AgreedOrderInvoiceFacts reads the order's header and every line, and holds the order to its own
 // arithmetic before anything is billed from it.
 func (r *Repository) AgreedOrderInvoiceFacts(ctx context.Context, orderID string) (InvoiceFacts, error) {
 	if r.pool == nil {
 		return InvoiceFacts{}, errNoDB
 	}
-	f, err := r.orderBillingHeader(ctx, orderID)
+	return agreedOrderInvoiceFactsOn(ctx, r.pool, orderID)
+}
+
+// AgreedOrderInvoiceFactsTx is AgreedOrderInvoiceFacts on the caller's transaction.
+func (r *Repository) AgreedOrderInvoiceFactsTx(ctx context.Context, tx pgx.Tx, orderID string) (InvoiceFacts, error) {
+	return agreedOrderInvoiceFactsOn(ctx, tx, orderID)
+}
+
+func agreedOrderInvoiceFactsOn(ctx context.Context, q invoiceQuerier, orderID string) (InvoiceFacts, error) {
+	f, err := orderBillingHeaderOn(ctx, q, orderID)
 	if err != nil {
 		return InvoiceFacts{}, err
 	}
 	var status string
 	var subtotal, tax, total, fee int64
-	if err := r.pool.QueryRow(ctx, `
+	if err := q.QueryRow(ctx, `
 SELECT status, subtotal_cents, tax_cents, total_cents, COALESCE(quoted_freight_cents, 0)
   FROM orders WHERE id = $1`, orderID).Scan(&status, &subtotal, &tax, &total, &fee); err != nil {
 		return InvoiceFacts{}, fmt.Errorf("order: agreed header for %s: %w", orderID, err)
@@ -391,7 +429,7 @@ SELECT status, subtotal_cents, tax_cents, total_cents, COALESCE(quoted_freight_c
 	}
 	f.ClosesOrder = true
 
-	rows, err := r.pool.Query(ctx, `
+	rows, err := q.Query(ctx, `
 SELECT ol.id::text, COALESCE(ol.product_id::text,''), ol.description, ol.qty_entered::text, ol.uom_entered,
        ol.qty_base::text, ol.unit_price_cents, COALESCE(ol.price_uom, ol.uom_entered), ol.line_total_cents
   FROM order_lines ol WHERE ol.order_id = $1 ORDER BY ol.line_no`, orderID)

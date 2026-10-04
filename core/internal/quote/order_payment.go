@@ -1,15 +1,18 @@
 package quote
 
 // order_payment.go, QD-5: the counter's payment on a converted quote's order. The design is in
-// QD5-DESIGN.md, written before this file.
+// QD5-DESIGN.md. The whole action is ONE transaction on ONE connection: the conversion (for a customer
+// with no credit), the order's facts, the invoice and the payment are written on it and commit
+// together, or none of them exists.
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
@@ -36,6 +39,7 @@ type OrderPaymentResult struct {
 	AmountCents       int64     `json:"amount_cents"`
 	ReceivedAt        time.Time `json:"received_at"`
 	Reference         string    `json:"reference"`
+	ReceivedBy        string    `json:"received_by"`
 	BalanceCents      int64     `json:"balance_cents"`
 	Replayed          bool      `json:"replayed"`
 	Converted         bool      `json:"converted"`
@@ -53,10 +57,12 @@ type AgreedInvoice struct {
 	BalanceCents int64
 }
 
-// OrderInvoicer is the billing and order seam the door needs.
+// OrderInvoicer is the billing and order seam the door needs, every method on the door's one
+// transaction: the order may have been written in it a moment ago and is not yet visible to any other
+// connection.
 type OrderInvoicer interface {
-	AgreedInvoice(ctx context.Context, orderID string) (AgreedInvoice, error)
-	RaiseAgreedInvoice(ctx context.Context, orderID string) (AgreedInvoice, error)
+	AgreedInvoiceTx(ctx context.Context, tx pgx.Tx, orderID string) (AgreedInvoice, error)
+	RaiseAgreedInvoiceTx(ctx context.Context, tx pgx.Tx, orderID string) (AgreedInvoice, error)
 }
 
 // CounterReceiptInput is one already taken payment to settle against one invoice.
@@ -71,19 +77,22 @@ type CounterReceiptInput struct {
 	AmountCents    int64
 }
 
-// CounterReceipt is the settle's answer.
+// CounterReceipt is the settle's answer: the payment as stored, the reference and the receiver
+// included, also when the key replays an earlier payment.
 type CounterReceipt struct {
 	PaymentID   string
 	PaymentNo   string
 	Method      string
 	AmountCents int64
 	ReceivedAt  time.Time
+	Reference   string
+	ReceivedBy  string
 	Replayed    bool
 }
 
-// CounterPayer is the payments seam the door needs.
+// CounterPayer is the payments seam the door needs, on the door's one transaction.
 type CounterPayer interface {
-	TakePayment(ctx context.Context, in CounterReceiptInput) (CounterReceipt, error)
+	TakePaymentTx(ctx context.Context, tx pgx.Tx, in CounterReceiptInput) (CounterReceipt, error)
 }
 
 // OrderPaymentConflictError is a refusal that names its reason in words and answers 409: the quote
@@ -95,19 +104,6 @@ func (e *OrderPaymentConflictError) Error() string { return e.Msg }
 // NewOrderPaymentConflict is the constructor the composition root's adapters use to carry an
 // order or billing refusal across the seam without the quote package importing either module.
 func NewOrderPaymentConflict(msg string) error { return &OrderPaymentConflictError{Msg: msg} }
-
-// PaymentNotRecordedError says the action stopped between two commits: the order and invoice exist
-// and the payment was not recorded. Repeating the same request, with the same key, finishes it.
-type PaymentNotRecordedError struct {
-	OrderNo, InvoiceNo string
-	Cause              error
-}
-
-func (e *PaymentNotRecordedError) Error() string {
-	return "quote: order " + e.OrderNo + " and invoice " + e.InvoiceNo +
-		" exist but the payment was not recorded; repeat the same request with the same key to finish it"
-}
-func (e *PaymentNotRecordedError) Unwrap() error { return e.Cause }
 
 // counterTenders are the tenders the payments settle accepts at a desk (payments.CounterTenders).
 // Declared here because the quote package imports no money module; the settle validates the same
@@ -122,8 +118,12 @@ const maxPaymentReferenceLen = 80
 // orderPaymentStore is the persistence the door needs beyond the staff store, asserted like the
 // conversion's pricing context so a store that predates it fails the door closed.
 type orderPaymentStore interface {
-	OrderPaymentFacts(ctx context.Context, quoteID string) (OrderPaymentFacts, error)
-	LockOrderPayments(ctx context.Context, quoteID string) (unlock func(), err error)
+	// InOrderPaymentTx runs fn in ONE transaction on ONE pool connection. The first statement takes the
+	// quote's transaction scoped advisory lock, so same quote and same key calls queue behind each
+	// other without holding a second connection, and the lock leaves with the transaction. fn's ctx
+	// carries the transaction for the conversion; tx is the same transaction for the seams.
+	InOrderPaymentTx(ctx context.Context, quoteID string, fn func(ctx context.Context, tx pgx.Tx) error) error
+	OrderPaymentFactsTx(ctx context.Context, tx pgx.Tx, quoteID string) (OrderPaymentFacts, error)
 }
 
 // OrderPaymentFacts is what the door reads off the quote under its per quote lock: the status, whose
@@ -159,7 +159,7 @@ func moneyWords(cents int64) string { return money(cents) }
 // The gate holds Work or above on the Counter Till. This method holds what the gate cannot: an
 // active caller, reach to the quote's branch, the shape of the request, and that the quote is
 // converted (or is a cash customer's accepted quote, which this one action converts, bills and
-// pays). Everything checkable is checked before the first write, so a refusal leaves nothing.
+// pays). Everything is written in one transaction, so any refusal or fault leaves nothing behind.
 func (s *StaffService) TakeOrderPayment(ctx context.Context, idOrNo string, in OrderPaymentInput) (OrderPaymentResult, error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
@@ -193,19 +193,29 @@ func (s *StaffService) TakeOrderPayment(ctx context.Context, idOrNo string, in O
 		return OrderPaymentResult{}, err
 	}
 
-	// One payment action at a time per quote, so a replay waits for the first call and then takes the
-	// settle's replay path, and two different keys race for the balance one after the other.
-	unlock, err := ps.LockOrderPayments(ctx, quoteID)
+	// A client that hangs up does not cancel the action halfway: the transaction either commits whole
+	// or rolls back whole, and a repeat with the same key answers whichever happened.
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), actionTimeout)
+	defer cancel()
+	var res OrderPaymentResult
+	err = ps.InOrderPaymentTx(wctx, quoteID, func(txCtx context.Context, tx pgx.Tx) error {
+		var err error
+		res, err = s.takeOrderPaymentTx(txCtx, tx, ps, caller, quoteID, in)
+		return err
+	})
 	if err != nil {
 		return OrderPaymentResult{}, err
 	}
-	defer unlock()
-	// From here the action is not cancelled by a client that hangs up: it either finishes or stops at
-	// a commit boundary with a keyed state a repeat completes.
-	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), actionTimeout)
-	defer cancel()
+	return res, nil
+}
 
-	pf, err := ps.OrderPaymentFacts(wctx, quoteID)
+// takeOrderPaymentTx is the action, on the transaction the store opened and holds the quote's lock in.
+// Every read and every write here goes through that transaction; nothing in here calls out of the
+// process.
+func (s *StaffService) takeOrderPaymentTx(ctx context.Context, tx pgx.Tx, ps orderPaymentStore,
+	caller identity.StaffContext, quoteID string, in OrderPaymentInput) (OrderPaymentResult, error) {
+
+	pf, err := ps.OrderPaymentFactsTx(ctx, tx, quoteID)
 	if err != nil {
 		return OrderPaymentResult{}, err
 	}
@@ -246,9 +256,10 @@ func (s *StaffService) TakeOrderPayment(ctx context.Context, idOrNo string, in O
 			return OrderPaymentResult{}, &OrderPaymentConflictError{
 				Msg: "the quote's total does not agree with its lines, so it cannot be converted and paid until that is looked at"}
 		}
-		// Everything above is read before the first write. The conversion re-asserts the total under
-		// its own lock, and tells the credit gate this order is paid at the counter in this action.
-		res, err := runConvert(wctx, s.convertStore(), s.audit, pf.CustomerID, quoteID, caller.UserID,
+		// The conversion on this transaction, through the one conversion path, with the option that
+		// tells the credit gate this order is paid at the counter in this same action. The conversion
+		// re-asserts the total under its own lock.
+		res, err := runConvert(withTx(ctx, tx), s.convertStore(), s.audit, pf.CustomerID, quoteID, caller.UserID,
 			ConvertOptions{paidAtCounter: true, paidTotalCents: pf.TotalCents})
 		if err != nil {
 			return OrderPaymentResult{}, err
@@ -260,9 +271,10 @@ func (s *StaffService) TakeOrderPayment(ctx context.Context, idOrNo string, in O
 			"this quote is %s; only a converted quote's order takes a payment", strings.ToLower(pf.Status))}
 	}
 
-	// The agreed invoice: the document when it exists, else what would be raised. The amount is held
-	// to it before anything is raised, so a refused amount leaves no invoice behind.
-	agreed, err := s.invoicer.AgreedInvoice(wctx, orderID)
+	// The agreed invoice: the document when it exists, else what would be raised, read on this
+	// transaction (the order may be this action's own). The amount is held to it before anything is
+	// raised; a refusal here rolls the whole action back.
+	agreed, err := s.invoicer.AgreedInvoiceTx(ctx, tx, orderID)
 	if err != nil {
 		return OrderPaymentResult{}, err
 	}
@@ -274,11 +286,11 @@ func (s *StaffService) TakeOrderPayment(ctx context.Context, idOrNo string, in O
 		return OrderPaymentResult{}, httpx.BadRequestf(
 			"the payment is more than the agreed total of %s", moneyWords(agreed.TotalCents))
 	}
-	inv, err := s.invoicer.RaiseAgreedInvoice(wctx, orderID)
+	inv, err := s.invoicer.RaiseAgreedInvoiceTx(ctx, tx, orderID)
 	if err != nil {
-		return OrderPaymentResult{}, s.unfinished(converted, orderNo, "", err)
+		return OrderPaymentResult{}, err
 	}
-	rcpt, err := s.payer.TakePayment(wctx, CounterReceiptInput{
+	rcpt, err := s.payer.TakePaymentTx(ctx, tx, CounterReceiptInput{
 		CustomerID:     pf.CustomerID,
 		InvoiceID:      inv.InvoiceID,
 		BranchID:       pf.BranchID,
@@ -289,17 +301,13 @@ func (s *StaffService) TakeOrderPayment(ctx context.Context, idOrNo string, in O
 		AmountCents:    in.AmountCents,
 	})
 	if err != nil {
-		var br httpx.BadRequestError
-		if errors.As(err, &br) {
-			return OrderPaymentResult{}, err
-		}
-		return OrderPaymentResult{}, s.unfinished(converted, orderNo, inv.InvoiceNo, err)
+		return OrderPaymentResult{}, err
 	}
 	if rcpt.Replayed && (rcpt.Method != in.Method || rcpt.AmountCents != in.AmountCents) {
 		return OrderPaymentResult{}, &OrderPaymentConflictError{
 			Msg: "this idempotency key took a different payment; use a new key for a new payment"}
 	}
-	after, err := s.invoicer.AgreedInvoice(wctx, orderID)
+	after, err := s.invoicer.AgreedInvoiceTx(ctx, tx, orderID)
 	if err != nil {
 		return OrderPaymentResult{}, err
 	}
@@ -307,23 +315,14 @@ func (s *StaffService) TakeOrderPayment(ctx context.Context, idOrNo string, in O
 		OrderID: orderID, OrderNo: orderNo,
 		InvoiceID: inv.InvoiceID, InvoiceNo: inv.InvoiceNo, InvoiceTotalCents: inv.TotalCents,
 		PaymentID: rcpt.PaymentID, PaymentNo: rcpt.PaymentNo, Method: rcpt.Method,
-		AmountCents: rcpt.AmountCents, ReceivedAt: rcpt.ReceivedAt, Reference: in.Reference,
+		AmountCents: rcpt.AmountCents, ReceivedAt: rcpt.ReceivedAt, Reference: rcpt.Reference,
+		ReceivedBy:   rcpt.ReceivedBy,
 		BalanceCents: after.BalanceCents, Replayed: rcpt.Replayed, Converted: converted,
 	}, nil
 }
 
-// actionTimeout bounds one payment action once it has begun writing.
+// actionTimeout bounds one payment action, lock wait included.
 const actionTimeout = 60 * time.Second
-
-// unfinished wraps a fault between two commits: when the action had already written something this
-// request (a conversion, or an invoice), say exactly what exists. A fault before any write is just
-// that fault.
-func (s *StaffService) unfinished(converted bool, orderNo, invoiceNo string, cause error) error {
-	if !converted && invoiceNo == "" {
-		return cause
-	}
-	return &PaymentNotRecordedError{OrderNo: orderNo, InvoiceNo: invoiceNo, Cause: cause}
-}
 
 // namespacedPaymentKey scopes the caller's key to the quote, so a key used on one quote can never
 // replay another quote's payment.

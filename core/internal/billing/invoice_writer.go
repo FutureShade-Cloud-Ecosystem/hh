@@ -427,8 +427,24 @@ func multiShipKey(orderID string, groupIDs []string) string {
 // moment it lands (the additive columns stay NULL on writers that predate them, ERP-carried
 // rows included).
 func (w *InvoiceWriter) write(ctx context.Context, f OrderInvoiceFacts, sourceKind, idemKey, docID string) (InvoiceDoc, error) {
-	if w.pool == nil {
-		return InvoiceDoc{}, errNoDB
+	return w.writeCore(ctx, nil, f, sourceKind, idemKey, docID)
+}
+
+// writeCore is write on either the writer's own transaction (tx nil) or the caller's (QD-5): with a
+// caller's transaction nothing here begins, commits or rolls back, the existing document under the key
+// is looked for on that transaction, and the header, the lines, the AR subledger row and the event
+// are written on it, so they commit with whatever the caller wrote before and after. A genuine key
+// race then surfaces as the database's error (the transaction cannot continue after it), and the
+// caller's action fails whole, never half.
+func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvoiceFacts, sourceKind, idemKey, docID string) (InvoiceDoc, error) {
+	var q keyQuerier
+	if ctxTx != nil {
+		q = ctxTx
+	} else {
+		if w.pool == nil {
+			return InvoiceDoc{}, errNoDB
+		}
+		q = w.pool
 	}
 	if f.CustomerID == "" || f.BranchID == "" {
 		return InvoiceDoc{}, httpx.BadRequestf("an invoice needs a customer and a branch")
@@ -439,7 +455,7 @@ func (w *InvoiceWriter) write(ctx context.Context, f OrderInvoiceFacts, sourceKi
 
 	// An existing document under this key ends the call before any write. This is the fast path for
 	// the double click; the UNIQUE index is the slow path for the genuine race.
-	if doc, ok, err := w.findByKey(ctx, idemKey); err != nil {
+	if doc, ok, err := findByKeyOn(ctx, q, idemKey); err != nil {
 		return InvoiceDoc{}, err
 	} else if ok {
 		doc.Reused = true
@@ -469,7 +485,7 @@ func (w *InvoiceWriter) write(ctx context.Context, f OrderInvoiceFacts, sourceKi
 	dueDate := w.now().AddDate(0, 0, terms).Format("2006-01-02")
 
 	var doc InvoiceDoc
-	err = w.inTx(ctx, func(tx pgx.Tx) error {
+	insert := func(tx pgx.Tx) error {
 		var invoiceID, invoiceNo string
 		// FINALIZED, not DRAFT. The order was delivered; the document is real the moment it exists,
 		// and a DRAFT invoice is a promise to remember to finalize it that nobody keeps.
@@ -541,7 +557,14 @@ VALUES ($1, 'INVOICE', $2, $3, 'invoice', $4, $5, $6, clock_timestamp())`,
 			ClosesOrder: f.ClosesOrder, AtCounter: f.RaisedAtCounter,
 		}
 		return nil
-	})
+	}
+	if ctxTx != nil {
+		if err := insert(ctxTx); err != nil {
+			return InvoiceDoc{}, err
+		}
+		return doc, nil
+	}
+	err = w.inTx(ctx, insert)
 	if err != nil {
 		// The genuine race: a concurrent caller won the UNIQUE index. Return THEIR document.
 		if isUniqueViolation(err) {
@@ -623,6 +646,12 @@ type AgreedOrderSource interface {
 	AgreedInvoiceableOrder(ctx context.Context, orderID string) (OrderInvoiceFacts, error)
 }
 
+// AgreedOrderSourceTx is the same answer read on the caller's transaction (QD-5), for an order written
+// in that transaction and not yet visible to any other connection.
+type AgreedOrderSourceTx interface {
+	AgreedInvoiceableOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (OrderInvoiceFacts, error)
+}
+
 func (w *InvoiceWriter) agreedSource() (AgreedOrderSource, error) {
 	if w.source == nil {
 		return nil, ErrOrderSourceUnwired
@@ -634,6 +663,26 @@ func (w *InvoiceWriter) agreedSource() (AgreedOrderSource, error) {
 	return src, nil
 }
 
+// agreedFacts is the order's agreed facts, read through the pool (ctxTx nil) or the caller's
+// transaction.
+func (w *InvoiceWriter) agreedFacts(ctx context.Context, ctxTx pgx.Tx, orderID string) (OrderInvoiceFacts, error) {
+	if ctxTx == nil {
+		src, err := w.agreedSource()
+		if err != nil {
+			return OrderInvoiceFacts{}, err
+		}
+		return src.AgreedInvoiceableOrder(ctx, orderID)
+	}
+	if w.source == nil {
+		return OrderInvoiceFacts{}, ErrOrderSourceUnwired
+	}
+	src, ok := w.source.(AgreedOrderSourceTx)
+	if !ok {
+		return OrderInvoiceFacts{}, ErrOrderSourceUnwired
+	}
+	return src.AgreedInvoiceableOrderTx(ctx, ctxTx, orderID)
+}
+
 // AgreedOrderInvoice answers, read only, what the order's invoice at its agreed totals is: the
 // document itself when one exists under the whole order key (exists true), else the document that
 // would be raised (exists false, no id, balance equal to the total).
@@ -641,16 +690,21 @@ func (w *InvoiceWriter) AgreedOrderInvoice(ctx context.Context, orderID string) 
 	if w.pool == nil {
 		return InvoiceDoc{}, false, errNoDB
 	}
-	if doc, ok, err := w.findByKey(ctx, wholeOrderKey(orderID)); err != nil {
+	return w.agreedOrderInvoice(ctx, nil, w.pool, orderID)
+}
+
+// AgreedOrderInvoiceTx is AgreedOrderInvoice read on the caller's transaction (QD-5).
+func (w *InvoiceWriter) AgreedOrderInvoiceTx(ctx context.Context, tx pgx.Tx, orderID string) (InvoiceDoc, bool, error) {
+	return w.agreedOrderInvoice(ctx, tx, tx, orderID)
+}
+
+func (w *InvoiceWriter) agreedOrderInvoice(ctx context.Context, ctxTx pgx.Tx, q keyQuerier, orderID string) (InvoiceDoc, bool, error) {
+	if doc, ok, err := findByKeyOn(ctx, q, wholeOrderKey(orderID)); err != nil {
 		return InvoiceDoc{}, false, err
 	} else if ok {
 		return doc, true, nil
 	}
-	src, err := w.agreedSource()
-	if err != nil {
-		return InvoiceDoc{}, false, err
-	}
-	facts, err := src.AgreedInvoiceableOrder(ctx, orderID)
+	facts, err := w.agreedFacts(ctx, ctxTx, orderID)
 	if err != nil {
 		return InvoiceDoc{}, false, err
 	}
@@ -677,24 +731,31 @@ func (w *InvoiceWriter) InvoiceOrderAtAgreed(ctx context.Context, orderID string
 	if w.pool == nil {
 		return InvoiceDoc{}, errNoDB
 	}
-	if doc, ok, err := w.findByKey(ctx, wholeOrderKey(orderID)); err != nil {
+	return w.invoiceOrderAtAgreed(ctx, nil, w.pool, orderID)
+}
+
+// InvoiceOrderAtAgreedTx is InvoiceOrderAtAgreed on the caller's transaction (QD-5): the existing
+// document is looked for, the order's facts are read, and the invoice, its lines, its AR subledger row
+// and its event are written, all on that transaction, which this method neither commits nor rolls back.
+func (w *InvoiceWriter) InvoiceOrderAtAgreedTx(ctx context.Context, tx pgx.Tx, orderID string) (InvoiceDoc, error) {
+	return w.invoiceOrderAtAgreed(ctx, tx, tx, orderID)
+}
+
+func (w *InvoiceWriter) invoiceOrderAtAgreed(ctx context.Context, ctxTx pgx.Tx, q keyQuerier, orderID string) (InvoiceDoc, error) {
+	if doc, ok, err := findByKeyOn(ctx, q, wholeOrderKey(orderID)); err != nil {
 		return InvoiceDoc{}, err
 	} else if ok {
 		doc.Reused = true
 		return doc, nil
 	}
-	src, err := w.agreedSource()
-	if err != nil {
-		return InvoiceDoc{}, err
-	}
-	facts, err := src.AgreedInvoiceableOrder(ctx, orderID)
+	facts, err := w.agreedFacts(ctx, ctxTx, orderID)
 	if err != nil {
 		return InvoiceDoc{}, err
 	}
 	facts.ClosesOrder = true
 	facts.GroupIDs = nil
 	facts.RaisedAtCounter = true
-	return w.write(ctx, facts, SourceOrder, wholeOrderKey(orderID), "")
+	return w.writeCore(ctx, ctxTx, facts, SourceOrder, wholeOrderKey(orderID), "")
 }
 
 // invoiceMemo names the document on the subledger row so an AR clerk reading the ledger sees WHY the
@@ -709,15 +770,24 @@ func invoiceMemo(f OrderInvoiceFacts, invoiceNo string) string {
 	return invoiceNo
 }
 
+// keyQuerier is what an invoice is looked up through: the pool, or a caller's transaction (QD-5).
+type keyQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // findByKey resolves an existing document by its idempotency key.
 func (w *InvoiceWriter) findByKey(ctx context.Context, key string) (InvoiceDoc, bool, error) {
+	return findByKeyOn(ctx, w.pool, key)
+}
+
+func findByKeyOn(ctx context.Context, q keyQuerier, key string) (InvoiceDoc, bool, error) {
 	if key == "" {
 		return InvoiceDoc{}, false, nil
 	}
 	var d InvoiceDoc
 	var orderID *string
 	var due time.Time
-	err := w.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 SELECT id::text, invoice_no::text, doc_type, customer_id::text, order_id::text, branch_id::text,
        status, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, closes_order,
        COALESCE(metadata->>'source', '') = '`+EventSourceCounter+`'

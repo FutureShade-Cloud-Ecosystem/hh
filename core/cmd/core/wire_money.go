@@ -521,7 +521,8 @@ func quoteMoneyDoor(pool *pgxpool.Pool, orderSvc *order.Service) (quote.OrderInv
 }
 
 // quoteAgreedOrderSource is the money tail's order source plus the one answer the counter's agreed
-// invoice needs: every line at its agreed total, the delivery fee and the tax the quote agreed.
+// invoice needs: every line at its agreed total, the delivery fee and the tax the quote agreed, read
+// through the pool or on the door's transaction.
 type quoteAgreedOrderSource struct {
 	w6cOrderInvoiceSource
 	svc *order.Service
@@ -529,6 +530,17 @@ type quoteAgreedOrderSource struct {
 
 func (a quoteAgreedOrderSource) AgreedInvoiceableOrder(ctx context.Context, orderID string) (billing.OrderInvoiceFacts, error) {
 	f, err := a.svc.AgreedInvoiceableOrder(ctx, orderID)
+	return agreedFactsFor(f, err)
+}
+
+func (a quoteAgreedOrderSource) AgreedInvoiceableOrderTx(ctx context.Context, tx pgx.Tx, orderID string) (billing.OrderInvoiceFacts, error) {
+	f, err := a.svc.AgreedInvoiceableOrderTx(ctx, tx, orderID)
+	return agreedFactsFor(f, err)
+}
+
+// agreedFactsFor shapes the order module's answer into billing's facts, carrying its refusal across
+// as the quote door's 409.
+func agreedFactsFor(f order.InvoiceFacts, err error) (billing.OrderInvoiceFacts, error) {
 	if err != nil {
 		var refusal *order.AgreedBillingRefusal
 		if errors.As(err, &refusal) {
@@ -553,19 +565,20 @@ func (a quoteAgreedOrderSource) AgreedInvoiceableOrder(ctx context.Context, orde
 	return out, nil
 }
 
-// quoteOrderInvoicer binds the quote module's invoicer seam to the billing writer.
+// quoteOrderInvoicer binds the quote module's invoicer seam to the billing writer, every call on the
+// door's transaction.
 type quoteOrderInvoicer struct{ w *billing.InvoiceWriter }
 
-func (a quoteOrderInvoicer) AgreedInvoice(ctx context.Context, orderID string) (quote.AgreedInvoice, error) {
-	doc, exists, err := a.w.AgreedOrderInvoice(ctx, orderID)
+func (a quoteOrderInvoicer) AgreedInvoiceTx(ctx context.Context, tx pgx.Tx, orderID string) (quote.AgreedInvoice, error) {
+	doc, exists, err := a.w.AgreedOrderInvoiceTx(ctx, tx, orderID)
 	if err != nil {
 		return quote.AgreedInvoice{}, mapBillingRefusal(err)
 	}
 	return agreedFromDoc(doc, exists), nil
 }
 
-func (a quoteOrderInvoicer) RaiseAgreedInvoice(ctx context.Context, orderID string) (quote.AgreedInvoice, error) {
-	doc, err := a.w.InvoiceOrderAtAgreed(ctx, orderID)
+func (a quoteOrderInvoicer) RaiseAgreedInvoiceTx(ctx context.Context, tx pgx.Tx, orderID string) (quote.AgreedInvoice, error) {
+	doc, err := a.w.InvoiceOrderAtAgreedTx(ctx, tx, orderID)
 	if err != nil {
 		return quote.AgreedInvoice{}, mapBillingRefusal(err)
 	}
@@ -588,11 +601,12 @@ func mapBillingRefusal(err error) error {
 	return err
 }
 
-// quoteCounterPayer binds the quote module's payer seam to the payments settle.
+// quoteCounterPayer binds the quote module's payer seam to the payments settle, on the door's
+// transaction.
 type quoteCounterPayer struct{ repo *payments.Repository }
 
-func (a quoteCounterPayer) TakePayment(ctx context.Context, in quote.CounterReceiptInput) (quote.CounterReceipt, error) {
-	out, err := a.repo.RecordReceipt(ctx, payments.ReceiptRequest{
+func (a quoteCounterPayer) TakePaymentTx(ctx context.Context, tx pgx.Tx, in quote.CounterReceiptInput) (quote.CounterReceipt, error) {
+	out, err := a.repo.RecordReceiptTx(ctx, tx, payments.ReceiptRequest{
 		CustomerID:     in.CustomerID,
 		Method:         in.Method,
 		Reference:      in.Reference,
@@ -606,6 +620,7 @@ func (a quoteCounterPayer) TakePayment(ctx context.Context, in quote.CounterRece
 	}
 	return quote.CounterReceipt{
 		PaymentID: out.Payment.ID, PaymentNo: out.Payment.PaymentNo, Method: out.Payment.Method,
-		AmountCents: out.Payment.AmountCents, ReceivedAt: out.Payment.ReceivedAt, Replayed: out.Replayed,
+		AmountCents: out.Payment.AmountCents, ReceivedAt: out.Payment.ReceivedAt,
+		Reference: out.Reference, ReceivedBy: out.ReceivedBy, Replayed: out.Replayed,
 	}, nil
 }

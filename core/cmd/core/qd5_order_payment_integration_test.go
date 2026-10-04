@@ -41,28 +41,7 @@ type qd5Env struct {
 	svc      *quote.StaffService
 	orderSvc *order.Service
 	userID   string
-	payer    *qd5FlakyPayer
 }
-
-// qd5FlakyPayer wraps the real payer so a test can make the settle fail once, the infrastructure
-// fault between two commits.
-type qd5FlakyPayer struct {
-	real quote.CounterPayer
-	mu   sync.Mutex
-	fail bool
-}
-
-func (p *qd5FlakyPayer) TakePayment(ctx context.Context, in quote.CounterReceiptInput) (quote.CounterReceipt, error) {
-	p.mu.Lock()
-	f := p.fail
-	p.mu.Unlock()
-	if f {
-		return quote.CounterReceipt{}, errors.New("settle: connection reset")
-	}
-	return p.real.TakePayment(ctx, in)
-}
-
-func (p *qd5FlakyPayer) failNext(v bool) { p.mu.Lock(); p.fail = v; p.mu.Unlock() }
 
 func qd5Setup(t *testing.T) *qd5Env {
 	t.Helper()
@@ -83,11 +62,10 @@ func qd5Setup(t *testing.T) *qd5Env {
 	orderSvc := order.NewService(order.NewRepository(pool))
 	repo := quote.NewRepository(pool).WithCreditGate(till.NewHoldAwareCreditGate(till.NewRepository(pool)))
 	aud := audit.NewService(audit.NewRepository(pool), nil)
-	inv, realPayer := quoteMoneyDoor(pool, orderSvc)
-	flaky := &qd5FlakyPayer{real: realPayer}
+	inv, payer := quoteMoneyDoor(pool, orderSvc)
 	svc := quote.NewStaffService(repo).WithAudit(aud).WithAuditTrail(aud).
-		WithOrderInvoicer(inv).WithCounterPayer(flaky)
-	return &qd5Env{t: t, pool: pool, svc: svc, orderSvc: orderSvc, userID: userID, payer: flaky}
+		WithOrderInvoicer(inv).WithCounterPayer(payer)
+	return &qd5Env{t: t, pool: pool, svc: svc, orderSvc: orderSvc, userID: userID}
 }
 
 func (e *qd5Env) as(role, branch string) context.Context {
@@ -655,31 +633,6 @@ func TestQD5_CustomerWithCreditConvertsFirstThroughTheExistingDoor(t *testing.T)
 	}
 	if got := e.counts(q); got != (qd5Counts{}) {
 		t.Fatalf("a refusal wrote rows: %+v", got)
-	}
-}
-
-func TestQD5_AFaultBetweenTheCommitsIsFinishedByTheSameRequest(t *testing.T) {
-	e := qd5Setup(t)
-	q := e.seedQuote(0, 0, qd5Trenton)
-	e.payer.failNext(true)
-	_, err := e.svc.TakeOrderPayment(e.counter(), q.QuoteID, pay("CASH", q.Total, "k-fault"))
-	var nr *quote.PaymentNotRecordedError
-	if !errors.As(err, &nr) {
-		t.Fatalf("a fault in the settle must say what exists, got %v", err)
-	}
-	if nr.OrderNo == "" || nr.InvoiceNo == "" {
-		t.Fatalf("the refusal must name the order and the invoice: %+v", nr)
-	}
-	e.payer.failNext(false)
-	out, err := e.svc.TakeOrderPayment(e.counter(), q.QuoteID, pay("CASH", q.Total, "k-fault"))
-	if err != nil {
-		t.Fatalf("the repeat must finish the action: %v", err)
-	}
-	if out.BalanceCents != 0 || out.InvoiceNo != nr.InvoiceNo || out.OrderNo != nr.OrderNo {
-		t.Fatalf("the repeat finishes the same order and invoice: %+v vs %+v", out, nr)
-	}
-	if c := e.counts(q); c != (qd5Counts{Orders: 1, Invoices: 1, Payments: 1}) {
-		t.Fatalf("after the repeat: %+v", c)
 	}
 }
 

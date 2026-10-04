@@ -435,13 +435,9 @@ func (h *StaffHandler) writeErr(w http.ResponseWriter, err error) {
 	var floorRefusal *FloorRefusalError
 	var nothingToApprove *NothingToApproveError
 	var paymentConflict *OrderPaymentConflictError
-	var notRecorded *PaymentNotRecordedError
 	switch {
 	case errors.As(err, &paymentConflict):
 		httpx.Error(w, http.StatusConflict, paymentConflict.Error())
-	case errors.As(err, &notRecorded):
-		// Between two commits: say exactly what exists and how to finish. A 503, never a generic 500.
-		httpx.Error(w, http.StatusServiceUnavailable, notRecorded.Error())
 	// - DIB-483 / M3-G7B: the credit refusal keeps its REASON -
 	// This case sits ABOVE the generic ErrInvalidTransition case below, and the ordering is the
 	// entire fix. ErrCreditBlocked.Unwrap() returns ErrInvalidTransition on purpose (it is how the

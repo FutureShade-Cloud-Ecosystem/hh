@@ -142,11 +142,23 @@ func runConvert(ctx context.Context, store convertStore, rec audit.Recorder,
 		if f != "" {
 			extra["fulfillment"] = f
 		}
-		_ = rec.Record(ctx, audit.SensitiveAccess{
+		entry := audit.SensitiveAccess{
 			Action: audit.ActOrderStatusChanged, EntityType: "order", EntityID: res.OrderID,
 			ActorID: actor, Purpose: "ORDER_STATUS_TRANSITION", Reason: "quote_converted",
 			Extra: extra,
-		})
+		}
+		// QD-5: a conversion that runs on the payment door's transaction writes its history row on that
+		// transaction too, so the order and its history exist together or not at all, and a failure
+		// here aborts the action. Every other conversion stays best-effort and post-commit.
+		if tx, ok := txFrom(ctx); ok {
+			if tr, ok := rec.(txRecorder); ok {
+				if err := tr.RecordTx(ctx, tx, entry); err != nil {
+					return ConvertResult{}, fmt.Errorf("convert quote %q: record the order's creation: %w", quoteID, err)
+				}
+				return res, nil
+			}
+		}
+		_ = rec.Record(ctx, entry)
 	}
 	return res, nil
 }
