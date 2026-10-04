@@ -101,7 +101,7 @@ import { FLOOR_REFUSAL_CLOSED_EVENT, floorRefusalMessage, openFloorRefusalDialog
 import { OPEN_SETTINGS_EVENT } from "./panel-seams.js";
 import type { QdClient, SurfaceConfig, TermsRef } from "./qd-client.js";
 import { WorkspaceStore } from "./workspace-store.js";
-import { QuoteScope, SIGN_OUT_EVENT, type QuoteContext, type SignOutDetail } from "./quote-context.js";
+import { QuoteScope, SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type QuoteContext, type SignOutDetail } from "./quote-context.js";
 import type { AddonSuggestion } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
 
 /** Thrown inside the send and link paths when the quote changed under them: caught and said nothing. */
@@ -1180,6 +1180,12 @@ export class QdQuoteWorkarea extends LitElement {
     };
   }
 
+  /**
+   * The terms save of each quote the person left with an unsaved edit, until the server has answered it. Coming
+   * back to that quote waits on it, so the read never beats the save and the edit is not lost.
+   */
+  private readonly flushes = new Map<string, Promise<void>>();
+
   /** The unsaved terms edit of the quote being left is sent to the quote it was typed on, then cleared. */
   private flushTermsOf(previousId: string): void {
     const client = this.client;
@@ -1194,9 +1200,14 @@ export class QdQuoteWorkarea extends LitElement {
     this.termsUnsaved = false;
     this.termsEditSeq += 1;
     if (!dirty || client === null || terms === null || previousId === "") return;
-    void client.putTerms(previousId, termsBody(terms)).then((result) => {
+    const body = termsBody(terms);
+    const sent = client.putTerms(previousId, body).then((result) => {
       // Said plainly, naming the quote it was for, because the person has moved on to another.
       if (!result.ok) this.error = `The terms you changed on ${label} were not saved: ${spokenRefusal(quoteErrorMessage(result.status, result.error, "save the quote terms"))}`;
+    });
+    this.flushes.set(previousId, sent);
+    void sent.then(() => {
+      if (this.flushes.get(previousId) === sent) this.flushes.delete(previousId);
     });
   }
 
@@ -1210,6 +1221,8 @@ export class QdQuoteWorkarea extends LitElement {
     const ctx = this.ctx;
     if (this.termsPendingCount() > 0 && ctx.id !== "") await this.putTermsNow();
     await this.store?.flush();
+    // A terms save started by a switch is still the person's unsent work: sign out waits for it too (bounded by the host).
+    await Promise.all([...this.flushes.values()]);
   }
 
   private startLoads(): void {
@@ -1479,6 +1492,13 @@ export class QdQuoteWorkarea extends LitElement {
       // the caret.
       this.pendingFocusScan = false;
       void this.updateComplete.then(() => this.focusScan());
+    }
+    // A terms edit made on this quote before the person left it may still be on its way to the server: the read waits for it.
+    const unsent = this.flushes.get(ctx.id);
+    if (unsent !== undefined) {
+      const landed = await waitUpTo(UNSENT_WAIT_MS, unsent);
+      if (ctx.stale) return;
+      if (!landed) this.error = "A terms change you made on this quote is still being saved. What is shown may not include it yet.";
     }
     const terms = await ctx.guarded(client.readTerms(ctx.id));
     if (terms === undefined) return;

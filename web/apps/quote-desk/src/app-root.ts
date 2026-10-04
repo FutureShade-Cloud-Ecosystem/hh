@@ -12,7 +12,7 @@
 // The binding discipline is the app's own (the design system's position gate
 // holds its templates to no property or event bindings): the cards and the
 // chrome controls delegate through data-action on the host.
-import { SIGN_OUT_EVENT, type SignOutDetail } from "./quote-context.js";
+import { SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./quote-context.js";
 import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
@@ -295,14 +295,15 @@ export class QuoteDeskApp extends HHElement {
     // Unsent work (a terms edit waiting on its save, the layout) is sent while the session still stands.
     const detail: SignOutDetail = { waits: [] };
     window.dispatchEvent(new CustomEvent(SIGN_OUT_EVENT, { detail }));
-    await Promise.allSettled(detail.waits);
+    // Bounded: a save that never answers must not hold the session open for good.
+    const sent = await waitUpTo(UNSENT_WAIT_MS, Promise.allSettled(detail.waits));
     await this.#controller.signOut();
     this.#busy = false;
     this.#roleLabel = null;
     this.#deskUserId = null;
     this.#deskIdentity = null;
     this.#branch = null;
-    this.#message = null;
+    this.#message = sent ? null : "Signing out did not wait for every unsent change: saving timed out, so a change you made last may not have been saved.";
     this.#surface = "entry";
     // The shared surface's session-owned module state goes with the session.
     clearSessionState();

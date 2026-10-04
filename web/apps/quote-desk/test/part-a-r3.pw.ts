@@ -59,3 +59,79 @@ test("P2-1 a scan made in compose while the quote is being created is not added 
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
   expect(seen.filter((w) => w.includes("/lines"))).toHaveLength(0);
 });
+
+test("P2-2 a terms edit still being saved is waited for when the person returns to the quote, and is not lost", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-po")).toBeVisible();
+  const seen = writes(page);
+  const put = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "PUT" });
+  await page.getByTestId("qb-po").fill("PO-TYPED-ON-1004");
+  await row(page, "Q-1001").click();
+  await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
+  await put.asked;
+  await row(page, "Q-1004").click();
+  await expect(page.getByTestId("qb-context")).toContainText("Q-1004");
+  // The save is out: the read waits for it, so no empty box is shown as the saved value.
+  await settle(page);
+  await expect(page.getByTestId("qb-po")).toHaveCount(0);
+  put.open();
+  await expect(page.getByTestId("qb-po")).toHaveValue("PO-TYPED-ON-1004");
+  // The next edit carries the PO, so nothing blanks it.
+  await page.getByTestId("qb-contact").fill("Site contact");
+  await expect.poll(() => seen.filter((w) => w.startsWith("PUT") && w.includes("Site contact")).length).toBeGreaterThan(0);
+  const last = seen.filter((w) => w.startsWith("PUT") && w.includes("Site contact")).pop() ?? "";
+  expect(last).toContain('"customer_po":"PO-TYPED-ON-1004"');
+});
+
+test("P2-2 a return to a quote whose terms save never answers reads after a bound and says so", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-po")).toBeVisible();
+  const put = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "PUT" });
+  await page.getByTestId("qb-po").fill("PO-NEVER-ANSWERED");
+  await row(page, "Q-1001").click();
+  await put.asked;
+  await row(page, "Q-1004").click();
+  await expect(page.getByTestId("qb-po")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByTestId("qb-error")).toContainText("still being saved");
+});
+
+test("P2-2 sign out waits for the terms save of the quote just left, and sends it while the session stands", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-po")).toBeVisible();
+  const statuses: string[] = [];
+  page.on("response", (r) => {
+    if (r.request().method() === "PUT" && /\/quotes\/q-1004\/terms$/.test(r.url())) statuses.push(String(r.status()));
+  });
+  const put = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "PUT" });
+  await page.getByTestId("qb-po").fill("PO-AT-SIGN-OUT");
+  await row(page, "Q-1001").click();
+  await put.asked;
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await settle(page);
+  // The save is out: the session still stands.
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  put.open();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+  expect(statuses.length).toBeGreaterThan(0);
+  expect(statuses.every((status) => status === "200")).toBe(true);
+});
+
+test("P2-2 sign out is bounded: a save that never answers does not hold it, and the entry page says it timed out", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-po")).toBeVisible();
+  const put = await hold(page, /\/quotes\/q-1004\/terms$/, { method: "PUT" });
+  await page.getByTestId("qb-po").fill("PO-NEVER-ANSWERED");
+  await row(page, "Q-1001").click();
+  await put.asked;
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("status").filter({ hasText: "timed out" })).toBeVisible();
+});

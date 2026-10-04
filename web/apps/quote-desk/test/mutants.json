@@ -96,5 +96,40 @@
     "find": "if (this.quoteId !== \"\" && this.quoteId !== this.createdQuoteId) return;",
     "replace": "",
     "test": "P2-1 a scan made in compose"
+  },
+  {
+    "id": "wa-reload-waits-flush",
+    "file": "src/quote-workarea.ts",
+    "find": "const unsent = this.flushes.get(ctx.id);",
+    "replace": "const unsent = undefined as Promise<void> | undefined;",
+    "test": "P2-2 a terms edit still being saved"
+  },
+  {
+    "id": "wa-reload-wait-bound",
+    "file": "src/quote-workarea.ts",
+    "find": "const landed = await waitUpTo(UNSENT_WAIT_MS, unsent);",
+    "replace": "const landed = (await unsent, true);",
+    "test": "P2-2 a return to a quote whose terms save never answers"
+  },
+  {
+    "id": "wa-signout-waits-switch-flush",
+    "file": "src/quote-workarea.ts",
+    "find": "await Promise.all([...this.flushes.values()]);",
+    "replace": "",
+    "test": "P2-2 sign out waits for the terms save"
+  },
+  {
+    "id": "app-signout-bound",
+    "file": "src/app-root.ts",
+    "find": "const sent = await waitUpTo(UNSENT_WAIT_MS, Promise.allSettled(detail.waits));",
+    "replace": "const sent = (await Promise.allSettled(detail.waits), true);",
+    "test": "P2-2 sign out is bounded"
+  },
+  {
+    "id": "app-signout-says-timeout",
+    "file": "src/app-root.ts",
+    "find": "this.#message = sent ? null :",
+    "replace": "this.#message = true ? null :",
+    "test": "P2-2 sign out is bounded"
   }
 ]

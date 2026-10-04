@@ -73,3 +73,21 @@ export const SIGN_OUT_EVENT = "qd-sign-out";
 export interface SignOutDetail {
   waits: Promise<void>[];
 }
+
+/** How long a wait on unsent work lasts before the host goes on without it. */
+export const UNSENT_WAIT_MS = 3000;
+
+/** Waits for a promise for at most `ms`; true when it finished first, false when the wait timed out. */
+export async function waitUpTo(ms: number, work: Promise<unknown>): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+  });
+  const finished = work.then(
+    () => true as const,
+    () => true as const,
+  );
+  const landed = await Promise.race([finished, timedOut]);
+  if (timer !== undefined) clearTimeout(timer);
+  return landed;
+}
