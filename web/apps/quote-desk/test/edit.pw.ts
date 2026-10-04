@@ -138,6 +138,8 @@ test("a discount below the floor shows the plain refusal and fires the dialog ev
   const first = await refusals(page);
   expect(first).toHaveLength(1);
   expect(first[0]).toMatchObject({ lineNo: 1, discPct: 10 });
+  // The dialog the event opens is a real modal now: close it before the next edit.
+  await page.keyboard.press("Escape");
 
   // The quantity arm: a discount that was inside the floor, then the floor rises.
   const sand = panel(page).getByTestId("qe-line").nth(1);
@@ -151,6 +153,7 @@ test("a discount below the floor shows the plain refusal and fires the dialog ev
   const second = await refusals(page);
   expect(second).toHaveLength(2);
   expect(second[1]).toMatchObject({ lineNo: 2, discPct: 5 });
+  await page.keyboard.press("Escape");
   // The quantity did not change: the box returns to the server's truth.
   await expect(sand.locator('[data-field="qty"]')).toHaveValue("5");
   await page.request.put("/_stub/floor-raise", { data: { bps: 0 } });
