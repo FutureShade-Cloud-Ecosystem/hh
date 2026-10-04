@@ -208,6 +208,13 @@ export class QuotePublicPage extends HHElement {
         border: 1px solid var(--hh-line);
         display: block;
       }
+      /* The slot a thumbnail paints into: the cell holds its 36px box before
+         the image lands, so the row does not shift. */
+      .thumbslot {
+        display: block;
+        width: 36px;
+        height: 36px;
+      }
       .discnote {
         font-size: 0.76rem;
         color: var(--hh-text-dim);
@@ -261,13 +268,38 @@ export class QuotePublicPage extends HHElement {
     // once the quote has rendered. Guarded: a failed load never opens an
     // empty print dialog.
     this.autoPrint = params.get("print") === "1";
+    // The design system's position gate holds the template allow table at
+    // zero event and property bindings, so the controls stay static and this
+    // root delegates: the kits' own data-action pattern, and id-keyed reads
+    // for the two inputs.
+    this.renderRoot.addEventListener("input", this.onNameInput);
+    this.renderRoot.addEventListener("change", this.onAffirmChange);
+    this.renderRoot.addEventListener("click", this.onActionClick);
     void this.load();
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    this.renderRoot.removeEventListener("input", this.onNameInput);
+    this.renderRoot.removeEventListener("change", this.onAffirmChange);
+    this.renderRoot.removeEventListener("click", this.onActionClick);
     this.revokeThumbs();
   }
+
+  private onNameInput = (event: Event): void => {
+    const target = event.target as HTMLInputElement;
+    if (target.id === "name") this.typedName = target.value;
+  };
+
+  private onAffirmChange = (event: Event): void => {
+    const target = event.target as HTMLInputElement;
+    if (target.id === "affirm") this.affirmed = target.checked;
+  };
+
+  private onActionClick = (event: Event): void => {
+    const action = (event.target as HTMLElement).closest("[data-action]");
+    if (action !== null && action.getAttribute("data-action") === "accept") void this.accept();
+  };
 
   /** Fire the one-shot print once the loaded quote has painted. */
   updated(): void {
@@ -277,6 +309,34 @@ export class QuotePublicPage extends HHElement {
         window.print();
       } catch {
         // printing refused: the page itself is the fallback
+      }
+    }
+    this.paintThumbs();
+  }
+
+  /**
+   * The thumbnails paint outside the templates: an object URL is a blob
+   * scheme, which the design system's address rule (one helper, http and
+   * https and scheme free only) refuses to bind, so the slot renders in the
+   * template and the image element is built here, one per slot, idempotent.
+   */
+  private paintThumbs(): void {
+    const slots = this.renderRoot.querySelectorAll<HTMLSpanElement>("[data-thumb]");
+    for (const slot of slots) {
+      const ref = slot.getAttribute("data-thumb");
+      const url = ref !== null && ref !== "" ? (this.thumbs.get(ref) ?? null) : null;
+      const existing = slot.querySelector("img");
+      if (url !== null && existing === null) {
+        const img = document.createElement("img");
+        img.className = "thumb";
+        img.src = url;
+        img.alt = "";
+        img.loading = "lazy";
+        img.width = 36;
+        img.height = 36;
+        slot.append(img);
+      } else if (url === null && existing !== null) {
+        existing.remove();
       }
     }
   }
@@ -433,30 +493,15 @@ export class QuotePublicPage extends HHElement {
       <div class="card">
         <h2 class="card-h2">Accept this quote</h2>
         <label for="name">Your full name</label>
-        <input
-          id="name"
-          type="text"
-          autocomplete="name"
-          .value=${this.typedName}
-          @input=${(e: Event) => {
-            this.typedName = (e.target as HTMLInputElement).value;
-          }}
-        />
+        <input id="name" type="text" autocomplete="name" />
         <div class="check">
-          <input
-            id="affirm"
-            type="checkbox"
-            .checked=${this.affirmed}
-            @change=${(e: Event) => {
-              this.affirmed = (e.target as HTMLInputElement).checked;
-            }}
-          />
+          <input id="affirm" type="checkbox" />
           <label for="affirm" class="check-label">
             I accept this quote for ${acceptanceAmountPhrase(q)} and confirm I am authorised to do so on behalf of
             ${q.customerName}.
           </label>
         </div>
-        <button ?disabled=${this.busy} @click=${() => void this.accept()}>
+        <button type="button" data-action="accept" ?disabled=${this.busy}>
           ${this.busy ? "Recording…" : "Accept quote"}
         </button>
         ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}
@@ -497,18 +542,7 @@ export class QuotePublicPage extends HHElement {
             ${q.lines.map(
               (l) => html`<tr>
                 ${withImages
-                  ? html`<td>
-                      ${l.imageRef && this.thumbs.get(l.imageRef)
-                        ? html`<img
-                            class="thumb"
-                            src=${this.thumbs.get(l.imageRef)}
-                            alt=""
-                            loading="lazy"
-                            width="36"
-                            height="36"
-                          />`
-                        : nothing}
-                    </td>`
+                  ? html`<td><span class="thumbslot" data-thumb=${l.imageRef}></span></td>`
                   : nothing}
                 <td>
                   ${l.description}

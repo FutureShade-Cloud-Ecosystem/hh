@@ -29,7 +29,15 @@ test("the lane's reference shots, against the stub, on demand", async ({ page })
 
   await page.goto(`/?t=${GOOD_TOKEN}`);
   await expect(page.getByRole("heading", { name: "Quote #Q-25" })).toBeVisible();
-  await expect(page.locator("img.thumb").nth(2)).toBeVisible();
+  // The thumbnails ride the image read and then decode; hold the shot until
+  // every one has its pixels, the way the reference's product photos render.
+  await page.waitForFunction(() => {
+    const root = document.querySelector("pd-quote-public")?.shadowRoot;
+    const thumbs = root?.querySelectorAll("img.thumb");
+    return (
+      thumbs !== undefined && thumbs.length === 3 && Array.from(thumbs).every((img) => img.complete && img.naturalWidth > 0)
+    );
+  });
   await page.screenshot({ path: `${dir}/share-quote.png` });
 
   await page.locator("#name").fill("Sample Customer");
