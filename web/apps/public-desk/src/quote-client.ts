@@ -8,7 +8,7 @@
 // No credential rides any call: the client is built with an empty base URL
 // and NO header provider, because a customer on a share link holds no
 // credential at all. The token in the path is the credential.
-import { err, ok, type ApiClient, type Result } from "@hardscapehouse/api-client";
+import { err, ok, type ApiClient, type FetchLike, type Result } from "@hardscapehouse/api-client";
 import { publicApi, staffProduct } from "@hardscapehouse/api-client";
 
 export const QUOTE_STATUSES = ["DRAFT", "SENT", "ACCEPTED", "CONVERTED", "EXPIRED", "LOST"] as const;
@@ -58,6 +58,48 @@ export interface AcceptanceRef {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
+}
+
+// -- what a customer may be told of a refusal: the server's words only when
+// the answer carried a status AND the contract's JSON error envelope. The
+// transport hands the raw body of any other refusal (a proxy's HTML page, with
+// its upstream host) back as the error string, so this fetch hides every
+// non-envelope body: the transport then says only "HTTP <status>", and
+// serverWords refuses that too.
+
+function envelopeText(text: string): string {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (isRecord(parsed) && typeof parsed["error"] === "string" && parsed["error"] !== "") return text;
+  } catch {
+    // not JSON: not the envelope
+  }
+  return "";
+}
+
+/** The platform fetch, with every refusal body that is not the error envelope emptied. */
+export const envelopeOnlyFetch: FetchLike = async (url, init) => {
+  const f = globalThis.fetch;
+  if (typeof f !== "function") throw new TypeError("no global fetch is available");
+  const response = await f(url, init as RequestInit);
+  if (response.ok) return response;
+  const raw = response.text.bind(response);
+  return {
+    status: response.status,
+    ok: false,
+    text: async () => envelopeText(await raw()),
+    arrayBuffer: () => response.arrayBuffer(),
+  };
+};
+
+/**
+ * The server's own words for a failed call, or null when there are none to
+ * show a customer: no status (nothing answered), or an answer that was not the
+ * JSON error envelope.
+ */
+export function serverWords(failure: { error: string; status?: number }): string | null {
+  if (failure.status === undefined) return null;
+  return /^HTTP \d{3}$/.test(failure.error) ? null : failure.error;
 }
 
 // -- field readers: a response field either proves itself or the answer is

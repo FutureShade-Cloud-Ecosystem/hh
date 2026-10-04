@@ -27,13 +27,14 @@ import {
   type QuoteMoney,
 } from "./_quote-public.js";
 import { formatMoney, quoteStatusPhrase, withFullStop } from "./format.js";
-import { PublicQuoteClient, type AcceptanceRef, type QuoteViewRef } from "./quote-client.js";
+import { envelopeOnlyFetch, PublicQuoteClient, serverWords, type AcceptanceRef, type QuoteViewRef } from "./quote-client.js";
 
 const LINK_GONE =
   "This link is no longer valid. Quote links expire, and can also be turned off by our team. Please contact us for an up-to-date link.";
 const LINK_GONE_SHORT = "This link is no longer valid. Please contact us for an up-to-date link.";
 const NOT_FOUND = "We could not find this quote. Please check the link you were sent.";
 const LOAD_FAILED = "We could not load this quote right now. Please try again shortly.";
+const COULD_NOT_REACH = "We could not reach the server. Please try again.";
 const NOT_RECORDED = "We could not record your acceptance. Please try again.";
 
 export class QuotePublicPage extends HHElement {
@@ -303,7 +304,7 @@ export class QuotePublicPage extends HHElement {
     super();
     // Same origin, same origin relative calls, and no header provider at all:
     // a customer on a share link holds no credential to attach.
-    this.client = new PublicQuoteClient(new ApiClient({ baseUrl: "" }));
+    this.client = new PublicQuoteClient(new ApiClient({ baseUrl: "", fetch: envelopeOnlyFetch }));
   }
 
   connectedCallback(): void {
@@ -392,13 +393,19 @@ export class QuotePublicPage extends HHElement {
     this.thumbUrls = [];
   }
 
-  private async load(): Promise<void> {
+  /**
+   * Load the quote. A REFRESH (after a refused accept) never replaces the page
+   * the customer is looking at: only a dead link does, any other failure
+   * leaves the quote and the typed name where they are.
+   */
+  private async load(refresh = false): Promise<void> {
     if (!this.token) {
       this.fatal = "This link is missing its access code. Please use the full link you were sent.";
       return;
     }
     const result = await this.client.viewQuote(this.token);
     if (!result.ok) {
+      if (refresh && result.status !== 410 && result.status !== 404) return;
       // Gone, not found: the link EXISTED and died, or it never did. Say
       // which, and say what to do next.
       this.fatal = result.status === 410 ? LINK_GONE : result.status === 404 ? NOT_FOUND : LOAD_FAILED;
@@ -441,11 +448,18 @@ export class QuotePublicPage extends HHElement {
           this.fatal = LINK_GONE_SHORT;
           return;
         }
+        // Nothing answered: say so plainly and keep the form and the name.
+        if (result.status === undefined) {
+          this.error = COULD_NOT_REACH;
+          return;
+        }
         // The server's refusal is the informative one: an already accepted
-        // quote names its state. Show that rather than replacing it with
-        // canned text, and refresh the page's figures from the source.
-        this.error = result.error || NOT_RECORDED;
-        await this.load();
+        // quote names its state. Show its words when the answer was the JSON
+        // error envelope, plain words otherwise (a proxy's page is never
+        // shown), and refresh the page's figures from the source.
+        const words = serverWords(result);
+        this.error = words ?? NOT_RECORDED;
+        if (words !== null) await this.load(true);
         return;
       }
       this.accepted = result.value;

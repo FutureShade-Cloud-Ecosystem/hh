@@ -283,3 +283,67 @@ test("no credential header rides any call, every call is a public route or the i
   }));
   expect(storage).toEqual({ local: 0, session: 0, cookie: "" });
 });
+
+// A failed accept must speak plainly and keep the form. The server's own words
+// are shown only when the answer carried a status and the JSON error envelope;
+// a transport failure or a proxy's page never reaches the customer.
+const COULD_NOT_REACH = "We could not reach the server. Please try again.";
+const NOT_RECORDED = "We could not record your acceptance. Please try again.";
+
+async function readyToAccept(page: Page, token: string): Promise<void> {
+  await page.goto(`/?t=${token}`);
+  await expect(page.getByRole("heading", { name: "Quote #Q-28" })).toBeVisible();
+  await page.locator("#name").fill("Sample Customer");
+  await page.locator("#affirm").check();
+}
+
+async function expectFormKept(page: Page): Promise<void> {
+  await expect(page.getByRole("heading", { name: "Quote #Q-28" })).toBeVisible();
+  await expect(page.locator("#name")).toHaveValue("Sample Customer");
+  await expect(page.locator("#affirm")).toBeChecked();
+  await expect(page.getByRole("button", { name: "Accept quote" })).toBeEnabled();
+}
+
+test("an accept that never reaches the server says so plainly and keeps the form", async ({ page }) => {
+  await readyToAccept(page, "q-terms-28");
+  await page.route("**/accept", (route) => route.abort("failed"));
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText(COULD_NOT_REACH);
+  await expect(page.getByRole("alert")).not.toContainText("transport");
+  await expect(page.getByRole("alert")).not.toContainText("quotePublicAcceptQuote");
+  await expectFormKept(page);
+});
+
+test("an accept answered by a proxy's HTML page shows neither the page nor its host", async ({ page }) => {
+  await readyToAccept(page, "q-terms-28");
+  await page.route("**/accept", (route) =>
+    route.fulfill({
+      status: 502,
+      contentType: "text/html",
+      body: "<html><body><h1>502 Bad Gateway</h1><p>upstream core.internal.example:8000 refused</p></body></html>",
+    }),
+  );
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText(NOT_RECORDED);
+  const body = await page.locator("body").evaluate((node) => node.outerHTML + (document.querySelector("pd-quote-public")?.shadowRoot?.innerHTML ?? ""));
+  expect(body).not.toContain("Bad Gateway");
+  expect(body).not.toContain("core.internal.example");
+  await expectFormKept(page);
+});
+
+test("a refusal that carries the server's JSON error envelope shows the server's words", async ({ page }) => {
+  await readyToAccept(page, "q-terms-28");
+  await page.route("**/accept", (route) => route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: "The typed name must match the contact on the quote." }) }));
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText("The typed name must match the contact on the quote.");
+});
+
+test("the whole network going down after the quote loaded keeps the quote and the typed name", async ({ page, context }) => {
+  await readyToAccept(page, "q-terms-28");
+  await context.setOffline(true);
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText(COULD_NOT_REACH);
+  await expectFormKept(page);
+  await expect(page.getByText("Quote link unavailable")).toHaveCount(0);
+  await context.setOffline(false);
+});
