@@ -97,7 +97,8 @@ test("a failed column save is shown", async ({ page }) => {
     }
   });
   await page.getByTestId("qb-columns-btn").click();
-  await page.locator('[data-field="column"][data-column="line.margin_pct"]').check();
+  // A refused save returns the box to the saved state, so the press is a click: check() would re-read the box and race that revert.
+  await page.locator('[data-field="column"][data-column="line.margin_pct"]').click();
   await expect(page.getByTestId("qb-layout-error")).toContainText("The columns were not saved");
 });
 

@@ -134,6 +134,8 @@ export class QdQuoteWorkarea extends LitElement {
   @state() private error = "";
   /** A layout save, reset or column save that was refused, in words: never silently dropped. */
   @state() private layoutError = "";
+  /** The column save's own refusal: a layout save that lands must never clear it, nor the reverse. */
+  @state() private columnsError = "";
   @state() private notice = "";
   @state() private busy = false;
   @state() private term = "";
@@ -2038,10 +2040,10 @@ export class QdQuoteWorkarea extends LitElement {
     if (client === null) return;
     const saved = await client.putMyItems(next.map((c) => ({ kind: "column", id: c.id, position: c.position, visible: c.visible })));
     if (!saved.ok) {
-      this.layoutError = `The columns were not saved: ${spokenRefusal(quoteErrorMessage(saved.status, saved.error, "save the columns"))}`;
+      this.columnsError = `The columns were not saved: ${spokenRefusal(quoteErrorMessage(saved.status, saved.error, "save the columns"))}`;
       return;
     }
-    this.layoutError = "";
+    this.columnsError = "";
     const config = await client.surfaceConfig(this.branchId);
     if (config.ok) this.config = config.value;
   }
@@ -2066,10 +2068,10 @@ export class QdQuoteWorkarea extends LitElement {
     if (client === null) return;
     const reset = await client.deleteMyItems();
     if (!reset.ok) {
-      this.layoutError = `The columns were not reset: ${spokenRefusal(quoteErrorMessage(reset.status, reset.error, "reset the columns"))}`;
+      this.columnsError = `The columns were not reset: ${spokenRefusal(quoteErrorMessage(reset.status, reset.error, "reset the columns"))}`;
       return;
     }
-    this.layoutError = "";
+    this.columnsError = "";
     const config = await client.surfaceConfig(this.branchId);
     if (config.ok) this.config = config.value;
   }
@@ -2620,7 +2622,7 @@ export class QdQuoteWorkarea extends LitElement {
   private renderOutcomeLines() {
     return html`
       <p class="err" role="alert" data-testid="qb-error">${this.error}</p>
-      <p class="err" role="alert" data-testid="qb-layout-error">${this.layoutError}</p>
+      <p class="err" role="alert" data-testid="qb-layout-error">${[this.layoutError, this.columnsError].filter((line) => line !== "").join(" ")}</p>
       <p class="ok" role="status" aria-live="polite" aria-atomic="true" data-testid="qb-notice">${this.notice}</p>
     `;
   }
