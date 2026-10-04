@@ -27,6 +27,9 @@ type fakeStore struct {
 	// lastFiled is the most recent request fileApproval handed the store
 	// (the quote floor door's binding assertions read it back).
 	lastFiled *ApprovalRequest
+	// requesterRoles maps a requester's user id to the ERP role code the
+	// store would read for it, stamped onto a filed request.
+	requesterRoles map[string]string
 
 	// approvals rail (0075):
 	saveNotApplied bool              // when set, SaveDecision reports applied=false (CAS lost / already decided)
@@ -49,6 +52,7 @@ func (f *fakeStore) ResolveStaff(_ context.Context, userID string) (StaffContext
 func (f *fakeStore) CreateApproval(_ context.Context, r ApprovalRequest) (ApprovalRequest, error) {
 	r.ID = "ar-new"
 	r.Status = ApprovalPending
+	r.RequesterRole = f.requesterRoles[r.RequestedBy]
 	filed := r
 	f.lastFiled = &filed
 	return r, nil

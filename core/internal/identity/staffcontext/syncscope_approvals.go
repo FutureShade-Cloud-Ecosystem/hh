@@ -126,6 +126,7 @@ const approvalSyncColumns = `a.id::text, a.requested_by::text, a.branch_id::text
 	COALESCE(a.subject_ref,''), COALESCE((a.data->>'amount_cents')::bigint, 0),
 	COALESCE(a.data->>'line_id',''),
 	a.status, COALESCE(a.decided_by::text,''),
+	` + requesterRoleHead + `a.requested_by` + requesterRoleTail + `,
 	a.seq, (a.deleted_at IS NOT NULL) AS deleted`
 
 // approvalSyncRow is one scanned row plus its sync legs.
@@ -140,7 +141,7 @@ func scanApprovalSync(row interface{ Scan(dest ...any) error }) (approvalSyncRow
 	var r approvalSyncRow
 	var policy, status string
 	if err := row.Scan(&r.req.ID, &r.req.RequestedBy, &r.req.BranchID, &policy, &r.req.Detail,
-		&r.req.SubjectRef, &r.req.AmountCents, &r.req.LineID, &status, &r.req.DecidedBy,
+		&r.req.SubjectRef, &r.req.AmountCents, &r.req.LineID, &status, &r.req.DecidedBy, &r.req.RequesterRole,
 		&r.seq, &r.deleted); err != nil {
 		return approvalSyncRow{}, err
 	}

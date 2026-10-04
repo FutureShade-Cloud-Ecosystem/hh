@@ -37,6 +37,10 @@ func qd1bCountClerk(t *testing.T, pool *pgxpool.Pool) string {
 		`SELECT id::text FROM users WHERE platform_user_id = 'fxstaff-qd1b-count-clerk'`).Scan(&id); err != nil {
 		t.Fatalf("read the count clerk: %v", err)
 	}
+	// The clerk is an Inside Sales filer: the branch Sales manager decides a
+	// salesperson's request alone (row 743), read from the requester's role
+	// grant.
+	qd1ePlantRoleGrant(t, pool, "fxstaff-qd1b-count-clerk", "inside_sales")
 	return id
 }
 

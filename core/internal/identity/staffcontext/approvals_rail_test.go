@@ -246,7 +246,7 @@ func TestFanOutFollowsTheConfiguredFloorApprovers(t *testing.T) {
 	want := []string{"gm", "sm"}
 
 	notifier := &fakeNotifier{}
-	s := NewApprovals(&fakeStore{candidates: candidates}).
+	s := NewApprovals(&fakeStore{candidates: candidates, requesterRoles: map[string]string{"clerk": "INSIDE_SALES"}}).
 		WithApprovalNotifier(notifier).
 		WithFloorApprovers(configured)
 	if _, err := s.FileFloorApproval(context.Background(), FloorApprovalFiling{
@@ -266,7 +266,7 @@ func TestFanOutFollowsTheConfiguredFloorApprovers(t *testing.T) {
 	// another branch is not notified of this branch's request.
 	f := &fakeStore{
 		candidates: candidates,
-		reconcile:  []ApprovalRequest{{ID: "p1", BranchID: trt, Policy: PolicyMargin, Status: ApprovalPending}},
+		reconcile:  []ApprovalRequest{{ID: "p1", BranchID: trt, Policy: PolicyMargin, RequesterRole: "INSIDE_SALES", Status: ApprovalPending}},
 	}
 	s = NewApprovals(f).WithFloorApprovers(configured)
 	pending, _, err := s.ApprovalReconcile(context.Background(), time.Now().Add(-24*time.Hour))

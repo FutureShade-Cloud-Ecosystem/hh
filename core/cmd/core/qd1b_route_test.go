@@ -43,12 +43,19 @@ type qd1bFixture struct {
 // manager and the financial controller legs ride plantMatrixStaff).
 func newQD1BFixture(t *testing.T) *qd1bFixture {
 	t.Helper()
-	env := newCompEnv(t)
-	rec := &recordingRegistrar{inner: http.NewServeMux()}
 	cfg, err := roleconfig.Default()
 	if err != nil {
 		t.Fatalf("role configuration: %v", err)
 	}
+	return newQD1BFixtureWith(t, cfg)
+}
+
+// newQD1BFixtureWith is newQD1BFixture over a given role configuration, the
+// floor approver ruling's setting on and off legs.
+func newQD1BFixtureWith(t *testing.T, cfg *roleconfig.Config) *qd1bFixture {
+	t.Helper()
+	env := newCompEnv(t)
+	rec := &recordingRegistrar{inner: http.NewServeMux()}
 	graph, err := registerRoutesWithRoleConfig(rec, env.getenv, cfg)
 	if err != nil {
 		t.Fatalf("registerRoutesWithRoleConfig: %v", err)
