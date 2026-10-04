@@ -6639,6 +6639,7 @@ type QuoteOrderPaymentResult struct {
 	AmountCents       int64     `json:"amount_cents"`
 	ReceivedAt        time.Time `json:"received_at"`
 	Reference         string    `json:"reference"`
+	ReceivedBy        string    `json:"received_by"`
 	BalanceCents      int64     `json:"balance_cents"`
 	Replayed          bool      `json:"replayed"`
 	Converted         bool      `json:"converted"`

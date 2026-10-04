@@ -5708,6 +5708,7 @@ export type QuoteOrderPaymentResult = {
   amount_cents: number;
   received_at: string;
   reference: string;
+  received_by: string;
   balance_cents: number;
   replayed: boolean;
   converted: boolean;

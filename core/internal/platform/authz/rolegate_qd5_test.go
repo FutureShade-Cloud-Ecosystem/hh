@@ -1,11 +1,13 @@
 package authz
 
-// rolegate_qd5_test.go, the wrong role ledger rows 13 and 14 at the gate, on the REAL route:
-// the annotation read is the generated census entry of quoteTakeOrderPayment, so the contract is
-// what is proven, not a literal copied beside it. Row 13: Outside Sales and the General Manager
-// are refused (and HR, and every role with no Counter Till level). Row 14's admitted set: Inside
-// Sales, the Sales manager, the Yard manager and the Branch manager reach the handler. Branch
-// reach is the service's, proven by request in cmd/core.
+// rolegate_qd5_test.go, the counter payment's role set at the gate, on the REAL route: the annotation
+// read is the generated census entry of quoteTakeOrderPayment, so the contract is what is proven, not
+// a literal copied beside it. Row 13 (refused): Outside Sales and the General Manager are refused, and
+// HR, the Yard team, the Financial controller and every role with no Counter Till level. The admitted
+// set (the payment's own rule, CP0-7 A and the ruling that admits the Yard manager at the cash
+// customer's one action): Inside Sales, the Sales manager, the Yard manager and the Branch manager
+// reach the handler. Row 14 is the Yard manager's refusal at the SEPARATE conversion of a quote, which
+// is the service's rule and is proven by request in cmd/core, as is branch reach.
 
 import (
 	"testing"

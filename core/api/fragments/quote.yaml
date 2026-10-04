@@ -339,7 +339,19 @@ paths:
         the same document. A customer with a credit account may pay a part
         (a deposit); a customer with no credit account pays the whole agreed
         total, and for such a customer an ACCEPTED quote is converted, billed
-        and paid as one action, so the order never exists unpaid. A replayed
+        and paid as one action: the conversion, the invoice and the payment
+        are written in one transaction, so either all three exist or none
+        does, and a cash customer's order never exists unpaid. For a customer
+        with a credit account the order already exists when the payment is
+        taken; the invoice and the payment are then written together, so a
+        payment that fails leaves no invoice and no balance behind. The
+        Yard manager is admitted at the cash customer's one action, on an
+        accepted quote only; the separate conversion of a quote keeps its
+        selling role rule. An order that already has an invoice raised another
+        way (by shipment group, say) is refused with a 409 and nothing is
+        raised, so the order is never billed twice. The counter's invoice does
+        not move the order out of the yard: it is confirmed, picked and handed
+        over as usual, and is invoiced when it leaves. A replayed
         idempotency_key posts nothing and answers the first payment; the same
         key with a different method or amount is a 409. The role rule is Work
         or above on the Counter Till at the order's branch.
@@ -1781,8 +1793,9 @@ components:
       description: >-
         What the till's receipt needs: the payment, the invoice it settled
         against, the order and the balance now on the invoice. On a replay
-        the payment fields are the first payment's and replayed is true.
-      required: [order_id, order_no, invoice_id, invoice_no, invoice_total_cents, payment_id, payment_no, method, amount_cents, received_at, reference, balance_cents, replayed, converted]
+        the payment fields (the reference and the receiver included) are the
+        first payment's as stored, and replayed is true.
+      required: [order_id, order_no, invoice_id, invoice_no, invoice_total_cents, payment_id, payment_no, method, amount_cents, received_at, reference, received_by, balance_cents, replayed, converted]
       properties:
         order_id: { type: string, format: uuid }
         order_no: { type: string }
@@ -1795,6 +1808,10 @@ components:
         amount_cents: { type: integer, format: int64 }
         received_at: { type: string, format: date-time }
         reference: { type: string }
+        received_by:
+          type: string
+          format: uuid
+          description: The staff member who took the payment
         balance_cents:
           type: integer
           format: int64
