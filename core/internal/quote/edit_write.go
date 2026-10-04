@@ -151,11 +151,21 @@ func (s *StaffService) EditLineQty(ctx context.Context, quoteID string, lineNo i
 	// D5 (plan 3.3): a quantity change on a line that carries a discount
 	// reprices it below its rule price, so the reprice runs the same floor
 	// decision the discount arm runs. A line at its rule price (disc 0) is
-	// not asked: that is QD-2's read side.
+	// not asked: that is QD-2's read side. But the discount the read SAW is
+	// always recorded, at 0 too, so the guarded write re-checks it under
+	// the lock: a discount set between the read and the commit cannot ride
+	// a repriced line nobody decided on (P2-6). And a read that FAILS is a
+	// refusal, never a skip: the floor question that cannot be answered
+	// must not answer itself "no discount".
 	plan := floorWritePlan{expectedDisc: -1}
 	var out *floorOutcome
 	if fs, ok := s.floorStore(); ok {
-		if lineID, disc, _, _, _, clearing, ferr := fs.LineFloorState(ctx, quoteID, lineNo); ferr == nil && disc > 0 {
+		lineID, disc, _, _, _, clearing, ferr := fs.LineFloorState(ctx, quoteID, lineNo)
+		if ferr != nil {
+			return QuoteEditResult{}, ferr
+		}
+		plan.expectedDisc = disc
+		if disc > 0 {
 			out, err = s.decideLineFloor(ctx, caller, quoteID, branchID, cur.ProductID, lineNo, disc, lineID, uom,
 				lp.UnitPriceCents, lp.LineTotalCents, lp.PriceUOM, clearing)
 			if err != nil {
@@ -165,6 +175,7 @@ func (s *StaffService) EditLineQty(ctx context.Context, quoteID string, lineNo i
 				return QuoteEditResult{}, out.refusal
 			}
 			plan = out.plan
+			plan.expectedDisc = disc
 		}
 	}
 	_, after, totals, status, err := s.store.UpdateLineGuarded(ctx, quoteEditWrite{

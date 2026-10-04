@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -377,5 +378,55 @@ func TestQD1_ReadMarks_ClearedByForCostListOnly(t *testing.T) {
 	}
 	if hview.Lines[0].FloorClearedBy != "" || hview.Lines[0].RulePriceBelowFloor != nil {
 		t.Fatalf("a caller off the cost list must learn neither mark, got %+v", hview.Lines[0])
+	}
+}
+
+// qd1StaleDiscStore is the real repository with one lie: its floor state
+// read always answers disc 0, the discount the decision saw a moment
+// before another write set one. It simulates the race the lock time
+// re-check exists for, deterministically.
+type qd1StaleDiscStore struct {
+	*Repository
+}
+
+func (r qd1StaleDiscStore) LineFloorState(ctx context.Context, quoteID string, lineNo int) (string, int, int64, int64, string, *floorClearingStamp, error) {
+	lineID, _, unit, gross, uom, clearing, err := r.Repository.LineFloorState(ctx, quoteID, lineNo)
+	return lineID, 0, unit, gross, uom, clearing, err
+}
+
+// TestQD1_QtyRepriceRecordsTheDiscountItRead (P2-6): the quantity arm
+// always records the stored discount it read, even 0, so the guarded
+// write re-checks it under the lock. A discount set between the read and
+// the commit used to ride the reprice unchecked, because a disc of 0
+// recorded nothing and the lock time check never ran.
+func TestQD1_QtyRepriceRecordsTheDiscountItRead(t *testing.T) {
+	pool := intPool(t)
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	bm := qd1User(t, pool, "bm")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", bm, true)
+	// The row carries a 25 percent discount the decision did not see.
+	qd1SetDisc(t, pool, quoteID, 1, 25)
+
+	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
+	repo := NewRepository(pool).withNow(func() time.Time { return now })
+	aud := audit.NewService(audit.NewRepository(pool), nil)
+	svc := NewStaffService(qd1StaleDiscStore{repo}).
+		WithAudit(aud).
+		WithAuditTrail(aud).
+		WithPricing(qPricer{}).
+		WithCostBasis(qInv{}).
+		WithCustomerType(qCustType{}).
+		WithActorNamer(repo).
+		WithRoleConfig(qd1Cfg).
+		WithFloorArbiter(&arb).
+		WithFloorRail(identity.NewApprovals(identity.NewApprovalRepository(pool))).
+		withCaller(qCallerFrom).
+		withNow(func() time.Time { return now })
+	ctx := qCtxAs(intStaff(intTrenton))
+	ctx = qd1WithRole(ctx, "BRANCH_MANAGER", intTrenton, bm)
+
+	_, err := svc.EditLineQty(ctx, quoteID, 1, "5")
+	if err == nil {
+		t.Fatal("a discount set between the floor read and the lock must refuse the reprice, the figures nobody decided on cannot ride it")
 	}
 }
