@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -313,5 +314,164 @@ func TestIntegration_QD3f_MissingAuditTrailRefusesKeyedAccept(t *testing.T) {
 	}
 	if _, err := svc.AcceptByToken(ctx, token, qd3fCustomer, true); err != nil {
 		t.Errorf("an unkeyed accept with no audit trail is unchanged, got %v", err)
+	}
+}
+
+// P3-5: twelve parallel accepts under one key, multi-accept on AND off: twelve identical answers, one
+// acceptance row, one audit row.
+func TestIntegration_QD3f_ConcurrentSameKeyBothModes(t *testing.T) {
+	pool := intPool(t)
+	now := qd3fNow()
+	for _, multi := range []bool{true, false} {
+		setMultiAccept(t, pool, multi)
+		svc, quoteID, token, _ := qd3fMinted(t, pool, now)
+		const n = 12
+		bodies := make([]string, n)
+		errs := make([]error, n)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				r, err := svc.AcceptByTokenKeyed(context.Background(), token, qd3fCustomer, true, qd3dKeyA)
+				errs[i] = err
+				if err == nil {
+					bodies[i] = qd3dBody(t, r)
+				}
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+		for i := 0; i < n; i++ {
+			if errs[i] != nil {
+				t.Fatalf("multi=%v accept %d: %v", multi, i, errs[i])
+			}
+			if bodies[i] != bodies[0] {
+				t.Errorf("multi=%v answer %d differs from the first outcome:\n%s\n%s", multi, i, bodies[i], bodies[0])
+			}
+		}
+		if got := acceptanceRows(t, pool, quoteID); got != 1 {
+			t.Errorf("multi=%v acceptance rows = %d, want 1", multi, got)
+		}
+		if got := qd3dAuditRows(t, pool, quoteID); got != 1 {
+			t.Errorf("multi=%v audit rows = %d, want 1", multi, got)
+		}
+	}
+}
+
+// qd3fWaitForLockWaiters polls until at least want sessions of this database wait on a lock.
+func qd3fWaitForLockWaiters(t *testing.T, pool *pgxpool.Pool, want int) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		var n int
+		if err := pool.QueryRow(context.Background(), `
+			SELECT COUNT(*) FROM pg_stat_activity
+			 WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&n); err != nil {
+			t.Fatalf("read lock waiters: %v", err)
+		}
+		if n >= want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("fewer than %d sessions queued on the quote row lock", want)
+}
+
+// P3-5: a genuinely in flight commit. An outside transaction holds the quote row lock while attempt 1
+// and then the retry queue behind it; releasing the lock lets attempt 1 commit and the retry, which
+// was waiting, must answer the byte identical first outcome. Multi-accept on and off.
+func TestIntegration_QD3f_InFlightCommitThenRetry(t *testing.T) {
+	pool := intPool(t)
+	now := qd3fNow()
+	for _, multi := range []bool{true, false} {
+		name := "multi_off"
+		if multi {
+			name = "multi_on"
+		}
+		t.Run(name, func(t *testing.T) {
+			setMultiAccept(t, pool, multi)
+			svc, quoteID, token, _ := qd3fMinted(t, pool, now)
+			ctx := context.Background()
+			holder, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatalf("begin holder: %v", err)
+			}
+			defer func() { _ = holder.Rollback(ctx) }()
+			if _, err := holder.Exec(ctx, `SELECT 1 FROM quotes WHERE id = $1 FOR UPDATE`, quoteID); err != nil {
+				t.Fatalf("hold the quote row lock: %v", err)
+			}
+			type answer struct {
+				body string
+				err  error
+			}
+			out := make(chan answer, 2)
+			attempt := func() {
+				r, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA)
+				a := answer{err: err}
+				if err == nil {
+					a.body = qd3dBody(t, r)
+				}
+				out <- a
+			}
+			go attempt()
+			qd3fWaitForLockWaiters(t, pool, 1)
+			go attempt()
+			qd3fWaitForLockWaiters(t, pool, 2)
+			if n := acceptanceRows(t, pool, quoteID); n != 0 {
+				t.Fatalf("nothing may commit while the lock is held, %d rows", n)
+			}
+			if err := holder.Commit(ctx); err != nil {
+				t.Fatalf("release the lock: %v", err)
+			}
+			a, b := <-out, <-out
+			if a.err != nil || b.err != nil {
+				t.Fatalf("both attempts must answer: %v / %v", a.err, b.err)
+			}
+			if a.body != b.body {
+				t.Errorf("the queued retry must answer the first outcome:\n%s\n%s", a.body, b.body)
+			}
+			if n := acceptanceRows(t, pool, quoteID); n != 1 {
+				t.Errorf("acceptance rows = %d, want 1", n)
+			}
+			if n := qd3dAuditRows(t, pool, quoteID); n != 1 {
+				t.Errorf("audit rows = %d, want 1", n)
+			}
+		})
+	}
+}
+
+// Condition 3: the key is bounded (a UUID, 36 characters of hex and hyphens), anything else is a 400,
+// and the key is never echoed into an error body.
+func TestIntegration_QD3f_KeyBoundedAndNeverEchoed(t *testing.T) {
+	pool := intPool(t)
+	now := qd3fNow()
+	setMultiAccept(t, pool, true)
+	svc, quoteID, token, _ := qd3fMinted(t, pool, now)
+	bad := []string{
+		strings.Repeat("a", 37), strings.Repeat("a", 4096), qd3dKeyA[:35], "{" + qd3dKeyA + "}",
+		strings.ReplaceAll(qd3dKeyA, "-", "_"), "secretlooking-not-a-uuid-at-all-0000000",
+	}
+	for _, k := range bad {
+		w := qd3dPost(t, svc, context.Background(), token, k, qd3fCustomer)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("key of length %d = %d, want 400", len(k), w.Code)
+		}
+		if strings.Contains(w.Body.String(), k) || strings.Contains(w.Body.String(), "secretlooking") {
+			t.Errorf("the 400 body echoes the key: %s", w.Body.String())
+		}
+	}
+	// The 409 for a reused key must not echo it either.
+	if _, err := svc.AcceptByTokenKeyed(context.Background(), token, qd3fCustomer, true, qd3dKeyA); err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	w := qd3dPost(t, svc, context.Background(), token, qd3dKeyA, "Another Customer")
+	if w.Code != http.StatusConflict || strings.Contains(w.Body.String(), qd3dKeyA) {
+		t.Errorf("reused key = %d (%s): want a 409 that does not echo the key", w.Code, w.Body.String())
+	}
+	if n := acceptanceRows(t, pool, quoteID); n != 1 {
+		t.Errorf("acceptance rows = %d, want 1", n)
 	}
 }
