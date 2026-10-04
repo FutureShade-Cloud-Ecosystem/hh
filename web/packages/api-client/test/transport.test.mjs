@@ -186,3 +186,25 @@ test("a transport that never settles still lands the caller's abort", { timeout:
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.error, /the request was aborted/);
 });
+
+test("quotePublicAcceptQuote sends call.idempotencyKey as the Idempotency-Key header, and only when given", { timeout: 5000 }, async () => {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    seen.push(req.headers["idempotency-key"]);
+    req.resume();
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const client = new api.ApiClient({ baseUrl: baseUrlOf(server) });
+    const body = { typed_name: "Dana Reyes", accepted: true };
+    const key = "7b1c2d3e-4f50-4a61-8b72-93a4b5c6d7e8";
+    await api.publicApi.quotePublicAcceptQuote(client, "tok", body, { idempotencyKey: key });
+    await api.publicApi.quotePublicAcceptQuote(client, "tok", body, { idempotencyKey: key });
+    await api.publicApi.quotePublicAcceptQuote(client, "tok", body);
+    assert.deepEqual(seen, [key, key, undefined]);
+  } finally {
+    await shutdown(server);
+  }
+});

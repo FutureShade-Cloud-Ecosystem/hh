@@ -601,9 +601,14 @@ for (const path of Object.keys(doc.paths).sort()) {
     // shape and fails here. The allowlist is global: a listed header is
     // accepted beside any operation that declares it, not bound to the
     // return route; a per-operation bound would be a later tightening.
-    const KNOWN_HEADER_PARAMS = new Set(["X-Org", "X-Approver-Authorization"]);
+    //
+    // Idempotency-Key is the one header that IS a generated argument: it is chosen per operation
+    // attempt and resent unchanged on every retry of it, so a client-wide provider cannot carry it.
+    // The operation's call options gain an optional idempotencyKey (ApiKeyedCallOptions), and only
+    // operations whose contract declares the header get it.
+    const KNOWN_HEADER_PARAMS = new Set(["X-Org", "X-Approver-Authorization", "Idempotency-Key"]);
     if (headerParams.some((p) => !KNOWN_HEADER_PARAMS.has(p.name))) {
-      problems.push(`${where}: header parameter other than X-Org and X-Approver-Authorization`);
+      problems.push(`${where}: header parameter other than X-Org, X-Approver-Authorization and Idempotency-Key`);
     }
     const queryParams = declared.filter((p) => p.in === "query");
     const pathSchemas = declared.filter((p) => p.in === "path");
@@ -630,6 +635,7 @@ for (const path of Object.keys(doc.paths).sort()) {
         pathSchemas,
         queryParams,
         approverHeader: headerParams.some((p) => p.name === "X-Approver-Authorization"),
+        idempotencyHeader: headerParams.some((p) => p.name === "Idempotency-Key"),
         body,
         success,
       });
@@ -741,6 +747,7 @@ for (const tag of tagNames) {
 
   const usedTypes = new Set();
   const bodyLines = [];
+  let usesKeyedCall = false;
   for (const op of ops) {
     const where = `${op.method} ${op.path}`;
     for (const p of [...op.queryParams, ...op.pathSchemas]) {
@@ -791,7 +798,8 @@ for (const tag of tagNames) {
           args.push(`opts?: { ${optionType} }`);
         }
       }
-      args.push("call?: ApiCallOptions");
+      args.push(op.idempotencyHeader ? "call?: ApiKeyedCallOptions" : "call?: ApiCallOptions");
+      if (op.idempotencyHeader) usesKeyedCall = true;
 
       const requestProps = [`method: ${JSON.stringify(op.method)}`, `path: ${JSON.stringify(op.path)}`];
       if (op.pathParams.length > 0) {
@@ -813,6 +821,7 @@ for (const tag of tagNames) {
       }
       if (op.success.textResponse) requestProps.push("textResponse: true");
       if (op.success.bytesResponse) requestProps.push("bytesResponse: true");
+      if (op.idempotencyHeader) requestProps.push("idempotencyKey: call?.idempotencyKey");
       requestProps.push("signal: call?.signal");
       requestProps.push("timeoutMs: call?.timeoutMs");
       requestProps.push(`operationId: ${JSON.stringify(op.operationId)}`);
@@ -825,6 +834,11 @@ for (const tag of tagNames) {
         notes.push("// held in memory for this one call and dropped. It rides the caller-set headers");
         notes.push("// (the credential is the caller's business, never a generated argument) and the");
         notes.push("// server never logs it.");
+      }
+      if (op.idempotencyHeader) {
+        notes.push("// The document lets this call carry an Idempotency-Key: call.idempotencyKey, a UUID chosen");
+        notes.push("// once per attempt and resent unchanged on every retry of it, so a retry after a");
+        notes.push("// timeout answers the first outcome instead of recording a second one.");
       }
       if (op.body?.kind === "multi") {
         const declared = op.body.variants.map((v, i) => (i === 0 ? v.contentType : `${v.contentType} (${op.operationId}${v.suffix})`));
@@ -878,7 +892,9 @@ for (const tag of tagNames) {
 
   if (usedTypes.size > 0) out.push(`import type { ${[...usedTypes].sort().join(", ")} } from "./types.js";`);
   out.push('import type { Result } from "../result.js";');
-  out.push('import { ApiClient, type ApiCallOptions } from "../http.js";');
+  out.push(
+    `import { ApiClient, type ApiCallOptions${usesKeyedCall ? ", type ApiKeyedCallOptions" : ""} } from "../http.js";`,
+  );
   out.push("");
   out.push(...bodyLines);
   generatedFiles.set(file, out.join("\n"));

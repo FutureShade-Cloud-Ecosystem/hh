@@ -69,6 +69,14 @@ export interface ApiCallOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Call options for the operations whose contract declares an Idempotency-Key header (QD-3d, the public
+ * quote accept). The key is a UUID chosen once per attempt and resent unchanged on every retry of it.
+ */
+export interface ApiKeyedCallOptions extends ApiCallOptions {
+  idempotencyKey?: string;
+}
+
 export interface ApiClientOptions {
   /** The base URL, for example the edge's origin; the contract pins no host. */
   baseUrl: string;
@@ -131,6 +139,8 @@ export interface OperationRequest {
   textResponse?: boolean;
   /** Set by the generator when the success response is format: binary bytes. */
   bytesResponse?: boolean;
+  /** Sent as the Idempotency-Key header when set (see ApiKeyedCallOptions). */
+  idempotencyKey?: string;
   /** Aborts the request; the operation resolves an error Result naming it. */
   signal?: AbortSignal;
   /** Aborts the request after this many milliseconds. */
@@ -426,6 +436,7 @@ export class ApiClient {
       }
       providedHeaders = raced.headers;
       const headers: Record<string, string> = { ...providedHeaders };
+      if (req.idempotencyKey !== undefined) headers["Idempotency-Key"] = req.idempotencyKey;
       let body: string | FormData | Uint8Array | ArrayBuffer | undefined;
       if (req.rawBody !== undefined) {
         body = req.rawBody.content;
