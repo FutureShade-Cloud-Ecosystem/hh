@@ -299,5 +299,68 @@
     "find": "      else this.error = `The settings you changed for ${lockKey",
     "replace": "      else if (false) this.error = `The settings you changed for ${lockKey",
     "test": "P3 a policy save refused after the scope moved on"
+  },
+  {
+    "id": "av-load-order",
+    "file": "src/availability-panel.ts",
+    "find": "await ctx.guardedRead(seq, Promise.all([client.availability(ctx.id), client.readQuote(ctx.id)]))",
+    "replace": "await ctx.guarded(Promise.all([client.availability(ctx.id), client.readQuote(ctx.id)]))",
+    "test": "P3 availability: an older read of the quote answered late"
+  },
+  {
+    "id": "av-peek-order",
+    "file": "src/availability-panel.ts",
+    "find": "if (result === undefined || seq !== this.peekSeq) return;",
+    "replace": "if (result === undefined) return;",
+    "test": "P3 availability: a peek answered after a newer read"
+  },
+  {
+    "id": "fu-load-order",
+    "file": "src/followups-panel.ts",
+    "find": "await ctx.guardedRead(seq, Promise.all([client.followUps(ctx.id), client.readQuote(ctx.id)]))",
+    "replace": "await ctx.guarded(Promise.all([client.followUps(ctx.id), client.readQuote(ctx.id)]))",
+    "test": "P3 follow-ups: an older read of the quote answered late"
+  },
+  {
+    "id": "he-load-order",
+    "file": "src/hold-expiry-panel.ts",
+    "find": "await ctx.guardedRead(seq, client.holdExpiry(ctx.id))",
+    "replace": "await ctx.guarded(client.holdExpiry(ctx.id))",
+    "test": "P3 hold expiry: an older read of the quote answered late"
+  },
+  {
+    "id": "qg-verdict-branch",
+    "file": "src/guard-panel.ts",
+    "find": "    if (asked !== this.branchId) return;\n",
+    "replace": "",
+    "test": "P3 the guard panel: a verdict answered after the quote moved"
+  },
+  {
+    "id": "qg-verdict-cleared",
+    "file": "src/guard-panel.ts",
+    "find": "      this.status = \"\";\n      this.blocked = false;\n      this.faulted = false;\n      this.busy = false;\n    }\n    if (changed.has(\"client\")",
+    "replace": "    }\n    if (changed.has(\"client\")",
+    "test": "P3 the guard panel: a verdict is cleared when the quote moves"
+  },
+  {
+    "id": "qg-branch-name-order",
+    "file": "src/guard-panel.ts",
+    "find": "    if (wanted !== this.branchId) return; // the branch changed while this was out: the newer read names it\n",
+    "replace": "",
+    "test": "P3 the guard panel: the branch name read for the branch before"
+  },
+  {
+    "id": "fd-request-bound",
+    "file": "src/floor-refusal-dialog.ts",
+    "find": "    if (filedFor !== this.shown) return;\n",
+    "replace": "",
+    "test": "P3 the floor dialog: the answer to a request filed"
+  },
+  {
+    "id": "as-epoch-reset",
+    "file": "src/assist-panel.ts",
+    "find": "      if (epoch !== this.lastEpoch) {\n        this.lastEpoch = epoch;\n        this.reading = false;\n        this.adding = false;\n      }\n",
+    "replace": "",
+    "test": "P3 the assist panel: leaving a quote and coming back"
   }
 ]

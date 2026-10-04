@@ -55,10 +55,12 @@ export function writes(page: Page): string[] {
 }
 
 export interface Held {
-  /** Resolves when the first matching request has reached the route and is being held. */
+  /** Resolves when the first matching request has reached the route and is being held (with its snapshot taken, if asked). */
   asked: Promise<void>;
   /** Let the held request(s) go; the answer is the server's own, or the refusal given. */
   open: () => void;
+  /** Let them go and wait until the page has received every answer, so what follows asserts after the late write had its chance. */
+  release: () => Promise<void>;
   /** The held requests that have been opened, as "METHOD url". */
   seen: string[];
 }
@@ -81,6 +83,7 @@ export async function hold(
 ): Promise<Held> {
   const door = gate();
   const seen: string[] = [];
+  const heldRequests: Request[] = [];
   let held = 0;
   let askedNow: () => void = () => undefined;
   const asked = new Promise<void>((resolve) => {
@@ -94,9 +97,11 @@ export async function hold(
       return;
     }
     held += 1;
+    heldRequests.push(request);
     seen.push(`${request.method()} ${request.url()}`);
-    askedNow();
+    // A snapshot is taken before the test is told the request is held, so a change it makes next cannot be in it.
     const taken = options.snapshot === true ? await route.fetch() : undefined;
+    askedNow();
     await door.opened;
     if (taken !== undefined) {
       await route.fulfill({ response: taken });
@@ -106,5 +111,21 @@ export async function hold(
       await route.continue();
     }
   });
-  return { asked, open: door.open, seen };
+  const release = async (): Promise<void> => {
+    door.open();
+    await Promise.all(heldRequests.map((request) => request.response()));
+  };
+  return { asked, open: door.open, release, seen };
 }
+
+/** Wait until the page has gone quiet: no request has finished for a stretch (a request held behind a gate does not count). */
+export async function quiet(page: Page): Promise<void> {
+  let count = 0;
+  page.on("requestfinished", () => (count += 1));
+  let last = -1;
+  while (last !== count) {
+    last = count;
+    await page.waitForTimeout(400);
+  }
+}
+

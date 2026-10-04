@@ -114,7 +114,10 @@ export class QdQuoteAvailability extends PanelBase {
       return;
     }
     this.error = "";
-    const answers = await ctx.guarded(Promise.all([client.availability(ctx.id), client.readQuote(ctx.id)]));
+    // A newer read of this quote supersedes an older one still out: the older answer never lands over it.
+    const seq = ctx.startRead();
+    this.peekSeq += 1; // a peek still out belongs to the figures this read replaces
+    const answers = await ctx.guardedRead(seq, Promise.all([client.availability(ctx.id), client.readQuote(ctx.id)]));
     if (answers === undefined) return;
     const [result, quote] = answers;
     this.names = quote.ok ? Object.fromEntries(quote.value.lines.map((line) => [line.line_no, line.description])) : {};
@@ -145,12 +148,15 @@ export class QdQuoteAvailability extends PanelBase {
     void this.readPeek(productId);
   }
 
+  private peekSeq = 0;
+
   private async readPeek(productId: string): Promise<void> {
     const client = this.client;
     if (client === null) return;
     const ctx = this.ctx;
+    const seq = ++this.peekSeq;
     const result = await ctx.guarded(client.availabilityBranches(productId));
-    if (result === undefined) return;
+    if (result === undefined || seq !== this.peekSeq) return;
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "read the other branches' stock"));
       return;

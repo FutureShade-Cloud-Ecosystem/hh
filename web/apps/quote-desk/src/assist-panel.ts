@@ -82,6 +82,8 @@ export class QdQuoteAssist extends PanelBase {
 
   private gapsSeq = 0;
   private lastQuote = "";
+  /** The epoch of the context the flags below belong to: a new one means a read or an add still out will not answer here. */
+  private lastEpoch = -1;
 
   static styles = [
     panelStyles,
@@ -286,6 +288,13 @@ export class QdQuoteAssist extends PanelBase {
 
   protected override willUpdate(changed: Map<string, unknown>): void {
     if (changed.has("quoteId") || changed.has("client")) {
+      // Leaving a quote and coming back inside one update is a new context too: what was out for the first visit is gone.
+      const epoch = this.ctx.epoch;
+      if (epoch !== this.lastEpoch) {
+        this.lastEpoch = epoch;
+        this.reading = false;
+        this.adding = false;
+      }
       if (this.quoteId !== this.lastQuote) {
         // A different quote is a different conversation: the proposals, the ticks and the
         // dismissals all belong to the quote they were made against.

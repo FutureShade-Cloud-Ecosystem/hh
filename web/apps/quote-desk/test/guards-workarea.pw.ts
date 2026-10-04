@@ -21,7 +21,7 @@ test("guard terms read: the terms of the quote just left never land on the quote
   await held.asked;
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
-  held.open();
+  await held.release();
   await settle(page);
   await expect(page.getByTestId("qb-po")).toHaveValue("");
 });
@@ -41,7 +41,7 @@ test("guard margin glance: the margin of the quote just left never lands on the 
   await held.asked;
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-margin-pill")).toHaveText(mapleMargin);
-  held.open();
+  await held.release();
   await settle(page);
   await expect(page.getByTestId("qb-margin-pill")).toHaveText(mapleMargin);
 });
@@ -59,10 +59,10 @@ test("guard terms save answer: a terms save that answers after another quote ope
   await row(page, "Q-1001").click();
   await read.asked;
   await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
-  held.open();
+  await held.release();
   await settle(page);
   await expect(page.getByTestId("qb-po")).toHaveCount(0);
-  read.open();
+  await read.release();
   await settle(page);
   await expect(page.getByTestId("qb-po")).toHaveValue("");
 });
@@ -79,7 +79,7 @@ test("guard add line: an add that answers after another quote opened says nothin
   await held.asked;
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
-  held.open();
+  await held.release();
   await settle(page);
   await expect(page.getByText("Added Polymeric Locking Sand")).toHaveCount(0);
   await expect(page.getByTestId("qb-error")).toHaveText("");
@@ -95,7 +95,7 @@ test("guard quantity edit: a refused quantity edit that answers after another qu
   await held.asked;
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
-  held.open();
+  await held.release();
   await settle(page);
   await expect(page.getByTestId("qb-error")).toHaveText("");
 });
@@ -110,7 +110,7 @@ test("guard remove line: a refused remove that answers after another quote opene
   await held.asked;
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
-  held.open();
+  await held.release();
   await settle(page);
   await expect(page.getByTestId("qb-error")).toHaveText("");
 });
@@ -125,7 +125,7 @@ test("guard validity: a refused expiry change that answers after another quote o
   await held.asked;
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
-  held.open();
+  await held.release();
   await settle(page);
   await expect(page.getByTestId("qb-error")).toHaveText("");
 });
@@ -141,7 +141,7 @@ test("guard convert: a conversion that answers after another quote opened shows 
   await held.asked;
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
-  held.open();
+  await held.release();
   await settle(page);
   await expect(page.getByTestId("qb-convert-done")).toHaveCount(0);
 });
@@ -155,7 +155,7 @@ test("guard customer search: the account facts found for the quote just left nev
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-identity-credit")).toBeVisible();
   const mapleCredit = await page.getByTestId("qb-identity").innerText();
-  held.open();
+  await held.release();
   await settle(page);
   expect(await page.getByTestId("qb-identity").innerText()).toBe(mapleCredit);
   expect(mapleCredit).not.toContain("C02");
@@ -172,7 +172,7 @@ test("guard add-ons: the suggestions read for the quote just left never show on 
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await own;
   await settle(page);
-  held.open();
+  await held.release();
   await settle(page);
   await expect(page.getByTestId("qb-addon-tile")).toHaveCount(0);
 });
@@ -190,7 +190,7 @@ test("guard busy release: a send that finishes on the quote just left does not f
   await page.getByRole("button", { name: /^Increase quantity/ }).first().click();
   await edit.asked;
   await expect(page.getByTestId("qb-send")).toBeDisabled();
-  mint.open();
+  await mint.release();
   await settle(page);
   await expect(page.getByTestId("qb-send")).toBeDisabled();
   edit.open();

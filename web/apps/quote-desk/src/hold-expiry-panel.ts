@@ -108,7 +108,9 @@ export class QdQuoteHoldExpiry extends PanelBase {
       this.st = null;
       return;
     }
-    const result = await ctx.guarded(client.holdExpiry(ctx.id));
+    // A newer read of this quote supersedes an older one still out: the older answer never lands over it.
+    const seq = ctx.startRead();
+    const result = await ctx.guardedRead(seq, client.holdExpiry(ctx.id));
     if (result === undefined) return;
     if (!result.ok) {
       // A lapse notice is not invented from a failed read, and silence would read as "nothing lapsed":

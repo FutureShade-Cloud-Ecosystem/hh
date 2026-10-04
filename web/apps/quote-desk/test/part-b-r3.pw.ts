@@ -1,7 +1,7 @@
 // PR 121 round 3, Part B findings: the panels. Every test holds an answer back behind a delayed route, so the order
 // of events is exact on any machine.
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { hold, row, seed, settle, signIn as signInAs, writes } from "./switch-helpers.js";
+import { hold, quiet, row, seed, settle, signIn as signInAs, writes } from "./switch-helpers.js";
 
 // The Sales manager sees every quote in the list, so the probes can move between quotes of either owner.
 const signIn = (page: Page, role = "Sales manager") => signInAs(page, role);
@@ -189,7 +189,7 @@ test("P3 a refusal answered while the person is on another quote is not shown th
   await patch.asked;
   await row(page, "Q-1003").click();
   await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1003");
-  patch.open();
+  await patch.release();
   await settle(page);
   await expect(page.getByTestId("qe-error")).toHaveText("");
 });
@@ -264,7 +264,7 @@ test("P3 a policy save that succeeds after the scope moved on tells the other sc
     (window as unknown as { __changed: number }).__changed = 0;
     window.addEventListener("quote-changed", () => ((window as unknown as { __changed: number }).__changed += 1), true);
   });
-  put.open();
+  await put.release();
   await settle(page);
   expect(await page.evaluate(() => (window as unknown as { __changed: number }).__changed)).toBeGreaterThan(0);
   await page.request.put("/_stub/general-manager", { data: { member: false } });
@@ -281,4 +281,182 @@ test("P3 a policy save refused after the scope moved on says which settings were
   await expect(page.getByTestId("qs-error")).toContainText("were not saved");
   await expect(page.getByTestId("qs-error")).toContainText("branch you left");
   await page.request.put("/_stub/general-manager", { data: { member: false } });
+});
+
+const reloadOf = (page: Page, selector: string) => page.locator(selector).evaluate((el) => (el as unknown as { reload: () => void }).reload());
+
+test("P3 availability: an older read of the quote answered late does not undo a newer one", async ({ page, request }) => {
+  await signIn(page);
+  await openQuote(page, "Q-1002");
+  const panel = page.locator("qd-quote-availability");
+  const chip = panel.getByTestId("av-chip").first();
+  await expect(chip).toBeVisible();
+  const before = await chip.innerText();
+  await quiet(page);
+  let armed = false;
+  const older = await hold(page, /\/api\/v1\/quotes\/q-1002\/availability$/, { method: "GET", times: 1, snapshot: true, match: () => armed });
+  armed = true;
+  await reloadOf(page, "qd-quote-availability");
+  await older.asked;
+  armed = false;
+  await request.put("/_stub/stock", { data: { product_id: "p-wall-std", trenton: 2 } });
+  await reloadOf(page, "qd-quote-availability");
+  await expect.poll(() => chip.innerText()).not.toBe(before);
+  const after = await chip.innerText();
+  await older.release();
+  await settle(page);
+  await expect(chip).toHaveText(after);
+});
+
+test("P3 availability: a peek answered after a newer read of the quote is dropped", async ({ page, request }) => {
+  await signIn(page);
+  await openQuote(page, "Accepted");
+  const panel = page.locator("qd-quote-availability");
+  const thin = panel.getByTestId("av-line").filter({ has: page.locator('[data-avail-grade="THIN"]') });
+  await quiet(page);
+  let armed = false;
+  const older = await hold(page, /\/api\/v1\/quote-availability\/[^/]+\/branches$/, { method: "GET", times: 1, snapshot: true, match: () => armed });
+  armed = true;
+  await thin.getByRole("button", { name: "Other branches" }).click();
+  await older.asked;
+  armed = false;
+  // The stock moves, the quote is read again, and the open peek is read again with it.
+  await request.put("/_stub/stock", { data: { product_id: "p-clear-stone", belleville: 7 } });
+  await reloadOf(page, "qd-quote-availability");
+  await expect(panel.getByTestId("av-branch").filter({ hasText: "BEL: 7 available" })).toBeVisible();
+  await older.release();
+  await settle(page);
+  await expect(panel.getByTestId("av-branch").filter({ hasText: "BEL: 7 available" })).toBeVisible();
+  await expect(panel.getByTestId("av-branch").filter({ hasText: "BEL: 60 available" })).toHaveCount(0);
+});
+
+test("P3 follow-ups: an older read of the quote answered late does not undo a newer one", async ({ page, request }) => {
+  await signIn(page);
+  await openQuote(page, "Q-1002");
+  const panel = page.locator("qd-quote-followups");
+  await expect(panel.getByTestId("fu-contact")).toContainText("Not heard from us yet");
+  await quiet(page);
+  let armed = false;
+  const older = await hold(page, /\/api\/v1\/quotes\/q-1002\/followups$/, { method: "GET", times: 1, snapshot: true, match: () => armed });
+  armed = true;
+  await reloadOf(page, "qd-quote-followups");
+  await older.asked;
+  armed = false;
+  await request.post("/_stub/followup-event", { data: { quote_id: "q-1002", step_day: 3, channel: "EMAIL", status: "SENT" } });
+  await reloadOf(page, "qd-quote-followups");
+  await expect(panel.getByTestId("fu-contact")).toContainText("Heard from us");
+  await older.release();
+  await settle(page);
+  await expect(panel.getByTestId("fu-contact")).toContainText("Heard from us");
+});
+
+test("P3 hold expiry: an older read of the quote answered late does not undo a newer one", async ({ page, request }) => {
+  await signIn(page);
+  await openQuote(page, "Q-1001");
+  const panel = page.locator("qd-quote-hold-expiry");
+  await expect(panel.getByTestId("he-headline")).toHaveCount(0);
+  await quiet(page);
+  let armed = false;
+  const older = await hold(page, /\/api\/v1\/quotes\/q-1001\/hold-expiry$/, { method: "GET", times: 1, snapshot: true, match: () => armed });
+  armed = true;
+  await reloadOf(page, "qd-quote-hold-expiry");
+  await older.asked;
+  armed = false;
+  await request.post("/_stub/hold-lapse", { data: { quote_id: "q-1001", line_no: 2 } });
+  await reloadOf(page, "qd-quote-hold-expiry");
+  await expect(panel.getByTestId("he-headline")).toBeVisible();
+  await older.release();
+  await settle(page);
+  await expect(panel.getByTestId("he-headline")).toBeVisible();
+});
+
+test("P3 the guard panel: a verdict answered after the quote moved to another branch says nothing", async ({ page }) => {
+  await signIn(page, "Sales");
+  await openQuote(page, "Q-1001");
+  const guard = page.locator("qd-quote-guard");
+  const post = await hold(page, /\/api\/v1\/staff\/identity\/policy\/check|\/policy\/check/, { method: "POST" });
+  await guard.getByTestId("qg-check").click();
+  await post.asked;
+  await guard.evaluate((el) => {
+    (el as unknown as { branchId: string }).branchId = "another-branch";
+  });
+  await post.release();
+  await settle(page);
+  await expect(guard.getByTestId("qg-result")).toHaveCount(0);
+});
+
+test("P3 the guard panel: a verdict is cleared when the quote moves to another branch", async ({ page }) => {
+  await signIn(page, "Sales");
+  await openQuote(page, "Q-1001");
+  const guard = page.locator("qd-quote-guard");
+  await guard.getByTestId("qg-check").click();
+  await expect(guard.getByTestId("qg-result")).toBeVisible();
+  await guard.evaluate((el) => {
+    (el as unknown as { branchId: string }).branchId = "another-branch";
+  });
+  await expect(guard.getByTestId("qg-result")).toHaveCount(0);
+});
+
+test("P3 the floor dialog: the answer to a request filed for a refusal closed since says nothing on the next refusal", async ({ page }) => {
+  await signIn(page, "Sales");
+  await openQuote(page, "Q-1001");
+  const paver = edit(page).getByTestId("qe-line").first();
+  await paver.locator('[data-field="disc"]').fill("10");
+  await paver.getByRole("button", { name: "Save" }).click();
+  const dialog = page.locator("qd-floor-refusal");
+  await expect(dialog.getByTestId("fr-dialog")).toBeVisible();
+  const post = await hold(page, /\/lines\/\d+\/floor-approval$/, { method: "POST" });
+  await dialog.getByTestId("fr-request").click();
+  await post.asked;
+  await page.keyboard.press("Escape");
+  await expect(dialog.getByTestId("fr-dialog")).toHaveCount(0);
+  await paver.locator('[data-field="disc"]').fill("12");
+  await paver.getByRole("button", { name: "Save" }).click();
+  await expect(dialog.getByTestId("fr-dialog")).toBeVisible();
+  await post.release();
+  await settle(page);
+  await expect(dialog.getByTestId("fr-notice")).toHaveCount(0);
+  await expect(dialog.getByTestId("fr-request")).toBeVisible();
+});
+
+test("P3 the assist panel: leaving a quote and coming back inside one update leaves the panel usable", async ({ page }) => {
+  await signIn(page);
+  await openQuote(page, "Q-1001");
+  const extract = await hold(page, /\/api\/v1\/quote-assist\/extract$/, { method: "POST" });
+  await assist(page).locator("#jobtext").fill("3 yd clear stone");
+  await assist(page).getByRole("button", { name: "Suggest lines from this text" }).click();
+  await extract.asked;
+  await assist(page).evaluate((el) => {
+    const panel = el as unknown as { quoteId: string };
+    panel.quoteId = "q-1002";
+    panel.quoteId = "q-1001";
+  });
+  await extract.release();
+  await settle(page);
+  await assist(page).locator("#jobtext").fill("20 sf holland stone");
+  await expect(assist(page).getByRole("button", { name: "Suggest lines from this text" })).toBeEnabled();
+});
+
+test("P3 the guard panel: the branch name read for the branch before is not shown under the new one", async ({ page }) => {
+  await signIn(page, "Sales");
+  await openQuote(page, "Q-1001");
+  const guard = page.locator("qd-quote-guard");
+  const own = await guard.evaluate((el) => (el as unknown as { branchId: string }).branchId);
+  await expect(guard.getByTestId("qg-branch")).not.toHaveText("This quote's branch");
+  const named = await guard.getByTestId("qg-branch").innerText();
+  // Three branch reads in turn: the second (the caller's own branch, which names it) is held until the third is done.
+  let reads = 0;
+  const second = await hold(page, /\/api\/v1\/branches/, { method: "GET", match: () => (reads += 1) === 2 });
+  const setBranch = (id: string) =>
+    guard.evaluate((el, value) => {
+      (el as unknown as { branchId: string }).branchId = value;
+    }, id);
+  await setBranch("another-branch");
+  await setBranch(own);
+  await second.asked;
+  await setBranch("another-branch-2");
+  await expect(guard.getByTestId("qg-branch")).not.toHaveText(named);
+  await second.release();
+  await settle(page);
+  await expect(guard.getByTestId("qg-branch")).not.toHaveText(named);
 });

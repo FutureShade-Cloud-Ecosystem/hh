@@ -1,18 +1,7 @@
 // PR 121 round 3, Part A findings: each test holds one answer back behind a delayed route, so the order of events
 // is exact and does not depend on the machine's speed.
 import { expect, test } from "@playwright/test";
-import { gate, hold, open, row, seed, settle, signIn, writes } from "./switch-helpers.js";
-
-/** Wait until the page has finished every request except the ones held: no new response for a stretch. */
-async function quiet(page: import("@playwright/test").Page): Promise<void> {
-  let count = 0;
-  page.on("requestfinished", () => (count += 1));
-  let last = -1;
-  while (last !== count) {
-    last = count;
-    await page.waitForTimeout(400);
-  }
-}
+import { gate, hold, open, quiet, row, seed, settle, signIn, writes } from "./switch-helpers.js";
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -37,7 +26,7 @@ test("P2-1 a scan on an open quote while a new quote is being created goes to th
   await scan.press("Enter");
   // The scan lands on the open quote at once; it does not wait for a create it has no part in.
   await expect(page.getByTestId("qb-line")).toHaveCount(3);
-  create.open();
+  await create.release();
   await settle(page);
   await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(3);
@@ -64,7 +53,7 @@ test("P2-1 a scan made in compose while the quote is being created is not added 
   });
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
-  create.open();
+  await create.release();
   await settle(page);
   await expect(page.getByTestId("qb-context")).toContainText("Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
@@ -236,16 +225,19 @@ test("P3 reads of one quote land in the order they were asked: an older read ans
   await open(page, "Q-1001");
   await expect(page.getByTestId("qb-line")).toHaveCount(2);
   // The first read of the quote is asked while it has two lines and is held; the add that follows reads three.
-  const older = await hold(page, /\/api\/v1\/quotes\/q-1001$/, { method: "GET", times: 1, snapshot: true });
+  let armed = false;
+  const older = await hold(page, /\/api\/v1\/quotes\/q-1001$/, { method: "GET", times: 1, snapshot: true, match: () => armed });
+  armed = true;
   await page.getByTestId("qb-save-draft").click();
   await older.asked;
+  armed = false;
   const scan = page.getByTestId("pos-scan-input");
   await scan.fill("PSN-100");
   await scan.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(3);
   // Every other read the add set going has landed before the older one is let go.
   await quiet(page);
-  older.open();
+  await older.release();
   await settle(page);
   await expect(page.getByTestId("qb-line")).toHaveCount(3);
 });

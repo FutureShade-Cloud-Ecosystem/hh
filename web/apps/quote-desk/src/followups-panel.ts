@@ -90,7 +90,9 @@ export class QdQuoteFollowups extends PanelBase {
       this.loaded = false;
       return;
     }
-    const answers = await ctx.guarded(Promise.all([client.followUps(ctx.id), client.readQuote(ctx.id)]));
+    // A newer read of this quote supersedes an older one still out: the older answer never lands over it.
+    const seq = ctx.startRead();
+    const answers = await ctx.guardedRead(seq, Promise.all([client.followUps(ctx.id), client.readQuote(ctx.id)]));
     if (answers === undefined) return;
     const [result, quote] = answers;
     // Whether the quote can still be shared is the quote's own status; a read that fails offers no send.
