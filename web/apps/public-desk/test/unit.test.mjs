@@ -105,13 +105,13 @@ test("a sentence ending on the timestamp carries one full stop, never two", () =
   // how the thank-you line grew a double full stop: the sentence must keep
   // the timestamp's own stop and add nothing.
   assert.equal(
-    withFullStop("Accepted by Sample Customer on 2026-10-04, 2:51:42 a.m."),
-    "Accepted by Sample Customer on 2026-10-04, 2:51:42 a.m.",
+    withFullStop("Accepted by Sample Customer on DAY, 2:51:42 a.m."),
+    "Accepted by Sample Customer on DAY, 2:51:42 a.m.",
   );
   // A clock style without one still ends its sentence.
   assert.equal(
-    withFullStop("Accepted by Sample Customer on 2026-10-04, 14:51:42"),
-    "Accepted by Sample Customer on 2026-10-04, 14:51:42.",
+    withFullStop("Accepted by Sample Customer on DAY, 14:51:42"),
+    "Accepted by Sample Customer on DAY, 14:51:42.",
   );
   assert.equal(withFullStop("Already a full sentence."), "Already a full sentence.");
   assert.equal(withFullStop("Ends on a question?"), "Ends on a question?");
