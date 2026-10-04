@@ -80,6 +80,14 @@ test("the line thumbnails ride the product image read, when the dealer chose ima
   }
 });
 
+test("the accept area says why the button is not disabled on a blank form", async ({ page }) => {
+  await page.goto(`/?t=${GOOD_TOKEN}`);
+  // The ERP behaviour is kept: the button stays clickable and the refusal is
+  // the red inline line, so the area must SAY that is deliberate, not look
+  // like the lane's disabled-look rule was forgotten.
+  await expect(page.getByText(/never greyed out/)).toBeVisible();
+});
+
 test("a dead link reads as a deliberate page: heading on the refusal, room above it", async ({ page }) => {
   await page.goto("/?t=q-revoked-410");
   await expect(page.getByRole("heading", { name: "Quote link unavailable" })).toBeVisible();

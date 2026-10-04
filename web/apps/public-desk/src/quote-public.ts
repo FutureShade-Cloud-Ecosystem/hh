@@ -545,7 +545,8 @@ export class QuotePublicPage extends HHElement {
         </button>
         ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}
         <p class="note">
-          Accepting records your typed name, the date and time, and the link you used. This is an electronic
+          The button is never greyed out while the form is unfinished: click it and anything missing is said right
+          here. Accepting records your typed name, the date and time, and the link you used. This is an electronic
           acceptance: we do not collect a handwritten signature.
         </p>
       </div>
