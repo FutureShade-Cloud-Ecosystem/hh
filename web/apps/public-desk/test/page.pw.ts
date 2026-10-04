@@ -33,7 +33,7 @@ test("the lane's reference shots, against the stub, on demand", async ({ page })
   // every one has its pixels, the way the reference's product photos render.
   await page.waitForFunction(() => {
     const root = document.querySelector("pd-quote-public")?.shadowRoot;
-    const thumbs = root?.querySelectorAll("img.thumb");
+    const thumbs = root?.querySelectorAll<HTMLImageElement>("img.thumb");
     return (
       thumbs !== undefined && thumbs.length === 3 && Array.from(thumbs).every((img) => img.complete && img.naturalWidth > 0)
     );
