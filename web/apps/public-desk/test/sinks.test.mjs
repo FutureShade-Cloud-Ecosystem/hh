@@ -69,3 +69,10 @@ test("the scan covers the entry page and every stylesheet, not the TypeScript al
   assert.ok(scanned.includes(join("src", "fonts.css")), "src/fonts.css must be scanned");
   assert.ok(scanned.some((path) => path.endsWith(".ts")), "the TypeScript must still be scanned");
 });
+
+test("the entry page tells the browser to send no referrer", () => {
+  // The token rides the address bar; a referrer would carry it to whatever the
+  // page ever loads or links, so the page sends none at all.
+  const page = readFileSync(join(appDir, "index.html"), "utf8");
+  assert.match(page, /<meta\s+name="referrer"\s+content="no-referrer"\s*\/?>/);
+});

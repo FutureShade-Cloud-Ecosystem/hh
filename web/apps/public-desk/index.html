@@ -3,6 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- The token rides the address bar, so no request this page makes may
+         carry it onward as a referrer. -->
+    <meta name="referrer" content="no-referrer" />
     <title>Your Quote: Hardscape House</title>
     <!-- This page is reached by an opaque share-link token and runs BEFORE any
          authentication: there is no session, no nav shell and no toast host, so
