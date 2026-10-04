@@ -136,3 +136,41 @@ func TestIntegration_QD3g_DeadLinkOtherNameNeverReplayed(t *testing.T) {
 		}
 	}
 }
+
+// qd3gPostBody is qd3dPost with the raw JSON body in the caller's hands.
+func qd3gPostBody(t *testing.T, svc *StaffService, token, key, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/public/v1/quotes/"+token+"/accept",
+		strings.NewReader(body)).WithContext(context.Background())
+	req.SetPathValue("token", token)
+	if key != "" {
+		req.Header.Set("Idempotency-Key", key)
+	}
+	w := httptest.NewRecorder()
+	NewStaffHandler(svc).publicAccept(w, req)
+	return w
+}
+
+// P3-a: the dead link door checks the affirmative like the live link door: accepted false, or no
+// accepted field at all, is the same 400.
+func TestIntegration_QD3g_DeadLinkNeedsTheAffirmative(t *testing.T) {
+	pool := intPool(t)
+	now := qd3fNow()
+	setMultiAccept(t, pool, true)
+	svc, quoteID, token, _ := qd3gAccepted(t, pool, now)
+	for name, body := range map[string]string{
+		"accepted_false":  `{"typed_name":"` + qd3fCustomer + `","accepted":false}`,
+		"accepted_absent": `{"typed_name":"` + qd3fCustomer + `"}`,
+	} {
+		w := qd3gPostBody(t, svc, token, qd3dKeyA, body)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "you must confirm") {
+			t.Errorf("%s through a dead link = %d (%s), want the 400 you must confirm", name, w.Code, w.Body.String())
+		}
+	}
+	if w := qd3gPostBody(t, svc, token, qd3dKeyA, `{"typed_name":"`+qd3fCustomer+`","accepted":true}`); w.Code != http.StatusOK {
+		t.Errorf("the affirmed retry = %d (%s), want 200", w.Code, w.Body.String())
+	}
+	if n := acceptanceRows(t, pool, quoteID); n != 1 {
+		t.Errorf("acceptance rows = %d, want 1", n)
+	}
+}
