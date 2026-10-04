@@ -77,3 +77,20 @@ test("Auto follows the system's light setting", async ({ browser }) => {
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await context.close();
 });
+
+// The face is Outfit itself, self-hosted. document.fonts.load answers with the
+// faces it actually matched, so an absent @font-face fails here as an empty
+// answer rather than passing on check()'s vacuous true.
+test("the desk's UI face is Outfit, self-hosted, not a system fallback", async ({ page }) => {
+  await signIn(page);
+  const faces = await page.evaluate(async () => {
+    const out: Record<string, boolean> = {};
+    for (const weight of ["400", "500", "600", "700"]) {
+      const matched = await document.fonts.load(`${weight} 16px Outfit`);
+      out[weight] = matched.length > 0 && matched.every((face) => face.status === "loaded");
+    }
+    await document.fonts.ready;
+    return out;
+  });
+  expect(faces).toEqual({ 400: true, 500: true, 600: true, 700: true });
+});

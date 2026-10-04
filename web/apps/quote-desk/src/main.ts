@@ -6,5 +6,8 @@
 // fallbacks they carry). The app root's registration and the shared
 // components' element registrations are the only side effects.
 import "@hardscapehouse/design-system/src/tokens.css";
+// The self-hosted faces the token sheet names (src/fonts.css): without them
+// --hh-font-ui's first name never resolves and every user sees a fallback.
+import "./fonts.css";
 import "@hardscapehouse/pos-kit/src/ported/styles/tokens.css";
 import "./app-root.js";
