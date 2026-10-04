@@ -227,7 +227,7 @@ func gradeAvailability(qtyBase, availableBase float64) string {
 // render, and a grey chip that says "not reported" is a better answer than a failed page. The wired
 // flag rides in the response so the client can say which it is.
 func (s *StaffService) QuoteAvailability(ctx context.Context, quoteIDOrNo string) ([]LineAvailability, bool, error) {
-	_, quoteID, err := s.resolveQuoteForCaller(ctx, quoteIDOrNo)
+	caller, quoteID, err := s.resolveQuoteForCaller(ctx, quoteIDOrNo)
 	if err != nil {
 		return nil, false, err
 	}
@@ -235,6 +235,11 @@ func (s *StaffService) QuoteAvailability(ctx context.Context, quoteIDOrNo string
 	if err != nil {
 		return nil, false, err
 	}
+	// X3: the cost figure on the stock view is cost information, gated by
+	// the configuration's cost and margin list like every other cost read.
+	// The grades render for every caller; the cost does not (absent on the
+	// wire for a caller off the list, never a zero that reads as free).
+	seeCost := s.seesCostAndMargin(caller)
 	out := make([]LineAvailability, 0, len(view.Lines))
 	for _, ln := range view.Lines {
 		row := LineAvailability{
@@ -254,6 +259,9 @@ func (s *StaffService) QuoteAvailability(ctx context.Context, quoteIDOrNo string
 			out = append(out, row)
 			continue
 		}
+		if !seeCost {
+			bs.AvgCostCents = 0
+		}
 		row.Branch = bs
 		row.Grade = gradeAvailability(row.QtyBase, bs.AvailableBase)
 		out = append(out, row)
@@ -265,7 +273,8 @@ func (s *StaffService) QuoteAvailability(ctx context.Context, quoteIDOrNo string
 // every branch present even when it has none (inventory's own stated rule, a missing row reads as a
 // bug rather than as an answer).
 func (s *StaffService) CrossBranchPeek(ctx context.Context, productID string) ([]BranchStock, error) {
-	if _, err := s.caller(ctx); err != nil {
+	caller, err := s.caller(ctx)
+	if err != nil {
 		return nil, err
 	}
 	if !looksLikeUUID(productID) {
@@ -274,7 +283,18 @@ func (s *StaffService) CrossBranchPeek(ctx context.Context, productID string) ([
 	if s.avail == nil {
 		return []BranchStock{}, nil
 	}
-	return s.avail.AvailabilityAllBranches(ctx, productID)
+	rows, err := s.avail.AvailabilityAllBranches(ctx, productID)
+	if err != nil {
+		return nil, err
+	}
+	// X3, the same gate as the at-quote read: the peek carries the cost
+	// figure to callers on the list alone.
+	if !s.seesCostAndMargin(caller) {
+		for i := range rows {
+			rows[i].AvgCostCents = 0
+		}
+	}
+	return rows, nil
 }
 
 // - plumbing -

@@ -430,3 +430,56 @@ func TestQD1_QtyRepriceRecordsTheDiscountItRead(t *testing.T) {
 		t.Fatal("a discount set between the floor read and the lock must refuse the reprice, the figures nobody decided on cannot ride it")
 	}
 }
+
+// The availability reads gate avg_cost_cents by the cost list (X3, the
+// review's P2-8): under the default every Quote Desk role is on the list,
+// but a dealer who removes one would read cost through the availability
+// chips. The stock view still renders for the off-list caller, the cost
+// figure does not.
+func TestQD1_AvailabilityCostGatedByCostList(t *testing.T) {
+	pool := intPool(t)
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	hidden := qd1User(t, pool, "hiddensales")
+	onList := qd1User(t, pool, "onlist")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", hidden, true)
+
+	cfg := qd1CfgCostHiddenFrom(t, "inside_sales")
+	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
+	svc := qd1SvcFloor(t, pool, now, arb, cfg)
+	svc.WithAvailability(qd1CostAvail{cost: 4321})
+
+	// A caller OFF the list: the grades render, the cost does not.
+	hidCtx := qCtxAs(intStaff(intTrenton))
+	hidCtx = qd1WithRole(hidCtx, "INSIDE_SALES", intTrenton, hidden)
+	rows, _, err := svc.QuoteAvailability(hidCtx, quoteID)
+	if err != nil {
+		t.Fatalf("availability for an off-list caller: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Grade == "" {
+		t.Fatalf("the stock view must still render for an off-list caller, got %+v", rows)
+	}
+	if rows[0].Branch.AvgCostCents != 0 {
+		t.Errorf("a caller off the cost list must not read avg_cost_cents through the availability chips, got %d",
+			rows[0].Branch.AvgCostCents)
+	}
+	peek, err := svc.CrossBranchPeek(hidCtx, "00000000-0000-4000-8000-0000000000aa")
+	if err != nil {
+		t.Fatalf("cross branch peek for an off-list caller: %v", err)
+	}
+	for _, b := range peek {
+		if b.AvgCostCents != 0 {
+			t.Errorf("a caller off the cost list must not read avg_cost_cents through the branch peek, got %d", b.AvgCostCents)
+		}
+	}
+
+	// A caller ON the list still reads it.
+	onCtx := qCtxAs(intStaff(intTrenton))
+	onCtx = qd1WithRole(onCtx, "BRANCH_MANAGER", intTrenton, onList)
+	rows, _, err = svc.QuoteAvailability(onCtx, quoteID)
+	if err != nil {
+		t.Fatalf("availability for an on-list caller: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Branch.AvgCostCents != 4321 {
+		t.Fatalf("a caller on the cost list must read avg_cost_cents, got %+v", rows)
+	}
+}

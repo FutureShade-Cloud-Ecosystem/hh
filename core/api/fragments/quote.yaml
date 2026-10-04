@@ -2201,7 +2201,10 @@ components:
       description: >-
         The four-bucket view of one product at one branch. The staff quote
         resource is the canonical dealer_quote (DECISIONS.md D8).
-      required: [product_id, branch_id, branch_code, branch_name, on_hand_base, reserved_base, in_transit_base, available_base, soft_held_base, avg_cost_cents]
+        avg_cost_cents is gated by the dealer's cost_visibility list: it is
+        present for callers on the list and absent otherwise, never zero,
+        never null.
+      required: [product_id, branch_id, branch_code, branch_name, on_hand_base, reserved_base, in_transit_base, available_base, soft_held_base]
       properties:
         product_id: { type: string, format: uuid }
         branch_id: { type: string, format: uuid }
@@ -2214,7 +2217,10 @@ components:
         soft_held_base:
           type: number
           description: Carried and rendered even though it does not gate, because soft interest is worth seeing
-        avg_cost_cents: { type: integer, format: int64 }
+        avg_cost_cents:
+          type: integer
+          format: int64
+          description: Present only for callers the cost_visibility list allows, absent otherwise
     QuoteBranchStockList:
       type: object
       description: >-

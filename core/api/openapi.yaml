@@ -45656,7 +45656,7 @@ components:
           type: boolean
     QuoteBranchStock:
       type: object
-      description: The four-bucket view of one product at one branch. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
+      description: "The four-bucket view of one product at one branch. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). avg_cost_cents is gated by the dealer's cost_visibility list: it is present for callers on the list and absent otherwise, never zero, never null."
       required:
         - product_id
         - branch_id
@@ -45667,7 +45667,6 @@ components:
         - in_transit_base
         - available_base
         - soft_held_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -45693,6 +45692,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: Present only for callers the cost_visibility list allows, absent otherwise
     QuoteBranchStockList:
       type: object
       description: One product's stock at every branch, plus the seam flag. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
