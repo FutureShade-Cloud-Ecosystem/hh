@@ -16,7 +16,9 @@ import {
   totalsBlock,
 } from "../src/_quote-public.js";
 import { formatMoney, quoteStatusPhrase, withFullStop } from "../src/format.js";
-import { validateAcceptance, validateQuoteView } from "../src/quote-client.js";
+import { createHash } from "node:crypto";
+import { createAcceptKeys, deriveAcceptKey } from "../src/accept-key.js";
+import { isKeyReuseRefusal, validateAcceptance, validateQuoteView } from "../src/quote-client.js";
 
 const TAXED = { subtotalCents: 9665, taxCents: 1257, totalCents: 10922 };
 const UNTAXED = { subtotalCents: 9665, taxCents: 0, totalCents: 9665 };
@@ -246,4 +248,54 @@ test("the vendored Outfit faces ship with their licence text beside them", async
   assert.match(text, /SIL OPEN FONT LICENSE Version 1\.1/);
   assert.match(text, /PERMISSION & CONDITIONS/);
   assert.match(text, /DISCLAIMER/);
+});
+
+// -- the acceptance key: derived, never stored.
+
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+test("the accept key is the first 16 bytes of SHA-256 of token and typed name, as a name based UUID", async () => {
+  const key = await deriveAcceptKey("tok-1", "Sample Customer");
+  const bytes = createHash("sha256").update("quote-accept:tok-1:Sample Customer").digest().subarray(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  assert.equal(key, `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`);
+  assert.match(key, UUID_SHAPE);
+  assert.equal(key[14], "5", "version nibble");
+  assert.ok("89ab".includes(key[19]), "variant nibble");
+});
+
+test("the accept key is deterministic and differs by token and by name", async () => {
+  const a = await deriveAcceptKey("tok-1", "Sample Customer");
+  assert.equal(await deriveAcceptKey("tok-1", "Sample Customer"), a);
+  assert.notEqual(await deriveAcceptKey("tok-2", "Sample Customer"), a);
+  assert.notEqual(await deriveAcceptKey("tok-1", "Another Customer"), a);
+});
+
+test("with no crypto.subtle the fallback is one random UUID per acceptance, stable in memory, never derived", async () => {
+  assert.equal(await deriveAcceptKey("tok-1", "Sample Customer", {}), null);
+  let calls = 0;
+  const fake = {
+    getRandomValues(bytes) {
+      calls += 1;
+      bytes.fill(calls);
+      return bytes;
+    },
+  };
+  const keys = createAcceptKeys(fake);
+  const first = await keys.keyFor("tok-1", "Sample Customer");
+  assert.match(first, UUID_SHAPE);
+  assert.equal(first[14], "4", "random UUID version nibble");
+  assert.equal(await keys.keyFor("tok-1", "Sample Customer"), first);
+  assert.equal(calls, 1, "the second retry reuses the remembered key");
+  assert.notEqual(await keys.keyFor("tok-1", "Another Customer"), first);
+  assert.notEqual(await createAcceptKeys(fake).keyFor("tok-1", "Sample Customer"), first, "memory is per page life");
+});
+
+test("only the server's own key reuse refusal is a key reuse refusal", () => {
+  assert.equal(isKeyReuseRefusal({ status: 409, error: "quote: this idempotency key was used for a different acceptance" }), true);
+  assert.equal(isKeyReuseRefusal({ status: 409, error: "This quote has already been accepted." }), false);
+  assert.equal(isKeyReuseRefusal({ status: 400, error: "quote: this idempotency key was used for a different acceptance" }), false);
+  assert.equal(isKeyReuseRefusal({ error: "quote: this idempotency key was used for a different acceptance" }), false);
 });

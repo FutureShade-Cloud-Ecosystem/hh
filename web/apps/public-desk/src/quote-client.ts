@@ -240,6 +240,25 @@ export function validateAcceptance(value: unknown): AcceptanceRef | null {
   return { quoteNo, typedName, acceptedAt, subtotalCents, taxCents, totalCents };
 }
 
+const KEY_REUSE_WORDS = /idempotency key was used for a different acceptance/;
+
+/**
+ * The server's refusal of one key for two typed names: a 409 whose envelope
+ * says so. It is the one definite refusal that means an acceptance DID land.
+ */
+export function isKeyReuseRefusal(failure: { error: string; status?: number }): boolean {
+  return failure.status === 409 && KEY_REUSE_WORDS.test(failure.error);
+}
+
+/**
+ * The server's own definite refusal of an acceptance: a 4xx that carried the
+ * JSON error envelope. Only this proves the acceptance was not recorded. No
+ * status, a 5xx, a proxy's page, an unreadable answer: all unknown outcomes.
+ */
+export function isDefiniteRefusal(failure: { error: string; status?: number }): boolean {
+  return failure.status !== undefined && failure.status >= 400 && failure.status < 500 && serverWords(failure) !== null;
+}
+
 export class PublicQuoteClient {
   readonly #client: ApiClient;
 
@@ -255,12 +274,18 @@ export class PublicQuoteClient {
     return view === null ? err("the quote on this link is not readable") : ok(view);
   }
 
-  /** The typed name acceptance: the server seals the name, the figures and the moment. */
-  async acceptQuote(token: string, typedName: string): Promise<Result<AcceptanceRef>> {
-    const result = await publicApi.quotePublicAcceptQuote(this.#client, token, {
-      typed_name: typedName,
-      accepted: true,
-    });
+  /**
+   * The typed name acceptance: the server seals the name, the figures and the
+   * moment. The idempotency key is the same on every attempt of one
+   * acceptance, so a repeat answers the first outcome and records nothing.
+   */
+  async acceptQuote(token: string, typedName: string, idempotencyKey: string): Promise<Result<AcceptanceRef>> {
+    const result = await publicApi.quotePublicAcceptQuote(
+      this.#client,
+      token,
+      { typed_name: typedName, accepted: true },
+      { idempotencyKey },
+    );
     if (!result.ok) return result;
     const acceptance = validateAcceptance(result.value);
     return acceptance === null ? err("the acceptance answer is not readable") : ok(acceptance);

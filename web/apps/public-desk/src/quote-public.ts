@@ -26,17 +26,28 @@ import {
   totalsBlock,
   type QuoteMoney,
 } from "./_quote-public.js";
+import { createAcceptKeys } from "./accept-key.js";
 import { formatMoney, quoteStatusPhrase, withFullStop } from "./format.js";
-import { envelopeOnlyFetch, PublicQuoteClient, serverWords, type AcceptanceRef, type QuoteViewRef } from "./quote-client.js";
+import {
+  envelopeOnlyFetch,
+  isDefiniteRefusal,
+  isKeyReuseRefusal,
+  PublicQuoteClient,
+  serverWords, type AcceptanceRef, type QuoteViewRef,
+} from "./quote-client.js";
 
 const LINK_GONE =
   "This link is no longer valid. Quote links expire, and can also be turned off by our team. Please contact us for an up-to-date link.";
 const LINK_GONE_SHORT = "This link is no longer valid. Please contact us for an up-to-date link.";
 const NOT_FOUND = "We could not find this quote. Please check the link you were sent.";
 const LOAD_FAILED = "We could not load this quote right now. Please try again shortly.";
-const NOT_RECORDED = "We could not record your acceptance. Please try again.";
+// Said ONLY after the server's own definite refusal. Every other failure is an
+// unknown outcome: the retry carries the same idempotency key, so it is safe.
+const NOT_RECORDED = "Your acceptance was not recorded.";
 const UNCONFIRMED =
-  "We could not confirm whether your acceptance was recorded. Please reload this page before trying again.";
+  "We could not confirm whether your acceptance was recorded. Trying again is safe: it will not be recorded twice.";
+const KEY_REUSED =
+  "This quote was already accepted with a different name on this attempt, so nothing more was recorded.";
 
 export class QuotePublicPage extends HHElement {
   static styles = [
@@ -275,6 +286,9 @@ export class QuotePublicPage extends HHElement {
   /** A failed accept whose re-read proved the acceptance landed: the page ends on the accepted state. */
   @state()
   private landed = false;
+  /** The server said this acceptance's key was used for a different typed name. */
+  @state()
+  private keyReused = false;
   @state()
   private typedName = "";
   @state()
@@ -284,6 +298,7 @@ export class QuotePublicPage extends HHElement {
   private thumbs: Map<string, string> = new Map();
 
   private readonly client: PublicQuoteClient;
+  private readonly acceptKeys = createAcceptKeys();
   private token = "";
   private autoPrint = false;
   /**
@@ -446,36 +461,45 @@ export class QuotePublicPage extends HHElement {
     this.error = "";
     const before = this.quote?.status;
     try {
-      const result = await this.client.acceptQuote(this.token, this.typedName.trim());
+      const typedName = this.typedName.trim();
+      const key = await this.acceptKeys.keyFor(this.token, typedName);
+      const result = await this.client.acceptQuote(this.token, typedName, key);
       if (!result.ok) {
         if (result.status === 410) {
           this.fatal = LINK_GONE_SHORT;
           return;
         }
-        // Any other failure may hide a recorded acceptance (a proxy's page
-        // after the core committed, a body lost on the way back), so the
-        // page re-reads the quote before it says anything. Only the re-read
-        // can vouch for the outcome: with no status the client cannot tell a
-        // refused connection from a lost answer.
-        const words = serverWords(result);
+        if (isKeyReuseRefusal(result)) {
+          // The server holds an acceptance under this very key with another
+          // typed name: the quote WAS accepted. Re-read, then end on the
+          // accepted state whatever the re-read says.
+          await this.load(true);
+          if (this.fatal !== "") return;
+          this.keyReused = true;
+          this.landed = true;
+          this.error = "";
+          return;
+        }
+        if (isDefiniteRefusal(result)) {
+          // The server's own refusal, in its envelope: nothing was recorded,
+          // and the page may say so, in the server's words.
+          this.error = `${withFullStop(serverWords(result) ?? "")} ${NOT_RECORDED}`;
+          return;
+        }
+        // Anything else may hide a recorded acceptance (a proxy's page after
+        // the core committed, a body lost on the way back, a request that
+        // timed out here and commits there later), so the outcome is UNKNOWN.
+        // A re-read showing SENT does not prove nothing was recorded, so the
+        // page never says it; the retry carries the same key and is safe.
         const reread = await this.load(true);
         if (this.fatal !== "") return;
         const now = this.quote;
-        if (!reread || now === null) {
-          this.error = UNCONFIRMED;
-          return;
-        }
-        if (before === "SENT" && (now.status === "ACCEPTED" || now.status === "CONVERTED")) {
+        if (reread && now !== null && before === "SENT" && (now.status === "ACCEPTED" || now.status === "CONVERTED")) {
           // The acceptance landed. With multi-accept on the core keeps an
           // accepted quote acceptable, so the page ends on the accepted
           // state itself rather than offering the form again.
           this.landed = true;
           this.error = "";
-          return;
-        }
-        if (before === "SENT" && now.status === "SENT") {
-          // Still awaiting its first acceptance: nothing was recorded.
-          this.error = result.status !== undefined && words !== null ? words : NOT_RECORDED;
           return;
         }
         this.error = UNCONFIRMED;
@@ -583,6 +607,7 @@ export class QuotePublicPage extends HHElement {
       const acceptedElsewhere = q.status === "ACCEPTED" || this.landed;
       return html`<div class="card closed">
         <h2>${acceptedElsewhere ? this.renderOkMark() : nothing}${acceptedElsewhere ? "Already accepted" : "Acceptance closed"}</h2>
+        ${this.keyReused ? html`<p class="gone">${KEY_REUSED}</p>` : nothing}
         <p class="gone">
           ${q.expired
             ? `This quote expired on ${q.validUntil} and can no longer be accepted online. Please contact us for an updated quote.`

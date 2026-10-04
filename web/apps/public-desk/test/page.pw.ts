@@ -10,6 +10,7 @@
 // The stub's quote world is in memory and an acceptance flips its own quote,
 // so the tests run in order and each reads only what it itself caused or
 // names deliberately.
+import { createHash } from "node:crypto";
 import { expect, test, type Page, type Response } from "@playwright/test";
 
 const GOOD_TOKEN = "q-demo-25";
@@ -327,8 +328,12 @@ test("no credential header rides any call, every call is a public route or the i
 // A failed accept must speak plainly and keep the form. The server's own words
 // are shown only when the answer carried a status and the JSON error envelope;
 // a transport failure or a proxy's page never reaches the customer.
-const NOT_RECORDED = "We could not record your acceptance. Please try again.";
-const UNCONFIRMED = "We could not confirm whether your acceptance was recorded. Please reload this page before trying again.";
+// The page says "not recorded" ONLY on the server's own definite refusal. Every
+// other failure is an unknown outcome, said as such, and a retry is safe: it
+// carries the same idempotency key, so the server never records it twice.
+const UNCONFIRMED =
+  "We could not confirm whether your acceptance was recorded. Trying again is safe: it will not be recorded twice.";
+const NOT_RECORDED_SUFFIX = "Your acceptance was not recorded.";
 
 async function readyToAccept(page: Page, token: string): Promise<void> {
   await page.goto(`/?t=${token}`);
@@ -366,8 +371,9 @@ test("an accept answered by a proxy's HTML page shows neither the page nor its h
     }),
   );
   await page.getByRole("button", { name: "Accept quote" }).click();
-  // The re-read answers and the quote is still SENT: the outcome is known.
-  await expect(page.getByRole("alert")).toHaveText(NOT_RECORDED);
+  // A 5xx that is not the envelope is an unknown outcome, even though the
+  // re-read answers SENT: a re-read proves nothing was NOT recorded.
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
   const body = await page.locator("body").evaluate((node) => node.outerHTML + (document.querySelector("pd-quote-public")?.shadowRoot?.innerHTML ?? ""));
   expect(body).not.toContain("Bad Gateway");
   expect(body).not.toContain("core.internal.example");
@@ -378,7 +384,7 @@ test("a refusal that carries the server's JSON error envelope shows the server's
   await readyToAccept(page, "q-terms-28");
   await page.route("**/accept", (route) => route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: "The typed name must match the contact on the quote." }) }));
   await page.getByRole("button", { name: "Accept quote" }).click();
-  await expect(page.getByRole("alert")).toHaveText("The typed name must match the contact on the quote.");
+  await expect(page.getByRole("alert")).toHaveText(`The typed name must match the contact on the quote. ${NOT_RECORDED_SUFFIX}`);
 });
 
 test("the whole network going down after the quote loaded keeps the quote and the typed name", async ({ page, context }) => {
@@ -416,13 +422,14 @@ test("an accept recorded by the core but answered 200 with an unreadable body en
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
-test("an accept that never reached the core, re-read still SENT, says it was not recorded and keeps the form", async ({ page }) => {
+test("an accept that never reached the core, re-read still SENT, is an unknown outcome that offers the same button", async ({ page }) => {
   await readyToAccept(page, "q-lost-refused");
-  // The accept is refused before the stub sees it; the re-read answers and
-  // the quote is still SENT, which proves nothing was recorded.
+  // The accept is refused before the stub sees it; the re-read answers SENT.
+  // That does not prove the acceptance was not recorded (a request that timed
+  // out at the client can commit later), so the page never says it.
   await page.route("**/accept", (route) => route.abort("connectionrefused"));
   await page.getByRole("button", { name: "Accept quote" }).click();
-  await expect(page.getByRole("alert")).toHaveText(NOT_RECORDED);
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
   await expectFormKept(page);
 });
 
@@ -470,7 +477,7 @@ test("two synchronous clicks send one POST: the busy guard stands alone, before 
   expect(posts()).toBe(1);
 });
 
-test("a refused accept whose re-read fails is unconfirmed and keeps the page: only a dead link replaces it", async ({ page }) => {
+test("a definite refusal is final whatever the re-read does: the server's words, kept page, only a dead link replaces it", async ({ page }) => {
   await readyToAccept(page, "q-terms-28");
   await page.route("**/accept", (route) =>
     route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "This quote has already been accepted." }) }),
@@ -479,8 +486,7 @@ test("a refused accept whose re-read fails is unconfirmed and keeps the page: on
     route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) }),
   );
   await page.getByRole("button", { name: "Accept quote" }).click();
-  // The re-read failed, so nothing can be vouched for, whatever the envelope said.
-  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  await expect(page.getByRole("alert")).toHaveText(`This quote has already been accepted. ${NOT_RECORDED_SUFFIX}`);
   await expectFormKept(page);
   await expect(page.getByText("Quote link unavailable")).toHaveCount(0);
 });
@@ -570,6 +576,7 @@ test("multi-accept on: a failed repeat accept, with the quote already ACCEPTED b
   await page.locator("#affirm").check();
   await page.getByRole("button", { name: "Accept quote" }).click();
   // Nothing proves the repeat was not recorded: the status could not move.
+  // The same button stays, and its retry carries the same key.
   await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
   await expect(page.getByRole("button", { name: "Accept quote" })).toBeEnabled();
 });
@@ -613,4 +620,238 @@ test("a failed accept whose re-read shows the quote closed by something else end
   await expect(page.getByRole("heading", { name: "Acceptance closed" })).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.locator("#name")).toHaveCount(0);
+});
+
+// -- the idempotency key: every attempt of one acceptance carries the same
+// key, derived from the token and the typed name (the page may store nothing),
+// so a retry after a lost answer, a reload or another tab is answered with the
+// first outcome and never records a second row.
+
+const ACCEPT_PATH = (token: string): string => `/api/public/v1/quotes/${token}/accept`;
+
+function expectedKey(token: string, typedName: string): string {
+  const bytes = createHash("sha256").update(`quote-accept:${token}:${typedName}`).digest().subarray(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+async function multiAcceptOn(page: Page, token: string): Promise<void> {
+  const response = await page.request.post(`/_stub/multi-accept?token=${token}&on=1`);
+  expect(response.ok()).toBe(true);
+}
+
+async function acceptanceRows(page: Page, token: string): Promise<Array<{ typed_name: string; key: string | null }>> {
+  const response = await page.request.get("/_stub/state");
+  const state = (await response.json()) as { acceptances: Record<string, Array<{ typed_name: string; key: string | null }>> };
+  return state.acceptances[token] ?? [];
+}
+
+/** The Idempotency-Key of every accept POST the page sends, in order. */
+function trackKeys(page: Page): Array<string | undefined> {
+  const keys: Array<string | undefined> = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/accept")) keys.push(request.headers()["idempotency-key"]);
+  });
+  return keys;
+}
+
+interface Abandoned {
+  key: string | undefined;
+  body: string | null;
+}
+
+/**
+ * The first accept is cut at the client BEFORE the server sees it (a client
+ * timeout); the request is kept so the test can let it commit late, which is
+ * what a slow core does. Later accepts pass straight through.
+ */
+async function abandonFirstAccept(page: Page): Promise<() => Abandoned | null> {
+  let abandoned: Abandoned | null = null;
+  await page.route("**/accept", async (route) => {
+    if (abandoned === null) {
+      abandoned = { key: route.request().headers()["idempotency-key"], body: route.request().postData() };
+      await route.abort("timedout");
+      return;
+    }
+    await route.continue();
+  });
+  return () => abandoned;
+}
+
+async function commitLate(page: Page, token: string, abandoned: Abandoned): Promise<void> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (abandoned.key !== undefined) headers["idempotency-key"] = abandoned.key;
+  const response = await page.request.post(ACCEPT_PATH(token), { headers, data: abandoned.body ?? "" });
+  expect(response.status()).toBe(200);
+}
+
+test("a slow commit after a client timeout, then a retry, multi-accept on: the same key, ONE acceptance row", async ({ page }) => {
+  const token = "q-key-slow";
+  await multiAcceptOn(page, token);
+  const keys = trackKeys(page);
+  await readyToAccept(page, token);
+  const abandoned = await abandonFirstAccept(page);
+
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  // The re-read answers SENT: the page cannot say it was not recorded.
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  await expectFormKept(page);
+  expect(await acceptanceRows(page, token)).toHaveLength(0);
+
+  // The abandoned request now commits at the server, late.
+  const first = abandoned();
+  expect(first).not.toBeNull();
+  await commitLate(page, token, first as Abandoned);
+  expect(await acceptanceRows(page, token)).toHaveLength(1);
+
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("heading", { name: "Thank you: quote Q-28 accepted" })).toBeVisible();
+
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBeDefined();
+  expect(keys[1]).toBe(keys[0]);
+  expect(keys[0]).toBe(expectedKey(token, "Sample Customer"));
+  expect(await acceptanceRows(page, token)).toHaveLength(1);
+});
+
+test("the same after a reload of the page: the key is derived again, still ONE acceptance row", async ({ page }) => {
+  const token = "q-key-reload";
+  await multiAcceptOn(page, token);
+  const keys = trackKeys(page);
+  await readyToAccept(page, token);
+  const abandoned = await abandonFirstAccept(page);
+
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  await commitLate(page, token, abandoned() as Abandoned);
+
+  // A reload loses every in-memory thing: the key must come back from the
+  // token and the name alone.
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Quote #Q-28" })).toBeVisible();
+  await page.locator("#name").fill("Sample Customer");
+  await page.locator("#affirm").check();
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("heading", { name: "Thank you: quote Q-28 accepted" })).toBeVisible();
+
+  expect(keys).toHaveLength(2);
+  expect(keys[1]).toBe(keys[0]);
+  expect(await acceptanceRows(page, token)).toHaveLength(1);
+});
+
+test("a different typed name sends a different key and, with multi-accept on, a second row on purpose", async ({ page }) => {
+  const token = "q-key-names";
+  await multiAcceptOn(page, token);
+  const keys = trackKeys(page);
+  await readyToAccept(page, token);
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("heading", { name: "Thank you: quote Q-28 accepted" })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByText("Accepting again records another acceptance.")).toBeVisible();
+  await page.locator("#name").fill("Another Customer");
+  await page.locator("#affirm").check();
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByText("Accepted by Another Customer on")).toBeVisible();
+
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBe(expectedKey(token, "Sample Customer"));
+  expect(keys[1]).toBe(expectedKey(token, "Another Customer"));
+  expect(keys[1]).not.toBe(keys[0]);
+  expect((await acceptanceRows(page, token)).map((row) => row.typed_name)).toEqual(["Sample Customer", "Another Customer"]);
+});
+
+test("the key is the typed name AS SENT: stray white space around it does not change the key", async ({ page }) => {
+  const keys = trackKeys(page);
+  await page.goto("/?t=q-terms-28");
+  await page.route("**/accept", (route) => route.abort("failed"));
+  await page.locator("#name").fill("  Sample Customer  ");
+  await page.locator("#affirm").check();
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  expect(keys[0]).toBe(expectedKey("q-terms-28", "Sample Customer"));
+});
+
+test("a definite refusal says it was not recorded, in the server's words, and keeps the form", async ({ page }) => {
+  for (const [status, words] of [
+    [400, "the acceptance carries no typed name"],
+    [409, "This quote has already been accepted."],
+    [404, "not found"],
+  ] as const) {
+    await page.unroute("**/accept");
+    await readyToAccept(page, "q-terms-28");
+    await page.route("**/accept", (route) =>
+      route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ error: words }) }),
+    );
+    await page.getByRole("button", { name: "Accept quote" }).click();
+    await expect(page.getByRole("alert")).toHaveText(`${words}${words.endsWith(".") ? "" : "."} ${NOT_RECORDED_SUFFIX}`);
+    await expectFormKept(page);
+  }
+});
+
+test("no unknown outcome ever says the acceptance was not recorded, and each offers the same button", async ({ page }) => {
+  const unknowns: Array<[string, (route: import("@playwright/test").Route) => Promise<void>]> = [
+    ["no status at all", (route) => route.abort("failed")],
+    ["a connection reset", (route) => route.abort("connectionreset")],
+    [
+      "a proxy's HTML 502",
+      (route) => route.fulfill({ status: 502, contentType: "text/html", body: "<html><body>502</body></html>" }),
+    ],
+    [
+      "a 500 that is the JSON envelope",
+      (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "internal" }) }),
+    ],
+    [
+      "an unreadable 200",
+      (route) => route.fulfill({ status: 200, contentType: "application/json", body: "{\"quote_no\": \"Q-28\", \"typed_na" }),
+    ],
+  ];
+  for (const [label, handler] of unknowns) {
+    await page.unroute("**/accept");
+    await readyToAccept(page, "q-terms-28");
+    await page.route("**/accept", handler);
+    await page.getByRole("button", { name: "Accept quote" }).click();
+    const alert = page.getByRole("alert");
+    await expect(alert, label).toHaveText(UNCONFIRMED);
+    await expect(alert, label).not.toContainText(/not recorded/i);
+    await expect(alert, label).not.toContainText(/could not record your/i);
+    await expectFormKept(page);
+  }
+});
+
+test("the same key used for a different typed name: the quote was already accepted with a different name, shown as accepted", async ({ page }) => {
+  await readyToAccept(page, "q-key-reuse");
+  await page.route("**/accept", (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "quote: this idempotency key was used for a different acceptance" }),
+    }),
+  );
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
+  await expect(page.getByText("already accepted with a different name", { exact: false })).toBeVisible();
+  await expect(page.locator("#name")).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText("idempotency");
+});
+
+test("crypto.subtle absent: the fallback key is one random UUID, stable across retries in one page life", async ({ page }) => {
+  await page.addInitScript(() => {
+    // An insecure context has no crypto.subtle.
+    Object.defineProperty(Crypto.prototype, "subtle", { get: () => undefined, configurable: true });
+  });
+  const keys = trackKeys(page);
+  await readyToAccept(page, "q-key-nosubtle");
+  await page.route("**/accept", (route) => route.abort("failed"));
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect.poll(() => keys.length).toBe(2);
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  expect(keys[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  expect(keys[1]).toBe(keys[0]);
+  expect(keys[0]).not.toBe(expectedKey("q-key-nosubtle", "Sample Customer"));
 });

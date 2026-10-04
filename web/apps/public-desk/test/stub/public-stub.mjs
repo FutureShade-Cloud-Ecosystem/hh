@@ -187,6 +187,11 @@ for (const token of [
   "q-unk-unreadable",
   "q-unk-reset",
   "q-multi-504",
+  "q-key-slow",
+  "q-key-reload",
+  "q-key-names",
+  "q-key-nosubtle",
+  "q-key-reuse",
 ]) {
   QUOTES[token] = structuredClone(QUOTES["q-terms-28"]);
 }
@@ -255,6 +260,19 @@ const IMAGES = {
 
 const SIGHTINGS = [];
 
+// The keyed acceptance, as the core keeps it (QD-3d): one row per key. The
+// same key with the same typed name answers the FIRST outcome and writes
+// nothing, whatever the quote's status is now; the same key with another typed
+// name is a 409 naming the reuse; a malformed key is a 400; no key behaves as
+// before. ACCEPTANCES holds every row written, per token, for the suite to
+// count. MULTI_TOKENS is the multi-accept switch: a committed quote then reads
+// ACCEPTED yet stays acceptable, as the core's does with multi-accept on.
+const ACCEPTANCES = new Map();
+const KEYED = new Map();
+const MULTI_TOKENS = new Set();
+const KEY_REUSE_WORDS = "quote: this idempotency key was used for a different acceptance";
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function respondJson(response, status, payload) {
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(payload));
@@ -289,7 +307,17 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (request.method === "GET" && path === "/_stub/state") {
-    respondJson(response, 200, { sightings: SIGHTINGS });
+    respondJson(response, 200, {
+      sightings: SIGHTINGS,
+      acceptances: Object.fromEntries(ACCEPTANCES),
+    });
+    return;
+  }
+  if (request.method === "POST" && path === "/_stub/multi-accept") {
+    const token = url.searchParams.get("token") ?? "";
+    if (url.searchParams.get("on") === "0") MULTI_TOKENS.delete(token);
+    else MULTI_TOKENS.add(token);
+    respondJson(response, 200, { ok: true });
     return;
   }
 
@@ -321,9 +349,10 @@ const server = createServer(async (request, response) => {
       respondJson(response, 404, { error: "no quote answers on this link" });
       return;
     }
-    if (token === "q-refuse-27" || quote.status === "ACCEPTED") {
-      const refusal = alreadyAccepted();
-      respondJson(response, refusal.status, refusal.body);
+    const rawKey = request.headers["idempotency-key"];
+    const key = typeof rawKey === "string" ? rawKey : undefined;
+    if (key !== undefined && !UUID_SHAPE.test(key)) {
+      respondJson(response, 400, { error: "Idempotency-Key must be a UUID" });
       return;
     }
     let body;
@@ -341,18 +370,45 @@ const server = createServer(async (request, response) => {
       respondJson(response, 400, { error: "the acceptance is not affirmed" });
       return;
     }
+    const typedName = body.typed_name.trim();
+    // The key is looked up before the quote's status is judged, as the core
+    // does under the quote lock: a repeat answers the first outcome even when
+    // the quote has since left the acceptable state.
+    const keyId = key === undefined ? undefined : `${token}|${key.toLowerCase()}`;
+    if (keyId !== undefined) {
+      const first = KEYED.get(keyId);
+      if (first !== undefined) {
+        if (first.typedName !== typedName) {
+          respondJson(response, 409, { error: KEY_REUSE_WORDS });
+          return;
+        }
+        respondJson(response, 200, first.outcome);
+        return;
+      }
+    }
+    if (token === "q-refuse-27" || (quote.status === "ACCEPTED" && !MULTI_TOKENS.has(token))) {
+      const refusal = alreadyAccepted();
+      respondJson(response, refusal.status, refusal.body);
+      return;
+    }
     // The acceptance commits: the quote's own figures come back echoed, and
-    // the quote leaves the acceptable state, exactly as the core's accept does.
+    // the quote leaves the acceptable state (unless multi-accept is on),
+    // exactly as the core's accept does.
     quote.status = "ACCEPTED";
-    quote.acceptable = false;
-    respondJson(response, 200, {
+    quote.acceptable = MULTI_TOKENS.has(token);
+    const outcome = {
       quote_no: quote.quote_no,
-      typed_name: body.typed_name.trim(),
+      typed_name: typedName,
       accepted_at: nowIso(),
       subtotal_cents: quote.subtotal_cents,
       tax_cents: quote.tax_cents,
       total_cents: quote.total_cents,
-    });
+    };
+    const rows = ACCEPTANCES.get(token) ?? [];
+    rows.push({ typed_name: typedName, key: key ?? null });
+    ACCEPTANCES.set(token, rows);
+    if (keyId !== undefined) KEYED.set(keyId, { typedName, outcome });
+    respondJson(response, 200, outcome);
     return;
   }
 
