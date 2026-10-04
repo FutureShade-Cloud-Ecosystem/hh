@@ -15,6 +15,7 @@ package quote
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -251,5 +252,27 @@ func (s *StaffService) dateAuditHook(actor, quoteID string) func(context.Context
 			return err
 		}
 		return nil
+	}
+}
+
+// discountAuditHook builds the record hook the guarded discount write runs
+// on its transaction (plan 4.2): the discount before and after and the
+// line total, plus the quote level pair every line write records, so the
+// quote's own history shows who discounted what.
+func (s *StaffService) discountAuditHook(actor, quoteID string) func(context.Context, pgx.Tx, int, int, int, int64, int64, QuoteTotals) error {
+	return func(ctx context.Context, tx pgx.Tx, lineNo, beforeDisc, afterDisc int, beforeTotal, afterTotal int64, totals QuoteTotals) error {
+		bd, ad := int64(beforeDisc), int64(afterDisc)
+		if err := s.recordIntChange(ctx, tx, actor, quoteID, lineNo, "disc_pct", &bd, &ad); err != nil {
+			return fmt.Errorf("quote-discount audit: %w", err)
+		}
+		bt, at := beforeTotal, afterTotal
+		if err := s.recordIntChange(ctx, tx, actor, quoteID, lineNo, "line_total_cents", &bt, &at); err != nil {
+			return fmt.Errorf("quote-discount audit: %w", err)
+		}
+		subtotal, total := totals.SubtotalCents, totals.TotalCents
+		if err := s.recordIntChange(ctx, tx, actor, quoteID, 0, "subtotal_cents", nil, &subtotal); err != nil {
+			return fmt.Errorf("quote-discount audit: %w", err)
+		}
+		return s.recordIntChange(ctx, tx, actor, quoteID, 0, "total_cents", nil, &total)
 	}
 }

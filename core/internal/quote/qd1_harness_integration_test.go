@@ -146,12 +146,16 @@ func qd1SetDisc(t *testing.T, pool *pgxpool.Pool, quoteID string, lineNo, discPc
 	}
 }
 
-// qd1BypassRows reads the pricing log rows the decision wrote for one quote.
+// qd1BypassRows reads the pricing log's BYPASS rows for one quote. The
+// action filter is the point (QD-2): a below rule above floor write now
+// leaves an UPDATE row beside any BYPASS row, and this helper answers only
+// the bypasses its name promises.
 func qd1BypassRows(t *testing.T, pool *pgxpool.Pool, quoteID string) []string {
 	t.Helper()
 	rows, err := pool.Query(context.Background(), `
-		SELECT action FROM pricing_audit_log WHERE ref_entity_type = 'quote' AND ref_entity_id = $1
-		ORDER BY created_at`, quoteID)
+		SELECT action FROM pricing_audit_log
+		 WHERE ref_entity_type = 'quote' AND ref_entity_id = $1 AND action = 'BYPASS'
+		 ORDER BY created_at`, quoteID)
 	if err != nil {
 		t.Fatalf("read pricing log: %v", err)
 	}

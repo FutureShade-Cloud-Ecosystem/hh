@@ -132,8 +132,10 @@ func (s *Service) EvaluateLineFloor(ctx context.Context, in FloorQuestion) (Floo
 // FloorRecord is one pricing log row for a quote line floor decision: a
 // BYPASS row when a clearing or an approval let a below floor price through
 // (the honoured override's shape), an UPDATE row for a below rule above
-// floor price (the row QD-2 completes). One call site, RecordFloorDecision,
-// writes both.
+// floor price (plan 4.2), and an UPDATE row for a line accepted at a rule
+// price that itself sits below the floor (CP0-3 answer A, no discount
+// asked, the rule and the net the same price). One call site,
+// RecordFloorDecision, writes all of them.
 type FloorRecord struct {
 	UserID     string
 	QuoteID    string

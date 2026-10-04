@@ -444,7 +444,25 @@ func (s *StaffService) completeFloorWrite(ctx context.Context, caller identity.S
 		})
 		return
 	}
-	// The below rule above floor UPDATE row (plan 4.2) lands here.
+	// The below rule above floor UPDATE row (plan 4.2): accepted, no
+	// manager, logged for the pricing editors through the same seam. A
+	// write that rode a standing clearing (below floor, no new stamp) and
+	// a write on a category with the floor question switched off write no
+	// row here: the first already has its BYPASS row from the clearing
+	// that stamped it, the second was never asked a floor question.
+	if out.asked && !out.belowFloor && !out.answer.EnforcementDisabled {
+		s.floor.RecordFloorDecision(ctx, pricing.FloorRecord{
+			UserID: caller.UserID, QuoteID: quoteID, LineNo: lineNo,
+			ProductID:     productID,
+			CategoryID:    out.answer.CategoryID,
+			RuleUnitCents: out.ruleUnitCents,
+			NetUnitCents:  out.netUnitCents,
+			DiscPct:       discPct,
+			MarginBps:     out.answer.MarginBps,
+			FloorBps:      out.answer.FloorBps,
+			Action:        "UPDATE",
+		})
+	}
 }
 
 // recordRulePriceBelowFloor writes the pricing log row a finished write

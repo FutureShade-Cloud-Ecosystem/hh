@@ -167,8 +167,9 @@ func TestQD1_BelowFloorSalesManagerClearsAnyQuoteInBranch(t *testing.T) {
 }
 
 // Below the rule price and above the floor: accepted, logged, no manager.
-// The UPDATE log row is QD-2's half; this pins the acceptance and that no
-// BYPASS row and no clearing stamp appear.
+// The UPDATE log row is QD-2's (qd2_discount_log_integration_test.go pins
+// it); this pins the acceptance and that no BYPASS row and no clearing
+// stamp appear.
 func TestQD1_BelowRuleAboveFloorAcceptedNoManager(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)

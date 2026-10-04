@@ -38,7 +38,7 @@ type qd2Pricer struct {
 func (p qd2Pricer) ResolvePrice(_ context.Context, in pricing.ResolveInput) (pricing.Breakdown, error) {
 	final := p.finalCents
 	if final == 0 {
-		final = 600
+		final = 1000
 	}
 	uom := p.priceUOM
 	if uom == "" {

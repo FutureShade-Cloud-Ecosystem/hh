@@ -47,7 +47,7 @@ type builderStore interface {
 	UpsertQuotePolicy(ctx context.Context, p QuotePolicy) error
 	ReadQuoteTerms(ctx context.Context, quoteID string) (QuoteTerms, error)
 	UpdateTermsGuarded(ctx context.Context, quoteID string, in TermsInput, allowedFrom []string, actorID string, hstRateBps int64) (QuoteTerms, error)
-	UpdateLineDiscountGuarded(ctx context.Context, quoteID string, lineNo, discPct int, allowedFrom []string, actorID string, plan floorWritePlan) (QuoteEditResult, error)
+	UpdateLineDiscountGuarded(ctx context.Context, quoteID string, lineNo, discPct int, allowedFrom []string, actorID string, plan floorWritePlan, hooks quoteDiscountHooks) (QuoteEditResult, error)
 	ReadQuoteMarginRows(ctx context.Context, quoteID string) (branchID string, rows []quoteMarginRow, err error)
 	ReadHSTRateBps(ctx context.Context) int64
 	TopCatalogueApplications(ctx context.Context, limit int) ([]string, error)
@@ -490,7 +490,9 @@ func (s *StaffService) SetLineDiscount(ctx context.Context, quoteID string, line
 		}
 		plan = out.plan
 	}
-	res, err := b.UpdateLineDiscountGuarded(ctx, quoteID, lineNo, discPct, rule.fromList(), caller.UserID, plan)
+	res, err := b.UpdateLineDiscountGuarded(ctx, quoteID, lineNo, discPct, rule.fromList(), caller.UserID, plan, quoteDiscountHooks{
+		record: s.discountAuditHook(caller.UserID, quoteID),
+	})
 	if err != nil {
 		return QuoteEditResult{}, nameQuoteField(err, FieldQuoteLineQty)
 	}

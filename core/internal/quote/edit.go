@@ -305,6 +305,16 @@ type quoteDateHooks struct {
 	record func(ctx context.Context, tx pgx.Tx, before, after string) error
 }
 
+// quoteDiscountHooks is the record closure the discount write threads into
+// its guarded write (plan 4.2): the discount before and after and the line
+// total, on the write's own transaction, the same trail the other line
+// writes use. The percents and the line's net total are passed explicitly:
+// the discount is the one column a QuoteLineSnapshot does not carry, and a
+// half-populated snapshot invites a confident wrong read.
+type quoteDiscountHooks struct {
+	record func(ctx context.Context, tx pgx.Tx, lineNo, beforeDisc, afterDisc int, beforeTotal, afterTotal int64, totals QuoteTotals) error
+}
+
 // - expiry (D2) -
 
 // quoteExpired reports whether a quote's validity window has closed.
