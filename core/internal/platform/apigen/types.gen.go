@@ -5469,6 +5469,7 @@ type PricingFloorPreview struct {
 	Items     []PricingFloorPreviewItem `json:"items"`
 	Evaluated int                       `json:"evaluated"`
 	NotGraded int                       `json:"not_graded"`
+	NoCost    int                       `json:"no_cost"`
 	Truncated bool                      `json:"truncated"`
 }
 

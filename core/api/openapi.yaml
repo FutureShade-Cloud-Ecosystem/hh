@@ -15915,7 +15915,7 @@ paths:
       tags:
         - staff-pricing
       summary: Name the products a proposed price would put under the margin floor
-      description: The pricing editors' floor warning (the editors warn and may still save). Lays the proposed rule, customer price, category margin policy or quantity break over the stored pricing data and grades the existing products it can reach through the resolver and its margin gate, as a quote line would meet them. Returns the products the new price leaves under the floor, worst first, each marked when it was already under the floor before the change. A surcharge tier never changes a price under the replace rule, so a break of surcharge tiers names nothing. Products with no cost on file are counted as not graded. At most 200 products are graded and truncated says when more existed. Writes nothing, not even a log row. Refuses what the write itself would refuse.
+      description: The pricing editors' floor warning (the editors warn and may still save). Lays the proposed rule, customer price, category margin policy or quantity break over the stored pricing data and grades the existing products it can reach through the resolver and its margin gate, as a quote line would meet them. Returns the products the new price leaves under the floor, worst first, each marked when it was already under the floor before the change. A surcharge tier never changes a price under the replace rule, so a break of surcharge tiers names nothing. A change that names a customer is graded at that customer's own pricing type, so the price today is what the customer pays. Products with no cost on file are counted in no_cost, and products the resolver has no price to grade (no list price, no unit conversion) in not_graded; any other failure of the grading is an error answer, never a count. At most 200 products and a bounded number of product, customer type and quantity combinations are graded, and truncated says when more existed. A quantity break has at most 20 tiers, and a tier starting at zero is graded at one base unit. Writes nothing, not even a log row. Refuses what the write itself would refuse (an override needs a customer, a category and a price unit).
       x-addition: the editors' floor warning (plan CP0-6, QD-4); no ERP source route
       x-role: requireManager
       x-access:
@@ -15944,6 +15944,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "422":
           description: The proposed price is not valid against the pricing vocabulary
           content:
@@ -41388,7 +41390,7 @@ components:
         branch_id:
           type: string
           format: uuid
-          description: Grade against this branch's cost; omitted grades against the highest branch cost
+          description: Grade against this branch's cost; omitted grades against the product's engagement-wide weighted cost
         rule:
           $ref: "#/components/schemas/PricingRuleWrite"
         customer_id:
@@ -41430,7 +41432,7 @@ components:
           type: string
         customer_type:
           type: string
-          description: The customer type this was worst for; empty when the change names a customer
+          description: The customer type this was worst for; the customer's own type when the change names a customer
         final_cents:
           type: integer
           format: int64
@@ -41470,6 +41472,7 @@ components:
         - items
         - evaluated
         - not_graded
+        - no_cost
         - truncated
       properties:
         items:
@@ -41478,13 +41481,16 @@ components:
             $ref: "#/components/schemas/PricingFloorPreviewItem"
         evaluated:
           type: integer
-          description: Products graded
+          description: Products graded in full
         not_graded:
           type: integer
-          description: Products with no cost on file or no price to grade
+          description: Products the resolver had no price to grade in full (no list price, no unit conversion)
+        no_cost:
+          type: integer
+          description: Products with no cost on file, whose margin cannot be told
         truncated:
           type: boolean
-          description: More than 200 products were reachable and only the first 200 were graded
+          description: More products or combinations were reachable than one preview grades (200 products, a bounded number of combinations); the rest were not graded
     PricingFloorConfirmation:
       type: object
       required:
@@ -41781,6 +41787,7 @@ components:
           type: string
         items:
           type: array
+          maxItems: 20
           items:
             $ref: "#/components/schemas/PricingQuantityBreakItem"
         version:

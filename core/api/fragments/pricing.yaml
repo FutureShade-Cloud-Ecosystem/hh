@@ -463,10 +463,17 @@ paths:
         quote line would meet them. Returns the products the new price leaves
         under the floor, worst first, each marked when it was already under the
         floor before the change. A surcharge tier never changes a price under
-        the replace rule, so a break of surcharge tiers names nothing. Products
-        with no cost on file are counted as not graded. At most 200 products
-        are graded and truncated says when more existed. Writes nothing, not
-        even a log row. Refuses what the write itself would refuse.
+        the replace rule, so a break of surcharge tiers names nothing. A change
+        that names a customer is graded at that customer's own pricing type, so
+        the price today is what the customer pays. Products with no cost on file
+        are counted in no_cost, and products the resolver has no price to grade
+        (no list price, no unit conversion) in not_graded; any other failure of
+        the grading is an error answer, never a count. At most 200 products and
+        a bounded number of product, customer type and quantity combinations
+        are graded, and truncated says when more existed. A quantity break has
+        at most 20 tiers, and a tier starting at zero is graded at one base
+        unit. Writes nothing, not even a log row. Refuses what the write itself
+        would refuse (an override needs a customer, a category and a price unit).
       x-addition: "the editors' floor warning (plan CP0-6, QD-4); no ERP source route"
       x-role: requireManager
       x-access:
@@ -491,6 +498,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "422":
           description: The proposed price is not valid against the pricing vocabulary
           content:
@@ -2135,7 +2143,7 @@ components:
       properties:
         kind: { type: string, enum: [rule, override, category_policy, quantity_break] }
         id: { type: string, format: uuid }
-        branch_id: { type: string, format: uuid, description: "Grade against this branch's cost; omitted grades against the highest branch cost" }
+        branch_id: { type: string, format: uuid, description: "Grade against this branch's cost; omitted grades against the product's engagement-wide weighted cost" }
         rule: { $ref: "#/components/schemas/PricingRuleWrite" }
         customer_id: { type: string, format: uuid }
         override: { $ref: "#/components/schemas/PricingOverrideWrite" }
@@ -2152,7 +2160,7 @@ components:
         sku: { type: string }
         name: { type: string }
         category_id: { type: string }
-        customer_type: { type: string, description: "The customer type this was worst for; empty when the change names a customer" }
+        customer_type: { type: string, description: "The customer type this was worst for; the customer's own type when the change names a customer" }
         final_cents: { type: integer, format: int64, description: "The unit price with the change" }
         margin_bps: { type: integer, format: int64 }
         floor_bps: { type: integer, format: int64 }
@@ -2166,14 +2174,15 @@ components:
 
     PricingFloorPreview:
       type: object
-      required: [items, evaluated, not_graded, truncated]
+      required: [items, evaluated, not_graded, no_cost, truncated]
       properties:
         items:
           type: array
           items: { $ref: "#/components/schemas/PricingFloorPreviewItem" }
-        evaluated: { type: integer, description: "Products graded" }
-        not_graded: { type: integer, description: "Products with no cost on file or no price to grade" }
-        truncated: { type: boolean, description: "More than 200 products were reachable and only the first 200 were graded" }
+        evaluated: { type: integer, description: "Products graded in full" }
+        not_graded: { type: integer, description: "Products the resolver had no price to grade in full (no list price, no unit conversion)" }
+        no_cost: { type: integer, description: "Products with no cost on file, whose margin cannot be told" }
+        truncated: { type: boolean, description: "More products or combinations were reachable than one preview grades (200 products, a bounded number of combinations); the rest were not graded" }
 
     PricingFloorConfirmation:
       type: object
@@ -2334,6 +2343,7 @@ components:
         threshold_uom: { type: string }
         items:
           type: array
+          maxItems: 20
           items: { $ref: "#/components/schemas/PricingQuantityBreakItem" }
         version:
           type: integer

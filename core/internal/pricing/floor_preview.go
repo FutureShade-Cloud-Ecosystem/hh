@@ -9,6 +9,7 @@ package pricing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -48,6 +49,7 @@ type FloorPreview struct {
 	Items     []FloorPreviewItem
 	Evaluated int
 	NotGraded int
+	NoCost    int
 	Truncated bool
 }
 
@@ -61,10 +63,35 @@ type CandidateProduct struct {
 	CostCents  int64
 }
 
-// FloorCandidates finds the products a change may reach. The pgx Repository satisfies it.
+// FloorCandidates finds the products a change may reach, with their cost. The composition
+// root implements it over the product and inventory services, so pricing reads neither' table.
 type FloorCandidates interface {
 	CandidateProducts(ctx context.Context, categoryID, productID, branchID string, limit int) ([]CandidateProduct, error)
 }
+
+// FloorCustomers names the pricing type of a customer, so a customer scoped change is graded
+// at the price that customer pays (its tier rules apply beneath the change). The composition
+// root implements it over the customer service.
+type FloorCustomers interface {
+	CustomerType(ctx context.Context, customerID string) (string, error)
+}
+
+// ErrFloorCustomerNotFound is the answer of a FloorCustomers seam for an unknown customer.
+var ErrFloorCustomerNotFound = fmt.Errorf("floor preview customer: %w", errNotFound)
+
+// WithFloorCustomerType wires the customer type seam the preview grades customer changes with.
+func (s *Service) WithFloorCustomerType(c FloorCustomers) *Service {
+	s.floorCust = c
+	return s
+}
+
+// MaxBreakTiers bounds the tiers of one quantity break: the write refuses more, and the preview
+// grades every tier for every product and customer type.
+const MaxBreakTiers = 20
+
+// MaxPreviewGrades bounds the product, customer type and quantity combinations one preview
+// grades. Past it the preview stops and says it was truncated.
+const MaxPreviewGrades = 4000
 
 // FloorConfirmation is the editor's confirmation of a floor warning.
 type FloorConfirmation struct {
@@ -235,7 +262,11 @@ func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPrevie
 		ov.dropRuleID, ov.addRule = ch.ID, &r
 		categoryID, productID = r.CategoryID, r.ProductID
 		if r.Scope == ScopeCustomerProduct || r.Scope == ScopeCustomerCategory {
-			contexts = []previewContext{{customerID: r.CustomerID}}
+			c, cerr := s.customerContext(ctx, r.CustomerID)
+			if cerr != nil {
+				return FloorPreview{}, cerr
+			}
+			contexts = []previewContext{c}
 		} else {
 			contexts = []previewContext{{customerType: r.CustomerType}}
 		}
@@ -247,6 +278,9 @@ func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPrevie
 			return FloorPreview{}, badReq("override is required for an override preview")
 		}
 		o := *ch.Override
+		if o.CustomerID == "" || o.CategoryID == "" || o.PriceUOM == "" {
+			return FloorPreview{}, badReq("customer_id, category_id and price_uom are required")
+		}
 		normalizeOverrideCalc(&o)
 		if err := validateOverride(o); err != nil {
 			return FloorPreview{}, err
@@ -254,7 +288,11 @@ func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPrevie
 		o.ID = ch.ID
 		ov.dropOverrideID, ov.addOverride = ch.ID, &o
 		categoryID = o.CategoryID
-		contexts = []previewContext{{customerID: o.CustomerID}}
+		c, cerr := s.customerContext(ctx, o.CustomerID)
+		if cerr != nil {
+			return FloorPreview{}, cerr
+		}
+		contexts = []previewContext{c}
 	case "category_policy":
 		if ch.Policy == nil {
 			return FloorPreview{}, badReq("policy is required for a category policy preview")
@@ -282,11 +320,22 @@ func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPrevie
 		h.ID = ch.ID
 		ov.dropBreakID, ov.addBreak = ch.ID, &h
 		categoryID, productID = h.CategoryID, h.ProductID
-		// A break prices at its threshold: grade each discount tier at the quantity it starts at.
+		// A break prices at its threshold: grade each discount tier at the quantity it starts
+		// at, each distinct start once. A tier that starts at zero is graded at one base unit,
+		// the smallest positive quantity it covers.
 		qtys = nil
+		seen := map[previewQty]bool{}
 		for _, it := range h.Items {
-			if !isSurchargeBreak(it.ValueType) && it.FromQty > 0 {
-				qtys = append(qtys, previewQty{qty: it.FromQty, uom: h.ThresholdUOM})
+			if isSurchargeBreak(it.ValueType) {
+				continue
+			}
+			q := previewQty{qty: it.FromQty, uom: h.ThresholdUOM}
+			if it.FromQty <= 0 {
+				q = previewQty{qty: 1}
+			}
+			if !seen[q] {
+				seen[q] = true
+				qtys = append(qtys, q)
 			}
 		}
 	default:
@@ -313,14 +362,21 @@ func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPrevie
 	}
 	overlay := *s
 	overlay.store = ov
+	perProduct := len(contexts) * len(qtys)
+	grades := 0
 	for _, p := range products {
 		if p.CostCents <= 0 {
 			// No cost on file: a margin cannot be told, and a zero would read as a clean 100 percent.
-			out.NotGraded++
+			out.NoCost++
 			continue
 		}
+		if grades+perProduct > MaxPreviewGrades {
+			out.Truncated = true
+			break
+		}
+		grades += perProduct
 		var worst *FloorPreviewItem
-		graded := false
+		skipped, graded := false, false
 		for _, c := range contexts {
 			for _, q := range qtys {
 				uom := q.uom
@@ -333,6 +389,10 @@ func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPrevie
 				}
 				after, aerr := overlay.resolve(ctx, in, true, false)
 				if aerr != nil {
+					if !notGradable(aerr) {
+						return FloorPreview{}, fmt.Errorf("floor preview grading %s: %w", p.ProductID, aerr)
+					}
+					skipped = true
 					continue
 				}
 				graded = true
@@ -340,30 +400,59 @@ func (s *Service) PreviewFloor(ctx context.Context, ch FloorChange) (FloorPrevie
 					continue
 				}
 				before, berr := s.resolve(ctx, in, true, false)
+				if berr != nil {
+					if !notGradable(berr) {
+						return FloorPreview{}, fmt.Errorf("floor preview grading %s: %w", p.ProductID, berr)
+					}
+					skipped = true
+					continue
+				}
 				it := FloorPreviewItem{
 					ProductID: p.ProductID, SKU: p.SKU, Name: p.Name, CategoryID: p.CategoryID, CustomerType: c.customerType,
 					FinalCents: after.FinalCents, MarginBps: after.MarginBps, FloorBps: after.FloorBps,
 					PriceUOM: after.PriceUOM, Source: after.Source,
-				}
-				if berr == nil {
-					it.PreviousFinalCents, it.PreviousMarginBps, it.AlreadyUnderFloor = before.FinalCents, before.MarginBps, before.Blocked
+					PreviousFinalCents: before.FinalCents, PreviousMarginBps: before.MarginBps, AlreadyUnderFloor: before.Blocked,
 				}
 				if worst == nil || worseBreach(it, *worst) {
 					worst = &it
 				}
 			}
 		}
-		if !graded {
+		switch {
+		case skipped:
+			// Some combination of this product could not be priced: it is not fully graded, and
+			// whatever breach the other combinations showed is still listed.
 			out.NotGraded++
-			continue
+		case graded:
+			out.Evaluated++
 		}
-		out.Evaluated++
 		if worst != nil {
 			out.Items = append(out.Items, *worst)
 		}
 	}
 	sort.SliceStable(out.Items, func(i, j int) bool { return out.Items[i].MarginBps < out.Items[j].MarginBps })
 	return out, nil
+}
+
+// customerContext names the customer a change is graded for, with the pricing type the
+// customer is resolved at: the tier rules beneath the change decide what the customer pays today.
+func (s *Service) customerContext(ctx context.Context, customerID string) (previewContext, error) {
+	if s.floorCust == nil {
+		return previewContext{}, errNoDB
+	}
+	t, err := s.floorCust.CustomerType(ctx, customerID)
+	if err != nil {
+		return previewContext{}, err
+	}
+	return previewContext{customerID: customerID, customerType: t}, nil
+}
+
+// notGradable reports the per product cases the resolver gives when a product has no price to
+// grade (no list price, no unit conversion, a product that is not there). Any other error is
+// a failure of the grading itself, and the preview answers it as an error, never as a count
+// of products it could not check.
+func notGradable(err error) bool {
+	return errors.Is(err, errNoListPrice) || isNoConversion(err) || errors.Is(err, errNotFound)
 }
 
 // worseBreach orders two breaches of one product: a newly under case outranks one that was
@@ -389,6 +478,9 @@ func (s *Service) RecordFloorConfirmation(ctx context.Context, c FloorConfirmati
 	}
 	if c.EntityID == "" {
 		return badReq("entity_id is required")
+	}
+	if (c.RefType == "") != (c.RefID == "") || (c.RefType != "" && !validRefTypes[c.RefType]) {
+		return badReq("ref_entity_type must be one of product, customer, category, quote, order and come with ref_entity_id")
 	}
 	var err error
 	switch c.EntityType {
@@ -418,10 +510,12 @@ func (s *Service) RecordFloorConfirmation(ctx context.Context, c FloorConfirmati
 	if len(c.ProductIDs) == 1 {
 		word = "product"
 	}
+	// The row says what the server knows: that the editor confirmed a warning naming these
+	// products. It does not state them as under the floor; the server did not recheck.
 	if err := s.store.AppendAudit(ctx, AuditEntry{
 		EntityType: c.EntityType, EntityID: c.EntityID, Action: "UPDATE",
 		FieldName: "floor_warning_confirmed",
-		NewValue:  fmt.Sprintf("%d %s under the margin floor: %s%s", len(c.ProductIDs), word, strings.Join(shown, ", "), more),
+		NewValue:  fmt.Sprintf("the editor confirmed a floor warning naming %d %s: %s%s", len(c.ProductIDs), word, strings.Join(shown, ", "), more),
 		UserID:    userID, RefEntityType: c.RefType, RefEntityID: c.RefID,
 	}); err != nil {
 		return fmt.Errorf("record floor confirmation: %w", err)

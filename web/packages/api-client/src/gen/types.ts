@@ -4690,6 +4690,7 @@ export type PricingFloorPreview = {
   items: PricingFloorPreviewItem[];
   evaluated: number;
   not_graded: number;
+  no_cost: number;
   truncated: boolean;
 };
 export type PricingFloorConfirmation = {

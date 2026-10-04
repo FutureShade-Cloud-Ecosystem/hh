@@ -39,7 +39,7 @@ func previewSvc(st *fakeStore, prods ...CandidateProduct) *Service {
 	if len(prods) == 0 {
 		prods = []CandidateProduct{{ProductID: "blu60", CategoryID: "pavers", SKU: "BLU-60", Name: "Blu 60", BaseUOM: "SF", CostCents: 7000}}
 	}
-	return newSvc(st, "pavers").WithCandidateSource(fakeCands{prods})
+	return newSvc(st, "pavers").WithCandidateSource(fakeCands{prods}).WithFloorCustomerType(fakeCustTypes{"cust1": "RETAIL"})
 }
 
 func tierRule(pct int64) *Rule {
@@ -168,7 +168,7 @@ func TestPreviewFloor_AProductWithNoCostIsCountedNotGuessed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreviewFloor: %v", err)
 	}
-	if len(out.Items) != 0 || out.NotGraded != 1 || out.Evaluated != 0 {
+	if len(out.Items) != 0 || out.NoCost != 1 || out.NotGraded != 0 || out.Evaluated != 0 {
 		t.Fatalf("no cost on file means not graded, never a confident zero: %+v", out)
 	}
 }

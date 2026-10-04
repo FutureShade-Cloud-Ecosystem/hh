@@ -173,11 +173,12 @@ type txAuditStore interface {
 
 // Service holds the pricing business logic.
 type Service struct {
-	store pricingStore
-	batch batchStore      // A-08 price-batch/import/change-log seam (nil until WithBatchStore)
-	scan  salesScanStore  // D-PA-3 low-margin live-sales feed (nil until WithSalesScanStore)
-	txAud txAuditStore    // transactional audit append (auto-wired; nil on DB-free fakes)
-	cands FloorCandidates // CP0-6 floor warning product source (nil until WithCandidateSource)
+	store     pricingStore
+	batch     batchStore      // A-08 price-batch/import/change-log seam (nil until WithBatchStore)
+	scan      salesScanStore  // D-PA-3 low-margin live-sales feed (nil until WithSalesScanStore)
+	txAud     txAuditStore    // transactional audit append (auto-wired; nil on DB-free fakes)
+	cands     FloorCandidates // CP0-6 floor warning product source (nil until WithCandidateSource)
+	floorCust FloorCustomers  // CP0-6 floor warning customer type seam (nil until WithFloorCustomerType)
 	// W4-A optional seams. All three are FLAG-OFF by default: nil means the corresponding step does
 	// not run and the resolver behaves exactly as it did in W3. That is what lets every pre-existing
 	// resolver test keep passing against a fake that has never heard of promotions.
@@ -211,9 +212,6 @@ func NewService(store pricingStore) *Service {
 	// simply leave s.batch nil.
 	if b, ok := store.(batchStore); ok {
 		s.batch = b
-	}
-	if c, ok := store.(FloorCandidates); ok {
-		s.cands = c
 	}
 	// Auto-wire the D-PA-3 low-margin scan seam the same way (the pgx *Repository implements it);
 	// DB-free fakes that don't leave s.scan nil, so LowMarginScan returns a friendly errNoDB.
@@ -1442,6 +1440,9 @@ func validateQuantityBreak(h QuantityBreakHeader) error {
 	}
 	if len(h.Items) == 0 {
 		return unprocessable("a quantity break needs at least one tier")
+	}
+	if len(h.Items) > MaxBreakTiers {
+		return badReq("a quantity break has at most %d tiers", MaxBreakTiers)
 	}
 	var prevFrom float64
 	var prevTo *float64

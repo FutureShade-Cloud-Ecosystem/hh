@@ -107,7 +107,7 @@ func (h *Handler) floorPreview(w http.ResponseWriter, r *http.Request, _ guards.
 		})
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"items": items, "evaluated": out.Evaluated, "not_graded": out.NotGraded, "truncated": out.Truncated,
+		"items": items, "evaluated": out.Evaluated, "not_graded": out.NotGraded, "no_cost": out.NoCost, "truncated": out.Truncated,
 	})
 }
 
