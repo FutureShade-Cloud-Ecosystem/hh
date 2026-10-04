@@ -380,13 +380,11 @@ func (s *Service) AdvanceFromEvent(ctx context.Context, orderID, target, eventID
 		// Nothing may advance INTO this status by event (e.g. DRAFT, or a status off the ladder).
 		return ErrIllegalTransition
 	}
-	if err := s.setStatusGuarded(ctx, "", orderID, target, eventID, allowed, nil); err != nil {
-		return err
+	err := s.setStatusGuarded(ctx, "", orderID, target, eventID, allowed, nil)
+	if target == "FULFILLED" && (err == nil || errors.Is(err, ErrNoTransition)) {
+		s.completeCounterInvoiced(ctx, orderID, eventID) // QD-5, consumer.go; a redelivery reaches it too
 	}
-	if target == "FULFILLED" {
-		s.completeCounterInvoiced(ctx, orderID, eventID) // QD-5, consumer.go
-	}
-	return nil
+	return err
 }
 
 // - DIB-191 manual order-fulfilment transitions (forward-only matrix) -

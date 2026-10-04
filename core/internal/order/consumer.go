@@ -206,14 +206,28 @@ type counterInvoiceStore interface {
 // is completed here and no second invoice is raised. Best effort by design: the hand over has
 // committed and must not be failed by what follows; an order left FULFILLED beside its paid invoice
 // is the same state any order is in before its invoice event arrives.
+//
+// A failure is never silent: a lookup or a move that fails is logged with the order id and the event
+// id, so an order left FULFILLED beside its paid invoice can be found. The completion is idempotent (a
+// guarded FULFILLED to INVOICED move, a benign no-op once the order is past it), which is why
+// AdvanceFromEvent runs it again when a redelivered hand over finds the order already FULFILLED.
 func (s *Service) completeCounterInvoiced(ctx context.Context, orderID, eventID string) {
 	cs, ok := s.store.(counterInvoiceStore)
 	if !ok {
 		return
 	}
 	has, err := cs.OrderHasCounterInvoice(ctx, orderID)
-	if err != nil || !has {
+	if err != nil {
+		slog.Default().Warn("order lifecycle: counter invoice completion: lookup failed",
+			"order_id", orderID, "event_id", eventID, "err", err)
 		return
 	}
-	_ = s.AdvanceCounterInvoiced(ctx, orderID, eventID)
+	if !has {
+		return
+	}
+	if err := s.AdvanceCounterInvoiced(ctx, orderID, eventID); err != nil &&
+		!errors.Is(err, ErrNoTransition) && !errors.Is(err, ErrIllegalTransition) {
+		slog.Default().Warn("order lifecycle: counter invoice completion: move to INVOICED failed",
+			"order_id", orderID, "event_id", eventID, "err", err)
+	}
 }
