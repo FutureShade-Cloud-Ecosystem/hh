@@ -220,30 +220,45 @@ func (r *Repository) ProductPolicy(ctx context.Context, productID string) (*Prod
 	return &p, nil
 }
 
-func (r *Repository) AppendAudit(ctx context.Context, e AuditEntry) error {
-	if r.pool == nil {
-		return errNoDB
-	}
-	// DIB-402: normalise the drill-through reference before it reaches the DB. A half-set pair
-	// (type without id, or id without type) would violate pricing_audit_ref_pair and turn an
-	// audit APPEND, which every caller fires-and-forgets with `_ =`, into a silent data loss.
-	// Dropping the half-pair here writes the row with no target, which the viewer renders as
-	// plain unlinked text: the row survives, and nothing pretends to know where it points.
+// auditInsert normalises one audit entry into the pricing_audit_log INSERT
+// and its arguments: the drill-through reference and the bypass reason are
+// dropped rather than rejected (DIB-402, W4-A), so an append can never lose
+// its row to a CHECK the caller did not know about. The pool append and the
+// transactional append below share this one builder, so the two can never
+// drift apart on discipline.
+func auditInsert(e AuditEntry) (string, []any) {
 	refType, refID := normaliseAuditRef(e.RefEntityType, e.RefEntityID)
-	// W4-A (0114): the same drop-don't-fail discipline for bypass_reason. Two CHECKs guard the
-	// column, the value must be in the known set AND the row must be a BYPASS, and either one
-	// firing would lose the whole audit row through the discarded `_ =`. A reason that fails either
-	// test is dropped and the row is written without it.
 	reason := e.BypassReason
 	if !validBypassReasons[reason] || e.Action != "BYPASS" {
 		reason = ""
 	}
-	_, err := r.pool.Exec(ctx,
-		`INSERT INTO pricing_audit_log (entity_type, entity_id, action, field_name, old_value, new_value, user_id,
-		                                ref_entity_type, ref_entity_id, bypass_reason)
+	return `INSERT INTO pricing_audit_log (entity_type, entity_id, action, field_name, old_value, new_value, user_id,
+	                                ref_entity_type, ref_entity_id, bypass_reason)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		e.EntityType, nullStr(e.EntityID), e.Action, nullStr(e.FieldName), nullStr(e.OldValue), nullStr(e.NewValue), nullStr(e.UserID),
-		nullStr(refType), nullStr(refID), nullStr(reason))
+		[]any{e.EntityType, nullStr(e.EntityID), e.Action, nullStr(e.FieldName), nullStr(e.OldValue), nullStr(e.NewValue), nullStr(e.UserID),
+			nullStr(refType), nullStr(refID), nullStr(reason)}
+}
+
+func (r *Repository) AppendAudit(ctx context.Context, e AuditEntry) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	q, args := auditInsert(e)
+	_, err := r.pool.Exec(ctx, q, args...)
+	return err
+}
+
+// AppendAuditTx is AppendAudit on a caller-supplied transaction: the row
+// commits or rolls back with the write that owes it. The pool append above
+// is fire-and-forget by design (its callers discard the error); this one is
+// for a row that MUST ride a mutating write, whose error the caller returns
+// so a refused append refuses the write (the quote floor seam, plan 4.2).
+func (r *Repository) AppendAuditTx(ctx context.Context, tx pgx.Tx, e AuditEntry) error {
+	if tx == nil {
+		return errNoDB
+	}
+	q, args := auditInsert(e)
+	_, err := tx.Exec(ctx, q, args...)
 	return err
 }
 

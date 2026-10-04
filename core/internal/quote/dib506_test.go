@@ -57,7 +57,7 @@ func (s *dib506Store) UpdateTermsGuarded(_ context.Context, _ string, in TermsIn
 	s.lastTerms = in
 	return QuoteTerms{QuoteID: qOrg, Fulfillment: in.Fulfillment, DeliveryFeeCents: in.DeliveryFeeCents}, nil
 }
-func (s *dib506Store) UpdateLineDiscountGuarded(_ context.Context, _ string, _ int, discPct int, _ []string, _ string, _ floorWritePlan) (QuoteEditResult, error) {
+func (s *dib506Store) UpdateLineDiscountGuarded(_ context.Context, _ string, _ int, discPct int, _ []string, _ string, _ floorWritePlan, _ quoteDiscountHooks) (QuoteEditResult, error) {
 	s.discWrites++
 	s.lastDisc = discPct
 	return QuoteEditResult{Status: "DRAFT"}, nil
