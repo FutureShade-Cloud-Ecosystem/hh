@@ -296,7 +296,7 @@ func (s *StaffService) resolveQuoteForCaller(ctx context.Context, quoteIDOrNo st
 	if err != nil {
 		return identity.StaffContext{}, "", err
 	}
-	_, branchID, _, err := s.store.QuoteEditHeader(ctx, quoteID)
+	_, branchID, _, _, err := s.store.QuoteEditHeader(ctx, quoteID)
 	if err != nil {
 		return identity.StaffContext{}, "", err
 	}

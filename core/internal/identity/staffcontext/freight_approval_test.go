@@ -82,9 +82,13 @@ func TestCreateApproval_SystemOnlyPoliciesAreRefusedOnTheCallerPath(t *testing.T
 			t.Fatalf("%s must not be filable from the caller-facing create path", policy)
 		}
 	}
-	// Positive control: the path itself works, so the two refusals above are about the POLICY and not
-	// about a create path that has stopped creating anything.
-	if _, err := s.CreateApproval(context.Background(), "u1", trt, PolicyMargin, "below floor", ""); err != nil {
+	// Positive control: the create path itself works, so the two refusals
+	// above are about the POLICY and not about a create path that has
+	// stopped creating anything. D7 moved the margin policy to the quote
+	// module's door (FileFloorApproval), so that door is the control.
+	if _, err := s.FileFloorApproval(context.Background(), FloorApprovalFiling{
+		RequestedBy: "u1", BranchID: trt, SubjectRef: "q1", Detail: "below floor", LineNo: 1, DiscPct: 25,
+	}); err != nil {
 		t.Fatalf("positive control failed: a margin override must still file: %v", err)
 	}
 }

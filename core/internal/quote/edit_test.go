@@ -12,6 +12,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -79,6 +80,7 @@ type fakeStaffStore struct {
 	status     string
 	branchID   string
 	validUntil *time.Time
+	ownerID    string
 	line       QuoteLineSnapshot
 	uom        string
 	lineGone   bool
@@ -87,6 +89,9 @@ type fakeStaffStore struct {
 	lastWrite quoteEditWrite
 	writes    int
 	validSet  string
+	// disc and clearing back the floor seam's store read.
+	disc     int
+	clearing *floorClearingStamp
 }
 
 func newFakeStaffStore(status string) *fakeStaffStore {
@@ -109,11 +114,11 @@ func (f *fakeStaffStore) ResolveQuoteID(_ context.Context, idOrNo string, _ bool
 	return "", ErrNotFound
 }
 
-func (f *fakeStaffStore) QuoteEditHeader(_ context.Context, quoteID string) (string, string, *time.Time, error) {
+func (f *fakeStaffStore) QuoteEditHeader(_ context.Context, quoteID string) (string, string, *time.Time, string, error) {
 	if quoteID != qOrg {
-		return "", "", nil, ErrNotFound
+		return "", "", nil, "", ErrNotFound
 	}
-	return f.status, f.branchID, f.validUntil, nil
+	return f.status, f.branchID, f.validUntil, f.ownerID, nil
 }
 
 func (f *fakeStaffStore) CreateQuote(_ context.Context, _ QuoteCreate) (string, string, error) {
@@ -126,7 +131,7 @@ func (f *fakeStaffStore) StaffDetail(_ context.Context, quoteID string) (StaffQu
 	}
 	v := StaffQuoteView{
 		ID: qOrg, QuoteNo: "#Q-1", CustomerID: qCust, BranchID: f.branchID,
-		Status: f.status, validUntil: f.validUntil, Lines: []QuoteViewLine{},
+		Status: f.status, validUntil: f.validUntil, Lines: []QuoteViewLine{}, OwnerID: f.ownerID,
 	}
 	if f.validUntil != nil {
 		v.ValidUntil = f.validUntil.Format(dateLayout)
@@ -134,7 +139,7 @@ func (f *fakeStaffStore) StaffDetail(_ context.Context, quoteID string) (StaffQu
 	return v, nil
 }
 
-func (f *fakeStaffStore) ListStaffQuotes(_ context.Context, _ bool, _ []string, _ Filter) ([]StaffQuoteSummary, error) {
+func (f *fakeStaffStore) ListStaffQuotes(_ context.Context, _ bool, _ []string, _ string, _ Filter) ([]StaffQuoteSummary, error) {
 	return []StaffQuoteSummary{}, nil
 }
 
@@ -147,6 +152,15 @@ func (f *fakeStaffStore) LineForEdit(_ context.Context, quoteID string, lineNo i
 
 func (f *fakeStaffStore) QuotePricingContext(_ context.Context, _ string) (string, string, error) {
 	return qCust, f.branchID, nil
+}
+
+// LineFloorState satisfies the floor seam's store read (floor.go): the
+// fake's line is undiscounted unless a test sets disc.
+func (f *fakeStaffStore) LineFloorState(_ context.Context, quoteID string, lineNo int) (int, int64, int64, string, *floorClearingStamp, error) {
+	if quoteID != qOrg || f.lineGone || lineNo != f.line.LineNo {
+		return 0, 0, 0, "", nil, ErrLineNotFound
+	}
+	return f.disc, 1000, 2000, "EA", f.clearing, nil
 }
 
 // Convert satisfies the DIB-483 conversion seam embedded in staffStore. The edit tests never call it;
@@ -175,7 +189,7 @@ func (f *fakeStaffStore) totals() QuoteTotals {
 	return QuoteTotals{SubtotalCents: f.line.LineTotalCents, TotalCents: f.line.LineTotalCents}
 }
 
-func (f *fakeStaffStore) UpdateLineGuarded(ctx context.Context, w quoteEditWrite, hooks quoteEditHooks) (QuoteLineSnapshot, QuoteLineSnapshot, QuoteTotals, string, error) {
+func (f *fakeStaffStore) UpdateLineGuarded(ctx context.Context, w quoteEditWrite, _ floorWritePlan, hooks quoteEditHooks) (QuoteLineSnapshot, QuoteLineSnapshot, QuoteTotals, string, error) {
 	if err := f.guard(w.AllowedFrom); err != nil {
 		return QuoteLineSnapshot{}, QuoteLineSnapshot{}, QuoteTotals{}, f.status, err
 	}
@@ -348,12 +362,13 @@ func qCallerFrom(ctx context.Context) (identity.StaffContext, bool) {
 	return c, ok
 }
 
-// qStaff is a frontline, branch-scoped staff member, the LOWEST authority that R1 says may edit a
-// quote. Using frontline (not manager) as the default caller in every matrix test is deliberate: it is
-// what proves R1 rather than merely assuming it.
+// qStaff is a frontline, branch-scoped staff member, the LOWEST authority that may edit a
+// quote it owns (plan 3.3: an inside sales caller at Work). Using frontline
+// (not manager) as the default caller in every matrix test is deliberate: it is
+// what proves the ladder's lowest rung rather than merely assuming it.
 func qStaff() identity.StaffContext {
 	return identity.StaffContext{
-		UserID: qUser, Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
+		UserID: qUser, RoleCode: "INSIDE_SALES", Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
 		Status: identity.StatusActive, Branches: map[string]bool{qBranch: true},
 	}
 }
@@ -364,19 +379,32 @@ func qInactive() identity.StaffContext {
 	return c
 }
 
-// qFixture is the one-liner every test starts from.
+// qFixture is the one-liner every test starts from. The store's quote is
+// owned by qStaff's user and the service carries the decided role
+// configuration, the shape every edit now runs under (plan 3.3).
 func qFixture(t *testing.T, status string) (*StaffService, *fakeStaffStore, *recordingTxRecorder) {
 	t.Helper()
 	store := newFakeStaffStore(status)
+	store.ownerID = qUser
 	rec := &recordingTxRecorder{}
 	svc := NewStaffService(store).
 		WithAudit(rec).
 		WithPricing(qPricer{}).
 		WithCostBasis(qInv{}).
 		WithCustomerType(qCustType{}).
+		WithRoleConfig(qTestRoleConfig()).
 		withCaller(qCallerFrom).
 		withNow(qNow)
 	return svc, store, rec
+}
+
+// qTestRoleConfig loads the decided default once for the unit fixtures.
+func qTestRoleConfig() *roleconfig.Config {
+	cfg, err := roleconfig.Default()
+	if err != nil {
+		panic("quote tests: role configuration refused: " + err.Error())
+	}
+	return cfg
 }
 
 // applyQuoteEdit drives one command uniformly, so the matrix test can treat all four identically.
@@ -854,7 +882,9 @@ func TestQuoteEdit_PriceBlockedIsRefused(t *testing.T) {
 // TestQuoteEdit_UnwiredPricingFailsClosed pins that a missing seam refuses rather than quoting at zero.
 func TestQuoteEdit_UnwiredPricingFailsClosed(t *testing.T) {
 	store := newFakeStaffStore("DRAFT")
+	store.ownerID = qUser
 	svc := NewStaffService(store).WithAudit(&recordingTxRecorder{}).
+		WithRoleConfig(qTestRoleConfig()).
 		withCaller(qCallerFrom).withNow(qNow) // no pricing/cost/customer-type seams
 	if svc.QuoteEditSeamsWired() {
 		t.Fatal("fixture bug: seams must be unwired for this test")

@@ -47,7 +47,7 @@ type builderStore interface {
 	UpsertQuotePolicy(ctx context.Context, p QuotePolicy) error
 	ReadQuoteTerms(ctx context.Context, quoteID string) (QuoteTerms, error)
 	UpdateTermsGuarded(ctx context.Context, quoteID string, in TermsInput, allowedFrom []string, actorID string, hstRateBps int64) (QuoteTerms, error)
-	UpdateLineDiscountGuarded(ctx context.Context, quoteID string, lineNo, discPct int, allowedFrom []string, actorID string) (QuoteEditResult, error)
+	UpdateLineDiscountGuarded(ctx context.Context, quoteID string, lineNo, discPct int, allowedFrom []string, actorID string, plan floorWritePlan) (QuoteEditResult, error)
 	ReadQuoteMarginRows(ctx context.Context, quoteID string) (branchID string, rows []quoteMarginRow, err error)
 	ReadHSTRateBps(ctx context.Context) int64
 	TopCatalogueApplications(ctx context.Context, limit int) ([]string, error)
@@ -138,17 +138,24 @@ func validateQuotePolicy(p QuotePolicy) (QuotePolicy, error) {
 	return p, nil
 }
 
-// UpdateQuotePolicy writes the dealer (or branch) policy row. Tier-1 GLOBAL admins only, the
-// settingsAdmin gate, in the service, exactly like the acceptance settings.
+// UpdateQuotePolicy writes the dealer (or branch) policy row under the
+// settings' role rule (CP0-5 answer A, defect D9): the Sales manager
+// changes the Quote Desk's settings for its own branch, the General
+// Manager sets the dealer wide default. A branch row (BranchID set) is a
+// Manage-on-quote-desk caller's write, in a branch it reaches; the NULL
+// dealer default row is the General Manager's alone. Every other role is
+// refused with the typed settings refusal.
 func (s *StaffService) UpdateQuotePolicy(ctx context.Context, p QuotePolicy) (QuotePolicy, error) {
-	if _, err := s.settingsAdmin(ctx); err != nil {
+	caller, err := s.settingsWriter(ctx, p.BranchID)
+	if err != nil {
 		return QuotePolicy{}, err
 	}
+	_ = caller
 	b, ok := s.builder()
 	if !ok {
 		return QuotePolicy{}, errBuilderNotConfigured
 	}
-	p, err := validateQuotePolicy(p)
+	p, err = validateQuotePolicy(p)
 	if err != nil {
 		return QuotePolicy{}, err
 	}
@@ -189,29 +196,18 @@ type QuoteMargin struct {
 	Partial        bool              `json:"partial,omitempty"`
 }
 
-// costAllowed answers whether THIS caller may receive cost/margin under the branch policy.
-// Fail closed: an unreadable policy or an anonymous caller receives nothing.
+// costAllowed answers whether THIS caller may receive cost/margin. The
+// rule is the role configuration's cost_visibility list (X3, r3: Inside
+// Sales, Outside Sales and every manager and leadership role except HR),
+// the same reader the till's glance uses; the branch policy's
+// MANAGER_UP-tier default no longer governs (defect D8). Fail closed: an
+// unwired configuration or an anonymous caller receives nothing.
 func (s *StaffService) costAllowed(ctx context.Context, branchID string) bool {
 	caller, err := s.caller(ctx)
 	if err != nil {
 		return false
 	}
-	b, ok := s.builder()
-	if !ok {
-		return false
-	}
-	p, err := b.ReadQuotePolicy(ctx, branchID)
-	if err != nil {
-		return false
-	}
-	switch p.CostVisibility {
-	case settings.VisibilityAllStaff:
-		return true
-	case settings.VisibilityHidden:
-		return false
-	default: // MANAGER_UP, the column default ("" from a partial read resolves here too)
-		return caller.IsManager()
-	}
+	return s.seesCostAndMargin(caller)
 }
 
 // quoteMarginBps computes gross margin in bps from integer cents (pos.marginBpsOf's arithmetic,
@@ -406,7 +402,7 @@ func (s *StaffService) Terms(ctx context.Context, quoteID string) (QuoteTerms, e
 	if err != nil {
 		return QuoteTerms{}, err
 	}
-	_, branchID, _, err := s.store.QuoteEditHeader(ctx, quoteID)
+	_, branchID, _, _, err := s.store.QuoteEditHeader(ctx, quoteID)
 	if err != nil {
 		return QuoteTerms{}, err
 	}
@@ -439,7 +435,10 @@ func (s *StaffService) UpdateTerms(ctx context.Context, quoteID string, in Terms
 
 // SetLineDiscount writes one line's discount percent. Server-gated by the dealer's
 // line_discounts_enabled knob (curation hides the input; THIS refusal is the authority), and
-// authorized on the line-edit matrix row.
+// authorized on the line-edit matrix row. A discount is a below-rule write, so it runs the
+// floor decision of plan 3.3 (floor.go): below the rule price and above the floor it is
+// accepted with no manager; below the floor it is refused with the typed 409 unless the
+// caller clears the floor itself or an approved and unused request is consumed by this write.
 func (s *StaffService) SetLineDiscount(ctx context.Context, quoteID string, lineNo, discPct int) (QuoteEditResult, error) {
 	caller, rule, quoteID, err := s.authorizeQuoteEdit(ctx, quoteID, FieldQuoteLineQty)
 	if err != nil {
@@ -453,7 +452,7 @@ func (s *StaffService) SetLineDiscount(ctx context.Context, quoteID string, line
 		return QuoteEditResult{}, settings.Errf(http.StatusUnprocessableEntity,
 			"quote: disc_pct must be between 0 and 100")
 	}
-	_, branchID, _, err := s.store.QuoteEditHeader(ctx, quoteID)
+	_, branchID, _, _, err := s.store.QuoteEditHeader(ctx, quoteID)
 	if err != nil {
 		return QuoteEditResult{}, err
 	}
@@ -461,7 +460,44 @@ func (s *StaffService) SetLineDiscount(ctx context.Context, quoteID string, line
 		return QuoteEditResult{}, settings.Errf(http.StatusUnprocessableEntity,
 			"quote: line discounts are switched off for this dealer, ask an administrator to enable them in the quote settings")
 	}
-	return b.UpdateLineDiscountGuarded(ctx, quoteID, lineNo, discPct, rule.fromList(), caller.UserID)
+	// The floor decision (a discount is a below-rule write). discPct 0 IS
+	// the rule price and is never asked, so the floor seams are consulted
+	// only by a real discount.
+	var out *floorOutcome
+	var productID string
+	plan := floorWritePlan{}
+	if discPct > 0 {
+		fs, ok := s.floorStore()
+		if !ok {
+			return QuoteEditResult{}, ErrEditNotConfigured
+		}
+		_, ruleUnit, gross, priceUOM, clearing, ferr := fs.LineFloorState(ctx, quoteID, lineNo)
+		if ferr != nil {
+			return QuoteEditResult{}, ferr
+		}
+		snap, _, lerr := s.store.LineForEdit(ctx, quoteID, lineNo)
+		if lerr != nil {
+			return QuoteEditResult{}, lerr
+		}
+		productID = snap.ProductID
+		out, err = s.decideLineFloor(ctx, caller, quoteID, branchID, snap.ProductID, lineNo, discPct, "",
+			ruleUnit, gross, priceUOM, clearing)
+		if err != nil {
+			return QuoteEditResult{}, err
+		}
+		if out.refusal != nil {
+			return QuoteEditResult{}, out.refusal
+		}
+		plan = out.plan
+	}
+	res, err := b.UpdateLineDiscountGuarded(ctx, quoteID, lineNo, discPct, rule.fromList(), caller.UserID, plan)
+	if err != nil {
+		return QuoteEditResult{}, nameQuoteField(err, FieldQuoteLineQty)
+	}
+	if out != nil {
+		s.completeFloorWrite(ctx, caller, quoteID, productID, lineNo, discPct, out)
+	}
+	return res, nil
 }
 
 // - the settings-kit surface hooks (what the quote module contributes to DIB-507) -

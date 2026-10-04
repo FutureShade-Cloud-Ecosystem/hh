@@ -43,10 +43,16 @@ func TestApprovalsHandler_RoutesAndRePointHalves(t *testing.T) {
 	}
 
 	// The guard resolves a ruled rail approver; the linker supplies the
-	// ERP id; the create leg files under that id.
+	// ERP id; the create leg files under that id. D7 moved the margin
+	// policy to the quote module's door, so the caller facing create leg's
+	// policy is the credit one, and the margin door's refusal is asserted
+	// beside it.
 	sg.SetAuthority(identity.StaffAuthority{RoleID: "general_manager", Tier: 1, Scope: "global"})
-	if rr := do(http.MethodPost, "/api/v1/staff/approvals", `{"branch_id":"`+trt+`","policy_type":"MARGIN_BELOW_MINIMUM","detail":"d"}`); rr.Code != http.StatusCreated {
+	if rr := do(http.MethodPost, "/api/v1/staff/approvals", `{"branch_id":"`+trt+`","policy_type":"CREDIT_LIMIT_EXCEEDED","detail":"d"}`); rr.Code != http.StatusCreated {
 		t.Fatalf("create = %d, want 201 (body %s)", rr.Code, rr.Body.String())
+	}
+	if rr := do(http.MethodPost, "/api/v1/staff/approvals", `{"branch_id":"`+trt+`","policy_type":"MARGIN_BELOW_MINIMUM","detail":"d"}`); rr.Code != http.StatusForbidden {
+		t.Fatalf("margin create = %d, want the quote desk door's 403 (body %s)", rr.Code, rr.Body.String())
 	}
 
 	// Front-line half: the same surface refuses the decide to a caller

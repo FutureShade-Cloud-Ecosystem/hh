@@ -241,7 +241,7 @@ func (s *StaffService) MintShareLink(ctx context.Context, quoteID string, ttl ti
 	if err != nil {
 		return MintedShareLink{}, err
 	}
-	status, branchID, validUntil, err := s.store.QuoteEditHeader(ctx, quoteID)
+	status, branchID, validUntil, _, err := s.store.QuoteEditHeader(ctx, quoteID)
 	if err != nil {
 		return MintedShareLink{}, err
 	}
@@ -312,7 +312,7 @@ func (s *StaffService) ListShareLinks(ctx context.Context, quoteID string) ([]Sh
 	if err != nil {
 		return nil, err
 	}
-	_, branchID, _, err := s.store.QuoteEditHeader(ctx, quoteID)
+	_, branchID, _, _, err := s.store.QuoteEditHeader(ctx, quoteID)
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +344,7 @@ func (s *StaffService) RevokeShareLink(ctx context.Context, quoteID, linkID stri
 	if err != nil {
 		return err
 	}
-	_, branchID, _, err := s.store.QuoteEditHeader(ctx, quoteID)
+	_, branchID, _, _, err := s.store.QuoteEditHeader(ctx, quoteID)
 	if err != nil {
 		return err
 	}

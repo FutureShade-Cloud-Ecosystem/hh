@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { QuoteAcceptanceSettings, QuoteAcceptanceSettingsWrite, QuoteBranchStockList, QuoteConvertRequest, QuoteConvertResult, QuoteCreateRequest, QuoteEditHistory, QuoteEditResult, QuoteFollowUpHistory, QuoteHoldExpiryView, QuoteHoldList, QuoteHoldReleaseResult, QuoteHoldResyncResult, QuoteLineAddRequest, QuoteLineAvailabilityList, QuoteLineCompareRequest, QuoteLineComparison, QuoteLinePatchRequest, QuoteMargin, QuoteMintedShareLink, QuotePolicy, QuoteRelatedDocumentList, QuoteSMSShareRequest, QuoteSMSShareResult, QuoteShareLinkList, QuoteShareLinkMintRequest, QuoteSummaryPage, QuoteTerms, QuoteTermsInput, QuoteValidUntilWrite, QuoteView } from "./types.js";
+import type { QuoteAcceptanceSettings, QuoteAcceptanceSettingsWrite, QuoteBranchStockList, QuoteConvertRequest, QuoteConvertResult, QuoteCreateRequest, QuoteEditHistory, QuoteEditResult, QuoteFloorApprovalAnswer, QuoteFloorApprovalRequest, QuoteFollowUpHistory, QuoteHoldExpiryView, QuoteHoldList, QuoteHoldReleaseResult, QuoteHoldResyncResult, QuoteLineAddRequest, QuoteLineAvailabilityList, QuoteLineCompareRequest, QuoteLineComparison, QuoteLinePatchRequest, QuoteMargin, QuoteMintedShareLink, QuotePolicy, QuoteRelatedDocumentList, QuoteSMSShareRequest, QuoteSMSShareResult, QuoteShareLinkList, QuoteShareLinkMintRequest, QuoteSummaryPage, QuoteTerms, QuoteTermsInput, QuoteValidUntilWrite, QuoteView } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -375,6 +375,24 @@ export async function quoteCompareQuoteLine(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "quoteCompareQuoteLine",
+  });
+}
+
+export async function quoteRequestFloorApproval(
+  client: ApiClient,
+  id: string | number,
+  lineNo: string | number,
+  body: QuoteFloorApprovalRequest,
+  call?: ApiCallOptions
+): Promise<Result<QuoteFloorApprovalAnswer>> {
+  return client.request<QuoteFloorApprovalAnswer>({
+    method: "POST",
+    path: "/api/v1/quotes/{id}/lines/{lineNo}/floor-approval",
+    pathParams: { id, lineNo },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "quoteRequestFloorApproval",
   });
 }
 

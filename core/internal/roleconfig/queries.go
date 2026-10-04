@@ -57,6 +57,14 @@ func (c *Config) FloorClearersOwnBranch() []string {
 	return append([]string(nil), c.lists.FloorClearersOwnBranch...)
 }
 
+// QuoteFloorBranchApprovers returns who decides a quote floor request
+// inside its own branch, beside the floor list's dealer wide approvers
+// (CP0-1 answer B: the branch's Sales manager). The list is the data; the
+// decide path folds the branch reach in.
+func (c *Config) QuoteFloorBranchApprovers() []string {
+	return append([]string(nil), c.lists.QuoteFloorBranchApprovers...)
+}
+
 // ClearsOwnBranchFloor reports whether the role clears the floor on its
 // own quote price inside its own branch, the setting folded in (X5, the
 // quote flow only): off, every such price goes to leadership, whatever the

@@ -166,7 +166,11 @@ func TestCreateApproval_FansOutToEligibleApprovers(t *testing.T) {
 	}
 	s := NewApprovals(f).WithApprovalNotifier(notifier)
 
-	if _, err := s.CreateApproval(context.Background(), "clerk", trt, PolicyMargin, "6% margin", ""); err != nil {
+	// D7: the margin request is filed by the quote module alone, so this
+	// test files through the quote module's door.
+	if _, err := s.FileFloorApproval(context.Background(), FloorApprovalFiling{
+		RequestedBy: "clerk", BranchID: trt, SubjectRef: "q1", Detail: "6% margin", LineNo: 1, DiscPct: 25,
+	}); err != nil {
 		t.Fatalf("create should succeed: %v", err)
 	}
 	if len(notifier.requested) != 1 {

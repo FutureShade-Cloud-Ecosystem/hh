@@ -5566,6 +5566,8 @@ export type QuoteSummary = {
   tax_cents: number;
   total_cents: number;
   updated_at: string;
+  owner_id?: string;
+  owner_name?: string;
 };
 export type QuoteSummaryPage = {
   items: QuoteSummary[];
@@ -5583,6 +5585,8 @@ export type QuoteView = {
   expired: boolean;
   editable_fields: ("line_qty" | "line_add" | "line_remove" | "valid_until")[];
   can_convert: boolean;
+  owner_id?: string;
+  owner_name?: string;
   lines: QuoteViewLine[];
   subtotal_cents: number;
   tax_cents: number;
@@ -5599,6 +5603,8 @@ export type QuoteViewLine = {
   unit_price_cents: number;
   price_uom: string;
   line_total_cents: number;
+  rule_price_below_floor?: boolean;
+  floor_cleared_by?: string;
 };
 export type QuoteCreateRequest = {
   customer_id: string;
@@ -6036,6 +6042,29 @@ export type QuoteAssistScopeRuleList = {
 };
 export type QuoteAssistScopeRulePatch = {
   enabled: boolean;
+};
+export type QuoteFloorApprovalRequest = {
+  disc_pct: number;
+  note?: string;
+};
+export type QuoteFloorRequestState = {
+  id: string;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  line_no: number;
+  disc_pct: number;
+};
+export type QuoteFloorApprovalAnswer = {
+  filed: boolean;
+  may_clear_itself: boolean;
+  request?: QuoteFloorRequestState;
+};
+export type QuoteFloorRefusal = {
+  policy: string;
+  approver_roles: string[];
+  manager_may_set: boolean;
+  existing_request?: QuoteFloorRequestState;
+  margin_bps?: number;
+  floor_bps?: number;
 };
 export type ReportingColumn = {
   name: string;

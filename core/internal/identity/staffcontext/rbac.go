@@ -238,7 +238,14 @@ func CheckCredit(orderTotalCents, openBalanceCents, creditLimitCents int64, term
 // Tier-1 GLOBAL roles: General Manager, Financial Controller, and the platform admin. Note this is
 // narrower than a plain IsAdmin() check, which would also admit HR (a Tier-1 GLOBAL role that is
 // deliberately NOT an approval authority here). It is a role-code allowlist, not a tier test, precisely
-// so HR is excluded. TODO(approver-assignment): a downstream by-role to assigned-user config will let an
+// so HR is excluded.
+//
+// D11: this constant set is the CARRIED DEFAULT the rail falls back to when no
+// configuration is wired, and it equals r3's ruling. The live margin authority is
+// the dealer's role configuration, handed to the rail as FloorApprovers by the
+// composition root (approvals.go): the floor list's dealer wide approvers plus the
+// branch scoped quote floor approvers (CP0-1 answer B, the branch's Sales manager).
+// TODO(approver-assignment): a downstream by-role to assigned-user config will let an
 // org route a policy to specific people; until then, authority is this fixed role set.
 var railApproverRoles = map[string]bool{
 	"GENERAL_MANAGER":      true,
@@ -248,6 +255,49 @@ var railApproverRoles = map[string]bool{
 
 // isRailApprover reports whether a role code is in the ruled rail-approver set.
 func isRailApprover(roleCode string) bool { return railApproverRoles[roleCode] }
+
+// FloorApprovers is the margin floor's decide authority as data (D11): which
+// ERP role codes may decide a MARGIN_BELOW_MINIMUM request dealer wide, and
+// which may decide one inside a branch they reach (CP0-1 answer B: the
+// branch's Sales manager). Built by the composition root from the dealer's
+// role configuration, never from a code constant; the zero value carries no
+// authority, so an unwired set falls back to the carried default set above,
+// which equals r3's ruling.
+type FloorApprovers struct {
+	DealerWide []string
+	OwnBranch  []string
+}
+
+// defaultFloorApprovers is the carried default: the rail's ruled Tier-1 set,
+// no branch scoped arm (r3 as ruled before CP0-1 B widened it).
+func defaultFloorApprovers() FloorApprovers {
+	return FloorApprovers{
+		DealerWide: []string{"GENERAL_MANAGER", "FINANCIAL_CONTROLLER", RoleSuperAdmin},
+	}
+}
+
+// mayDecideDealerWide reports whether the role is on the dealer wide list.
+func (f FloorApprovers) mayDecideDealerWide(roleCode string) bool {
+	for _, r := range f.DealerWide {
+		if r == roleCode {
+			return true
+		}
+	}
+	return false
+}
+
+// MayDecideInBranch reports whether the role is on the branch scoped list.
+// The branch REACH itself is the caller's to prove (CanApprove checks it
+// before the arm is consulted), a listed role with no grant over the
+// request's branch decides nothing.
+func (f FloorApprovers) MayDecideInBranch(roleCode string) bool {
+	for _, r := range f.OwnBranch {
+		if r == roleCode {
+			return true
+		}
+	}
+	return false
+}
 
 // sellingRoles is the authority set for COMMITTING AN ORDER AGAINST A CUSTOMER'S CREDIT from a staff
 // surface: today, the DIB-483 counter door onto quote to order conversion (quote/convert_staff.go).
@@ -343,7 +393,8 @@ func DispatchCommittingRoles() []string {
 // CanApprove encodes the decide-authority model:
 //   - MARGIN + JE_OVER_THRESHOLD + FREIGHT_ABOVE_QUOTE (the approvals rail): the three ruled Tier-1
 //     GLOBAL roles only (DIB-216 decision #1, GM / Financial Controller / platform admin; NOT HR,
-//     NOT branch managers).
+//     NOT branch managers). The margin arm consults the carried default set; a caller holding the
+//     dealer's configured set passes it through CanApproveFloor (D11, CP0-1 answer B).
 //   - CREDIT/COD override: Tier-1 leadership only (a finance/GM decision), unchanged.
 //
 // The branch-reachability guard still applies (the ruled roles are all GLOBAL, so it is always satisfied
@@ -356,11 +407,25 @@ func DispatchCommittingRoles() []string {
 // be waved through by whoever happened to be looking. 0195 added FREIGHT_ABOVE_QUOTE to the CHECK and
 // to the arm below in the same change, for exactly this reason.
 func CanApprove(approver StaffContext, policy PolicyType, requestBranchID string) bool {
+	return CanApproveFloor(approver, policy, requestBranchID, defaultFloorApprovers())
+}
+
+// CanApproveFloor is CanApprove with the margin arm's authority supplied
+// from the dealer's role configuration (D11): a dealer wide approver decides
+// anywhere it reaches; a branch scoped approver (CP0-1 answer B) decides
+// only inside a branch it reaches. Four eyes is NOT checked here, it is the
+// Decide path's own rule and holds whichever set answers.
+func CanApproveFloor(approver StaffContext, policy PolicyType, requestBranchID string, floor FloorApprovers) bool {
 	if !approver.CanAccessBranch(requestBranchID) {
 		return false
 	}
 	switch policy {
-	case PolicyMargin, PolicyJEThreshold, PolicyFreightAboveQuote:
+	case PolicyMargin:
+		if floor.mayDecideDealerWide(approver.RoleCode) {
+			return true
+		}
+		return floor.MayDecideInBranch(approver.RoleCode)
+	case PolicyJEThreshold, PolicyFreightAboveQuote:
 		return isRailApprover(approver.RoleCode)
 	case PolicyCredit, PolicyCOD:
 		return approver.Tier == TierLeadership
@@ -375,12 +440,18 @@ func CanApprove(approver StaffContext, policy PolicyType, requestBranchID string
 // truth), so the target set is unit-tested against the same matrix decide enforces. An empty result is the
 // zero-eligible-approver edge (the caller logs it; the request stays decidable and re-fans on the sweep).
 func ResolveApprovers(candidates []StaffContext, policy PolicyType, branchID string) []string {
+	return ResolveApproversFloor(candidates, policy, branchID, defaultFloorApprovers())
+}
+
+// ResolveApproversFloor is ResolveApprovers over a configured FloorApprovers
+// set (D11): the fan-out resolves the same authority the decide path holds.
+func ResolveApproversFloor(candidates []StaffContext, policy PolicyType, branchID string, floor FloorApprovers) []string {
 	var out []string
 	for _, c := range candidates {
 		if c.UserID == "" {
 			continue
 		}
-		if CanApprove(c, policy, branchID) {
+		if CanApproveFloor(c, policy, branchID, floor) {
 			out = append(out, c.UserID)
 		}
 	}
@@ -407,14 +478,35 @@ type ApprovalRequest struct {
 	// AmountCents is the money magnitude an approvals-rail card shows (a JE debit total; 0/omitted for a
 	// margin override). It has NO column in permission_approval_requests: it is persisted in the existing
 	// `data` JSONB (data->>'amount_cents') and read back for the card + the reconcile re-fan (0075).
-	AmountCents int64          `json:"amount_cents,omitempty"`
-	Status      ApprovalStatus `json:"status"`
-	DecidedBy   string         `json:"decided_by,omitempty"`
+	AmountCents int64 `json:"amount_cents,omitempty"`
+	// LineNo and DiscPct bind a quote floor request to exactly one line of
+	// the subject quote at exactly the discount that was asked (D3, D7).
+	// They ride the `data` JSONB like AmountCents; an approval covers one
+	// line at no deeper a discount than was asked, and the first write that
+	// uses it uses it up.
+	LineNo  int `json:"line_no,omitempty"`
+	DiscPct int `json:"disc_pct,omitempty"`
+	// Note is the requester's bounded free text on a quote floor request.
+	// It rides `data`; it is never the detail the approver reads as the
+	// server's own figures (D7).
+	Note      string         `json:"note,omitempty"`
+	Status    ApprovalStatus `json:"status"`
+	DecidedBy string         `json:"decided_by,omitempty"`
 }
 
 // Decide applies an approver's decision, enforcing the authority model, the
-// pending-state, and separation of duties (no self-approval).
+// pending-state, and separation of duties (no self-approval), over the
+// carried default margin authority set. A caller holding the dealer's
+// configured set passes it through DecideWithFloor (D11).
 func (r *ApprovalRequest) Decide(approver StaffContext, approve bool) error {
+	return r.DecideWithFloor(approver, approve, defaultFloorApprovers())
+}
+
+// DecideWithFloor is Decide with the margin arm's authority supplied from
+// the dealer's role configuration. Four eyes holds whichever set answers:
+// the requester never decides its own request, even when it holds an
+// approver role.
+func (r *ApprovalRequest) DecideWithFloor(approver StaffContext, approve bool, floor FloorApprovers) error {
 	if r.Status != ApprovalPending {
 		return clientErr(http.StatusConflict, "request already %s", r.Status)
 	}
@@ -422,7 +514,7 @@ func (r *ApprovalRequest) Decide(approver StaffContext, approve bool) error {
 	if approver.UserID != "" && approver.UserID == r.RequestedBy {
 		return clientErr(http.StatusForbidden, "separation of duties: you cannot approve your own request")
 	}
-	if !CanApprove(approver, r.Policy, r.BranchID) {
+	if !CanApproveFloor(approver, r.Policy, r.BranchID, floor) {
 		return clientErr(http.StatusForbidden, "approver %s (tier %d) not authorized for %s in branch %s", approver.RoleCode, approver.Tier, r.Policy, r.BranchID)
 	}
 	if approve {

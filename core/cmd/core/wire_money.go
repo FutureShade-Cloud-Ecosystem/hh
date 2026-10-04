@@ -26,6 +26,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -55,7 +56,7 @@ func linkedUserID(pool *pgxpool.Pool) identity.UserIDLinker {
 // the landed seam set supports; the seams whose owners land in later
 // batches (billing, pos, till, customer) stay unwired and their surfaces
 // answer the modules' designed fail-closed refusals.
-func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, staffBaseURL string) *moneySpine {
+func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog.Logger, staffBaseURL string, roleCfg *roleconfig.Config) *moneySpine {
 	link := linkedUserID(pool)
 	outboxStore := notify.NewPgOutboxStore(pool)
 	auditSvc := audit.NewService(audit.NewRepository(pool), log)
@@ -129,6 +130,28 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// the customer-tier seam lands with customer) and the public share
 	// routes (token in path, no guard, R4).
 	quoteRepo := quote.NewRepository(pool)
+	// The quote floor's approvals rail: the margin decide authority from
+	// the role configuration (D11, CP0-1 answer B), the floor list's dealer
+	// wide approvers plus the branch scoped quote floor approvers, mapped
+	// onto the ERP role codes the rail speaks. The platform admin rides
+	// beside them (outside the configuration's thirteen role vocabulary).
+	quoteFloorApprovers := identity.FloorApprovers{
+		DealerWide: []string{identity.RoleSuperAdmin},
+		OwnBranch:  []string{},
+	}
+	if wide, err := roleCfg.ExceptionApprovers(roleconfig.ExceptionFloorQuote); err == nil {
+		for _, role := range wide {
+			if erp, ok := identity.ERPCodeFor(role); ok {
+				quoteFloorApprovers.DealerWide = append(quoteFloorApprovers.DealerWide, erp)
+			}
+		}
+	}
+	for _, role := range roleCfg.QuoteFloorBranchApprovers() {
+		if erp, ok := identity.ERPCodeFor(role); ok {
+			quoteFloorApprovers.OwnBranch = append(quoteFloorApprovers.OwnBranch, erp)
+		}
+	}
+	approvals.WithFloorApprovers(quoteFloorApprovers)
 	quoteStaffSvc := quote.NewStaffService(quoteRepo).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
@@ -136,6 +159,9 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithPricePreview(pricingSvc).
 		WithCostBasis(inventorySvc).
 		WithActorNamer(quoteRepo).
+		WithRoleConfig(roleCfg).
+		WithFloorArbiter(pricingSvc).
+		WithFloorRail(approvals).
 		WithShares(quoteRepo).
 		WithStockReserver(w5aQuoteStockReserver{svc: inventorySvc}).
 		WithAvailability(w5aQuoteAvailability{svc: inventorySvc}).
@@ -424,8 +450,12 @@ func (a w5cOverrideAuthority) MarginOverrideAuthority(ctx context.Context, userI
 		// wrong, there is simply nobody to grant anything to.
 		return pricing.OverrideGrant{}, nil
 	}
-	// 1. the approvals substrate.
-	has, err := a.svc.HasApprovedOverride(ctx, userID, branchID, identity.PolicyMargin)
+	// 1. the approvals substrate. The subject is EMPTY by design here: a
+	// generic resolve carries no document to bind (and no till or generic
+	// route ever sets OverrideRequested, DIB-420), so the empty subject is
+	// stated at the call site rather than hidden in the lookup (D3). Every
+	// quote floor path consumes subject narrowed requests instead.
+	has, err := a.svc.HasApprovedOverride(ctx, userID, branchID, "", identity.PolicyMargin)
 	if err != nil {
 		// Propagated, NOT swallowed. pricing fails closed on an error, which is what we want when the
 		// approvals substrate is unreachable, an outage must not become a pricing hole.

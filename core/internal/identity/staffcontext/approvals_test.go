@@ -24,6 +24,9 @@ type fakeStore struct {
 	overrides map[string]bool // keyed by requestedBy|branchID|policy
 	approval  ApprovalRequest
 	saved     *savedDecision
+	// lastFiled is the most recent request fileApproval handed the store
+	// (the quote floor door's binding assertions read it back).
+	lastFiled *ApprovalRequest
 
 	// approvals rail (0075):
 	saveNotApplied bool              // when set, SaveDecision reports applied=false (CAS lost / already decided)
@@ -46,6 +49,8 @@ func (f *fakeStore) ResolveStaff(_ context.Context, userID string) (StaffContext
 func (f *fakeStore) CreateApproval(_ context.Context, r ApprovalRequest) (ApprovalRequest, error) {
 	r.ID = "ar-new"
 	r.Status = ApprovalPending
+	filed := r
+	f.lastFiled = &filed
 	return r, nil
 }
 
@@ -144,10 +149,12 @@ func TestApprovals_CreateApproval_ValidatesPolicy(t *testing.T) {
 	if _, err := s.CreateApproval(context.Background(), "u1", trt, "NONSENSE", "x", ""); err == nil {
 		t.Error("unknown policy should be rejected")
 	}
-	if _, err := s.CreateApproval(context.Background(), "", trt, PolicyMargin, "x", ""); err == nil {
+	if _, err := s.CreateApproval(context.Background(), "", trt, PolicyCredit, "x", ""); err == nil {
 		t.Error("missing requested_by should be rejected")
 	}
-	got, err := s.CreateApproval(context.Background(), "u1", trt, PolicyMargin, "6% margin", "")
+	// D7: the margin policy moved to the quote module's door; the caller
+	// facing door's valid-create control is the credit policy.
+	got, err := s.CreateApproval(context.Background(), "u1", trt, PolicyCredit, "over the limit", "")
 	if err != nil {
 		t.Fatalf("valid create should succeed: %v", err)
 	}

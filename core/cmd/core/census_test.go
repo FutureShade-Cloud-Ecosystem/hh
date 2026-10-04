@@ -31,8 +31,8 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 			}
 		}
 	}
-	if staff != 595 {
-		t.Fatalf("census staff operations: %d, want the document's 595", staff)
+	if staff != 596 {
+		t.Fatalf("census staff operations: %d, want the document's 596", staff)
 	}
 	t.Logf("surface and level asserted for all %d census staff operations, no database needed", staff)
 }
@@ -54,7 +54,9 @@ func assertCensusAnnotated(t *testing.T, route apigen.Route) {
 	default:
 		t.Fatalf("staff operation %s names unknown level %q", route.OperationID, route.Level)
 	}
-	if route.List != "" && route.List != roleconfig.SettingPricingEditors {
+	// The named lists the gate reads (rolegate.go's listReaders): the
+	// pricing editors and the cost and margin list (D10, the pricing log).
+	if route.List != "" && route.List != roleconfig.SettingPricingEditors && route.List != roleconfig.SettingCostVisibility {
 		t.Fatalf("staff operation %s names list %q, which no gate reader knows", route.OperationID, route.List)
 	}
 }

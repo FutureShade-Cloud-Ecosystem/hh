@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"io"
 	"log/slog"
 	"net/http"
@@ -32,7 +33,7 @@ func TestServeSetRegistration_NoDuplicatePatterns(t *testing.T) {
 	mux := http.NewServeMux()
 	rec := shims.NewRecorder(16)
 	shims.RegisterRoutes(mux, sg.Guards, rec)
-	spine := wireMoney(mux, nil, sg.Guards, nil, "")
+	spine := wireMoney(mux, nil, sg.Guards, nil, "", mustRoleConfigForWire())
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ops := wireOperations(mux, nil, sg.Guards, log, spine, "test-ticket-key", nil)
 	if spine == nil {
@@ -82,4 +83,14 @@ func muxHandler(mux *http.ServeMux, method, path string) *httptest.ResponseRecor
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, r)
 	return rr
+}
+
+// mustRoleConfigForWire loads the decided default for the wiring tests'
+// wireMoney calls, whose refusal stops the test the way it stops the core.
+func mustRoleConfigForWire() *roleconfig.Config {
+	cfg, err := roleconfig.Default()
+	if err != nil {
+		panic("wire test: role configuration refused: " + err.Error())
+	}
+	return cfg
 }

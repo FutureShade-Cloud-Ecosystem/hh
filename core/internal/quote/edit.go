@@ -45,6 +45,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -231,6 +232,15 @@ type QuoteViewLine struct {
 	UnitPriceCents int64  `json:"unit_price_cents"`
 	PriceUOM       string `json:"price_uom"`
 	LineTotalCents int64  `json:"line_total_cents"`
+	// RulePriceBelowFloor, for callers on the cost and margin list (X3):
+	// the line's rule price itself sits below the margin floor. Pointer so
+	// absent means "not asked" (a caller off the list, or no arbiter), never
+	// a confident false.
+	RulePriceBelowFloor *bool `json:"rule_price_below_floor,omitempty"`
+	// FloorClearedBy names who cleared a below floor price on this line
+	// (the clearing stamped by the write that went through); "" when the
+	// line was never cleared.
+	FloorClearedBy string `json:"floor_cleared_by,omitempty"`
 }
 
 // quoteEditWrite is one line mutation's payload, handed to the guarded write.
@@ -345,10 +355,19 @@ func assertNotExpired(validUntil *time.Time, now time.Time) error {
 //	known edit field               → BadRequest       (400)
 //	quote exists                   → ErrNotFound      (404)  ← resolved BEFORE any authz rejection
 //	caller reaches the quote branch → ErrForbidden    (403)
+//	caller holds Work+ on quote-desk, and owns the quote unless it holds Manage
+//	                               → NotQuoteOwnerError (403, the way forward named) / ErrForbidden
 //	field editable in this status  → NotEditableError (409, status named)
 //	quote not expired              → QuoteExpiredError(409, date + path forward)
 //
-// There is NO tier rung: R1 ratifies quote editing as open to any active in-branch staff member.
+// The ownership rung is plan 3.3 (defect D4): a caller at Work edits only its
+// own quotes, a caller at Manage edits any quote in its branch. "Own" is the
+// quote's salesperson when one is set, else its creator. A Work caller still
+// reads any quote in its branch and converts an accepted one: only the edit
+// ladder changed. The level comes from the dealer's role configuration
+// (the caller's role mapped through identity.CanonicalForERPCode); a caller
+// whose level is under Work edits nothing, and a service with no
+// configuration wired fails closed.
 //
 // It returns the caller, the rule, and the RESOLVED quote id. The status and expiry it checked are
 // deliberately not returned: both are ADVISORY only, because the authoritative re-check happens inside
@@ -378,12 +397,21 @@ func (s *StaffService) authorizeQuoteEdit(ctx context.Context, quoteID string, f
 	if err != nil {
 		return identity.StaffContext{}, quoteEditRule{}, "", err
 	}
-	status, branchID, validUntil, err := s.store.QuoteEditHeader(ctx, quoteID)
+	status, branchID, validUntil, ownerID, err := s.store.QuoteEditHeader(ctx, quoteID)
 	if err != nil {
 		return identity.StaffContext{}, quoteEditRule{}, "", err // ErrNotFound, no existence leak
 	}
 	if !caller.CanAccessBranch(branchID) {
 		return identity.StaffContext{}, quoteEditRule{}, "", ErrForbidden
+	}
+	// The ownership rung (plan 3.3). Level first: under Work edits nothing,
+	// a flat 403 like the branch rung.
+	level := s.quoteDeskLevel(caller)
+	if !level.AtLeast(roleconfig.LevelWork) {
+		return identity.StaffContext{}, quoteEditRule{}, "", ErrForbidden
+	}
+	if level == roleconfig.LevelWork && !s.ownsQuote(caller, ownerID) {
+		return identity.StaffContext{}, quoteEditRule{}, "", &NotQuoteOwnerError{}
 	}
 	if !rule.from[status] {
 		return identity.StaffContext{}, quoteEditRule{}, quoteID, &NotEditableError{Field: field, Status: status}
@@ -392,6 +420,44 @@ func (s *StaffService) authorizeQuoteEdit(ctx context.Context, quoteID string, f
 		return identity.StaffContext{}, quoteEditRule{}, quoteID, err
 	}
 	return caller, rule, quoteID, nil
+}
+
+// quoteDeskLevel answers the caller's configured level on the Quote Desk,
+// mapping the caller's ERP role code through the bridge
+// (identity.CanonicalForERPCode) onto the configuration's vocabulary. An
+// unmapped or unknown role, or a service with no configuration, answers
+// none: the gated paths fail closed, never permissively.
+func (s *StaffService) quoteDeskLevel(c identity.StaffContext) roleconfig.Level {
+	if s.roles == nil || c.RoleCode == "" {
+		return roleconfig.LevelNone
+	}
+	canonical, ok := identity.CanonicalForERPCode(c.RoleCode)
+	if !ok {
+		return roleconfig.LevelNone
+	}
+	level, err := s.roles.Level(canonical, "quote-desk")
+	if err != nil {
+		return roleconfig.LevelNone
+	}
+	return level
+}
+
+// ownsQuote answers whether the caller owns the quote whose owner is ownerID
+// (the salesperson when one is set, else the creator, plan 3.3). An
+// ownerless quote (no salesperson, no creator, the pre-ownership seeds) is
+// owned by nobody, so a Work caller cannot edit it: the way forward is the
+// branch's Sales manager, exactly as for anyone else's quote.
+func (s *StaffService) ownsQuote(c identity.StaffContext, ownerID string) bool {
+	return ownerID != "" && c.UserID == ownerID
+}
+
+// NotQuoteOwnerError is the refusal a Work caller gets editing a quote it
+// does not own. Typed so the message can name the way forward: the quote's
+// owner or the branch's Sales manager. Mapped to 403.
+type NotQuoteOwnerError struct{}
+
+func (e *NotQuoteOwnerError) Error() string {
+	return "quote: this quote belongs to another salesperson, ask the branch's Sales manager to take it over"
 }
 
 // callerBranchScope projects a caller onto the branch filter ResolveQuoteID needs: a GLOBAL caller
@@ -629,20 +695,21 @@ func (s *StaffService) recordIntChange(ctx context.Context, q audit.Execer, acto
 
 // - read-side matrix projection -
 
-// editableFields computes which fields THIS caller may edit on a quote in THIS status: the ratified
-// matrix ∧ the caller's authority ∧ the expiry guard.
+// editableFields computes which fields a caller WITH edit authority may edit on a quote in THIS status:
+// the ratified matrix ∧ the expiry guard. editableFieldsFor folds the ownership answer in (plan 3.3).
 //
 // Deliberately SOFTER than the write path, mirroring canOfferCancel/editableFields on the order side: an
 // expired or frozen quote simply OFFERS NOTHING, none of it may fail the quote read. The 409 belongs
 // exclusively to an actual edit attempt.
 //
-// Because R1 puts no tier rung on quote editing, the caller's authority contributes nothing here beyond
-// the branch check already done by the read, which is why this projection is a function of (status,
-// valid_until) alone. If a future ruling adds a tier axis, it goes here AND in authorizeQuoteEdit.
-func (s *StaffService) editableFields(status string, validUntil *time.Time) []string {
+// Since plan 3.3 the caller's authority contributes the ownership axis: a
+// Work caller who does not own the quote is offered nothing, because the
+// write path would refuse it, and a button that appears must be a button
+// that works.
+func (s *StaffService) editableFieldsFor(status string, validUntil *time.Time, owns bool) []string {
 	out := make([]string, 0, len(quoteFieldOrder))
-	if quoteExpired(validUntil, s.now()) {
-		return out // an expired quote offers nothing (D2), [] not null
+	if quoteExpired(validUntil, s.now()) || !owns {
+		return out // an expired quote, or one this caller may not edit, offers nothing (D2), [] not null
 	}
 	for _, f := range quoteFieldOrder {
 		if !quoteEditRules[f].from[status] {

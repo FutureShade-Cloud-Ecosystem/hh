@@ -57,7 +57,7 @@ func (s *dib506Store) UpdateTermsGuarded(_ context.Context, _ string, in TermsIn
 	s.lastTerms = in
 	return QuoteTerms{QuoteID: qOrg, Fulfillment: in.Fulfillment, DeliveryFeeCents: in.DeliveryFeeCents}, nil
 }
-func (s *dib506Store) UpdateLineDiscountGuarded(_ context.Context, _ string, _ int, discPct int, _ []string, _ string) (QuoteEditResult, error) {
+func (s *dib506Store) UpdateLineDiscountGuarded(_ context.Context, _ string, _ int, discPct int, _ []string, _ string, _ floorWritePlan) (QuoteEditResult, error) {
 	s.discWrites++
 	s.lastDisc = discPct
 	return QuoteEditResult{Status: "DRAFT"}, nil
@@ -74,7 +74,7 @@ var _ staffStore = (*dib506Store)(nil)
 var _ builderStore = (*dib506Store)(nil)
 
 func newDib506Store(status string) *dib506Store {
-	return &dib506Store{
+	st := &dib506Store{
 		fakeStaffStore: newFakeStaffStore(status),
 		policy: QuotePolicy{
 			CostVisibility: settings.VisibilityManagerUp, DefaultValidityDays: 30,
@@ -83,6 +83,8 @@ func newDib506Store(status string) *dib506Store {
 		},
 		marginBr: qBranch,
 	}
+	st.ownerID = qUser
+	return st
 }
 
 func dib506Caller(tier identity.Tier, scope identity.Scope) identity.StaffContext {
@@ -94,6 +96,11 @@ func dib506Caller(tier identity.Tier, scope identity.Scope) identity.StaffContex
 
 func dib506Svc(store *dib506Store, caller identity.StaffContext) *StaffService {
 	return NewStaffService(store).
+		WithRoleConfig(qTestRoleConfig()).
+		WithPricing(qPricer{}).
+		WithCostBasis(qInv{}).
+		WithCustomerType(qCustType{}).
+		WithFloorArbiter(&unitFloorArbiter{}).
 		withCaller(func(context.Context) (identity.StaffContext, bool) { return caller, true }).
 		withNow(qNow)
 }
@@ -121,9 +128,13 @@ func costRows() []quoteMarginRow {
 }
 
 func TestQuoteMarginGlance_FrontlineRole_FieldsByteAbsent(t *testing.T) {
+	// D8: the byte-absent case is a role OFF the configuration's cost
+	// list. Yard Team is frontline and off it (r3 X3): literal {}.
 	store := newDib506Store("DRAFT")
 	store.marginRows = costRows()
-	svc := dib506Svc(store, dib506Caller(identity.TierFrontline, identity.ScopeBranch))
+	off := dib506Caller(identity.TierFrontline, identity.ScopeBranch)
+	off.RoleCode = "YARD_TEAM"
+	svc := dib506Svc(store, off)
 
 	out, err := svc.MarginGlance(context.Background(), qOrg)
 	if err != nil {
@@ -131,7 +142,7 @@ func TestQuoteMarginGlance_FrontlineRole_FieldsByteAbsent(t *testing.T) {
 	}
 	raw, _ := json.Marshal(out)
 	if string(raw) != "{}" {
-		t.Fatalf("MANAGER_UP + frontline caller must marshal the literal {}, cost BYTE-ABSENT; got %s", raw)
+		t.Fatalf("a frontline role off the cost list must marshal the literal {}, cost BYTE-ABSENT; got %s", raw)
 	}
 }
 
@@ -165,45 +176,55 @@ func TestQuoteMarginGlance_Manager_GetsFields_NoCostLineAbsent(t *testing.T) {
 	}
 }
 
-func TestQuoteMarginGlance_Hidden_RefusesEvenManagers(t *testing.T) {
+func TestQuoteMarginGlance_OffTheList_RefusesEvenLeadership(t *testing.T) {
+	// D8: the rule is the role configuration's cost_visibility list (X3),
+	// no longer the branch policy's MANAGER_UP tier default. HR holds
+	// leadership tier and is OFF the list: byte absent.
 	store := newDib506Store("DRAFT")
 	store.marginRows = costRows()
-	store.policy.CostVisibility = settings.VisibilityHidden
-	svc := dib506Svc(store, dib506Caller(identity.TierLeadership, identity.ScopeGlobal))
+	hr := dib506Caller(identity.TierLeadership, identity.ScopeGlobal)
+	hr.RoleCode = "HR"
+	svc := dib506Svc(store, hr)
 
 	out, err := svc.MarginGlance(context.Background(), qOrg)
 	if err != nil {
 		t.Fatalf("glance: %v", err)
 	}
 	if raw, _ := json.Marshal(out); string(raw) != "{}" {
-		t.Fatalf("HIDDEN must refuse everyone: got %s", raw)
+		t.Fatalf("a role off the cost list must receive the byte-absent answer: got %s", raw)
 	}
 }
 
-func TestQuoteMarginGlance_FailClosed_OnUnreadablePolicy(t *testing.T) {
+func TestQuoteMarginGlance_FailClosed_WithoutConfiguration(t *testing.T) {
+	// D8: the list lives in the role configuration; a service with none
+	// wired answers no one (the nil gate fails closed, the till's posture).
 	store := newDib506Store("DRAFT")
 	store.marginRows = costRows()
-	store.policyErr = errors.New("boom")
-	svc := dib506Svc(store, dib506Caller(identity.TierLeadership, identity.ScopeGlobal))
+	svc := NewStaffService(store).
+		withCaller(func(context.Context) (identity.StaffContext, bool) {
+			return dib506Caller(identity.TierLeadership, identity.ScopeGlobal), true
+		}).withNow(qNow)
 
 	out, err := svc.MarginGlance(context.Background(), qOrg)
 	if err != nil {
-		t.Fatalf("glance must not surface the policy read error as data: %v", err)
+		t.Fatalf("glance must not surface the missing configuration as an error: %v", err)
 	}
 	if raw, _ := json.Marshal(out); string(raw) != "{}" {
-		t.Fatalf("an unreadable policy must fail CLOSED: got %s", raw)
+		t.Fatalf("an unwired configuration must fail CLOSED: got %s", raw)
 	}
 }
 
-func TestQuoteMarginGlance_AllStaff_AdmitsFrontline(t *testing.T) {
+func TestQuoteMarginGlance_ListAdmitsFrontline(t *testing.T) {
+	// D8: Inside Sales is on the configuration's cost list (r3 X3), so the
+	// frontline sales caller sees cost and margin with no policy change.
 	store := newDib506Store("DRAFT")
 	store.marginRows = costRows()
-	store.policy.CostVisibility = settings.VisibilityAllStaff
+	store.policy.CostVisibility = settings.VisibilityManagerUp
 	svc := dib506Svc(store, dib506Caller(identity.TierFrontline, identity.ScopeBranch))
 
 	out, err := svc.MarginGlance(context.Background(), qOrg)
 	if err != nil || out.MarginBps == nil {
-		t.Fatalf("ALL_STAFF must admit a frontline caller: %+v %v", out, err)
+		t.Fatalf("a frontline role on the cost list must see the figures: %+v %v", out, err)
 	}
 }
 
@@ -306,10 +327,15 @@ func TestSetLineDiscount_BoundsAndDealerSwitch(t *testing.T) {
 	_, err := svc.SetLineDiscount(context.Background(), qOrg, 1, 101)
 	dib506Want422(t, err, "between 0 and 100")
 
+	// The arbiter answers above the floor, so an in-range discount passes
+	// the floor decision and reaches the store.
+	if _, err := svc.SetLineDiscount(context.Background(), qOrg, 1, 5); err != nil {
+		t.Fatalf("an in-range discount above the floor must pass: %v", err)
+	}
 	store.policy.LineDiscountsEnabled = false
 	_, err = svc.SetLineDiscount(context.Background(), qOrg, 1, 5)
 	dib506Want422(t, err, "switched off")
-	if store.discWrites != 0 {
+	if store.discWrites != 1 {
 		t.Fatal("refused discounts must never reach the store")
 	}
 	// Clearing a discount stays allowed even with the switch off, a dealer turning the feature
@@ -322,7 +348,7 @@ func TestSetLineDiscount_BoundsAndDealerSwitch(t *testing.T) {
 	if _, err := svc.SetLineDiscount(context.Background(), qOrg, 1, 5); err != nil {
 		t.Fatalf("an in-range discount must pass: %v", err)
 	}
-	if store.lastDisc != 5 || store.discWrites != 2 {
+	if store.lastDisc != 5 || store.discWrites != 3 {
 		t.Fatalf("want the 5%% write captured; got %d/%d", store.lastDisc, store.discWrites)
 	}
 }
