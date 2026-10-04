@@ -834,6 +834,51 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  // The quote policy: any staff caller reads it; the write follows the CP0-5
+  // answer A rule, in words: the Sales manager writes a branch row it reaches,
+  // the General Manager alone writes the dealer default, anyone else is refused.
+  if (path === "/api/v1/quotes/policy" && request.method === "GET") {
+    const branchId = url.searchParams.get("branch_id");
+    respondJson(response, 200, effectivePolicy(branchId === null || branchId === "" ? "" : branchId));
+    return;
+  }
+  if (path === "/api/v1/quotes/policy" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      const dealerRow = body.branch_id === undefined || body.branch_id === "";
+      if (!isSettingsAdmin(caller)) {
+        respondJson(response, 403, { error: "quote: the Inside Sales role may not change the quote policy" });
+        return;
+      }
+      if (dealerRow && !isGeneralManager(caller)) {
+        respondJson(response, 403, { error: "quote: the dealer wide default is set by the General Manager; the Sales Manager sets a branch row" });
+        return;
+      }
+      if (!dealerRow && body.branch_id !== caller.branchId) {
+        respondJson(response, 403, { error: "quote: that branch is not one your role reaches" });
+        return;
+      }
+      const days = body.default_validity_days;
+      if (!Number.isInteger(days) || days < 1 || days > 365) {
+        respondJson(response, 422, { error: "quote: default validity must be between 1 and 365 days" });
+        return;
+      }
+      if (!Number.isInteger(body.default_deposit_pct) || body.default_deposit_pct < 0 || body.default_deposit_pct > 100) {
+        respondJson(response, 422, { error: "quote: default deposit must be between 0 and 100 percent" });
+        return;
+      }
+      if (!Number.isInteger(body.workspace_split_pct) || body.workspace_split_pct < 20 || body.workspace_split_pct > 80) {
+        respondJson(response, 422, { error: "quote: the panel split must be between 20 and 80 percent" });
+        return;
+      }
+      const { effective_chips: _skip, ...row } = body;
+      policyRows.set(dealerRow ? "" : body.branch_id, row);
+      policyWrites.push({ scope: dealerRow ? "dealer" : "branch", user_id: userId });
+      respondJson(response, 200, { ...effectivePolicy(dealerRow ? "" : body.branch_id), ...(dealerRow ? {} : { branch_id: body.branch_id }) });
+    });
+    return;
+  }
+
+
   if (request.method === "GET" && path === "/api/v1/quotes") {
     const status = url.searchParams.get("status");
     // The QD-1 list rule: a Work caller's list defaults to its own quotes; a
@@ -1305,50 +1350,6 @@ const server = createServer(async (request, response) => {
       const request = { id: `fr-${key}`, status: "PENDING", line_no: lineNo, disc_pct: disc };
       floorRequests.set(key, request);
       respondJson(response, 200, { filed: true, may_clear_itself: false, request });
-    });
-    return;
-  }
-
-  // The quote policy: any staff caller reads it; the write follows the CP0-5
-  // answer A rule, in words: the Sales manager writes a branch row it reaches,
-  // the General Manager alone writes the dealer default, anyone else is refused.
-  if (path === "/api/v1/quotes/policy" && request.method === "GET") {
-    const branchId = url.searchParams.get("branch_id");
-    respondJson(response, 200, effectivePolicy(branchId === null || branchId === "" ? "" : branchId));
-    return;
-  }
-  if (path === "/api/v1/quotes/policy" && request.method === "PUT") {
-    readBody(request, response, (body) => {
-      const dealerRow = body.branch_id === undefined || body.branch_id === "";
-      if (!isSettingsAdmin(caller)) {
-        respondJson(response, 403, { error: "quote: the Inside Sales role may not change the quote policy" });
-        return;
-      }
-      if (dealerRow && !isGeneralManager(caller)) {
-        respondJson(response, 403, { error: "quote: the dealer wide default is set by the General Manager; the Sales Manager sets a branch row" });
-        return;
-      }
-      if (!dealerRow && body.branch_id !== caller.branchId) {
-        respondJson(response, 403, { error: "quote: that branch is not one your role reaches" });
-        return;
-      }
-      const days = body.default_validity_days;
-      if (!Number.isInteger(days) || days < 1 || days > 365) {
-        respondJson(response, 422, { error: "quote: default validity must be between 1 and 365 days" });
-        return;
-      }
-      if (!Number.isInteger(body.default_deposit_pct) || body.default_deposit_pct < 0 || body.default_deposit_pct > 100) {
-        respondJson(response, 422, { error: "quote: default deposit must be between 0 and 100 percent" });
-        return;
-      }
-      if (!Number.isInteger(body.workspace_split_pct) || body.workspace_split_pct < 20 || body.workspace_split_pct > 80) {
-        respondJson(response, 422, { error: "quote: the panel split must be between 20 and 80 percent" });
-        return;
-      }
-      const { effective_chips: _skip, ...row } = body;
-      policyRows.set(dealerRow ? "" : body.branch_id, row);
-      policyWrites.push({ scope: dealerRow ? "dealer" : "branch", user_id: userId });
-      respondJson(response, 200, { ...effectivePolicy(dealerRow ? "" : body.branch_id), ...(dealerRow ? {} : { branch_id: body.branch_id }) });
     });
     return;
   }

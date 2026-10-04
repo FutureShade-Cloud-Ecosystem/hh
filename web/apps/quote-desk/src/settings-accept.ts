@@ -91,6 +91,9 @@ export class QdAcceptAdmin extends PanelBase {
   }
 
   protected override updated(): void {
+    // While the write is in flight the box keeps the position the person gave
+    // it; the server's answer (or its refusal) decides where it settles.
+    if (this.busy) return;
     const box = this.renderRoot.querySelector<HTMLInputElement>('[data-field="multi"]');
     if (box !== null && this.settings !== null && box.checked !== this.settings.allowMultiAccept) box.checked = this.settings.allowMultiAccept;
   }
