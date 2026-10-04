@@ -124,3 +124,41 @@ func TestIntegration_QD3f_KeyedAttemptOnDeadLinkNothingAccepted(t *testing.T) {
 		t.Errorf("acceptance rows = %d, want 0", n)
 	}
 }
+
+// P3-2: a replay writes nothing, which includes the ACCEPT row in quote_share_link_events.
+func TestIntegration_QD3f_ReplayWritesNoShareEvent(t *testing.T) {
+	pool := intPool(t)
+	now := qd3fNow()
+	setMultiAccept(t, pool, true)
+	svc, quoteID, token, linkID := qd3fMinted(t, pool, now)
+	ctx := context.Background()
+	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA); err != nil {
+		t.Fatalf("attempt 1: %v", err)
+	}
+	if n := qd3fEvents(t, pool, quoteID, "ACCEPT"); n != 1 {
+		t.Fatalf("ACCEPT events after the first acceptance = %d, want 1", n)
+	}
+	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if n := qd3fEvents(t, pool, quoteID, "ACCEPT"); n != 1 {
+		t.Errorf("ACCEPT events after a replay = %d, want still 1", n)
+	}
+	// A new key is a new acceptance and does log one.
+	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyB); err != nil {
+		t.Fatalf("second acceptance: %v", err)
+	}
+	if n := qd3fEvents(t, pool, quoteID, "ACCEPT"); n != 2 {
+		t.Errorf("ACCEPT events after a second acceptance = %d, want 2", n)
+	}
+	// And the replay through a dead link writes none either.
+	if err := svc.RevokeShareLink(qCtxAs(intStaff(intTrenton)), quoteID, linkID); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA); err != nil {
+		t.Fatalf("replay through the dead link: %v", err)
+	}
+	if n := qd3fEvents(t, pool, quoteID, "ACCEPT"); n != 2 {
+		t.Errorf("ACCEPT events after a dead link replay = %d, want still 2", n)
+	}
+}

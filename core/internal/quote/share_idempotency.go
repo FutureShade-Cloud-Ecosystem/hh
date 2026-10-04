@@ -76,6 +76,7 @@ func (r *Repository) findKeyedAcceptance(ctx context.Context, tx rowQuerier, in 
 	// rule recordAcceptance writes. The first outcome had the repeat flag only if this one did.
 	out.Repeat = before != "" && before == after
 	out.priorStatus = before
+	out.replayed = true
 	return out, true, nil
 }
 

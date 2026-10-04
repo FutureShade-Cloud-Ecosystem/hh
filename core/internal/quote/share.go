@@ -189,6 +189,9 @@ type AcceptanceResult struct {
 	// idemKey is the Idempotency-Key this acceptance carried, for the audit hook only (QD-3d). Unexported,
 	// it never crosses the wire.
 	idemKey string
+	// replayed marks an outcome rebuilt from an earlier keyed acceptance (QD-3d). A replay writes
+	// nothing, so the caller logs no ACCEPT share event for it. Unexported, never on the wire.
+	replayed bool
 }
 
 // shareStore is the persistence the share surface needs.
@@ -457,7 +460,9 @@ func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedNa
 	if err != nil {
 		return AcceptanceResult{}, err
 	}
-	_ = s.shares.LogShareEvent(ctx, link.ID, "ACCEPT")
+	if !res.replayed {
+		_ = s.shares.LogShareEvent(ctx, link.ID, "ACCEPT")
+	}
 	return res, nil
 }
 
