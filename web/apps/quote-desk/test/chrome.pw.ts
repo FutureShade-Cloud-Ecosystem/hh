@@ -41,3 +41,39 @@ for (const width of [1440, 820]) {
     expect(barBox.height).toBeLessThanOrEqual(120);
   });
 }
+
+// The theme control (visual review round 1, P2-5): the ERP's light look was
+// unreachable. The bar carries the till's cycle (Auto, Light, Dark); the dark
+// sheet is the tokens' default and light is the opt-in data-theme attribute.
+test("the theme control cycles Auto, Light, Dark on the document root", async ({ browser }) => {
+  const context = await browser.newContext({ colorScheme: "dark" });
+  const page = await context.newPage();
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await expect(page.getByTestId("qb-list")).toBeVisible();
+  const toggle = page.getByTestId("qd-bar").getByTestId("theme-control");
+  await expect(toggle).toHaveText("Theme: Auto");
+  const root = page.locator("html");
+  await expect(root).not.toHaveAttribute("data-theme", /.+/);
+  await toggle.click();
+  await expect(toggle).toHaveText("Theme: Light");
+  await expect(root).toHaveAttribute("data-theme", "light");
+  // The desk itself re-themes: the page ground is light.
+  const ground = await page.locator("qd-app-root").evaluate((el) => getComputedStyle(el).backgroundColor);
+  const [red, green, blue] = ground.match(/\d+/g)!.map(Number);
+  expect(red + green + blue).toBeGreaterThan(600);
+  await toggle.click();
+  await expect(toggle).toHaveText("Theme: Dark");
+  await expect(root).not.toHaveAttribute("data-theme", /.+/);
+  await toggle.click();
+  await expect(toggle).toHaveText("Theme: Auto");
+  await context.close();
+});
+
+test("Auto follows the system's light setting", async ({ browser }) => {
+  const context = await browser.newContext({ colorScheme: "light" });
+  const page = await context.newPage();
+  await page.goto("/");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await context.close();
+});

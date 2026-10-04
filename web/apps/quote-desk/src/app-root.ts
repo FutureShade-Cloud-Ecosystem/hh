@@ -23,6 +23,7 @@ import { demoBanner, demoBannerStyles } from "./demo-banner.js";
 import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { setBranches, wirePorts, clearSessionState, type AuthUser } from "@hardscapehouse/pos-kit/src/ported/ports.js";
 import { QdClient, type BranchRef } from "./qd-client.js";
+import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 // The builder shell registers the work area and the panel seams.
 import "./quote-builder.js";
 
@@ -135,6 +136,10 @@ export class QuoteDeskApp extends HHElement {
   /** The mint's own IdentityUser block, in the ported surface's session shape. */
   #deskIdentity: AuthUser | null = null;
   #branch: BranchRef | null = null;
+  /** The theme choice: Auto follows the system, Light and Dark pin it; tab memory only (see theme.ts). */
+  readonly #theme = new ThemeController(() => this.requestUpdate());
+  /** What a screen reader hears after a Theme press: focus stays on the button, so the new name is not re-read. */
+  #themeStatus = "";
   /** The mounted surface: the entry cards, or the desk. */
   #surface: "entry" | "desk" = "entry";
 
@@ -171,6 +176,8 @@ export class QuoteDeskApp extends HHElement {
     // The kits' wiring rule: listen on the HOST and read the control off
     // composedPath(), never an event binding in a template.
     this.addEventListener("click", this.#onHostClick);
+    // The system's light setting is honoured from the first paint.
+    this.#theme.start();
     void this.#loadFlows();
   }
 
@@ -183,6 +190,7 @@ export class QuoteDeskApp extends HHElement {
 
   override disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.#theme.stop();
     super.disconnectedCallback();
   }
 
@@ -197,6 +205,11 @@ export class QuoteDeskApp extends HHElement {
     }
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
+    }
+    if (control.getAttribute("data-action") === "theme") {
+      this.#theme.cycle();
+      this.#themeStatus = themeStatusText(this.#theme.choice);
+      this.requestUpdate();
     }
   };
 
@@ -300,10 +313,28 @@ export class QuoteDeskApp extends HHElement {
     return this.#roleLabel ?? session.user.name;
   }
 
+  /** The Theme control of the bar: one button, its value beside the word. */
+  #themeControl(): TemplateResult {
+    const choice = this.#theme.choice;
+    return html`
+      <button
+        type="button"
+        class="btn-secondary"
+        data-action="theme"
+        data-testid="theme-control"
+        aria-label=${themeControlLabel(choice)}
+        title="Cycle the theme: Auto, Light, Dark"
+      >
+        Theme: ${THEME_LABEL[choice]}
+      </button>
+    `;
+  }
+
   render(): TemplateResult {
     const demoPresent =
       this.#surface === "desk" || (this.#flowsState.kind === "ready" && this.#flowsState.flows.length > 0);
     return html`
+      <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
       <header class="bar" data-testid="qd-bar">
         <div class="brand">
           <span class="mark" data-testid="qd-mark" aria-hidden="true">QD</span>
@@ -311,10 +342,11 @@ export class QuoteDeskApp extends HHElement {
         </div>
         ${demoPresent ? html`<div class="bar-demo">${demoBanner()}</div>` : nothing}
         ${this.#roleLabel === null
-          ? nothing
+          ? html`<p class="bar-user">${this.#themeControl()}</p>`
           : html`
               <p class="bar-user">
                 <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
+                ${this.#themeControl()}
                 <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
                   Sign out
                 </button>
