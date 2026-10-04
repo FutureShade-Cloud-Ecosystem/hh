@@ -2051,21 +2051,29 @@ export class QdQuoteWorkarea extends LitElement {
 
   // ── per person column curation (whole or absent, reset is a delete) ────────
 
+  /** The columns as asked for, held from the press until the server has answered, so a render in between keeps the box as pressed. */
+  private columnsDraft: ResolvedItem[] | null = null;
+
   private resolvedColumns(): ResolvedItem[] {
+    if (this.columnsDraft !== null) return this.columnsDraft;
     return effectiveItems("column", QB_COLUMNS, this.config?.roleItems, this.config?.userItems);
   }
 
   private async putColumns(next: ResolvedItem[]): Promise<void> {
     const client = this.client;
     if (client === null) return;
+    this.columnsDraft = next;
+    this.requestUpdate();
     const saved = await client.putMyItems(next.map((c) => ({ kind: "column", id: c.id, position: c.position, visible: c.visible })));
     if (!saved.ok) {
+      this.columnsDraft = null;
       this.columnsError = `The columns were not saved: ${spokenRefusal(quoteErrorMessage(saved.status, saved.error, "save the columns"))}`;
       return;
     }
     this.columnsError = "";
     const config = await client.surfaceConfig(this.branchId);
     if (config.ok) this.config = config.value;
+    this.columnsDraft = null;
   }
 
   private toggleColumn(id: string): void {
