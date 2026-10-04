@@ -80,6 +80,27 @@ test("the line thumbnails ride the product image read, when the dealer chose ima
   }
 });
 
+test("a dead link reads as a deliberate page: heading on the refusal, room above it", async ({ page }) => {
+  await page.goto("/?t=q-revoked-410");
+  await expect(page.getByRole("heading", { name: "Quote link unavailable" })).toBeVisible();
+
+  await page.goto("/?t=q-never-minted");
+  await expect(page.getByRole("heading", { name: "Quote link unavailable" })).toBeVisible();
+
+  await page.goto("/?t=q-expired-25");
+  await expect(page.getByRole("heading", { name: "Acceptance closed" })).toBeVisible();
+
+  // The fatal card does not hug the viewport top: it clears the host's own
+  // padding with a margin of its own, so the page reads deliberate, not broken.
+  await page.goto("/?t=q-revoked-410");
+  const top = await page.evaluate(() => {
+    const card = document.querySelector("pd-quote-public")?.shadowRoot?.querySelector(".card");
+    return card ? card.getBoundingClientRect().top : null;
+  });
+  expect(top).not.toBeNull();
+  expect(top!, "the refusal card must sit clear of the viewport top").toBeGreaterThanOrEqual(48);
+});
+
 test("the page stands on the token's pale ground so the white cards lift off it", async ({ page }) => {
   await page.goto(`/?t=${GOOD_TOKEN}`);
   await expect(page.getByRole("heading", { name: "Quote #Q-25" })).toBeVisible();

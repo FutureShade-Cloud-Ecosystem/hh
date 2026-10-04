@@ -222,6 +222,20 @@ export class QuotePublicPage extends HHElement {
         font-size: 0.95rem;
         line-height: 1.55;
       }
+      /* The refusal's own anatomy: the dead link is a DELIBERATE page, so it
+         carries a heading like every other card and clears the viewport top
+         with room of its own, not the host padding alone. */
+      .refusal {
+        margin-top: 24px;
+      }
+      .refusal h2,
+      .closed h2 {
+        margin: 0 0 8px;
+      }
+      .refusal .gone,
+      .closed .gone {
+        margin: 0;
+      }
       .thumb {
         width: 36px;
         height: 36px;
@@ -502,8 +516,10 @@ export class QuotePublicPage extends HHElement {
     if (this.accepted) return nothing;
     if (!q.acceptable) {
       // The customer reads this alone, with no staff beside them to translate,
-      // so the state is SAID, in the same six states said mid-sentence.
-      return html`<div class="card">
+      // so the state is SAID, in the same six states said mid-sentence: under
+      // a heading, so the closed door reads deliberate rather than broken.
+      return html`<div class="card closed">
+        <h2>Acceptance closed</h2>
         <p class="gone">
           ${q.expired
             ? `This quote expired on ${q.validUntil} and can no longer be accepted online. Please contact us for an updated quote.`
@@ -537,7 +553,10 @@ export class QuotePublicPage extends HHElement {
 
   render(): TemplateResult {
     if (this.fatal) {
-      return html`<div class="card"><p class="gone">${this.fatal}</p></div>`;
+      return html`<div class="card refusal">
+        <h2>Quote link unavailable</h2>
+        <p class="gone">${this.fatal}</p>
+      </div>`;
     }
     const q = this.quote;
     if (!q) return html`<p class="sub">Loading your quote…</p>`;
