@@ -39,6 +39,7 @@ import (
 	"log/slog"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // InvoiceOrderResolver maps a finalized invoice to its owning order. The ar.invoice.finalized payload
@@ -49,6 +50,11 @@ import (
 type InvoiceOrderResolver interface {
 	OrderIDForInvoice(ctx context.Context, invoiceID string) (orderID string, err error)
 }
+
+// counterInvoiceSource is the "source" an ar.invoice.finalized payload carries when the invoice was
+// raised at the counter for an order that has not left the yard (QD-5). It spells billing's
+// EventSourceCounter: the order module never imports billing, and a test pins the two equal.
+const counterInvoiceSource = "COUNTER"
 
 // observerRegistrar is the subset of *notify.Dispatcher the consumer needs (observer registration only),
 // kept as an interface so the order package depends on the seam, not the dispatcher's whole surface, and
@@ -100,6 +106,7 @@ func (c *LifecycleConsumer) onInvoiceFinalized(ctx context.Context, e notify.Eve
 	}
 	var p struct {
 		InvoiceID string `json:"invoice_id"`
+		Source    string `json:"source"`
 	}
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		c.warn("ar.invoice.finalized: bad payload", e, err)
@@ -115,6 +122,12 @@ func (c *LifecycleConsumer) onInvoiceFinalized(ctx context.Context, e notify.Eve
 	}
 	if orderID == "" {
 		return nil // invoice missing or not bound to an order, nothing to advance
+	}
+	if p.Source == counterInvoiceSource {
+		// QD-5: an invoice raised at the counter bills goods that may still be in the yard. It moves
+		// the order only when the goods have already left (FULFILLED); otherwise the order stays
+		// where the yard has it, with its holds, and the fulfilment road completes the move.
+		return c.settle(e, orderID, "INVOICED", c.svc.AdvanceCounterInvoiced(ctx, orderID, e.EventID))
 	}
 	return c.advance(ctx, e, orderID, "INVOICED")
 }
@@ -134,7 +147,11 @@ func (c *LifecycleConsumer) onInvoiceFinalized(ctx context.Context, e notify.Eve
 //
 // Any other error is returned so the dispatcher logs it as a swallowed observer failure.
 func (c *LifecycleConsumer) advance(ctx context.Context, e notify.Event, orderID, target string) error {
-	err := c.svc.AdvanceFromEvent(ctx, orderID, target, e.EventID)
+	return c.settle(e, orderID, target, c.svc.AdvanceFromEvent(ctx, orderID, target, e.EventID))
+}
+
+// settle grades the outcome of one guarded move the way advance's header describes.
+func (c *LifecycleConsumer) settle(e notify.Event, orderID, target string, err error) error {
 	switch {
 	case err == nil, errors.Is(err, ErrNoTransition):
 		return nil
@@ -161,4 +178,42 @@ func (c *LifecycleConsumer) warn(msg string, e notify.Event, err error) {
 	if c.log != nil {
 		c.log.Warn("order lifecycle: "+msg, "topic", e.Topic, "event_id", e.EventID, "err", err)
 	}
+}
+
+// - the counter's invoice (QD-5) -
+
+// AdvanceCounterInvoiced is the move an invoice raised at the counter makes: FULFILLED to INVOICED
+// and nothing else. An order still DRAFT, CONFIRMED, PICKING or READY is not moved (the goods are in
+// the yard and the holds stay), which the guarded write answers as ErrIllegalTransition, a logged
+// no-op for the consumer. The holds are not touched here either: they were consumed at FULFILLED, and
+// the INVOICED backstop finds none ACTIVE.
+func (s *Service) AdvanceCounterInvoiced(ctx context.Context, orderID, eventID string) error {
+	if orderID == "" {
+		return httpx.BadRequestf("order id is required")
+	}
+	return s.setStatusGuarded(ctx, "", orderID, "INVOICED", eventID, []string{"FULFILLED"}, nil)
+}
+
+// counterInvoiceStore is the store capability the fulfilment completion needs: whether the order
+// already has an invoice raised at the counter. A store that cannot answer completes nothing.
+type counterInvoiceStore interface {
+	OrderHasCounterInvoice(ctx context.Context, orderID string) (bool, error)
+}
+
+// completeCounterInvoiced is the fulfilment road finding the counter's invoice already there: the
+// order has just reached FULFILLED (its holds consumed once, in that move), and an invoice raised at
+// the counter before the goods left is the very document that would have moved it on, so the move
+// is completed here and no second invoice is raised. Best effort by design: the hand over has
+// committed and must not be failed by what follows; an order left FULFILLED beside its paid invoice
+// is the same state any order is in before its invoice event arrives.
+func (s *Service) completeCounterInvoiced(ctx context.Context, orderID, eventID string) {
+	cs, ok := s.store.(counterInvoiceStore)
+	if !ok {
+		return
+	}
+	has, err := cs.OrderHasCounterInvoice(ctx, orderID)
+	if err != nil || !has {
+		return
+	}
+	_ = s.AdvanceCounterInvoiced(ctx, orderID, eventID)
 }

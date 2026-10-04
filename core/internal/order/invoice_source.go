@@ -320,6 +320,23 @@ SELECT ol.id::text, COALESCE(ol.product_id::text,''), ol.line_no, ol.description
 	return f, nil
 }
 
+// OrderHasCounterInvoice reports whether the order already has a live invoice raised at the counter
+// (QD-5): the header says so in its metadata, the same marker the finalized event carries. It lets
+// the fulfilment road complete the order's move instead of raising a second document.
+func (r *Repository) OrderHasCounterInvoice(ctx context.Context, orderID string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var has bool
+	if err := r.pool.QueryRow(ctx, `
+SELECT EXISTS (SELECT 1 FROM invoices
+                WHERE order_id = $1 AND doc_type = 'INVOICE' AND status <> 'VOID'
+                  AND metadata->>'source' = 'COUNTER')`, orderID).Scan(&has); err != nil {
+		return false, fmt.Errorf("order: counter invoice lookup for %s: %w", orderID, err)
+	}
+	return has, nil
+}
+
 // Quantities go over this seam as DECIMAL strings via edit.go's formatQty, which renders at the
 // column's own DECIMAL(19,4) precision. Never a float on the wire: billing casts these straight into
 // numeric columns, and a quantity that has been through a float64's text form is a quantity somebody

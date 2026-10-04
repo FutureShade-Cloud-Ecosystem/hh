@@ -83,6 +83,13 @@ const (
 	SourceWarrantyCredit = "WARRANTY_CREDIT"
 )
 
+// EventSourceCounter marks an invoice raised at the counter for an order that has not left the yard
+// (QD-5, InvoiceOrderAtAgreed). It rides on the invoice header's metadata and on the
+// ar.invoice.finalized payload as "source". AR and the ledger take the event whole and ignore it; the
+// order lifecycle consumer reads it so that an invoice for goods still in the yard does not move the
+// order or consume its holds. Every other producer sets no source.
+const EventSourceCounter = "COUNTER"
+
 // TaxStdON13 is the default reason code, spelled identically to pos.TaxStdON13 and tax.ReasonStdON13.
 // Written out rather than imported: a reason code is a wire/DB value, and billing importing pos to
 // borrow a string would be a module dependency bought for nothing.
@@ -195,6 +202,9 @@ type OrderInvoiceFacts struct {
 	// AgreedTaxCents, when set, is the tax the customer was shown, billed as stated. Nil for every
 	// caller but the counter's agreed invoice.
 	AgreedTaxCents *int64
+	// RaisedAtCounter marks the counter's agreed invoice: the header and the finalized event carry
+	// EventSourceCounter. False for every other caller.
+	RaisedAtCounter bool
 }
 
 // OrderInvoiceLine is one billable line, in the shape invoice_lines stores. Quantities are DECIMAL
@@ -230,6 +240,9 @@ type InvoiceDoc struct {
 	TotalCents    int64  `json:"total_cents"`
 	BalanceCents  int64  `json:"balance_cents"`
 	ClosesOrder   bool   `json:"closes_order"`
+	// AtCounter reports that the document was raised at the counter (EventSourceCounter), read off the
+	// header's metadata. Not part of any answer on the wire.
+	AtCounter bool `json:"-"`
 	// Reused reports that an existing document with this idempotency key was returned rather than a
 	// new one raised. The surface says "already invoiced as #INV-1043" instead of pretending.
 	Reused bool `json:"reused"`
@@ -463,15 +476,15 @@ func (w *InvoiceWriter) write(ctx context.Context, f OrderInvoiceFacts, sourceKi
 		err := tx.QueryRow(ctx, invoiceWriterSeqCTE+`
 INSERT INTO invoices (id, invoice_no, customer_id, order_id, branch_id, status, due_date,
                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
-                      doc_type, source_kind, idempotency_key, closes_order, org_id, seq)
+                      doc_type, source_kind, idempotency_key, closes_order, org_id, seq, metadata)
 VALUES (COALESCE(NULLIF($1,'')::uuid, gen_random_uuid()), '#INV-' || nextval('invoice_no_seq'),
         $2, $3, $4, 'FINALIZED', $5,
         $6, $7, $8, $8, now(), 'INVOICE', $9, $10, $11,
         (SELECT org_id FROM locations WHERE id = $4::uuid),
-        (SELECT next_value FROM iseq))
+        (SELECT next_value FROM iseq), $12::jsonb)
 RETURNING id::text, invoice_no`,
 			docID, f.CustomerID, nullUUID(f.OrderID), f.BranchID, dueDate,
-			subtotal, quote.TaxCents, total, sourceKind, idemKey, f.ClosesOrder,
+			subtotal, quote.TaxCents, total, sourceKind, idemKey, f.ClosesOrder, headerMetadata(f),
 		).Scan(&invoiceID, &invoiceNo)
 		if err != nil {
 			return fmt.Errorf("insert invoice: %w", err)
@@ -509,10 +522,14 @@ VALUES ($1, 'INVOICE', $2, $3, 'invoice', $4, $5, $6, clock_timestamp())`,
 
 		// G3: the SAME topic and the SAME payload keys the ring emits. gl derives the journal from the
 		// invoice row, so this is the whole of the GL wiring for this producer.
-		if err := emitOutbox(ctx, tx, "ar.invoice.finalized", map[string]any{
+		finalized := map[string]any{
 			"invoice_id": invoiceID, "customer_id": f.CustomerID,
 			"total_cents": total, "due_date": dueDate,
-		}); err != nil {
+		}
+		if f.RaisedAtCounter {
+			finalized["source"] = EventSourceCounter
+		}
+		if err := emitOutbox(ctx, tx, "ar.invoice.finalized", finalized); err != nil {
 			return err
 		}
 
@@ -521,7 +538,7 @@ VALUES ($1, 'INVOICE', $2, $3, 'invoice', $4, $5, $6, clock_timestamp())`,
 			CustomerID: f.CustomerID, OrderID: f.OrderID, BranchID: f.BranchID,
 			Status: "FINALIZED", DueDate: dueDate,
 			SubtotalCents: subtotal, TaxCents: quote.TaxCents, TotalCents: total, BalanceCents: total,
-			ClosesOrder: f.ClosesOrder,
+			ClosesOrder: f.ClosesOrder, AtCounter: f.RaisedAtCounter,
 		}
 		return nil
 	})
@@ -536,6 +553,15 @@ VALUES ($1, 'INVOICE', $2, $3, 'invoice', $4, $5, $6, clock_timestamp())`,
 		return InvoiceDoc{}, err
 	}
 	return doc, nil
+}
+
+// headerMetadata is the invoice header's metadata: empty for every producer but the counter's agreed
+// invoice, which says so (the same marker the finalized event carries).
+func headerMetadata(f OrderInvoiceFacts) string {
+	if f.RaisedAtCounter {
+		return `{"source":"` + EventSourceCounter + `"}`
+	}
+	return `{}`
 }
 
 // shapedDocument is the document's money as billing shapes it: the lines (with the delivery fee as
@@ -667,6 +693,7 @@ func (w *InvoiceWriter) InvoiceOrderAtAgreed(ctx context.Context, orderID string
 	}
 	facts.ClosesOrder = true
 	facts.GroupIDs = nil
+	facts.RaisedAtCounter = true
 	return w.write(ctx, facts, SourceOrder, wholeOrderKey(orderID), "")
 }
 
@@ -692,10 +719,12 @@ func (w *InvoiceWriter) findByKey(ctx context.Context, key string) (InvoiceDoc, 
 	var due time.Time
 	err := w.pool.QueryRow(ctx, `
 SELECT id::text, invoice_no::text, doc_type, customer_id::text, order_id::text, branch_id::text,
-       status, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, closes_order
+       status, due_date, subtotal_cents, tax_cents, total_cents, balance_cents, closes_order,
+       COALESCE(metadata->>'source', '') = '`+EventSourceCounter+`'
   FROM invoices WHERE idempotency_key = $1`, key).
 		Scan(&d.InvoiceID, &d.InvoiceNo, &d.DocType, &d.CustomerID, &orderID, &d.BranchID,
-			&d.Status, &due, &d.SubtotalCents, &d.TaxCents, &d.TotalCents, &d.BalanceCents, &d.ClosesOrder)
+			&d.Status, &due, &d.SubtotalCents, &d.TaxCents, &d.TotalCents, &d.BalanceCents, &d.ClosesOrder,
+			&d.AtCounter)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return InvoiceDoc{}, false, nil
