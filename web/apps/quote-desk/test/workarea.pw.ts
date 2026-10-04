@@ -54,7 +54,7 @@ test("the stepper tracks the quote: compose, picked, lines, sent", async ({ page
   await expect(products).not.toHaveClass(/complete/);
 
   // Add a line through the scan box: the resolution is the add.
-  const scanInput = page.locator("hos-pos-scan-box").getByRole("textbox");
+  const scanInput = page.getByTestId("pos-scan-input");
   await scanInput.fill("PSN-100");
   await scanInput.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
@@ -75,7 +75,7 @@ test("lines are added and removed, and the removal renumbers the ticket", async 
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
   await expect(page.getByTestId("qb-line")).toHaveCount(0);
 
-  const scanInput = page.locator("hos-pos-scan-box").getByRole("textbox");
+  const scanInput = page.getByTestId("pos-scan-input");
   await scanInput.fill("PSN-100");
   await scanInput.press("Enter");
   await scanInput.fill("WAT-STD");
@@ -94,7 +94,7 @@ test("a discount above the floor lands and shows the discount row; below the flo
   await signIn(page);
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Maple");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
-  const scanInput = page.locator("hos-pos-scan-box").getByRole("textbox");
+  const scanInput = page.getByTestId("pos-scan-input");
   await scanInput.fill("PSN-100");
   await scanInput.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
@@ -220,7 +220,7 @@ test("the Sales manager clears the floor itself, and the clearing is stamped on 
   await signIn(page, { name: "Sales manager", exact: true });
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Fenwick");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Fenwick Builders/ }).click();
-  const scanInput = page.locator("hos-pos-scan-box").getByRole("textbox");
+  const scanInput = page.getByTestId("pos-scan-input");
   await scanInput.fill("PSN-100");
   await scanInput.press("Enter");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
