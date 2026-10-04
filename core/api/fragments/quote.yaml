@@ -337,9 +337,10 @@ paths:
         the payment through the payments settle with the caller stamped as
         the receiver. Billing the order again when it leaves the yard returns
         the same document. A customer with a credit account may pay a part
-        (a deposit); a customer with no credit account pays the whole agreed
-        total, and for such a customer an ACCEPTED quote is converted, billed
-        and paid as one action: the conversion, the invoice and the payment
+        (a deposit); a customer with no credit account pays the whole of what
+        the invoice still owes (on a fresh order, the whole agreed total),
+        and for such a customer an ACCEPTED quote is converted, billed and
+        paid as one action: the conversion, the invoice and the payment
         are written in one transaction, so either all three exist or none
         does, and a cash customer's order never exists unpaid. For a customer
         with a credit account the order already exists when the payment is

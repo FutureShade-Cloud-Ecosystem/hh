@@ -112,8 +112,27 @@ The counter's invoice header carries a source marker (`metadata.source = COUNTER
 
 - Before raising, the counter looks for ANY live invoice of the order under another key (a shipment
   group's, say). If there is one it refuses with a 409 naming the invoice and raises nothing; the
-  payment is then recorded against that invoice from the receivables register. The invoices of an
-  order therefore never total more than the order.
+  payment is then recorded against that invoice by Payables and receivables, the General Manager or
+  the Financial controller (the counter roles only read the Money Desk, so the refusal says who can,
+  not a register they cannot open). The invoices of an order therefore never total more than the order.
+- Both writers that can bill an order whole or by group take the order's row lock
+  (`SELECT ... FROM orders WHERE id = $1 FOR UPDATE`) as the first statement of their own
+  transaction and run their existence checks after it: the counter's (in the door's transaction, at
+  its first read of the agreed invoice) and the group writer's (inside the transaction that inserts the
+  group invoice; the whole order writer shares the path). A group invoice and a counter invoice of one
+  order therefore queue behind each other, and whichever comes second sees the first one's committed
+  document: the group writer finds the counter's document and links its groups to it, the counter finds
+  the group's invoice and answers its 409. The race is forced in tests by a trigger that sleeps inside
+  one side's transaction while the other is issued, both ways round.
+- Lock order, so the lock cannot deadlock: the counter takes the quote's advisory lock first (only the
+  counter takes it), then, in a credit order's payment, the order row, then the invoices scope
+  sequence and the invoice and payment rows. The group writer takes the order row first, then the same
+  scope sequence and invoice rows. Order edits, reservations and shipment groups already take the order
+  row lock first and then the rows below it. For a cash customer the conversion runs before the lock
+  and holds stock rows, but the order row it then locks is its own, written in the same transaction
+  and visible to no one else, so no other session can be waiting on it. No path takes an invoice or a
+  payment row and then waits for an order row, so there is no cycle with the advisory lock or the
+  conversion's locks.
 - A shipment plan's group billing treats only the counter's own document (the marker) as covering its
   groups. Any other whole order document (the sync door's, which may bill only the fulfilled lines)
   covers nothing, so a later group is billed exactly as it was before QD-5.
@@ -127,16 +146,25 @@ take the event whole, unchanged. When the order later reaches FULFILLED by event
 already has a counter invoice, the same move is completed there: the holds are consumed once, at
 fulfilment, the status becomes INVOICED, and no second invoice is raised. Every other invoice source
 (the POS ring, the fulfilment invoice, a shipment group invoice) moves the order exactly as before,
-pinned by a test per source. The hook line sits in `AdvanceFromEvent` (order/service.go); its logic is
-in `order/consumer.go`.
+pinned by a test per source. The hook sits in `AdvanceFromEvent` (order/service.go); its logic is in
+`order/consumer.go`. The completion is best effort, because the hand over has committed and must not be
+failed by it, but it is never silent: a failed lookup or move is logged with the order id and the event
+id. The dispatcher does not retry an observer, so nothing re-runs a failed completion by itself; the
+hook is idempotent (a guarded FULFILLED to INVOICED move, a no-op once the order is past it), and
+`AdvanceFromEvent` runs it again when a redelivered hand over finds the order already FULFILLED, so any
+redelivery completes what the first try could not.
 
 ## Amounts
 
 Method is one of CASH, CARD, CHEQUE, EFT. A missing key, a zero or negative amount, an unknown method
 or an amount above what the invoice can take is refused, and the refusal rolls the transaction back, so
 a refusal leaves no invoice behind. A customer with a credit account may pay a part (a deposit) and the
-balance stays on the invoice. A customer with no credit pays the whole agreed total: a balance left on
-the invoice would be credit the customer does not have.
+balance stays on the invoice. A customer with no credit pays the whole of what the invoice still owes,
+which on a fresh order is the whole agreed total: a balance left on the invoice would be credit the
+customer does not have. Both checks compare against the invoice's BALANCE, not its total, so a customer
+whose limit dropped to zero after a deposit can still pay the rest, and an overpay is refused by the
+door in words about the balance. A replayed key is told apart first (a read on the payments seam) and
+answered with the stored payment, so a replay is never refused for a balance it has since moved.
 
 ## The customer with no credit
 
