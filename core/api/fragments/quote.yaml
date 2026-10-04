@@ -865,7 +865,9 @@ paths:
         same key with a different typed name is a 409. A retry through a
         link that was revoked or has expired since the first attempt still
         answers that first outcome with a 200 when the acceptance under the
-        key is found for that link, and stays a 410 otherwise. A malformed
+        key is found for that link, and stays a 410 otherwise. The lookup
+        waits for an attempt still in flight, so a keyed 410 means no
+        acceptance exists under this key for this link at that moment. A malformed
         key is a 400. Without the header the acceptance behaves as it always has.
       x-role: public
       security: []
