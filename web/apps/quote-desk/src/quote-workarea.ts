@@ -441,6 +441,10 @@ export class QdQuoteWorkarea extends LitElement {
       padding: var(--hos-s-4, 4px);
       white-space: nowrap;
     }
+    /* The ERP stripes its ticket rows: every second line takes the row-alt tint. */
+    table.lines tbody tr:nth-child(even) {
+      background: var(--hos-row-alt, var(--hh-row-alt));
+    }
     table.lines td {
       padding: var(--hos-s-8, 8px) var(--hos-s-4, 4px);
       border-bottom: 1px solid var(--hos-line, var(--hh-line));
