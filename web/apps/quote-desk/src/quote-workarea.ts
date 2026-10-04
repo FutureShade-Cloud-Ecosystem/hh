@@ -324,6 +324,25 @@ export class QdQuoteWorkarea extends LitElement {
       margin: 0;
       font-size: var(--qb-section);
     }
+    /* The summary panel's buttons ride the header's own row: the title
+       truncates with an ellipsis before it can sit under a button, and the
+       buttons wrap to a row of their own when the panel is narrow (visual
+       review round 1, P2-3). */
+    .panelbar.inflow {
+      padding-right: 0;
+      justify-content: space-between;
+    }
+    .panelbar.inflow h2 {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .panelbar.inflow .panelbtns {
+      position: static;
+      margin-left: auto;
+    }
     .panelbtns {
       position: absolute;
       top: 10px;
@@ -2430,8 +2449,24 @@ export class QdQuoteWorkarea extends LitElement {
   private renderSummaryPanel() {
     return html`
       <section class="panel summary" aria-label="Customer and terms">
-        <div class="panelbar">
+        <div class="panelbar inflow">
           <h2>Customer &amp; terms</h2>
+          <div class="panelbtns">
+            ${this.config?.profile === "admin"
+              ? html`<button type="button" class="pbtn" data-action="settings" data-testid="qb-settings-btn">Screen settings</button>`
+              : nothing}
+            <button
+              type="button"
+              class="pbtn"
+              data-action="reset-layout"
+              title="Reset layout to company default"
+            >
+              Reset layout
+            </button>
+            <button type="button" class="pbtn" data-action="collapse-secondary" aria-label="Collapse this panel">
+              <span aria-hidden="true">${drawIcon(iconForId("pencil:right"), 12)}</span>
+            </button>
+          </div>
         </div>
         <div class="scrollzone">
           ${this.renderIdentity()}
@@ -2443,22 +2478,6 @@ export class QdQuoteWorkarea extends LitElement {
           ${this.view !== null ? this.renderTotalsCard() : nothing}
           ${this.view !== null ? this.renderActions() : nothing}
           ${this.renderOutcomeLines()}
-        </div>
-        <div class="panelbtns">
-          ${this.config?.profile === "admin"
-            ? html`<button type="button" class="pbtn" data-action="settings" data-testid="qb-settings-btn">Screen settings</button>`
-            : nothing}
-          <button
-            type="button"
-            class="pbtn"
-            data-action="reset-layout"
-            title="Reset layout to company default"
-          >
-            Reset layout
-          </button>
-          <button type="button" class="pbtn" data-action="collapse-secondary" aria-label="Collapse this panel">
-            <span aria-hidden="true">${drawIcon(iconForId("pencil:right"), 12)}</span>
-          </button>
         </div>
       </section>
     `;
