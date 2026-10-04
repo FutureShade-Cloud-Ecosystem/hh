@@ -152,6 +152,12 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		}
 	}
 	approvals.WithFloorApprovers(quoteFloorApprovers)
+	// The approvals sync door decides through the same configured
+	// authority the rail now holds: its store is constructed on another
+	// wire (wire_operations) the role configuration does not pass, so the
+	// set the rail was given is published for the door to read (D11): one
+	// authority, one source.
+	identity.PublishFloorApprovers(quoteFloorApprovers)
 	quoteStaffSvc := quote.NewStaffService(quoteRepo).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
