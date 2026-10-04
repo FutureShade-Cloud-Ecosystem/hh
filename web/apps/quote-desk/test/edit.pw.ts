@@ -230,6 +230,27 @@ test("share links: mint once with the token shown once, list without it, revoke"
   await expect(panel(page).getByRole("button", { name: "Revoke" })).toHaveCount(0);
 });
 
+// Visual review round 1, P3: the link area. The created notice sits beside
+// its button, the URL box has room for a link, and the Issued column says
+// when, not a raw id.
+test("the link area: the created notice beside its button, a roomy URL box, Issued as a date", async ({ page }) => {
+  await signIn(page);
+  await openQuote(page, "Sent");
+  const create = panel(page).getByRole("button", { name: "Create link to copy" });
+  await create.click();
+  const notice = page.getByTestId("qe-notice");
+  await expect(notice).toContainText("Nothing was emailed");
+  const buttonBox = (await create.boundingBox())!;
+  const noticeBox = (await notice.boundingBox())!;
+  // The notice is inside the Customer link area, within a short reach of the button.
+  expect(Math.abs(noticeBox.y - buttonBox.y)).toBeLessThan(80);
+  const url = panel(page).locator('[data-field="link-url"]');
+  const urlBox = (await url.boundingBox())!;
+  expect(urlBox.width).toBeGreaterThanOrEqual(300);
+  const issued = await panel(page).getByTestId("qe-link").first().locator("td").first().innerText();
+  expect(issued).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+});
+
 test("compare scores alternates read only: the current line, a priced alternate, an unavailable one", async ({ page }) => {
   await signIn(page);
   await openQuote(page, "Sent");

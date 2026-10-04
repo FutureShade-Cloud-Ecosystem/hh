@@ -90,6 +90,12 @@ export const panelStyles = css`
   input.wide {
     width: 12rem;
   }
+  /* The customer link box takes the row, so a link is not cut off. */
+  .row input.wide {
+    flex: 1 1 22rem;
+    min-width: 0;
+    width: auto;
+  }
   input[type="checkbox"] {
     accent-color: var(--hos-stone-amber, var(--hh-accent));
   }

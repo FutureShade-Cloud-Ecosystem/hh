@@ -58,6 +58,9 @@ import type { Result } from "@hardscapehouse/api-client";
 
 type Which = "add" | "compare";
 
+/** The mint's own notice: it is said beside the button that made it, not at the foot of the panel. */
+const LINK_CREATED_NOTICE = "Link created. Nothing was emailed: copy the link and send it yourself.";
+
 @customElement("qd-quote-edit")
 export class QdQuoteEdit extends PanelBase {
   @state() private view: QuoteView | null = null;
@@ -425,7 +428,7 @@ export class QdQuoteEdit extends PanelBase {
     // person is told plainly that it will not be shown again. Minting moves
     // the quote to Sent and starts its follow-ups; it addresses nothing.
     this.mintedToken = result.value;
-    this.notice = "Link created. Nothing was emailed: copy the link and send it yourself.";
+    this.notice = LINK_CREATED_NOTICE;
     await this.load();
     this.announceChanged();
   }
@@ -715,7 +718,10 @@ export class QdQuoteEdit extends PanelBase {
           ? html`<div class="row" style="margin-top:0">
               <button type="button" data-action="mint-link" ?disabled=${this.busy}>Create link to copy</button>
               <span class="picked">Nothing is emailed: copy the link and send it yourself. The customer can accept online.</span>
-            </div>`
+            </div>
+            ${this.notice === LINK_CREATED_NOTICE
+              ? html`<p class="ok" role="status" aria-live="polite" data-testid="qe-notice">${this.notice}</p>`
+              : nothing}`
           : html`<p class="sentence" data-testid="qe-share-note">${shareable ? "Sharing is not offered to you on this quote." : shareSentence(view)}</p>`}
         ${this.mintedToken !== ""
           ? html`<div class="row">
@@ -737,7 +743,7 @@ export class QdQuoteEdit extends PanelBase {
               <tbody>
                 ${this.links.map(
                   (l) => html`<tr data-testid="qe-link">
-                    <td>${l.id.slice(-8)}</td>
+                    <td>${new Date(l.createdAt).toLocaleDateString("en-CA")}</td>
                     <td>${new Date(l.expiresAt).toLocaleDateString("en-CA")}</td>
                     <td>${shareLinkState(l)}</td>
                     <td class="actions">
@@ -886,7 +892,7 @@ export class QdQuoteEdit extends PanelBase {
         <qd-panel-seam data-seam=${SEAM_PAYMENT} data-seam-label="Related documents and the order's payment (QD-5)"></qd-panel-seam>
         ${this.renderCompare()}
         <p class="err" role="alert" data-testid="qe-error">${this.error}</p>
-        <p class="ok" role="status" aria-live="polite" aria-atomic="true" data-testid="qe-notice">${this.notice}</p>
+        <p class="ok" role="status" aria-live="polite" aria-atomic="true" data-testid=${this.notice === LINK_CREATED_NOTICE ? nothing : "qe-notice"}>${this.notice === LINK_CREATED_NOTICE ? "" : this.notice}</p>
       </div>
     `;
   }
