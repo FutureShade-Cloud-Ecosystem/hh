@@ -92,6 +92,9 @@ type CounterReceipt struct {
 
 // CounterPayer is the payments seam the door needs, on the door's one transaction.
 type CounterPayer interface {
+	// KeyTakenTx says whether a payment already holds the key, so the door can tell a replay, which it
+	// answers with the stored payment, from a first payment, which it holds to the invoice's balance.
+	KeyTakenTx(ctx context.Context, tx pgx.Tx, key string) (bool, error)
 	TakePaymentTx(ctx context.Context, tx pgx.Tx, in CounterReceiptInput) (CounterReceipt, error)
 }
 
@@ -284,13 +287,27 @@ func (s *StaffService) takeOrderPaymentTx(ctx context.Context, tx pgx.Tx, ps ord
 	if err != nil {
 		return OrderPaymentResult{}, err
 	}
-	if cash && in.AmountCents != agreed.TotalCents {
-		return OrderPaymentResult{}, httpx.BadRequestf(
-			"a customer with no credit account pays the whole agreed total of %s", moneyWords(agreed.TotalCents))
+	paymentKey := namespacedPaymentKey(quoteID, in.IdempotencyKey)
+	replay, err := s.payer.KeyTakenTx(ctx, tx, paymentKey)
+	if err != nil {
+		return OrderPaymentResult{}, err
 	}
-	if in.AmountCents > agreed.TotalCents {
-		return OrderPaymentResult{}, httpx.BadRequestf(
-			"the payment is more than the agreed total of %s", moneyWords(agreed.TotalCents))
+	if !replay {
+		// Held to what the invoice still owes, not to its total: once a deposit is on it, the rest is the
+		// balance whatever the customer's credit has become since. A customer with no credit pays all of
+		// it at once; nobody pays more than it.
+		if cash && in.AmountCents != agreed.BalanceCents {
+			if agreed.BalanceCents == agreed.TotalCents {
+				return OrderPaymentResult{}, httpx.BadRequestf(
+					"a customer with no credit account pays the whole agreed total of %s", moneyWords(agreed.TotalCents))
+			}
+			return OrderPaymentResult{}, httpx.BadRequestf(
+				"a customer with no credit account pays the whole balance of %s", moneyWords(agreed.BalanceCents))
+		}
+		if in.AmountCents > agreed.BalanceCents {
+			return OrderPaymentResult{}, httpx.BadRequestf(
+				"the payment is more than the balance of %s", moneyWords(agreed.BalanceCents))
+		}
 	}
 	inv, err := s.invoicer.RaiseAgreedInvoiceTx(ctx, tx, orderID)
 	if err != nil {
@@ -302,7 +319,7 @@ func (s *StaffService) takeOrderPaymentTx(ctx context.Context, tx pgx.Tx, ps ord
 		BranchID:       pf.BranchID,
 		Method:         in.Method,
 		Reference:      in.Reference,
-		IdempotencyKey: namespacedPaymentKey(quoteID, in.IdempotencyKey),
+		IdempotencyKey: paymentKey,
 		ReceivedBy:     caller.UserID,
 		AmountCents:    in.AmountCents,
 	})

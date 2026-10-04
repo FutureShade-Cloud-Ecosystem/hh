@@ -779,3 +779,74 @@ func TestQD5_AReplayAnswersTheStoredReferenceAndTheReceiver(t *testing.T) {
 		t.Fatalf("a replay answers the stored reference and receiver, got %+v", again)
 	}
 }
+
+// - QD-5 review round 2, P2-B: the door compares against the invoice's BALANCE, not its total -
+
+// TestQD5_ADepositThenALimitOfZeroStillLetsTheRestBePaidAndAnOverpayIsTheDoorsOwnRefusal: a credit
+// customer pays a deposit, then their limit drops to zero. The rest is accepted (the customer has no
+// credit left to draw on, the balance is what is owed). More than the balance is refused by the door,
+// in words about the balance, and posts nothing.
+func TestQD5_ADepositThenALimitOfZeroStillLetsTheRestBePaidAndAnOverpayIsTheDoorsOwnRefusal(t *testing.T) {
+	e := qd5Setup(t)
+	q := e.seedQuote(1_000_000, 0, qd5Trenton)
+	e.convert(q)
+	if _, err := e.svc.TakeOrderPayment(e.counter(), q.QuoteID, pay("CASH", 1000, "k-dep0")); err != nil {
+		t.Fatalf("deposit: %v", err)
+	}
+	balance := q.Total - 1000
+
+	// A credit customer who overpays gets the door's own refusal, in words about the balance.
+	_, err := e.svc.TakeOrderPayment(e.counter(), q.QuoteID, pay("CASH", balance+1, "k-over1"))
+	wantBadRequest(t, "credit customer above the balance", err)
+	if !strings.Contains(err.Error(), "more than the balance of "+dollars(balance)) {
+		t.Fatalf("the door's own refusal names the balance %s, got %v", dollars(balance), err)
+	}
+
+	if _, err := e.pool.Exec(context.Background(),
+		`UPDATE customers SET credit_limit_cents = 0 WHERE id = $1`, q.CustomerID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.svc.TakeOrderPayment(e.counter(), q.QuoteID, pay("CASH", balance+1, "k-over0"))
+	wantBadRequest(t, "above the balance", err)
+	if !strings.Contains(err.Error(), dollars(balance)) || strings.Contains(err.Error(), "refresh and retry") {
+		t.Fatalf("the door's own refusal names the balance %s, got %v", dollars(balance), err)
+	}
+	if c := e.counts(q); c.Payments != 1 {
+		t.Fatalf("a refused overpay posted a payment: %+v", c)
+	}
+
+	// The total, which is more than the balance now, is the same refusal and not the settle's message.
+	_, err = e.svc.TakeOrderPayment(e.counter(), q.QuoteID, pay("CASH", q.Total, "k-total0"))
+	wantBadRequest(t, "the total after a deposit", err)
+	if strings.Contains(err.Error(), "refresh and retry") {
+		t.Fatalf("the settle's message leaked through the door: %v", err)
+	}
+
+	rest, err := e.svc.TakeOrderPayment(e.counter(), q.QuoteID, pay("CASH", balance, "k-rest0"))
+	if err != nil {
+		t.Fatalf("the balance of a customer whose limit dropped to zero must be accepted: %v", err)
+	}
+	if rest.BalanceCents != 0 {
+		t.Fatalf("the rest settles the invoice: %+v", rest)
+	}
+}
+
+// TestQD5_ACashCustomerOnAFreshOrderStillPaysTheWholeAgreedTotal: the cash rule is unchanged where the
+// balance is the whole total, and it names the total.
+func TestQD5_ACashCustomerOnAFreshOrderStillPaysTheWholeAgreedTotal(t *testing.T) {
+	e := qd5Setup(t)
+	q := e.seedQuote(0, 0, qd5Trenton)
+	for name, amount := range map[string]int64{"short": q.Total - 1, "over": q.Total + 1} {
+		_, err := e.svc.TakeOrderPayment(e.counter(), q.QuoteID, pay("CASH", amount, "k-fresh-"+name))
+		wantBadRequest(t, name, err)
+		if c := e.counts(q); c != (qd5Counts{}) {
+			t.Fatalf("%s left rows behind: %+v", name, c)
+		}
+	}
+	if _, err := e.svc.TakeOrderPayment(e.counter(), q.QuoteID, pay("CASH", q.Total, "k-fresh-ok")); err != nil {
+		t.Fatalf("the whole agreed total: %v", err)
+	}
+}
+
+// dollars renders cents the way the door's refusals do.
+func dollars(cents int64) string { return fmt.Sprintf("$%d.%02d", cents/100, cents%100) }

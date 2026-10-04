@@ -154,6 +154,15 @@ func (r *Repository) RecordReceiptTx(ctx context.Context, tx pgx.Tx, in ReceiptR
 	return ReceiptOutcome{Payment: p, Reference: in.Reference, ReceivedBy: in.ReceivedBy}, nil
 }
 
+// ReceiptKeyTakenTx reports, on the caller's transaction, whether a receipt already holds the key: a
+// call that repeats it is a replay, which the settle answers with the stored payment, so a door that
+// compares an amount against a balance must not refuse the replay for the balance it has since moved
+// (QD-5 review round 2). It reads and writes nothing else.
+func (r *Repository) ReceiptKeyTakenTx(ctx context.Context, tx pgx.Tx, key string) (bool, error) {
+	_, _, _, ok, err := receiptByKeyOn(ctx, tx, key)
+	return ok, err
+}
+
 // validateReceipt is the request check both entries make before any database is consulted.
 func validateReceipt(in ReceiptRequest) error {
 	if in.IdempotencyKey == "" {

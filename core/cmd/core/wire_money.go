@@ -609,6 +609,10 @@ func mapBillingRefusal(err error) error {
 // transaction.
 type quoteCounterPayer struct{ repo *payments.Repository }
 
+func (a quoteCounterPayer) KeyTakenTx(ctx context.Context, tx pgx.Tx, key string) (bool, error) {
+	return a.repo.ReceiptKeyTakenTx(ctx, tx, key)
+}
+
 func (a quoteCounterPayer) TakePaymentTx(ctx context.Context, tx pgx.Tx, in quote.CounterReceiptInput) (quote.CounterReceipt, error) {
 	out, err := a.repo.RecordReceiptTx(ctx, tx, payments.ReceiptRequest{
 		CustomerID:     in.CustomerID,
