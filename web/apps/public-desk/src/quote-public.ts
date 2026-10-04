@@ -593,6 +593,9 @@ export class QuotePublicPage extends HHElement {
     return html`
       <div class="card">
         <h2 class="card-h2">Accept this quote</h2>
+        ${q.status === "ACCEPTED" || q.status === "CONVERTED"
+          ? html`<p class="note">This quote was already accepted. Accepting again records another acceptance.</p>`
+          : nothing}
         <label for="name">Your full name</label>
         <input id="name" type="text" autocomplete="name" />
         <div class="check">

@@ -574,6 +574,25 @@ test("multi-accept on: a failed repeat accept, with the quote already ACCEPTED b
   await expect(page.getByRole("button", { name: "Accept quote" })).toBeEnabled();
 });
 
+test("multi-accept on: an ACCEPTED quote that is still acceptable says it was already accepted and that accepting again records another", async ({ page }) => {
+  await page.route("**/api/public/v1/quotes/q-terms-28", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { status: string; acceptable: boolean };
+    body.status = "ACCEPTED";
+    body.acceptable = true;
+    await route.fulfill({ response, json: body });
+  });
+  await page.goto("/?t=q-terms-28");
+  await expect(page.getByRole("heading", { name: "Accept this quote" })).toBeVisible();
+  await expect(page.getByText("This quote was already accepted. Accepting again records another acceptance.")).toBeVisible();
+});
+
+test("a quote still awaiting its first acceptance carries no repeat note", async ({ page }) => {
+  await page.goto("/?t=q-terms-28");
+  await expect(page.getByRole("heading", { name: "Accept this quote" })).toBeVisible();
+  await expect(page.getByText(/already accepted/)).toHaveCount(0);
+});
+
 test("a failed accept whose re-read shows the quote closed by something else ends on the closed card, no alert", async ({ page }) => {
   let reads = 0;
   await page.route("**/api/public/v1/quotes/q-terms-28", async (route) => {
