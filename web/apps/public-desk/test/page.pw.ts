@@ -481,3 +481,18 @@ test("a refused accept whose re-read fails keeps the page: only a dead link repl
   await expectFormKept(page);
   await expect(page.getByText("Quote link unavailable")).toHaveCount(0);
 });
+
+test("the page wears the manifest's brand: hh-pro pins the action fill to the dealer blue, not the house gold", async ({ page }) => {
+  // A quote that is still open: the demo quote is accepted by an earlier test.
+  await page.goto("/?t=q-terms-28");
+  await expect(page.locator("html")).toHaveAttribute("data-brand", "hh-pro");
+  // The computed colour may come back in a wide-gamut syntax; a canvas
+  // pixel turns it into plain sRGB channels.
+  const [r, , b] = await page.getByRole("button", { name: "Accept quote" }).evaluate((node) => {
+    const ctx = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
+    ctx.fillStyle = getComputedStyle(node).backgroundColor;
+    ctx.fillRect(0, 0, 1, 1);
+    return Array.from(ctx.getImageData(0, 0, 1, 1).data);
+  });
+  expect(b).toBeGreaterThan(r);
+});

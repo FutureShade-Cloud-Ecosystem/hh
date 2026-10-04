@@ -24,6 +24,13 @@ customer document must look identical to everyone and must print correctly,
 so there is no theme preference to read (the ERP's own ruling for this page,
 carried).
 
+The brand is pinned beside the theme: `index.html` sets `data-brand="hh-pro"`,
+because the manifest names `brand: hh-pro` for this app and the design system's
+`hh-pro` override is the dealer blue. So the Accept button is the dealer blue,
+not the ERP's house gold. That is a deliberate departure from the reference
+shots, where the button is gold; nothing else on the page changes with the
+brand. If the house decides this page should stay gold, drop the attribute.
+
 ## What it ports
 
 This is a port of the older product's customer quote page, never from
