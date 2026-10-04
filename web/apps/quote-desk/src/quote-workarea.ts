@@ -2216,7 +2216,7 @@ export class QdQuoteWorkarea extends LitElement {
           <span class="viewflip" role="group" aria-label="Results view">
             <button
               type="button"
-              class=${this.presentation === "CARDS" ? "active" : ""}
+              class="${this.presentation === "CARDS" ? "active" : ""}"
               data-action="view-cards"
               data-testid="qb-view-cards"
               aria-pressed=${this.presentation === "CARDS" ? "true" : "false"}
@@ -2226,7 +2226,7 @@ export class QdQuoteWorkarea extends LitElement {
             </button>
             <button
               type="button"
-              class=${this.presentation === "ROWS" ? "active" : ""}
+              class="${this.presentation === "ROWS" ? "active" : ""}"
               data-action="view-rows"
               data-testid="qb-view-rows"
               aria-pressed=${this.presentation === "ROWS" ? "true" : "false"}
