@@ -43,8 +43,8 @@
 // rather than seeding a stale margin.
 //
 // NOT DAY-KEYED. A quote is a document, not a day: stable keys, written once. The share links and the
-// quotes' own validity run well past the clock the first apply read, far enough that a box looked
-// at weekly keeps a link that opens.
+// quotes' own validity run well past the clock the first apply read, far enough that the link
+// still opens when a tester arrives.
 package main
 
 import (
