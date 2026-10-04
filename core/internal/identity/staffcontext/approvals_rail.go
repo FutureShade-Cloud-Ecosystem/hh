@@ -166,7 +166,7 @@ func (s *Approvals) notifyApprovalRequested(ctx context.Context, req ApprovalReq
 	if s.notifier == nil {
 		return
 	}
-	approvers, err := s.resolveApproverIDs(ctx, req.Policy, req.BranchID)
+	approvers, err := s.resolveApproverIDs(ctx, req.Policy, req.BranchID, req.RequesterRole)
 	if err != nil {
 		s.log.Error("identity: approvals fan-out could not resolve approvers", "approval_id", req.ID, "err", err)
 		return
@@ -206,38 +206,57 @@ func (s *Approvals) notifyApprovalDecided(ctx context.Context, req ApprovalReque
 // filtered through CanApprove. The margin arm reads the CONFIGURED floor set the service was wired with
 // (D11, CP0-1 answer B): the fan-out notifies exactly the authority the decide path holds, so a branch
 // floor request reaches the branch's Sales manager, never only the carried default set.
-func (s *Approvals) resolveApproverIDs(ctx context.Context, policy PolicyType, branchID string) ([]string, error) {
+func (s *Approvals) resolveApproverIDs(ctx context.Context, policy PolicyType, branchID, requesterRole string) ([]string, error) {
 	candidates, err := s.store.ListApproverCandidates(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return ResolveApproversFloor(candidates, policy, branchID, s.floorApprovers), nil
+	return ResolveApproversFloor(candidates, policy, branchID, requesterRole, s.floorApprovers), nil
 }
 
-// CanDecide answers whether the caller's authority decides the policy in
-// the branch under the CONFIGURED floor set the service was wired with
-// (D11): the same rule the Decide path runs (four eyes and PENDING are
-// the caller's own to check), offered so a surface that must show what
-// waits on this person (the Home queue's approvals count) reads the
-// configured authority and never a second copy derived from the carried
-// default.
-func (s *Approvals) CanDecide(caller StaffContext, policy PolicyType, branchID string) bool {
-	return CanApproveFloor(caller, policy, branchID, s.floorApprovers)
-}
-
-// CanDecideRequest is CanDecide over one loaded request: the caller's
-// authority decides the request's policy in its branch, AND the decide
-// path's line-bound rule holds (P2-C): a margin request with no line
-// binding, a legacy card filed before the quote desk's door, is decidable
-// by the dealer wide floor set alone. The queue's count reads this, so it
-// counts exactly what the caller could decide, nothing it would only
-// appear to hold.
+// CanDecideRequest answers whether the caller could decide one loaded
+// request under the CONFIGURED floor set the service was wired with (D11),
+// the same rule the Decide path runs (four eyes and PENDING are the
+// caller's own to check): the caller's authority decides the request's
+// policy in its branch, a margin request answers to the branch scoped arm
+// only when a salesperson role filed it (row 743), AND the decide path's
+// line-bound rule holds (P2-C): a margin request with no line binding, a
+// legacy card filed before the quote desk's door, is decidable by the
+// dealer wide floor set alone. The queue's count and list read this, so
+// they show exactly what the caller could decide, nothing it would only
+// appear to hold. There is no policy only form: the rule needs the request.
 func (s *Approvals) CanDecideRequest(caller StaffContext, r ApprovalRequest) bool {
-	if !s.CanDecide(caller, r.Policy, r.BranchID) {
+	return canDecideRequestWith(s.floorApprovers, caller, r)
+}
+
+// canDecideRequestWith is CanDecideRequest over an explicit floor set, the
+// one rule the rail and the sync door both hold.
+func canDecideRequestWith(fa FloorApprovers, caller StaffContext, r ApprovalRequest) bool {
+	if !CanApproveFloor(caller, r.Policy, r.BranchID, r.RequesterRole, fa) {
 		return false
 	}
-	return !(r.Policy == PolicyMargin && r.LineID == "" &&
-		!s.floorApprovers.mayDecideDealerWide(caller.RoleCode))
+	return !(r.Policy == PolicyMargin && r.LineID == "" && !fa.mayDecideDealerWide(caller.RoleCode))
+}
+
+// MayReadRequest answers whether the caller may read one request's card.
+// A floor request's detail carries the resulting margin and the floor in
+// basis points, which with the discount and the product name the cost, and
+// the approvals reads have no money gate of their own (P2-3, round 3): the
+// caller reads a floor request only when it could decide it or filed it
+// itself. Every other policy reads as before.
+func (s *Approvals) MayReadRequest(caller StaffContext, r ApprovalRequest) bool {
+	return mayReadRequestWith(s.floorApprovers, caller, r)
+}
+
+// mayReadRequestWith is MayReadRequest over an explicit floor set.
+func mayReadRequestWith(fa FloorApprovers, caller StaffContext, r ApprovalRequest) bool {
+	if r.Policy != PolicyMargin {
+		return true
+	}
+	if caller.UserID != "" && r.RequestedBy == caller.UserID {
+		return true
+	}
+	return canDecideRequestWith(fa, caller, r)
 }
 
 // ApprovalReconcilePending is one still-PENDING request the messaging sweep must ensure has a card in each
@@ -292,7 +311,7 @@ func (s *Approvals) ApprovalReconcile(ctx context.Context, decidedSince time.Tim
 				// decide path hold (D11): a sweep re-fans to exactly who may
 				// decide, so a newly configured branch approver's card
 				// arrives and a deconfigured one's stops.
-				ApproverIDs: ResolveApproversFloor(candidates, r.Policy, r.BranchID, s.floorApprovers),
+				ApproverIDs: ResolveApproversFloor(candidates, r.Policy, r.BranchID, r.RequesterRole, s.floorApprovers),
 			})
 		case ApprovalApproved, ApprovalRejected:
 			decided = append(decided, ApprovalReconcileDecided{

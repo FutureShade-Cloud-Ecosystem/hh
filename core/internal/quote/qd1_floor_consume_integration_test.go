@@ -296,3 +296,74 @@ func TestQD1_Row10_AnotherLine(t *testing.T) {
 		t.Errorf("a refused line must be untouched, total now %d", got.LineTotalCents)
 	}
 }
+
+// A tombstoned request is gone from every read and write of the rail
+// (round 3, P3): not listed, not decidable, not consumable, not the line's
+// open request. The approvals sync Delete tombstones any card, so the reads
+// must honour deleted_at where the sync reads already do.
+func TestQD1_TombstonedFloorRequestIsGoneFromTheRail(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, prod, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+	lineID, _ := qd1LineBinding(t, pool, quoteID, 1)
+	rail := identity.NewApprovals(identity.NewApprovalRepository(pool))
+
+	approved := qd1FileAndApprove(t, pool, seller, intTrenton, quoteID, lineID, prod, 1, 40)
+	pending, err := rail.FileFloorApproval(ctx, identity.FloorApprovalFiling{
+		RequestedBy: seller, BranchID: intTrenton, SubjectRef: quoteID, Detail: "qd1: tombstone pin",
+		LineNo: 2, DiscPct: 40, LineID: lineID, ProductID: prod,
+	})
+	if err != nil {
+		t.Fatalf("file the pending request: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM permission_approval_requests WHERE id = $1`, pending.ID)
+	})
+	gm := identity.StaffContext{UserID: qd1User(t, pool, "gm-tomb"), Tier: identity.TierLeadership,
+		Scope: identity.ScopeGlobal, Status: identity.StatusActive, RoleCode: "GENERAL_MANAGER"}
+
+	listed := func() map[string]bool {
+		list, err := rail.ListApprovals(ctx, gm, "")
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		got := map[string]bool{}
+		for _, r := range list {
+			got[r.ID] = true
+		}
+		return got
+	}
+	if l := listed(); !l[approved.ID] || !l[pending.ID] {
+		t.Fatalf("both live requests must be listed before the tombstone, got %v", l)
+	}
+	// The negative reads below mean nothing unless the live request IS
+	// answered first: the approved, unused request stands as line 1's open
+	// request until it is tombstoned.
+	if rec, found, err := rail.FloorRequestFor(ctx, seller, intTrenton, quoteID, 1, lineID, prod); err != nil || !found || rec.ID != approved.ID {
+		t.Fatalf("the live approved request must answer FloorRequestFor before the tombstone, got %+v found %v err %v", rec, found, err)
+	}
+
+	if _, err := pool.Exec(ctx,
+		`UPDATE permission_approval_requests SET deleted_at = to_timestamp(0) WHERE id = ANY($1::uuid[])`,
+		[]string{approved.ID, pending.ID}); err != nil {
+		t.Fatalf("tombstone the requests: %v", err)
+	}
+
+	if l := listed(); l[approved.ID] || l[pending.ID] {
+		t.Errorf("a tombstoned request must not be listed, got %v", l)
+	}
+	if err := rail.DecideApproval(ctx, pending.ID, gm, true, "qd1"); err == nil {
+		t.Errorf("a tombstoned request must not be decidable")
+	}
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM permission_approval_requests WHERE id = $1`, pending.ID).Scan(&status); err != nil || status != "PENDING" {
+		t.Errorf("the refused decision must leave the request PENDING, got %q err %v", status, err)
+	}
+	if _, found, err := rail.FloorRequestFor(ctx, seller, intTrenton, quoteID, 1, lineID, prod); err != nil || found {
+		t.Errorf("a tombstoned request must not stand as the line's open request, found %v err %v", found, err)
+	}
+	if qd1Consume(t, pool, seller, intTrenton, quoteID, 1, 40, lineID, prod) {
+		t.Errorf("a tombstoned approved request must not be consumed")
+	}
+}

@@ -19,7 +19,10 @@ package pricing
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 )
 
 // FloorQuestion is the quote module's question about one line write: may
@@ -95,9 +98,16 @@ func (s *Service) EvaluateLineFloor(ctx context.Context, in FloorQuestion) (Floo
 	// to the default floor (P1-3, the PR 117 review's finding).
 	categoryID := ""
 	if s.cat != nil {
-		if cid, err := s.cat.GetCategory(ctx, in.ProductID); err == nil {
-			categoryID = cid
+		cid, err := s.cat.GetCategory(ctx, in.ProductID)
+		if err != nil {
+			// As the resolver does: a failed category read refuses the
+			// decision, it never falls back to the default floor (P2-2).
+			if errors.Is(err, product.ErrNotFound) {
+				return FloorAnswer{}, fmt.Errorf("resolve category: %w", errNotFound)
+			}
+			return FloorAnswer{}, fmt.Errorf("resolve category: %w", err)
 		}
+		categoryID = cid
 	}
 
 	// The floor source: the category policy row the resolver reads, with

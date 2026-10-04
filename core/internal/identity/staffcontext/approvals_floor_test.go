@@ -95,7 +95,7 @@ const qd1LineID = "22222222-2222-4222-8222-222222222223"
 
 func TestQD1_SalesManagerDecidesFloorRequestInOwnBranch(t *testing.T) {
 	f := &fakeStore{approval: ApprovalRequest{
-		ID: "11111111-1111-4111-8111-111111111111", RequestedBy: "u9", BranchID: "b1", Policy: PolicyMargin, LineID: qd1LineID, Status: ApprovalPending,
+		ID: "11111111-1111-4111-8111-111111111111", RequestedBy: "u9", RequesterRole: "INSIDE_SALES", BranchID: "b1", Policy: PolicyMargin, LineID: qd1LineID, Status: ApprovalPending,
 	}}
 	s := NewApprovals(f).WithFloorApprovers(qd1FloorApprovers())
 	if err := s.DecideApproval(context.Background(), "11111111-1111-4111-8111-111111111111", qd1SM("sm1", "b1"), true, "qd1"); err != nil {
@@ -143,7 +143,7 @@ func TestQD1_Row8_InsideSalesCannotDecide(t *testing.T) {
 // filer's choosing, and it stays decidable by the dealer wide set alone.
 func TestQD1_UnboundMarginCardIsNotTheBranchArmsToDecide(t *testing.T) {
 	legacy := ApprovalRequest{
-		ID: "11111111-1111-4111-8111-111111111121", RequestedBy: "u9", BranchID: "b1",
+		ID: "11111111-1111-4111-8111-111111111121", RequestedBy: "u9", RequesterRole: "INSIDE_SALES", BranchID: "b1",
 		Policy: PolicyMargin, Status: ApprovalPending,
 	}
 	s := NewApprovals(&fakeStore{approval: legacy}).WithFloorApprovers(qd1FloorApprovers())

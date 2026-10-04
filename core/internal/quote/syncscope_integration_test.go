@@ -57,6 +57,12 @@ func newSyncFixture(t *testing.T) *syncFixture {
 	t.Helper()
 	pool := intPool(t)
 	ctx := context.Background()
+	// The door decides with the configuration the composition root
+	// publishes (P2-4, round 3); nothing published refuses every write, so
+	// the world publishes the decided default and restores what it found.
+	prevRoles := publishedRoles.Load()
+	PublishRoleConfig(qd1Cfg)
+	t.Cleanup(func() { PublishRoleConfig(prevRoles) })
 	if err := testkit.Build(ctx, testkit.PgxPool(pool)); err != nil {
 		t.Fatalf("fixture build: %v", err)
 	}
