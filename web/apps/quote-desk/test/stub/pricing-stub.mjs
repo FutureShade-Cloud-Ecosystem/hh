@@ -296,6 +296,16 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
     });
     return true;
   }
+  // Pad the log with plain rows, to walk the pager and the window note.
+  if (path === "/_stub/pricing-seed-audit" && request.method === "POST") {
+    readBody(request, response, (body) => {
+      for (let i = 0; i < Number(body.count); i += 1) {
+        logRow("demo-account-sales-manager", "pricing_rule", newId("f"), "UPDATE", "priority", String(i), String(i + 1), undefined);
+      }
+      respondJson(response, 200, { rows: world.audit.length });
+    });
+    return true;
+  }
   // Another editor saved first: the record's version moves under an open form.
   if (path === "/_stub/pricing-bump" && request.method === "POST") {
     readBody(request, response, (body) => {
