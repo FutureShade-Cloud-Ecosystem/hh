@@ -104,11 +104,11 @@ export class QdScopeRules extends PanelBase {
     }
     const summary = scopeRuleSummary(this.rules);
     return html`
-      <p class="dim" style="margin-top:0">
+      <p class="dim flush-top">
         These rules decide what the quote builder suggests. They are data, not code: switch off any that are wrong for this yard.
       </p>
       <p class="dim" data-testid="qr-summary">${summary.line} A rule that is wrong for this yard can be switched off here; nothing else about the quote changes.</p>
-      <table style="margin-top:8px" data-testid="qr-table">
+      <table class="gap-s" data-testid="qr-table">
         <thead>
           <tr>
             <th scope="col">Suggestion</th>

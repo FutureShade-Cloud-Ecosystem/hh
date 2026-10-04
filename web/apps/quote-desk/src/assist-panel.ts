@@ -561,13 +561,13 @@ export class QdQuoteAssist extends PanelBase {
               <button type="button" class="primary" data-action="confirm" data-testid="qa-confirm" ?disabled=${this.adding || payloads.length === 0}>
                 ${this.adding ? "Adding..." : confirmButtonLabel(ex, this.selected)}
               </button>
-              <span class="dim" style="margin:0">${this.selected.length} of ${this.proposals.length} ticked</span>
+              <span class="dim flush">${this.selected.length} of ${this.proposals.length} ticked</span>
             </div>
           `
         : nothing}
       ${this.addNote !== "" ? html`<p class="note" role="status" data-testid="qa-add-note">${this.addNote}</p>` : nothing}
       ${unmatched.length > 0
-        ? html`<div style="margin-top:10px" data-testid="qa-unmatched">
+        ? html`<div class="gap-m" data-testid="qa-unmatched">
             <div class="kicker">couldn't match</div>
             <p class="dim">These stayed here rather than disappearing: add them by hand, or reword and read again.</p>
             <ul>
@@ -581,7 +581,7 @@ export class QdQuoteAssist extends PanelBase {
           </div>`
         : nothing}
       ${ex !== null && this.proposals.length === 0 && unmatched.length === 0 && this.addNote === ""
-        ? html`<p class="dim" style="margin-top:10px">
+        ? html`<p class="dim gap-m">
             Nothing in that text matched the catalogue. Try naming the product the way the catalogue does (a SKU always works), or add the lines by hand.
           </p>`
         : nothing}
@@ -601,7 +601,7 @@ export class QdQuoteAssist extends PanelBase {
       ${f.suggest_query !== ""
         ? html`<div class="row">
             <button type="button" data-action="find" data-code=${f.rule_code}>Find “${f.suggest_query}”</button>
-            <span class="dim" style="margin:0">opens the same review list: you still pick and confirm</span>
+            <span class="dim flush">opens the same review list: you still pick and confirm</span>
           </div>`
         : nothing}
     </li>`;

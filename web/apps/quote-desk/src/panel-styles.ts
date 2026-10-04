@@ -244,4 +244,17 @@ export const panelStyles = css`
     margin-top: 8px;
     font-size: var(--qp-body);
   }
+  /* Spacing utilities, doubled in specificity so a component's own margin rules never win over them. */
+  .flush-top.flush-top {
+    margin-top: 0;
+  }
+  .flush.flush {
+    margin: 0;
+  }
+  .gap-s.gap-s {
+    margin-top: 8px;
+  }
+  .gap-m.gap-m {
+    margin-top: 10px;
+  }
 `;

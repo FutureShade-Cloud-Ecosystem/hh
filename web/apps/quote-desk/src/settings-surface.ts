@@ -453,8 +453,8 @@ export class QdSurfaceSettings extends PanelBase {
           ${drawIcon(iconForId("pencil:info"), 19)}
         </button>
       </h3>
-      <div class="row" style="margin-top:0">
-        <label class="f" for="qs-scope" style="margin:0">Applies to</label>
+      <div class="row flush-top">
+        <label class="f flush" for="qs-scope">Applies to</label>
         <select id="qs-scope" data-field="scope" data-testid="qs-scope" style="width:auto">
           <option value="branch">This branch</option>
           <option value="dealer">Dealer wide default</option>
@@ -572,8 +572,8 @@ export class QdSurfaceSettings extends PanelBase {
           ${drawIcon(iconForId("pencil:info"), 19)}
         </button>
       </h3>
-      <div class="row" style="margin-top:0">
-        <label class="f" for="qs-profile" style="margin:0">Profile</label>
+      <div class="row flush-top">
+        <label class="f flush" for="qs-profile">Profile</label>
         <select id="qs-profile" data-field="profile" data-testid="qs-profile" style="width:auto" ?disabled=${locked}>
           ${PROFILES.map((p) => html`<option>${p}</option>`)}
         </select>

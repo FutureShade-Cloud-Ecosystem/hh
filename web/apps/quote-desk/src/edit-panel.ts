@@ -707,7 +707,7 @@ export class QdQuoteEdit extends PanelBase {
     if (!canEdit(view, EDIT_VALID_UNTIL)) return nothing;
     return html`
       <div class="row">
-        <label for="vu" style="margin:0">Expiry</label>
+        <label class="flush" for="vu">Expiry</label>
         <input id="vu" type="date" data-field="expiry" />
         <button type="button" data-action="save-expiry" ?disabled=${this.busy}>Save expiry</button>
         <span class="picked">Clear the date to remove the expiry entirely.</span>
@@ -720,7 +720,7 @@ export class QdQuoteEdit extends PanelBase {
     return html`
       <fieldset>
         <legend>Add a line</legend>
-        <div class="row" style="margin-top:0">
+        <div class="row flush-top">
           <input
             class="wide"
             type="search"
@@ -757,7 +757,7 @@ export class QdQuoteEdit extends PanelBase {
       <fieldset>
         <legend>Customer link</legend>
         ${offered
-          ? html`<div class="row" style="margin-top:0">
+          ? html`<div class="row flush-top">
               <button type="button" data-action="mint-link" ?disabled=${this.busy}>Create link to copy</button>
               <span class="picked">Nothing is emailed: copy the link and send it yourself. The customer can accept online.</span>
             </div>
@@ -773,7 +773,7 @@ export class QdQuoteEdit extends PanelBase {
             </div>`
           : nothing}
         ${this.links.length > 0
-          ? html`<table style="margin-top:8px" data-testid="qe-links">
+          ? html`<table class="gap-s" data-testid="qe-links">
               <thead>
                 <tr>
                   <th>Issued</th>
@@ -824,7 +824,7 @@ export class QdQuoteEdit extends PanelBase {
           moment, and the stock this quote is holding becomes a firm reservation.
         </p>
         <label for="convert-fulfilment">How is it leaving?</label>
-        <div class="row" style="margin-top:0">
+        <div class="row flush-top">
           <select id="convert-fulfilment" data-field="fulfilment" data-testid="qe-fulfilment">
             <option value="">Pickup at the counter (default)</option>
             <option value="WILL_CALL">Will-call: hold it on the rack</option>
@@ -845,7 +845,7 @@ export class QdQuoteEdit extends PanelBase {
     return html`
       <fieldset data-testid="qe-compare">
         <legend>Compare line ${this.compareLine}</legend>
-        <div class="row" style="margin-top:0">
+        <div class="row flush-top">
           <input
             class="wide"
             type="search"
@@ -874,7 +874,7 @@ export class QdQuoteEdit extends PanelBase {
             </ul>`
           : nothing}
         ${this.compareRows.length > 0
-          ? html`<table style="margin-top:8px">
+          ? html`<table class="gap-s">
                 <thead>
                   <tr>
                     <th>Option</th>

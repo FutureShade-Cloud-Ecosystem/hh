@@ -105,7 +105,7 @@ export class QdAcceptAdmin extends PanelBase {
     if (this.settings === null) return html`<p class="dim">Loading acceptance settings...</p>`;
     const locked = this.writeRefusal !== "" || !this.settings.switchWired;
     return html`
-      <div class="row" style="margin-top:0">
+      <div class="row flush-top">
         <label class="sw">
           <input type="checkbox" data-field="multi" data-testid="qa-switch" ?disabled=${this.busy || locked} />
           Allow accepting a quote more than once
