@@ -52,11 +52,19 @@ is idempotent replay: the settle's key is checked first, on the transaction; a r
 nothing and answers the first payment as stored (the reference as recorded and the receiver), and the
 same key with a different method or amount is a 409.
 
-The connection count is one per call, with one stated exception outside this item: when a conversion
-holds the transaction, inventory's reserve reads its allocation policy through the pool, a nested read
-this file cannot move. So the store admits at most pool size minus one actions at a time (at least one),
-which leaves a connection for that read and cannot deadlock a pool of any size of two or more. The
-probes run pools of four and of one (without holds, where no nested read exists).
+The connection count is one per call. When a conversion holds the transaction, inventory's reserve
+reads its allocation policy through the pool, a nested read this file cannot move. So the store admits
+at most pool size minus one actions at a time (at least one), which leaves a connection for that read.
+That holds for THIS door alone: counter actions never wait on one another's second connection, and
+three counter conversions at a pool of four finish with an unrelated read answering at once. It is not
+a promise about the pool as a whole. A plain conversion (the existing door, which this item does not
+touch) holds one connection and then needs a second for the hold check and the allocation policy, so
+a counter conversion beside a plain conversion at a pool of two, or enough plain conversions at once at
+a pool of four, can stall each other until the connection wait times out. That hazard predates this
+item and the door widens it by adding callers of the same pattern. The fix lives in inventory's
+policy read, which is outside this item's files. At a pool of one, any cash conversion with holds
+waits for the nested read and fails after its timeout. The probes run pools of four and of one (without
+holds, where no nested read exists).
 
 ## The contract text
 
