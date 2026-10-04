@@ -702,14 +702,19 @@ func (s *StaffService) recordIntChange(ctx context.Context, q audit.Execer, acto
 // expired or frozen quote simply OFFERS NOTHING, none of it may fail the quote read. The 409 belongs
 // exclusively to an actual edit attempt.
 //
-// Since plan 3.3 the caller's authority contributes the ownership axis: a
-// Work caller who does not own the quote is offered nothing, because the
-// write path would refuse it, and a button that appears must be a button
-// that works.
-func (s *StaffService) editableFieldsFor(status string, validUntil *time.Time, owns bool) []string {
+// Since plan 3.3 the caller's authority contributes the ownership axis, and
+// the axis is the WRITE LADDER's own: below Work edits nothing, a Work
+// caller edits only its own quotes, and a Manage caller edits any quote in
+// its branch. A Sales manager reading another salesperson's quote is
+// therefore offered the fields, because a button that appears must be a
+// button that works.
+func (s *StaffService) editableFieldsFor(status string, validUntil *time.Time, level roleconfig.Level, owns bool) []string {
 	out := make([]string, 0, len(quoteFieldOrder))
-	if quoteExpired(validUntil, s.now()) || !owns {
-		return out // an expired quote, or one this caller may not edit, offers nothing (D2), [] not null
+	if quoteExpired(validUntil, s.now()) {
+		return out // an expired quote offers nothing (D2), [] not null
+	}
+	if !level.AtLeast(roleconfig.LevelWork) || (level == roleconfig.LevelWork && !owns) {
+		return out // a caller the write ladder would refuse offers nothing, [] not null
 	}
 	for _, f := range quoteFieldOrder {
 		if !quoteEditRules[f].from[status] {

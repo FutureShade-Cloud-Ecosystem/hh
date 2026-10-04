@@ -171,6 +171,34 @@ func TestQD1_WorkCallerReadsOthersQuoteWithEmptyOfferAndOwnerNamed(t *testing.T)
 	}
 }
 
+// P2-1: the offer must take the caller's LEVEL, not ownership alone. A
+// Sales manager (Manage) may take over any quote in its branch, so its
+// read of another salesperson's quote offers the edit fields: a control
+// that appears is a control that works, and the write accepts it.
+func TestQD1_ManageCallerOfferedEditsOnOthersQuote(t *testing.T) {
+	pool := intPool(t)
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	seller := qd1User(t, pool, "seller")
+	mgr := qd1User(t, pool, "mgr")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+
+	svc := qd1Svc(t, pool, now)
+	ctx := qCtxAs(intStaff(intTrenton))
+	ctx = qd1WithRole(ctx, "SALES_MANAGER", intTrenton, mgr)
+
+	view, err := svc.StaffQuoteRead(ctx, quoteID)
+	if err != nil {
+		t.Fatalf("a Manage caller must read any quote in its branch: %v", err)
+	}
+	if len(view.EditableFields) == 0 {
+		t.Fatal("a Sales manager reading another salesperson's quote must be offered the edit fields, got none")
+	}
+	// And the offered control works: the write path accepts the manager's edit.
+	if _, err := svc.EditLineQty(ctx, quoteID, 1, "5"); err != nil {
+		t.Errorf("the offered edit must be accepted by the write path: %v", err)
+	}
+}
+
 // "Own" is the salesperson when one is set, else the creator.
 func TestQD1_OwnIsSalespersonElseCreator(t *testing.T) {
 	pool := intPool(t)
