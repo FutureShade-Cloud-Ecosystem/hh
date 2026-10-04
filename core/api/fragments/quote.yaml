@@ -507,14 +507,23 @@ paths:
       tags: [staff-quote]
       summary: Flip the dealer's multi-acceptance switch
       description: >-
-        Admin-gated in the service (Tier-1 global), audited in both
-        directions. allow_multi_accept is required: a body that omits it is
-        refused rather than read as false, because this one field decides
-        whether a duplicate order can be minted.
+        The switch is dealer wide, so CP0-5 answer A gives the write to the
+        General Manager alone: the rule runs in the service, in words, and
+        any other caller is refused with 403 naming the role. The gate
+        sits at read so the General Manager (Read on the Quote Desk)
+        reaches the service. Every flip is audited in both directions.
+        allow_multi_accept is required: a body that omits it is refused
+        rather than read as false, because this one field decides whether
+        a duplicate order can be minted.
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
-        level: manage
+        level: read
+        reason: >-
+          The dealer wide switch is the General Manager's alone under
+          CP0-5 answer A, and that rule runs in the service in words; the
+          gate must let the General Manager (Read on the Quote Desk)
+          through to it.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -569,14 +578,24 @@ paths:
       tags: [staff-quote]
       summary: Write the dealer or branch quote-builder policy
       description: >-
-        Admin-gated in the service (Tier-1 global), exactly like the
-        acceptance settings. Out-of-bounds knobs are refused in words with 422
-        before any database CHECK can fire; the 422 body is the shared Error
-        envelope.
+        The CP0-5 answer A rule runs in the service, in words: a caller
+        holding Manage on the Quote Desk writes a branch row it reaches
+        (the Sales manager under the decided default), and the General
+        Manager alone writes the NULL dealer default row; any other caller
+        is refused with 403 naming the role. The gate therefore sits at
+        read, so both named roles reach the service (the General Manager
+        holds Read on the Quote Desk). Out-of-bounds knobs are refused in
+        words with 422 before any database CHECK can fire; the 422 body is
+        the shared Error envelope.
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
-        level: manage
+        level: read
+        reason: >-
+          The CP0-5 answer A rule runs in the service in words (Manage
+          writes a branch row it reaches, the General Manager the dealer
+          default), so the gate must let both named roles through; the
+          General Manager holds Read on the Quote Desk.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
