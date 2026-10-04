@@ -520,18 +520,22 @@ func rulePriceLogRows(caller identity.StaffContext, quoteID, productID string, d
 // write rather than being swallowed after the commit. lineNo is fed by the
 // write itself: the add learns its line number only inside the lock, so the
 // rows are built without one and named here. changed is the write's own
-// verdict on whether it moved the line: an idempotent rewrite (the same
-// discount or the same quantity at the same resolved figures) owes no row,
-// so a retried request does not log twice.
+// verdict on whether it moved the line. It gates the UPDATE rows only: an
+// idempotent rewrite (the same discount or the same quantity at the same
+// resolved figures) owes no UPDATE row, so a retried request does not log
+// twice. A BYPASS row belongs to the clearing, not to the line moving: the
+// plan carries a clearing only when this write stamped a new one or used up
+// an approval (a write riding a standing clearing carries none), so the row
+// is written whether or not the line moved.
 func (s *StaffService) pricingLogHook(rows []pricing.FloorRecord) func(context.Context, pgx.Tx, int, bool) error {
 	if s.floor == nil || len(rows) == 0 {
 		return nil
 	}
 	return func(ctx context.Context, tx pgx.Tx, lineNo int, changed bool) error {
-		if !changed {
-			return nil
-		}
 		for _, rec := range rows {
+			if !changed && rec.Action != "BYPASS" {
+				continue
+			}
 			rec.LineNo = lineNo
 			if err := s.floor.RecordFloorDecisionTx(ctx, tx, rec); err != nil {
 				return err
