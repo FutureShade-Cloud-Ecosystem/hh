@@ -6620,6 +6620,30 @@ type QuoteConvertResult struct {
 	OrderNo string `json:"order_no"`
 }
 
+type QuoteOrderPaymentRequest struct {
+	Method         string `json:"method"`
+	AmountCents    int64  `json:"amount_cents"`
+	Reference      string `json:"reference"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type QuoteOrderPaymentResult struct {
+	OrderId           string    `json:"order_id"`
+	OrderNo           string    `json:"order_no"`
+	InvoiceId         string    `json:"invoice_id"`
+	InvoiceNo         string    `json:"invoice_no"`
+	InvoiceTotalCents int64     `json:"invoice_total_cents"`
+	PaymentId         string    `json:"payment_id"`
+	PaymentNo         string    `json:"payment_no"`
+	Method            string    `json:"method"`
+	AmountCents       int64     `json:"amount_cents"`
+	ReceivedAt        time.Time `json:"received_at"`
+	Reference         string    `json:"reference"`
+	BalanceCents      int64     `json:"balance_cents"`
+	Replayed          bool      `json:"replayed"`
+	Converted         bool      `json:"converted"`
+}
+
 type QuoteRelatedDocument struct {
 	Kind       string    `json:"kind"`
 	Id         string    `json:"id"`
