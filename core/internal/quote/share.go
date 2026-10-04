@@ -528,10 +528,17 @@ func (s *StaffService) recordAcceptance(ctx context.Context, tx pgx.Tx, quoteID,
 		return 0, fmt.Errorf("quote-acceptance audit: %w", err)
 	}
 	// The seq is read back inside the same tx so the acceptance row can anchor to it.
+	// A keyed acceptance anchors to the row carrying ITS key (client_id), never merely the latest
+	// QUOTE_ACCEPTED row, so a row that failed to land can never anchor to an earlier acceptance's.
 	var seq int64
-	if serr := tx.QueryRow(ctx,
-		`SELECT seq FROM audit_log WHERE entity_type='quote' AND entity_id=$1 AND action=$2
-		  ORDER BY seq DESC LIMIT 1`, quoteID, audit.ActQuoteAccepted).Scan(&seq); serr != nil {
+	anchorSQL, anchorArgs := `SELECT seq FROM audit_log WHERE entity_type='quote' AND entity_id=$1 AND action=$2
+		  ORDER BY seq DESC LIMIT 1`, []any{quoteID, audit.ActQuoteAccepted}
+	if r.idemKey != "" {
+		anchorSQL = `SELECT seq FROM audit_log WHERE entity_type='quote' AND entity_id=$1 AND action=$2
+		  AND changes->>'client_id' = $3 ORDER BY seq DESC LIMIT 1`
+		anchorArgs = append(anchorArgs, r.idemKey)
+	}
+	if serr := tx.QueryRow(ctx, anchorSQL, anchorArgs...).Scan(&seq); serr != nil {
 		if r.idemKey != "" {
 			// The key is found through the anchor, so a keyed acceptance without one is refused.
 			return 0, fmt.Errorf("quote-acceptance audit anchor: %w", serr)

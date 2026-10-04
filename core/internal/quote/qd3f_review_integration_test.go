@@ -162,3 +162,42 @@ func TestIntegration_QD3f_ReplayWritesNoShareEvent(t *testing.T) {
 		t.Errorf("ACCEPT events after a dead link replay = %d, want still 2", n)
 	}
 }
+
+// P3-1: the anchor is the audit row carrying THIS key. A trigger swallows the second acceptance's
+// audit insert (unreachable today, the hardening is for the day something does); the keyed accept must
+// then be refused and write nothing, never anchor to the earlier acceptance's row.
+func TestIntegration_QD3f_AnchorIsTheRowCarryingThisKey(t *testing.T) {
+	pool := intPool(t)
+	now := qd3fNow()
+	setMultiAccept(t, pool, true)
+	svc, quoteID, token, _ := qd3fMinted(t, pool, now)
+	ctx := context.Background()
+	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyA); err != nil {
+		t.Fatalf("attempt 1: %v", err)
+	}
+	for _, ddl := range []string{
+		`CREATE OR REPLACE FUNCTION qd3f_swallow() RETURNS trigger LANGUAGE plpgsql AS $$
+		 BEGIN
+		   IF NEW.changes->>'client_id' = '` + qd3dKeyB + `' THEN RETURN NULL; END IF;
+		   RETURN NEW;
+		 END $$`,
+		`CREATE TRIGGER qd3f_swallow BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION qd3f_swallow()`,
+	} {
+		if _, err := pool.Exec(ctx, ddl); err != nil {
+			t.Fatalf("install trigger: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DROP TRIGGER IF EXISTS qd3f_swallow ON audit_log`)
+		_, _ = pool.Exec(context.Background(), `DROP FUNCTION IF EXISTS qd3f_swallow()`)
+	})
+	if _, err := svc.AcceptByTokenKeyed(ctx, token, qd3fCustomer, true, qd3dKeyB); err == nil {
+		t.Errorf("a keyed accept whose own audit row is missing must be refused, not anchored to another row")
+	}
+	if n := acceptanceRows(t, pool, quoteID); n != 1 {
+		t.Errorf("acceptance rows = %d, want 1 (the refused accept wrote nothing)", n)
+	}
+	if n := qd3fKeyedAuditRows(t, pool, quoteID, qd3dKeyB); n != 0 {
+		t.Errorf("keyed audit rows for the refused key = %d, want 0", n)
+	}
+}
