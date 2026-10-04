@@ -12,6 +12,14 @@ package main
 // branch's Sales manager decides a floor request of its own branch from
 // the device as it does at the desk. Four eyes and the branch fence hold
 // on the same door.
+//
+// Isolation caveat: the sync door reads the configured floor set from a
+// package global that wireMoney publishes (publishedFloor, last writer
+// wins across every test in this process). Every wiring in this package
+// uses the default floor lists, so the legs below are not racing one
+// another's set; a future test that wires a NON default floor set must
+// restore the default set when it ends, or it changes what these legs
+// decide.
 
 import (
 	"context"
