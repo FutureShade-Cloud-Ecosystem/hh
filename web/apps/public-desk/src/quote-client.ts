@@ -114,6 +114,12 @@ function stringAt(record: Record<string, unknown>, key: string): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
+/** A string that must be PRESENT but may be empty (a line's words can be ''). */
+function presentStringAt(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  return typeof value === "string" ? value : null;
+}
+
 function integerAt(record: Record<string, unknown>, key: string): number | null {
   const value = record[key];
   return typeof value === "number" && Number.isInteger(value) ? value : null;
@@ -163,7 +169,7 @@ export function validateQuoteView(value: unknown): QuoteViewRef | null {
     const row = line as unknown;
     if (!isRecord(row)) return null;
     const lineNo = integerAt(row, "line_no");
-    const description = stringAt(row, "description");
+    const description = presentStringAt(row, "description");
     const qtyEntered = stringAt(row, "qty_entered");
     const uomEntered = stringAt(row, "uom_entered");
     const unitPriceCents = integerAt(row, "unit_price_cents");

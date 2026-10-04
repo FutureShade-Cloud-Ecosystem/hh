@@ -193,6 +193,21 @@ test("an answer missing a field, or carrying a wrong one, is refused whole", () 
   assert.equal(validateQuoteView(badLineMoney), null, "a line total that is not an integer is refused");
 });
 
+test("a line whose description is the empty string is served, a line with no description field is refused", () => {
+  // The core's line read can serve '' (the legacy fallback when a line has
+  // neither its own words nor a product name): one such line must not turn
+  // the whole page into "try again shortly".
+  const emptyDescription = { ...FULL_VIEW, lines: [{ ...FULL_VIEW.lines[0], description: "" }] };
+  const view = validateQuoteView(emptyDescription);
+  assert.notEqual(view, null);
+  assert.equal(view.lines[0].description, "");
+  const noDescription = { ...FULL_VIEW, lines: [{ ...FULL_VIEW.lines[0] }] };
+  delete noDescription.lines[0].description;
+  assert.equal(validateQuoteView(noDescription), null, "a missing description field is still refused");
+  const numeric = { ...FULL_VIEW, lines: [{ ...FULL_VIEW.lines[0], description: 5 }] };
+  assert.equal(validateQuoteView(numeric), null, "a non string description is refused");
+});
+
 test("the acceptance result parses, and an answer without its timestamp is refused", () => {
   const ok = validateAcceptance({
     quote_no: "Q-25",
