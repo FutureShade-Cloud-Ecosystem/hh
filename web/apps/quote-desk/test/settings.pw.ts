@@ -27,11 +27,11 @@ async function openScreenSettings(page: Page): Promise<void> {
 }
 
 async function ledger(page: Page): Promise<{
-  policyWrites: Array<{ scope: string }>;
+  policyWrites: Array<{ scope: string; default_validity_days?: number }>;
   itemsWrites: Array<{ body: { profile: string; count: number } }>;
 }> {
   return (await (await page.request.get("/_stub/state")).json()) as {
-    policyWrites: Array<{ scope: string }>;
+    policyWrites: Array<{ scope: string; default_validity_days?: number }>;
     itemsWrites: Array<{ body: { profile: string; count: number } }>;
   };
 }
@@ -246,4 +246,55 @@ test("a caller outside the settings roles sees the server's sentences in place o
   await page.getByTestId("qs-items-save").click();
   await expect(page.getByTestId("qs-items-lock")).toContainText("Only an administrator saves the dealer's screen layout");
   await expect(page.getByTestId("qs-items-save")).toBeDisabled();
+});
+
+// ── PR 121 round 1: a switch never wipes or misdirects what the person typed ──
+
+test("a value typed right after the scope switch is not wiped by the slow read, and the save carries it", async ({ page }) => {
+  await page.request.put("/_stub/general-manager", { data: { member: true } });
+  await signIn(page);
+  await openScreenSettings(page);
+  await page.route("**/api/v1/quotes/policy**", async (route) => {
+    if (route.request().method() === "GET") await new Promise((resolve) => setTimeout(resolve, 700));
+    await route.continue();
+  });
+  await page.getByTestId("qs-scope").selectOption("dealer");
+  // The form is held (disabled) until the read lands, so this fill waits for it and is then the last word.
+  await page.getByTestId("qs-validity-days").fill("77");
+  await page.waitForTimeout(900);
+  await expect(page.getByTestId("qs-validity-days")).toHaveValue("77");
+  await page.getByTestId("qs-policy-save").click();
+  await expect(page.getByTestId("qs-notice")).toContainText("Quote settings saved");
+  const writes = (await ledger(page)).policyWrites;
+  expect(writes[writes.length - 1]).toMatchObject({ scope: "dealer", default_validity_days: 77 });
+  await page.request.put("/_stub/general-manager", { data: { member: false } });
+});
+
+test("a dirty branch form is never saved to the branch that is open now", async ({ page }) => {
+  await signIn(page);
+  await openScreenSettings(page);
+  await page.getByTestId("qs-validity-days").fill("55");
+  const before = (await ledger(page)).policyWrites.length;
+  await page.locator("qd-surface-settings").evaluate((el) => {
+    (el as unknown as { branchId: string }).branchId = "another-branch";
+  });
+  await expect(page.getByTestId("qs-notice")).toContainText("The branch changed");
+  await expect(page.getByTestId("qs-validity-days")).not.toHaveValue("55");
+  await page.getByTestId("qs-policy-save").click();
+  const writes = (await ledger(page)).policyWrites;
+  for (const write of writes.slice(before)) expect(write).not.toMatchObject({ default_validity_days: 55 });
+});
+
+test("a refusal on one branch does not lock another branch's row", async ({ page }) => {
+  await signIn(page);
+  await openScreenSettings(page);
+  await page.getByTestId("qs-scope").selectOption("dealer");
+  await page.getByTestId("qs-policy-save").click();
+  await expect(page.getByTestId("qs-policy-lock")).toContainText("The dealer wide default is set by the General Manager");
+  await page.getByTestId("qs-scope").selectOption("branch");
+  await expect(page.getByTestId("qs-policy-save")).toBeEnabled();
+  await page.locator("qd-surface-settings").evaluate((el) => {
+    (el as unknown as { branchId: string }).branchId = "another-branch";
+  });
+  await expect(page.getByTestId("qs-policy-save")).toBeEnabled();
 });

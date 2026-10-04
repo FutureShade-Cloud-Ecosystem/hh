@@ -64,11 +64,11 @@ export class QdQuoteSettings extends PanelBase {
         <qd-surface-settings></qd-surface-settings>
       </details>
       <details class="box" data-testid="qa-details">
-        <summary>Acceptance settings (administrators)</summary>
+        <summary>Acceptance settings</summary>
         <qd-accept-admin></qd-accept-admin>
       </details>
       <details class="box" data-testid="qr-details">
-        <summary>Scope suggestion rules (administrators)</summary>
+        <summary>Scope suggestion rules</summary>
         <qd-scope-rules></qd-scope-rules>
       </details>
     `;

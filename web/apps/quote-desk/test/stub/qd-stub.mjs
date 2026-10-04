@@ -1165,7 +1165,7 @@ const server = createServer(async (request, response) => {
       }
       const { effective_chips: _skip, ...row } = body;
       policyRows.set(dealerRow ? "" : body.branch_id, row);
-      policyWrites.push({ scope: dealerRow ? "dealer" : "branch", user_id: userId });
+      policyWrites.push({ scope: dealerRow ? "dealer" : "branch", user_id: userId, branch_id: body.branch_id ?? null, default_validity_days: body.default_validity_days });
       respondJson(response, 200, { ...effectivePolicy(dealerRow ? "" : body.branch_id), ...(dealerRow ? {} : { branch_id: body.branch_id }) });
     });
     return;

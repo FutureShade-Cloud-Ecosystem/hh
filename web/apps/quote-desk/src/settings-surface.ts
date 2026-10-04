@@ -53,7 +53,11 @@ export class QdSurfaceSettings extends PanelBase {
   @state() private roleItems: WireItem[] = [];
   @state() private drafts: Record<string, ResolvedItem[]> = {};
   /** A refused write locks its scope: the server's sentence, in place of an enabled save. */
-  @state() private policyLocks: Partial<Record<Scope, string>> = {};
+  @state() private policyLocks: Record<string, string> = {};
+  /** True from a scope or branch switch until its read lands: the form is disabled, so nothing typed is ever overwritten. */
+  @state() private policyLoading = false;
+  /** The scope and branch the form on screen was loaded for; a save is refused when the panel has moved on. */
+  private formKey = "";
   @state() private itemsLock = "";
   /** The policy form's own refusal, said beside Save policy, and the field it names. */
   @state() private policyProblem: { field: string; message: string } | null = null;
@@ -166,7 +170,23 @@ export class QdSurfaceSettings extends PanelBase {
   ];
 
   protected override willUpdate(changed: Map<string, unknown>): void {
-    if (changed.has("client") || changed.has("branchId")) this.reload();
+    if (changed.has("client")) {
+      this.reload();
+    } else if (changed.has("branchId")) {
+      // The form belongs to the branch it was loaded for. A branch row's unsaved edits are dropped, said
+      // plainly, and the new branch's row is read; the dealer wide row does not depend on the branch.
+      if (this.scope === "branch") {
+        if (this.policyDirty) this.notice = "The branch changed, so the unsaved quote settings were dropped and this branch's were read.";
+        this.policyDirty = false;
+        void this.loadPolicy(true);
+      }
+      void this.loadItems();
+    }
+  }
+
+  /** The key a lock and a loaded form are bound to: the dealer row, or one branch's row. */
+  private lockKey(): string {
+    return this.scope === "dealer" ? "dealer" : `branch:${this.branchId}`;
   }
 
   reload(): void {
@@ -197,14 +217,18 @@ export class QdSurfaceSettings extends PanelBase {
     const client = this.client;
     if (client === null) return;
     const seq = ++this.policySeq;
+    const key = this.lockKey();
+    if (force) this.policyLoading = true;
     const result = await client.readPolicy(this.scopeBranch());
     if (seq !== this.policySeq) return;
+    this.policyLoading = false;
     if (!result.ok) {
       this.error = writeRefusalLine(result.status, result.error);
       return;
     }
     if (this.policyDirty && !force) return;
     this.policyDirty = false;
+    this.formKey = key;
     this.policy = result.value;
     this.chipsPick = [...result.value.quick_chip_set];
     this.numDraft = {};
@@ -252,7 +276,15 @@ export class QdSurfaceSettings extends PanelBase {
   private async savePolicy(): Promise<void> {
     const client = this.client;
     const policy = this.policy;
-    if (client === null || policy === null || this.busy) return;
+    if (client === null || policy === null || this.busy || this.policyLoading) return;
+    if (this.formKey !== this.lockKey()) {
+      // The form was loaded for another scope or branch: never write it to this one.
+      this.error = "These settings were loaded for another branch and were not saved. They are being read again.";
+      this.notice = "";
+      this.policyDirty = false;
+      void this.loadPolicy(true);
+      return;
+    }
     const candidate: QuotePolicyWire = { ...policy, quick_chip_set: this.chipsPick };
     const bad = firstPolicyProblem(candidate);
     if (bad !== null) {
@@ -265,16 +297,17 @@ export class QdSurfaceSettings extends PanelBase {
     this.busy = true;
     this.error = "";
     this.notice = "";
-    const scope = this.scope;
+    const lockKey = this.lockKey();
     const result = await client.putPolicy(policyBody(candidate, this.scopeBranch()));
     this.busy = false;
     if (!result.ok) {
       const line = writeRefusalLine(result.status, result.error);
-      if (result.status === 403) this.policyLocks = { ...this.policyLocks, [scope]: line };
+      if (result.status === 403) this.policyLocks = { ...this.policyLocks, [lockKey]: line };
       else this.error = line;
       return;
     }
     this.policyDirty = false;
+    this.formKey = lockKey;
     this.policy = result.value;
     this.chipsPick = [...result.value.quick_chip_set];
     this.numDraft = {};
@@ -406,8 +439,8 @@ export class QdSurfaceSettings extends PanelBase {
   private renderPolicy() {
     const p = this.policy;
     if (p === null) return html`<div class="box"><p class="dim">Loading the quote settings...</p></div>`;
-    const lock = this.policyLocks[this.scope] ?? "";
-    const locked = lock !== "";
+    const lock = this.policyLocks[this.lockKey()] ?? "";
+    const locked = lock !== "" || this.policyLoading;
     return html`<div class="box" data-testid="qs-policy">
       <h3>
         Quote policy
@@ -426,7 +459,7 @@ export class QdSurfaceSettings extends PanelBase {
           <option value="branch">This branch</option>
           <option value="dealer">Dealer wide default</option>
         </select>
-        <span class="picked">The server decides who may save which: a branch manager sets its branch, the General Manager the dealer default.</span>
+        <span class="picked">The server decides who may save which.</span>
       </div>
       <div class="knobs" style="margin-top:12px">
         <div>
@@ -477,7 +510,7 @@ export class QdSurfaceSettings extends PanelBase {
           <label class="check"><input type="checkbox" data-field="send_sms_enabled" data-testid="qs-send-sms" ?disabled=${locked} /> Send by text (SMS)</label>
         </div>
       </div>
-      ${locked ? html`<p class="lock" role="status" data-testid="qs-policy-lock">${lock}</p>` : nothing}
+      ${lock !== "" ? html`<p class="lock" role="status" data-testid="qs-policy-lock">${lock}</p>` : nothing}
       <div class="row saverow">
         <button type="button" class="primary" data-action="save-policy" data-testid="qs-policy-save" ?disabled=${this.busy || locked}>Save policy</button>
         ${this.policyProblem !== null
