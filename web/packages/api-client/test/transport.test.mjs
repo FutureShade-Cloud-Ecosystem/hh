@@ -198,7 +198,7 @@ test("quotePublicAcceptQuote sends call.idempotencyKey as the Idempotency-Key he
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const client = new api.ApiClient({ baseUrl: baseUrlOf(server) });
-    const body = { typed_name: "Dana Reyes", accepted: true };
+    const body = { typed_name: "Customer One", accepted: true };
     const key = "7b1c2d3e-4f50-4a61-8b72-93a4b5c6d7e8";
     await api.publicApi.quotePublicAcceptQuote(client, "tok", body, { idempotencyKey: key });
     await api.publicApi.quotePublicAcceptQuote(client, "tok", body, { idempotencyKey: key });
