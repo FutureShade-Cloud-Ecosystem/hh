@@ -549,7 +549,7 @@ func (r *ApprovalRepository) ListApprovals(ctx context.Context, status string, b
 	             COALESCE(subject_ref,''), COALESCE((data->>'amount_cents')::bigint, 0),
 	             COALESCE(data->>'line_id',''),
 	             status, COALESCE(decided_by::text,'')
-	      FROM permission_approval_requests WHERE ($1 = '' OR status = $1)`
+	      FROM permission_approval_requests WHERE deleted_at IS NULL AND ($1 = '' OR status = $1)`
 	args := []any{status}
 	if branches != nil {
 		q += ` AND branch_id = ANY($2::uuid[])`
@@ -593,7 +593,7 @@ func (r *ApprovalRepository) GetApproval(ctx context.Context, id string) (Approv
 		       COALESCE(subject_ref,''), COALESCE((data->>'amount_cents')::bigint, 0),
 		       COALESCE(data->>'line_id',''),
 		       status, COALESCE(decided_by::text,'')
-		FROM permission_approval_requests WHERE id = $1`, id).Scan(
+		FROM permission_approval_requests WHERE id = $1 AND deleted_at IS NULL`, id).Scan(
 		&a.ID, &a.RequestedBy, &a.BranchID, &policy, &a.Detail,
 		&a.SubjectRef, &a.AmountCents, &a.LineID, &st, &a.DecidedBy)
 	if err != nil {
@@ -692,6 +692,7 @@ func (r *ApprovalRepository) FloorRequestFor(ctx context.Context, requestedBy, b
 		SELECT id::text, status, COALESCE((data->>'line_no')::int, 0), COALESCE((data->>'disc_pct')::int, 0)
 		FROM permission_approval_requests
 		WHERE requested_by = $1 AND branch_id = $2 AND policy_type = 'MARGIN_BELOW_MINIMUM'
+		  AND deleted_at IS NULL
 		  AND subject_ref = $3 AND COALESCE((data->>'line_no')::int, 0) = $4
 		  AND COALESCE(data->>'line_id', '') = $5
 		  AND COALESCE(data->>'product_id', '') = $6
@@ -728,6 +729,7 @@ func (r *ApprovalRepository) ConsumeApprovedFloorTx(ctx context.Context, tx pgx.
 		WHERE id = (
 			SELECT id FROM permission_approval_requests
 			WHERE requested_by = $1 AND branch_id = $2 AND policy_type = 'MARGIN_BELOW_MINIMUM'
+			  AND deleted_at IS NULL
 			  AND subject_ref = $3 AND status = 'APPROVED' AND (data->>'used') IS NULL
 			  AND COALESCE((data->>'line_no')::int, 0) = $4
 			  AND COALESCE((data->>'disc_pct')::int, 0) >= $5
