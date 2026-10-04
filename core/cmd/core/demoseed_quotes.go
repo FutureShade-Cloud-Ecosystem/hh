@@ -42,6 +42,22 @@
 // (demoFloorBps), asserted against the database by the world's proof so a changed policy fails loudly
 // rather than seeding a stale margin.
 //
+// WHAT THIS WORLD DOES NOT CARRY, and what a tester will see for it:
+//
+//   - seq. The real writers stamp quotes.seq and the floor request's seq from scope_sequences
+//     (edit_repository.go CreateQuote, approvals.go), the counter the sync feeds read by. The applier
+//     writes INSERT ... DO NOTHING and nothing else, so it cannot advance that counter, and a seq
+//     written without advancing it would collide with the next real write. The rows stay seq NULL:
+//     the Quote Desk reads over REST and shows them, a sync client never receives them.
+//   - the side rows the real paths write beside a quote: the change trail, the follow-up cadence
+//     that minting a link starts, and the approval card fan-out for the floor request. The world
+//     carries the quotes, lines, links, acceptance, its audit row, the pricing log and the request
+//     without them, so the history, follow-up and inbox views look thinner than for a real quote.
+//   - a way back. Apply never updates a row, so the demo states do not come back after a tester acts
+//     on them: an accepted Q2 stays accepted, a converted Q3 stays converted, and Q2's link and the
+//     validity of every quote are fixed by the first apply that adds the quotes. The testers' page
+//     must say so.
+//
 // NOT DAY-KEYED. A quote is a document, not a day: stable keys, written once. The share links and the
 // quotes' own validity run well past the clock the first apply read, far enough that the link
 // still opens when a tester arrives.
