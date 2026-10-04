@@ -62,7 +62,15 @@ export class QdQuoteFollowups extends PanelBase {
   ];
 
   protected override willUpdate(changed: Map<string, unknown>): void {
-    if (changed.has("quoteId") || changed.has("client")) this.reload();
+    if (changed.has("quoteId") || changed.has("client")) {
+      // Everything on screen belonged to the last quote: its refusal, its notice, its plan.
+      this.error = "";
+      this.notice = "";
+      this.history = null;
+      this.unavailable = "";
+      this.loaded = false;
+      this.reload();
+    }
   }
 
   reload(): void {

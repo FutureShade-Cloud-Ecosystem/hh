@@ -33,6 +33,8 @@ import {
 export class QdQuoteHoldExpiry extends PanelBase {
   @state() private st: SoftHoldExpiry | null = null;
   @state() private seamWired = true;
+  /** A failed read, in words: it is not the same thing as "no lapse" and never renders as it. */
+  @state() private readError = "";
 
   static styles = [
     panelStyles,
@@ -80,7 +82,14 @@ export class QdQuoteHoldExpiry extends PanelBase {
   ];
 
   protected override willUpdate(changed: Map<string, unknown>): void {
-    if (changed.has("quoteId") || changed.has("client")) this.reload();
+    if (changed.has("quoteId") || changed.has("client")) {
+      // A re-hold notice or a lapse read belongs to the quote it was made for.
+      this.error = "";
+      this.notice = "";
+      this.st = null;
+      this.readError = "";
+      this.reload();
+    }
   }
 
   reload(): void {
@@ -102,11 +111,13 @@ export class QdQuoteHoldExpiry extends PanelBase {
     const result = await client.holdExpiry(quoteId);
     if (quoteId !== this.quoteId) return;
     if (!result.ok) {
-      // A decoration that cannot be computed is not the rep's problem to solve, and a lapse notice
-      // is not something to invent from a failed read: stay quiet rather than guess either way.
+      // A lapse notice is not invented from a failed read, and silence would read as "nothing lapsed":
+      // the panel says the status could not be read.
       this.st = null;
+      this.readError = "The stock hold status could not be read, so it is not known whether any hold has lapsed.";
       return;
     }
+    this.readError = "";
     this.st = result.value.expiry;
     this.seamWired = result.value.seam_wired;
   }
@@ -136,7 +147,7 @@ export class QdQuoteHoldExpiry extends PanelBase {
   override render() {
     const banner = expiryBanner(this.st, { seamWired: this.seamWired, whenLabel: (iso) => this.whenLabel(iso) });
     // After a re-hold the lapse is gone but its outcome is still worth saying, so a notice or a refusal keeps the region.
-    if (banner === null && this.notice === "" && this.error === "") return nothing;
+    if (banner === null && this.notice === "" && this.error === "" && this.readError === "") return nothing;
     return html`
       <div class="status" role="status" data-testid="he-box">
         <p class="kicker">Stock holds</p>
@@ -152,6 +163,7 @@ export class QdQuoteHoldExpiry extends PanelBase {
                 : nothing}
             `
           : nothing}
+        ${this.readError !== "" ? html`<p class="err" role="status" data-testid="he-unread">${this.readError}</p>` : nothing}
         ${this.error !== "" ? html`<p class="err" role="alert" data-testid="he-error">${this.error}</p>` : nothing}
         ${this.notice !== "" ? html`<p class="did" data-testid="he-notice">${this.notice}</p>` : nothing}
       </div>

@@ -296,6 +296,8 @@ export class QdQuoteAssist extends PanelBase {
         this.dismissed = [];
         this.addNote = "";
         this.readError = "";
+        // The pasted job description belongs to the quote it was pasted for.
+        this.text = "";
         this.readSeq += 1;
       }
       this.reload();

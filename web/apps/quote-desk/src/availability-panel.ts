@@ -89,7 +89,16 @@ export class QdQuoteAvailability extends PanelBase {
   ];
 
   protected override willUpdate(changed: Map<string, unknown>): void {
-    if (changed.has("quoteId") || changed.has("client")) this.reload();
+    if (changed.has("quoteId") || changed.has("client")) {
+      // The last quote's lines, peeks and open peek never sit under this quote.
+      this.lines = [];
+      this.names = {};
+      this.loaded = false;
+      this.peeks = {};
+      this.openPeek = "";
+      this.error = "";
+      this.reload();
+    }
   }
 
   reload(): void {
@@ -109,6 +118,9 @@ export class QdQuoteAvailability extends PanelBase {
     if (quoteId !== this.quoteId) return;
     this.names = quote.ok ? Object.fromEntries(quote.value.lines.map((line) => [line.line_no, line.description])) : {};
     if (!result.ok) {
+      // A failed read shows no lines at all: the previous read's chips would be stale facts under this quote.
+      this.lines = [];
+      this.loaded = false;
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "read this quote's availability"));
       return;
     }
