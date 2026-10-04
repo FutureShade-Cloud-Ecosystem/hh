@@ -12,6 +12,14 @@ package main
 // branch's Sales manager decides a floor request of its own branch from
 // the device as it does at the desk. Four eyes and the branch fence hold
 // on the same door.
+//
+// Isolation caveat: the sync door reads the configured floor set from a
+// package global that wireMoney publishes (publishedFloor, last writer
+// wins across every test in this process). Every wiring in this package
+// uses the default floor lists, so the legs below are not racing one
+// another's set; a future test that wires a NON default floor set must
+// restore the default set when it ends, or it changes what these legs
+// decide.
 
 import (
 	"context"
@@ -192,6 +200,35 @@ func TestQD1B_SyncDoorRefusesAFloorRequestsNoteRewrite(t *testing.T) {
 	qd1bApplied(t, "the requester edits their own plain filing's note", res)
 }
 
+// TestQD1B_SyncDoorRefusesTheSalesManagerAnUnboundMarginCard is P2-C's
+// device leg: the pushed decide path resolves the same rule the desk
+// holds, so a legacy margin card with no line binding stays refused to
+// the branch Sales manager from the device too, and the refusal decides
+// nothing.
+func TestQD1B_SyncDoorRefusesTheSalesManagerAnUnboundMarginCard(t *testing.T) {
+	q := newQD1BFixture(t)
+	clerk := qd1bUserID(t, q.pool, testkit.SubInsideSales)
+	legacy := qd1bPlantUnboundMargin(t, q.pool, clerk, testkit.BranchNorthAID)
+	qd1bCleanSync(t, q, legacy)
+
+	res := qd1bPush(t, q, testkit.SubSalesManager, qd1bPushOp{
+		ClientID: "3ef10000-0d1b-4000-8000-0000000000c8",
+		Op:       "update",
+		Payload:  map[string]any{"id": legacy, "status": "APPROVED"},
+	})
+	qd1bRejected(t, "the Sales manager decides an unbound margin card from the device", res,
+		"no line binding")
+
+	var status string
+	if err := q.pool.QueryRow(context.Background(),
+		`SELECT status FROM permission_approval_requests WHERE id = $1`, legacy).Scan(&status); err != nil {
+		t.Fatalf("read the legacy card back: %v", err)
+	}
+	if status != "PENDING" {
+		t.Fatalf("the refused legacy card is %s, want PENDING", status)
+	}
+}
+
 // TestQD1B_SyncDoorDecidesWithTheConfiguredApprovers is the decide leg:
 // a pushed decision resolves its authority through the configured floor
 // approvers (D11, CP0-1 answer B), the same set the rail's decide path
@@ -220,11 +257,16 @@ func TestQD1B_SyncDoorDecidesWithTheConfiguredApprovers(t *testing.T) {
 	})
 	qd1bRejected(t, "the Sales manager decides another branch's floor request", res, "")
 
-	ownTwo := qd1bPlantFloor(t, q, clerk, testkit.BranchNorthAID, "000000000c23")
-	res = qd1bPush(t, q, testkit.SubInsideSales, qd1bPushOp{
+	// Four eyes with a caller who would otherwise hold the authority: the
+	// branch's Sales manager decides a request of its own branch (the leg
+	// above), so the only thing refusing it here is that it is the
+	// requester. Disabling the four eyes rule turns this leg red.
+	manager := qd1bUserID(t, q.pool, testkit.SubSalesManager)
+	ownTwo := qd1bPlantFloor(t, q, manager, testkit.BranchNorthAID, "000000000c23")
+	res = qd1bPush(t, q, testkit.SubSalesManager, qd1bPushOp{
 		ClientID: "3ef10000-0d1b-4000-8000-0000000000c7",
 		Op:       "update",
 		Payload:  map[string]any{"id": ownTwo, "status": "APPROVED"},
 	})
-	qd1bRejected(t, "the requester decides their own floor request", res, "")
+	qd1bRejected(t, "the Sales manager decides their own floor request", res, "separation of duties")
 }

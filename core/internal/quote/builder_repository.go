@@ -320,11 +320,13 @@ func (r *Repository) UpdateLineDiscountGuarded(ctx context.Context, quoteID stri
 	}
 	var gross, before int64
 	var beforePct int
+	var rowID string
 	err = tx.QueryRow(ctx, `
-		SELECT CASE WHEN pre_discount_total_cents > 0 THEN pre_discount_total_cents ELSE line_total_cents END,
+		SELECT id::text,
+		       CASE WHEN pre_discount_total_cents > 0 THEN pre_discount_total_cents ELSE line_total_cents END,
 		       line_total_cents, disc_pct
 		  FROM quote_lines WHERE quote_id = $1 AND line_no = $2 FOR UPDATE`, quoteID, lineNo).
-		Scan(&gross, &before, &beforePct)
+		Scan(&rowID, &gross, &before, &beforePct)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return QuoteEditResult{}, ErrLineNotFound
 	}
@@ -334,6 +336,13 @@ func (r *Repository) UpdateLineDiscountGuarded(ctx context.Context, quoteID stri
 	if plan.expectedGross != 0 && plan.expectedGross != gross {
 		// The floor decision priced a gross the lock no longer sees; refuse
 		// rather than discount figures nobody decided on.
+		return QuoteEditResult{}, errFloorStateChanged
+	}
+	if plan.lineID != "" && plan.lineID != rowID {
+		// The decision priced a row the lock no longer sees: the number was
+		// reused inside the evaluation window (P2-A). Refuse BEFORE any
+		// approval is consumed, so a swap cannot spend a decision that
+		// belongs to a row that is gone.
 		return QuoteEditResult{}, errFloorStateChanged
 	}
 	if err := runFloorPlan(ctx, tx, &plan); err != nil {

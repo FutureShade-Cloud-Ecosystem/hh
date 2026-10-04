@@ -225,6 +225,21 @@ func (s *Approvals) CanDecide(caller StaffContext, policy PolicyType, branchID s
 	return CanApproveFloor(caller, policy, branchID, s.floorApprovers)
 }
 
+// CanDecideRequest is CanDecide over one loaded request: the caller's
+// authority decides the request's policy in its branch, AND the decide
+// path's line-bound rule holds (P2-C): a margin request with no line
+// binding, a legacy card filed before the quote desk's door, is decidable
+// by the dealer wide floor set alone. The queue's count reads this, so it
+// counts exactly what the caller could decide, nothing it would only
+// appear to hold.
+func (s *Approvals) CanDecideRequest(caller StaffContext, r ApprovalRequest) bool {
+	if !s.CanDecide(caller, r.Policy, r.BranchID) {
+		return false
+	}
+	return !(r.Policy == PolicyMargin && r.LineID == "" &&
+		!s.floorApprovers.mayDecideDealerWide(caller.RoleCode))
+}
+
 // ApprovalReconcilePending is one still-PENDING request the messaging sweep must ensure has a card in each
 // currently-eligible approver's channel (identity-owned type; the wire adapter maps it into messaging).
 type ApprovalReconcilePending struct {

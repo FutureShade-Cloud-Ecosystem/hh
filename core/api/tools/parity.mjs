@@ -64,6 +64,22 @@ for (const route of additions.keys()) {
   if (erpRoutes.has(route)) problems.push(`additions entry has an ERP source after all: ${route}`);
 }
 
+// x-addition is the contract document's own account of an operation with NO
+// ERP source route, so an operation that HAS one must not carry it: the
+// marker is a claim about provenance, and parity above reads the drop list,
+// not this marker, so nothing else catches a paste of it onto a ported
+// operation (PR 116 round 2, P2-B).
+for (const [path, item] of Object.entries(doc.paths)) {
+  for (const method of Object.keys(item)) {
+    if (!METHODS.has(method)) continue;
+    if (!item[method]?.["x-addition"]) continue;
+    const route = `${method.toUpperCase()} ${path}`;
+    if (erpRoutes.has(route)) {
+      problems.push(`x-addition on an operation with an ERP source route: ${route}`);
+    }
+  }
+}
+
 if (problems.length) {
   console.error(`route parity failed with ${problems.length} problem(s):`);
   for (const p of problems) console.error(`  - ${p}`);
