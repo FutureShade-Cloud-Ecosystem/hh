@@ -162,3 +162,48 @@ test("P2-4 the desk resumes the quote that was open when the person signed out, 
   await page.getByRole("button", { name: "Sales", exact: true }).click();
   await expect(page.getByTestId("qb-context")).toContainText("Q-1003");
 });
+
+test("P3 Reset columns takes: the box a failed re-read held on the draft goes back to the default", async ({ page }) => {
+  await signIn(page);
+  await open(page, "Q-1001");
+  const box = page.locator('[data-field="column"][data-column="line.margin_pct"]');
+  await page.getByTestId("qb-columns-btn").click();
+  const before = await box.isChecked();
+  const refuse = (route: import("@playwright/test").Route) =>
+    route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "settings: the config store is down" }) });
+  await page.route("**/api/v1/surfaces/*/config**", refuse);
+  const reread = page.waitForResponse((r) => r.request().method() === "GET" && r.url().includes("/config"));
+  await box.click();
+  await reread;
+  await settle(page);
+  expect(await box.isChecked()).toBe(!before);
+  await page.unroute("**/api/v1/surfaces/*/config**", refuse);
+  const deleted = page.waitForResponse((r) => r.request().method() === "DELETE" && r.url().includes("/my-items"));
+  await page.getByTestId("qb-columns-reset").click();
+  await deleted;
+  await settle(page);
+  await page.getByTestId("qb-po").fill("any later render");
+  await settle(page);
+  expect(await box.isChecked()).toBe(before);
+});
+
+test("P3 Reset columns with the config re-read refused still shows the default columns", async ({ page }) => {
+  await signIn(page);
+  await open(page, "Q-1001");
+  const box = page.locator('[data-field="column"][data-column="line.margin_pct"]');
+  await page.getByTestId("qb-columns-btn").click();
+  const before = await box.isChecked();
+  await box.click();
+  await expect.poll(() => box.isChecked()).toBe(!before);
+  await settle(page);
+  await page.route("**/api/v1/surfaces/*/config**", (route) =>
+    route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "settings: the config store is down" }) }),
+  );
+  const deleted = page.waitForResponse((r) => r.request().method() === "DELETE" && r.url().includes("/my-items"));
+  await page.getByTestId("qb-columns-reset").click();
+  await deleted;
+  await settle(page);
+  await page.getByTestId("qb-po").fill("any later render");
+  await settle(page);
+  expect(await box.isChecked()).toBe(before);
+});

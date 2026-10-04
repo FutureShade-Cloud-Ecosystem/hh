@@ -145,5 +145,19 @@
     "find": "        if (this.store !== null) this.store.state.openRef = this.quoteId;\n        this.store?.scheduleSave();",
     "replace": "        this.store?.scheduleSave();",
     "test": "P2-4 the desk resumes"
+  },
+  {
+    "id": "wa-reset-columns-draft",
+    "file": "src/quote-workarea.ts",
+    "find": "      this.columnsDraft = effectiveItems(\"column\", QB_COLUMNS, this.config?.roleItems, undefined);\n",
+    "replace": "",
+    "test": "P3 Reset columns with the config re-read refused"
+  },
+  {
+    "id": "wa-reset-columns-release",
+    "file": "src/quote-workarea.ts",
+    "find": "      this.columnsDraft = null; // a draft left by an earlier press must not outlive the reset\n",
+    "replace": "",
+    "test": "P3 Reset columns takes"
   }
 ]

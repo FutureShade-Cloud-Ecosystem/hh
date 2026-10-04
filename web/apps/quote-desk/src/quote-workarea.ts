@@ -2274,7 +2274,13 @@ export class QdQuoteWorkarea extends LitElement {
     }
     this.columnsError = "";
     const config = await client.surfaceConfig(this.branchId);
-    if (config.ok) this.config = config.value;
+    if (config.ok) {
+      this.config = config.value;
+      this.columnsDraft = null; // a draft left by an earlier press must not outlive the reset
+    } else {
+      // The delete landed but the read did not: the columns are the role's own now, and the box says so until a good read.
+      this.columnsDraft = effectiveItems("column", QB_COLUMNS, this.config?.roleItems, undefined);
+    }
   }
 
   /** The visible columns for THIS render: curation first, then the server's cost gate on top. */
