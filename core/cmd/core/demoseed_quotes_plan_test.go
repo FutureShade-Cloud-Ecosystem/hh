@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // quoteRows pulls the quote world's rows out of a plan, by table.
@@ -315,4 +316,67 @@ func quoteProdCategory(t *testing.T, prod string) string {
 	}
 	t.Fatalf("no demo product %s", prod)
 	return ""
+}
+
+// An accepted quote carries what a real accept leaves: the QUOTE_ACCEPTED audit row in the change
+// trail (the actor the link and not a staff user, only allowlisted details), the acceptance record
+// anchored to it, and an updated_at that is not earlier than the acceptance (share_repository.go
+// sets both at the accept).
+func TestQuotePlan_TheAcceptanceIsAnchoredAndItsQuoteUpdatedAtTheAccept(t *testing.T) {
+	rows, sum := buildForTest(t)
+	q := quoteRows(rows, sum)
+	if len(q["audit_log"]) != 1 {
+		t.Fatalf("the world holds %d audit rows, want the one QUOTE_ACCEPTED row", len(q["audit_log"]))
+	}
+	a := q["audit_log"][0]
+	if a["action"] != "QUOTE_ACCEPTED" || a["entity_type"] != "quote" || a["entity_id"] != demoID("quote:Q3") {
+		t.Errorf("the audit row is %v on %v %v", a["action"], a["entity_type"], a["entity_id"])
+	}
+	if a["actor_id"] != nil || a["branch_id"] != nil {
+		t.Errorf("the audit row names actor %v branch %v, an acceptance has no staff principal", a["actor_id"], a["branch_id"])
+	}
+	var changes map[string]any
+	if err := json.Unmarshal([]byte(fmt.Sprint(a["changes"])), &changes); err != nil {
+		t.Fatal(err)
+	}
+	for k, want := range map[string]any{"purpose": "CUSTOMER_QUOTE_ACCEPTANCE", "reason": "status", "field": "status",
+		"before": "SENT", "after": "ACCEPTED", "ref_type": "quote_share_link"} {
+		if changes[k] != want {
+			t.Errorf("audit change %s is %v, want %v", k, changes[k], want)
+		}
+	}
+	if len(changes) != 7 {
+		t.Errorf("the audit row carries %d detail keys (%v), the real accept writes 7 allowlisted ones", len(changes), changes)
+	}
+	if len(q["quote_acceptances"]) != 1 {
+		t.Fatalf("acceptance records %d, want 1", len(q["quote_acceptances"]))
+	}
+	acc := q["quote_acceptances"][0]
+	anchor, ok := acc["audit_seq"].(auditAnchor)
+	if !ok || string(anchor) != fmt.Sprint(a["id"]) {
+		t.Errorf("the acceptance's audit_seq is %#v, want an anchor to the audit row %v", acc["audit_seq"], a["id"])
+	}
+	if changes["amount_cents"] != float64(acc["accepted_total_cents"].(int64)) {
+		t.Errorf("the audit amount %v is not the accepted total %v", changes["amount_cents"], acc["accepted_total_cents"])
+	}
+	for _, f := range q["quotes"] {
+		if f["status"] != "ACCEPTED" {
+			continue
+		}
+		upd, acceptedAt := f["updated_at"].(time.Time), acc["accepted_at"].(time.Time)
+		if upd.Before(acceptedAt) {
+			t.Errorf("the accepted quote was updated %v, before its acceptance at %v", upd, acceptedAt)
+		}
+	}
+}
+
+// The applier binds the anchor as a parameter and renders the lookup around it; nothing is inlined.
+func TestApply_AnAuditAnchorIsABoundLookup(t *testing.T) {
+	r := insert("quote_acceptances", "(id)", "id", "x", "audit_seq", auditAnchor("a-1"))
+	if got, want := r.sql(), "INSERT INTO quote_acceptances (id, audit_seq) VALUES ($1, (SELECT seq FROM audit_log WHERE id = $2::uuid)) ON CONFLICT (id) DO NOTHING"; got != want {
+		t.Errorf("sql is\n%s\nwant\n%s", got, want)
+	}
+	if args := r.args(); len(args) != 2 || args[1] != "a-1" {
+		t.Errorf("args %#v, want the id bound as text", args)
+	}
 }

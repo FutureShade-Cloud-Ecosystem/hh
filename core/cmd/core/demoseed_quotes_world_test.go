@@ -172,6 +172,15 @@ func qwPublic(mux *http.ServeMux, path string) demoResponse {
 	return demoResponse{status: rsp.Code, body: rsp.Body.Bytes()}
 }
 
+func qwPublicPost(mux *http.ServeMux, path, body string) demoResponse {
+	req := httptest.NewRequest("POST", path, strings.NewReader(body))
+	req.Header.Set("X-Org", demoOrgSlug)
+	req.Header.Set("Content-Type", "application/json")
+	rsp := httptest.NewRecorder()
+	mux.ServeHTTP(rsp, req)
+	return demoResponse{status: rsp.Code, body: rsp.Body.Bytes()}
+}
+
 type qwLine struct {
 	LineNo              int    `json:"line_no"`
 	ProductID           string `json:"product_id"`
@@ -249,7 +258,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	// 3. the second apply: now the logins resolve, so the quote world is added, and nothing else moves.
 	before := qwFingerprint(t, ctx, pool, qwOtherWorldTables)
 	proposed, created := qwApply(t)
-	const wantQuoteRows = 3 + 7 + 2 + 1 + 1 + 4 + 1 // quotes, lines, links, acceptance, event, log rows, request
+	const wantQuoteRows = 3 + 7 + 2 + 1 + 1 + 1 + 4 + 1 // quotes, lines, links, acceptance, audit row, event, log rows, request
 	if created != wantQuoteRows {
 		t.Fatalf("the second apply created %d rows, want exactly the quote world's %d (proposed %d)", created, wantQuoteRows, proposed)
 	}
@@ -565,6 +574,42 @@ func TestDemoWorld_Quotes(t *testing.T) {
 		if real[0] != seededRows[0] {
 			t.Errorf("%s: the seeded log row is %+v, the real write path writes %+v", c.name, seededRows[0], real[0])
 		}
+	}
+
+	// 11c. the accepted quote's acceptance is anchored to its QUOTE_ACCEPTED audit row, as a real accept
+	// anchors it: the same Q2 accepted through its seeded token writes a row of the same shape, and
+	// the seeded Q3 row reads the same as that real one apart from the amount and the time.
+	type auditShape struct {
+		Action, EntityType, Changes string
+		ActorNull, BranchNull       bool
+	}
+	auditOf := func(quote string) (auditShape, int64, int64) {
+		t.Helper()
+		var a auditShape
+		var seq, anchor int64
+		if err := pool.QueryRow(ctx, `
+			SELECT al.action, al.entity_type, (al.changes - 'amount_cents')::text, al.actor_id IS NULL, al.branch_id IS NULL,
+			       al.seq, COALESCE(qa.audit_seq, 0)
+			  FROM quote_acceptances qa JOIN audit_log al ON al.seq = qa.audit_seq
+			 WHERE qa.quote_id = $1::uuid`, quote).Scan(&a.Action, &a.EntityType, &a.Changes, &a.ActorNull, &a.BranchNull, &seq, &anchor); err != nil {
+			t.Fatalf("the acceptance of %s is not anchored to an audit row: %v", quote, err)
+		}
+		return a, seq, anchor
+	}
+	acc := qwPublicPost(rec.inner, "/api/public/v1/quotes/"+quoteToken("Q2")+"/accept", `{"typed_name":"Customer representative (demo)","accepted":true}`)
+	acc.ok(t, http.StatusOK)
+	realAudit, realSeq, realAnchor := auditOf(quoteID("Q2"))
+	seedAudit, seedSeq, seedAnchor := auditOf(quoteID("Q3"))
+	if realSeq != realAnchor || seedSeq != seedAnchor || seedSeq == 0 {
+		t.Errorf("anchors: real %d/%d seeded %d/%d", realSeq, realAnchor, seedSeq, seedAnchor)
+	}
+	if realAudit != seedAudit {
+		t.Errorf("the seeded QUOTE_ACCEPTED row is %+v, the real accept writes %+v", seedAudit, realAudit)
+	}
+	var acceptedAt, updatedAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT qa.accepted_at, q.updated_at FROM quote_acceptances qa JOIN quotes q ON q.id = qa.quote_id WHERE q.id = $1::uuid`,
+		quoteID("Q3")).Scan(&acceptedAt, &updatedAt); err != nil || updatedAt.Before(acceptedAt) {
+		t.Errorf("Q3 updated_at %v is before its accepted_at %v (%v)", updatedAt, acceptedAt, err)
 	}
 
 	// 12. the accepted quote converts through the real service, at its own price.

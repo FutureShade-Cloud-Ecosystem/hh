@@ -242,6 +242,10 @@ func (b *builder) quoteWorld() {
 		}
 		created := b.agoDays(q.AgeDays)
 		updated := b.agoDays(q.AgeDays - 1)
+		acceptedAt := b.agoDays(q.AgeDays - 2)
+		if q.Status == "ACCEPTED" {
+			updated = acceptedAt // the accept sets updated_at = now() in the same write (share_repository.go)
+		}
 		quoteID := demoID("quote:" + q.Key)
 		no := b.quoteNo(q.Branch, q.Key)
 		add(insert("quotes", "(id)",
@@ -342,7 +346,23 @@ func (b *builder) quoteWorld() {
 			b.sum.QuoteLinks = append(b.sum.QuoteLinks,
 				fmt.Sprintf("%s · %s · %s · token %s", q.Key, no, q.Status, quoteToken(q.Key)))
 			if q.Status == "ACCEPTED" {
-				at := b.agoDays(q.AgeDays - 2)
+				at := acceptedAt
+				// The QUOTE_ACCEPTED audit row the real accept writes in the same transaction
+				// (share.go recordAcceptance): the actor is the LINK, so no actor and no branch, the
+				// allowlisted details only, the typed name kept off it. The acceptance record anchors to
+				// its seq.
+				auditID := demoID("quoteaudit:" + q.Key + ":accept")
+				changes, _ := json.Marshal(map[string]any{
+					"purpose": "CUSTOMER_QUOTE_ACCEPTANCE", "reason": "status",
+					"field": "status", "before": "SENT", "after": "ACCEPTED",
+					"amount_cents": total, "ref_type": "quote_share_link",
+				})
+				add(insert("audit_log", "(id)",
+					"id", auditID,
+					"action", "QUOTE_ACCEPTED", "entity_type", "quote", "entity_id", quoteID,
+					"changes", string(changes),
+					"created_at", at,
+				))
 				add(insert("quote_acceptances", "(id)",
 					"id", demoID("quoteaccept:"+q.Key),
 					"quote_id", quoteID,
@@ -352,6 +372,7 @@ func (b *builder) quoteWorld() {
 					"accepted_subtotal_cents", subtotal,
 					"accepted_tax_cents", tax,
 					"accepted_total_cents", total,
+					"audit_seq", auditAnchor(auditID),
 					"accepted_at", at,
 				))
 				add(insert("quote_share_link_events", "(id)",
