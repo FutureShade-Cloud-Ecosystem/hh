@@ -22,13 +22,13 @@ import (
 func TestQD1_RequestDoor_FilesBoundRequest(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 
 	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
 	svc := qd1SvcFloor(t, pool, now, arb, qd1Cfg)
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, alice)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
 	ans, err := svc.RequestFloorApproval(ctx, quoteID, 1, 25, "customer pushed hard")
 	if err != nil {
@@ -106,13 +106,13 @@ func TestQD1_RequestDoor_CallerWhoMayClearToldSo(t *testing.T) {
 func TestQD1_RequestDoor_NotBelowFloorIs409(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 
 	arb := qd1Arbiter{marginBps: 2000, floorBps: 1200}
 	svc := qd1SvcFloor(t, pool, now, arb, qd1Cfg)
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, alice)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
 	if _, err := svc.RequestFloorApproval(ctx, quoteID, 1, 10, ""); err == nil {
 		t.Fatal("a line not below the floor must be refused: nothing to approve")
@@ -123,18 +123,18 @@ func TestQD1_RequestDoor_NotBelowFloorIs409(t *testing.T) {
 func TestQD1_RefusalCarriesPendingRequest(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 
 	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
 	svc := qd1SvcFloor(t, pool, now, arb, qd1Cfg)
 	rail := identity.NewApprovals(identity.NewApprovalRepository(pool))
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, alice)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
 	lineID, prodID := qd1LineBinding(t, pool, quoteID, 1)
 	filed, err := rail.FileFloorApproval(context.Background(), identity.FloorApprovalFiling{
-		RequestedBy: alice, BranchID: intTrenton, SubjectRef: quoteID,
+		RequestedBy: seller, BranchID: intTrenton, SubjectRef: quoteID,
 		Detail: "qd1: pending", LineNo: 1, DiscPct: 25, LineID: lineID, ProductID: prodID,
 	})
 	if err != nil {

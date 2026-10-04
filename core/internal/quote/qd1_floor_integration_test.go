@@ -32,14 +32,14 @@ import (
 func TestQD1_Row5_BelowFloorRefusedTypedForSales(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
+	seller := qd1User(t, pool, "seller")
 
 	for _, role := range []string{"INSIDE_SALES", "OUTSIDE_SALES"} {
-		_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+		_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 		arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
 		svc := qd1SvcFloor(t, pool, now, arb, qd1Cfg)
 		ctx := qCtxAs(intStaff(intTrenton))
-		ctx = qd1WithRole(ctx, role, intTrenton, alice)
+		ctx = qd1WithRole(ctx, role, intTrenton, seller)
 
 		_, err := svc.SetLineDiscount(ctx, quoteID, 1, 25)
 		var ref *FloorRefusalError
@@ -150,9 +150,9 @@ func TestQD1_BelowFloorBranchManagerClearsOwnQuote(t *testing.T) {
 func TestQD1_BelowFloorSalesManagerClearsAnyQuoteInBranch(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
+	seller := qd1User(t, pool, "seller")
 	mgr := qd1User(t, pool, "mgr")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 
 	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
 	svc := qd1SvcFloor(t, pool, now, arb, qd1Cfg)
@@ -173,13 +173,13 @@ func TestQD1_BelowFloorSalesManagerClearsAnyQuoteInBranch(t *testing.T) {
 func TestQD1_BelowRuleAboveFloorAcceptedNoManager(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 
 	arb := qd1Arbiter{marginBps: 2000, floorBps: 1200}
 	svc := qd1SvcFloor(t, pool, now, arb, qd1Cfg)
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, alice)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
 	res, err := svc.SetLineDiscount(ctx, quoteID, 1, 10)
 	if err != nil {
@@ -202,20 +202,20 @@ func TestQD1_BelowRuleAboveFloorAcceptedNoManager(t *testing.T) {
 func TestQD1_Row10_ApprovedRequestUsedUpByFirstWrite(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
-	_, otherQuote, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+	_, otherQuote, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 
 	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
 	svc := qd1SvcFloor(t, pool, now, arb, qd1Cfg)
 	rail := identity.NewApprovals(identity.NewApprovalRepository(pool))
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, alice)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
 	// File and approve a request for line 1 of the first quote at 25 percent.
 	lineID, prodID := qd1LineBinding(t, pool, quoteID, 1)
 	filed, err := rail.FileFloorApproval(context.Background(), identity.FloorApprovalFiling{
-		RequestedBy: alice, BranchID: intTrenton, SubjectRef: quoteID,
+		RequestedBy: seller, BranchID: intTrenton, SubjectRef: quoteID,
 		Detail: "qd1: below floor request", LineNo: 1, DiscPct: 25, LineID: lineID, ProductID: prodID,
 	})
 	if err != nil {
@@ -269,8 +269,8 @@ func TestQD1_Row10_ApprovedRequestUsedUpByFirstWrite(t *testing.T) {
 func TestQD1_QtyRepriceOfDiscountedLineRunsFloorDecision(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 	qd1SetDisc(t, pool, quoteID, 1, 20)
 
 	// The reprice at the new quantity lands below the floor (the arbiter's
@@ -278,7 +278,7 @@ func TestQD1_QtyRepriceOfDiscountedLineRunsFloorDecision(t *testing.T) {
 	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
 	svc := qd1SvcFloor(t, pool, now, arb, qd1Cfg)
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, alice)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
 	if _, err := svc.EditLineQty(ctx, quoteID, 1, "5"); err == nil {
 		t.Fatal("D5: a quantity reprice that repriced a discounted line below the floor went through")
