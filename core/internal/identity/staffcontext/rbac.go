@@ -513,7 +513,9 @@ func (r *ApprovalRequest) Decide(approver StaffContext, approve bool) error {
 // DecideWithFloor is Decide with the margin arm's authority supplied from
 // the dealer's role configuration. Four eyes holds whichever set answers:
 // the requester never decides its own request, even when it holds an
-// approver role.
+// approver role. The branch scoped arm answers LINE-BOUND floor requests
+// alone: a margin request with no line binding is decidable by the dealer
+// wide set alone (P2-C).
 func (r *ApprovalRequest) DecideWithFloor(approver StaffContext, approve bool, floor FloorApprovers) error {
 	if r.Status != ApprovalPending {
 		return clientErr(http.StatusConflict, "request already %s", r.Status)
@@ -524,6 +526,17 @@ func (r *ApprovalRequest) DecideWithFloor(approver StaffContext, approve bool, f
 	}
 	if !CanApproveFloor(approver, r.Policy, r.BranchID, floor) {
 		return clientErr(http.StatusForbidden, "approver %s (tier %d) not authorized for %s in branch %s", approver.RoleCode, approver.Tier, r.Policy, r.BranchID)
+	}
+	// The branch scoped floor arm decides LINE-BOUND requests alone (P2-C,
+	// grant rows 739 and 740): a margin card with no line binding is a
+	// legacy filing from before the quote desk's door, a subject and detail
+	// of the filer's choosing, and it stays decidable by the dealer wide
+	// floor set alone, never by the branch Sales manager the widening
+	// reached. GetApproval and the sync projection load the binding for
+	// exactly this check.
+	if r.Policy == PolicyMargin && r.LineID == "" && !floor.mayDecideDealerWide(approver.RoleCode) {
+		return clientErr(http.StatusForbidden,
+			"approver %s holds only the branch scoped floor authority, which decides the quote desk's line-bound floor requests; this margin request carries no line binding", approver.RoleCode)
 	}
 	if approve {
 		r.Status = ApprovalApproved

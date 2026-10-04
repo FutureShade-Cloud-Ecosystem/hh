@@ -119,9 +119,12 @@ func allocateApprovalsSeqTx(ctx context.Context, tx pgx.Tx) (int64, error) {
 
 // approvalSyncColumns is the rail's own card projection (the columns
 // ListApprovals selects, amount out of the data JSONB exactly as the
-// rail reads it) plus the two sync legs.
+// rail reads it) plus the two sync legs. line_id rides along so a pushed
+// decision holds the decide path's branch arm rule (P2-C): the device
+// decides exactly what the desk decides.
 const approvalSyncColumns = `a.id::text, a.requested_by::text, a.branch_id::text, a.policy_type, a.detail,
 	COALESCE(a.subject_ref,''), COALESCE((a.data->>'amount_cents')::bigint, 0),
+	COALESCE(a.data->>'line_id',''),
 	a.status, COALESCE(a.decided_by::text,''),
 	a.seq, (a.deleted_at IS NOT NULL) AS deleted`
 
@@ -132,12 +135,12 @@ type approvalSyncRow struct {
 	deleted bool
 }
 
-// scanApprovalSync reads the 11-target row.
+// scanApprovalSync reads the 12-target row.
 func scanApprovalSync(row interface{ Scan(dest ...any) error }) (approvalSyncRow, error) {
 	var r approvalSyncRow
 	var policy, status string
 	if err := row.Scan(&r.req.ID, &r.req.RequestedBy, &r.req.BranchID, &policy, &r.req.Detail,
-		&r.req.SubjectRef, &r.req.AmountCents, &status, &r.req.DecidedBy,
+		&r.req.SubjectRef, &r.req.AmountCents, &r.req.LineID, &status, &r.req.DecidedBy,
 		&r.seq, &r.deleted); err != nil {
 		return approvalSyncRow{}, err
 	}

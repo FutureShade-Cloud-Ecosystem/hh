@@ -526,9 +526,11 @@ func (r *ApprovalRepository) ListApprovals(ctx context.Context, status string, b
 		return nil, errNoDB
 	}
 	// Select subject_ref + amount so the rail feed (GET /api/v1/staff/approvals) can render a faithful
-	// JE card (money magnitude + journal binding), matching ApprovalsForReconcile.
+	// JE card (money magnitude + journal binding), matching ApprovalsForReconcile. line_id rides along
+	// so the queue's count can hold the decide path's branch arm rule (P2-C).
 	q := `SELECT id::text, requested_by::text, branch_id::text, policy_type, detail,
 	             COALESCE(subject_ref,''), COALESCE((data->>'amount_cents')::bigint, 0),
+	             COALESCE(data->>'line_id',''),
 	             status, COALESCE(decided_by::text,'')
 	      FROM permission_approval_requests WHERE ($1 = '' OR status = $1)`
 	args := []any{status}
@@ -547,7 +549,7 @@ func (r *ApprovalRepository) ListApprovals(ctx context.Context, status string, b
 		var a ApprovalRequest
 		var policy, st string
 		if err := rows.Scan(&a.ID, &a.RequestedBy, &a.BranchID, &policy, &a.Detail,
-			&a.SubjectRef, &a.AmountCents, &st, &a.DecidedBy); err != nil {
+			&a.SubjectRef, &a.AmountCents, &a.LineID, &st, &a.DecidedBy); err != nil {
 			return nil, err
 		}
 		a.Policy = PolicyType(policy)
@@ -567,13 +569,16 @@ func (r *ApprovalRepository) GetApproval(ctx context.Context, id string) (Approv
 	// Must select subject_ref + amount here: DecideApproval reads req.SubjectRef to bridge a
 	// JE_OVER_THRESHOLD approve into gl.ApproveJournal. Omitting it (the shipped bug) left SubjectRef=""
 	// so the bridge was skipped: the request stamped APPROVED while the journal stayed DRAFT (0075).
+	// line_id rides along for the decide path's branch arm rule (P2-C): a margin request with
+	// no line binding is decidable by the dealer wide floor set alone.
 	err := r.pool.QueryRow(ctx, `
 		SELECT id::text, requested_by::text, branch_id::text, policy_type, detail,
 		       COALESCE(subject_ref,''), COALESCE((data->>'amount_cents')::bigint, 0),
+		       COALESCE(data->>'line_id',''),
 		       status, COALESCE(decided_by::text,'')
 		FROM permission_approval_requests WHERE id = $1`, id).Scan(
 		&a.ID, &a.RequestedBy, &a.BranchID, &policy, &a.Detail,
-		&a.SubjectRef, &a.AmountCents, &st, &a.DecidedBy)
+		&a.SubjectRef, &a.AmountCents, &a.LineID, &st, &a.DecidedBy)
 	if err != nil {
 		// A well-formed-but-absent id maps to a clean 404 (not a raw 500), matching the module's
 		// clientError taxonomy. (Malformed non-UUID ids are rejected upstream in DecideApproval.)
