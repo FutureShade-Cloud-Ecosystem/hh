@@ -4,4 +4,7 @@
 // session code, no shell, no other surface: the token in the link is the
 // credential.
 import "@hardscapehouse/design-system/src/tokens.css";
+// The self-hosted faces the token sheet names (src/fonts.css): without them
+// --hh-font-ui's first name never resolves and every visitor sees a fallback.
+import "./fonts.css";
 import "./quote-public.js";

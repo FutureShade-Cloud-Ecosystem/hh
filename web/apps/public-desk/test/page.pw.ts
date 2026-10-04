@@ -80,6 +80,25 @@ test("the line thumbnails ride the product image read, when the dealer chose ima
   }
 });
 
+test("the page's UI face is Outfit itself, self-hosted, not a system fallback", async ({ page }) => {
+  await page.goto(`/?t=${GOOD_TOKEN}`);
+  await expect(page.getByRole("heading", { name: "Quote #Q-25" })).toBeVisible();
+  // document.fonts is the closest provable check, and load() is the honest
+  // half of it: it answers with the faces it actually MATCHED, so an absent
+  // @font-face (check()'s vacuous true) fails here as an empty answer. The
+  // three weights are the ones the page renders: body, labels and button, title.
+  const faces = await page.evaluate(async () => {
+    const out: Record<string, boolean> = {};
+    for (const weight of ["400", "600", "700"]) {
+      const matched = await document.fonts.load(`${weight} 16px Outfit`);
+      out[weight] = matched.length > 0 && matched.every((face) => face.status === "loaded");
+    }
+    await document.fonts.ready;
+    return out;
+  });
+  expect(faces).toEqual({ 400: true, 600: true, 700: true });
+});
+
 test("the line table never overflows its card or the page, with thumbnails, at phone and tablet widths", async ({ page }) => {
   for (const width of [390, 820]) {
     await page.setViewportSize({ width, height: 844 });
