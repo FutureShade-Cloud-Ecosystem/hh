@@ -25,6 +25,16 @@
 //   GET/PUT/DELETE /api/v1/surfaces/quotes.builder/my-workspace  -> the workspace row
 //   GET/PUT/DELETE /api/v1/surfaces/quotes.builder/my-items      -> the column curation
 //   GET  /api/v1/surfaces/quotes.builder/config  -> SettingsSurfaceConfig
+//   GET  /api/v1/quotes/{id}/edits               -> QuoteEditHistory
+//   GET  /api/v1/quotes/{id}/share-links         -> QuoteShareLinkList
+//   DELETE /api/v1/quotes/{id}/share-links/{id}  -> 204
+//   POST /api/v1/quotes/{id}/lines/{n}/compare   -> QuoteLineComparison
+//   GET/PUT /api/v1/quotes/policy                -> QuotePolicy | 403 | 422
+//   GET/PUT /api/v1/quotes/settings/acceptance   -> QuoteAcceptanceSettings | 403
+//   GET  /api/v1/quote-assist/scope-rules        -> QuoteAssistScopeRuleList | 403
+//   PATCH /api/v1/quote-assist/scope-rules/{code} -> QuoteAssistScopeRule | 403
+//   PUT  /api/v1/surfaces/quotes.builder/items   -> { saved: true } | 403
+//   GET  /api/v1/products/search                 -> ProductSearchResults
 //   GET  /api/v1/customers/search                -> PosCustomer[]
 //   GET  /api/v1/pos/salespeople                 -> PosSalespersonPage
 //   GET  /api/v1/pos/addon-suggestions           -> { suggestions: [] }
@@ -224,15 +234,25 @@ const HST_RATE_BPS = 1300;
 // answers the glance with figures; false answers the glance as the empty
 // object, byte-absent, exactly as the core's marshal gate does for a caller
 // the list refuses. A test flips this for a page and flips it back.
-const switches = { callerOnCostList: true };
+// The General Manager switch: neither demo login is the General Manager, and
+// the dealer wide writes (the policy's default row, the acceptance switch)
+// are that role's alone (CP0-5 answer A). A test flips this on to prove the
+// permitted write, and the default proves the refusal.
+// The floor raise: a test lifts every category floor by a whole number of
+// basis points, so a discount that was inside the floor when it was set lands
+// below it on a later quantity reprice (the qty arm of the typed refusal).
+const switches = { callerOnCostList: true, callerIsGeneralManager: false, floorRaiseBps: 0 };
 
 // Every write the stub sees, for the suite's layout save assertions. The
 // ledger is test scaffolding: no contract path reads it.
 const workspaceWrites = [];
 const itemsWrites = [];
-// The share links minted, by quote id, and the request door's filed requests.
+const policyWrites = [];
+// The share links minted, by quote id (a list), and the request door's filed requests.
 const shareLinks = new Map();
 const floorRequests = new Map(); // `${quoteId}:${lineNo}` -> request row
+// The conversions seen, for the suite's fulfilment assertion (scaffolding).
+const conversions = [];
 
 // ---------------------------------------------------------------------------
 // The pricing and floor rules, in the plan's own rows (section 3.3). All
@@ -265,7 +285,8 @@ function floorDecision(caller, product, customer, discPct) {
   const unitCents = netUnitCents(ruleCents, discPct);
   const costCents = product.branch_cost_cents[TRENTON_ID] ?? 0;
   const margin = marginBps(unitCents, costCents);
-  if (margin >= product.floor_bps) return null;
+  const floorBps = product.floor_bps + switches.floorRaiseBps;
+  if (margin >= floorBps) return null;
   const isManager = caller.account.role_code === "sales_manager";
   if (isManager) return { cleared: true, by: USERS[caller.flow].display_name };
   return {
@@ -274,7 +295,7 @@ function floorDecision(caller, product, customer, discPct) {
       policy: "category_margin_floor",
       approver_roles: ["General Manager", "Financial Controller", "Sales Manager"],
       manager_may_set: true,
-      ...(switches.callerOnCostList ? { margin_bps: margin, floor_bps: product.floor_bps } : {}),
+      ...(switches.callerOnCostList ? { margin_bps: margin, floor_bps: floorBps } : {}),
     },
   };
 }
@@ -366,12 +387,17 @@ function seedQuote(status, customerId, ownerFlow, lines, terms = {}) {
   return quote;
 }
 
-seedQuote("DRAFT", "c-maple-ridge", "sales", [
-  { p: "p-holland-60", q: 120 },
-  { p: "p-polymer-sand", q: 2 },
-]);
-seedQuote("SENT", "c-fenwick", "sales-manager", [{ p: "p-wall-std", q: 10 }]);
-seedQuote("ACCEPTED", "c-maple-ridge", "sales", [{ p: "p-clear-stone", q: 3 }]);
+function seedWorld() {
+  quoteCounter = 1000;
+  quotes.clear();
+  seedQuote("DRAFT", "c-maple-ridge", "sales", [
+    { p: "p-holland-60", q: 120 },
+    { p: "p-polymer-sand", q: 2 },
+  ]);
+  seedQuote("SENT", "c-fenwick", "sales-manager", [{ p: "p-wall-std", q: 10 }]);
+  seedQuote("ACCEPTED", "c-maple-ridge", "sales", [{ p: "p-clear-stone", q: 3 }]);
+}
+seedWorld();
 
 function renumber(quote) {
   quote.lines.forEach((line, index) => {
@@ -384,6 +410,49 @@ function restamp(quote) {
   quote.subtotal_cents = totals.subtotal_cents;
   quote.tax_cents = totals.tax_cents;
   quote.total_cents = totals.total_cents;
+}
+
+// The change trail. Every guarded write appends its column rows under one
+// request id, oldest first (the audit sequence), and the actor is the caller's
+// display name. Timestamps are taken from the clock at write time, so no
+// calendar value is written down here.
+let auditSeq = 0;
+function audit(quote, caller, rows) {
+  auditSeq += 1;
+  const requestId = `req-${auditSeq}`;
+  const at = new Date(Date.now() + auditSeq * 1000).toISOString();
+  quote.history = quote.history ?? [];
+  for (const row of rows) {
+    quote.history.push({
+      field: row.field,
+      line_no: row.line_no ?? 0,
+      ...(row.before === undefined ? {} : { before: String(row.before) }),
+      ...(row.after === undefined ? {} : { after: String(row.after) }),
+      actor_id: caller.account.user_id,
+      actor_name: caller.account.display_name,
+      request_id: requestId,
+      occurred_at: at,
+    });
+  }
+}
+
+// The money columns every line write moves, as history rows.
+function moneyRows(quote, before, line, lineNo) {
+  const rows = [];
+  if (line !== null && before.unit !== line.unit_price_cents) rows.push({ field: "unit_price_cents", line_no: lineNo, before: before.unit, after: line.unit_price_cents });
+  if (line !== null && before.lineTotal !== line.line_total_cents) rows.push({ field: "line_total_cents", line_no: lineNo, before: before.lineTotal, after: line.line_total_cents });
+  rows.push({ field: "subtotal_cents", line_no: 0, before: before.subtotal, after: quote.subtotal_cents });
+  rows.push({ field: "total_cents", line_no: 0, before: before.total, after: quote.total_cents });
+  return rows;
+}
+
+function snapshotOf(quote, line) {
+  return {
+    unit: line === undefined || line === null ? undefined : line.unit_price_cents,
+    lineTotal: line === undefined || line === null ? undefined : line.line_total_cents,
+    subtotal: quote.subtotal_cents,
+    total: quote.total_cents,
+  };
 }
 
 // The view the read answers. editable_fields follows the QD-1 offer: a Work
@@ -516,6 +585,61 @@ const POLICY = {
 const workspaces = new Map(); // user_id -> saved row
 const myItems = new Map(); // user_id -> items array
 
+// The typed quote policy: the dealer default row ("") and one row per branch.
+// A branch row, when one exists, wins over the dealer default for that branch.
+const policyRows = new Map();
+function resetPolicy() {
+  policyRows.clear();
+  policyRows.set("", { ...POLICY, quick_chip_set: [...POLICY.quick_chip_set] });
+}
+function effectivePolicy(branchId) {
+  const row = policyRows.get(branchId) ?? policyRows.get("");
+  const { branch_id: _drop, ...rest } = row;
+  return { ...rest, effective_chips: rest.quick_chip_set.length > 0 ? [...rest.quick_chip_set] : ["Pavers"] };
+}
+
+// The dealer's one acceptance switch, and the scope rule table (seven rules,
+// the reference's own set, wording fixed: only the switch is writable).
+const acceptance = { allow_multi_accept: false, switch_wired: true };
+const SCOPE_RULES = [
+  ["SURFACE_NEEDS_BASE", "Granular base for the paved area", ["PAVER", "PATIO"], ["BASE"]],
+  ["SURFACE_NEEDS_BEDDING", "Bedding course under the units", ["PAVER", "PATIO"], ["BEDDING"]],
+  ["SURFACE_NEEDS_JOINTING", "Jointing sand for the paved area", ["PAVER", "PATIO"], ["JOINTING"]],
+  ["SURFACE_NEEDS_EDGING", "Edge restraint around the perimeter", ["PAVER", "PATIO"], ["EDGING", "RESTRAINT"]],
+  ["WALL_NEEDS_BASE", "Levelling pad under the wall", ["WALL"], ["BASE"]],
+  ["WALL_NEEDS_DRAINAGE", "Drainage stone behind the wall", ["WALL"], ["DRAINAGE"]],
+  ["CAPS_NEED_ADHESIVE", "Adhesive for the caps and steps", ["COPING", "STEP"], ["ADHESIVE"]],
+];
+let scopeRules = [];
+function resetScopeRules() {
+  scopeRules = SCOPE_RULES.map(([code, title, whenApps, expectApps], index) => ({
+    code,
+    title,
+    advice: `${title}: the yard's own installation advice.`,
+    when_apps: whenApps,
+    expect_apps: expectApps,
+    suggest_query: expectApps[0].toLowerCase(),
+    enabled: true,
+    sort_order: index + 1,
+  }));
+}
+resetScopeRules();
+resetPolicy();
+
+// The dealer's curation rows per role profile.
+const roleItemsByProfile = new Map();
+
+// The caller's own profile word, and whether it may administer the settings.
+function profileOf(caller) {
+  return caller.account.role_code === "sales_manager" ? "admin" : "counter";
+}
+function isGeneralManager(caller) {
+  return switches.callerIsGeneralManager && caller.account.role_code === "sales_manager";
+}
+function isSettingsAdmin(caller) {
+  return caller.account.role_code === "sales_manager";
+}
+
 function workspaceRow(userId, defaults) {
   const saved = workspaces.get(userId);
   if (saved) return { ...saved, source: "user" };
@@ -633,7 +757,43 @@ const server = createServer(async (request, response) => {
   // the cost list switch the wrong-role page flips. Test scaffolding; no
   // contract path shares the namespace.
   if (path === "/_stub/state") {
-    respondJson(response, 200, { workspaceWrites, itemsWrites, switches: { ...switches } });
+    respondJson(response, 200, { workspaceWrites, itemsWrites, policyWrites, conversions, switches: { ...switches } });
+    return;
+  }
+  if (path === "/_stub/general-manager" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      switches.callerIsGeneralManager = body.member === true;
+      respondJson(response, 200, { member: switches.callerIsGeneralManager });
+    });
+    return;
+  }
+  if (path === "/_stub/floor-raise" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      switches.floorRaiseBps = Number.isInteger(body.bps) && body.bps > 0 ? body.bps : 0;
+      respondJson(response, 200, { bps: switches.floorRaiseBps });
+    });
+    return;
+  }
+  // Put the whole in-memory world back to its seeded state, so a suite that
+  // changes quotes, policy or switches leaves the next one a clean stub.
+  if (path === "/_stub/reset" && request.method === "POST") {
+    seedWorld();
+    shareLinks.clear();
+    floorRequests.clear();
+    workspaces.clear();
+    myItems.clear();
+    roleItemsByProfile.clear();
+    workspaceWrites.length = 0;
+    itemsWrites.length = 0;
+    policyWrites.length = 0;
+    conversions.length = 0;
+    acceptance.allow_multi_accept = false;
+    resetPolicy();
+    resetScopeRules();
+    switches.callerOnCostList = true;
+    switches.callerIsGeneralManager = false;
+    switches.floorRaiseBps = 0;
+    respondJson(response, 200, { reset: true });
     return;
   }
   if (path === "/_stub/cost-list" && request.method === "PUT") {
@@ -738,7 +898,9 @@ const server = createServer(async (request, response) => {
           respondJson(response, 409, { error: `quote: this quote is ${quote.status.toLowerCase()} and can no longer be changed` });
           return;
         }
+        const previous = quote.valid_until;
         quote.valid_until = typeof body.valid_until === "string" ? body.valid_until : "";
+        audit(quote, caller, [{ field: "valid_until", line_no: 0, before: previous, after: quote.valid_until }]);
         respondJson(response, 200, {
           totals: { SubtotalCents: quote.subtotal_cents, TotalCents: quote.total_cents },
           status: quote.status,
@@ -767,9 +929,16 @@ const server = createServer(async (request, response) => {
         return;
       }
       const customer = customerById.get(quote.customer_id);
+      const before = snapshotOf(quote, null);
       const line = newLine(product, customer, body.qty_entered, { lineNo: quote.lines.length + 1 });
       quote.lines.push(line);
       restamp(quote);
+      audit(quote, caller, [
+        { field: "line_added", line_no: line.line_no, after: product.product_id },
+        { field: "qty_entered", line_no: line.line_no, after: line.qty_entered },
+        { field: "qty_base", line_no: line.line_no, after: line.qty_base },
+        ...moneyRows(quote, before, line, line.line_no),
+      ]);
       respondJson(response, 200, editResult(quote, line));
     });
     return;
@@ -794,9 +963,11 @@ const server = createServer(async (request, response) => {
         respondJson(response, 404, { error: "no line with that number" });
         return;
       }
+      const before = snapshotOf(quote, line);
       quote.lines = quote.lines.filter((row) => row.line_no !== lineNo);
       renumber(quote);
       restamp(quote);
+      audit(quote, caller, [{ field: "line_removed", line_no: lineNo, before: line.product_id }, ...moneyRows(quote, before, null, lineNo)]);
       respondJson(response, 200, editResult(quote, null));
       return;
     }
@@ -824,10 +995,16 @@ const server = createServer(async (request, response) => {
           const decision = floorDecision(caller, product, customer, disc);
           if (decision !== null && decision.cleared) {
             // The manager's own clearing: accepted once, stamped on the line.
+            const before = snapshotOf(quote, line);
             quote.lines = quote.lines.map((row) =>
               row.line_no === lineNo ? newLine(product, customer, row.qty_entered, { lineNo, discPct: disc, floorClearedBy: decision.by }) : row,
             );
             restamp(quote);
+            audit(quote, caller, [
+              { field: "disc_pct", line_no: lineNo, before: line.disc_pct, after: disc },
+              { field: "floor_cleared_by", line_no: lineNo, after: decision.by },
+              ...moneyRows(quote, before, quote.lines.find((row) => row.line_no === lineNo), lineNo),
+            ]);
             respondJson(response, 200, editResult(quote, quote.lines.find((row) => row.line_no === lineNo)));
             return;
           }
@@ -840,10 +1017,15 @@ const server = createServer(async (request, response) => {
             respondJson(response, 409, body);
             return;
           }
+          const before = snapshotOf(quote, line);
           quote.lines = quote.lines.map((row) =>
             row.line_no === lineNo ? newLine(product, customer, row.qty_entered, { lineNo, discPct: disc }) : row,
           );
           restamp(quote);
+          audit(quote, caller, [
+            { field: "disc_pct", line_no: lineNo, before: line.disc_pct, after: disc },
+            ...moneyRows(quote, before, quote.lines.find((row) => row.line_no === lineNo), lineNo),
+          ]);
           respondJson(response, 200, editResult(quote, quote.lines.find((row) => row.line_no === lineNo)));
           return;
         }
@@ -854,10 +1036,29 @@ const server = createServer(async (request, response) => {
           respondJson(response, 400, { error: "quote: the quantity must be a positive number" });
           return;
         }
+        // The qty arm reprices at the discount the line already carries, so the
+        // floor is asked again at that discount: a refusal here is the same
+        // typed body the discount arm answers.
+        let clearedBy = line.floor_cleared_by;
+        if (line.disc_pct > 0) {
+          const decision = floorDecision(caller, product, customer, line.disc_pct);
+          if (decision !== null && !decision.cleared) {
+            const standing = floorRequests.get(`${quote.id}:${lineNo}`);
+            respondJson(response, 409, { ...decision.body, ...(standing === undefined ? {} : { existing_request: standing }) });
+            return;
+          }
+          if (decision !== null) clearedBy = decision.by;
+        }
+        const before = snapshotOf(quote, line);
         quote.lines = quote.lines.map((row) =>
-          row.line_no === lineNo ? newLine(product, customer, qty, { lineNo, discPct: row.disc_pct, floorClearedBy: row.floor_cleared_by }) : row,
+          row.line_no === lineNo ? newLine(product, customer, qty, { lineNo, discPct: row.disc_pct, floorClearedBy: clearedBy }) : row,
         );
         restamp(quote);
+        audit(quote, caller, [
+          { field: "qty_entered", line_no: lineNo, before: line.qty_entered, after: qty },
+          { field: "qty_base", line_no: lineNo, before: line.qty_base, after: qty },
+          ...moneyRows(quote, before, quote.lines.find((row) => row.line_no === lineNo), lineNo),
+        ]);
         respondJson(response, 200, editResult(quote, quote.lines.find((row) => row.line_no === lineNo)));
       });
       return;
@@ -917,19 +1118,119 @@ const server = createServer(async (request, response) => {
       return;
     }
     readBody(request, response, () => {
+      if (quote.status !== "DRAFT" && quote.status !== "SENT") {
+        respondJson(response, 409, { error: `quote: this quote is ${quote.status.toLowerCase()} and cannot be shared` });
+        return;
+      }
       // Minting is the send: the reference's own rule, DRAFT moves to SENT.
       if (quote.status === "DRAFT") quote.status = "SENT";
+      const list = shareLinks.get(quote.id) ?? [];
+      const now = Date.now();
       const row = {
-        id: `sl-${quote.id}`,
+        id: `sl-${quote.id}-${list.length + 1}`,
         quote_id: quote.id,
-        expires_at: "2027-01-01T00:00:00Z",
+        expires_at: new Date(now + 14 * 86400000).toISOString(),
         created_by: userId,
-        created_at: "2026-01-01T00:00:00Z",
+        created_at: new Date(now).toISOString(),
         live: true,
-        token: `qd-demo-${quote.id}`,
+        revoked_at: null,
       };
-      shareLinks.set(quote.id, row);
-      respondJson(response, 200, row);
+      list.push(row);
+      shareLinks.set(quote.id, list);
+      // The token is the mint's answer alone: it is never stored or listed.
+      respondJson(response, 200, { ...row, token: `qd-demo-${row.id}` });
+    });
+    return;
+  }
+
+  match = /^\/api\/v1\/quotes\/([^/]+)\/share-links$/.exec(path);
+  if (match !== null && request.method === "GET") {
+    const quote = quoteOr404(match[1]);
+    if (quote === null) {
+      respondJson(response, 404, { error: "no quote with that id" });
+      return;
+    }
+    respondJson(response, 200, { items: shareLinks.get(quote.id) ?? [] });
+    return;
+  }
+
+  match = /^\/api\/v1\/quotes\/([^/]+)\/share-links\/([^/]+)$/.exec(path);
+  if (match !== null && request.method === "DELETE") {
+    const quote = quoteOr404(match[1]);
+    const row = quote === null ? undefined : (shareLinks.get(quote.id) ?? []).find((link) => link.id === match[2]);
+    if (row === undefined) {
+      respondJson(response, 404, { error: "no share link with that id" });
+      return;
+    }
+    row.live = false;
+    row.revoked_at = new Date().toISOString();
+    response.writeHead(204);
+    response.end();
+    return;
+  }
+
+  match = /^\/api\/v1\/quotes\/([^/]+)\/edits$/.exec(path);
+  if (match !== null && request.method === "GET") {
+    const quote = quoteOr404(match[1]);
+    if (quote === null) {
+      respondJson(response, 404, { error: "no quote with that id" });
+      return;
+    }
+    respondJson(response, 200, { quote_id: quote.id, changes: quote.history ?? [] });
+    return;
+  }
+
+  match = /^\/api\/v1\/quotes\/([^/]+)\/lines\/(\d+)\/compare$/.exec(path);
+  if (match !== null && request.method === "POST") {
+    const quote = quoteOr404(match[1]);
+    const line = quote === null ? undefined : quote.lines.find((row) => row.line_no === Number(match[2]));
+    if (line === undefined) {
+      respondJson(response, 404, { error: "no line with that number" });
+      return;
+    }
+    readBody(request, response, (body) => {
+      const customer = customerById.get(quote.customer_id);
+      const qty = Number(line.qty_entered);
+      const source = customer && customer.percent_off > 0 ? "CUSTOMER_RULE" : "LIST";
+      const options = [
+        {
+          product_id: line.product_id,
+          is_current: true,
+          qty_entered: line.qty_entered,
+          uom_entered: line.uom_entered,
+          unit_price_cents: line.unit_price_cents,
+          price_uom: line.price_uom,
+          line_total_cents: line.line_total_cents,
+          list_price_cents: productById.get(line.product_id).list_cents,
+          discount_bps: customer ? customer.percent_off * 100 : 0,
+          source,
+          delta_cents: 0,
+          blocked: false,
+        },
+      ];
+      for (const alt of Array.isArray(body.alternates) ? body.alternates : []) {
+        const product = productById.get(alt.product_id);
+        if (product === undefined) continue;
+        const unit = ruleUnitCents(product, customer);
+        const row = {
+          product_id: product.product_id,
+          is_current: false,
+          qty_entered: line.qty_entered,
+          uom_entered: product.sold_by,
+          unit_price_cents: unit,
+          price_uom: product.sold_by,
+          line_total_cents: Math.round(unit * qty),
+          list_price_cents: product.list_cents,
+          discount_bps: customer ? customer.percent_off * 100 : 0,
+          source,
+          delta_cents: Math.round(unit * qty) - line.line_total_cents,
+          blocked: marginBps(unit, product.branch_cost_cents[TRENTON_ID] ?? 0) < product.floor_bps + switches.floorRaiseBps,
+          ...(product.sold_by === line.price_uom ? {} : { unavailable: "cannot be priced in this unit" }),
+        };
+        if (row.blocked) row.block_policy = "category_margin_floor";
+        options.push(row);
+      }
+      respondJson(response, 200, { quote_id: quote.id, line_no: line.line_no, options });
     });
     return;
   }
@@ -956,12 +1257,14 @@ const server = createServer(async (request, response) => {
       respondJson(response, 404, { error: "no quote with that id" });
       return;
     }
-    readBody(request, response, () => {
+    readBody(request, response, (body) => {
       if (quote.status !== "ACCEPTED") {
         respondJson(response, 409, { error: `quote: this quote is ${quote.status.toLowerCase()}, only an accepted quote converts` });
         return;
       }
       quote.status = "CONVERTED";
+      quote.fulfilment = body.fulfillment === "WILL_CALL" ? "WILL_CALL" : "PICKUP";
+      conversions.push({ quote_id: quote.id, fulfillment: body.fulfillment ?? null });
       respondJson(response, 200, { order_id: `o-${quote.id}`, order_no: `SO-${quote.id.slice(-4)}` });
     });
     return;
@@ -1006,20 +1309,147 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  // The quote policy: any staff caller reads it; the write follows the CP0-5
+  // answer A rule, in words: the Sales manager writes a branch row it reaches,
+  // the General Manager alone writes the dealer default, anyone else is refused.
+  if (path === "/api/v1/quotes/policy" && request.method === "GET") {
+    const branchId = url.searchParams.get("branch_id");
+    respondJson(response, 200, effectivePolicy(branchId === null || branchId === "" ? "" : branchId));
+    return;
+  }
+  if (path === "/api/v1/quotes/policy" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      const dealerRow = body.branch_id === undefined || body.branch_id === "";
+      if (!isSettingsAdmin(caller)) {
+        respondJson(response, 403, { error: "quote: the Inside Sales role may not change the quote policy" });
+        return;
+      }
+      if (dealerRow && !isGeneralManager(caller)) {
+        respondJson(response, 403, { error: "quote: the dealer wide default is set by the General Manager; the Sales Manager sets a branch row" });
+        return;
+      }
+      if (!dealerRow && body.branch_id !== caller.branchId) {
+        respondJson(response, 403, { error: "quote: that branch is not one your role reaches" });
+        return;
+      }
+      const days = body.default_validity_days;
+      if (!Number.isInteger(days) || days < 1 || days > 365) {
+        respondJson(response, 422, { error: "quote: default validity must be between 1 and 365 days" });
+        return;
+      }
+      if (!Number.isInteger(body.default_deposit_pct) || body.default_deposit_pct < 0 || body.default_deposit_pct > 100) {
+        respondJson(response, 422, { error: "quote: default deposit must be between 0 and 100 percent" });
+        return;
+      }
+      if (!Number.isInteger(body.workspace_split_pct) || body.workspace_split_pct < 20 || body.workspace_split_pct > 80) {
+        respondJson(response, 422, { error: "quote: the panel split must be between 20 and 80 percent" });
+        return;
+      }
+      const { effective_chips: _skip, ...row } = body;
+      policyRows.set(dealerRow ? "" : body.branch_id, row);
+      policyWrites.push({ scope: dealerRow ? "dealer" : "branch", user_id: userId });
+      respondJson(response, 200, { ...effectivePolicy(dealerRow ? "" : body.branch_id), ...(dealerRow ? {} : { branch_id: body.branch_id }) });
+    });
+    return;
+  }
+
+  if (path === "/api/v1/quotes/settings/acceptance" && request.method === "GET") {
+    if (!isSettingsAdmin(caller)) {
+      respondJson(response, 403, { error: "quote: the acceptance settings are for administrators; the Inside Sales role may not read them" });
+      return;
+    }
+    respondJson(response, 200, acceptance);
+    return;
+  }
+  if (path === "/api/v1/quotes/settings/acceptance" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      if (!isGeneralManager(caller)) {
+        respondJson(response, 403, { error: "quote: the acceptance switch is dealer wide and only the General Manager changes it" });
+        return;
+      }
+      if (typeof body.allow_multi_accept !== "boolean") {
+        respondJson(response, 400, { error: "quote: allow_multi_accept is required" });
+        return;
+      }
+      acceptance.allow_multi_accept = body.allow_multi_accept;
+      respondJson(response, 200, acceptance);
+    });
+    return;
+  }
+
+  if (path === "/api/v1/quote-assist/scope-rules" && request.method === "GET") {
+    if (!isSettingsAdmin(caller)) {
+      respondJson(response, 403, { error: "quoteassist: only an administrator reads the scope rules" });
+      return;
+    }
+    respondJson(response, 200, { rules: scopeRules });
+    return;
+  }
+  match = /^\/api\/v1\/quote-assist\/scope-rules\/([^/]+)$/.exec(path);
+  if (match !== null && request.method === "PATCH") {
+    readBody(request, response, (body) => {
+      if (!isSettingsAdmin(caller)) {
+        respondJson(response, 403, { error: "quoteassist: only an administrator changes the scope rules" });
+        return;
+      }
+      const rule = scopeRules.find((row) => row.code === match[1]);
+      if (rule === undefined) {
+        respondJson(response, 404, { error: "no scope rule with that code" });
+        return;
+      }
+      if (typeof body.enabled !== "boolean") {
+        respondJson(response, 400, { error: "quoteassist: enabled is required" });
+        return;
+      }
+      rule.enabled = body.enabled;
+      respondJson(response, 200, rule);
+    });
+    return;
+  }
+
+  if (path === "/api/v1/surfaces/quotes.builder/items" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      if (!isSettingsAdmin(caller)) {
+        respondJson(response, 403, { error: "settings: only an administrator saves the dealer's screen layout" });
+        return;
+      }
+      if (!["counter", "yard", "driver", "manager", "admin"].includes(body.profile) || !Array.isArray(body.items)) {
+        respondJson(response, 400, { error: "settings: a profile and its items are required" });
+        return;
+      }
+      roleItemsByProfile.set(body.profile, body.items);
+      itemsWrites.push({ user_id: userId, body: { profile: body.profile, count: body.items.length } });
+      respondJson(response, 200, { saved: true });
+    });
+    return;
+  }
+
+  if (request.method === "GET" && path === "/api/v1/products/search") {
+    const q = (url.searchParams.get("q") ?? "").toLowerCase();
+    const limit = Number(url.searchParams.get("limit") ?? 10);
+    const items = PRODUCTS.filter((product) => [product.sku, product.name, ...product.aliases].join(" ").toLowerCase().includes(q))
+      .slice(0, Number.isInteger(limit) && limit > 0 ? limit : 10)
+      .map((product) => ({ product_id: product.product_id, sku: product.sku, name: product.name, category: product.category, base_uom: product.sold_by }));
+    respondJson(response, 200, { items });
+    return;
+  }
+
   // The surface settings kit.
   match = /^\/api\/v1\/surfaces\/([^/]+)\/config$/.exec(path);
   if (match !== null && request.method === "GET" && match[1] === SURFACE_ID) {
-    const workspace = workspaceRow(userId, POLICY);
+    const policy = effectivePolicy(caller.branchId);
+    const workspace = workspaceRow(userId, policy);
+    const asked = url.searchParams.get("profile");
     respondJson(response, 200, {
       surface_id: SURFACE_ID,
       // The manager owns the screen's settings (CP0-5 answer A), so its
       // config answers the admin profile and the work area offers the
       // settings entry.
       profile: caller.account.role_code === "sales_manager" ? "admin" : "staff",
-      role_items: [],
+      role_items: roleItemsByProfile.get(asked ?? profileOf(caller)) ?? [],
       user_items: myItems.get(userId) ?? [],
       workspace: { ...workspace, open_ref: workspace.open_ref === "" ? undefined : workspace.open_ref },
-      policy: POLICY,
+      policy,
     });
     return;
   }

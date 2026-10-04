@@ -16,10 +16,30 @@
 import { err, ok, type ApiClient, type Result } from "@hardscapehouse/api-client";
 import {
   staffBranches,
+  staffProduct,
   staffQuote,
+  staffQuoteassist,
   staffSettings,
 } from "@hardscapehouse/api-client";
-import type { QuoteView } from "./_quote-edit.js";
+import { convertBody, type QuoteView } from "./_quote-edit.js";
+import type { QuoteFieldChange } from "./_quote-history.js";
+import {
+  readAcceptance,
+  readCatalogHits,
+  readComparison,
+  readHistory,
+  readPolicy,
+  readScopeRuleOne,
+  readScopeRules,
+  readShareLinks,
+  type AcceptanceView,
+  type CatalogHit,
+  type ComparisonRow,
+  type QuotePolicyWire,
+  type ScopeRuleRow,
+  type ShareLinkRow,
+} from "./_panel-wire.js";
+import type { CurationProfile } from "./_quote-settings.js";
 import type { GlanceIn } from "./_quote-workarea.js";
 import type { WireItem } from "./quote-surface.js";
 
@@ -595,9 +615,13 @@ export class QdClient {
     return result.ok ? ok(true) : result;
   }
 
-  /** Convert an accepted quote to its order. */
-  async convertQuote(quoteId: string): Promise<Result<{ orderId: string; orderNo: string }>> {
-    const result = await staffQuote.quoteConvertQuote(this.#client, quoteId, {});
+  /**
+   * Convert an accepted quote to its order. The fulfilment choice rides only
+   * when one was made (convertBody), so the default request says nothing and
+   * the server's own default applies.
+   */
+  async convertQuote(quoteId: string, fulfilment = ""): Promise<Result<{ orderId: string; orderNo: string }>> {
+    const result = await staffQuote.quoteConvertQuote(this.#client, quoteId, convertBody(fulfilment));
     if (!result.ok) return result;
     const record = result.value as unknown;
     if (!isRecord(record)) return err("the conversion answer is not readable");
@@ -634,9 +658,10 @@ export class QdClient {
   }
 
   /** The surface config read: the curation rows, the workspace row and the policy. */
-  async surfaceConfig(branchId: string): Promise<Result<SurfaceConfig>> {
+  async surfaceConfig(branchId: string, profile?: CurationProfile): Promise<Result<SurfaceConfig>> {
     const result = await staffSettings.settingsGetSurfaceConfig(this.#client, "quotes.builder", {
       ...(branchId === "" ? {} : { branch_id: branchId }),
+      ...(profile === undefined ? {} : { profile }),
     });
     if (!result.ok) return result;
     const config = validateConfig(result.value);
@@ -681,6 +706,106 @@ export class QdClient {
   /** Reset this person's column curation. */
   async deleteMyItems(): Promise<Result<true>> {
     const result = await staffSettings.settingsDeleteMyItems(this.#client, "quotes.builder");
+    return result.ok ? ok(true) : result;
+  }
+
+  // ── the edit panel's reads and writes ──────────────────────────────────────
+
+  /** The staff catalogue search behind the add line box and the compare box. */
+  async searchProducts(query: string, limit: number): Promise<Result<CatalogHit[]>> {
+    const result = await staffProduct.productSearch(this.#client, { q: query, limit });
+    if (!result.ok) return result;
+    const hits = readCatalogHits(result.value);
+    return hits === null ? err("the catalogue search is not readable") : ok(hits);
+  }
+
+  /** The quote's share links. A refusal here is data; the list simply stays empty. */
+  async listShareLinks(quoteId: string): Promise<Result<ShareLinkRow[]>> {
+    const result = await staffQuote.quoteListShareLinks(this.#client, quoteId);
+    if (!result.ok) return result;
+    const rows = readShareLinks(result.value);
+    return rows === null ? err("the share link list is not readable") : ok(rows);
+  }
+
+  /** Revoke one share link. */
+  async revokeShareLink(quoteId: string, linkId: string): Promise<Result<true>> {
+    const result = await staffQuote.quoteRevokeShareLink(this.#client, quoteId, linkId);
+    return result.ok ? ok(true) : result;
+  }
+
+  /** Score alternate products against one line. Read only: the server writes nothing. */
+  async compareLine(quoteId: string, lineNo: number, productIds: string[]): Promise<Result<ComparisonRow[]>> {
+    const result = await staffQuote.quoteCompareQuoteLine(this.#client, quoteId, lineNo, {
+      alternates: productIds.map((id) => ({ product_id: id })),
+    });
+    if (!result.ok) return result;
+    const rows = readComparison(result.value);
+    return rows === null ? err("the price comparison is not readable") : ok(rows);
+  }
+
+  /** The change trail, oldest first, exactly as the server sends it. */
+  async editHistory(quoteId: string): Promise<Result<QuoteFieldChange[]>> {
+    const result = await staffQuote.quoteQuoteEditHistory(this.#client, quoteId);
+    if (!result.ok) return result;
+    const rows = readHistory(result.value);
+    return rows === null ? err("the change history is not readable") : ok(rows);
+  }
+
+  // ── the settings screens ───────────────────────────────────────────────────
+
+  /** The effective quote policy for a branch (an empty branch resolves the dealer default). */
+  async readPolicy(branchId: string): Promise<Result<QuotePolicyWire>> {
+    const result = await staffQuote.quoteReadQuotePolicy(this.#client, branchId === "" ? undefined : { branch_id: branchId });
+    if (!result.ok) return result;
+    const policy = readPolicy(result.value);
+    return policy === null ? err("the quote policy is not readable") : ok(policy);
+  }
+
+  /** Write one policy row. The server decides whose row this caller may write. */
+  async putPolicy(body: QuotePolicyWire): Promise<Result<QuotePolicyWire>> {
+    const result = await staffQuote.quotePutQuotePolicy(this.#client, body);
+    if (!result.ok) return result;
+    const policy = readPolicy(result.value);
+    return policy === null ? err("the saved quote policy is not readable") : ok(policy);
+  }
+
+  /** The dealer's one acceptance switch. */
+  async getAcceptance(): Promise<Result<AcceptanceView>> {
+    const result = await staffQuote.quoteGetAcceptanceSettings(this.#client);
+    if (!result.ok) return result;
+    const view = readAcceptance(result.value);
+    return view === null ? err("the acceptance settings are not readable") : ok(view);
+  }
+
+  async setAcceptance(allowMultiAccept: boolean): Promise<Result<AcceptanceView>> {
+    const result = await staffQuote.quoteSetAcceptanceSettings(this.#client, { allow_multi_accept: allowMultiAccept });
+    if (!result.ok) return result;
+    const view = readAcceptance(result.value);
+    return view === null ? err("the saved acceptance settings are not readable") : ok(view);
+  }
+
+  /** The scope rule table, switched-off rules included. */
+  async listScopeRules(): Promise<Result<ScopeRuleRow[]>> {
+    const result = await staffQuoteassist.quoteAssistListScopeRules(this.#client);
+    if (!result.ok) return result;
+    const rules = readScopeRules(result.value);
+    return rules === null ? err("the scope rules are not readable") : ok(rules);
+  }
+
+  /** Switch one rule. Only the switch: the wording, categories and order are not editable here. */
+  async setScopeRule(code: string, enabled: boolean): Promise<Result<ScopeRuleRow>> {
+    const result = await staffQuoteassist.quoteAssistPatchScopeRule(this.#client, code, { enabled });
+    if (!result.ok) return result;
+    const rule = readScopeRuleOne(result.value);
+    return rule === null ? err("the saved scope rule is not readable") : ok(rule);
+  }
+
+  /** Save the dealer's curation for one role profile. */
+  async putRoleItems(profile: CurationProfile, items: WireItem[]): Promise<Result<true>> {
+    const result = await staffSettings.settingsPutRoleItems(this.#client, "quotes.builder", {
+      profile,
+      items: items.map((item) => ({ kind: item.kind, id: item.id, position: item.position, visible: item.visible })),
+    });
     return result.ok ? ok(true) : result;
   }
 }

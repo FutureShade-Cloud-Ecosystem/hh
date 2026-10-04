@@ -127,7 +127,7 @@ test("the convert body says nothing when no fulfilment was chosen, and the choic
 
 // ── the change history ─────────────────────────────────────────────────────────
 
-const change = (over) => ({ field: "qty_entered", line_no: 1, occurred_at: "2030-01-01T10:00:00Z", ...over });
+const change = (over) => ({ field: "qty_entered", line_no: 1, occurred_at: "at-1", ...over });
 
 test("groupChanges folds rows that share a request id, keeps order, and lets an unattributed row stand alone", () => {
   const rows = [
@@ -266,7 +266,7 @@ test("scopeRuleSummary counts the rules that are on, with the plural and the swi
 // ── the wire readers ───────────────────────────────────────────────────────────
 
 test("readHistory proves each row and refuses the whole list on one unreadable row", () => {
-  const good = { quote_id: "q-1", changes: [{ field: "qty_entered", line_no: 1, before: "1", after: "2", occurred_at: "2030-01-01T00:00:00Z", request_id: "r", actor_name: "Sales (demo)" }] };
+  const good = { quote_id: "q-1", changes: [{ field: "qty_entered", line_no: 1, before: "1", after: "2", occurred_at: "at-1", request_id: "r", actor_name: "Sales (demo)" }] };
   assert.equal(readHistory(good).length, 1);
   assert.equal(readHistory(good)[0].actor_name, "Sales (demo)");
   assert.equal(readHistory({ quote_id: "q-1", changes: [{ field: "x", occurred_at: "t" }] }), null);
@@ -276,7 +276,7 @@ test("readHistory proves each row and refuses the whole list on one unreadable r
 });
 
 test("readShareLinks needs the id, the expiry, the live flag; the token is never read from a list", () => {
-  const rows = readShareLinks({ items: [{ id: "l-1", quote_id: "q", expires_at: "2031-01-01T00:00:00Z", created_at: "2030-01-01T00:00:00Z", live: true, token: "must-not-ride" }] });
+  const rows = readShareLinks({ items: [{ id: "l-1", quote_id: "q", expires_at: "at-2", created_at: "at-1", live: true, token: "must-not-ride" }] });
   assert.equal(rows.length, 1);
   assert.equal("token" in rows[0], false);
   assert.equal(readShareLinks({ items: [{ id: "l-1", live: "yes" }] }), null);
