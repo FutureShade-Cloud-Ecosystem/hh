@@ -317,7 +317,7 @@ test('the walk finds this package and names the workspace packages it must also 
   // Quote Desk app (web/apps/quote-desk) is the second: the staff quote work
   // area and list, scanned by the same gates.
   assert.deepEqual(
-    dependentPackages().map((d) => d.name),
+    dependentPackages().map((d) => d.name).sort(),
     ['@hardscapehouse/counter-till', '@hardscapehouse/quote-desk'],
     'a package now depends on @hardscapehouse/design-system; its sources are scanned below, and this lock must name it deliberately',
   );
