@@ -424,8 +424,15 @@ test("an accept that never reached the core keeps the form and says what it know
   await expectFormKept(page);
 });
 
-test("a double click on Accept sends exactly one POST while the first is in flight", async ({ page }) => {
-  await readyToAccept(page, "q-terms-28");
+const ECHO_28 = {
+  quote_no: "Q-28",
+  typed_name: "Sample Customer",
+  subtotal_cents: 52000,
+  tax_cents: 6760,
+  total_cents: 58760,
+};
+
+async function slowAccept(page: Page): Promise<() => number> {
   let posts = 0;
   await page.route("**/accept", async (route) => {
     posts += 1;
@@ -433,18 +440,30 @@ test("a double click on Accept sends exactly one POST while the first is in flig
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ quote_no: "Q-28", typed_name: "Sample Customer", accepted_at: new Date().toISOString(), subtotal_cents: 52000, tax_cents: 6760, total_cents: 58760 }),
+      body: JSON.stringify({ ...ECHO_28, accepted_at: new Date().toISOString() }),
     });
   });
-  const button = page.getByRole("button", { name: "Accept quote" });
-  await button.dblclick();
-  // Two synchronous clicks too: the first sets the busy flag before the
-  // disabled attribute can render, so only the guard stops the second.
+  return () => posts;
+}
+
+test("a double click on Accept sends exactly one POST while the first is in flight", async ({ page }) => {
+  await readyToAccept(page, "q-terms-28");
+  const posts = await slowAccept(page);
+  await page.getByRole("button", { name: "Accept quote" }).dblclick();
+  await expect(page.getByRole("heading", { name: "Thank you: quote Q-28 accepted" })).toBeVisible();
+  expect(posts()).toBe(1);
+});
+
+test("two synchronous clicks send one POST: the busy guard stands alone, before the button can render disabled", async ({ page }) => {
+  await readyToAccept(page, "q-terms-28");
+  const posts = await slowAccept(page);
+  // Both clicks run in one task, so the disabled attribute cannot have
+  // rendered between them: only the guard in accept() stops the second.
   await page.locator("pd-quote-public").evaluate((host) => {
     const inner = host.shadowRoot?.querySelector<HTMLButtonElement>("button[data-action=accept]");
     inner?.click();
     inner?.click();
   });
   await expect(page.getByRole("heading", { name: "Thank you: quote Q-28 accepted" })).toBeVisible();
-  expect(posts).toBe(1);
+  expect(posts()).toBe(1);
 });
