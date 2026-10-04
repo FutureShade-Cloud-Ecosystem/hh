@@ -15,12 +15,12 @@ export async function openPricing(page: Page): Promise<void> {
 
 export async function openTab(page: Page, tab: "margin" | "rules" | "customers" | "breaks" | "audit"): Promise<void> {
   await page.getByTestId(`pricing-tab-${tab}`).click();
-  await expect(page.getByTestId(`pricing-tab-${tab}`)).toHaveAttribute("aria-current", "true");
+  await expect(page.getByTestId(`pricing-tab-${tab}`)).toHaveAttribute("aria-selected", "true");
 }
 
 export async function setMode(
   page: Page,
-  body: { mode?: string; audit_allowed?: boolean; shape?: string; fail_next?: { kind: string; status?: number; message?: string } | null; fail_confirm?: boolean },
+  body: { mode?: string; audit_allowed?: boolean; shape?: string; fail_next?: { kind: string; status?: number; message?: string } | null; fail_confirm?: boolean; force_preview?: Record<string, unknown> | null },
 ): Promise<void> {
   await page.request.put("/_stub/pricing-mode", { data: body });
 }

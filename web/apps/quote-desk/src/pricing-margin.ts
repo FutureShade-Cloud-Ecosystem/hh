@@ -212,7 +212,7 @@ export class QdPricingMargin extends PricingTabBase {
       <div class="panel" data-testid="pm-panel">
         <div class="head">
           <h2>Margin policy</h2>
-          <span class="count">${this.rows.length} categories</span>
+          ${this.loading || this.loadError !== "" ? nothing : html`<span class="count" data-testid="pm-count">${this.rows.length} categories</span>`}
         </div>
         ${this.loading
           ? html`<p class="msg">Loading the margin policy...</p>`

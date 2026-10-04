@@ -51,13 +51,35 @@ export function alreadyUnderCount(p: FloorPreview): number {
   return p.items.length - affectedItems(p).length;
 }
 
-/** Whether the editor is asked to confirm before the save runs. */
+/** Whether the check left something the editor has not been told: a gap in what it covered. */
+function hasGaps(p: FloorPreview): boolean {
+  return p.notGraded > 0 || p.noCost > 0 || p.truncated;
+}
+
+/**
+ * Whether the editor is asked to confirm before the save runs. Never a silent save past a
+ * check that could not grade: a product the new price makes worse, a product that could not
+ * be priced or has no cost, and a check that stopped at its limit all open the notice.
+ */
 export function needsConfirm(p: FloorPreview): boolean {
-  return affectedItems(p).length > 0;
+  return affectedItems(p).length > 0 || hasGaps(p);
+}
+
+/**
+ * What a straight save says afterwards when the check found products already under their
+ * floor that the change leaves no worse: not a stop (the price makes nothing worse) but
+ * never left unsaid. "" when there is nothing to say.
+ */
+export function settledNote(p: FloorPreview): string {
+  if (affectedItems(p).length > 0) return "";
+  const n = alreadyUnderCount(p);
+  if (n === 0) return "";
+  return n === 1 ? "Saved. 1 product was already under its margin floor and is no worse." : `Saved. ${n} products were already under their margin floor and are no worse.`;
 }
 
 export function warningHeadline(p: FloorPreview): string {
   const n = affectedItems(p).length;
+  if (n === 0) return "The floor check could not cover everything this price reaches.";
   return n === 1 ? "This price puts 1 product under its margin floor." : `This price puts ${n} products under their margin floor.`;
 }
 
@@ -78,16 +100,15 @@ export function itemLine(i: FloorItem): string {
   );
 }
 
-/** What the grading did not cover, said plainly. */
+/** What the grading did not cover, said plainly and neutrally. */
 export function warningNotes(p: FloorPreview): string[] {
   const notes: string[] = [];
-  if (p.truncated) notes.push(`Only the first ${p.evaluated} products were checked; more are reached by this price.`);
+  if (p.truncated) notes.push(`The check stopped at its limit after ${p.evaluated} products; the rest could not be checked.`);
   if (p.notGraded > 0) {
-    notes.push(
-      p.notGraded === 1
-        ? "1 product could not be checked because it has no cost on file."
-        : `${p.notGraded} products could not be checked because they have no cost on file.`,
-    );
+    notes.push(p.notGraded === 1 ? "1 product could not be priced, so it could not be checked." : `${p.notGraded} products could not be priced, so they could not be checked.`);
+  }
+  if (p.noCost > 0) {
+    notes.push(p.noCost === 1 ? "1 product has no cost on file, so its margin could not be told." : `${p.noCost} products have no cost on file, so their margin could not be told.`);
   }
   const already = alreadyUnderCount(p);
   if (already > 0) {
@@ -126,13 +147,19 @@ const ENTITY_OF: Record<FloorChange["kind"], PricingFloorConfirmation["entity_ty
   quantity_break: "quantity_break",
 };
 
-/** The body that logs the editor's confirmation, against the record the save wrote. */
-export function confirmationBody(change: FloorChange, savedId: string, p: FloorPreview): PricingFloorConfirmation {
+/**
+ * The body that logs the editor's confirmation, against the record the save wrote; null when
+ * the notice named no product (the log row names the products the editor was shown, and the
+ * server refuses a confirmation of none).
+ */
+export function confirmationBody(change: FloorChange, savedId: string, p: FloorPreview): PricingFloorConfirmation | null {
+  const shown = affectedItems(p);
+  if (shown.length === 0) return null;
   const ref = refOf(change);
   return {
     entity_type: ENTITY_OF[change.kind],
     entity_id: savedId,
-    product_ids: affectedItems(p).map((i) => i.productId),
+    product_ids: shown.map((i) => i.productId),
     ...(ref === null ? {} : { ref_entity_type: ref.type, ref_entity_id: ref.id }),
   };
 }

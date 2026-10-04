@@ -22,6 +22,7 @@ import {
   confirmationBody,
   itemLine,
   needsConfirm,
+  settledNote,
   previewBody,
   warningHeadline,
   warningNotes,
@@ -51,6 +52,10 @@ interface FloorPrompt {
   savedId: string;
   /** The confirmation that still has to reach the log, when the save landed and the log write did not. */
   unlogged: PricingFloorConfirmation | null;
+  /** The control that had focus when the save began: a decline returns focus here, inside the dialog that is still open. */
+  returnTo: HTMLElement | null;
+  /** Set when Close or Escape was pressed once with the log row still owed: the next press leaves it. */
+  closeWarned: boolean;
 }
 
 export abstract class PricingTabBase extends PanelBase {
@@ -61,10 +66,23 @@ export abstract class PricingTabBase extends PanelBase {
   @state() protected saving = false;
   @state() protected formError = "";
   @state() protected floorPrompt: FloorPrompt | null = null;
+  /** What a straight save said afterwards about products already under their floor and no worse. */
+  @state() protected settled = "";
   private returnFocus: HTMLElement | null = null;
 
   /** Close the tab's own top dialog; true when one was open. */
   protected abstract closeTopDialog(): boolean;
+
+  /**
+   * HOOK for the app's leaving paths (the panel's tab switch, the desk's Quotes toggle, and
+   * the sign out): true while a price is saved and its floor confirmation is not yet in the
+   * pricing log, so leaving would lose the row. quote/qd-3b-app's SIGN_OUT_EVENT wait should
+   * register this (through QdPricingPanel.holdLeave) when that branch is merged; until then
+   * the desk's own sign out button asks the panel the same question.
+   */
+  unloggedConfirmationPending(): boolean {
+    return this.floorPrompt?.unlogged != null;
+  }
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -195,11 +213,17 @@ export abstract class PricingTabBase extends PanelBase {
     if (pricing === null || this.saving) return;
     this.saving = true;
     this.formError = "";
+    this.settled = "";
+    const asked = PricingTabBase.deepActive();
     const checked = await pricing.previewFloor(previewBody(change));
     if (!checked.ok) {
       this.saving = false;
       if (this.noteRefusal(checked, true)) return;
-      this.formError = `${spokenRefusal(checked.error).replace(/\.+$/, "")}. Nothing was saved, because the floor check could not run.`;
+      // A 400 or 422 is the check refusing what was sent: say what, not that the check could not run.
+      const refused = checked.status === 400 || checked.status === 422;
+      this.formError = refused
+        ? `${spokenRefusal(checked.error).replace(/\.+$/, "")}. Nothing was saved.`
+        : `${spokenRefusal(checked.error).replace(/\.+$/, "")}. Nothing was saved, because the floor check could not run.`;
       return;
     }
     if (!needsConfirm(checked.value)) {
@@ -209,20 +233,32 @@ export abstract class PricingTabBase extends PanelBase {
         if (!this.noteRefusal(saved, true)) this.formError = spokenRefusal(saved.error);
         return;
       }
+      this.settled = settledNote(checked.value);
       onSaved();
       return;
     }
     this.saving = false;
     this.captureFocus();
-    this.floorPrompt = { preview: checked.value, change, save, onSaved, busy: false, error: "", savedId: "", unlogged: null };
+    this.floorPrompt = {
+      preview: checked.value, change, save, onSaved, busy: false, error: "", savedId: "", unlogged: null,
+      returnTo: asked, closeWarned: false,
+    };
   }
 
   protected declineFloor(): void {
     const prompt = this.floorPrompt;
     if (prompt === null || prompt.busy) return;
+    // A price saved whose log row is still owed: the first Close or Escape says so, the next leaves.
+    if (prompt.unlogged !== null && !prompt.closeWarned) {
+      prompt.closeWarned = true;
+      prompt.error = "The price was saved, but its confirmation is not in the pricing log. Log it again, or close once more to leave without it.";
+      this.requestUpdate();
+      return;
+    }
     this.floorPrompt = null;
     // A price that is already saved stays saved; declining after that is closing the notice.
     if (prompt.savedId !== "") prompt.onSaved();
+    else if (prompt.returnTo !== null && prompt.returnTo.isConnected) prompt.returnTo.focus();
     else this.restoreFocus();
   }
 
@@ -240,7 +276,15 @@ export abstract class PricingTabBase extends PanelBase {
       return;
     }
     prompt.savedId = saved.value;
-    await this.logConfirmation(prompt, confirmationBody(prompt.change, saved.value, prompt.preview));
+    const body = confirmationBody(prompt.change, saved.value, prompt.preview);
+    if (body === null) {
+      // The notice named no product (a gap in the check only): there is nothing to log.
+      prompt.busy = false;
+      this.floorPrompt = null;
+      prompt.onSaved();
+      return;
+    }
+    await this.logConfirmation(prompt, body);
   }
 
   private async logConfirmation(prompt: FloorPrompt, body: PricingFloorConfirmation): Promise<void> {
@@ -252,6 +296,7 @@ export abstract class PricingTabBase extends PanelBase {
     prompt.busy = false;
     if (!logged.ok) {
       prompt.unlogged = body;
+      prompt.closeWarned = false;
       prompt.error = `The price was saved, but the confirmation could not be logged: ${spokenRefusal(logged.error)}`;
       this.requestUpdate();
       return;
@@ -277,25 +322,32 @@ export abstract class PricingTabBase extends PanelBase {
 
   protected renderFloorDialog(): TemplateResult | typeof nothing {
     const prompt = this.floorPrompt;
-    if (prompt === null) return nothing;
+    if (prompt === null) {
+      return this.settled === "" ? nothing : html`<p class="msg settled" role="status" data-testid="floor-settled">${this.settled}</p>`;
+    }
     const affected = affectedItems(prompt.preview);
     const saved = prompt.savedId !== "";
+    const names = affected.length > 0 || prompt.preview.items.length > 0;
     return html`
       <div class="backdrop top" data-testid="floor-backdrop">
         <div class="dialog wide" role="dialog" aria-modal="true" aria-labelledby="floor-title" data-testid="floor-dialog">
           <div class="dialog-head">
-            <h3 id="floor-title">Margin floor warning</h3>
+            <h3 id="floor-title">${affected.length > 0 ? "Margin floor warning" : "Margin floor check"}</h3>
           </div>
           <div class="dialog-body">
             <div data-testid="floor-headline"><strong>${warningHeadline(prompt.preview)}</strong></div>
-            <ul class="floor-list" data-testid="floor-list">
-              ${affected.map((item) => html`<li data-testid="floor-item">${itemLine(item)}</li>`)}
-            </ul>
+            ${names
+              ? html`<ul class="floor-list" data-testid="floor-list">
+                  ${affected.map((item) => html`<li data-testid="floor-item">${itemLine(item)}</li>`)}
+                </ul>`
+              : nothing}
             ${warningNotes(prompt.preview).map((note) => html`<div class="hint" data-testid="floor-note">${note}</div>`)}
             <div class="hint">
               ${saved
                 ? "Saved. The confirmation goes into the pricing log."
-                : "You may still save it: the editors set the prices. Confirming saves the price and records in the pricing log that you were shown this."}
+                : affected.length > 0
+                  ? "You may still save it: the editors set the prices. Confirming saves the price and records in the pricing log that you were shown this."
+                  : "You may still save it: the editors set the prices. Confirming saves the price."}
             </div>
             ${prompt.error !== "" ? html`<div class="err" role="alert" data-testid="floor-error">${prompt.error}</div>` : nothing}
           </div>
@@ -314,8 +366,13 @@ export abstract class PricingTabBase extends PanelBase {
   }
 
   protected override updated(changed: Map<string, unknown>): void {
-    if (changed.has("floorPrompt") && this.floorPrompt !== null) {
+    if (this.floorPrompt === null) return;
+    const dialog = this.renderRoot.querySelector<HTMLElement>('[data-testid="floor-dialog"]');
+    if (changed.has("floorPrompt")) {
       this.renderRoot.querySelector<HTMLElement>('[data-testid="floor-decline"]')?.focus();
+    } else if (dialog !== null && !dialog.contains((this.renderRoot as ShadowRoot).activeElement)) {
+      // A button that was busy (and so disabled) lost focus to the page: bring it back inside the dialog.
+      dialog.querySelector<HTMLElement>("button:not([disabled])")?.focus();
     }
   }
 }

@@ -122,7 +122,7 @@ test("the list answered as the contract's page object reads the same", async ({ 
   await openTab(page, "audit");
   await expect(page.getByTestId("pa-row")).toHaveCount(2);
   await openTab(page, "rules");
-  await expect(page.getByTestId("pr-row")).toHaveCount(4);
+  await expect(page.getByTestId("pr-row")).toHaveCount(5);
 });
 
 test("a log the cost and margin list refuses shows the server's refusal there, and the price tabs are untouched", async ({ page }) => {

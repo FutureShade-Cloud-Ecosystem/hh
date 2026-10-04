@@ -16,7 +16,7 @@ import { PricingTabBase } from "./pricing-tab-base.js";
 import { pricingStyles } from "./pricing-styles.js";
 import { spokenRefusal } from "./_quote-workarea.js";
 import { AUDIT_ACTIONS, ENTITY_TYPES, auditActionWord, auditFieldWord, categoryLabel, entityLabel } from "./_pricing-shared.js";
-import { EMPTY_RANGE, PAGE_SIZE, auditWindowNote, drillTarget, filterByDate, pageOf, type DateRange, type DrillTarget } from "./_pricing-audit.js";
+import { EMPTY_RANGE, PAGE_SIZE, auditWindowNote, bypassWord, drillTarget, filterByDate, floorConfirmationText, floorProductIds, pageOf, type DateRange, type DrillTarget } from "./_pricing-audit.js";
 import type { AuditRow } from "./_pricing-wire.js";
 
 const AUDIT_FETCH_LIMIT = 200;
@@ -34,6 +34,9 @@ export class QdPricingAudit extends PricingTabBase {
   @state() private range: DateRange = { ...EMPTY_RANGE };
   @state() private page = 1;
   @state() private actors: Map<string, string> = new Map();
+  /** Product names for the floor confirmations' ids, looked up as the rows arrive. */
+  @state() private productNames: Map<string, string> = new Map();
+  private namesAsked = new Set<string>();
   private loadSeq = 0;
   private actorsAsked = false;
 
@@ -73,12 +76,25 @@ export class QdPricingAudit extends PricingTabBase {
     }
     this.rows = result.value;
     this.page = 1;
+    void this.nameProducts(pricing, result.value);
     if (!this.actorsAsked) {
       this.actorsAsked = true;
       void pricing.actorNames().then((names) => {
         if (names.ok) this.actors = names.value;
       });
     }
+  }
+
+  /** The floor confirmations name products by id; ask for the names (best effort, a bounded number). */
+  private async nameProducts(pricing: NonNullable<typeof this.pricing>, rows: readonly AuditRow[]): Promise<void> {
+    const wanted = [...new Set(rows.filter((r) => r.fieldName === "floor_warning_confirmed").flatMap((r) => floorProductIds(r.newValue)))]
+      .filter((id) => !this.namesAsked.has(id))
+      .slice(0, 40);
+    for (const id of wanted) this.namesAsked.add(id);
+    const found = await Promise.all(wanted.map(async (id) => [id, await pricing.productLabel(id)] as const));
+    const next = new Map(this.productNames);
+    for (const [id, label] of found) if (label.ok) next.set(id, label.value);
+    if (next.size !== this.productNames.size) this.productNames = next;
   }
 
   protected override onClickAction(action: string, control: HTMLElement): void {
@@ -144,11 +160,16 @@ export class QdPricingAudit extends PricingTabBase {
   }
 
   private renderChange(row: AuditRow) {
-    if (row.oldValue === undefined && row.newValue === undefined) return html`<span class="dim">-</span>`;
-    if (row.oldValue === undefined) return html`<span class="delta amber" data-testid="pa-change">${row.newValue}</span>`;
+    const why = row.action === "BYPASS" ? bypassWord(row.bypassReason) : "";
+    const reason = why === "" ? nothing : html`<div class="dim small" data-testid="pa-bypass-reason">Bypassed because ${why}</div>`;
+    if (row.oldValue === undefined && row.newValue === undefined) return why === "" ? html`<span class="dim">-</span>` : reason;
+    if (row.oldValue === undefined) {
+      const text = row.fieldName === "floor_warning_confirmed" && row.newValue !== undefined ? floorConfirmationText(row.newValue, this.productNames) : row.newValue;
+      return html`<span class="delta amber" data-testid="pa-change">${text}</span>${reason}`;
+    }
     return html`<span class="delta" data-testid="pa-change"
       ><span class="old">${row.oldValue}</span><span class="arrow">&rarr;</span><span class="amber">${row.newValue ?? "-"}</span></span
-    >`;
+    >${reason}`;
   }
 
   private renderRow(row: AuditRow) {
@@ -178,7 +199,7 @@ export class QdPricingAudit extends PricingTabBase {
       <div class="panel" data-testid="pa-panel">
         <div class="head">
           <h2>Pricing log</h2>
-          <span class="count" data-testid="pa-count">${filtered.length === this.rows.length ? `${this.rows.length} entries` : `${filtered.length} of ${this.rows.length} entries`}</span>
+          ${this.loading || this.listError !== "" ? nothing : html`<span class="count" data-testid="pa-count">${filtered.length === this.rows.length ? `${this.rows.length} entries` : `${filtered.length} of ${this.rows.length} entries`}</span>`}
         </div>
         <div class="toolbar">
           <select aria-label="Filter by entity" data-field="entity" data-testid="pa-entity"></select>

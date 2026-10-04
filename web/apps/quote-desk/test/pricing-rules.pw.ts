@@ -19,7 +19,7 @@ async function openRules(page: import("@playwright/test").Page): Promise<void> {
   await signIn(page);
   await openPricing(page);
   await openTab(page, "rules");
-  await expect(page.getByTestId("pr-row")).toHaveCount(4);
+  await expect(page.getByTestId("pr-row")).toHaveCount(5);
 }
 
 test("the rules list reads as the console's: scope, applies to, value, priority", async ({ page }) => {
@@ -30,7 +30,7 @@ test("the rules list reads as the console's: scope, applies to, value, priority"
   await expect(first).toContainText("0.00% off");
   await expect(first).toContainText("100");
   await expect(page.getByTestId("pr-row").last()).toContainText("Tier default");
-  await expect(page.getByTestId("pr-count")).toHaveText("4 rules");
+  await expect(page.getByTestId("pr-count")).toHaveText("5 rules");
   await shot(page.locator("qd-pricing-rules"), "pricing-rules");
 });
 
@@ -40,8 +40,8 @@ test("the filters narrow the list from the server", async ({ page }) => {
   await expect(page.getByTestId("pr-row")).toHaveCount(1);
   await page.getByTestId("pr-filter-scope").selectOption("");
   await page.getByTestId("pr-filter-category").selectOption(PAVERS);
-  await expect(page.getByTestId("pr-row")).toHaveCount(1);
-  await expect(page.getByTestId("pr-row")).toContainText("Pavers");
+  await expect(page.getByTestId("pr-row")).toHaveCount(2);
+  await expect(page.getByTestId("pr-row").first()).toContainText("Pavers");
   await page.getByTestId("pr-filter-category").selectOption("");
   await page.getByTestId("pr-filter-type").selectOption("RETAIL");
   await expect(page.getByTestId("pr-empty")).toBeVisible();
@@ -56,7 +56,7 @@ test("a new rule that puts nothing under the floor saves straight away and shows
   await page.getByTestId("pr-detail").fill("Retail default");
   await page.getByTestId("pr-save").click();
   await expect(page.getByTestId("pr-dialog")).toHaveCount(0);
-  await expect(page.getByTestId("pr-row")).toHaveCount(5);
+  await expect(page.getByTestId("pr-row")).toHaveCount(6);
   const state = await pricingState(page);
   const made = state.rules.find((r) => r.detail_text === "Retail default");
   expect(made).toMatchObject({ scope: "TIER_DEFAULT", customer_type: "RETAIL", discount_bps: 500, category_id: "" });
@@ -107,7 +107,7 @@ test("a rule that would put products under the floor is shown before saving, and
   await expect(page.getByTestId("floor-dialog")).toHaveCount(0);
   await expect(page.getByTestId("pr-dialog")).toBeVisible();
   const state = await pricingState(page);
-  expect(state.rules).toHaveLength(4);
+  expect(state.rules).toHaveLength(5);
   expect(state.confirmations).toHaveLength(0);
   expect(state.writes).toHaveLength(0);
 });
@@ -124,7 +124,7 @@ test("confirming saves the rule and the confirmation reaches the pricing log aga
   await page.getByTestId("floor-confirm").click();
   await expect(page.getByTestId("floor-dialog")).toHaveCount(0);
   await expect(page.getByTestId("pr-dialog")).toHaveCount(0);
-  await expect(page.getByTestId("pr-row")).toHaveCount(5);
+  await expect(page.getByTestId("pr-row")).toHaveCount(6);
   const state = await pricingState(page);
   const made = state.rules.find((r) => r.priority === 90);
   expect(made).toMatchObject({ discount_bps: 4000, category_id: PAVERS });
@@ -132,7 +132,7 @@ test("confirming saves the rule and the confirmation reaches the pricing log aga
   expect(state.confirmations[0]).toMatchObject({ entity_type: "pricing_rule", entity_id: made?.id, ref_entity_type: "category", ref_entity_id: PAVERS });
   await openTab(page, "audit");
   await expect(page.getByTestId("pa-field").filter({ hasText: "Floor warning confirmed" })).toHaveCount(1);
-  await expect(page.getByTestId("pa-change").filter({ hasText: "2 products under the margin floor" })).toHaveCount(1);
+  await expect(page.getByTestId("pa-change").filter({ hasText: "the editor confirmed a floor warning naming 2 products" })).toHaveCount(1);
 });
 
 test("a confirmation the log would not take is said, with a way to try again, and the saved rule stays saved", async ({ page }) => {
@@ -146,11 +146,11 @@ test("a confirmation the log would not take is said, with a way to try again, an
   await page.getByTestId("pr-save").click();
   await page.getByTestId("floor-confirm").click();
   await expect(page.getByTestId("floor-error")).toContainText("The price was saved, but the confirmation could not be logged");
-  expect((await pricingState(page)).rules).toHaveLength(5);
+  expect((await pricingState(page)).rules).toHaveLength(6);
   await page.getByTestId("floor-retry-log").click();
   await expect(page.getByTestId("floor-dialog")).toHaveCount(0);
   const state = await pricingState(page);
-  expect(state.rules).toHaveLength(5);
+  expect(state.rules).toHaveLength(6);
   expect(state.confirmations).toHaveLength(1);
 });
 
@@ -172,14 +172,14 @@ test("a save the server refuses is shown in the dialog, never silently", async (
   await page.getByTestId("pr-save").click();
   await expect(page.getByTestId("pr-form-error")).toHaveText("A conflicting active rule already exists");
   await expect(page.getByTestId("pr-dialog")).toBeVisible();
-  expect((await pricingState(page)).rules).toHaveLength(4);
+  expect((await pricingState(page)).rules).toHaveLength(5);
 });
 
 test("Edit opens the rule fresh and a stale version is refused by the server and shown", async ({ page }) => {
   await openRules(page);
   const state0 = await pricingState(page);
   const pavers = state0.rules.find((r) => r.category_id === PAVERS);
-  await page.getByTestId("pr-row").filter({ hasText: "Pavers" }).getByTestId("pr-edit").click();
+  await page.getByTestId("pr-row").filter({ hasText: "Contractor, Pavers" }).getByTestId("pr-edit").click();
   await expect(page.getByTestId("pr-dialog")).toBeVisible();
   await expect(page.getByTestId("pr-value")).toHaveValue("18.00");
   await expect(page.getByTestId("pr-priority")).toHaveValue("40");
@@ -190,7 +190,7 @@ test("Edit opens the rule fresh and a stale version is refused by the server and
   expect((await pricingState(page)).rules.find((r) => r.id === pavers?.id)).toMatchObject({ priority: 40 });
   // The next try opens the rule again and carries the version the server holds now.
   await page.getByRole("button", { name: "Cancel" }).click();
-  await page.getByTestId("pr-row").filter({ hasText: "Pavers" }).getByTestId("pr-edit").click();
+  await page.getByTestId("pr-row").filter({ hasText: "Contractor, Pavers" }).getByTestId("pr-edit").click();
   await page.getByTestId("pr-priority").fill("41");
   await page.getByTestId("pr-save").click();
   await expect(page.getByTestId("pr-dialog")).toHaveCount(0);

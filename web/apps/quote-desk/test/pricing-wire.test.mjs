@@ -97,13 +97,15 @@ test("a created reference needs its id and version", () => {
 test("a floor preview reads its items and counts, and refuses a half answer", () => {
   const good = {
     items: [{ product_id: "p1", sku: "HPV-60", name: "Holland", final_cents: 300, margin_bps: 800, floor_bps: 2500, price_uom: "sf", source: "TIER_CATEGORY", previous_final_cents: 400, previous_margin_bps: 3100, already_under_floor: false }],
-    evaluated: 12, not_graded: 1, truncated: false,
+    evaluated: 12, not_graded: 1, no_cost: 2, truncated: false,
   };
   const p = readFloorPreview(good);
   assert.equal(p?.items[0]?.sku, "HPV-60");
   assert.equal(p?.items[0]?.alreadyUnderFloor, false);
   assert.equal(p?.evaluated, 12);
   assert.equal(p?.notGraded, 1);
+  assert.equal(p?.noCost, 2);
+  assert.equal(readFloorPreview({ ...good, no_cost: undefined }), null, "the count of products with no cost is part of the contract");
   assert.equal(readFloorPreview({ ...good, truncated: undefined }), null);
   assert.equal(readFloorPreview({ ...good, items: [{ ...good.items[0], margin_bps: "8" }] }), null);
   assert.equal(readFloorPreview({ ...good, evaluated: 1.5 }), null);

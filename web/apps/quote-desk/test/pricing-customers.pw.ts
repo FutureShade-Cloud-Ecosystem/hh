@@ -104,7 +104,7 @@ test("the pricing log links a customer row back to that customer's prices", asyn
   await expect(page.getByTestId("pc-row")).toHaveCount(1);
   await openTab(page, "audit");
   await page.getByTestId("pa-link").filter({ hasText: "Open customer pricing" }).first().click();
-  await expect(page.getByTestId("pricing-tab-customers")).toHaveAttribute("aria-current", "true");
+  await expect(page.getByTestId("pricing-tab-customers")).toHaveAttribute("aria-selected", "true");
   await expect(page.getByTestId("pc-row")).toHaveCount(1);
   await expect(page.getByTestId("pc-row")).toContainText("Retaining Walls");
 });

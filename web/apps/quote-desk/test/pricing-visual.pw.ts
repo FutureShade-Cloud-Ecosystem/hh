@@ -49,7 +49,7 @@ test("the rule editor and the floor warning in dark", async ({ page }) => {
   await setTheme(page, "Dark");
   await openPricing(page);
   await openTab(page, "rules");
-  await page.getByTestId("pr-row").filter({ hasText: "Pavers" }).getByTestId("pr-edit").click();
+  await page.getByTestId("pr-row").filter({ hasText: "Contractor, Pavers" }).getByTestId("pr-edit").click();
   await expect(page.getByTestId("pr-dialog")).toBeVisible();
   await shot(page, "pricing-rule-editor-dark");
   await page.getByTestId("pr-priority").fill("90");

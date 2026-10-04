@@ -125,6 +125,6 @@ test("the audit link opens this tab with the category's row marked", async ({ pa
   await expect(page.getByTestId("pm-saved")).toBeVisible();
   await openTab(page, "audit");
   await page.getByTestId("pa-link").first().click();
-  await expect(page.getByTestId("pricing-tab-margin")).toHaveAttribute("aria-current", "true");
+  await expect(page.getByTestId("pricing-tab-margin")).toHaveAttribute("aria-selected", "true");
   await expect(page.locator('tr[data-category-id="' + PAVERS + '"]')).toHaveClass(/focused/);
 });

@@ -79,6 +79,37 @@ test("an edit sends the dates, a blank date as the clear signal", () => {
   assert.equal(ruleFormFromRow(ruleRow).validFrom, "2026-01-02");
 });
 
+// The core stores a typed end date as midnight of the NEXT day (handler.go parseValidityBound: the
+// upper bound is exclusive), so a form that reads the stored day back must give the day back.
+const coreStoresValidTo = (day) => new Date(Date.parse(`${day}T00:00:00Z`) + 86400000).toISOString().replace(".000Z", "Z");
+
+test("an end date survives an edit: what the core stored reads back as the day the editor typed", () => {
+  for (const typed of ["2026-11-15", "2026-12-31", "2027-03-01", "2028-02-28"]) {
+    const stored = coreStoresValidTo(typed);
+    const form = ruleFormFromRow({ ...ruleRow, validTo: stored });
+    assert.equal(form.validTo, typed, `${stored} is the ${typed} typed`);
+    const out = ruleSave({ ...form, detailText: "only the text changed" });
+    assert.equal(out.value.patch.valid_to, typed, "the unchanged date goes back as the same day");
+    assert.equal(coreStoresValidTo(out.value.patch.valid_to), stored, "and the core stores the same instant again");
+  }
+  assert.equal(ruleFormFromRow({ ...ruleRow, validTo: null }).validTo, "");
+  assert.equal(ruleFormFromRow({ ...ruleRow, validTo: "2026-11-16T09:30:00Z" }).validTo, "2026-11-16", "an instant inside a day shows that day");
+});
+
+test("a customer and category rule keeps its customer and category through an edit", () => {
+  const row = { ...ruleRow, scope: "CUSTOMER_CATEGORY", customerId: CUST, customerType: undefined, categoryId: CAT };
+  const form = ruleFormFromRow(row);
+  assert.equal(form.scope, "CUSTOMER_CATEGORY");
+  const out = ruleSave({ ...form, valuePct: "21" });
+  assert.equal(out.ok, true);
+  assert.equal(out.value.patch.scope, "CUSTOMER_CATEGORY");
+  assert.equal(out.value.patch.customer_id, CUST);
+  assert.equal(out.value.patch.category_id, CAT);
+  assert.equal(out.value.patch.customer_type, "");
+  assert.equal(out.value.patch.discount_bps, 2100);
+  assert.match(ruleSave({ ...form, valuePct: "21", customerId: "x" }).error, /customer/i);
+});
+
 test("a customer and product rule needs both ids as uuids, and a fixed price is cents by digits", () => {
   const base = { ...emptyRuleForm(), scope: "CUSTOMER_PRODUCT", calcType: "ABSOLUTE", priceDollars: "12.34" };
   assert.equal(ruleSave({ ...base, customerId: "x", productId: PROD }).ok, false);
@@ -96,6 +127,8 @@ test("a rule form refuses what it can see is wrong, in words", () => {
   assert.match(ruleSave({ ...f, valuePct: "" }).error, /percentage/i);
   assert.match(ruleSave({ ...f, valuePct: "1.005" }).error, /percentage/i);
   assert.match(ruleSave({ ...f, valuePct: "10", priority: "x" }).error, /priority/i);
+  for (const odd of ["1e3", "0x10", "1.5", "-2", "+3", "١٢"]) assert.match(ruleSave({ ...f, valuePct: "10", priority: odd }).error, /priority/i, `priority ${odd}`);
+  assert.equal(ruleSave({ ...f, valuePct: "10", priority: "40" }).value.write.priority, 40);
   assert.match(ruleSave({ ...f, valuePct: "10", priceUom: "" }).error, /unit/i);
   assert.match(ruleSave({ ...f, scope: "TIER_DEFAULT", calcType: "ABSOLUTE", priceDollars: "5" }).error, /fixed price/i);
   assert.match(ruleSave({ ...ruleFormFromRow(ruleRow), validFrom: "01/02/2026" }).error, /date/i);

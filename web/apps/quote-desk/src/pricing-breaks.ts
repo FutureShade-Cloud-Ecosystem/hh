@@ -50,6 +50,7 @@ export class QdPricingBreaks extends PricingTabBase {
   @state() private form: BreakForm = emptyBreakForm();
   @state() private confirmRetire: BreakRow | null = null;
   private loadSeq = 0;
+  private editSeq = 0;
 
   static styles = pricingStyles;
 
@@ -191,7 +192,10 @@ export class QdPricingBreaks extends PricingTabBase {
     const pricing = this.pricing;
     if (pricing === null || id === "") return;
     this.captureFocus();
+    // Two quick Edit clicks: only the latest answer opens.
+    const seq = (this.editSeq += 1);
     const fresh = await pricing.getBreak(id);
+    if (seq !== this.editSeq) return;
     if (!fresh.ok) {
       if (this.noteRefusal(fresh, false)) return;
       this.listError = `That quantity break could not be opened. ${spokenRefusal(fresh.error)}`;
@@ -284,7 +288,7 @@ export class QdPricingBreaks extends PricingTabBase {
       <div class="panel" data-testid="pb-panel">
         <div class="head">
           <h2>Quantity breaks</h2>
-          <span class="count" data-testid="pb-count">${this.breaks.length} schedules</span>
+          ${this.loading || this.listError !== "" ? nothing : html`<span class="count" data-testid="pb-count">${this.breaks.length} schedules</span>`}
         </div>
         <details class="info">
           <summary>Precedence</summary>

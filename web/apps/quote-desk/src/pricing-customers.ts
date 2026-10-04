@@ -47,6 +47,7 @@ export class QdPricingCustomers extends PricingTabBase {
   @state() private form: OverrideForm = emptyOverrideForm();
   @state() private confirmDelete: OverrideRow | null = null;
   private loadSeq = 0;
+  private editSeq = 0;
 
   static styles = pricingStyles;
 
@@ -185,8 +186,9 @@ export class QdPricingCustomers extends PricingTabBase {
     const customerId = this.customerId;
     if (pricing === null || customerId === "" || id === "") return;
     this.captureFocus();
+    const seq = (this.editSeq += 1);
     const fresh = await pricing.listOverrides(customerId);
-    if (customerId !== this.customerId) return;
+    if (customerId !== this.customerId || seq !== this.editSeq) return;
     if (!fresh.ok) {
       if (this.noteRefusal(fresh, false)) return;
       this.listError = `That price could not be opened. ${spokenRefusal(fresh.error)}`;

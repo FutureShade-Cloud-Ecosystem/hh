@@ -55,6 +55,8 @@ export class QdPricingPanel extends PanelBase {
   @state() private denied = "";
   /** The server's words when it refused a write or the floor check: the prices stay readable. */
   @state() private readOnly = "";
+  /** Set when a leave was held once because a saved price's confirmation is not in the log: the next leave goes. */
+  @state() private leaveWarned = false;
 
   static styles = [
     pricingStyles,
@@ -89,11 +91,13 @@ export class QdPricingPanel extends PanelBase {
     super.connectedCallback();
     this.renderRoot.addEventListener(PRICING_REFUSED_EVENT, this.onRefused as EventListener);
     this.renderRoot.addEventListener(PRICING_DRILL_EVENT, this.onDrill as EventListener);
+    this.renderRoot.addEventListener("keydown", this.onTabKey as EventListener);
   }
 
   override disconnectedCallback(): void {
     this.renderRoot.removeEventListener(PRICING_REFUSED_EVENT, this.onRefused as EventListener);
     this.renderRoot.removeEventListener(PRICING_DRILL_EVENT, this.onDrill as EventListener);
+    this.renderRoot.removeEventListener("keydown", this.onTabKey as EventListener);
     super.disconnectedCallback();
   }
 
@@ -112,14 +116,61 @@ export class QdPricingPanel extends PanelBase {
     const { tab, id, kind } = event.detail;
     if (kind === "customer") this.focusCustomerId = id;
     if (kind === "category") this.focusCategoryId = id;
-    this.tab = tab;
+    this.selectTab(tab);
   };
+
+  /**
+   * HOOK for every path that leaves the pricing screen or its tab (the tab switch here, the
+   * desk's Quotes toggle and its sign out): true when the leave must wait, because a price
+   * is saved and its floor confirmation is not yet in the pricing log. The first call says
+   * so on screen and holds; the next goes through. quote/qd-3b-app's SIGN_OUT_EVENT wait
+   * registers this when that branch is merged.
+   */
+  holdLeave(): boolean {
+    const child = this.renderRoot.querySelector<HTMLElement & { unloggedConfirmationPending?: () => boolean }>(TAG[this.tab]);
+    if (child?.unloggedConfirmationPending?.() !== true) {
+      this.leaveWarned = false;
+      return false;
+    }
+    if (this.leaveWarned) {
+      this.leaveWarned = false;
+      return false;
+    }
+    this.leaveWarned = true;
+    return true;
+  }
+
+  private selectTab(id: PricingTabId): void {
+    if (id === this.tab) return;
+    if (this.holdLeave()) return;
+    this.tab = id;
+  }
 
   protected override onClickAction(action: string, control: HTMLElement): void {
     if (action !== "tab") return;
     const next = TABS.find((t) => t.id === control.getAttribute("data-tab"));
-    if (next !== undefined) this.tab = next.id;
+    if (next !== undefined) this.selectTab(next.id);
   }
+
+  /** Arrow keys, Home and End move between the tabs (the tab pattern: one stop, the arrows inside it). */
+  private readonly onTabKey = (event: KeyboardEvent): void => {
+    const here = event.composedPath().find((n): n is HTMLElement => n instanceof HTMLElement && n.getAttribute("data-action") === "tab");
+    if (here === undefined) return;
+    const i = TABS.findIndex((t) => t.id === here.getAttribute("data-tab"));
+    let to = i;
+    if (event.key === "ArrowRight") to = (i + 1) % TABS.length;
+    else if (event.key === "ArrowLeft") to = (i + TABS.length - 1) % TABS.length;
+    else if (event.key === "Home") to = 0;
+    else if (event.key === "End") to = TABS.length - 1;
+    else return;
+    event.preventDefault();
+    const target = TABS[to];
+    if (target === undefined) return;
+    this.selectTab(target.id);
+    if (this.tab === target.id) {
+      void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>(`[data-testid="pricing-tab-${target.id}"]`)?.focus());
+    }
+  };
 
   /** The wiring pass: the active tab receives what a binding would have given it. */
   protected override updated(): void {
@@ -168,17 +219,22 @@ export class QdPricingPanel extends PanelBase {
           <h2>Pricing</h2>
           <span class="dim small">Margin policy, rules, customer prices and quantity breaks. Every change is logged.</span>
         </div>
-        <nav class="subnav" aria-label="Pricing sections">
+        <div class="subnav" role="tablist" aria-label="Pricing sections" data-testid="pricing-tablist">
           ${TABS.map(
-            (t) => html`<button type="button" class="${t.id === this.tab ? "active" : ""}" aria-current=${t.id === this.tab ? "true" : "false"} data-action="tab" data-tab="${t.id}" data-testid="pricing-tab-${t.id}">${t.label}</button>`,
+            (t) => html`<button type="button" role="tab" id="pricing-tab-${t.id}" class="${t.id === this.tab ? "active" : ""}" aria-selected=${t.id === this.tab ? "true" : "false"} aria-controls="pricing-tabpanel" tabindex=${t.id === this.tab ? "0" : "-1"} data-action="tab" data-tab="${t.id}" data-testid="pricing-tab-${t.id}">${t.label}</button>`,
           )}
-        </nav>
+        </div>
+        ${this.leaveWarned
+          ? html`<p class="readonly-note" role="alert" data-testid="pricing-leave-warning">
+              A price was saved, but its confirmation is not in the pricing log yet. Log it from the open notice, or leave again to go without it.
+            </p>`
+          : nothing}
         ${this.readOnly !== ""
           ? html`<p class="readonly-note" role="alert" data-testid="pricing-readonly">
               The server refused a change from this login: ${this.readOnly}. The prices stay readable and the controls are off.
             </p>`
           : nothing}
-        ${this.renderTab()}
+        <div role="tabpanel" id="pricing-tabpanel" aria-labelledby="pricing-tab-${this.tab}">${this.renderTab()}</div>
       </div>
     `;
   }

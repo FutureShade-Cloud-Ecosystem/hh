@@ -69,7 +69,7 @@ test("a login that may read but not write loses its controls when the server ref
   await expect(page.getByTestId("pm-row")).toHaveCount(6);
   await expect(page.getByTestId("pm-row").first()).toContainText("33.00%");
   await openTab(page, "rules");
-  await expect(page.getByTestId("pr-row")).toHaveCount(4);
+  await expect(page.getByTestId("pr-row")).toHaveCount(5);
   await expect(page.getByTestId("pr-new")).toHaveCount(0);
   await expect(page.getByTestId("pr-edit")).toHaveCount(0);
   await expect(page.getByTestId("pr-retire")).toHaveCount(0);

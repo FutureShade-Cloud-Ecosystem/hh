@@ -297,6 +297,8 @@ export interface AuditRow {
   createdAt: string;
   refEntityType: string | undefined;
   refEntityId: string | undefined;
+  /** Why a BYPASS row bypassed the floor; only on those rows. */
+  bypassReason: string | undefined;
 }
 
 export function readAuditRow(value: unknown): AuditRow | null {
@@ -319,6 +321,7 @@ export function readAuditRow(value: unknown): AuditRow | null {
     createdAt,
     refEntityType: optStr(value, "ref_entity_type"),
     refEntityId: optStr(value, "ref_entity_id"),
+    bypassReason: optStr(value, "bypass_reason"),
   };
 }
 
@@ -359,7 +362,10 @@ export interface FloorItem {
 export interface FloorPreview {
   items: FloorItem[];
   evaluated: number;
+  /** Products the resolver had no price to grade in full. */
   notGraded: number;
+  /** Products with no cost on file, whose margin cannot be told. */
+  noCost: number;
   truncated: boolean;
 }
 
@@ -388,13 +394,14 @@ export function readFloorPreview(value: unknown): FloorPreview | null {
   if (!isRecord(value) || !Array.isArray(value["items"])) return null;
   const evaluated = int(value, "evaluated");
   const notGraded = int(value, "not_graded");
+  const noCost = int(value, "no_cost");
   const truncated = bool(value, "truncated");
-  if (evaluated === null || notGraded === null || truncated === null) return null;
+  if (evaluated === null || notGraded === null || noCost === null || truncated === null) return null;
   const items: FloorItem[] = [];
   for (const raw of value["items"]) {
     const item = readFloorItem(raw);
     if (item === null) return null;
     items.push(item);
   }
-  return { items, evaluated, notGraded, truncated };
+  return { items, evaluated, notGraded, noCost, truncated };
 }

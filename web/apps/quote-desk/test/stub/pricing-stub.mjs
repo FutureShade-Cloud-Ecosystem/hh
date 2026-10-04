@@ -50,6 +50,13 @@ const CUSTOMER_UUID = new Map([...CUSTOMER_ALIAS].map(([uuid, label]) => [label,
 const canonCustomer = (id) => CUSTOMER_ALIAS.get(id) ?? id;
 const uuidOfCustomer = (id) => CUSTOMER_UUID.get(id) ?? id;
 
+// The pricing type of each stub customer, which the core reads from the account.
+const CUSTOMER_TYPE = new Map([
+  ["c-maple-ridge", "CONTRACTOR"],
+  ["c-fenwick", "RETAIL"],
+]);
+const customerTypeOf = (id) => CUSTOMER_TYPE.get(canonCustomer(id)) ?? "RETAIL";
+
 const TYPES = ["CONTRACTOR", "RETAIL", "BUILDER", "GOVERNMENT", "INTERNAL"];
 const UNITS_PER = { PLT: 120, SF: 1, EA: 1, T: 1, KG: 1, PC: 1, LF: 1, BAG: 1 };
 const DEFAULT_FLOOR_BPS = 1200;
@@ -60,7 +67,7 @@ const newId = (prefix) => {
   return `${prefix}0000000-0000-4000-9000-${String(seq).padStart(12, "0")}`;
 };
 
-const switches = { mode: "editor", auditAllowed: true, shape: "bare", failNext: null, failConfirm: false };
+const switches = { mode: "editor", auditAllowed: true, shape: "bare", failNext: null, failConfirm: false, forcePreview: null };
 let world;
 
 function seedWorld() {
@@ -78,6 +85,7 @@ function seedWorld() {
       rule("TIER_CATEGORY", { customer_type: "CONTRACTOR", category_id: CAT.bulk }, "PCT_OFF_LIST", { discount_bps: 0 }, "SF", 100, "Provisional: bulk default; real breaks land with the general manager's worksheet"),
       rule("TIER_CATEGORY", { customer_type: "CONTRACTOR", category_id: CAT.pavers }, "PCT_OFF_LIST", { discount_bps: 1800 }, "SF", 40, "Contractor, Pavers: 18% off"),
       rule("TIER_CATEGORY", { customer_type: "CONTRACTOR", category_id: CAT.accessories }, "PCT_OFF_LIST", { discount_bps: 800 }, "SF", 40, "Contractor, Accessories: 8% off"),
+      rule("CUSTOMER_CATEGORY", { customer_id: "c0000000-0000-4000-9000-000000000001", category_id: CAT.pavers }, "PCT_OFF_LIST", { discount_bps: 800 }, "SF", 20, "Maple Ridge, Pavers: 8% off"),
       rule("TIER_DEFAULT", { customer_type: "CONTRACTOR" }, "PCT_OFF_LIST", { discount_bps: 1500 }, "SF", 10, "Contractor, default: 15% off"),
     ],
     overrides: [],
@@ -202,21 +210,24 @@ function floorPreview(body) {
     const r = body.rule;
     if (r.scope === "TIER_CATEGORY") products = PRODUCTS.filter((p) => p.category === r.category_id);
     if (r.scope === "CUSTOMER_PRODUCT") products = PRODUCTS.filter((p) => p.id === r.product_id);
-    contexts = r.scope === "CUSTOMER_PRODUCT" ? [{ customerType: "", customerId: canonCustomer(r.customer_id) }] : [{ customerType: r.customer_type, customerId: "" }];
+    contexts = r.scope === "CUSTOMER_PRODUCT" || r.scope === "CUSTOMER_CATEGORY"
+      ? [{ customerType: customerTypeOf(r.customer_id), customerId: canonCustomer(r.customer_id) }]
+      : [{ customerType: r.customer_type, customerId: "" }];
+    if (r.scope === "CUSTOMER_CATEGORY") products = PRODUCTS.filter((p) => p.category === r.category_id);
   } else if (body.kind === "override") {
     products = PRODUCTS.filter((p) => p.category === body.override.category_id);
-    contexts = [{ customerType: "", customerId: canonCustomer(body.customer_id) }];
+    contexts = [{ customerType: customerTypeOf(body.customer_id), customerId: canonCustomer(body.customer_id) }];
   } else if (body.kind === "category_policy") {
     products = PRODUCTS.filter((p) => p.category === body.category_id);
   } else if (body.kind === "quantity_break") {
     const b = body.quantity_break;
     products = PRODUCTS.filter((p) => (b.product_id !== "" && p.id === b.product_id) || (b.category_id !== "" && p.category === b.category_id));
-    qtys = b.items.filter((it) => it.value_type === "PCT_OFF" || it.value_type === "ABS_OFF").filter((it) => it.from_qty > 0).map((it) => ({ qty: it.from_qty, uom: b.threshold_uom }));
+    qtys = b.items.filter((it) => it.value_type === "PCT_OFF" || it.value_type === "ABS_OFF").map((it) => (it.from_qty > 0 ? { qty: it.from_qty, uom: b.threshold_uom } : { qty: 1, uom: null }));
   }
   const items = [];
   let evaluated = 0;
   const truncated = products.length > 200;
-  if (qtys.length === 0) return { items, evaluated: 0, not_graded: 0, truncated };
+  if (qtys.length === 0) return { items, evaluated: 0, not_graded: 0, no_cost: 0, truncated };
   for (const product of products.slice(0, 200)) {
     evaluated += 1;
     let worst = null;
@@ -239,7 +250,7 @@ function floorPreview(body) {
     if (worst !== null) items.push(worst);
   }
   items.sort((x, y) => x.margin_bps - y.margin_bps);
-  return { items, evaluated, not_graded: 0, truncated };
+  return { items, evaluated, not_graded: 0, no_cost: 0, truncated };
 }
 
 // ── the pricing log ─────────────────────────────────────────────────────────
@@ -260,6 +271,19 @@ function logRow(userId, entityType, entityId, action, fieldName, oldValue, newVa
 
 const asList = (rows) => (switches.shape === "page" ? { items: rows, next_cursor: null } : rows);
 
+// The core stores a typed date as an instant: a valid_from day at its midnight, a valid_to day as
+// the midnight of the NEXT day (the upper bound is exclusive, so the typed day is inclusive), and
+// an RFC3339 value as it came. An empty string clears the bound.
+function storedDate(value, endOfDay) {
+  if (value === "") return null;
+  if (typeof value !== "string") return undefined;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const at = Date.parse(`${value}T00:00:00Z`) + (endOfDay ? 86400000 : 0);
+    return new Date(at).toISOString().replace(".000Z", "Z");
+  }
+  return value;
+}
+
 function validBps(v) {
   return v === undefined || v === null || (Number.isInteger(v) && v >= 0 && v <= 10000);
 }
@@ -273,6 +297,7 @@ export function resetPricing() {
   switches.shape = "bare";
   switches.failNext = null;
   switches.failConfirm = false;
+  switches.forcePreview = null;
   clock = 0;
 }
 
@@ -285,6 +310,8 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
       if (typeof body.shape === "string") switches.shape = body.shape === "page" ? "page" : "bare";
       if (body.fail_next !== undefined) switches.failNext = body.fail_next;
       if (typeof body.fail_confirm === "boolean") switches.failConfirm = body.fail_confirm;
+      // Fields laid over the next previews' answer (not_graded, no_cost, truncated, items), or null to stop.
+      if (body.force_preview !== undefined) switches.forcePreview = body.force_preview;
       respondJson(response, 200, { ...switches });
     });
     return true;
@@ -304,6 +331,13 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
       }
       respondJson(response, 200, { rows: world.audit.length });
     });
+    return true;
+  }
+  // One BYPASS row with its reason, as the core writes when a floor is switched off for a category.
+  if (path === "/_stub/pricing-seed-bypass" && request.method === "POST") {
+    logRow("demo-account-sales-manager", "margin_enforcement", CAT.pavers, "BYPASS", "margin_floor", undefined, "bypassed", { type: "category", id: CAT.pavers });
+    world.audit[0].bypass_reason = "CATEGORY_POLICY_DISABLED";
+    respondJson(response, 200, { rows: world.audit.length });
     return true;
   }
   // Another editor saved first: the record's version moves under an open form.
@@ -426,7 +460,9 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
         for (const field of ["discount_bps", "markup_bps", "price_cents", "priority", "detail_text", "price_uom"]) {
           if (String(r[field]) !== String(next[field])) logRow(userId, "pricing_rule", r.id, "UPDATE", field, String(r[field] ?? ""), String(next[field] ?? ""), refOfRule(next));
         }
-        Object.assign(r, next, { version: r.version + 1, valid_from: body.valid_from === "" ? null : (body.valid_from ?? r.valid_from ?? null), valid_to: body.valid_to === "" ? null : (body.valid_to ?? r.valid_to ?? null) });
+        const from = storedDate(body.valid_from, false);
+        const to = storedDate(body.valid_to, true);
+        Object.assign(r, next, { version: r.version + 1, valid_from: from === undefined ? (r.valid_from ?? null) : from, valid_to: to === undefined ? (r.valid_to ?? null) : to });
         world.ledger.writes.push({ kind: "rule", id: r.id });
         respondJson(response, 200, r);
       });
@@ -564,7 +600,7 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
       world.ledger.previews.push(body);
       const bad = body.kind === "rule" && body.rule !== undefined ? validateRule(body.rule) : null;
       if (bad !== null) return respondJson(response, 422, { error: bad });
-      respondJson(response, 200, floorPreview(body));
+      respondJson(response, 200, { ...floorPreview(body), ...(switches.forcePreview ?? {}) });
     });
     return true;
   }
@@ -575,10 +611,15 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
         return respondJson(response, 500, { error: "internal error" });
       }
       if (!Array.isArray(body.product_ids) || body.product_ids.length === 0) return respondJson(response, 400, { error: "a confirmation names at least one product" });
+      const refType = body.ref_entity_type ?? "";
+      const refId = body.ref_entity_id ?? "";
+      if ((refType === "") !== (refId === "") || (refType !== "" && !["product", "customer", "category", "quote", "order"].includes(refType))) {
+        return respondJson(response, 400, { error: "ref_entity_type must be one of product, customer, category, quote, order and come with ref_entity_id" });
+      }
       const known = { pricing_rule: world.rules.some((r) => r.id === body.entity_id), customer_override: world.overrides.some((o) => o.id === body.entity_id), quantity_break: world.breaks.some((b) => b.id === body.entity_id), category_policy: world.policies.has(body.entity_id) };
       if (known[body.entity_type] !== true) return respondJson(response, 404, { error: "not found" });
       world.ledger.confirmations.push(body);
-      logRow(userId, body.entity_type, body.entity_id, "UPDATE", "floor_warning_confirmed", undefined, `${body.product_ids.length} product${body.product_ids.length === 1 ? "" : "s"} under the margin floor: ${body.product_ids.join(", ")}`, body.ref_entity_type === undefined ? undefined : { type: body.ref_entity_type, id: body.ref_entity_id });
+      logRow(userId, body.entity_type, body.entity_id, "UPDATE", "floor_warning_confirmed", undefined, `the editor confirmed a floor warning naming ${body.product_ids.length} product${body.product_ids.length === 1 ? "" : "s"}: ${body.product_ids.join(", ")}`, body.ref_entity_type === undefined ? undefined : { type: body.ref_entity_type, id: body.ref_entity_id });
       respondJson(response, 200, { status: "recorded" });
     });
     return true;

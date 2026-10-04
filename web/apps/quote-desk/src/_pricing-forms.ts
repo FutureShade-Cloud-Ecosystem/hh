@@ -83,6 +83,22 @@ export function emptyRuleForm(): RuleForm {
   };
 }
 
+/**
+ * The day an editor typed as a rule's end date, read back from what the core stored. The core
+ * keeps a typed end date as midnight of the NEXT day (the upper bound is exclusive, so the
+ * typed day is inclusive; handler.go parseValidityBound), so a stored midnight shows as the
+ * day before. An instant inside a day shows that day. Reading the stored day as it stands
+ * would move the end date one day later on every edit.
+ */
+export function validToDay(stored: string | null | undefined): string {
+  if (stored === null || stored === undefined || stored === "") return "";
+  const at = new Date(stored);
+  if (Number.isNaN(at.getTime())) return stored.slice(0, 10);
+  const day = at.toISOString().slice(0, 10);
+  const atMidnight = at.getUTCHours() === 0 && at.getUTCMinutes() === 0 && at.getUTCSeconds() === 0 && at.getUTCMilliseconds() === 0;
+  return atMidnight ? new Date(at.getTime() - 86400000).toISOString().slice(0, 10) : day;
+}
+
 export function ruleFormFromRow(r: RuleRow): RuleForm {
   const base = emptyRuleForm();
   return {
@@ -99,7 +115,7 @@ export function ruleFormFromRow(r: RuleRow): RuleForm {
     priceUom: r.priceUom,
     priority: String(r.priority),
     validFrom: (r.validFrom ?? "").slice(0, 10),
-    validTo: (r.validTo ?? "").slice(0, 10),
+    validTo: validToDay(r.validTo),
     detailText: r.detailText,
     version: r.version,
   };
@@ -139,12 +155,18 @@ export function ruleSave(form: RuleForm): FormOutcome<RuleSave> {
   }
   const calc = calcFields(form);
   if (!calc.ok) return calc;
-  const priority = form.priority.trim() === "" ? 0 : Number(form.priority);
-  if (!Number.isInteger(priority)) return fail("Priority must be a whole number.");
+  const priorityText = form.priority.trim();
+  if (priorityText !== "" && !/^[0-9]+$/.test(priorityText)) return fail("Priority must be a whole number, digits only.");
+  const priority = priorityText === "" ? 0 : Number(priorityText);
+  if (!Number.isSafeInteger(priority)) return fail("Priority must be a whole number, digits only.");
   if (form.priceUom.trim() === "") return fail("Enter the price unit.");
   if (form.scope === "CUSTOMER_PRODUCT") {
     if (!UUID.test(form.customerId.trim())) return fail("A customer and product rule needs the customer id as a uuid.");
     if (!UUID.test(form.productId.trim())) return fail("A customer and product rule needs the product id as a uuid.");
+  }
+  if (form.scope === "CUSTOMER_CATEGORY") {
+    if (!UUID.test(form.customerId.trim())) return fail("A customer and category rule needs the customer id as a uuid.");
+    if (form.categoryId.trim() === "") return fail("A customer and category rule needs a category.");
   }
   if (form.id !== "") {
     for (const day of [form.validFrom, form.validTo]) {
@@ -155,9 +177,9 @@ export function ruleSave(form: RuleForm): FormOutcome<RuleSave> {
   const isTier = form.scope === "TIER_DEFAULT" || form.scope === "TIER_CATEGORY";
   const dims = {
     customer_type: isTier ? form.customerType : "",
-    category_id: form.scope === "TIER_CATEGORY" ? form.categoryId : "",
+    category_id: form.scope === "TIER_CATEGORY" || form.scope === "CUSTOMER_CATEGORY" ? form.categoryId : "",
     branch_id: form.scope === "TIER_CATEGORY" ? form.branchId : "",
-    customer_id: form.scope === "CUSTOMER_PRODUCT" ? form.customerId.trim() : "",
+    customer_id: form.scope === "CUSTOMER_PRODUCT" || form.scope === "CUSTOMER_CATEGORY" ? form.customerId.trim() : "",
     product_id: form.scope === "CUSTOMER_PRODUCT" ? form.productId.trim() : "",
   };
   const write: PricingRuleWrite = {

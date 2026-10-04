@@ -16,6 +16,9 @@ import {
   auditWindowNote,
   PAGE_SIZE,
   drillTarget,
+  bypassWord,
+  floorProductIds,
+  floorConfirmationText,
 } from "../src/_pricing-audit.js";
 
 // Rows built from LOCAL midday, so the fixtures mean the same calendar day in any timezone the test
@@ -224,4 +227,35 @@ test("a missing, half set, unknown or malformed reference is no link at all", ()
   assert.equal(drillTarget({ ref_entity_id: CUST }), null);
   assert.equal(drillTarget({ ref_entity_type: "warehouse", ref_entity_id: CUST }), null);
   assert.equal(drillTarget({ ref_entity_type: "customer", ref_entity_id: "not-a-uuid" }), null);
+});
+
+// ── the Change column of the log ───────────────────────────────────────────────────────────────────
+
+const P1 = "a7000000-0000-4000-9000-000000000001";
+const P2 = "a7000000-0000-4000-9000-000000000002";
+
+test("a BYPASS row's reason is kept and read in words", () => {
+  assert.equal(bypassWord("PRODUCT_POLICY_DISABLED"), "the product's margin policy is switched off");
+  assert.equal(bypassWord("CATEGORY_POLICY_DISABLED"), "the category's margin policy is switched off");
+  assert.equal(bypassWord("APPROVED_OVERRIDE"), "an approved override");
+  assert.equal(bypassWord("MANAGER_SCOPE_OVERRIDE"), "a manager's override");
+  assert.equal(bypassWord("SOMETHING_NEW"), "SOMETHING NEW");
+  assert.equal(bypassWord(undefined), "");
+});
+
+test("the products a floor confirmation names are found in its text, once each, in order", () => {
+  const text = `the editor confirmed a floor warning naming 3 products: ${P1}, ${P2}, ${P1}`;
+  assert.deepEqual(floorProductIds(text), [P1, P2]);
+  assert.deepEqual(floorProductIds("1 product under the margin floor"), []);
+  assert.deepEqual(floorProductIds(undefined), []);
+});
+
+test("a floor confirmation shows product names where they are known and a short id where not", () => {
+  const text = `the editor confirmed a floor warning naming 2 products: ${P1}, ${P2}`;
+  const names = new Map([[P1, "HPV-60 · Holland Stone 60 mm"]]);
+  assert.equal(
+    floorConfirmationText(text, names),
+    "the editor confirmed a floor warning naming 2 products: HPV-60 · Holland Stone 60 mm, a7000000",
+  );
+  assert.equal(floorConfirmationText("size changed", names), "size changed");
 });

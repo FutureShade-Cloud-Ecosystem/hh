@@ -11,6 +11,7 @@ import {
   confirmationBody,
   itemLine,
   needsConfirm,
+  settledNote,
   previewBody,
   warningHeadline,
   warningNotes,
@@ -24,7 +25,7 @@ const item = (over = {}) => ({
   productId: PROD, sku: "HPV-60", name: "Holland Stone 60 mm", customerType: "CONTRACTOR", finalCents: 300, marginBps: 800, floorBps: 2500,
   priceUom: "sf", previousFinalCents: 400, previousMarginBps: 3100, alreadyUnderFloor: false, ...over,
 });
-const preview = (items, over = {}) => ({ items, evaluated: 12, notGraded: 0, truncated: false, ...over });
+const preview = (items, over = {}) => ({ items, evaluated: 12, notGraded: 0, noCost: 0, truncated: false, ...over });
 
 const ruleWrite = { scope: "TIER_CATEGORY", customer_id: "", customer_type: "CONTRACTOR", category_id: CAT, product_id: "", branch_id: "", calc_type: "PCT_OFF_LIST", discount_bps: 4000, price_uom: "sf", priority: 1, detail_text: "", version: 0 };
 
@@ -56,8 +57,30 @@ test("the editor confirms what the new price makes worse, not what was already u
   assert.deepEqual(affectedItems(p).map((i) => i.productId), [PROD, "p3"]);
   assert.equal(alreadyUnderCount(p), 1);
   assert.equal(needsConfirm(p), true);
-  assert.equal(needsConfirm(preview([already])), false);
   assert.equal(needsConfirm(preview([])), false);
+});
+
+test("the editor is never saved past a check that could not grade, nor past a count it could not cover", () => {
+  // the three answers a silent save used to follow
+  assert.equal(needsConfirm(preview([], { notGraded: 9 })), true, "nothing could be priced");
+  assert.equal(needsConfirm(preview([], { truncated: true })), true, "the check stopped at its limit");
+  const already = item({ productId: "p2", alreadyUnderFloor: true, finalCents: 400, previousFinalCents: 400 });
+  assert.equal(needsConfirm(preview([already])), false, "products already under the floor and no worse are not newly at risk: said after the save, not a stop");
+  assert.equal(needsConfirm(preview([], { noCost: 2 })), true, "products with no cost on file could not be graded");
+  assert.equal(needsConfirm(preview([], { evaluated: 4 })), false, "a clean, complete answer saves straight away");
+});
+
+test("a notice with no product newly under the floor says what could not be checked, neutrally", () => {
+  assert.equal(warningHeadline(preview([], { notGraded: 9 })), "The floor check could not cover everything this price reaches.");
+  assert.equal(warningHeadline(preview([], { truncated: true })), "The floor check could not cover everything this price reaches.");
+});
+
+test("a save past products that were already under the floor and are no worse says so afterwards, in words", () => {
+  const already = item({ productId: "p2", alreadyUnderFloor: true, finalCents: 400, previousFinalCents: 400 });
+  assert.equal(settledNote(preview([already])), "Saved. 1 product was already under its margin floor and is no worse.");
+  assert.equal(settledNote(preview([already, { ...already, productId: "p3" }])), "Saved. 2 products were already under their margin floor and are no worse.");
+  assert.equal(settledNote(preview([])), "");
+  assert.equal(settledNote(preview([item()])), "", "a warned save is told in the warning");
 });
 
 test("the headline says how many products, in the singular and the plural", () => {
@@ -82,12 +105,12 @@ test("a product's line gives the figures the server graded, in words", () => {
 test("the notes say what the grading did not cover", () => {
   assert.deepEqual(warningNotes(preview([item()])), []);
   assert.deepEqual(warningNotes(preview([item()], { truncated: true, evaluated: 200 })), [
-    "Only the first 200 products were checked; more are reached by this price.",
+    "The check stopped at its limit after 200 products; the rest could not be checked.",
   ]);
-  assert.deepEqual(warningNotes(preview([item()], { notGraded: 3 })), [
-    "3 products could not be checked because they have no cost on file.",
-  ]);
-  assert.deepEqual(warningNotes(preview([item()], { notGraded: 1 })), ["1 product could not be checked because it has no cost on file."]);
+  assert.deepEqual(warningNotes(preview([item()], { notGraded: 3 })), ["3 products could not be priced, so they could not be checked."]);
+  assert.deepEqual(warningNotes(preview([item()], { notGraded: 1 })), ["1 product could not be priced, so it could not be checked."]);
+  assert.deepEqual(warningNotes(preview([item()], { noCost: 2 })), ["2 products have no cost on file, so their margin could not be told."]);
+  assert.deepEqual(warningNotes(preview([item()], { noCost: 1 })), ["1 product has no cost on file, so its margin could not be told."]);
   assert.deepEqual(warningNotes(preview([item(), item({ productId: "p2", alreadyUnderFloor: true, finalCents: 400 })])), [
     "1 more product was already under its floor and is no worse.",
   ]);
@@ -119,4 +142,11 @@ test("a tier rule with no category has no reference to link, and the body leaves
   const body = confirmationBody({ kind: "rule", id: "", write: tierDefault }, "r-new", preview([item()]));
   assert.equal("ref_entity_type" in body, false);
   assert.equal("ref_entity_id" in body, false);
+});
+
+test("a notice that names no product has nothing to log", () => {
+  const rule = { kind: "rule", id: "", write: ruleWrite };
+  assert.equal(confirmationBody(rule, "r-new", preview([], { notGraded: 9 })), null);
+  const already = item({ productId: "p2", alreadyUnderFloor: true, finalCents: 400, previousFinalCents: 400 });
+  assert.equal(confirmationBody(rule, "r-new", preview([already], { noCost: 1 })), null, "already under products are not what the editor was warned of");
 });

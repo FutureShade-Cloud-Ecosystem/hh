@@ -44,6 +44,7 @@ const SCOPE_OPTION: Record<string, string> = {
   TIER_DEFAULT: "Tier default",
   TIER_CATEGORY: "Tier + category",
   CUSTOMER_PRODUCT: "Customer + product (negotiated)",
+  CUSTOMER_CATEGORY: "Customer + category",
 };
 
 @customElement("qd-pricing-rules")
@@ -59,6 +60,7 @@ export class QdPricingRules extends PricingTabBase {
   @state() private confirmRetire: RuleRow | null = null;
   @state() private branchNames: Array<{ id: string; name: string }> = [];
   private loadSeq = 0;
+  private editSeq = 0;
   private branchesAsked = false;
 
   static styles = pricingStyles;
@@ -99,6 +101,11 @@ export class QdPricingRules extends PricingTabBase {
       return;
     }
     this.rules = result.value;
+  }
+
+  /** The scopes the form offers: the three the editor can create, and a customer and category rule's own while it is edited, so the select can show it and the edit carries its customer and category through. */
+  private scopeChoices(f: RuleForm): readonly RuleScope[] {
+    return f.id !== "" && f.scope === "CUSTOMER_CATEGORY" ? [...EDITABLE_SCOPES, "CUSTOMER_CATEGORY"] : EDITABLE_SCOPES;
   }
 
   private branchName = (id: string): string => this.branchNames.find((b) => b.id === id)?.name ?? id.slice(0, 8);
@@ -237,7 +244,10 @@ export class QdPricingRules extends PricingTabBase {
     const pricing = this.pricing;
     if (pricing === null || id === "") return;
     this.captureFocus();
+    // Two quick Edit clicks: only the latest answer opens, a slower earlier one is dropped.
+    const seq = (this.editSeq += 1);
     const fresh = await pricing.getRule(id);
+    if (seq !== this.editSeq) return;
     if (!fresh.ok) {
       if (this.noteRefusal(fresh, false)) return;
       this.listError = `That rule could not be opened. ${spokenRefusal(fresh.error)}`;
@@ -306,7 +316,7 @@ export class QdPricingRules extends PricingTabBase {
     this.fillSelect("filter-category", [["", "All categories"], ...CATEGORY_OPTIONS.map((c) => [c.id, c.name] as const)], this.fCategory);
     if (this.dialogOpen) {
       const f = this.form;
-      this.fillSelect("scope", EDITABLE_SCOPES.map((s) => [s, SCOPE_OPTION[s] ?? scopeLabel(s)] as const), f.scope);
+      this.fillSelect("scope", this.scopeChoices(f).map((s) => [s, SCOPE_OPTION[s] ?? scopeLabel(s)] as const), f.scope);
       this.fillSelect("customerType", CUSTOMER_TYPES.map((t) => [t, t] as const), f.customerType);
       this.fillSelect("categoryId", CATEGORY_OPTIONS.map((c) => [c.id, c.name] as const), f.categoryId);
       this.fillSelect("branchId", [["", "All branches"], ...this.branchNames.map((b) => [b.id, b.name] as const)], f.branchId);
@@ -332,7 +342,7 @@ export class QdPricingRules extends PricingTabBase {
       <div class="panel" data-testid="pr-panel">
         <div class="head">
           <h2>Pricing rules</h2>
-          <span class="count" data-testid="pr-count">${this.rules.length} rules</span>
+          ${this.loading || this.listError !== "" ? nothing : html`<span class="count" data-testid="pr-count">${this.rules.length} rules</span>`}
         </div>
         <div class="toolbar">
           <select aria-label="Filter by scope" data-field="filter-scope" data-testid="pr-filter-scope"></select>
@@ -420,6 +430,16 @@ export class QdPricingRules extends PricingTabBase {
                     <select id="pr-branch" data-field="branchId" data-testid="pr-branch"></select>
                   </div>`
               : nothing}
+            ${f.scope === "CUSTOMER_CATEGORY"
+              ? html`<div class="field">
+                    <label for="pr-customer">Customer id (uuid)</label>
+                    <input id="pr-customer" class="mono" data-field="customerId" data-testid="pr-customer-id" />
+                  </div>
+                  <div class="field">
+                    <label for="pr-category">Category</label>
+                    <select id="pr-category" data-field="categoryId" data-testid="pr-category"></select>
+                  </div>`
+              : nothing}
             ${f.scope === "CUSTOMER_PRODUCT"
               ? html`<div class="field">
                     <label for="pr-customer">Customer id (uuid)</label>
@@ -450,7 +470,7 @@ export class QdPricingRules extends PricingTabBase {
             </div>
             <div class="field">
               <label for="pr-priority">Priority (higher wins within a scope)</label>
-              <input id="pr-priority" class="mono" inputmode="numeric" data-field="priority" data-testid="pr-priority" />
+              <input id="pr-priority" class="mono" inputmode="numeric" pattern="[0-9]*" data-field="priority" data-testid="pr-priority" />
             </div>
             ${f.id !== ""
               ? html`<div class="field">

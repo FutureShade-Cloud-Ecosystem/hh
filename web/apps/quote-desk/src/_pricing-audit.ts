@@ -156,3 +156,31 @@ export function drillTarget(ref: AuditRef | null | undefined): DrillTarget | nul
   if (kind === "category") return { kind, id, tab: "margin", label: "Open category policy" };
   return null;
 }
+
+// ── the Change column ────────────────────────────────────────────────────────
+
+const BYPASS_WORDS: Readonly<Record<string, string>> = {
+  PRODUCT_POLICY_DISABLED: "the product's margin policy is switched off",
+  CATEGORY_POLICY_DISABLED: "the category's margin policy is switched off",
+  APPROVED_OVERRIDE: "an approved override",
+  MANAGER_SCOPE_OVERRIDE: "a manager's override",
+};
+
+/** Why a BYPASS row bypassed the floor, in words; the code with spaces for a reason this app does not know yet. */
+export function bypassWord(reason: string | undefined): string {
+  if (reason === undefined || reason === "") return "";
+  return BYPASS_WORDS[reason] ?? reason.replace(/_/g, " ");
+}
+
+const UUID_G = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/** The product ids a floor confirmation's text names, each once, in order. */
+export function floorProductIds(text: string | undefined): string[] {
+  if (text === undefined) return [];
+  return [...new Set(text.match(UUID_G) ?? [])];
+}
+
+/** A floor confirmation's text with each product id replaced by its name where known, else its first eight characters. */
+export function floorConfirmationText(text: string, names: ReadonlyMap<string, string>): string {
+  return text.replace(UUID_G, (id) => names.get(id) ?? id.slice(0, 8));
+}

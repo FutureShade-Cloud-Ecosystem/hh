@@ -218,6 +218,10 @@ export class QuoteDeskApp extends HHElement {
       const flow = control.getAttribute("data-flow");
       if (typeof flow === "string" && flow !== "") void this.#chooseFlow(flow);
     }
+    // A saved price whose floor confirmation is not in the pricing log yet holds a leave once
+    // (the pricing panel's holdLeave; the SIGN_OUT_EVENT wait of quote/qd-3b-app registers it).
+    const leaving = control.getAttribute("data-action");
+    if ((leaving === "sign-out" || (leaving === "pricing" && this.#view === "pricing")) && this.#pricingHoldsLeave()) return;
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
     }
@@ -231,6 +235,11 @@ export class QuoteDeskApp extends HHElement {
       this.requestUpdate();
     }
   };
+
+  #pricingHoldsLeave(): boolean {
+    const panel = this.renderRoot.querySelector<HTMLElement & { holdLeave?: () => boolean }>("qd-pricing-panel");
+    return panel?.holdLeave?.() === true;
+  }
 
   async #loadFlows(): Promise<void> {
     const result = await this.#account.listFlows();
