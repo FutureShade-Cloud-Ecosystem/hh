@@ -236,6 +236,35 @@ export function comparisonDeltaLabel(row: { is_current: boolean; delta_cents: nu
   return `${row.delta_cents < 0 ? "-" : "+"}${moneyWord(Math.abs(row.delta_cents))}`;
 }
 
+/**
+ * Which rule set a resolved price came from, in the ERP's own words
+ * (pricing-words-logic.ts PRICE_SOURCE_LABEL / priceSourceWord, carried over
+ * as written): the scope column's wording for the tier and customer levels,
+ * the audit filter's for the override, and the list price for the anchor. A
+ * source this table does not know degrades to plain lower case words, never
+ * the enum.
+ */
+export const PRICE_SOURCE_LABEL: Record<string, string> = {
+  CUSTOMER_PRODUCT_RULE: "Customer + product",
+  CUSTOMER_CATEGORY_RULE: "Customer + category",
+  CUSTOMER_OVERRIDE: "Customer override",
+  QUANTITY_BREAK: "Quantity break",
+  TIER_CATEGORY: "Tier + category",
+  TIER_DEFAULT: "Tier default",
+  PROMOTION: "Promotion",
+  LIST: "List price",
+};
+
+/** A price source for people. */
+export function priceSourceWord(source: string): string {
+  return PRICE_SOURCE_LABEL[source] ?? source.toLowerCase().replace(/_/g, " ");
+}
+
+/** The basis the compare table prints: the pricing source in words, or the floor block with its policy as sent. */
+export function comparisonBasisWord(row: { blocked: boolean; source: string; block_policy?: string }): string {
+  return row.blocked ? comparisonBasis(row) : priceSourceWord(row.source);
+}
+
 /** The comparison row's basis: the pricing source, or the floor block with its policy. */
 export function comparisonBasis(row: { blocked: boolean; source: string; block_policy?: string }): string {
   if (!row.blocked) return row.source;

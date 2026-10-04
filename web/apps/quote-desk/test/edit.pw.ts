@@ -321,3 +321,18 @@ test("the Sales manager edits any quote in its branch", async ({ page }) => {
   await expect(panel(page).locator('[data-field="qty"]')).toHaveValue("11");
   await expect(panel(page).getByTestId("qe-line")).toContainText("CA$514.80");
 });
+
+// Visual review round 1, P3: the compare table's Basis column words the pricing
+// source as the ERP does, not the raw enum.
+test("the compare table words its basis, not the raw enum", async ({ page }) => {
+  await signIn(page);
+  await openQuote(page, "Sent");
+  await panel(page).getByTestId("qe-line").first().getByRole("button", { name: "Compare" }).click();
+  const search = page.getByTestId("qe-compare").locator('[data-field="cmp-search"]');
+  await search.fill("holland");
+  await page.getByTestId("qe-compare").getByRole("option").first().click();
+  await page.getByTestId("qe-compare").getByRole("button", { name: "Score" }).click();
+  await expect(page.getByTestId("qe-compare")).toContainText("HPV-60 · Holland Stone 60 mm");
+  const text = await page.getByTestId("qe-compare").innerText();
+  expect(text).not.toMatch(/\b[A-Z]+_[A-Z_]+\b/);
+});

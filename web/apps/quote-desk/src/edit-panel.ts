@@ -31,7 +31,7 @@ import {
   canEdit,
   catalogHitStatus,
   CATALOGUE_MIN_QUERY,
-  comparisonBasis,
+  comparisonBasisWord,
   comparisonDeltaLabel,
   EDIT_LINE_ADD,
   EDIT_LINE_QTY,
@@ -854,7 +854,7 @@ export class QdQuoteEdit extends PanelBase {
                             <td class="num">${money(r.list_price_cents)}</td>
                             <td class="num">${money(r.line_total_cents)}</td>
                             <td class="num">${comparisonDeltaLabel(r)}</td>
-                            <td class="${r.blocked ? "blocked" : ""}">${comparisonBasis(r)}</td>
+                            <td class="${r.blocked ? "blocked" : ""}">${comparisonBasisWord(r)}</td>
                           `}
                     </tr>`,
                   )}
