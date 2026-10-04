@@ -1,0 +1,534 @@
+//go:build demo
+
+package main
+
+// demoseed_quotes_world_test.go, QD-6: proof of the quote world, on a throwaway local Postgres.
+//
+// The test builds the world the order a demo box does: the frozen migration set, the first
+// `demoseed -apply` (the demo role logins are not there yet, so the world holds no quote), the REAL
+// demo populate in process (the two role accounts, their roles, branch grants and platform links),
+// then `demoseed -apply` again, which now adds the quotes. Everything after runs through the real
+// registerRoutes as the demo Sales login and the demo Sales manager login, plus an HR login planted
+// beside them for the one negative leg.
+//
+// The database gate is the demo world proof's own variable (the till's world test reads the same one),
+// and the harness refuses an address that is not local.
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
+)
+
+// The two role accounts the demo populate plants (core/internal/demo/populate.go, pinned there). The
+// literals are repeated here on purpose: if the populate ever moves them, the quote world stops
+// resolving its owners and this test goes red, which is the point.
+const (
+	qwSalesUserID   = "de110000-0000-4000-9000-000000000001"
+	qwManagerUserID = "de110000-0000-4000-9000-000000000002"
+	qwHRSubject     = "hh-demo-quotes-hr"
+)
+
+// qwClock pins every apply in this test: one instant, so the day-keyed rows are the same on every
+// run and a second apply is the same plan as the first.
+var qwClock = time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)
+
+// qwQuoteTables are the tables the quote world writes, the census of "what the second apply added".
+var qwQuoteTables = []string{
+	"quotes", "quote_lines", "quote_share_links", "quote_acceptances", "quote_share_link_events",
+}
+
+// qwOtherWorldTables are the tables the rest of the demo world writes (the till's, the order book's,
+// dispatch's, picking's, the freight approvals'). They are fingerprinted before and after the apply
+// that adds the quotes: nothing in them may move.
+var qwOtherWorldTables = []string{
+	"credit_holds", "customers", "delivery_freight_raises", "delivery_runs", "delivery_stops",
+	"dispatch_branch_depots", "dispatch_drivers", "dispatch_reschedules", "dispatch_trucks",
+	"invoice_lines", "invoices", "load_scan_checkpoints", "order_lines", "orders",
+	"payment_allocations", "payments", "pos_parked_tickets", "pos_sale", "pos_signature",
+	"pricing_list_prices", "pricing_rules", "product_branch_costs", "product_images",
+	"product_reorder_points", "product_uoms", "products", "quantity_break_headers",
+	"quantity_break_items", "stock_balances", "stock_moves", "task_events", "task_shortages",
+	"tasks", "will_call_pickups",
+	"users", "user_roles", "user_branch_grants", "staff_role_grant", "payment_config", "org",
+	"system_settings", "demo_box",
+}
+
+// qwFreshDB creates this test's own database from zero and applies the migration set, the same
+// files and order the migrate role applies.
+func qwFreshDB(t *testing.T, ctx context.Context, dsn string) (*pgxpool.Pool, string) {
+	t.Helper()
+	name := "demoworld_quotes"
+	admin, err := pgxpool.New(ctx, swapDSNDatabase(dsn, "postgres"))
+	if err != nil {
+		t.Fatalf("connecting to the admin database: %v", err)
+	}
+	defer admin.Close()
+	if _, err := admin.Exec(ctx, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)"); err != nil {
+		t.Fatalf("dropping %s: %v", name, err)
+	}
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+		t.Fatalf("creating %s: %v", name, err)
+	}
+	testDSN := swapDSNDatabase(dsn, name)
+	pool, err := pgxpool.New(ctx, testDSN)
+	if err != nil {
+		t.Fatalf("connecting to %s: %v", name, err)
+	}
+	t.Cleanup(pool.Close)
+	files, err := filepath.Glob(filepath.Join("..", "..", "db", "migrations", "*.sql"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no migrations found (err=%v)", err)
+	}
+	sort.Strings(files)
+	for _, f := range files {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("reading %s: %v", filepath.Base(f), err)
+		}
+		if _, err := pool.Exec(ctx, string(body)); err != nil {
+			t.Fatalf("applying %s: %v", filepath.Base(f), err)
+		}
+	}
+	return pool, testDSN
+}
+
+// qwApply runs `demoseed -apply` the way the entrypoint does, at the pinned clock, and returns how
+// many rows it proposed and created.
+func qwApply(t *testing.T) (proposed, created int) {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "demoseed-out")
+	if err != nil {
+		t.Fatalf("temp output: %v", err)
+	}
+	defer f.Close()
+	if err := demoseedRole([]string{"-apply", "-now", qwClock.Format(time.RFC3339)}, f, os.Getenv); err != nil {
+		t.Fatalf("demoseed -apply: %v", err)
+	}
+	raw, err := os.ReadFile(f.Name())
+	if err != nil {
+		t.Fatalf("reading demoseed output: %v", err)
+	}
+	var skipped int
+	for _, line := range strings.Split(string(raw), "\n") {
+		if n, err := fmt.Sscanf(line, "applied: %d proposed · %d created · %d already present",
+			&proposed, &created, &skipped); err == nil && n == 3 {
+			return proposed, created
+		}
+	}
+	t.Fatalf("demoseed -apply printed no result line:\n%s", raw)
+	return 0, 0
+}
+
+// qwFingerprint fingerprints every row of the tables, contents and row versions, so an assertion can
+// hold that a run changed nothing at all rather than merely created nothing.
+func qwFingerprint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tables []string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, table := range tables {
+		var sum string
+		if err := pool.QueryRow(ctx, `
+			SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
+			  FROM (SELECT to_jsonb(r)::text AS line
+			          FROM (SELECT *, xmin::text AS row_version FROM `+table+`) r) s`).Scan(&sum); err != nil {
+			t.Fatalf("fingerprint %s: %v", table, err)
+		}
+		out[table] = sum
+	}
+	return out
+}
+
+func qwCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, q string, args ...any) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(ctx, q, args...).Scan(&n); err != nil {
+		t.Fatalf("%s: %v", q, err)
+	}
+	return n
+}
+
+// qwPublic calls a public (tokenless) route.
+func qwPublic(mux *http.ServeMux, path string) demoResponse {
+	req := httptest.NewRequest("GET", path, bytes.NewReader(nil))
+	req.Header.Set("X-Org", demoOrgSlug)
+	rsp := httptest.NewRecorder()
+	mux.ServeHTTP(rsp, req)
+	return demoResponse{status: rsp.Code, body: rsp.Body.Bytes()}
+}
+
+type qwLine struct {
+	LineNo              int    `json:"line_no"`
+	ProductID           string `json:"product_id"`
+	UnitPriceCents      int64  `json:"unit_price_cents"`
+	LineTotalCents      int64  `json:"line_total_cents"`
+	RulePriceBelowFloor *bool  `json:"rule_price_below_floor"`
+	FloorClearedBy      string `json:"floor_cleared_by"`
+}
+
+type qwQuote struct {
+	ID            string   `json:"id"`
+	QuoteNo       string   `json:"quote_no"`
+	Status        string   `json:"status"`
+	BranchID      string   `json:"branch_id"`
+	OwnerID       string   `json:"owner_id"`
+	CanConvert    bool     `json:"can_convert"`
+	Lines         []qwLine `json:"lines"`
+	SubtotalCents int64    `json:"subtotal_cents"`
+	TaxCents      int64    `json:"tax_cents"`
+	TotalCents    int64    `json:"total_cents"`
+}
+
+func TestDemoWorld_Quotes(t *testing.T) {
+	dsn := os.Getenv(tillDemoDBEnvVar)
+	if dsn == "" {
+		t.Skip(tillDemoDBEnvVar + " is not set: the demo world proof needs its own throwaway local Postgres")
+	}
+	requireLocalDSN(t, dsn)
+	ctx := context.Background()
+
+	rawKey := make([]byte, 32)
+	if _, err := rand.Read(rawKey); err != nil {
+		t.Fatalf("generate vault key: %v", err)
+	}
+	vaultKeyHex := hex.EncodeToString(rawKey)
+
+	// 1. migrate, then the first apply exactly as a box runs it: the role logins are not there yet.
+	pool, testDSN := qwFreshDB(t, ctx, dsn)
+	t.Setenv("DATABASE_URL", testDSN)
+	t.Setenv("CORE_DATABASE_URL", testDSN)
+	t.Setenv("PAYMENT_VAULT_KEY", vaultKeyHex)
+	t.Setenv("APP_ENV", "dev")
+	_, created := qwApply(t)
+	if created == 0 {
+		t.Fatal("the first apply created nothing on a fresh database")
+	}
+	// The migrations plant their own portal fixtures (a quote among them), so the baseline is what a
+	// migrated and once-seeded database holds, and the world's own rows are told apart by its marker.
+	baseline := map[string]int{}
+	for _, table := range append(append([]string{}, qwQuoteTables...), "pricing_audit_log", "permission_approval_requests") {
+		baseline[table] = qwCount(t, ctx, pool, `SELECT count(*) FROM `+table)
+	}
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM quotes WHERE metadata->>'demo_seed' = $1`, demoMarker); n != 0 {
+		t.Fatalf("the first apply (no demo role logins yet) left %d demo quotes, the world must hold no quote until the logins exist", n)
+	}
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM permission_approval_requests WHERE policy_type = 'MARGIN_BELOW_MINIMUM'`); n != 0 {
+		t.Fatalf("the first apply filed %d floor requests with no requester", n)
+	}
+
+	// 2. the REAL demo populate, in process: the two role accounts, their grants and platform links.
+	now := qwClock
+	if _, err := demo.RunPopulate(ctx, demo.Options{Getenv: os.Getenv, Now: &now}); err != nil {
+		t.Fatalf("demo populate: %v", err)
+	}
+	for id, role := range map[string]string{qwSalesUserID: "INSIDE_SALES", qwManagerUserID: "SALES_MANAGER"} {
+		var got string
+		if err := pool.QueryRow(ctx, `
+			SELECT sr.origin_code FROM users u
+			  JOIN staff_role_grant g ON g.platform_user_id = u.platform_user_id AND g.deleted_at IS NULL
+			  JOIN staff_role sr ON sr.id = g.role_id WHERE u.id = $1`, id).Scan(&got); err != nil || got != role {
+			t.Fatalf("demo account %s reads as %q (%v), want %s", id, got, err, role)
+		}
+	}
+
+	// 3. the second apply: now the logins resolve, so the quote world is added, and nothing else moves.
+	before := qwFingerprint(t, ctx, pool, qwOtherWorldTables)
+	proposed, created := qwApply(t)
+	const wantQuoteRows = 3 + 7 + 2 + 1 + 1 + 4 + 1 // quotes, lines, links, acceptance, event, log rows, request
+	if created != wantQuoteRows {
+		t.Fatalf("the second apply created %d rows, want exactly the quote world's %d (proposed %d)", created, wantQuoteRows, proposed)
+	}
+	after := qwFingerprint(t, ctx, pool, qwOtherWorldTables)
+	for table, sum := range before {
+		if after[table] != sum {
+			t.Errorf("%s changed across the apply that adds the quotes, nothing else in the world may move", table)
+		}
+	}
+	census := map[string]int{"quotes": 3, "quote_lines": 7, "quote_share_links": 2, "quote_acceptances": 1,
+		"quote_share_link_events": 1, "pricing_audit_log": 4, "permission_approval_requests": 1}
+	for table, add := range census {
+		if n := qwCount(t, ctx, pool, `SELECT count(*) FROM `+table); n != baseline[table]+add {
+			t.Errorf("%s holds %d rows, want the baseline %d plus the world's %d", table, n, baseline[table], add)
+		}
+	}
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM quotes WHERE metadata->>'demo_seed' = $1`, demoMarker); n != 3 {
+		t.Errorf("demo quotes found by the world's marker: %d, want 3", n)
+	}
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM permission_approval_requests WHERE policy_type = 'MARGIN_BELOW_MINIMUM'`); n != 1 {
+		t.Errorf("floor requests: %d, want 1", n)
+	}
+
+	// 4. idempotent: applied again, the same rows, nothing created, nothing touched.
+	allTables := append(append(append([]string{}, qwOtherWorldTables...), qwQuoteTables...), "pricing_audit_log", "permission_approval_requests")
+	snap := qwFingerprint(t, ctx, pool, allTables)
+	if _, created := qwApply(t); created != 0 {
+		t.Errorf("a third apply created %d rows, the seed must be idempotent", created)
+	}
+	for table, sum := range qwFingerprint(t, ctx, pool, allTables) {
+		if snap[table] != sum {
+			t.Errorf("%s changed across a repeat apply", table)
+		}
+	}
+
+	// 5. the category floor the plan holds is the floor the database holds.
+	for _, code := range []string{"PAVER", "BULK"} {
+		var floor int
+		if err := pool.QueryRow(ctx, `
+			SELECT p.margin_floor_bps FROM pricing_category_policy p
+			  JOIN product_categories c ON c.id = p.category_id WHERE c.code = $1`, code).Scan(&floor); err != nil || floor != demoFloorBps {
+			t.Fatalf("category %s floor is %d (%v), the quote world is struck over %d", code, floor, err, demoFloorBps)
+		}
+	}
+
+	// 6. the full served surface, then the HR login beside the two demo ones.
+	var orgID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM org WHERE slug = $1`, demoOrgSlug).Scan(&orgID); err != nil {
+		t.Fatalf("the demo org: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		WITH u AS (
+		  INSERT INTO users (email, display_name, status, org_id, platform_user_id)
+		  VALUES ('hr.quotes@hh-demo.invalid', 'HR (quote proof)', 'ACTIVE', $1, $2) RETURNING id)
+		INSERT INTO user_branch_grants (user_id, branch_id, org_id) SELECT id, $3, $1 FROM u`,
+		orgID, qwHRSubject, trentonBranchID); err != nil {
+		t.Fatalf("plant the HR login: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO staff_role_grant (platform_user_id, role_id, org_id, branch_id) VALUES ($1, 'hr', $2, $3)`,
+		qwHRSubject, orgID, trentonBranchID); err != nil {
+		t.Fatalf("plant the HR grant: %v", err)
+	}
+	appwrite := newAppwriteFake(t)
+	for _, sub := range []string{qwSalesUserID, qwManagerUserID, qwHRSubject} {
+		appwrite.setTeam(sub, "org:"+demoOrgSlug)
+	}
+	keys := testkit.NewKeys(t)
+	acceptKey := make([]byte, 32)
+	if _, err := rand.Read(acceptKey); err != nil {
+		t.Fatalf("generate acceptance key: %v", err)
+	}
+	env := &compEnv{
+		keys: keys, minter: &testkit.Minter{Keys: keys, Clock: testkit.NewClock()},
+		keySrv: testkit.NewKeyServer(t, keys), appwrite: appwrite, dsn: testDSN,
+	}
+	values := map[string]string{
+		"CORE_TOKEN_ISSUER": testkit.KitIssuer, "CORE_STAFF_AUDIENCE": testkit.KitStaffAud,
+		"CORE_TENANT_AUDIENCE": testkit.KitTenantAud, "CORE_JWKS_URL": env.keySrv.URL(),
+		"CORE_DATABASE_URL": testDSN, "CORE_APPWRITE_ENDPOINT": appwrite.server.URL,
+		"CORE_APPWRITE_PROJECT": "fx-appwrite-project", "CORE_APPWRITE_API_KEY": "fx-appwrite-key-placeholder",
+		customerquote.EnvKeyID: "fx-accept-sign-key", customerquote.EnvKey: hex.EncodeToString(acceptKey),
+	}
+	env.getenv = func(k string) string { return values[k] }
+	rec, _ := registeredSurface(t, env)
+	sales := &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, qwSalesUserID), who: "Sales"}
+	manager := &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, qwManagerUserID), who: "Sales manager"}
+	hr := &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, qwHRSubject), who: "HR"}
+
+	quoteID := func(key string) string { return demoID("quote:" + key) }
+	read := func(c *tillClient, key string) qwQuote {
+		t.Helper()
+		rsp := c.call("GET", "/api/v1/quotes/"+quoteID(key), nil)
+		rsp.ok(t, http.StatusOK)
+		var q qwQuote
+		rsp.decode(t, &q)
+		return q
+	}
+
+	// 7. counts, owners and states, read back through the app as the app shows them.
+	type want struct {
+		no, status, owner string
+		lines             int
+	}
+	wants := map[string]want{
+		"Q1": {"DEMO-TRT-Q1", "DRAFT", qwSalesUserID, 2},
+		"Q2": {"DEMO-TRT-Q2", "SENT", qwManagerUserID, 2},
+		"Q3": {"DEMO-TRT-Q3", "ACCEPTED", qwSalesUserID, 3},
+	}
+	seeded := map[string]qwQuote{}
+	for key, w := range wants {
+		q := read(manager, key)
+		seeded[key] = q
+		if q.QuoteNo != w.no || q.Status != w.status || q.OwnerID != w.owner || len(q.Lines) != w.lines || q.BranchID != trentonBranchID {
+			t.Errorf("%s reads %s %s owner %s branch %s with %d lines, want %+v at Trenton", key, q.QuoteNo, q.Status, q.OwnerID, q.BranchID, len(q.Lines), w)
+		}
+		if q.TotalCents != q.SubtotalCents+q.TaxCents || q.TaxCents != taxOn(q.SubtotalCents) {
+			t.Errorf("%s: subtotal %d tax %d total %d are not the builder's flat HST arithmetic", key, q.SubtotalCents, q.TaxCents, q.TotalCents)
+		}
+	}
+	if seeded["Q1"].OwnerID == seeded["Q2"].OwnerID {
+		t.Error("the quotes are not owned by two different salespeople")
+	}
+	// The app lists the two customers' quotes to the manager (Manage reaches every quote of its branch).
+	listRsp := manager.call("GET", "/api/v1/quotes", nil)
+	listRsp.ok(t, http.StatusOK)
+	for _, key := range []string{"Q1", "Q2", "Q3"} {
+		if !strings.Contains(string(listRsp.body), wants[key].no) {
+			t.Errorf("the quote list as the Sales manager lacks %s", wants[key].no)
+		}
+	}
+
+	// 8. the line figures are the engine's: the rule unit price on every line equals what the engine's
+	// own price picture answers for that customer, and the floor mark the app reads matches the story.
+	custID := func(key string) string {
+		var id string
+		if err := pool.QueryRow(ctx, `SELECT id::text FROM customers WHERE account_no = $1`, "DEMO-"+key).Scan(&id); err != nil {
+			t.Fatalf("customer %s: %v", key, err)
+		}
+		return id
+	}
+	for key, cust := range map[string]string{"Q1": "C02", "Q2": "C01", "Q3": "C02"} {
+		items := []map[string]any{}
+		for _, ln := range seeded[key].Lines {
+			var qty float64
+			var uom string
+			if err := pool.QueryRow(ctx, `SELECT qty_entered::float8, uom_entered::text FROM quote_lines WHERE quote_id = $1 AND line_no = $2`,
+				quoteID(key), ln.LineNo).Scan(&qty, &uom); err != nil {
+				t.Fatal(err)
+			}
+			items = append(items, map[string]any{"product_id": ln.ProductID, "qty_entered": qty, "uom_entered": uom})
+		}
+		rsp := manager.call("POST", "/api/v1/pos/counter-prices", map[string]any{
+			"branch_id": trentonBranchID, "customer_id": custID(cust), "items": items})
+		rsp.ok(t, http.StatusOK)
+		var prices counterPrices
+		rsp.decode(t, &prices)
+		engine := map[string]int64{}
+		for _, p := range prices.Prices {
+			engine[p.ProductID] = p.CustomerCents
+		}
+		for _, ln := range seeded[key].Lines {
+			if engine[ln.ProductID] != ln.UnitPriceCents {
+				t.Errorf("%s line %d: the quote holds a rule price of %d, the engine prices that customer and product at %d",
+					key, ln.LineNo, ln.UnitPriceCents, engine[ln.ProductID])
+			}
+		}
+	}
+	// CP0-3 A: the Holland line's rule price sits below the floor and the app says so on the cost list.
+	if l := seeded["Q2"].Lines[0]; l.RulePriceBelowFloor == nil || !*l.RulePriceBelowFloor {
+		t.Errorf("Q2 line 1 (rule price under the floor) reads rule_price_below_floor %v", l.RulePriceBelowFloor)
+	}
+	if l := seeded["Q2"].Lines[1]; l.RulePriceBelowFloor != nil && *l.RulePriceBelowFloor {
+		t.Error("Q2 line 2 (list price above the floor) is marked below the floor")
+	}
+	// The cleared line names its clearer.
+	if l := seeded["Q3"].Lines[0]; l.FloorClearedBy == "" {
+		t.Error("Q3 line 1 (cleared by the Sales manager) shows no clearer")
+	}
+
+	// 9. the totals equal what the builder computes: the terms write, unchanged terms, restamps the
+	// header from the lines and the flat rate, and the figures must not move.
+	for _, key := range []string{"Q1", "Q2"} {
+		rsp := manager.call("GET", "/api/v1/quotes/"+quoteID(key)+"/terms", nil)
+		rsp.ok(t, http.StatusOK)
+		var terms map[string]any
+		rsp.decode(t, &terms)
+		put := manager.call("PUT", "/api/v1/quotes/"+quoteID(key)+"/terms", terms)
+		put.ok(t, http.StatusOK)
+		now := read(manager, key)
+		if now.SubtotalCents != seeded[key].SubtotalCents || now.TaxCents != seeded[key].TaxCents || now.TotalCents != seeded[key].TotalCents {
+			t.Errorf("%s: the app's terms write recomputes %d/%d/%d where the seed holds %d/%d/%d", key,
+				now.SubtotalCents, now.TaxCents, now.TotalCents,
+				seeded[key].SubtotalCents, seeded[key].TaxCents, seeded[key].TotalCents)
+		}
+	}
+
+	// 10. the share link opens the public view; both derived tokens are live, a wrong one is not.
+	for _, key := range []string{"Q2", "Q3"} {
+		rsp := qwPublic(rec.inner, "/api/public/v1/quotes/"+quoteToken(key))
+		rsp.ok(t, http.StatusOK)
+		var view struct {
+			QuoteNo    string `json:"quote_no"`
+			Status     string `json:"status"`
+			Total      int64  `json:"total_cents"`
+			Acceptable bool   `json:"acceptable"`
+			Expired    bool   `json:"expired"`
+		}
+		rsp.decode(t, &view)
+		if view.QuoteNo != wants[key].no || view.Status != wants[key].status || view.Total != seeded[key].TotalCents || view.Expired {
+			t.Errorf("%s's public view reads %+v, want %s %s total %d live", key, view, wants[key].no, wants[key].status, seeded[key].TotalCents)
+		}
+		if key == "Q2" && !view.Acceptable {
+			t.Error("the SENT quote's public view is not acceptable")
+		}
+	}
+	if rsp := qwPublic(rec.inner, "/api/public/v1/quotes/"+quoteToken("Q2")+"x"); rsp.status != http.StatusNotFound {
+		t.Errorf("a wrong token answered %d, want 404", rsp.status)
+	}
+
+	// 11. the floor request: listed to the branch Sales manager, never to HR; the requester sees its
+	// own; four eyes hold (the manager's list names it, and it is filed by the Sales login).
+	requestID := demoID("floorrequest:FR1")
+	listed := func(c *tillClient) bool {
+		t.Helper()
+		rsp := c.call("GET", "/api/v1/staff/approvals?status=PENDING", nil)
+		if rsp.status == http.StatusForbidden {
+			return false
+		}
+		rsp.ok(t, http.StatusOK)
+		return strings.Contains(string(rsp.body), requestID)
+	}
+	if !listed(manager) {
+		t.Error("the pending floor request is not listed to the branch's Sales manager")
+	}
+	if listed(hr) {
+		t.Error("the pending floor request is listed to HR, which must not read margin")
+	}
+	if !listed(sales) {
+		t.Error("the requester cannot see its own floor request")
+	}
+	var requesterRole string
+	if err := pool.QueryRow(ctx, `
+		SELECT sr.origin_code FROM permission_approval_requests r
+		  JOIN users u ON u.id = r.requested_by
+		  JOIN staff_role_grant g ON g.platform_user_id = u.platform_user_id AND g.deleted_at IS NULL
+		  JOIN staff_role sr ON sr.id = g.role_id
+		 WHERE r.id = $1`, requestID).Scan(&requesterRole); err != nil || requesterRole != "INSIDE_SALES" {
+		t.Errorf("the request's requester reads as %q (%v), want INSIDE_SALES", requesterRole, err)
+	}
+
+	// 12. the accepted quote converts through the real service, at its own price.
+	if !seeded["Q3"].CanConvert {
+		t.Error("the ACCEPTED quote reads can_convert false for the Sales manager")
+	}
+	conv := sales.call("POST", "/api/v1/quotes/"+quoteID("Q3")+"/convert", nil)
+	conv.ok(t, http.StatusCreated)
+	var converted struct {
+		OrderID string `json:"order_id"`
+		OrderNo string `json:"order_no"`
+	}
+	conv.decode(t, &converted)
+	var orderSub, orderTax, orderTotal int64
+	var orderStatus, quoteStatus string
+	if err := pool.QueryRow(ctx, `
+		SELECT o.status, o.subtotal_cents, o.tax_cents, o.total_cents, q.status
+		  FROM orders o JOIN quotes q ON q.id = o.quote_id WHERE o.id = $1`, converted.OrderID).
+		Scan(&orderStatus, &orderSub, &orderTax, &orderTotal, &quoteStatus); err != nil {
+		t.Fatalf("the converted order: %v", err)
+	}
+	if quoteStatus != "CONVERTED" {
+		t.Errorf("the quote is %s after conversion, want CONVERTED", quoteStatus)
+	}
+	if orderSub != seeded["Q3"].SubtotalCents || orderTax != seeded["Q3"].TaxCents || orderTotal != seeded["Q3"].TotalCents {
+		t.Errorf("the order carries %d/%d/%d, the accepted quote agreed %d/%d/%d", orderSub, orderTax, orderTotal,
+			seeded["Q3"].SubtotalCents, seeded["Q3"].TaxCents, seeded["Q3"].TotalCents)
+	}
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM order_lines WHERE order_id = $1`, converted.OrderID); n != 3 {
+		t.Errorf("the converted order has %d lines, want 3", n)
+	}
+	t.Logf("converted %s into order %s (%s), quote %s", wants["Q3"].no, converted.OrderNo, orderStatus, quoteStatus)
+}
