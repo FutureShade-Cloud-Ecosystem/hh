@@ -60,6 +60,13 @@ const (
 // heard of this field produces the identical row it produced before DIB-483.
 type ConvertOptions struct {
 	Fulfillment string
+
+	// paidAtCounter and paidTotalCents are QD-5's: the order is paid in full, at the agreed total,
+	// in the same counter action (order_payment.go), so the credit gate judges it as a cash sale.
+	// Unexported on purpose: only this package's payment door can set them, never the portal door,
+	// the plain staff door or a request body. The conversion re-asserts the total under its lock.
+	paidAtCounter  bool
+	paidTotalCents int64
 }
 
 // normalizeFulfillment grades the caller's choice. It is case- and space-forgiving (a counter user

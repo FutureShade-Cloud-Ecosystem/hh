@@ -554,15 +554,15 @@ func TestQD5_FulfilmentAndAShipmentPlanBillNothingTwice(t *testing.T) {
 
 	// A shipment plan gained later: the plan's own group key bills nothing either.
 	var groupID string
-	if err := e.pool.QueryRow(context.Background(),
-		`INSERT INTO shipment_groups (order_id, group_no, status) VALUES ($1, 1, 'COMPLETE') RETURNING id::text`,
-		res.OrderID).Scan(&groupID); err != nil {
+	if err := e.pool.QueryRow(context.Background(), `
+		WITH g AS (
+		  INSERT INTO shipment_groups (order_id, group_no, status, completed_at)
+		  VALUES ($1, 1, 'COMPLETE', now()) RETURNING id),
+		l AS (
+		  INSERT INTO shipment_group_lines (shipment_group_id, order_line_id, qty_base)
+		  SELECT g.id, ol.id, ol.qty_base FROM g, order_lines ol WHERE ol.order_id = $1 RETURNING 1)
+		SELECT g.id::text FROM g, (SELECT count(*) FROM l) n`, res.OrderID).Scan(&groupID); err != nil {
 		t.Fatalf("seed shipment group: %v", err)
-	}
-	if _, err := e.pool.Exec(context.Background(), `
-		INSERT INTO shipment_group_lines (shipment_group_id, order_line_id, qty_base)
-		SELECT $1::uuid, id, qty_base FROM order_lines WHERE order_id = $2`, groupID, res.OrderID); err != nil {
-		t.Fatalf("seed shipment group lines: %v", err)
 	}
 	gdoc, err := tail.InvoiceOrderGroups(context.Background(), res.OrderID, []string{groupID}, "ON_ALL_COMPLETE")
 	if err != nil {

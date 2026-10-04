@@ -331,7 +331,80 @@ type AgreedBillingRefusal struct{ Msg string }
 
 func (e *AgreedBillingRefusal) Error() string { return e.Msg }
 
-// AgreedInvoiceableOrder is the counter's agreed invoice facts (stub, red first).
+// agreedInvoiceStore is the store capability the counter's agreed facts need, asserted like the
+// other source capabilities so a store that cannot answer reports itself unconfigured.
+type agreedInvoiceStore interface {
+	AgreedOrderInvoiceFacts(ctx context.Context, orderID string) (InvoiceFacts, error)
+}
+
+// AgreedInvoiceableOrder answers the facts of the counter's invoice for an order paid before it
+// leaves the yard (plan 5.3, CP0-2 answer A): EVERY line at its agreed line total, whatever has or
+// has not been fulfilled, the delivery fee the order's price carries (the frozen quoted fee, never
+// the live freight figure dispatch may change) and the tax the price agreed. Like InvoiceableOrder
+// it returns facts and no permission; unlike it, it refuses when the order cannot be billed (it is
+// cancelled) or when its own header disagrees with its lines (lines plus fee plus tax must equal
+// the order total): a disagreement is something to look at, never a document to bill.
 func (s *Service) AgreedInvoiceableOrder(ctx context.Context, orderID string) (InvoiceFacts, error) {
-	return InvoiceFacts{}, fmt.Errorf("order: agreed invoice facts not built")
+	st, ok := s.store.(agreedInvoiceStore)
+	if !ok {
+		return InvoiceFacts{}, ErrShipNotConfigured
+	}
+	return st.AgreedOrderInvoiceFacts(ctx, orderID)
+}
+
+// AgreedOrderInvoiceFacts reads the order's header and every line, and holds the order to its own
+// arithmetic before anything is billed from it.
+func (r *Repository) AgreedOrderInvoiceFacts(ctx context.Context, orderID string) (InvoiceFacts, error) {
+	if r.pool == nil {
+		return InvoiceFacts{}, errNoDB
+	}
+	f, err := r.orderBillingHeader(ctx, orderID)
+	if err != nil {
+		return InvoiceFacts{}, err
+	}
+	var status string
+	var subtotal, tax, total, fee int64
+	if err := r.pool.QueryRow(ctx, `
+SELECT status, subtotal_cents, tax_cents, total_cents, COALESCE(quoted_freight_cents, 0)
+  FROM orders WHERE id = $1`, orderID).Scan(&status, &subtotal, &tax, &total, &fee); err != nil {
+		return InvoiceFacts{}, fmt.Errorf("order: agreed header for %s: %w", orderID, err)
+	}
+	if status == "CANCELLED" {
+		return InvoiceFacts{}, &AgreedBillingRefusal{Msg: "order " + f.OrderNo + " is cancelled and cannot be invoiced"}
+	}
+	f.ClosesOrder = true
+
+	rows, err := r.pool.Query(ctx, `
+SELECT ol.id::text, COALESCE(ol.product_id::text,''), ol.description, ol.qty_entered::text, ol.uom_entered,
+       ol.qty_base::text, ol.unit_price_cents, COALESCE(ol.price_uom, ol.uom_entered), ol.line_total_cents
+  FROM order_lines ol WHERE ol.order_id = $1 ORDER BY ol.line_no`, orderID)
+	if err != nil {
+		return InvoiceFacts{}, fmt.Errorf("order: agreed invoice lines: %w", err)
+	}
+	defer rows.Close()
+	var sum int64
+	for rows.Next() {
+		var l InvoiceLine
+		if err := rows.Scan(&l.OrderLineID, &l.ProductID, &l.Description, &l.QtyEntered, &l.UOMEntered,
+			&l.QtyBase, &l.UnitPriceCents, &l.PriceUOM, &l.LineTotalCents); err != nil {
+			return InvoiceFacts{}, fmt.Errorf("order: scan agreed line: %w", err)
+		}
+		l.LineNo = len(f.Lines) + 1
+		sum += l.LineTotalCents
+		f.Lines = append(f.Lines, l)
+	}
+	if err := rows.Err(); err != nil {
+		return InvoiceFacts{}, fmt.Errorf("order: agreed invoice lines: %w", err)
+	}
+	if len(f.Lines) == 0 {
+		return InvoiceFacts{}, &AgreedBillingRefusal{Msg: "order " + f.OrderNo + " has no lines to invoice"}
+	}
+	if sum+fee+tax != total {
+		return InvoiceFacts{}, &AgreedBillingRefusal{Msg: fmt.Sprintf(
+			"order %s does not agree with its own lines (lines %d, delivery %d, tax %d, order total %d cents); it cannot be invoiced until that is looked at",
+			f.OrderNo, sum, fee, tax, total)}
+	}
+	f.FreightCents = fee
+	f.AgreedTaxCents = &tax
+	return f, nil
 }

@@ -312,6 +312,23 @@ func (w *InvoiceWriter) InvoiceOrderGroups(ctx context.Context, orderID string, 
 	if w.source == nil {
 		return InvoiceDoc{}, ErrOrderSourceUnwired
 	}
+	// An order already billed whole at its agreed price (the counter's invoice, QD-5, raised under
+	// the whole order key) is not billed again under a shipment plan's group key: the plan's groups
+	// are covered by that document, so they are linked to it and nothing new is written.
+	if w.pool != nil {
+		if whole, ok, err := w.findByKey(ctx, wholeOrderKey(orderID)); err != nil {
+			return InvoiceDoc{}, err
+		} else if ok {
+			whole.Reused = true
+			if len(groupIDs) > 0 {
+				if err := w.source.MarkGroupsInvoiced(ctx, groupIDs, whole.InvoiceID, w.now()); err != nil {
+					return whole, fmt.Errorf("billing: order already invoiced as %s but the shipment groups could not be marked: %w",
+						whole.InvoiceNo, err)
+				}
+			}
+			return whole, nil
+		}
+	}
 	facts, err := w.source.InvoiceableOrder(ctx, orderID, groupIDs)
 	if err != nil {
 		return InvoiceDoc{}, err
@@ -368,8 +385,12 @@ func (w *InvoiceWriter) InvoiceOrderNamed(ctx context.Context, orderID, docID st
 	}
 	facts.ClosesOrder = true
 	facts.GroupIDs = nil
-	return w.write(ctx, facts, SourceOrder, "order-invoice:"+orderID, docID)
+	return w.write(ctx, facts, SourceOrder, wholeOrderKey(orderID), docID)
 }
+
+// wholeOrderKey is the idempotency key of a whole-order invoice: one document per order, whichever
+// door raises it (fulfilment, the invoices sync door, or the counter's agreed invoice).
+func wholeOrderKey(orderID string) string { return "order-invoice:" + orderID }
 
 // multiShipKey is the retry key for a group invoice: the order plus the EXACT group set, sorted so
 // the same set in a different order is the same key. Two different subsets of the same order are two
@@ -412,28 +433,13 @@ func (w *InvoiceWriter) write(ctx context.Context, f OrderInvoiceFacts, sourceKi
 		return doc, nil
 	}
 
-	var subtotal int64
-	for _, l := range f.Lines {
-		subtotal += l.LineTotalCents
-	}
-	if subtotal < 0 {
-		// A negative bill is a credit memo, and a credit memo has its own writer with its own
-		// document type. Refusing here keeps 0146's sign discipline meaningful rather than letting a
-		// caller mint a memo-shaped row that says INVOICE on it.
-		return InvoiceDoc{}, httpx.BadRequestf("an invoice subtotal cannot be negative, use IssueCreditMemo")
-	}
-
-	reason := f.TaxReasonCode
-	if reason == "" {
-		reason = TaxStdON13
-	}
-	quote, err := w.assessor().AssessSale(ctx, TaxQuoteInput{
-		BranchID: f.BranchID, SubtotalCents: subtotal, ReasonCode: reason,
-	})
+	shaped, err := w.shape(ctx, f)
 	if err != nil {
 		return InvoiceDoc{}, err
 	}
-	total := subtotal + quote.TaxCents
+	f.Lines = shaped.lines
+	subtotal, total := shaped.subtotal, shaped.total
+	quote := TaxQuoteResult{TaxCents: shaped.tax}
 
 	// Per-line tax: the largest-remainder split of the HEADER tax over the line totals. Identical
 	// call, identical function, identical arguments to the ring's, see G2.
@@ -532,6 +538,138 @@ VALUES ($1, 'INVOICE', $2, $3, 'invoice', $4, $5, $6, clock_timestamp())`,
 	return doc, nil
 }
 
+// shapedDocument is the document's money as billing shapes it: the lines (with the delivery fee as
+// its own line when the facts carry one), the subtotal over them, the tax and the total.
+type shapedDocument struct {
+	lines                []OrderInvoiceLine
+	subtotal, tax, total int64
+}
+
+// shape is the ONE place the document's totals are decided, so the counter's preview and the write
+// can never disagree. For every caller but the counter's agreed invoice the facts carry no freight
+// and no agreed tax, and the answer is exactly the lines' sum with the assessed tax.
+func (w *InvoiceWriter) shape(ctx context.Context, f OrderInvoiceFacts) (shapedDocument, error) {
+	lines := append([]OrderInvoiceLine(nil), f.Lines...)
+	if f.FreightCents > 0 {
+		lines = append(lines, OrderInvoiceLine{
+			LineNo: len(lines) + 1, Description: "Delivery", QtyEntered: "1", UOMEntered: "EA", QtyBase: "1",
+			UnitPriceCents: f.FreightCents, PriceUOM: "EA", LineTotalCents: f.FreightCents,
+		})
+	}
+	var subtotal int64
+	for _, l := range lines {
+		subtotal += l.LineTotalCents
+	}
+	if subtotal < 0 {
+		// A negative bill is a credit memo, and a credit memo has its own writer with its own
+		// document type. Refusing here keeps 0146's sign discipline meaningful rather than letting a
+		// caller mint a memo-shaped row that says INVOICE on it.
+		return shapedDocument{}, httpx.BadRequestf("an invoice subtotal cannot be negative, use IssueCreditMemo")
+	}
+	var tax int64
+	if f.AgreedTaxCents != nil {
+		// The tax the customer was shown, billed as stated: assessing it again could move the total
+		// the quote agreed.
+		if *f.AgreedTaxCents < 0 {
+			return shapedDocument{}, httpx.BadRequestf("an agreed tax cannot be negative")
+		}
+		tax = *f.AgreedTaxCents
+	} else {
+		reason := f.TaxReasonCode
+		if reason == "" {
+			reason = TaxStdON13
+		}
+		q, err := w.assessor().AssessSale(ctx, TaxQuoteInput{
+			BranchID: f.BranchID, SubtotalCents: subtotal, ReasonCode: reason,
+		})
+		if err != nil {
+			return shapedDocument{}, err
+		}
+		tax = q.TaxCents
+	}
+	return shapedDocument{lines: lines, subtotal: subtotal, tax: tax, total: subtotal + tax}, nil
+}
+
+// AgreedOrderSource is the optional order seam the counter's agreed invoice reads: every line at
+// its agreed total with the delivery fee and the agreed tax stated. A source that does not answer
+// it cannot raise the counter's invoice.
+type AgreedOrderSource interface {
+	AgreedInvoiceableOrder(ctx context.Context, orderID string) (OrderInvoiceFacts, error)
+}
+
+func (w *InvoiceWriter) agreedSource() (AgreedOrderSource, error) {
+	if w.source == nil {
+		return nil, ErrOrderSourceUnwired
+	}
+	src, ok := w.source.(AgreedOrderSource)
+	if !ok {
+		return nil, ErrOrderSourceUnwired
+	}
+	return src, nil
+}
+
+// AgreedOrderInvoice answers, read only, what the order's invoice at its agreed totals is: the
+// document itself when one exists under the whole order key (exists true), else the document that
+// would be raised (exists false, no id, balance equal to the total).
+func (w *InvoiceWriter) AgreedOrderInvoice(ctx context.Context, orderID string) (InvoiceDoc, bool, error) {
+	if w.pool == nil {
+		return InvoiceDoc{}, false, errNoDB
+	}
+	if doc, ok, err := w.findByKey(ctx, wholeOrderKey(orderID)); err != nil {
+		return InvoiceDoc{}, false, err
+	} else if ok {
+		return doc, true, nil
+	}
+	src, err := w.agreedSource()
+	if err != nil {
+		return InvoiceDoc{}, false, err
+	}
+	facts, err := src.AgreedInvoiceableOrder(ctx, orderID)
+	if err != nil {
+		return InvoiceDoc{}, false, err
+	}
+	if len(facts.Lines) == 0 {
+		return InvoiceDoc{}, false, ErrNothingToInvoice
+	}
+	shaped, err := w.shape(ctx, facts)
+	if err != nil {
+		return InvoiceDoc{}, false, err
+	}
+	return InvoiceDoc{
+		CustomerID: facts.CustomerID, OrderID: orderID, BranchID: facts.BranchID, DocType: DocInvoice,
+		SubtotalCents: shaped.subtotal, TaxCents: shaped.tax, TotalCents: shaped.total,
+		BalanceCents: shaped.total, ClosesOrder: true,
+	}, false, nil
+}
+
+// InvoiceOrderAtAgreed raises the order's invoice at its agreed totals, the counter's invoice for an
+// order paid before it leaves the yard. It is raised under the WHOLE order key, the same key the
+// fulfilment path uses, so billing the order again when it leaves returns this document and bills
+// nothing twice; a document already under the key is returned (Reused) before the order is asked
+// anything. Raising it again is the same call.
+func (w *InvoiceWriter) InvoiceOrderAtAgreed(ctx context.Context, orderID string) (InvoiceDoc, error) {
+	if w.pool == nil {
+		return InvoiceDoc{}, errNoDB
+	}
+	if doc, ok, err := w.findByKey(ctx, wholeOrderKey(orderID)); err != nil {
+		return InvoiceDoc{}, err
+	} else if ok {
+		doc.Reused = true
+		return doc, nil
+	}
+	src, err := w.agreedSource()
+	if err != nil {
+		return InvoiceDoc{}, err
+	}
+	facts, err := src.AgreedInvoiceableOrder(ctx, orderID)
+	if err != nil {
+		return InvoiceDoc{}, err
+	}
+	facts.ClosesOrder = true
+	facts.GroupIDs = nil
+	return w.write(ctx, facts, SourceOrder, wholeOrderKey(orderID), "")
+}
+
 // invoiceMemo names the document on the subledger row so an AR clerk reading the ledger sees WHY the
 // balance moved without opening the invoice.
 func invoiceMemo(f OrderInvoiceFacts, invoiceNo string) string {
@@ -610,21 +748,4 @@ func nullUUID(s string) any {
 // isUniqueViolation reports a Postgres 23505 anywhere in the error chain.
 func isUniqueViolation(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "23505")
-}
-
-// AgreedOrderSource is the optional order seam the counter's agreed invoice reads: every line at
-// its agreed total with the delivery fee and the agreed tax stated. A source that does not answer
-// it cannot raise the counter's invoice.
-type AgreedOrderSource interface {
-	AgreedInvoiceableOrder(ctx context.Context, orderID string) (OrderInvoiceFacts, error)
-}
-
-// AgreedOrderInvoice is the counter's read (stub, red first).
-func (w *InvoiceWriter) AgreedOrderInvoice(ctx context.Context, orderID string) (InvoiceDoc, bool, error) {
-	return InvoiceDoc{}, false, errors.New("billing: agreed invoice not built")
-}
-
-// InvoiceOrderAtAgreed is the counter's writer (stub, red first).
-func (w *InvoiceWriter) InvoiceOrderAtAgreed(ctx context.Context, orderID string) (InvoiceDoc, error) {
-	return InvoiceDoc{}, errors.New("billing: agreed invoice not built")
 }
