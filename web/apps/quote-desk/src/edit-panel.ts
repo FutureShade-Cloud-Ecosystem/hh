@@ -632,6 +632,8 @@ export class QdQuoteEdit extends PanelBase {
     if (seam !== null) {
       seam.quoteId = this.quoteId;
       seam.branchId = this.branchId;
+      // The converted order's id, once this quote has been converted ("" before): what QD-5's payment step needs.
+      seam.orderId = this.converted?.orderId ?? "";
     }
   }
 

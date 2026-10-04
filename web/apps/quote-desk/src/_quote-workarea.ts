@@ -305,15 +305,17 @@ export function spokenRefusal(msg: string): string {
 }
 
 /**
- * sentConfirmation: the send outcome in plain words, naming what actually
- * happened per channel. A refused text is named with the server's spoken
- * sentence rather than hidden.
+ * sentConfirmation: the send outcome in plain words, naming only what is
+ * true. The core's send mints a share link, moves DRAFT to SENT and starts the
+ * follow-up cadence; it sends no email. The text leg is claimed only when its
+ * call succeeded, and a refused text is named with the server's spoken sentence.
  */
 export function sentConfirmation(smsChosen: boolean, smsOk: boolean, smsRefusal: string): string {
-  if (!smsChosen) return "Quote sent. Emailed to the customer.";
-  if (smsOk) return "Quote sent. Emailed and texted to the customer.";
+  const base = "Quote sent: a link was created, the quote is now Sent and its follow-ups have started.";
+  if (!smsChosen) return `${base} Nothing was emailed: copy the link to the customer.`;
+  if (smsOk) return `${base} The link was texted to the customer. Nothing was emailed.`;
   const why = spokenRefusal(smsRefusal || "refused");
-  return `Quote sent by email. The text could not be sent: ${why}.`;
+  return `${base} Nothing was emailed, and the text could not be sent: ${why}.`;
 }
 
 // ── display formatting ─────────────────────────────────────────────────────────

@@ -62,6 +62,9 @@ export class QdQuoteBuilder extends LitElement {
   @property({ attribute: false }) client: QdClient | null = null;
 
   @state() private rows: QuoteRow[] = [];
+  /** The next page of the list, or "" when the server sent no more. */
+  @state() private nextCursor = "";
+  private listSeq = 0;
   @state() private selected = "";
   @state() private error = "";
   @state() private busy = false;
@@ -111,21 +114,26 @@ export class QdQuoteBuilder extends LitElement {
       max-height: 60vh;
       overflow-y: auto;
     }
-    li {
+    .rowbtn {
+      display: block;
+      width: 100%;
+      text-align: left;
       border: 1px solid var(--hos-line, var(--hh-line));
       border-radius: 6px;
       padding: 6px 8px;
       cursor: pointer;
       font-size: 0.83rem;
     }
-    li[aria-selected="true"] {
+    .rowbtn[aria-current="true"] {
       border-color: var(--hos-stone-amber, var(--hh-accent));
       background: var(--hos-line, var(--hh-line));
     }
     .no {
+      display: block;
       font-weight: 600;
     }
     .meta {
+      display: block;
       color: var(--hos-text-dim, var(--hh-text-dim));
       font-size: 0.76rem;
       margin-top: 2px;
@@ -290,12 +298,35 @@ export class QdQuoteBuilder extends LitElement {
     const client = this.client;
     if (client === null) return;
     this.error = "";
+    const seq = ++this.listSeq;
     const result = await client.listQuotes(this.statusFilter);
+    if (seq !== this.listSeq) return;
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "list quotes"));
       return;
     }
-    this.rows = result.value;
+    this.rows = result.value.rows;
+    this.nextCursor = result.value.nextCursor ?? "";
+  }
+
+  /** The next page of the same list is added under the rows already shown. */
+  private async loadMore(): Promise<void> {
+    const client = this.client;
+    if (client === null || this.nextCursor === "" || this.busy) return;
+    this.error = "";
+    const seq = ++this.listSeq;
+    const cursor = this.nextCursor;
+    this.busy = true;
+    const result = await client.listQuotes(this.statusFilter, cursor);
+    this.busy = false;
+    if (seq !== this.listSeq) return;
+    if (!result.ok) {
+      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "list more quotes"));
+      return;
+    }
+    const known = new Set(this.rows.map((r) => r.id));
+    this.rows = [...this.rows, ...result.value.rows.filter((r) => !known.has(r.id))];
+    this.nextCursor = result.value.nextCursor ?? "";
   }
 
   private async loadBranches(): Promise<void> {
@@ -386,6 +417,9 @@ export class QdQuoteBuilder extends LitElement {
     if (action === "refresh") {
       void this.loadList();
     }
+    if (action === "more") {
+      void this.loadMore();
+    }
     if (action === "create") {
       void this.createQuote();
     }
@@ -449,20 +483,27 @@ export class QdQuoteBuilder extends LitElement {
           ? html`<p class="empty" style="margin-top: 10px" data-testid="qb-list">No quotes.</p>`
           : html`<ul style="margin-top: 10px" data-testid="qb-list">
               ${this.rows.map(
-                (r) => html`<li
-                  data-action="open"
-                  data-quote=${r.id}
-                  data-testid="qb-list-row"
-                  aria-selected=${r.id === this.selected ? "true" : "false"}
-                >
-                  <div class="no">${r.quoteNo} · ${quoteStatusWord(r.status)}</div>
-                  <div class="meta">
-                    ${r.customerName} · ${money(r.totalCents)} · ${expiryLabel(r)}
-                    ${r.ownerName !== null ? html` · ${r.ownerName}` : nothing}
-                  </div>
+                (r) => html`<li>
+                  <button
+                    type="button"
+                    class="rowbtn"
+                    data-action="open"
+                    data-quote=${r.id}
+                    data-testid="qb-list-row"
+                    aria-current=${r.id === this.selected ? "true" : "false"}
+                  >
+                    <span class="no">${r.quoteNo} · ${quoteStatusWord(r.status)}</span>
+                    <span class="meta">
+                      ${r.customerName} · ${money(r.totalCents)} · ${expiryLabel(r)}
+                      ${r.ownerName !== null ? html` · ${r.ownerName}` : nothing}
+                    </span>
+                  </button>
                 </li>`,
               )}
             </ul>`}
+        ${this.nextCursor !== ""
+          ? html`<div class="row"><button type="button" data-action="more" data-testid="qb-list-more" ?disabled=${this.busy}>Load more quotes</button></div>`
+          : nothing}
         <fieldset>
           <legend>New quote</legend>
           <div class="row">

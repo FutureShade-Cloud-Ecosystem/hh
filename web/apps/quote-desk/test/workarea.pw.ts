@@ -69,7 +69,7 @@ test("the stepper tracks the quote: compose, picked, lines, sent", async ({ page
   await expect(page.getByTestId("qb-status")).toContainText("Sent");
 });
 
-test("lines are added and removed, and the removal renumbers the ticket", async ({ page }) => {
+test("lines are added and removed, and the core does not renumber: the remaining line keeps its number", async ({ page }) => {
   await signIn(page);
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Maple");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
@@ -84,10 +84,11 @@ test("lines are added and removed, and the removal renumbers the ticket", async 
   await expect(page.getByTestId("qb-lines")).toContainText("Polymeric Locking Sand");
   await expect(page.getByTestId("qb-lines")).toContainText("Retaining Wall Stone, Standard");
 
-  // Remove the first line: the ticket holds the second alone.
+  // Remove the first line: the ticket holds the second alone, and it keeps line number 2 (the core leaves a gap).
   await page.getByTestId("qb-line-trash").first().click();
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await expect(page.getByTestId("qb-lines")).toContainText("Retaining Wall Stone, Standard");
+  await expect(page.getByTestId("qb-line-qty")).toHaveAttribute("data-line", "2");
 });
 
 test("a discount above the floor lands and shows the discount row; below the floor is the typed refusal", async ({ page }) => {

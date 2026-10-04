@@ -137,7 +137,7 @@ export function quoteErrorMessage(status: number | undefined, detail: string, wh
   const d = detail.trim();
   if (status === 401) return `Not authenticated. Log in to ${what}.`;
   if (status === 403) return d || "This quote belongs to another branch.";
-  if (status === 404) return "That quote no longer exists.";
+  if (status === 404) return d || "That quote no longer exists.";
   if (status === 409) return d || "This quote changed since you opened it. Reload.";
   if (status === 400 || status === 422) return d || `Rejected. Invalid values for ${what}.`;
   if (status === 503) return d || `Service unavailable. ${what}.`;

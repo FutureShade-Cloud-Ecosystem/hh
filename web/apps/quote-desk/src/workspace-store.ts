@@ -6,6 +6,8 @@
 // stand, and every write is the whole row (split, arrangement, collapse,
 // cost hide, and the open quote a refresh resumes).
 import type { QdClient, SurfaceConfig } from "./qd-client.js";
+import { quoteErrorMessage } from "./_quote-edit.js";
+import { spokenRefusal } from "./_quote-workarea.js";
 import type { QuoteArrangement } from "./_quote-workarea.js";
 
 /** The workspace's whole state, one row. */
@@ -34,15 +36,18 @@ export const DEFAULT_WORKSPACE: WorkspaceState = {
 /**
  * The store. Constructed with the client and the surface config's own
  * workspace row; the caller reads state, mutates through the methods, and
- * the debounced save rides behind every change. A save refusal is held on
- * the store's own error line and never thrown: the screen keeps its state
- * and the words say what failed, exactly the posture the till's store keeps.
+ * the debounced save rides behind every change. A save refusal is never
+ * thrown and never dropped: the screen keeps its state and onError carries the
+ * words, which the work area shows on an error line; a later save that lands
+ * clears it (onError with an empty line).
  */
 export class WorkspaceStore {
   readonly state: WorkspaceState;
   #client: QdClient;
   #timer: ReturnType<typeof setTimeout> | undefined;
   #saveNow: Promise<void> = Promise.resolve();
+  /** Told the words of the last save or reset outcome: a refusal in words, "" when it landed. */
+  onError: (line: string) => void = () => undefined;
 
   constructor(client: QdClient, config: SurfaceConfig | null) {
     this.#client = client;
@@ -85,7 +90,9 @@ export class WorkspaceStore {
         costHidden: this.state.costHidden,
         openRef: this.state.openRef,
       })
-      .then(() => undefined);
+      .then((result) => {
+        this.onError(result.ok ? "" : `The layout was not saved: ${spokenRefusal(quoteErrorMessage(result.status, result.error, "save the layout"))}`);
+      });
     await this.#saveNow;
   }
 
@@ -95,13 +102,23 @@ export class WorkspaceStore {
     await this.#saveNow;
   }
 
-  /** Reset the person's row: the dealer default comes back. */
-  async reset(): Promise<void> {
+  /**
+   * Reset the person's row: the dealer default comes back. A refused delete
+   * changes nothing on screen (the saved row still stands, so the screen must
+   * not claim otherwise); it answers false and says why through onError.
+   */
+  async reset(): Promise<boolean> {
     if (this.#timer !== undefined) {
       clearTimeout(this.#timer);
       this.#timer = undefined;
     }
-    await this.#client.deleteMyWorkspace();
+    const result = await this.#client.deleteMyWorkspace();
+    if (!result.ok) {
+      this.onError(`The layout was not reset: ${spokenRefusal(quoteErrorMessage(result.status, result.error, "reset the layout"))}`);
+      return false;
+    }
+    this.onError("");
     Object.assign(this.state, DEFAULT_WORKSPACE);
+    return true;
   }
 }

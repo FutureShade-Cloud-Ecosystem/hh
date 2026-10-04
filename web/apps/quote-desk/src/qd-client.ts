@@ -67,6 +67,12 @@ import type { CurationProfile } from "./_quote-settings.js";
 import type { GlanceIn } from "./_quote-workarea.js";
 import type { WireItem } from "./quote-surface.js";
 
+/** One page of the quotes list: its rows, and the cursor of the next page or null at the end. */
+export interface QuotePage {
+  rows: QuoteRow[];
+  nextCursor: string | null;
+}
+
 export interface BranchRef {
   id: string;
   code: string;
@@ -451,14 +457,23 @@ export class QdClient {
     return ok({ id, code, name });
   }
 
-  /** The quotes list, with the status filter the server itself applies. */
-  async listQuotes(status: string): Promise<Result<QuoteRow[]>> {
-    const opts = status === "" ? undefined : { status: status as "DRAFT" | "SENT" | "ACCEPTED" | "CONVERTED" | "EXPIRED" | "LOST" };
-    const result = await staffQuote.quoteListQuotes(this.#client, opts);
+  /**
+   * One page of the quotes list, with the status filter the server itself
+   * applies. The core pages (newest first, fifty by default): next_cursor,
+   * when the server sends one, is handed back so the list can offer more.
+   */
+  async listQuotes(status: string, cursor = ""): Promise<Result<QuotePage>> {
+    const opts: { status?: "DRAFT" | "SENT" | "ACCEPTED" | "CONVERTED" | "EXPIRED" | "LOST"; cursor?: string } = {};
+    if (status !== "") opts.status = status as "DRAFT" | "SENT" | "ACCEPTED" | "CONVERTED" | "EXPIRED" | "LOST";
+    if (cursor !== "") opts.cursor = cursor;
+    const result = await staffQuote.quoteListQuotes(this.#client, Object.keys(opts).length === 0 ? undefined : opts);
     if (!result.ok) return result;
     const value = result.value as unknown;
     const items = isRecord(value) ? value["items"] : value;
     if (!Array.isArray(items)) return err("the quotes list did not answer a page or a list");
+    const nextRaw = isRecord(value) ? value["next_cursor"] : null;
+    if (nextRaw !== undefined && nextRaw !== null && typeof nextRaw !== "string") return err("the quotes list's next page cursor is not readable");
+    const nextCursor = typeof nextRaw === "string" && nextRaw !== "" ? nextRaw : null;
     const rows: QuoteRow[] = [];
     for (const item of items) {
       if (!isRecord(item)) return err("a quote row is not readable: the list is refused whole rather than shown short");
@@ -490,7 +505,7 @@ export class QdClient {
         ownerName: stringAt(item, "owner_name"),
       });
     }
-    return ok(rows);
+    return ok({ rows, nextCursor });
   }
 
   /** One quote's read: the offer itself (editable_fields, can_convert) rides it. */

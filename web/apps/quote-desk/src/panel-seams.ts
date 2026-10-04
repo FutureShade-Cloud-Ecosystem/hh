@@ -1,19 +1,13 @@
-// The panel seams: the named, empty slots the builder hosts for the second
-// and third coders of this app (QD-3's split). Each seam is a custom element
-// that renders nothing today, carries the quote id and the branch id as
-// plain attributes a panel reads, and answers reload() like every mounted
-// child the quote-changed fan-out reaches. The second coder fills the edit
-// panel, the change history and the settings seams (a port of quote-edit.ts,
-// quote-edits.ts, quote-surface-settings.ts and the two admin disclosures);
-// the third coder fills the assist, follow-ups, hold expiry, availability
-// and approvals seams and replaces the floor refusal dialog seam in
-// floor-refusal.ts. A seam is replaced by mounting the real panel in its
-// place; the names below are the contract.
-//
-// FILLED: the edit panel (edit-panel.ts), the change history
-// (history-panel.ts) and the settings (settings-panel.ts) are mounted in
-// place of their seams by the builder. Their names stay here so the seam
-// contract is one list.
+// The panel seams: the names the builder hosts its panels under, and the one
+// slot still open. Every seam below is filled by its own panel (the edit panel,
+// the change history and the settings; the assist, follow-ups, hold expiry,
+// availability and approvals panels; the floor refusal dialog), mounted by the
+// builder in place of the seam element and given the open quote's id and
+// branch id as the other panels are. Their names stay here so the seam
+// contract is one list. The only seam still empty is the QD-5 payment slot
+// below, which is the one custom element in this file: it renders nothing and
+// carries the quote id, the branch id and, once the quote is converted, the
+// order id.
 export const SEAM_EDIT_PANEL = "edit-panel";
 export const SEAM_HISTORY = "history";
 export const SEAM_SETTINGS = "settings";
@@ -24,7 +18,8 @@ export const SEAM_AVAILABILITY = "availability";
 export const SEAM_APPROVALS = "approvals";
 // The QD-5 seam: the quote's related documents and the converted order's
 // payment. The edit panel hosts it under the convert control; QD-5 replaces
-// the body of this slot. It renders nothing today.
+// the body of this slot. It renders nothing today; it is handed the quote id,
+// the branch id and the converted order's id (empty until the conversion).
 export const SEAM_PAYMENT = "payment";
 
 /**
@@ -50,8 +45,14 @@ import { customElement } from "lit/decorators.js";
 export class QdPanelSeam extends LitElement {
   quoteId = "";
   branchId = "";
+  /** The converted order's id, "" until the quote has been converted. */
+  orderId = "";
 
-  static properties = { quoteId: { attribute: "quote-id" }, branchId: { attribute: "branch-id" } };
+  static properties = {
+    quoteId: { attribute: "quote-id" },
+    branchId: { attribute: "branch-id" },
+    orderId: { attribute: "order-id" },
+  };
 
   /** The fan-out's hook: a real panel re-reads its quote here. */
   reload(): void {

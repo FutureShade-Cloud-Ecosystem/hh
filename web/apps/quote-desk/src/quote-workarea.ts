@@ -131,6 +131,8 @@ export class QdQuoteWorkarea extends LitElement {
   @state() private customer: PickerCustomer | null = null;
   @state() private salespeople: Salesperson[] = [];
   @state() private error = "";
+  /** A layout save, reset or column save that was refused, in words: never silently dropped. */
+  @state() private layoutError = "";
   @state() private notice = "";
   @state() private busy = false;
   @state() private term = "";
@@ -1269,11 +1271,26 @@ export class QdQuoteWorkarea extends LitElement {
   private async loadConfig(): Promise<void> {
     if (this.client === null) return;
     const result = await this.client.surfaceConfig(this.branchId);
-    if (!result.ok) return; // configuration never blocks the screen: shipped defaults stand
+    if (!result.ok) {
+      // Configuration never blocks the screen: the shipped defaults stand, and the store still exists, so a
+      // layout change is saved and a refusal of that save is shown rather than silently dropped.
+      this.store = this.newStore(null);
+      this.layoutError = `The saved layout could not be read, so the shipped layout is shown: ${spokenRefusal(quoteErrorMessage(result.status, result.error, "read the layout"))}`;
+      this.wsEcho++;
+      return;
+    }
     this.config = result.value;
-    this.store = new WorkspaceStore(this.client, result.value);
+    this.store = this.newStore(result.value);
     this.wsEcho++;
     void this.maybeRestoreOpenQuote(this.store.state.openRef);
+  }
+
+  private newStore(config: SurfaceConfig | null): WorkspaceStore {
+    const store = new WorkspaceStore(this.client as QdClient, config);
+    store.onError = (line) => {
+      this.layoutError = line;
+    };
+    return store;
   }
 
   /**
@@ -1712,7 +1729,15 @@ export class QdQuoteWorkarea extends LitElement {
       this.ticketMoved();
       await this.afterCartChange();
     } else {
-      this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "change this quantity"));
+      // The core may answer the typed floor refusal on this arm too: it is parsed like the discount arm's.
+      const refusal = result.status === 409 ? parseFloorRefusal(result.error) : null;
+      if (refusal !== null) {
+        this.error = floorRefusalMessage(refusal);
+        this.floorSpoken = this.error;
+        openFloorRefusalDialog(refusal, this.quoteId, line.line_no, this.termsLine(line.line_no)?.discPct ?? 0);
+      } else {
+        this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "change this quantity"));
+      }
       await this.loadAll();
     }
   }
@@ -1928,7 +1953,7 @@ export class QdQuoteWorkarea extends LitElement {
 
   private async resetWorkspace(): Promise<void> {
     await this.store?.reset();
-    this.wsEcho++;
+    this.wsEcho++; // a refused reset left the screen as it was; the store said why
   }
 
   private readonly onDividerPointerDown = (event: PointerEvent): void => {
@@ -1987,7 +2012,12 @@ export class QdQuoteWorkarea extends LitElement {
   private async putColumns(next: ResolvedItem[]): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    await client.putMyItems(next.map((c) => ({ kind: "column", id: c.id, position: c.position, visible: c.visible })));
+    const saved = await client.putMyItems(next.map((c) => ({ kind: "column", id: c.id, position: c.position, visible: c.visible })));
+    if (!saved.ok) {
+      this.layoutError = `The columns were not saved: ${spokenRefusal(quoteErrorMessage(saved.status, saved.error, "save the columns"))}`;
+      return;
+    }
+    this.layoutError = "";
     const config = await client.surfaceConfig(this.branchId);
     if (config.ok) this.config = config.value;
   }
@@ -2010,7 +2040,12 @@ export class QdQuoteWorkarea extends LitElement {
   private async resetColumns(): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    await client.deleteMyItems();
+    const reset = await client.deleteMyItems();
+    if (!reset.ok) {
+      this.layoutError = `The columns were not reset: ${spokenRefusal(quoteErrorMessage(reset.status, reset.error, "reset the columns"))}`;
+      return;
+    }
+    this.layoutError = "";
     const config = await client.surfaceConfig(this.branchId);
     if (config.ok) this.config = config.value;
   }
@@ -2073,7 +2108,9 @@ export class QdQuoteWorkarea extends LitElement {
   private async doCopyLink(): Promise<void> {
     try {
       const token = await this.ensureLink();
-      await navigator.clipboard?.writeText(this.shareUrl(token));
+      // The clipboard is only there on a secure page: say so rather than claim a copy that did not happen.
+      if (navigator.clipboard === undefined) throw new Error("The link was created but could not be copied from this page. Use Preview to open it and copy it from there.");
+      await navigator.clipboard.writeText(this.shareUrl(token));
       // Creating a link emails nothing: sending is a different button.
       this.notice = "Link copied. Nothing was emailed. Paste the link, or use Send quote.";
       await this.loadAll();
@@ -2097,12 +2134,14 @@ export class QdQuoteWorkarea extends LitElement {
   private async doSend(): Promise<void> {
     const client = this.client;
     if (client === null || this.busy) return;
+    // One send at a time: a second press while the first is out would mint a second live link and start the cadence twice.
+    this.busy = true;
     this.sendOpen = false;
     this.error = "";
     this.notice = "";
     const channels = sendChannels(this.#sendPolicy()).filter((c) => this.sendPick[c]);
     try {
-      await this.ensureLink(); // minting IS the email send: DRAFT moves to SENT
+      await this.ensureLink(); // the core mints a link, moves DRAFT to SENT and starts the cadence; it sends no email
       let smsOk = false;
       let smsWhy = "";
       const smsChosen = channels.includes("SMS");
@@ -2119,6 +2158,8 @@ export class QdQuoteWorkarea extends LitElement {
       this.quoteChanged();
     } catch (e) {
       this.error = e instanceof Error ? e.message : "Could not send the quote.";
+    } finally {
+      this.busy = false;
     }
   }
 
@@ -2522,9 +2563,7 @@ export class QdQuoteWorkarea extends LitElement {
         <div class="panelbar inflow">
           <h2>Customer &amp; terms</h2>
           <div class="panelbtns">
-            ${this.config?.profile === "admin"
-              ? html`<button type="button" class="pbtn" data-action="settings" data-testid="qb-settings-btn">Screen settings</button>`
-              : nothing}
+            <button type="button" class="pbtn" data-action="settings" data-testid="qb-settings-btn">Screen settings</button>
             <button
               type="button"
               class="pbtn"
@@ -2557,6 +2596,7 @@ export class QdQuoteWorkarea extends LitElement {
   private renderOutcomeLines() {
     return html`
       <p class="err" role="alert" data-testid="qb-error">${this.error}</p>
+      <p class="err" role="alert" data-testid="qb-layout-error">${this.layoutError}</p>
       <p class="ok" role="status" aria-live="polite" aria-atomic="true" data-testid="qb-notice">${this.notice}</p>
     `;
   }
@@ -2846,7 +2886,7 @@ export class QdQuoteWorkarea extends LitElement {
                 data-action="send"
                 data-testid="qb-send"
                 aria-keyshortcuts="Control+Enter"
-                ?disabled=${!shareable}
+                ?disabled=${!shareable || this.busy}
               >
                 <span aria-hidden="true">${drawIcon(iconForId("lucide:send"), 15)}</span> SEND QUOTE<span class="key" aria-hidden="true">Ctrl Enter</span>
               </button>

@@ -197,13 +197,15 @@ test("the send channels follow the policy, email leads, and a policy that disabl
   assert.equal(sendCaption(["EMAIL"]), "Email");
 });
 
-test("the send outcome names what happened, and a refused text is named with its spoken sentence", () => {
-  assert.equal(sentConfirmation(false, false, ""), "Quote sent. Emailed to the customer.");
-  assert.equal(sentConfirmation(true, true, ""), "Quote sent. Emailed and texted to the customer.");
+test("the send outcome names only what is true: a link, the Sent state, the cadence, never an email", () => {
+  const base = "Quote sent: a link was created, the quote is now Sent and its follow-ups have started.";
+  assert.equal(sentConfirmation(false, false, ""), `${base} Nothing was emailed: copy the link to the customer.`);
+  assert.equal(sentConfirmation(true, true, ""), `${base} The link was texted to the customer. Nothing was emailed.`);
   assert.equal(
     sentConfirmation(true, false, "quote: the customer has not opted in to text messages"),
-    "Quote sent by email. The text could not be sent: The customer has not opted in to text messages.",
+    `${base} Nothing was emailed, and the text could not be sent: The customer has not opted in to text messages.`,
   );
+  for (const text of [sentConfirmation(false, false, ""), sentConfirmation(true, false, "x")]) assert.doesNotMatch(text, /texted/);
 });
 
 // ── the spoken refusal ─────────────────────────────────────────────────────────

@@ -984,6 +984,13 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  if (path === "/_stub/quote-page-size" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      switches.quotePageSize = Number.isInteger(body.size) && body.size > 0 ? body.size : 0;
+      respondJson(response, 200, { size: switches.quotePageSize });
+    });
+    return;
+  }
   if (path === "/_stub/floor-raise" && request.method === "PUT") {
     readBody(request, response, (body) => {
       switches.floorRaiseBps = Number.isInteger(body.bps) && body.bps > 0 ? body.bps : 0;
@@ -1196,7 +1203,11 @@ const server = createServer(async (request, response) => {
       owner_id: quote.owner_id,
       owner_name: quote.owner_name,
     }));
-    respondJson(response, 200, { items, next_cursor: null, limit: 50 });
+    // The core pages (fifty by default, newest first). The stub pages at a small size on request, so a suite can reach the next page.
+    const size = switches.quotePageSize > 0 ? switches.quotePageSize : 50;
+    const start = Number(url.searchParams.get("cursor") ?? "0") || 0;
+    const page = items.slice(start, start + size);
+    respondJson(response, 200, { items: page, next_cursor: start + size < items.length ? String(start + size) : null, limit: size });
     return;
   }
 
@@ -1747,10 +1758,10 @@ const server = createServer(async (request, response) => {
     const asked = url.searchParams.get("profile");
     respondJson(response, 200, {
       surface_id: SURFACE_ID,
-      // The manager owns the screen's settings (CP0-5 answer A), so its
-      // config answers the admin profile and the work area offers the
-      // settings entry.
-      profile: caller.account.role_code === "sales_manager" ? "admin" : "staff",
+      // The core maps the Sales manager to the manager profile (migration
+      // 0140), never admin; the app offers the settings entry to everyone and
+      // the server answers who may write.
+      profile: caller.account.role_code === "sales_manager" ? "manager" : "staff",
       role_items: roleItemsByProfile.get(asked ?? profileOf(caller)) ?? [],
       user_items: myItems.get(userId) ?? [],
       workspace: { ...workspace, open_ref: workspace.open_ref === "" ? undefined : workspace.open_ref },

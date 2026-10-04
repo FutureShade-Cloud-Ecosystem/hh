@@ -400,9 +400,13 @@ export class HosCustomerPicker extends LitElement {
     super.disconnectedCallback();
   }
 
-  updated(changed: Map<string, unknown>): void {
-    // Switching branch switches which recency list applies.
+  willUpdate(changed: Map<string, unknown>): void {
+    // Switching branch switches which recency list applies. Set before the render, not after it:
+    // state set in updated() schedules a second update (Lit's "update after an update completed").
     if (changed.has('branchId')) this.recents = this.readRecents();
+  }
+
+  updated(): void {
     this.syncFields();
   }
 
