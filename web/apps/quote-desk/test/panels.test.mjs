@@ -283,7 +283,7 @@ test("the chip vocabulary is the active products' applications, sorted and uniqu
 test("the acceptance notice says what each position of the one switch means", () => {
   assert.match(acceptanceNotice(true), /^Multiple acceptance is on/);
   assert.match(acceptanceNotice(false), /^Multiple acceptance is off/);
-  assert.equal(/[–—]/.test(acceptanceNotice(true) + acceptanceNotice(false)), false);
+  assert.equal(new RegExp("[" + String.fromCharCode(0x2013, 0x2014) + "]").test(acceptanceNotice(true) + acceptanceNotice(false)), false);
 });
 
 test("scopeRuleSummary counts the rules that are on, with the plural and the switched-off note", () => {
