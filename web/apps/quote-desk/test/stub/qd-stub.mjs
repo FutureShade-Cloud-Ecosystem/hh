@@ -266,7 +266,7 @@ function floorDecision(caller, product, customer, discPct) {
   const costCents = product.branch_cost_cents[TRENTON_ID] ?? 0;
   const margin = marginBps(unitCents, costCents);
   if (margin >= product.floor_bps) return null;
-  const isManager = caller.role_code === "sales_manager";
+  const isManager = caller.account.role_code === "sales_manager";
   if (isManager) return { cleared: true, by: USERS[caller.flow].display_name };
   return {
     cleared: false,
@@ -392,7 +392,7 @@ function restamp(quote) {
 // branch.
 function viewOf(caller, quote) {
   const isOwner = quote.owner_id === USERS[caller.flow].user_id;
-  const isManager = caller.role_code === "sales_manager";
+  const isManager = caller.account.role_code === "sales_manager";
   const editable = (editableByStatus[quote.status] ?? []).length > 0 && (isOwner || isManager)
     ? editableByStatus[quote.status]
     : [];

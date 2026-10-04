@@ -136,6 +136,11 @@ test("margin surfaces render only when the server sends them", async ({ page }) 
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Maple");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
 
+  const scan = page.getByTestId("pos-scan-input");
+  await scan.fill("PSN-100");
+  await scan.press("Enter");
+  await expect(page.getByTestId("qb-line")).toHaveCount(1);
+
   // On the cost list (the shipped configuration): the margin pill shows, and
   // the cost class columns stay hidden until this person curates them on.
   await expect(page.getByTestId("qb-margin-pill")).toBeVisible();
@@ -155,6 +160,10 @@ test("margin surfaces render only when the server sends them", async ({ page }) 
   await page.getByRole("button", SALES).click();
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Maple");
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByRole("option", { name: /Maple Ridge Contracting/ }).click();
+  const scan2 = page.getByTestId("pos-scan-input");
+  await scan2.fill("PSN-100");
+  await scan2.press("Enter");
+  await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await expect(page.getByTestId("qb-margin-pill")).toHaveCount(0);
   expect(await page.getByTestId("qb-lines").locator('th[data-column="line.unit_cost"]').count()).toBe(0);
   expect(await page.getByTestId("qb-lines").locator('th[data-column="line.margin_pct"]').count()).toBe(0);
@@ -201,13 +210,13 @@ test("the layout saves per person: the swap and the keyboard resize reach the wo
   await expect(page.getByRole("button", { name: "Restore products panel" })).toHaveCount(0);
 });
 
-test("a Work caller that does not own the quote is offered no edit the server did not offer", async ({ page }) => {
+test("a quote the server offers no edit on shows no edit control", async ({ page }) => {
   await signIn(page);
-  // The seeded SENT quote is the manager's own: the Sales login (Work) reads
-  // it, and the read's editable_fields is empty, so no quantity stepper, no
-  // discount field and no remove button render.
-  const managerRow = page.getByTestId("qb-list-row").filter({ hasText: "Sent" }).first();
-  await managerRow.click();
+  // The seeded ACCEPTED quote is the Sales login's own, and the server offers
+  // no edit on an accepted quote: the read's editable_fields is empty, so no
+  // quantity stepper, no discount field and no remove button render.
+  const acceptedRow = page.getByTestId("qb-list-row").filter({ hasText: "Accepted" }).first();
+  await acceptedRow.click();
   await expect(page.getByTestId("qb-title")).toHaveText("Quote");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await expect(page.getByTestId("qb-line-qty")).toHaveCount(0);
