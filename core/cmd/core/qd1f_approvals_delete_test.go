@@ -10,6 +10,8 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -88,6 +90,33 @@ func TestQD1F_ApprovalsSyncDeleteIsTheRequestersOwnAndOnlyWhilePending(t *testin
 		qd1bRejected(t, "the requester withdraws a "+state.name+" request", res, "")
 		if qd1fDeleted(t, q, id) {
 			t.Errorf("a %s request was withdrawn", state.name)
+		}
+	}
+}
+
+// TestQD1F_ApprovalsSyncStaleUpdateEnvelopeCarriesNoFloorRequestItsCallerCannotRead
+// pins the Load mask (round 3 P2-3, the review's round 4 P3-1): a stale push
+// meets the engine's conflict envelope, which carries Load's projection. For a
+// floor request the caller could not read through the pull, that projection
+// would carry the margin figures. The envelope must still arrive (the engine
+// needs the row's id and seq), with no server state.
+func TestQD1F_ApprovalsSyncStaleUpdateEnvelopeCarriesNoFloorRequestItsCallerCannotRead(t *testing.T) {
+	q := newQD1BFixture(t)
+	clerk := qd1bUserID(t, q.pool, testkit.SubInsideSales)
+	id := qd1cPlantMargin(t, q, clerk, "0000000f4000")
+	stale := 0
+	for _, sub := range []string{xrSubHR, xrSubYardTeam, xrSubBranchManager} {
+		code, body := qd1bCall(t, q, http.MethodPost, "/api/v1/sync/approvals", sub, map[string]any{
+			"ops": []map[string]any{{"client_id": uuid.NewString(), "op": "update",
+				"payload": map[string]any{"id": id, "detail": "words"}, "base_seq": stale}}})
+		if code != http.StatusOK {
+			t.Fatalf("stale push as %s: %d %s", sub, code, body)
+		}
+		if !strings.Contains(body, "conflict") {
+			t.Fatalf("%s: the stale push did not meet the conflict envelope: %s", sub, body)
+		}
+		if strings.Contains(body, "bps against") || strings.Contains(body, qd1cMarginDetail) {
+			t.Errorf("%s: the conflict envelope carries a floor request it cannot read: %s", sub, body)
 		}
 	}
 }
