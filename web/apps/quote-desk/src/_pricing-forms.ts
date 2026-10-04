@@ -253,10 +253,10 @@ export function overrideValueText(o: Pick<OverrideRow, "calcType" | "discountBps
 export type BreakValueType = "PCT_OFF" | "ABS_OFF" | "SURCHARGE_PCT" | "SURCHARGE_ABS";
 
 export const BREAK_VALUE_CHOICES: ReadonlyArray<{ value: BreakValueType; label: string; unit: "pct" | "abs" }> = [
-  { value: "PCT_OFF", label: "Discount % off base", unit: "pct" },
-  { value: "ABS_OFF", label: "Discount $ off base", unit: "abs" },
-  { value: "SURCHARGE_PCT", label: "Surcharge % on base (not applied)", unit: "pct" },
-  { value: "SURCHARGE_ABS", label: "Surcharge $ on base (not applied)", unit: "abs" },
+  { value: "PCT_OFF", label: "Discount %", unit: "pct" },
+  { value: "ABS_OFF", label: "Discount $", unit: "abs" },
+  { value: "SURCHARGE_PCT", label: "Surcharge % (not applied)", unit: "pct" },
+  { value: "SURCHARGE_ABS", label: "Surcharge $ (not applied)", unit: "abs" },
 ];
 
 export const BREAK_UOMS = ["EA", "PC", "SF", "PLT", "LF", "KG", "T", "BAG"] as const;

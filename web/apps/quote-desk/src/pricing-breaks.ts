@@ -419,7 +419,7 @@ export class QdPricingBreaks extends PricingTabBase {
           <input class="mono" inputmode="decimal" aria-label="Tier ${i + 1} from" data-field="tier-fromQty-${i}" />
         </div>
         <div class="field">
-          <label>To (blank is no end)</label>
+          <label>To</label>
           <input class="mono" inputmode="decimal" aria-label="Tier ${i + 1} to" data-field="tier-toQty-${i}" />
         </div>
         <div class="field">

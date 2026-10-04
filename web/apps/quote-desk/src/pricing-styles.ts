@@ -250,6 +250,27 @@ export const pricingStyles = [
     .sched table td {
       padding: 10px 16px;
     }
+    details.info {
+      padding: 10px 20px 0;
+      font-size: 12px;
+      color: var(--hos-text-dim, var(--hh-text-dim));
+    }
+    details.info summary {
+      cursor: pointer;
+      display: inline-block;
+      border: 1px solid var(--hos-line, var(--hh-line));
+      border-radius: 999px;
+      padding: 1px 9px;
+      font-size: 11px;
+      list-style: none;
+      user-select: none;
+    }
+    details.info summary::-webkit-details-marker {
+      display: none;
+    }
+    details.info[open] summary {
+      border-color: var(--hos-stone-amber, var(--hh-accent));
+    }
     .note {
       margin: 14px 20px 0;
       padding: 10px 12px;
@@ -435,10 +456,20 @@ export const pricingStyles = [
     }
     .tier-row {
       display: grid;
-      grid-template-columns: 84px 84px 1fr 1fr 74px 34px;
+      grid-template-columns: 64px 64px minmax(0, 1.5fr) minmax(0, 1fr) 62px 32px;
       gap: 8px;
       align-items: end;
       margin-bottom: 8px;
+    }
+    .tier-row .field {
+      min-width: 0;
+    }
+    .tier-row .field input,
+    .tier-row .field select {
+      min-width: 0;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 6px;
     }
     .tier-row .field label {
       font-size: 10px;
