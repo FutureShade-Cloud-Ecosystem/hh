@@ -77,6 +77,34 @@ test("the quote policy saves a branch row, validated first, and reads back", asy
   await expect(page.getByTestId("qs-send-sms")).not.toBeChecked();
 });
 
+/** The fan-out the builder runs after any edit elsewhere on the page, and the policy read it brings. */
+async function fanOut(page: Page): Promise<void> {
+  const read = page.waitForResponse((r) => r.url().includes("/api/v1/quotes/policy") && r.request().method() === "GET");
+  await page.evaluate(() => {
+    const root = document.querySelector("qd-app-root")?.shadowRoot?.querySelector("qd-quote-builder")?.shadowRoot;
+    root?.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: "" } }));
+  });
+  await read;
+  await page.waitForTimeout(300);
+}
+
+test("a re-read never undoes an unsaved edit on the policy or the layout", async ({ page }) => {
+  await signIn(page);
+  await openScreenSettings(page);
+  await page.getByTestId("qs-validity-days").fill("77");
+  await page.getByTestId("qs-send-email").uncheck();
+  await page.getByTestId("qs-items").getByLabel("Show Photo").uncheck();
+  await fanOut(page);
+  await expect(page.getByTestId("qs-validity-days")).toHaveValue("77");
+  await expect(page.getByTestId("qs-send-email")).not.toBeChecked();
+  await expect(page.getByTestId("qs-items").getByLabel("Show Photo")).not.toBeChecked();
+  // Nothing was written by any of it.
+  expect((await ledger(page)).policyWrites).toHaveLength(0);
+  // Switching scope starts that scope clean: the unsaved figure belongs to the scope it was typed in.
+  await page.getByTestId("qs-scope").selectOption("dealer");
+  await expect(page.getByTestId("qs-validity-days")).toHaveValue("30");
+});
+
 test("quick chips are picked in click order and removed by a second click", async ({ page }) => {
   await signIn(page);
   await openScreenSettings(page);
@@ -153,7 +181,8 @@ test("the acceptance switch reads for this role, and the server refuses the deal
   await settings(page).getByTestId("qa-details").locator("summary").click();
   await expect(page.getByTestId("qa-switch")).toBeVisible();
   await expect(page.getByTestId("qa-switch")).not.toBeChecked();
-  await page.getByTestId("qa-switch").check();
+  // A click, not check(): the server refuses, so the box settles back where it was, which can beat the check's own re-read.
+  await page.getByTestId("qa-switch").click();
   await expect(page.getByTestId("qa-lock")).toContainText("only the General Manager changes it");
   await expect(page.getByTestId("qa-switch")).toBeDisabled();
   await expect(page.getByTestId("qa-switch")).not.toBeChecked();

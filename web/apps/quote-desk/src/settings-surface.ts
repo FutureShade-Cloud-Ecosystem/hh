@@ -165,29 +165,51 @@ export class QdSurfaceSettings extends PanelBase {
     return this.scope === "branch" ? this.branchId : "";
   }
 
-  private async loadPolicy(): Promise<void> {
+  /**
+   * The policy read. Two guards keep a late answer from undoing the person:
+   * an answer older than the newest request is dropped (a scope switched
+   * twice never shows the first scope's row), and an answer for the scope
+   * already on screen never overwrites a form the person has begun to edit.
+   */
+  private policySeq = 0;
+  private policyDirty = false;
+
+  private async loadPolicy(force = false): Promise<void> {
     const client = this.client;
     if (client === null) return;
+    const seq = ++this.policySeq;
     const result = await client.readPolicy(this.scopeBranch());
+    if (seq !== this.policySeq) return;
     if (!result.ok) {
       this.error = writeRefusalLine(result.status, result.error);
       return;
     }
+    if (this.policyDirty && !force) return;
+    this.policyDirty = false;
     this.policy = result.value;
     this.chipsPick = [...result.value.quick_chip_set];
     this.numDraft = {};
   }
 
-  private async loadItems(): Promise<void> {
+  /**
+   * The curation read. A re-read (the fan-out after any edit elsewhere on the
+   * page) refreshes the server's rows but never discards the kinds the person
+   * has already begun to change; switching profile or saving starts clean.
+   */
+  private itemsSeq = 0;
+
+  private async loadItems(force = false): Promise<void> {
     const client = this.client;
     if (client === null) return;
+    const seq = ++this.itemsSeq;
     const result = await client.surfaceConfig(this.branchId, this.profile);
+    if (seq !== this.itemsSeq) return;
     if (!result.ok) {
       this.error = writeRefusalLine(result.status, result.error);
       return;
     }
     this.roleItems = result.value.roleItems;
-    this.drafts = {};
+    if (force) this.drafts = {};
   }
 
   /** The category vocabulary, from the same catalogue read the grid's chips run on. */
@@ -202,7 +224,9 @@ export class QdSurfaceSettings extends PanelBase {
   // ── the policy half ───────────────────────────────────────────────────────
 
   private edit(patch: Partial<QuotePolicyWire>): void {
-    if (this.policy !== null) this.policy = { ...this.policy, ...patch };
+    if (this.policy === null) return;
+    this.policyDirty = true;
+    this.policy = { ...this.policy, ...patch };
   }
 
   private async savePolicy(): Promise<void> {
@@ -228,6 +252,7 @@ export class QdSurfaceSettings extends PanelBase {
       else this.error = line;
       return;
     }
+    this.policyDirty = false;
     this.policy = result.value;
     this.chipsPick = [...result.value.quick_chip_set];
     this.numDraft = {};
@@ -259,7 +284,7 @@ export class QdSurfaceSettings extends PanelBase {
       return;
     }
     this.notice = `Screen layout saved for the ${this.profile} profile. It is live now.`;
-    await this.loadItems();
+    await this.loadItems(true);
     this.announceChanged();
   }
 
@@ -270,7 +295,10 @@ export class QdSurfaceSettings extends PanelBase {
     const id = control.getAttribute("data-id") ?? "";
     if (action === "save-policy") void this.savePolicy();
     if (action === "save-items") void this.saveItems();
-    if (action === "chip") this.chipsPick = toggleChip(this.chipsPick, control.getAttribute("data-category") ?? "");
+    if (action === "chip") {
+      this.policyDirty = true;
+      this.chipsPick = toggleChip(this.chipsPick, control.getAttribute("data-category") ?? "");
+    }
     if (action === "item-up") this.drafts = { ...this.drafts, [kind]: moveDraftItem(this.draftFor(kind), id, -1) };
     if (action === "item-down") this.drafts = { ...this.drafts, [kind]: moveDraftItem(this.draftFor(kind), id, 1) };
   }
@@ -292,7 +320,8 @@ export class QdSurfaceSettings extends PanelBase {
         this.scope = select.value === "dealer" ? "dealer" : "branch";
         this.error = "";
         this.notice = "";
-        void this.loadPolicy();
+        this.policyDirty = false;
+        void this.loadPolicy(true);
         break;
       case "cost_visibility":
         this.edit({ cost_visibility: select.value as QuotePolicyWire["cost_visibility"] });
@@ -309,7 +338,8 @@ export class QdSurfaceSettings extends PanelBase {
       case "profile":
         this.profile = select.value as CurationProfile;
         this.itemsLock = "";
-        void this.loadItems();
+        this.drafts = {};
+        void this.loadItems(true);
         break;
       case "item-show":
         this.drafts = {
