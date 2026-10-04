@@ -471,9 +471,11 @@ func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedNa
 }
 
 // replayThroughDeadLink answers the first outcome of a keyed acceptance whose link has since been
-// revoked or has expired, or reports false and leaves the caller's 410 standing. A keyed 410 means no
-// acceptance exists under this key for this link at that moment: a different typed name (never
-// replayed, never named) and no matching acceptance are both that 410, so a dead link reveals nothing
+// revoked or has expired, or reports false and leaves the caller's 410 standing. A keyed 410 is never
+// followed by a commit under that key (AcceptQuoteGuarded refuses an attempt whose link died before it
+// took the quote lock), so it means no acceptance exists under this key for this link at that moment
+// and none is recorded afterwards. A different typed name (never replayed, never named), an empty or
+// over long typed name and no matching acceptance are all that 410, so a dead link reveals nothing
 // more. The affirmative is checked as on a live link (the same 400). A lookup failure is an error, not
 // the 410: the outcome is unknown, and the 410 must keep its meaning.
 func (s *StaffService) replayThroughDeadLink(ctx context.Context, link ShareLink, quoteID, typedName string, affirmed bool, idemKey string) (AcceptanceResult, bool, error) {
