@@ -105,6 +105,12 @@ type floorWritePlan struct {
 	// expectedDisc, when non-negative-and-asked, is the stored discount the
 	// decision repriced (the quantity arm). -1 = not asked.
 	expectedDisc int
+	// lineID, when set, is the line's OWN row id the decision priced: the
+	// guarded write re-checks it under the lock, so a row swapped into the
+	// line number inside the evaluation window (a delete and a re-add) can
+	// never ride a decision, an approval or a clearing that belongs to a
+	// row that is gone (P2-A).
+	lineID string
 	// consume runs INSIDE the write's transaction, before the mutation: it
 	// uses the approved request up, on the same commit as the line it
 	// cleared. found=false refuses the write (the typed refusal).
@@ -334,6 +340,7 @@ func (s *StaffService) decideLineFloor(ctx context.Context, caller identity.Staf
 	out.plan.asked = true
 	out.plan.expectedGross = grossCents
 	out.plan.expectedDisc = discPct
+	out.plan.lineID = lineID
 
 	if !answer.BelowFloor || answer.EnforcementDisabled {
 		// Below the rule price, above the floor (or no floor question):
