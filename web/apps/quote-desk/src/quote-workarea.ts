@@ -40,7 +40,7 @@ import "@hardscapehouse/pos-kit/src/ported/pos-scan-box.js";
 import "@hardscapehouse/pos-kit/src/ported/pos-product-grid.js";
 import "@hardscapehouse/pos-kit/src/ported/product-thumb.js";
 import "@hardscapehouse/pos-kit/src/ported/pos-flow-steps.js";
-import "@hardscapehouse/pos-kit/src/ported/pos-customer-picker.js";
+import "./customer-picker.js";
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
 import { clockLabel } from "@hardscapehouse/pos-kit/src/ported/_pos-rev8.js";
 import { money } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
@@ -940,7 +940,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.renderRoot.addEventListener("pos-scan-resolved", this.onScanResolved as EventListener);
     this.renderRoot.addEventListener("pos-add-product", this.onAddProduct as EventListener);
     this.renderRoot.addEventListener("pos-flow-goto", this.onFlowGoto as EventListener);
-    this.renderRoot.addEventListener("hos-customer-selected", this.onCustomerPicked as EventListener);
+    this.renderRoot.addEventListener("customer-picked", this.onCustomerPicked as EventListener);
   }
 
   override disconnectedCallback(): void {
@@ -959,7 +959,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.renderRoot.removeEventListener("pos-scan-resolved", this.onScanResolved as EventListener);
     this.renderRoot.removeEventListener("pos-add-product", this.onAddProduct as EventListener);
     this.renderRoot.removeEventListener("pos-flow-goto", this.onFlowGoto as EventListener);
-    this.renderRoot.removeEventListener("hos-customer-selected", this.onCustomerPicked as EventListener);
+    this.renderRoot.removeEventListener("customer-picked", this.onCustomerPicked as EventListener);
     if (this.clockTimer !== undefined) clearInterval(this.clockTimer);
     if (this.termsTimer !== undefined) clearTimeout(this.termsTimer);
   }
@@ -1500,12 +1500,11 @@ export class QdQuoteWorkarea extends LitElement {
   };
 
   /**
-   * The picker's pick. A null detail is the walk-in row, which the quote
-   * desk has no quote for: a quote needs the account, so the pick is
-   * ignored rather than turned into a refused create.
+   * The picker's pick: a quote needs the account, and the inline picker
+   * has no walk-in row.
    */
-  private readonly onCustomerPicked = (event: CustomEvent<PickerCustomer | null>): void => {
-    if (event.detail !== null) void this.createFor(event.detail);
+  private readonly onCustomerPicked = (event: CustomEvent<PickerCustomer>): void => {
+    void this.createFor(event.detail);
   };
 
   // ── quote mutations ────────────────────────────────────────────────────────

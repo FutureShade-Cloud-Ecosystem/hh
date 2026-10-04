@@ -28,6 +28,7 @@ import {
   SEAM_SETTINGS,
 } from "./panel-seams.js";
 import { money } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
+import "./customer-picker.js";
 import type { PickerCustomer } from "@hardscapehouse/pos-kit/src/ported/_customer-picker.js";
 import {
   expiryLabel,
@@ -198,8 +199,8 @@ export class QdQuoteBuilder extends LitElement {
     this.renderRoot.addEventListener("change", this.onFieldChange as EventListener);
     this.renderRoot.addEventListener("quote-changed", this.onQuoteChanged as EventListener);
     this.renderRoot.addEventListener("quote-open", this.onQuoteOpen as EventListener);
-    this.renderRoot.addEventListener("hos-customer-selected", this.onCustomerPicked as EventListener);
-    
+    this.renderRoot.addEventListener("customer-picked", this.onCustomerPicked as EventListener);
+    this.renderRoot.addEventListener("customer-cleared", this.onCustomerCleared as EventListener);
   }
 
   protected override willUpdate(changed: Map<string, unknown>): void {
@@ -220,7 +221,8 @@ export class QdQuoteBuilder extends LitElement {
     this.renderRoot.removeEventListener("change", this.onFieldChange as EventListener);
     this.renderRoot.removeEventListener("quote-changed", this.onQuoteChanged as EventListener);
     this.renderRoot.removeEventListener("quote-open", this.onQuoteOpen as EventListener);
-    this.renderRoot.removeEventListener("hos-customer-selected", this.onCustomerPicked as EventListener);
+    this.renderRoot.removeEventListener("customer-picked", this.onCustomerPicked as EventListener);
+    this.renderRoot.removeEventListener("customer-cleared", this.onCustomerCleared as EventListener);
   }
 
   protected override updated(): void {
@@ -321,11 +323,17 @@ export class QdQuoteBuilder extends LitElement {
     void this.loadList();
   };
 
-  private readonly onCustomerPicked = (event: CustomEvent<PickerCustomer | null>): void => {
-    // A null detail is the walk-in row: the quote desk has no quote for a
-    // walk-in, so the form stays without a customer rather than refusing one.
+  private readonly onCustomerPicked = (event: CustomEvent<PickerCustomer>): void => {
+    // The work area's own compose picker bubbles the same event; the form
+    // only takes the pick that came from its own fieldset.
+    if (!event.composedPath().some((el) => el instanceof HTMLFieldSetElement)) return;
+    event.stopPropagation();
     this.newCustomer = event.detail;
     this.error = "";
+  };
+
+  private readonly onCustomerCleared = (): void => {
+    this.newCustomer = null;
   };
 
   private reloadDetailPanels(): void {

@@ -57,8 +57,8 @@ test("opening a row mounts it in the work area", async ({ page }) => {
 
 test("the create form makes a quote and opens it", async ({ page }) => {
   await signIn(page);
-  await page.locator("qd-quote-builder").locator("hos-customer-picker").first().getByPlaceholder("Search name or account #").fill("Fenwick");
-  await page.locator("qd-quote-builder").locator("hos-customer-picker").first().getByRole("button", { name: /Fenwick Builders/ }).click();
+  await page.getByRole("group", { name: "New quote" }).locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Fenwick");
+  await page.getByRole("group", { name: "New quote" }).locator("hos-customer-picker").getByRole("option", { name: /Fenwick Builders/ }).click();
   await page.getByRole("button", { name: "Create", exact: true }).click();
   await expect(page.getByTestId("qb-title")).toHaveText("Quote");
   await expect(page.getByTestId("qb-identity")).toContainText("Fenwick Builders");
