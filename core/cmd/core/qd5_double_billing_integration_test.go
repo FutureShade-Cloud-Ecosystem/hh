@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
@@ -67,6 +68,15 @@ func TestQD5Billing_AGroupBilledOrderPaidAtTheCounterIsNeverBilledTwice(t *testi
 	var conflict *quote.OrderPaymentConflictError
 	if !errors.As(err, &conflict) {
 		t.Fatalf("the counter must refuse an order that already has an invoice raised another way, got %v", err)
+	}
+	// The words say who can record the payment, not a door the counter roles cannot open (P3-1).
+	for _, want := range []string{"Payables and receivables", "General Manager", "Financial controller", first.InvoiceNo} {
+		if !strings.Contains(conflict.Msg, want) {
+			t.Fatalf("the refusal must say %q, got %q", want, conflict.Msg)
+		}
+	}
+	if strings.Contains(conflict.Msg, "register") {
+		t.Fatalf("the refusal sends the clerk to a door they cannot open: %q", conflict.Msg)
 	}
 	if docs, total := e.billedTotal(q); docs != 1 || total != 3051 || total > q.Total {
 		t.Fatalf("the invoices of the order total %d across %d documents (order total %d): never more than the order", total, docs, q.Total)

@@ -717,7 +717,8 @@ type OrderAlreadyInvoicedError struct {
 
 func (e *OrderAlreadyInvoicedError) Error() string {
 	return "this order is already invoiced as " + e.InvoiceNo + " by another route, so the counter cannot bill it again; " +
-		"record the payment against that invoice from the receivables register"
+		"hand the customer to Payables and receivables, or to the General Manager or Financial controller, " +
+		"who record the payment against that invoice"
 }
 
 // lockOrder takes the order's row lock for the rest of the transaction: the one lock every writer that
