@@ -24,6 +24,7 @@ import type { ResolvedItem, SurfaceItemKind, WireItem } from "./quote-surface.js
 import {
   buildItemsBody,
   chipChoices,
+  firstPolicyProblem,
   CURATION_KINDS,
   curationDraft,
   kindHeading,
@@ -32,7 +33,6 @@ import {
   PROFILES,
   toggleChip,
   toggleDraftItem,
-  validatePolicy,
   writeRefusalLine,
   type CurationProfile,
 } from "./_quote-settings.js";
@@ -55,6 +55,8 @@ export class QdSurfaceSettings extends PanelBase {
   /** A refused write locks its scope: the server's sentence, in place of an enabled save. */
   @state() private policyLocks: Partial<Record<Scope, string>> = {};
   @state() private itemsLock = "";
+  /** The policy form's own refusal, said beside Save policy, and the field it names. */
+  @state() private policyProblem: { field: string; message: string } | null = null;
 
   static styles = [
     panelStyles,
@@ -97,6 +99,16 @@ export class QdSurfaceSettings extends PanelBase {
       }
       .span {
         grid-column: 1 / -1;
+      }
+      .knobs [aria-invalid="true"] {
+        border-color: var(--hos-safety-red, var(--hh-danger));
+        outline: 1px solid var(--hos-safety-red, var(--hh-danger));
+      }
+      .saverow {
+        align-items: center;
+      }
+      .saverow .err {
+        margin: 0;
       }
       .check {
         display: inline-flex;
@@ -226,6 +238,7 @@ export class QdSurfaceSettings extends PanelBase {
   private edit(patch: Partial<QuotePolicyWire>): void {
     if (this.policy === null) return;
     this.policyDirty = true;
+    this.policyProblem = null;
     this.policy = { ...this.policy, ...patch };
   }
 
@@ -234,12 +247,14 @@ export class QdSurfaceSettings extends PanelBase {
     const policy = this.policy;
     if (client === null || policy === null || this.busy) return;
     const candidate: QuotePolicyWire = { ...policy, quick_chip_set: this.chipsPick };
-    const bad = validatePolicy(candidate);
+    const bad = firstPolicyProblem(candidate);
     if (bad !== null) {
-      this.error = bad;
+      this.policyProblem = bad;
+      this.error = "";
       this.notice = "";
       return;
     }
+    this.policyProblem = null;
     this.busy = true;
     this.error = "";
     this.notice = "";
@@ -320,6 +335,7 @@ export class QdSurfaceSettings extends PanelBase {
         this.scope = select.value === "dealer" ? "dealer" : "branch";
         this.error = "";
         this.notice = "";
+        this.policyProblem = null;
         this.policyDirty = false;
         void this.loadPolicy(true);
         break;
@@ -375,6 +391,11 @@ export class QdSurfaceSettings extends PanelBase {
 
   // ── render ────────────────────────────────────────────────────────────────
 
+  /** aria-invalid on the field the policy form's refusal names, absent on every other. */
+  private invalidMark(field: string): "true" | typeof nothing {
+    return this.policyProblem?.field === field ? "true" : nothing;
+  }
+
   private renderPolicy() {
     const p = this.policy;
     if (p === null) return html`<div class="box"><p class="dim">Loading the quote settings...</p></div>`;
@@ -403,7 +424,7 @@ export class QdSurfaceSettings extends PanelBase {
       <div class="knobs" style="margin-top:12px">
         <div>
           <label class="f" for="qs-vis">Cost / margin visibility</label>
-          <select id="qs-vis" data-field="cost_visibility" data-testid="qs-cost-visibility" ?disabled=${locked}>
+          <select id="qs-vis" data-field="cost_visibility" data-testid="qs-cost-visibility" aria-invalid=${this.invalidMark("cost_visibility")} ?disabled=${locked}>
             <option value="MANAGER_UP">Managers and up</option>
             <option value="ALL_STAFF">All staff</option>
             <option value="HIDDEN">Hidden for everyone</option>
@@ -411,11 +432,11 @@ export class QdSurfaceSettings extends PanelBase {
         </div>
         <div>
           <label class="f" for="qs-days">Default validity (days)</label>
-          <input id="qs-days" data-field="default_validity_days" data-testid="qs-validity-days" inputmode="numeric" ?disabled=${locked} />
+          <input id="qs-days" data-field="default_validity_days" aria-invalid=${this.invalidMark("default_validity_days")} data-testid="qs-validity-days" inputmode="numeric" ?disabled=${locked} />
         </div>
         <div>
           <label class="f" for="qs-dep">Default deposit %</label>
-          <input id="qs-dep" data-field="default_deposit_pct" inputmode="numeric" ?disabled=${locked} />
+          <input id="qs-dep" data-field="default_deposit_pct" aria-invalid=${this.invalidMark("default_deposit_pct")} inputmode="numeric" ?disabled=${locked} />
         </div>
         <div class="span">
           <label class="f" id="qs-chips-label">Quick chips</label>
@@ -437,19 +458,22 @@ export class QdSurfaceSettings extends PanelBase {
         <label class="check"><input type="checkbox" data-field="send_sms_enabled" data-testid="qs-send-sms" ?disabled=${locked} /> Send by text (SMS)</label>
         <div>
           <label class="f" for="qs-split">Default panel split %</label>
-          <input id="qs-split" data-field="workspace_split_pct" inputmode="numeric" ?disabled=${locked} />
+          <input id="qs-split" data-field="workspace_split_pct" aria-invalid=${this.invalidMark("workspace_split_pct")} inputmode="numeric" ?disabled=${locked} />
         </div>
         <div>
           <label class="f" for="qs-arr">Default arrangement</label>
-          <select id="qs-arr" data-field="workspace_arrangement" ?disabled=${locked}>
+          <select id="qs-arr" data-field="workspace_arrangement" aria-invalid=${this.invalidMark("workspace_arrangement")} ?disabled=${locked}>
             <option value="PRIMARY_LEFT">Products left</option>
             <option value="PRIMARY_RIGHT">Products right</option>
           </select>
         </div>
       </div>
       ${locked ? html`<p class="lock" role="status" data-testid="qs-policy-lock">${lock}</p>` : nothing}
-      <div class="row">
+      <div class="row saverow">
         <button type="button" class="primary" data-action="save-policy" data-testid="qs-policy-save" ?disabled=${this.busy || locked}>Save policy</button>
+        ${this.policyProblem !== null
+          ? html`<p class="err" role="alert" data-testid="qs-error">${this.policyProblem.message}</p>`
+          : nothing}
       </div>
     </div>`;
   }

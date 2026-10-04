@@ -44,11 +44,30 @@ function inRange(n: number, lo: number, hi: number): boolean {
  * names the knob. The server re-validates regardless and its sentence wins.
  */
 export function validatePolicy(p: QuotePolicyWire): string | null {
-  if (!(COST_VISIBILITIES as readonly string[]).includes(p.cost_visibility)) return "Choose who sees cost and margin visibility.";
-  if (!inRange(p.default_validity_days, 1, 365)) return "Default validity must be a whole number of days from 1 to 365.";
-  if (!inRange(p.default_deposit_pct, 0, 100)) return "Default deposit must be a whole percent from 0 to 100.";
-  if (!inRange(p.workspace_split_pct, 20, 80)) return "Default panel split must be a whole percent from 20 to 80.";
-  if (!(ARRANGEMENTS as readonly string[]).includes(p.workspace_arrangement)) return "Choose a default arrangement.";
+  return firstPolicyProblem(p)?.message ?? null;
+}
+
+/**
+ * The first problem validatePolicy finds, with the field it belongs to (the
+ * data-field name the form carries), so the form can mark that field as well
+ * as say the sentence beside Save policy.
+ */
+export function firstPolicyProblem(p: QuotePolicyWire): { field: string; message: string } | null {
+  if (!(COST_VISIBILITIES as readonly string[]).includes(p.cost_visibility)) {
+    return { field: "cost_visibility", message: "Choose who sees cost and margin visibility." };
+  }
+  if (!inRange(p.default_validity_days, 1, 365)) {
+    return { field: "default_validity_days", message: "Default validity must be a whole number of days from 1 to 365." };
+  }
+  if (!inRange(p.default_deposit_pct, 0, 100)) {
+    return { field: "default_deposit_pct", message: "Default deposit must be a whole percent from 0 to 100." };
+  }
+  if (!inRange(p.workspace_split_pct, 20, 80)) {
+    return { field: "workspace_split_pct", message: "Default panel split must be a whole percent from 20 to 80." };
+  }
+  if (!(ARRANGEMENTS as readonly string[]).includes(p.workspace_arrangement)) {
+    return { field: "workspace_arrangement", message: "Choose a default arrangement." };
+  }
   return null;
 }
 
