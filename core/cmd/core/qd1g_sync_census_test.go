@@ -1020,6 +1020,7 @@ func TestQD1G_SyncDoorCensus(t *testing.T) {
 		}
 	}
 	qd1gNotVacuous(t)
+	qd1gMatchMatrices(t)
 	qd1gScopesGuard(t)
 }
 
@@ -1075,6 +1076,88 @@ func qd1gNotVacuous(t *testing.T) {
 		}
 		if err := os.WriteFile(path, raw, 0o600); err != nil {
 			t.Fatalf("write the dump: %v", err)
+		}
+	}
+}
+
+// ---- the document's matrices ---------------------------------------------
+
+// qd1gDocCells reads section 3 of the census document: every matrix row of a
+// `### door` block is a role and its A or R cells, cell n answering leg n.
+func qd1gDocCells(t *testing.T) map[string]string {
+	t.Helper()
+	raw, err := os.ReadFile("../../internal/quote/SYNC-DOOR-CENSUS.md")
+	if err != nil {
+		t.Fatalf("read the census document: %v", err)
+	}
+	section := string(raw)
+	if i := strings.Index(section, "\n## 3. "); i >= 0 {
+		section = section[i:]
+	}
+	if i := strings.Index(section, "\n## 4. "); i >= 0 {
+		section = section[:i]
+	}
+	cells := map[string]string{}
+	door := ""
+	heading := regexp.MustCompile("^### `([a-z]+\\.[A-Za-z]+)`")
+	for _, line := range strings.Split(section, "\n") {
+		if m := heading.FindStringSubmatch(line); m != nil {
+			door = m[1]
+			continue
+		}
+		if door == "" || !strings.HasPrefix(line, "| ") {
+			continue
+		}
+		parts := strings.Split(strings.Trim(strings.TrimSpace(line), "|"), "|")
+		role := strings.TrimSpace(parts[0])
+		isRole := false
+		for _, r := range qd1gRoleSubs() {
+			isRole = isRole || r.role == role
+		}
+		if !isRole {
+			continue
+		}
+		for i, cell := range parts[1:] {
+			cell = strings.TrimSpace(cell)
+			if cell != "A" && cell != "R" {
+				t.Errorf("census document: %s %s leg %d holds %q, want A or R", door, role, i+1, cell)
+				continue
+			}
+			cells[fmt.Sprintf("%s|%s|%d", door, role, i+1)] = cell
+		}
+	}
+	return cells
+}
+
+// qd1gMatchMatrices requires the document's section 3 to equal what the census
+// observed, cell for cell and in both directions. The observed answer is the
+// sync door's own (the REST answer, or the stated rule, equals it whenever the
+// census is otherwise green), so a rule changed on both sides at once, which
+// leaves REST equal to sync, still turns the document stale and fails here.
+func qd1gMatchMatrices(t *testing.T) {
+	t.Helper()
+	verb := map[bool]string{true: "A", false: "R"}
+	doc := qd1gDocCells(t)
+	leg := map[string]int{}
+	seen := map[string]bool{}
+	for _, a := range qd1gAnswers {
+		leg[a.Door+"|"+a.Role]++
+		key := fmt.Sprintf("%s|%s|%d", a.Door, a.Role, leg[a.Door+"|"+a.Role])
+		seen[key] = true
+		documented, ok := doc[key]
+		switch {
+		case !ok:
+			t.Errorf("CENSUS DOCUMENT %s as %s, leg %d (%s): the census observed %s and the document has no cell",
+				a.Door, a.Role, leg[a.Door+"|"+a.Role], a.Leg, verb[a.Sync])
+		case documented != verb[a.Sync]:
+			t.Errorf("CENSUS DOCUMENT %s as %s, leg %d (%s): the document says %s, the census observed %s",
+				a.Door, a.Role, leg[a.Door+"|"+a.Role], a.Leg, documented, verb[a.Sync])
+		}
+	}
+	for key, cell := range doc {
+		if !seen[key] {
+			p := strings.Split(key, "|")
+			t.Errorf("CENSUS DOCUMENT %s as %s, leg %s: the document says %s and the census observed no such cell", p[0], p[1], p[2], cell)
 		}
 	}
 }
