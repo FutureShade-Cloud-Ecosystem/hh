@@ -48,7 +48,7 @@ func normalizeIdempotencyKey(raw string) (string, error) {
 // findKeyedAcceptance returns the earlier acceptance of this quote through this share link that
 // carried the key, rebuilt as the confirmation it first produced, or found=false. It must run under
 // the quote row lock. A found acceptance with a different typed name is ErrIdempotencyKeyReused.
-func (r *Repository) findKeyedAcceptance(ctx context.Context, tx pgx.Tx, in acceptWrite) (out AcceptanceResult, found bool, err error) {
+func (r *Repository) findKeyedAcceptance(ctx context.Context, tx rowQuerier, in acceptWrite) (out AcceptanceResult, found bool, err error) {
 	var before, after string
 	err = tx.QueryRow(ctx, `
 		SELECT qa.quote_no, qa.typed_name, qa.accepted_subtotal_cents, qa.accepted_tax_cents,
@@ -76,5 +76,16 @@ func (r *Repository) findKeyedAcceptance(ctx context.Context, tx pgx.Tx, in acce
 	// rule recordAcceptance writes. The first outcome had the repeat flag only if this one did.
 	out.Repeat = before != "" && before == after
 	out.priorStatus = before
+	out.replayed = true
 	return out, true, nil
+}
+
+// ReplayKeyedAcceptance is the read-only lookup behind a retry through a link that has since died
+// (revoked or expired): the caller holds the token that existed and the key, so the first outcome is
+// what they were owed. It writes nothing and takes no lock; the acceptance it reads is committed.
+func (r *Repository) ReplayKeyedAcceptance(ctx context.Context, in acceptWrite) (AcceptanceResult, bool, error) {
+	if r.pool == nil {
+		return AcceptanceResult{}, false, errNoDB
+	}
+	return r.findKeyedAcceptance(ctx, r.pool, in)
 }

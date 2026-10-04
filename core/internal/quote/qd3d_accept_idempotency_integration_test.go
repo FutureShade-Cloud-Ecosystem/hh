@@ -74,7 +74,7 @@ func qd3dPost(t *testing.T, svc *StaffService, ctx context.Context, token, key, 
 // (a) eight concurrent accepts, one key, multi-accept ON: one row, one audit row, eight identical 200s.
 func TestIntegration_QD3d_ConcurrentSameKey_OneRow(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	setMultiAccept(t, pool, true)
 	svc, quoteID, token := mintedFor(t, pool, now, nil)
 
@@ -88,7 +88,7 @@ func TestIntegration_QD3d_ConcurrentSameKey_OneRow(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			r, err := svc.AcceptByTokenKeyed(context.Background(), token, "Dana Reyes", true, qd3dKeyA)
+			r, err := svc.AcceptByTokenKeyed(context.Background(), token, "Customer One", true, qd3dKeyA)
 			errs[i] = err
 			if err == nil {
 				b, _ := json.Marshal(r)
@@ -121,7 +121,7 @@ func TestIntegration_QD3d_ConcurrentSameKey_OneRow(t *testing.T) {
 // is cancelled), the retry under the same key answers the first outcome. Multi-accept ON and OFF.
 func TestIntegration_QD3d_SlowCommitThenRetry_FirstOutcome(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	for _, multi := range []bool{true, false} {
 		name := "multi_off"
 		if multi {
@@ -135,7 +135,7 @@ func TestIntegration_QD3d_SlowCommitThenRetry_FirstOutcome(t *testing.T) {
 			// can read the answer (the recorder is thrown away). The first outcome is read back from the
 			// database, the only place it is certain to exist.
 			c1, cancel := context.WithCancel(context.Background())
-			qd3dPost(t, svc, c1, token, qd3dKeyA, "Dana Reyes")
+			qd3dPost(t, svc, c1, token, qd3dKeyA, "Customer One")
 			cancel()
 			var first AcceptanceResult
 			if err := pool.QueryRow(context.Background(), `
@@ -146,7 +146,7 @@ func TestIntegration_QD3d_SlowCommitThenRetry_FirstOutcome(t *testing.T) {
 			}
 
 			// Attempt 2, the retry with the same key, through the handler on a live context.
-			w := qd3dPost(t, svc, context.Background(), token, qd3dKeyA, "Dana Reyes")
+			w := qd3dPost(t, svc, context.Background(), token, qd3dKeyA, "Customer One")
 			if w.Code != http.StatusOK {
 				t.Fatalf("retry = %d (%s), want 200 with the first outcome", w.Code, w.Body.String())
 			}
@@ -172,15 +172,15 @@ func TestIntegration_QD3d_SlowCommitThenRetry_FirstOutcome(t *testing.T) {
 // before or at the lock and nothing lands (the other half of "the slow client").
 func TestIntegration_QD3d_CancelledRetryWritesNothing(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	setMultiAccept(t, pool, true)
 	svc, quoteID, token := mintedFor(t, pool, now, nil)
-	if _, err := svc.AcceptByTokenKeyed(context.Background(), token, "Dana Reyes", true, qd3dKeyA); err != nil {
+	if _, err := svc.AcceptByTokenKeyed(context.Background(), token, "Customer One", true, qd3dKeyA); err != nil {
 		t.Fatalf("attempt 1: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, _ = svc.AcceptByTokenKeyed(ctx, token, "Dana Reyes", true, qd3dKeyA)
+	_, _ = svc.AcceptByTokenKeyed(ctx, token, "Customer One", true, qd3dKeyA)
 	if n := acceptanceRows(t, pool, quoteID); n != 1 {
 		t.Errorf("acceptance rows = %d, want 1", n)
 	}
@@ -190,13 +190,13 @@ func TestIntegration_QD3d_CancelledRetryWritesNothing(t *testing.T) {
 // first outcome and writes nothing.
 func TestIntegration_QD3d_RetryAfterQuoteMovedOn(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	for _, multi := range []bool{true, false} {
 		for _, moved := range []string{"CONVERTED", "SENT", "EXPIRED"} {
 			t.Run(moved, func(t *testing.T) {
 				setMultiAccept(t, pool, multi)
 				svc, quoteID, token := mintedFor(t, pool, now, nil)
-				first, err := svc.AcceptByTokenKeyed(context.Background(), token, "Dana Reyes", true, qd3dKeyA)
+				first, err := svc.AcceptByTokenKeyed(context.Background(), token, "Customer One", true, qd3dKeyA)
 				if err != nil {
 					t.Fatalf("attempt 1: %v", err)
 				}
@@ -204,7 +204,7 @@ func TestIntegration_QD3d_RetryAfterQuoteMovedOn(t *testing.T) {
 					`UPDATE quotes SET status=$2 WHERE id=$1`, quoteID, moved); err != nil {
 					t.Fatalf("move quote on: %v", err)
 				}
-				again, err := svc.AcceptByTokenKeyed(context.Background(), token, "Dana Reyes", true, qd3dKeyA)
+				again, err := svc.AcceptByTokenKeyed(context.Background(), token, "Customer One", true, qd3dKeyA)
 				if err != nil {
 					t.Fatalf("retry after %s: %v", moved, err)
 				}
@@ -228,18 +228,18 @@ func TestIntegration_QD3d_RetryAfterQuoteMovedOn(t *testing.T) {
 // The first outcome of a REPEAT acceptance keeps its repeat flag on replay (only if the first had it).
 func TestIntegration_QD3d_ReplayOfARepeatKeepsTheRepeatFlag(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	setMultiAccept(t, pool, true)
 	svc, quoteID, token := mintedFor(t, pool, now, nil)
 	ctx := context.Background()
-	if _, err := svc.AcceptByTokenKeyed(ctx, token, "Dana Reyes", true, qd3dKeyA); err != nil {
+	if _, err := svc.AcceptByTokenKeyed(ctx, token, "Customer One", true, qd3dKeyA); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	second, err := svc.AcceptByTokenKeyed(ctx, token, "Dana Reyes", true, qd3dKeyB)
+	second, err := svc.AcceptByTokenKeyed(ctx, token, "Customer One", true, qd3dKeyB)
 	if err != nil || !second.Repeat {
 		t.Fatalf("second under a new key must be a recorded repeat: %+v %v", second, err)
 	}
-	replay, err := svc.AcceptByTokenKeyed(ctx, token, "Dana Reyes", true, qd3dKeyB)
+	replay, err := svc.AcceptByTokenKeyed(ctx, token, "Customer One", true, qd3dKeyB)
 	if err != nil {
 		t.Fatalf("replay: %v", err)
 	}
@@ -254,14 +254,14 @@ func TestIntegration_QD3d_ReplayOfARepeatKeepsTheRepeatFlag(t *testing.T) {
 // (d) a different key on a multi-accept quote records a second row, today's behaviour.
 func TestIntegration_QD3d_DifferentKeyMultiAccept_SecondRow(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	setMultiAccept(t, pool, true)
 	svc, quoteID, token := mintedFor(t, pool, now, nil)
 	ctx := context.Background()
-	if _, err := svc.AcceptByTokenKeyed(ctx, token, "Dana Reyes", true, qd3dKeyA); err != nil {
+	if _, err := svc.AcceptByTokenKeyed(ctx, token, "Customer One", true, qd3dKeyA); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	r, err := svc.AcceptByTokenKeyed(ctx, token, "Dana Reyes", true, qd3dKeyB)
+	r, err := svc.AcceptByTokenKeyed(ctx, token, "Customer One", true, qd3dKeyB)
 	if err != nil {
 		t.Fatalf("second: %v", err)
 	}
@@ -279,14 +279,14 @@ func TestIntegration_QD3d_DifferentKeyMultiAccept_SecondRow(t *testing.T) {
 // (d2) a different key with multi-accept OFF is still today's refusal.
 func TestIntegration_QD3d_DifferentKeyMultiOff_Refused(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	setMultiAccept(t, pool, false)
 	svc, quoteID, token := mintedFor(t, pool, now, nil)
 	ctx := context.Background()
-	if _, err := svc.AcceptByTokenKeyed(ctx, token, "Dana Reyes", true, qd3dKeyA); err != nil {
+	if _, err := svc.AcceptByTokenKeyed(ctx, token, "Customer One", true, qd3dKeyA); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	w := qd3dPost(t, svc, ctx, token, qd3dKeyB, "Dana Reyes")
+	w := qd3dPost(t, svc, ctx, token, qd3dKeyB, "Customer One")
 	if w.Code != http.StatusConflict {
 		t.Errorf("a new key on an accepted quote with multi-accept off = %d, want 409", w.Code)
 	}
@@ -298,12 +298,12 @@ func TestIntegration_QD3d_DifferentKeyMultiOff_Refused(t *testing.T) {
 // (e) no key: unchanged. Two accepts with multi-accept ON are two rows, and nothing is deduplicated.
 func TestIntegration_QD3d_NoKey_Unchanged(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	setMultiAccept(t, pool, true)
 	svc, quoteID, token := mintedFor(t, pool, now, nil)
 	ctx := context.Background()
 	for i := 0; i < 2; i++ {
-		w := qd3dPost(t, svc, ctx, token, "", "Dana Reyes")
+		w := qd3dPost(t, svc, ctx, token, "", "Customer One")
 		if w.Code != http.StatusOK {
 			t.Fatalf("no-key accept %d = %d (%s)", i, w.Code, w.Body.String())
 		}
@@ -312,10 +312,10 @@ func TestIntegration_QD3d_NoKey_Unchanged(t *testing.T) {
 		t.Errorf("acceptance rows = %d, want 2", n)
 	}
 	// And a no-key retry never matches a keyed acceptance.
-	if _, err := svc.AcceptByTokenKeyed(ctx, token, "Dana Reyes", true, qd3dKeyA); err != nil {
+	if _, err := svc.AcceptByTokenKeyed(ctx, token, "Customer One", true, qd3dKeyA); err != nil {
 		t.Fatalf("keyed: %v", err)
 	}
-	if _, err := svc.AcceptByToken(ctx, token, "Dana Reyes", true); err != nil {
+	if _, err := svc.AcceptByToken(ctx, token, "Customer One", true); err != nil {
 		t.Fatalf("no key after keyed: %v", err)
 	}
 	if n := acceptanceRows(t, pool, quoteID); n != 4 {
@@ -326,21 +326,21 @@ func TestIntegration_QD3d_NoKey_Unchanged(t *testing.T) {
 // (f) the key is scoped to the quote AND the share link: the same key elsewhere never matches.
 func TestIntegration_QD3d_KeyScopedToQuoteAndLink(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	setMultiAccept(t, pool, true)
 	ctx := context.Background()
 
 	t.Run("another quote", func(t *testing.T) {
 		svcA, quoteA, tokenA := mintedFor(t, pool, now, nil)
 		svcB, quoteB, tokenB := mintedFor(t, pool, now, nil)
-		if _, err := svcA.AcceptByTokenKeyed(ctx, tokenA, "Dana Reyes", true, qd3dKeyA); err != nil {
+		if _, err := svcA.AcceptByTokenKeyed(ctx, tokenA, "Customer One", true, qd3dKeyA); err != nil {
 			t.Fatalf("A: %v", err)
 		}
-		rb, err := svcB.AcceptByTokenKeyed(ctx, tokenB, "Lee Park", true, qd3dKeyA)
+		rb, err := svcB.AcceptByTokenKeyed(ctx, tokenB, "Customer Two", true, qd3dKeyA)
 		if err != nil {
 			t.Fatalf("B with A's key must be its own acceptance, not a 409 or a replay: %v", err)
 		}
-		if rb.TypedName != "Lee Park" {
+		if rb.TypedName != "Customer Two" {
 			t.Errorf("B got someone else's outcome: %+v", rb)
 		}
 		if acceptanceRows(t, pool, quoteA) != 1 || acceptanceRows(t, pool, quoteB) != 1 {
@@ -354,14 +354,14 @@ func TestIntegration_QD3d_KeyScopedToQuoteAndLink(t *testing.T) {
 		if err != nil {
 			t.Fatalf("mint second link: %v", err)
 		}
-		if _, err := svc.AcceptByTokenKeyed(ctx, token1, "Dana Reyes", true, qd3dKeyA); err != nil {
+		if _, err := svc.AcceptByTokenKeyed(ctx, token1, "Customer One", true, qd3dKeyA); err != nil {
 			t.Fatalf("link 1: %v", err)
 		}
-		r2, err := svc.AcceptByTokenKeyed(ctx, m2.Token, "Lee Park", true, qd3dKeyA)
+		r2, err := svc.AcceptByTokenKeyed(ctx, m2.Token, "Customer Two", true, qd3dKeyA)
 		if err != nil {
 			t.Fatalf("link 2 with link 1's key: %v", err)
 		}
-		if r2.TypedName != "Lee Park" || !r2.Repeat {
+		if r2.TypedName != "Customer Two" || !r2.Repeat {
 			t.Errorf("link 2 must record its own (repeat) acceptance, got %+v", r2)
 		}
 		if n := acceptanceRows(t, pool, quoteID); n != 2 {
@@ -374,21 +374,21 @@ func TestIntegration_QD3d_KeyScopedToQuoteAndLink(t *testing.T) {
 // outcome of someone else's name.
 func TestIntegration_QD3d_SameKeyOtherName_409(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	for _, multi := range []bool{true, false} {
 		setMultiAccept(t, pool, multi)
 		svc, quoteID, token := mintedFor(t, pool, now, nil)
-		if _, err := svc.AcceptByTokenKeyed(context.Background(), token, "Dana Reyes", true, qd3dKeyA); err != nil {
+		if _, err := svc.AcceptByTokenKeyed(context.Background(), token, "Customer One", true, qd3dKeyA); err != nil {
 			t.Fatalf("first: %v", err)
 		}
-		w := qd3dPost(t, svc, context.Background(), token, qd3dKeyA, "Lee Park")
+		w := qd3dPost(t, svc, context.Background(), token, qd3dKeyA, "Customer Two")
 		if w.Code != http.StatusConflict {
 			t.Fatalf("multi=%v: same key, other name = %d (%s), want 409", multi, w.Code, w.Body.String())
 		}
 		if !strings.Contains(w.Body.String(), "different acceptance") {
 			t.Errorf("the 409 must say the key was used for a different acceptance: %s", w.Body.String())
 		}
-		if strings.Contains(w.Body.String(), "Dana") {
+		if strings.Contains(w.Body.String(), "Customer One") {
 			t.Errorf("the 409 must not leak the first name: %s", w.Body.String())
 		}
 		if n := acceptanceRows(t, pool, quoteID); n != 1 {
@@ -400,11 +400,11 @@ func TestIntegration_QD3d_SameKeyOtherName_409(t *testing.T) {
 // (h) a malformed key is a 400 and writes nothing; a well formed key in any case matches.
 func TestIntegration_QD3d_MalformedKey_400(t *testing.T) {
 	pool := intPool(t)
-	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	setMultiAccept(t, pool, true)
 	svc, quoteID, token := mintedFor(t, pool, now, nil)
 	for _, bad := range []string{"not-a-uuid", "7b1c2d3e4f504a618b7293a4b5c6d7e8", qd3dKeyA + "x", " " + qd3dKeyA, "zzzzzzzz-4f50-4a61-8b72-93a4b5c6d7e8"} {
-		w := qd3dPost(t, svc, context.Background(), token, bad, "Dana Reyes")
+		w := qd3dPost(t, svc, context.Background(), token, bad, "Customer One")
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("key %q = %d, want 400", bad, w.Code)
 		}
@@ -413,10 +413,10 @@ func TestIntegration_QD3d_MalformedKey_400(t *testing.T) {
 		t.Errorf("a refused key must write nothing, %d rows", n)
 	}
 	// Upper case is the same key as lower case.
-	if w := qd3dPost(t, svc, context.Background(), token, strings.ToUpper(qd3dKeyA), "Dana Reyes"); w.Code != http.StatusOK {
+	if w := qd3dPost(t, svc, context.Background(), token, strings.ToUpper(qd3dKeyA), "Customer One"); w.Code != http.StatusOK {
 		t.Fatalf("upper case key = %d (%s)", w.Code, w.Body.String())
 	}
-	if w := qd3dPost(t, svc, context.Background(), token, qd3dKeyA, "Dana Reyes"); w.Code != http.StatusOK {
+	if w := qd3dPost(t, svc, context.Background(), token, qd3dKeyA, "Customer One"); w.Code != http.StatusOK {
 		t.Fatalf("lower case retry = %d", w.Code)
 	}
 	if n := acceptanceRows(t, pool, quoteID); n != 1 {

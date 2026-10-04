@@ -251,7 +251,7 @@ type quoteEditWrite struct {
 	ProductID      string // a reprice: the product the price was read for, pinned under the lock
 	Description    string
 	QtyEntered     string
-	UOMEntered     string
+	UOMEntered     string // a reprice: the unit the price was read for, pinned under the lock beside the product
 	QtyBase        string
 	UnitPriceCents int64
 	PriceUOM       string

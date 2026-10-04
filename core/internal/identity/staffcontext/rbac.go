@@ -300,6 +300,13 @@ var floorBranchFilerRoles = map[string]bool{
 	"OUTSIDE_SALES": true,
 }
 
+// FloorBranchFiler reports whether a request filed by this ERP role code may
+// be answered by the branch scoped arm. It is the ONE definition of the filer
+// allowlist: the decide rule (MayDecideInBranchFor) and the approvers the
+// quote refusal names both read it, so the named set cannot drift from the
+// deciding set.
+func FloorBranchFiler(requesterRole string) bool { return floorBranchFilerRoles[requesterRole] }
+
 // MayDecideInBranch reports whether the role is on the branch scoped list.
 // The branch REACH itself is the caller's to prove (CanApprove checks it
 // before the arm is consulted), a listed role with no grant over the
@@ -319,7 +326,7 @@ func (f FloorApprovers) MayDecideInBranch(roleCode string) bool {
 // (floorBranchFilerRoles). The branch scoped arm decides nothing a leader or
 // a peer manager filed.
 func (f FloorApprovers) MayDecideInBranchFor(roleCode, requesterRole string) bool {
-	return f.MayDecideInBranch(roleCode) && floorBranchFilerRoles[requesterRole]
+	return f.MayDecideInBranch(roleCode) && FloorBranchFiler(requesterRole)
 }
 
 // sellingRoles is the authority set for COMMITTING AN ORDER AGAINST A CUSTOMER'S CREDIT from a staff

@@ -862,8 +862,11 @@ paths:
         the same key, on the same quote and share link, answers the first
         outcome with the same confirmation, writes nothing, and does so
         whatever the quote's status is by then, multi-accept on or off. The
-        same key with a different typed name is a 409. A malformed key is a
-        400. Without the header the acceptance behaves as it always has.
+        same key with a different typed name is a 409. A retry through a
+        link that was revoked or has expired since the first attempt still
+        answers that first outcome with a 200 when the acceptance under the
+        key is found for that link, and stays a 410 otherwise. A malformed
+        key is a 400. Without the header the acceptance behaves as it always has.
       x-role: public
       security: []
       parameters:

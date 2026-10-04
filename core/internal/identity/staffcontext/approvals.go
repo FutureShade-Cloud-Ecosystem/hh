@@ -647,7 +647,7 @@ func (r *ApprovalRepository) SaveDecision(ctx context.Context, id, decidedBy str
 		UPDATE permission_approval_requests
 		SET status = $2, decided_by = $3, decided_at = now(), rejection_reason = $4,
 		    seq = (SELECT next_value FROM aseq)
-		WHERE id = $1 AND status = 'PENDING'`, id, string(status), decidedBy, reason)
+		WHERE id = $1 AND status = 'PENDING' AND deleted_at IS NULL`, id, string(status), decidedBy, reason)
 	if err != nil {
 		return false, err
 	}
@@ -673,7 +673,7 @@ func (r *ApprovalRepository) SaveDecisionTx(ctx context.Context, tx pgx.Tx, id, 
 		UPDATE permission_approval_requests
 		SET status = $2, decided_by = $3, decided_at = now(), rejection_reason = $4,
 		    seq = (SELECT next_value FROM aseq)
-		WHERE id = $1 AND status = 'PENDING'`, id, string(status), decidedBy, reason)
+		WHERE id = $1 AND status = 'PENDING' AND deleted_at IS NULL`, id, string(status), decidedBy, reason)
 	if err != nil {
 		return false, err
 	}
@@ -692,6 +692,7 @@ func (r *ApprovalRepository) HasApprovedOverride(ctx context.Context, requestedB
 		SELECT EXISTS (
 			SELECT 1 FROM permission_approval_requests
 			WHERE requested_by = $1 AND branch_id = $2 AND policy_type = $3 AND status = 'APPROVED'
+			  AND deleted_at IS NULL
 			  AND ($4 = '' OR subject_ref = $4)
 		)`, requestedBy, branchID, string(policy), subjectRef).Scan(&ok)
 	if err != nil {
@@ -1019,7 +1020,7 @@ func (r *ApprovalRepository) ApprovalsForReconcile(ctx context.Context, decidedS
 		       COALESCE(subject_ref,''), COALESCE((data->>'amount_cents')::bigint, 0),
 		       status, COALESCE(decided_by::text,''), `+requesterRoleSQL("requested_by")+`
 		FROM permission_approval_requests
-		WHERE status = 'PENDING' OR (decided_at IS NOT NULL AND decided_at >= $1)
+		WHERE deleted_at IS NULL AND (status = 'PENDING' OR (decided_at IS NOT NULL AND decided_at >= $1))
 		ORDER BY requested_at DESC`, decidedSince)
 	if err != nil {
 		return nil, fmt.Errorf("approvals for reconcile: %w", err)
