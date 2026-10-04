@@ -178,6 +178,12 @@ const QUOTES = {
   },
 };
 
+// Fresh copies of the terms quote for the tests whose acceptance really
+// commits in the stub while the answer is lost on the way back.
+for (const token of ["q-lost-504", "q-lost-unreadable", "q-lost-refused"]) {
+  QUOTES[token] = structuredClone(QUOTES["q-terms-28"]);
+}
+
 // The link the server revoked: the route answers 410, not 404, because the
 // link EXISTED and died. The page says so, and says what to do next.
 const REVOKED_TOKENS = new Set(["q-revoked-410"]);

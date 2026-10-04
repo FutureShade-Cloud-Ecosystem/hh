@@ -328,7 +328,7 @@ test("no credential header rides any call, every call is a public route or the i
 // are shown only when the answer carried a status and the JSON error envelope;
 // a transport failure or a proxy's page never reaches the customer.
 const COULD_NOT_REACH = "We could not reach the server. Please try again.";
-const NOT_RECORDED = "We could not record your acceptance. Please try again.";
+const UNCONFIRMED = "We could not confirm whether your acceptance was recorded. Please reload this page before trying again.";
 
 async function readyToAccept(page: Page, token: string): Promise<void> {
   await page.goto(`/?t=${token}`);
@@ -344,9 +344,10 @@ async function expectFormKept(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Accept quote" })).toBeEnabled();
 }
 
-test("an accept that never reaches the server says so plainly and keeps the form", async ({ page }) => {
+test("an accept that never reaches the server says so plainly, only when the re-read fails too, and keeps the form", async ({ page }) => {
   await readyToAccept(page, "q-terms-28");
   await page.route("**/accept", (route) => route.abort("failed"));
+  await page.route("**/api/public/v1/quotes/q-terms-28", (route) => route.abort("failed"));
   await page.getByRole("button", { name: "Accept quote" }).click();
   await expect(page.getByRole("alert")).toHaveText(COULD_NOT_REACH);
   await expect(page.getByRole("alert")).not.toContainText("transport");
@@ -364,7 +365,7 @@ test("an accept answered by a proxy's HTML page shows neither the page nor its h
     }),
   );
   await page.getByRole("button", { name: "Accept quote" }).click();
-  await expect(page.getByRole("alert")).toHaveText(NOT_RECORDED);
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
   const body = await page.locator("body").evaluate((node) => node.outerHTML + (document.querySelector("pd-quote-public")?.shadowRoot?.innerHTML ?? ""));
   expect(body).not.toContain("Bad Gateway");
   expect(body).not.toContain("core.internal.example");
@@ -386,6 +387,41 @@ test("the whole network going down after the quote loaded keeps the quote and th
   await expectFormKept(page);
   await expect(page.getByText("Quote link unavailable")).toHaveCount(0);
   await context.setOffline(false);
+});
+
+test("an accept recorded by the core but answered by a proxy's 504 page ends on the accepted state", async ({ page }) => {
+  await readyToAccept(page, "q-lost-504");
+  await page.route("**/accept", async (route) => {
+    await route.fetch();
+    await route.fulfill({ status: 504, contentType: "text/html", body: "<html><body><h1>504 Gateway Timeout</h1></body></html>" });
+  });
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
+  await expect(page.locator("#name")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Accept quote" })).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("an accept recorded by the core but answered 200 with an unreadable body ends on the accepted state", async ({ page }) => {
+  await readyToAccept(page, "q-lost-unreadable");
+  await page.route("**/accept", async (route) => {
+    await route.fetch();
+    await route.fulfill({ status: 200, contentType: "application/json", body: "{\"quote_no\": \"Q-28\", \"typed_na" });
+  });
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
+  await expect(page.locator("#name")).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("an accept that never reached the core keeps the form and says what it knows", async ({ page }) => {
+  await readyToAccept(page, "q-lost-refused");
+  // The accept is refused before the stub sees it; the re-read answers and
+  // the quote is still open, so the outcome is only unconfirmed.
+  await page.route("**/accept", (route) => route.abort("connectionrefused"));
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  await expectFormKept(page);
 });
 
 test("a double click on Accept sends exactly one POST while the first is in flight", async ({ page }) => {
