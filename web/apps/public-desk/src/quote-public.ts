@@ -34,7 +34,7 @@ const LINK_GONE =
 const LINK_GONE_SHORT = "This link is no longer valid. Please contact us for an up-to-date link.";
 const NOT_FOUND = "We could not find this quote. Please check the link you were sent.";
 const LOAD_FAILED = "We could not load this quote right now. Please try again shortly.";
-const COULD_NOT_REACH = "We could not reach the server. Please try again.";
+const NOT_RECORDED = "We could not record your acceptance. Please try again.";
 const UNCONFIRMED =
   "We could not confirm whether your acceptance was recorded. Please reload this page before trying again.";
 
@@ -272,6 +272,9 @@ export class QuotePublicPage extends HHElement {
   private fatal = "";
   @state()
   private busy = false;
+  /** A failed accept whose re-read proved the acceptance landed: the page ends on the accepted state. */
+  @state()
+  private landed = false;
   @state()
   private typedName = "";
   @state()
@@ -441,6 +444,7 @@ export class QuotePublicPage extends HHElement {
     }
     this.busy = true;
     this.error = "";
+    const before = this.quote?.status;
     try {
       const result = await this.client.acceptQuote(this.token, this.typedName.trim());
       if (!result.ok) {
@@ -450,22 +454,31 @@ export class QuotePublicPage extends HHElement {
         }
         // Any other failure may hide a recorded acceptance (a proxy's page
         // after the core committed, a body lost on the way back), so the
-        // page re-reads the quote before it says anything. The server's own
-        // words are shown only when the answer was the JSON error envelope;
-        // an outcome nobody can vouch for is called unconfirmed, never
-        // "not recorded".
+        // page re-reads the quote before it says anything. Only the re-read
+        // can vouch for the outcome: with no status the client cannot tell a
+        // refused connection from a lost answer.
         const words = serverWords(result);
-        const known = result.status !== undefined && words !== null;
-        this.error = known ? words : UNCONFIRMED;
         const reread = await this.load(true);
         if (this.fatal !== "") return;
-        if (reread && this.quote?.acceptable === false) {
-          // The re-read shows the quote accepted: the page says so itself.
-          if (!known) this.error = "";
-        } else if (!reread && result.status === undefined) {
-          // Nothing answered and the re-read failed too: say so plainly.
-          this.error = COULD_NOT_REACH;
+        const now = this.quote;
+        if (!reread || now === null) {
+          this.error = UNCONFIRMED;
+          return;
         }
+        if (before === "SENT" && (now.status === "ACCEPTED" || now.status === "CONVERTED")) {
+          // The acceptance landed. With multi-accept on the core keeps an
+          // accepted quote acceptable, so the page ends on the accepted
+          // state itself rather than offering the form again.
+          this.landed = true;
+          this.error = "";
+          return;
+        }
+        if (before === "SENT" && now.status === "SENT") {
+          // Still awaiting its first acceptance: nothing was recorded.
+          this.error = result.status !== undefined && words !== null ? words : NOT_RECORDED;
+          return;
+        }
+        this.error = UNCONFIRMED;
         return;
       }
       this.accepted = result.value;
@@ -561,13 +574,13 @@ export class QuotePublicPage extends HHElement {
 
   private renderAcceptForm(q: QuoteViewRef): typeof nothing | TemplateResult {
     if (this.accepted) return nothing;
-    if (!q.acceptable) {
+    if (!q.acceptable || this.landed) {
       // The customer reads this alone, with no staff beside them to translate,
       // so the state is SAID, in the same six states said mid-sentence: under
       // a heading, so the closed door reads deliberate rather than broken. An
       // ACCEPTED quote is not a refusal at all: it is the customer's own
       // earlier action, acknowledged under the success mark.
-      const acceptedElsewhere = q.status === "ACCEPTED";
+      const acceptedElsewhere = q.status === "ACCEPTED" || this.landed;
       return html`<div class="card closed">
         <h2>${acceptedElsewhere ? this.renderOkMark() : nothing}${acceptedElsewhere ? "Already accepted" : "Acceptance closed"}</h2>
         <p class="gone">

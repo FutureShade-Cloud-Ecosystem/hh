@@ -327,7 +327,7 @@ test("no credential header rides any call, every call is a public route or the i
 // A failed accept must speak plainly and keep the form. The server's own words
 // are shown only when the answer carried a status and the JSON error envelope;
 // a transport failure or a proxy's page never reaches the customer.
-const COULD_NOT_REACH = "We could not reach the server. Please try again.";
+const NOT_RECORDED = "We could not record your acceptance. Please try again.";
 const UNCONFIRMED = "We could not confirm whether your acceptance was recorded. Please reload this page before trying again.";
 
 async function readyToAccept(page: Page, token: string): Promise<void> {
@@ -344,12 +344,13 @@ async function expectFormKept(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Accept quote" })).toBeEnabled();
 }
 
-test("an accept that never reaches the server says so plainly, only when the re-read fails too, and keeps the form", async ({ page }) => {
+test("an accept that never reaches the server, with the re-read failing too, is unconfirmed and keeps the form", async ({ page }) => {
   await readyToAccept(page, "q-terms-28");
   await page.route("**/accept", (route) => route.abort("failed"));
   await page.route("**/api/public/v1/quotes/q-terms-28", (route) => route.abort("failed"));
   await page.getByRole("button", { name: "Accept quote" }).click();
-  await expect(page.getByRole("alert")).toHaveText(COULD_NOT_REACH);
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  await expect(page.getByRole("alert")).not.toContainText("could not reach");
   await expect(page.getByRole("alert")).not.toContainText("transport");
   await expect(page.getByRole("alert")).not.toContainText("quotePublicAcceptQuote");
   await expectFormKept(page);
@@ -365,7 +366,8 @@ test("an accept answered by a proxy's HTML page shows neither the page nor its h
     }),
   );
   await page.getByRole("button", { name: "Accept quote" }).click();
-  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  // The re-read answers and the quote is still SENT: the outcome is known.
+  await expect(page.getByRole("alert")).toHaveText(NOT_RECORDED);
   const body = await page.locator("body").evaluate((node) => node.outerHTML + (document.querySelector("pd-quote-public")?.shadowRoot?.innerHTML ?? ""));
   expect(body).not.toContain("Bad Gateway");
   expect(body).not.toContain("core.internal.example");
@@ -383,7 +385,7 @@ test("the whole network going down after the quote loaded keeps the quote and th
   await readyToAccept(page, "q-terms-28");
   await context.setOffline(true);
   await page.getByRole("button", { name: "Accept quote" }).click();
-  await expect(page.getByRole("alert")).toHaveText(COULD_NOT_REACH);
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
   await expectFormKept(page);
   await expect(page.getByText("Quote link unavailable")).toHaveCount(0);
   await context.setOffline(false);
@@ -414,13 +416,13 @@ test("an accept recorded by the core but answered 200 with an unreadable body en
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
-test("an accept that never reached the core keeps the form and says what it knows", async ({ page }) => {
+test("an accept that never reached the core, re-read still SENT, says it was not recorded and keeps the form", async ({ page }) => {
   await readyToAccept(page, "q-lost-refused");
   // The accept is refused before the stub sees it; the re-read answers and
-  // the quote is still open, so the outcome is only unconfirmed.
+  // the quote is still SENT, which proves nothing was recorded.
   await page.route("**/accept", (route) => route.abort("connectionrefused"));
   await page.getByRole("button", { name: "Accept quote" }).click();
-  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  await expect(page.getByRole("alert")).toHaveText(NOT_RECORDED);
   await expectFormKept(page);
 });
 
@@ -468,7 +470,7 @@ test("two synchronous clicks send one POST: the busy guard stands alone, before 
   expect(posts()).toBe(1);
 });
 
-test("a refused accept whose re-read fails keeps the page: only a dead link replaces it", async ({ page }) => {
+test("a refused accept whose re-read fails is unconfirmed and keeps the page: only a dead link replaces it", async ({ page }) => {
   await readyToAccept(page, "q-terms-28");
   await page.route("**/accept", (route) =>
     route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "This quote has already been accepted." }) }),
@@ -477,7 +479,8 @@ test("a refused accept whose re-read fails keeps the page: only a dead link repl
     route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) }),
   );
   await page.getByRole("button", { name: "Accept quote" }).click();
-  await expect(page.getByRole("alert")).toHaveText("This quote has already been accepted.");
+  // The re-read failed, so nothing can be vouched for, whatever the envelope said.
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
   await expectFormKept(page);
   await expect(page.getByText("Quote link unavailable")).toHaveCount(0);
 });
@@ -495,4 +498,100 @@ test("the page wears the manifest's brand: hh-pro pins the action fill to the de
     return Array.from(ctx.getImageData(0, 0, 1, 1).data);
   });
   expect(b).toBeGreaterThan(r);
+});
+
+// The core keeps an ACCEPTED quote acceptable when multi-accept is on
+// (share.go): the view of a committed quote reads ACCEPTED with acceptable true.
+async function multiAcceptView(page: Page, token: string): Promise<void> {
+  await page.route(`**/api/public/v1/quotes/${token}`, async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { status: string; acceptable: boolean };
+    if (body.status === "ACCEPTED") body.acceptable = true;
+    await route.fulfill({ response, json: body });
+  });
+}
+
+test("an unreadable 200 recorded by the core, with the re-read aborted, is unconfirmed, never could not reach", async ({ page }) => {
+  await readyToAccept(page, "q-unk-unreadable");
+  await page.route("**/accept", async (route) => {
+    await route.fetch();
+    await route.fulfill({ status: 200, contentType: "application/json", body: "{\"quote_no\": \"Q-28\", \"typed_na" });
+  });
+  await page.route("**/api/public/v1/quotes/q-unk-unreadable", (route) => route.abort("failed"));
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  await expect(page.getByRole("alert")).not.toContainText("could not reach");
+  await expectFormKept(page);
+});
+
+test("an accept fetched through to the core then reset, with the re-read failing, is unconfirmed", async ({ page }) => {
+  await readyToAccept(page, "q-unk-reset");
+  await page.route("**/accept", async (route) => {
+    await route.fetch();
+    await route.abort("connectionreset");
+  });
+  await page.route("**/api/public/v1/quotes/q-unk-reset", (route) => route.abort("failed"));
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  await expect(page.getByRole("alert")).not.toContainText("could not reach");
+  await expectFormKept(page);
+});
+
+test("multi-accept on: a recorded accept answered 504 ends on the accepted state with no second submit", async ({ page }) => {
+  await readyToAccept(page, "q-multi-504");
+  await multiAcceptView(page, "q-multi-504");
+  let posts = 0;
+  await page.route("**/accept", async (route) => {
+    posts += 1;
+    await route.fetch();
+    await route.fulfill({ status: 504, contentType: "text/html", body: "<html><body><h1>504 Gateway Timeout</h1></body></html>" });
+  });
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("heading", { name: "Already accepted" })).toBeVisible();
+  await expect(page.locator("#name")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Accept quote" })).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  expect(posts).toBe(1);
+});
+
+test("multi-accept on: a failed repeat accept, with the quote already ACCEPTED before, is unconfirmed", async ({ page }) => {
+  await page.route("**/api/public/v1/quotes/q-multi-504", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { status: string; acceptable: boolean };
+    body.status = "ACCEPTED";
+    body.acceptable = true;
+    await route.fulfill({ response, json: body });
+  });
+  await page.route("**/accept", (route) =>
+    route.fulfill({ status: 502, contentType: "text/html", body: "<html><body>502</body></html>" }),
+  );
+  await page.goto("/?t=q-multi-504");
+  await page.locator("#name").fill("Sample Customer");
+  await page.locator("#affirm").check();
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  // Nothing proves the repeat was not recorded: the status could not move.
+  await expect(page.getByRole("alert")).toHaveText(UNCONFIRMED);
+  await expect(page.getByRole("button", { name: "Accept quote" })).toBeEnabled();
+});
+
+test("a failed accept whose re-read shows the quote closed by something else ends on the closed card, no alert", async ({ page }) => {
+  let reads = 0;
+  await page.route("**/api/public/v1/quotes/q-terms-28", async (route) => {
+    reads += 1;
+    const response = await route.fetch();
+    const body = (await response.json()) as { status: string; acceptable: boolean };
+    if (reads > 1) {
+      body.status = "LOST";
+      body.acceptable = false;
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await readyToAccept(page, "q-terms-28");
+  await page.route("**/accept", (route) =>
+    route.fulfill({ status: 502, contentType: "text/html", body: "<html><body>502</body></html>" }),
+  );
+  await page.getByRole("button", { name: "Accept quote" }).click();
+  await expect(page.getByRole("heading", { name: "Acceptance closed" })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator("#name")).toHaveCount(0);
 });

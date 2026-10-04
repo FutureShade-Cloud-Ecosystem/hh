@@ -180,7 +180,14 @@ const QUOTES = {
 
 // Fresh copies of the terms quote for the tests whose acceptance really
 // commits in the stub while the answer is lost on the way back.
-for (const token of ["q-lost-504", "q-lost-unreadable", "q-lost-refused"]) {
+for (const token of [
+  "q-lost-504",
+  "q-lost-unreadable",
+  "q-lost-refused",
+  "q-unk-unreadable",
+  "q-unk-reset",
+  "q-multi-504",
+]) {
   QUOTES[token] = structuredClone(QUOTES["q-terms-28"]);
 }
 
