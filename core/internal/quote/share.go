@@ -211,6 +211,9 @@ type acceptWrite struct {
 	ShareLinkID string
 	TypedName   string
 	Now         time.Time
+	// IdempotencyKey is the optional, already validated and lowercased Idempotency-Key. Empty means
+	// the caller sent none and the acceptance behaves exactly as it did before the key existed.
+	IdempotencyKey string
 }
 
 // acceptHooks folds the audit row into the acceptance transaction, exactly as the edit hooks do.
@@ -405,6 +408,11 @@ func (s *StaffService) PublicQuoteByToken(ctx context.Context, rawToken string) 
 // row lock (R3), so an acceptance is exactly as reconstructable as a staff edit, and an acceptance
 // can never exist without the trail that explains it, or vice versa.
 func (s *StaffService) AcceptByToken(ctx context.Context, rawToken, typedName string, affirmed bool) (AcceptanceResult, error) {
+	return s.AcceptByTokenKeyed(ctx, rawToken, typedName, affirmed, "")
+}
+
+// AcceptByTokenKeyed is AcceptByToken carrying the optional Idempotency-Key (see share_idempotency.go).
+func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedName string, affirmed bool, idemKey string) (AcceptanceResult, error) {
 	link, quoteID, err := s.resolveLive(ctx, rawToken)
 	if err != nil {
 		return AcceptanceResult{}, err

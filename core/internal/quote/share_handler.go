@@ -93,7 +93,7 @@ func (h *StaffHandler) publicAccept(w http.ResponseWriter, r *http.Request) {
 		h.writeShareErr(w, err)
 		return
 	}
-	res, err := h.svc.AcceptByToken(r.Context(), r.PathValue("token"), body.TypedName, body.Accepted)
+	res, err := h.svc.AcceptByTokenKeyed(r.Context(), r.PathValue("token"), body.TypedName, body.Accepted, r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		h.writeShareErr(w, err)
 		return
