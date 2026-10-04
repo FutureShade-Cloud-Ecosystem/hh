@@ -108,3 +108,16 @@ test("a floor preview reads its items and counts, and refuses a half answer", ()
   assert.equal(readFloorPreview({ ...good, items: [{ ...good.items[0], margin_bps: "8" }] }), null);
   assert.equal(readFloorPreview({ ...good, evaluated: 1.5 }), null);
 });
+
+test("a list answered as a bare array (what the core writes today) reads the same as the contract's page", () => {
+  const bare = readRulePage([rule]);
+  assert.equal(bare?.items[0]?.id, "r1");
+  assert.equal(bare?.nextCursor, null);
+  assert.equal(readPolicyPage([{ category_id: CAT, margin_target_bps: 3400, margin_floor_bps: 2000, margin_enforcement_disabled: false }])?.items.length, 1);
+  assert.equal(readOverridePage([override])?.items.length, 1);
+  assert.equal(readBreakPage([brk])?.items.length, 1);
+  assert.equal(readAuditPage([audit])?.items.length, 1);
+  assert.equal(readRulePage([])?.items.length, 0, "an empty list is an empty list, not a refusal");
+  assert.equal(readRulePage([rule, { nope: true }]), null, "one unreadable row still refuses the whole list");
+  assert.equal(readRulePage("not a list"), null);
+});

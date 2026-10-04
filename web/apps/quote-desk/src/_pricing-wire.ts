@@ -42,15 +42,21 @@ export interface PageOf<T> {
   nextCursor: string | null;
 }
 
+/**
+ * A list arrives as the contract's page object ({items, next_cursor}) or as a bare array,
+ * which is what the core's pricing handlers write today (they take no cursor). Both are
+ * read; an unreadable row refuses the whole list.
+ */
 function readPage<T>(value: unknown, readRow: (row: unknown) => T | null): PageOf<T> | null {
-  if (!isRecord(value) || !Array.isArray(value["items"])) return null;
+  const rows = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value["items"]) ? value["items"] : null;
+  if (rows === null) return null;
   const items: T[] = [];
-  for (const raw of value["items"]) {
+  for (const raw of rows) {
     const row = readRow(raw);
     if (row === null) return null;
     items.push(row);
   }
-  const cursor = value["next_cursor"];
+  const cursor = isRecord(value) ? value["next_cursor"] : null;
   return { items, nextCursor: typeof cursor === "string" && cursor !== "" ? cursor : null };
 }
 
