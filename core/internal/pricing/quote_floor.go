@@ -88,9 +88,23 @@ func (s *Service) EvaluateLineFloor(ctx context.Context, in FloorQuestion) (Floo
 	}
 	costInResUOM := roundCents(float64(in.CostCents) * fRes)
 
+	// The category the decision's floor comes from, resolved through the
+	// catalog seam exactly as the resolver resolves it (the SAME row the
+	// resolver's own gate reads), else the product when no seam is wired.
+	// The lookup must precede the policy read: the resolver passes the real
+	// category id here, and the repository answers nil for an empty one,
+	// so a lookup after the read would silently fall every decision back
+	// to the default floor (P1-3, the PR 117 review's finding).
+	categoryID := ""
+	if s.cat != nil {
+		if cid, err := s.cat.GetCategory(ctx, in.ProductID); err == nil {
+			categoryID = cid
+		}
+	}
+
 	// The floor source: the category policy row the resolver reads, with
 	// the same unseeded-environment fallback.
-	policy, err := s.store.CategoryPolicy(ctx, "")
+	policy, err := s.store.CategoryPolicy(ctx, categoryID)
 	if err != nil {
 		return FloorAnswer{}, fmt.Errorf("category policy: %w", err)
 	}
@@ -104,14 +118,8 @@ func (s *Service) EvaluateLineFloor(ctx context.Context, in FloorQuestion) (Floo
 	}
 
 	// The category the row's entity_id names (the honoured override's
-	// shape): resolved through the catalog seam when one is wired, else the
-	// product, so the NOT NULL column always holds the honest target.
-	categoryID := ""
-	if s.cat != nil {
-		if cid, err := s.cat.GetCategory(ctx, in.ProductID); err == nil {
-			categoryID = cid
-		}
-	}
+	// shape): the id resolved above, so the NOT NULL column always holds
+	// the honest target.
 	ans := FloorAnswer{
 		FloorBps:   floorBps,
 		CostCents:  costInResUOM,

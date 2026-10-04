@@ -89,6 +89,35 @@ func qd1bPlantApproval(t *testing.T, pool *pgxpool.Pool, rail *staffcontext.Appr
 	return rec.ID
 }
 
+// TestQD1B_UnboundMarginCardIsOutOfTheSalesManagersCount is P2-C's count
+// leg: a legacy margin card with no line binding is not the branch Sales
+// manager's arm to decide, so it must not wait on it either. The
+// line-bound floor request planted beside it still counts.
+func TestQD1B_UnboundMarginCardIsOutOfTheSalesManagersCount(t *testing.T) {
+	pool := wiringPool(t)
+	manager, branchA := plantDashboardCaller(t, pool)
+	_ = manager
+	clerk := qd1bCountClerk(t, pool)
+	rail := staffcontext.NewApprovals(staffcontext.NewApprovalRepository(pool))
+
+	sg := testkit.NewStaffGuards(t)
+	sg.SetAuthority(identity.StaffAuthority{
+		RoleID:   "sales_manager",
+		Tier:     identity.TierManager,
+		Scope:    identity.ScopeBranch,
+		Branches: []string{branchA},
+	})
+	mux := dashFold(t, pool, sg)
+
+	qd1bPlantApproval(t, pool, rail, staffcontext.PolicyMargin, clerk, branchA, "000000000d07")
+	qd1bPlantUnboundMargin(t, pool, clerk, branchA)
+
+	if n := needsApprovalsCount(t, mux, sg); n != 1 {
+		t.Fatalf("the queue counts %d approvals waiting on the branch Sales manager, want 1: the line-bound floor request alone, the legacy unbound margin card is not its arm's to decide or count",
+			n)
+	}
+}
+
 // TestQD1B_NeedsApprovalsCountFollowsTheDecideRule is the count's leg:
 // under the dealer's decided default the branch Sales manager's queue
 // counts its own branch's floor request (its configured branch arm) and
