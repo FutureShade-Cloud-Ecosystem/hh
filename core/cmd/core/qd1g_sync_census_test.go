@@ -849,6 +849,35 @@ func qd1gApprovalsFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 			t.Errorf("CENSUS RULE approvals.FindApplied as %s (%s): the replay rewrote the request", who.role, k.name)
 		}
 	}
+	// The dedup leg proper: a request the caller filed itself, plain, so the
+	// replayed note edit would be ADMITTED if the lookup missed. The key is
+	// already applied, so the replay must answer applied and rewrite nothing.
+	// A FindApplied that always misses lets the edit through and fails here.
+	id, marker := qd1gPlain(t, c, who.user, testkit.BranchNorthAID)
+	key := uuid.NewString()
+	if _, err := c.q.pool.Exec(context.Background(),
+		`UPDATE permission_approval_requests SET idempotency_key = $2::uuid WHERE id = $1`, id, key); err != nil {
+		t.Fatalf("stamp the key: %v", err)
+	}
+	code, body := qd1bCall(t, c.q, http.MethodPost, "/api/v1/sync/approvals", who.sub, map[string]any{"ops": []any{
+		map[string]any{"client_id": key, "op": "update", "payload": map[string]any{"id": id, "detail": "qd1g dedup rewrite"}}}})
+	if code != http.StatusOK {
+		t.Fatalf("dedup replay as %s: %d %s", who.role, code, body)
+	}
+	var detail string
+	if err := c.q.pool.QueryRow(context.Background(),
+		`SELECT detail FROM permission_approval_requests WHERE id = $1`, id).Scan(&detail); err != nil {
+		t.Fatalf("read the request back: %v", err)
+	}
+	if detail != marker {
+		t.Errorf("CENSUS RULE approvals.FindApplied as %s (its own plain request, dedup): the replay of an applied key was applied again (detail is now %q)", who.role, detail)
+	}
+	var resp struct {
+		Results []qd1bPushResult `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil || len(resp.Results) != 1 || resp.Results[0].Status != "applied" {
+		t.Errorf("CENSUS RULE approvals.FindApplied as %s (its own plain request, dedup): the replay did not answer applied: %s", who.role, body)
+	}
 }
 
 // ---- the census ----------------------------------------------------------
