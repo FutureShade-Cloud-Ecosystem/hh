@@ -215,5 +215,61 @@
     "find": "      this.loaded = false; // no count is shown beside a failed read\n",
     "replace": "",
     "test": "an approvals read that answers late never overwrites"
+  },
+  {
+    "id": "ep-late-announces",
+    "file": "src/edit-panel.ts",
+    "find": "      this.dispatchEvent(new CustomEvent(\"quote-changed\", { detail: { quoteId: ctx.id }, bubbles: true, composed: true }));\n      return;\n    }\n    if (this.ctx.id !== ctx.id) return;",
+    "replace": "      return;\n    }\n    if (this.ctx.id !== ctx.id) return;",
+    "test": "P2-3 a quantity save that lands after leaving"
+  },
+  {
+    "id": "ep-write-late-callback",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guarded(action(ctx.id), (late) => this.lateAnswer(ctx, late, what, floor));",
+    "replace": "const result = await ctx.guarded(action(ctx.id));",
+    "test": "P2-3 an add that lands after leaving"
+  },
+  {
+    "id": "ep-mint-late-callback",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id), (late) => this.lateAnswer(ctx, late, \"create a share link\"));",
+    "replace": "const result = await ctx.guarded(client.mintShareLink(ctx.id));",
+    "test": "P2-3 a link minted after leaving"
+  },
+  {
+    "id": "ep-convert-late-callback",
+    "file": "src/edit-panel.ts",
+    "find": "const result = await ctx.guarded(client.convertQuote(ctx.id, this.convertFulfilment), (late) => this.lateAnswer(ctx, late, \"convert this quote\"));",
+    "replace": "const result = await ctx.guarded(client.convertQuote(ctx.id, this.convertFulfilment));",
+    "test": "P2-3 a conversion that lands after leaving"
+  },
+  {
+    "id": "ep-late-refusal-other-quote",
+    "file": "src/edit-panel.ts",
+    "find": "    if (this.ctx.id !== ctx.id) return;\n",
+    "replace": "",
+    "test": "P3 a refusal answered while the person is on another quote"
+  },
+  {
+    "id": "ep-late-refusal-shown",
+    "file": "src/edit-panel.ts",
+    "find": "    if (this.ctx.id !== ctx.id) return;\n",
+    "replace": "    return;\n",
+    "test": "P3 a floor refusal answered after the person returned"
+  },
+  {
+    "id": "ep-load-keeps-other-drafts",
+    "file": "src/edit-panel.ts",
+    "find": ".filter(([lineNo]) => Number(lineNo) !== resetLine));",
+    "replace": ".filter(() => false));",
+    "test": "P3 saving one line keeps the unsaved figures"
+  },
+  {
+    "id": "ep-fulfilment-clears",
+    "file": "src/edit-panel.ts",
+    "find": "      this.convertFulfilment = \"\";\n",
+    "replace": "",
+    "test": "P3 the fulfilment chosen for one conversion"
   }
 ]

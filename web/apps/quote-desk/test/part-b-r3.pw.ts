@@ -1,7 +1,7 @@
 // PR 121 round 3, Part B findings: the panels. Every test holds an answer back behind a delayed route, so the order
 // of events is exact on any machine.
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { hold, row, settle, signIn as signInAs, writes } from "./switch-helpers.js";
+import { hold, row, seed, settle, signIn as signInAs, writes } from "./switch-helpers.js";
 
 // The Sales manager sees every quote in the list, so the probes can move between quotes of either owner.
 const signIn = (page: Page, role = "Sales manager") => signInAs(page, role);
@@ -91,4 +91,126 @@ test("P2-2 a reason typed for a row whose decision clashed (409) is not filed wi
   await expect.poll(() => bodies.length).toBe(1);
   expect(bodies[0]).not.toContain("Repeat buyer on row one");
   await manager.context().close();
+});
+
+test("P2-3 a quantity save that lands after leaving and returning to the quote shows on it, and the list follows", async ({ page }) => {
+  await signIn(page);
+  await openQuote(page, "Q-1001");
+  const box = edit(page).getByTestId("qe-line").first().locator('[data-field="qty"]');
+  await expect(box).toHaveValue("120");
+  const listBefore = await row(page, "Q-1001").innerText();
+  const patch = await hold(page, /\/api\/v1\/quotes\/q-1001\/lines\/1$/, { method: "PATCH", times: 1 });
+  await box.fill("6");
+  await edit(page).getByTestId("qe-line").first().getByRole("button", { name: "Save" }).click();
+  await patch.asked;
+  await row(page, "Q-1002").click();
+  await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1002");
+  await row(page, "Q-1001").click();
+  await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1001");
+  await expect(box).toHaveValue("120");
+  const answered = page.waitForResponse((r) => r.request().method() === "PATCH" && /\/quotes\/q-1001\/lines\/1$/.test(r.url()));
+  patch.open();
+  await answered;
+  await expect(box).toHaveValue("6");
+  await expect.poll(() => row(page, "Q-1001").innerText()).not.toBe(listBefore);
+});
+
+test("P2-3 an add that lands after leaving and returning to the quote shows on it", async ({ page }) => {
+  await signIn(page);
+  await openQuote(page, "Q-1001");
+  await edit(page).locator('[data-field="add-search"]').fill("edge");
+  await edit(page).getByRole("option").first().click();
+  await edit(page).locator('[data-field="add-qty"]').fill("2");
+  const post = await hold(page, /\/api\/v1\/quotes\/q-1001\/lines$/, { method: "POST" });
+  await edit(page).getByRole("button", { name: /^Add/ }).click();
+  await post.asked;
+  await row(page, "Q-1002").click();
+  await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1002");
+  await row(page, "Q-1001").click();
+  await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1001");
+  await expect(edit(page).getByTestId("qe-line")).toHaveCount(2);
+  post.open();
+  await expect(edit(page).getByTestId("qe-line")).toHaveCount(3);
+  await expect(page.getByTestId("qb-line")).toHaveCount(3);
+});
+
+test("P2-3 a link minted after leaving and returning to the quote shows in its link list", async ({ page }) => {
+  await signIn(page);
+  await openQuote(page, "Q-1001");
+  await expect(edit(page).getByTestId("qe-link")).toHaveCount(0);
+  const post = await hold(page, /\/api\/v1\/quotes\/q-1001\/share-links$/, { method: "POST" });
+  await edit(page).getByRole("button", { name: "Create link to copy" }).click();
+  await post.asked;
+  await row(page, "Q-1002").click();
+  await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1002");
+  await row(page, "Q-1001").click();
+  await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1001");
+  post.open();
+  await expect(edit(page).getByTestId("qe-link")).toHaveCount(1);
+});
+
+test("P2-3 a conversion that lands after leaving and returning to the quote shows the quote converted", async ({ page }) => {
+  await signIn(page);
+  await openQuote(page, "Q-1003");
+  const post = await hold(page, /\/api\/v1\/quotes\/q-1003\/convert$/, { method: "POST" });
+  await edit(page).getByTestId("qe-convert").click();
+  await post.asked;
+  await row(page, "Q-1002").click();
+  await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1002");
+  await row(page, "Q-1003").click();
+  await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1003");
+  post.open();
+  await expect(edit(page).getByTestId("qe-title")).toContainText("Converted");
+});
+
+test("P3 a floor refusal answered after the person returned to the quote is shown on it", async ({ page }) => {
+  await signIn(page, "Sales");
+  await openQuote(page, "Q-1001");
+  const patch = await hold(page, /\/api\/v1\/quotes\/q-1001\/lines\/1$/, { method: "PATCH", times: 1 });
+  const paver = edit(page).getByTestId("qe-line").first();
+  await paver.locator('[data-field="disc"]').fill("10");
+  await paver.getByRole("button", { name: "Save" }).click();
+  await patch.asked;
+  await row(page, "Q-1003").click();
+  await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1003");
+  await row(page, "Q-1001").click();
+  await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1001");
+  patch.open();
+  await expect(page.getByTestId("qe-error")).toContainText("puts the line below the margin floor");
+});
+
+test("P3 a refusal answered while the person is on another quote is not shown there", async ({ page }) => {
+  await signIn(page, "Sales");
+  await openQuote(page, "Q-1001");
+  const patch = await hold(page, /\/api\/v1\/quotes\/q-1001\/lines\/1$/, { method: "PATCH", times: 1 });
+  const paver = edit(page).getByTestId("qe-line").first();
+  await paver.locator('[data-field="disc"]').fill("10");
+  await paver.getByRole("button", { name: "Save" }).click();
+  await patch.asked;
+  await row(page, "Q-1003").click();
+  await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1003");
+  patch.open();
+  await settle(page);
+  await expect(page.getByTestId("qe-error")).toHaveText("");
+});
+
+test("P3 saving one line keeps the unsaved figures typed on the other lines", async ({ page }) => {
+  await signIn(page);
+  await openQuote(page, "Q-1001");
+  const lines = edit(page).getByTestId("qe-line");
+  await lines.nth(1).locator('[data-field="qty"]').fill("9");
+  await lines.first().locator('[data-field="qty"]').fill("6");
+  await lines.first().getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("qe-notice")).toHaveText("Saved.");
+  await expect(lines.first().locator('[data-field="qty"]')).toHaveValue("6");
+  await expect(lines.nth(1).locator('[data-field="qty"]')).toHaveValue("9");
+});
+
+test("P3 the fulfilment chosen for one conversion is not preselected on the next quote", async ({ page }) => {
+  await seed(page, { customer_id: "c-fenwick", status: "ACCEPTED" });
+  await signIn(page);
+  await openQuote(page, "Q-1003");
+  await edit(page).getByTestId("qe-fulfilment").selectOption("WILL_CALL");
+  await openQuote(page, "Q-1004");
+  await expect(edit(page).getByTestId("qe-fulfilment")).toHaveValue("");
 });
