@@ -441,16 +441,22 @@ func (s *SyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var status string
+	var status, branchID, ownerID string
 	var current *time.Time
 	if err := tx.QueryRow(ctx,
-		`SELECT status, valid_until FROM quotes
+		`SELECT status, valid_until, branch_id::text,
+		        COALESCE(salesperson_id::text, COALESCE(created_by::text, ''))
+		 FROM quotes
 		 WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL FOR UPDATE`,
-		id, f.OrgID).Scan(&status, &current); err != nil {
+		id, f.OrgID).Scan(&status, &current, &branchID, &ownerID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, fmt.Errorf("quote: lock %q for sync write: %w", id, err)
+	}
+	// The ownership ladder first, as the REST edit path runs it (P2-4).
+	if err := s.authorizeSyncWrite(ctx, f, branchID, ownerID); err != nil {
+		return sync.RowState{}, err
 	}
 	if rule, ok := quoteEditRules[FieldQuoteValidUntil]; ok && !rule.from[status] {
 		return sync.RowState{}, quoteRefused(fmt.Errorf("the quote is %s and its expiry date is frozen", status))
@@ -518,14 +524,20 @@ func (s *SyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key stri
 		return sync.RowState{}, fmt.Errorf("quote: begin sync delete: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var status string
+	var status, branchID, ownerID string
 	if err := tx.QueryRow(ctx,
-		`SELECT status FROM quotes WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL FOR UPDATE`,
-		id, f.OrgID).Scan(&status); err != nil {
+		`SELECT status, branch_id::text,
+		        COALESCE(salesperson_id::text, COALESCE(created_by::text, ''))
+		 FROM quotes WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL FOR UPDATE`,
+		id, f.OrgID).Scan(&status, &branchID, &ownerID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
 		return sync.RowState{}, fmt.Errorf("quote: lock %q for sync delete: %w", id, err)
+	}
+	// The same ladder as the write (P2-4): withdrawing is an edit.
+	if err := s.authorizeSyncWrite(ctx, f, branchID, ownerID); err != nil {
+		return sync.RowState{}, err
 	}
 	if status != "DRAFT" {
 		return sync.RowState{}, quoteRefused(fmt.Errorf("a %s quote is a record, withdrawal is the desk's own path", status))
