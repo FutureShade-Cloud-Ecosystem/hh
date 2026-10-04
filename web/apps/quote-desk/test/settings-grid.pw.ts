@@ -3,6 +3,14 @@
 // share a row of their own, and Save policy has its own breathing room.
 import { expect, test } from "@playwright/test";
 
+// The stub keeps the person's layout row, which now remembers the open quote: every test starts from the seeded world.
+test.beforeEach(async ({ request }) => {
+  await request.post("/_stub/reset");
+});
+test.afterAll(async ({ request }) => {
+  await request.post("/_stub/reset");
+});
+
 test("the policy switches share one row and Save policy keeps its distance", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");

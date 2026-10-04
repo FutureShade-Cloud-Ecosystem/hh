@@ -6,6 +6,11 @@
 // often as it won; this test makes the race deterministic.
 import { expect, test } from "@playwright/test";
 
+// Both tests read the second line of the seeded draft: a quote another test left behind, or a layout row that resumes
+// another quote, would put a different quote under the click, so each starts from the seeded world.
+test.beforeEach(async ({ request }) => {
+  await request.post("/_stub/reset");
+});
 test.afterAll(async ({ request }) => {
   await request.post("/_stub/reset");
 });

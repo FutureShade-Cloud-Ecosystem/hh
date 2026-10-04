@@ -3,6 +3,14 @@
 // already renders both presentations; the desk gave no way to reach Rows.
 import { expect, test } from "@playwright/test";
 
+// The stub keeps the person's layout row, which now remembers the open quote: every test starts from the seeded world.
+test.beforeEach(async ({ request }) => {
+  await request.post("/_stub/reset");
+});
+test.afterAll(async ({ request }) => {
+  await request.post("/_stub/reset");
+});
+
 test("Cards and Rows beside Products flip the grid's presentation", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Sales", exact: true }).click();

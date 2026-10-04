@@ -6,6 +6,14 @@
 // stub's world is in memory, so the tests run in order.
 import { expect, test, type Page } from "@playwright/test";
 
+// The stub keeps the person's layout row, which now remembers the open quote: every test starts from the seeded world.
+test.beforeEach(async ({ request }) => {
+  await request.post("/_stub/reset");
+});
+test.afterAll(async ({ request }) => {
+  await request.post("/_stub/reset");
+});
+
 async function signIn(page: Page, role = "Sales"): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: role, exact: true }).click();
