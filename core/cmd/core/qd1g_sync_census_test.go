@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"sort"
@@ -1019,6 +1020,7 @@ func TestQD1G_SyncDoorCensus(t *testing.T) {
 		}
 	}
 	qd1gNotVacuous(t)
+	qd1gScopesGuard(t)
 }
 
 // qd1gNotVacuous runs after the census and requires that
@@ -1077,3 +1079,81 @@ func qd1gNotVacuous(t *testing.T) {
 	}
 }
 
+// ---- the registered scopes -----------------------------------------------
+
+// qd1gScopesOnQuoteTables are the registered sync scopes allowed to touch the
+// quote or approval tables, each with the reason (the document repeats them).
+// quotes and approvals are the two stores the census drives door by door.
+var qd1gScopesOnQuoteTables = map[string]string{
+	"quotes":          "the quotes store, every door ruled by this census",
+	"approvals":       "the approvals store, every door ruled by this census",
+	"customer_quotes": "a separate table (the customer quote record), not the staff quotes table",
+	"orders":          "the tenant plan table; reads no quote or approval column",
+	"widget_measures": "reads only the layout tables; no quote or approval column",
+	"attachments":     "carries owner_kind quote links, fenced by org only, no quote field today",
+}
+
+// qd1gScopesClear are the other registered scopes, reviewed as touching
+// neither table. A scope on neither list fails the census by name.
+var qd1gScopesClear = map[string]bool{
+	"aging": true, "catalog": true, "customers": true, "cycle_counts": true,
+	"delivery_instructions": true, "delivery_stops": true, "drivers": true,
+	"inventory_lookup": true, "invoices": true, "loads": true, "parked_tickets": true,
+	"payment_methods": true, "payments": true, "pick_tasks": true, "pickups": true,
+	"pod": true, "price_matrix": true, "products": true, "projects": true,
+	"purchase_orders": true, "runs": true, "scope_items": true, "shortages": true,
+	"stops": true, "team": true, "trucks": true, "vendors": true, "warranty_board": true,
+	"warranty_claims": true, "weights": true, "will_call": true,
+}
+
+// qd1gScopesGuard reads every RegisterScope in this package's source and
+// requires each scope to be ruled: allowed on the quote and approval tables
+// (with a reason, in the census document too) or reviewed clear of them.
+func qd1gScopesGuard(t *testing.T) {
+	t.Helper()
+	files, err := filepath.Glob("*.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("list the cmd/core sources: %v", err)
+	}
+	re := regexp.MustCompile(`RegisterScope\("([a-z_]+)"`)
+	registered := map[string]bool{}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		for _, m := range re.FindAllStringSubmatch(string(raw), -1) {
+			registered[m[1]] = true
+		}
+	}
+	doc, err := os.ReadFile("../../internal/quote/SYNC-DOOR-CENSUS.md")
+	if err != nil {
+		t.Fatalf("read the census document: %v", err)
+	}
+	for name := range registered {
+		_, touches := qd1gScopesOnQuoteTables[name]
+		if !touches && !qd1gScopesClear[name] {
+			t.Errorf("sync census: the registered sync scope %q is on neither list: decide whether it touches the quote or approval tables, "+
+				"and list it in qd1gScopesOnQuoteTables (with a reason, and in the census document) or qd1gScopesClear", name)
+		}
+		if touches && qd1gScopesClear[name] {
+			t.Errorf("sync census: scope %q is on both lists", name)
+		}
+	}
+	for name := range qd1gScopesOnQuoteTables {
+		if !registered[name] {
+			t.Errorf("sync census: scope %q is listed as touching quote or approval tables but is no longer registered", name)
+		}
+		if !strings.Contains(string(doc), "`"+name+"`") {
+			t.Errorf("sync census: scope %q has no reason in the census document", name)
+		}
+	}
+	for name := range qd1gScopesClear {
+		if !registered[name] {
+			t.Errorf("sync census: scope %q is listed as clear but is no longer registered", name)
+		}
+	}
+}

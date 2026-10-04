@@ -23,7 +23,10 @@ How the test holds it:
 - It requires that every door both admits and refuses somebody, so a census whose
   every answer is a refusal cannot pass.
 - It reads this document: every row of section 1 must name a method the stores
-  have, and every method must have a row.
+  have, and every method must have a row, and every cell of section 3 must equal the
+  answer observed.
+- It follows both lists to the end (the REST cursor, the sync next_cursor), so a long
+  lived gate cannot push a planted row off a first page.
 
 ## 1. The rule per door
 
@@ -357,9 +360,47 @@ The census asserts for every role and for every planted row that the replay answ
    quote's validity is allowed. The withdrawal is a tombstone that takes effect; the
    desk's own path withdraws a record.
 
-## 5. Keeping it true
+## 5. Known and accepted
+
+Ruled as known by the reviewer, so the next reader does not reopen them:
+
+1. The census principals double as planted filers for some cells: the inside_sales
+   caller is the same user as the Inside Sales filer, and the branch_manager caller is
+   the planted Branch manager filer. So some legs of the approvals matrices are a
+   caller's own filings. The peer case is covered by the QD1C and QD1E tests, not here.
+2. A create replay after a sync decision files a twin pending card. The decision stamps
+   the decider's key over the filer's, so the filer's replay finds no match. It fails
+   safe (a duplicate pending card) and is the same pattern the quotes write has.
+3. The approvals pull for the walled roles (yard_team, driver, hr) refuses every live
+   row, so it pages to the end of the table on each pull. Accepted cost.
+4. The margin detail of a floor request is gated by who may read the request, not by the
+   cost list. The default cost list covers every role that can file or decide, so
+   nothing leaks today. A dealer that drops a Quote Desk role from the list would show
+   that role the figures of requests it may still read.
+5. Quote create on a taken id tells a Work caller that the id exists, for any quote id
+   in its org. This is intended.
+
+## 6. The registered sync scopes
+
+The census reads every `RegisterScope` in `core/cmd/core` and requires each scope to be
+ruled. A scope on neither list fails the census by name. These may touch the quote or
+approval tables, and why:
+
+- `quotes` and `approvals`: the two stores this census drives door by door.
+- `customer_quotes`: a separate table, not the staff quotes table.
+- `orders`: the tenant plan table; it reads no quote or approval column.
+- `widget_measures`: reads only the layout tables.
+- `attachments`: carries links with owner_kind quote. They are fenced by org only and
+  carry no quote field today; nothing reads those links through sync.
+
+Every other registered scope is listed in the test as reviewed clear of both tables.
+
+## 7. Keeping it true
 
 A door added to either store, a new operation on the sync core's `Store`, or a new role in
 the configuration fails the census until it is ruled: add its row to the table in
 `qd1g_sync_census_test.go`, its rule to section 1 and its matrix to section 3 here. The
-matrices are the test's own answers (`QD1G_DUMP=<file>` writes them as data).
+matrices are the test's own answers (`QD1G_DUMP=<file>` writes them as data), and the
+test reads them: after the run it parses section 3 and requires every door, role and leg
+cell to equal the answer the census observed, in both directions, so a rule changed on
+both sides at once leaves the census red until this document follows.
