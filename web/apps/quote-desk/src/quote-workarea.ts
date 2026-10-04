@@ -851,6 +851,11 @@ export class QdQuoteWorkarea extends LitElement {
       white-space: nowrap;
       border: 0;
     }
+    .drafthint {
+      margin: var(--hos-s-8, 8px) 0 0;
+      font-size: var(--qb-caption);
+      color: var(--hos-text-dim, var(--hh-text-dim));
+    }
     .actions {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -2778,6 +2783,9 @@ export class QdQuoteWorkarea extends LitElement {
     const channels = sendChannels(this.#sendPolicy());
     const chosen = channels.filter((c) => this.sendPick[c]);
     return html`
+      ${v.status === "DRAFT"
+        ? html`<p class="drafthint" data-testid="qb-draft-hint">A draft is a quote you have not sent yet.</p>`
+        : nothing}
       <div class="actions">
         ${has("quote.save_draft")
           ? html`<button type="button" class="abtn" data-action="save-draft" data-testid="qb-save-draft">Save</button>`
