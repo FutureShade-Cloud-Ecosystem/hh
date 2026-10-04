@@ -198,26 +198,30 @@ func TestQD1_CategoryFloor_EnforcementDisabledAsksNoFloorQuestion(t *testing.T) 
 	seller := qd1User(t, pool, "seller")
 	_, quoteID, prod, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 
-	if _, err := pool.Exec(context.Background(), `
-		INSERT INTO pricing_product_policy (product_id, margin_enforcement_disabled)
-		VALUES ($1::uuid, true)`, prod); err != nil {
-		t.Fatalf("seed the product's enforcement switch: %v", err)
+	// The CATEGORY's switch, not the product's: the product switch worked
+	// before the fix, only the category row was unreachable (empty id). 45
+	// percent leaves a 909 bps margin, UNDER the 1200 default, so a decision
+	// that fell back to the default would ask the floor question and refuse.
+	cat := qd1ProductCategory(t, pool, prod)
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE pricing_category_policy SET margin_enforcement_disabled = true WHERE category_id = $1`, cat); err != nil {
+		t.Fatalf("seed the category's enforcement switch: %v", err)
 	}
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(),
-			`DELETE FROM pricing_product_policy WHERE product_id = $1`, prod)
+			`UPDATE pricing_category_policy SET margin_enforcement_disabled = false WHERE category_id = $1`, cat)
 	})
 
 	svc := qd1RealFloorSvc(t, pool, now)
 	ctx := qCtxAs(intStaff(intTrenton))
 	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
-	res, err := svc.SetLineDiscount(ctx, quoteID, 1, 40)
+	res, err := svc.SetLineDiscount(ctx, quoteID, 1, 45)
 	if err != nil {
 		t.Fatalf("with enforcement disabled the gate does not run: %v", err)
 	}
-	if res.Line.LineTotalCents != 1200 {
-		t.Errorf("the discounted total must be 1200, got %d", res.Line.LineTotalCents)
+	if res.Line.LineTotalCents != 1100 {
+		t.Errorf("the discounted total must be 1100, got %d", res.Line.LineTotalCents)
 	}
 	if c := qd1LineClearing(t, pool, quoteID, 1); c != nil {
 		t.Errorf("no floor question means no clearing stamp, got %v", c)
@@ -228,8 +232,8 @@ func TestQD1_CategoryFloor_EnforcementDisabledAsksNoFloorQuestion(t *testing.T) 
 }
 
 // The floor is honoured from the category row in BOTH directions: with the
-// category's floor moved BELOW the default (1000 bps), the same 1666 bps
-// margin the default would refuse is accepted with no manager, so the
+// category's floor moved BELOW the default (500 bps), a 909 bps margin (45
+// percent) the 1200 default would refuse is accepted with no manager, so the
 // decision provably reads the category row and not the constant.
 func TestQD1_CategoryFloor_LowerCategoryFloorHonoured(t *testing.T) {
 	pool := intPool(t)
@@ -239,7 +243,7 @@ func TestQD1_CategoryFloor_LowerCategoryFloorHonoured(t *testing.T) {
 	cat := qd1ProductCategory(t, pool, prod)
 
 	if _, err := pool.Exec(context.Background(),
-		`UPDATE pricing_category_policy SET margin_floor_bps = 1000 WHERE category_id = $1`, cat); err != nil {
+		`UPDATE pricing_category_policy SET margin_floor_bps = 500 WHERE category_id = $1`, cat); err != nil {
 		t.Fatalf("lower the category floor: %v", err)
 	}
 	t.Cleanup(func() {
@@ -251,8 +255,8 @@ func TestQD1_CategoryFloor_LowerCategoryFloorHonoured(t *testing.T) {
 	ctx := qCtxAs(intStaff(intTrenton))
 	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
-	if _, err := svc.SetLineDiscount(ctx, quoteID, 1, 40); err != nil {
-		t.Fatalf("a 1666 bps margin sits above the category's lowered 1000 floor and must be accepted with no manager: %v", err)
+	if _, err := svc.SetLineDiscount(ctx, quoteID, 1, 45); err != nil {
+		t.Fatalf("a 909 bps margin sits above the category's lowered 500 floor and must be accepted with no manager: %v", err)
 	}
 	if c := qd1LineClearing(t, pool, quoteID, 1); c != nil {
 		t.Errorf("a write above the floor stamps no clearing, got %v", c)
