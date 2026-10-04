@@ -192,6 +192,16 @@ export function ruleValueText(r: Pick<RuleRow, "calcType" | "discountBps" | "mar
   return `${formatMoney(r.priceCents ?? 0)} / ${r.priceUom}`;
 }
 
+/** What a rule applies to, as the list says it; ids shorten to eight characters, and a named branch is named. */
+export function ruleAppliesTo(r: Pick<RuleRow, "scope" | "customerId" | "productId" | "customerType" | "categoryId" | "branchId">, branchName: (id: string) => string, categoryName: (id: string) => string): string {
+  if (r.scope === "CUSTOMER_PRODUCT") return `${(r.customerId ?? "").slice(0, 8)} \u00b7 ${(r.productId ?? "").slice(0, 8)}`;
+  if (r.scope === "CUSTOMER_CATEGORY") return `${(r.customerId ?? "").slice(0, 8)} \u00b7 ${categoryName(r.categoryId ?? "")}`;
+  if (r.scope === "TIER_CATEGORY") {
+    return `${r.customerType ?? ""} \u00b7 ${categoryName(r.categoryId ?? "")}${r.branchId === undefined ? "" : ` \u00b7 ${branchName(r.branchId)}`}`;
+  }
+  return r.customerType ?? "";
+}
+
 // ── customer prices ──────────────────────────────────────────────────────────
 
 export interface OverrideForm {

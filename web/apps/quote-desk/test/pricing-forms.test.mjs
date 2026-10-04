@@ -27,6 +27,7 @@ import {
   tierMark,
   tierValueDisplay,
   schedulesWithUnappliedTiers,
+  ruleAppliesTo,
 } from "../src/_pricing-forms.js";
 
 const CAT = "ca700000-0000-4000-9000-000000000001";
@@ -210,4 +211,13 @@ test("a policy save needs two percentages and a floor not above the target", () 
   assert.deepEqual(out.value, { margin_target_bps: 3400, margin_floor_bps: 2050, margin_enforcement_disabled: true });
   assert.match(policySave({ target: "", floor: "20", enforce: true }).error, /target and floor/i);
   assert.match(policySave({ target: "10", floor: "20", enforce: true }).error, /floor must be at or below the target/i);
+});
+
+test("a rule's applies to reads as the list shows it", () => {
+  const branch = (id) => (id === "b1" ? "Trenton" : id.slice(0, 8));
+  const cat = (id) => (id === CAT ? "Pavers" : id.slice(0, 8));
+  assert.equal(ruleAppliesTo(ruleRow, branch, cat), "CONTRACTOR · Pavers");
+  assert.equal(ruleAppliesTo({ ...ruleRow, branchId: "b1" }, branch, cat), "CONTRACTOR · Pavers · Trenton");
+  assert.equal(ruleAppliesTo({ ...ruleRow, scope: "TIER_DEFAULT", categoryId: undefined }, branch, cat), "CONTRACTOR");
+  assert.equal(ruleAppliesTo({ ...ruleRow, scope: "CUSTOMER_PRODUCT", customerId: CUST, productId: PROD }, branch, cat), "c0000000 · a7000000");
 });
