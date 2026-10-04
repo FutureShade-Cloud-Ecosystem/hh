@@ -345,6 +345,35 @@ func TestQD1B_UnboundMarginCardStaysRefusedToTheSalesManager(t *testing.T) {
 	}
 }
 
+// TestQD1B_SalesManagerRefusedTheirOwnFloorRequestOverTheRoute is four
+// eyes by request for the Sales manager (the review's P3): the manager
+// reaches the decide route and holds the branch arm for the request's
+// branch, so the only thing refusing the decision is that they filed the
+// request. The service's refusal, not the gate's, and the card stays
+// PENDING.
+func TestQD1B_SalesManagerRefusedTheirOwnFloorRequestOverTheRoute(t *testing.T) {
+	q := newQD1BFixture(t)
+	manager := qd1bUserID(t, q.pool, testkit.SubSalesManager)
+	own := qd1bPlantFloor(t, q, manager, testkit.BranchNorthAID, "000000000b09")
+
+	code, body := qd1bCall(t, q, http.MethodPost, qd1bDecidePath(own), testkit.SubSalesManager,
+		map[string]any{"approve": true})
+	if code != http.StatusForbidden || body == string(authz.BodyForbidden) {
+		t.Fatalf("the Sales manager decides their own floor request: %d %s, want the service's refusal, not the gate's", code, body)
+	}
+	if !strings.Contains(body, "separation of duties") {
+		t.Fatalf("the refusal must be the four eyes rule's, got %s", body)
+	}
+	var status string
+	if err := q.pool.QueryRow(context.Background(),
+		`SELECT status FROM permission_approval_requests WHERE id = $1`, own).Scan(&status); err != nil {
+		t.Fatalf("read the request back: %v", err)
+	}
+	if status != string(identity.ApprovalPending) {
+		t.Fatalf("the refused request is %s, want PENDING", status)
+	}
+}
+
 // TestQD1B_DecideRouteReachIsExactlyTheConfiguredSet pins the widening's
 // blast radius over the whole decided default, planted roles and
 // unplanted ones together: the roles whose rows reach the decide route

@@ -249,11 +249,16 @@ func TestQD1B_SyncDoorDecidesWithTheConfiguredApprovers(t *testing.T) {
 	})
 	qd1bRejected(t, "the Sales manager decides another branch's floor request", res, "")
 
-	ownTwo := qd1bPlantFloor(t, q, clerk, testkit.BranchNorthAID, "000000000c23")
-	res = qd1bPush(t, q, testkit.SubInsideSales, qd1bPushOp{
+	// Four eyes with a caller who would otherwise hold the authority: the
+	// branch's Sales manager decides a request of its own branch (the leg
+	// above), so the only thing refusing it here is that it is the
+	// requester. Disabling the four eyes rule turns this leg red.
+	manager := qd1bUserID(t, q.pool, testkit.SubSalesManager)
+	ownTwo := qd1bPlantFloor(t, q, manager, testkit.BranchNorthAID, "000000000c23")
+	res = qd1bPush(t, q, testkit.SubSalesManager, qd1bPushOp{
 		ClientID: "3ef10000-0d1b-4000-8000-0000000000c7",
 		Op:       "update",
 		Payload:  map[string]any{"id": ownTwo, "status": "APPROVED"},
 	})
-	qd1bRejected(t, "the requester decides their own floor request", res, "")
+	qd1bRejected(t, "the Sales manager decides their own floor request", res, "separation of duties")
 }
