@@ -1097,7 +1097,7 @@ export class QdQuoteWorkarea extends LitElement {
     if (changed.has("quoteId")) {
       this.converted = null;
       this.mintedToken = "";
-      void this.loadAll();
+      this.opening = this.loadAll();
       // Remember what is open so a refresh resumes it.
       if (changed.get("quoteId") !== undefined || this.quoteId) this.store?.scheduleSave();
     }
@@ -1715,9 +1715,23 @@ export class QdQuoteWorkarea extends LitElement {
     }
   }
 
+  /** The quote being created and the read of the quote just opened: a scan that arrives first waits for them. */
+  private creating: Promise<void> | null = null;
+  private opening: Promise<void> = Promise.resolve();
+  private createdQuoteId = "";
+
   private async addProduct(p: { id: string; uom: string; name?: string }, qty = 1): Promise<void> {
     const client = this.client;
     if (client === null) return;
+    // A scan right after the customer is picked lands while the quote is still being made or read: it waits
+    // for them rather than being told to pick a customer who has just been picked.
+    if (this.creating !== null) {
+      await this.creating;
+      // The host hands the new quote id down on its own render: wait for it to arrive (bounded).
+      for (let waited = 0; this.createdQuoteId !== "" && this.quoteId === "" && waited < 50; waited += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+      await this.updateComplete;
+    }
+    if (this.quoteId !== "" && this.view === null) await this.opening;
     if (this.quoteId === "" || this.view === null) {
       this.speakAdd("Pick a customer first. The quote starts there.", "warn");
       return;
@@ -2112,11 +2126,20 @@ export class QdQuoteWorkarea extends LitElement {
 
   // ── compose (a new quote) and the send and convert paths ───────────────────
 
-  private async createFor(cust: PickerCustomer): Promise<void> {
+  private createFor(cust: PickerCustomer): Promise<void> {
+    const made = this.createForNow(cust).finally(() => {
+      if (this.creating === made) this.creating = null;
+    });
+    this.creating = made;
+    return made;
+  }
+
+  private async createForNow(cust: PickerCustomer): Promise<void> {
     const client = this.client;
     if (client === null || this.busy) return;
     this.busy = true;
     this.error = "";
+    this.createdQuoteId = "";
     const days = this.config?.policy?.defaultValidityDays || 30;
     const result = await client.createQuote(cust.id, this.branchId, validUntilFromDays(days, this.clockNow));
     this.busy = false;
@@ -2129,6 +2152,7 @@ export class QdQuoteWorkarea extends LitElement {
     // guard is holding belongs to the quote that just left.
     this.ticketMoved();
     this.pendingFocusScan = true;
+    this.createdQuoteId = result.value;
     this.dispatchEvent(new CustomEvent("quote-open", { detail: { quoteId: result.value }, bubbles: true, composed: true }));
   }
 
