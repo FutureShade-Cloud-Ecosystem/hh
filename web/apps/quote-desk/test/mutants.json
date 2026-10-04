@@ -138,5 +138,12 @@
     "find": "    this.customer = null; // the card shows nothing of the old account until the new one is read\n",
     "replace": "",
     "test": "P2-3 the identity card"
+  },
+  {
+    "id": "wa-open-ref",
+    "file": "src/quote-workarea.ts",
+    "find": "        if (this.store !== null) this.store.state.openRef = this.quoteId;\n        this.store?.scheduleSave();",
+    "replace": "        this.store?.scheduleSave();",
+    "test": "P2-4 the desk resumes"
   }
 ]

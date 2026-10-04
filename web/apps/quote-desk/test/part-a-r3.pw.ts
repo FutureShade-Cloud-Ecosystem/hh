@@ -151,3 +151,14 @@ test("P2-3 the identity card shows nothing of the previous customer's account wh
   held.open();
   await expect(page.getByTestId("qb-identity")).toContainText("C02");
 });
+
+test("P2-4 the desk resumes the quote that was open when the person signed out, not the one open at the last layout change", async ({ page }) => {
+  await signIn(page);
+  await open(page, "Q-1001");
+  await page.getByRole("button", { name: "Swap panels" }).click();
+  await open(page, "Q-1003");
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await expect(page.getByTestId("qb-context")).toContainText("Q-1003");
+});

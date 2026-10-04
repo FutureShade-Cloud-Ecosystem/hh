@@ -1127,6 +1127,7 @@ export class QdQuoteWorkarea extends LitElement {
       this.opening = this.loadAll();
       // Remember what is open so a refresh resumes it, sent now rather than left to the debounce.
       if (changed.get("quoteId") !== undefined || this.quoteId) {
+        if (this.store !== null) this.store.state.openRef = this.quoteId;
         this.store?.scheduleSave();
         void this.store?.flush();
       }
