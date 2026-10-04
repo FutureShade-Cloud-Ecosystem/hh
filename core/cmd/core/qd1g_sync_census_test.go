@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"reflect"
 	"regexp"
@@ -317,19 +318,43 @@ func (c *qd1gCensus) ownerFor(who qd1gRole, own bool) string {
 	return c.seller
 }
 
-// qd1gRestQuoteList answers whether REST's list shows each planted quote.
+// qd1gRestQuoteList answers whether REST's list shows each planted quote. It
+// follows next_cursor to the end, so a long lived gate with many quotes
+// cannot push a planted one off the first page.
 func qd1gRestQuoteList(t *testing.T, c *qd1gCensus, who qd1gRole, ids []string) map[string]bool {
 	t.Helper()
-	code, body := qd1bCall(t, c.q, http.MethodGet, "/api/v1/quotes?limit=100", who.sub, nil)
 	out := map[string]bool{}
-	if code == http.StatusForbidden {
-		return out
-	}
-	if code != http.StatusOK {
-		t.Fatalf("REST quote list as %s: %d %s", who.role, code, body)
+	var all strings.Builder
+	cursor := ""
+	for page := 0; ; page++ {
+		path := "/api/v1/quotes?limit=200"
+		if cursor != "" {
+			path += "&cursor=" + url.QueryEscape(cursor)
+		}
+		code, body := qd1bCall(t, c.q, http.MethodGet, path, who.sub, nil)
+		if code == http.StatusForbidden {
+			return out
+		}
+		if code != http.StatusOK {
+			t.Fatalf("REST quote list as %s: %d %s", who.role, code, body)
+		}
+		all.WriteString(body)
+		var env struct {
+			Next *string `json:"next_cursor"`
+		}
+		if err := json.Unmarshal([]byte(body), &env); err != nil {
+			t.Fatalf("decode the REST quote page as %s: %v", who.role, err)
+		}
+		if env.Next == nil || *env.Next == "" {
+			break
+		}
+		if page > 1000 {
+			t.Fatalf("REST quote list as %s did not end", who.role)
+		}
+		cursor = *env.Next
 	}
 	for _, id := range ids {
-		out[id] = strings.Contains(body, id)
+		out[id] = strings.Contains(all.String(), id)
 	}
 	return out
 }
@@ -403,17 +428,36 @@ func qd1gRestApprovalList(t *testing.T, c *qd1gCensus, who qd1gRole, ids []strin
 	return out, true
 }
 
-// qd1gSyncPull answers the body of one scope's pull.
+// qd1gSyncPull answers the bodies of one scope's pull, every page joined: it
+// follows next_cursor (the resume is since=<cursor>) to the end.
 func qd1gSyncPull(t *testing.T, c *qd1gCensus, scope string, who qd1gRole) string {
 	t.Helper()
-	code, body := qd1bCall(t, c.q, http.MethodGet, "/api/v1/sync/"+scope+"?since=0&limit=500", who.sub, nil)
-	if code == http.StatusForbidden {
-		return ""
+	var all strings.Builder
+	since := "0"
+	for page := 0; ; page++ {
+		code, body := qd1bCall(t, c.q, http.MethodGet, "/api/v1/sync/"+scope+"?since="+since+"&limit=500", who.sub, nil)
+		if code == http.StatusForbidden {
+			return ""
+		}
+		if code != http.StatusOK {
+			t.Fatalf("pull %s as %s: %d %s", scope, who.role, code, body)
+		}
+		all.WriteString(body)
+		var env struct {
+			Next *string `json:"next_cursor"`
+		}
+		if err := json.Unmarshal([]byte(body), &env); err != nil {
+			t.Fatalf("decode the %s pull page as %s: %v", scope, who.role, err)
+		}
+		if env.Next == nil || *env.Next == "" {
+			break
+		}
+		if page > 1000 {
+			t.Fatalf("pull %s as %s did not end", scope, who.role)
+		}
+		since = *env.Next
 	}
-	if code != http.StatusOK {
-		t.Fatalf("pull %s as %s: %d %s", scope, who.role, code, body)
-	}
-	return body
+	return all.String()
 }
 
 // ---- the doors -----------------------------------------------------------
@@ -960,3 +1004,4 @@ func qd1gNotVacuous(t *testing.T) {
 		}
 	}
 }
+
