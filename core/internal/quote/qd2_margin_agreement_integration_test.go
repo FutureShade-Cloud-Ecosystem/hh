@@ -39,12 +39,12 @@ import (
 // so the dated test audit keeps it under its guard without a signoff.
 var qd2TagSeq int64
 
-// qd2SeedMarginQuote seeds alice's Trenton quote with the two lines the
+// qd2SeedMarginQuote seeds seller's Trenton quote with the two lines the
 // agreement is pinned on: line 1 at a 550 cent rule price (below the floor
 // at its rule price, CP0-3's case) and line 2 at a 1000 cent rule price
 // carrying a 10 percent discount. The product's weighted average cost at
 // the branch is set to 500 cents and restored afterwards.
-func qd2SeedMarginQuote(t *testing.T, pool *pgxpool.Pool, alice string) (quoteID, prod, uom string) {
+func qd2SeedMarginQuote(t *testing.T, pool *pgxpool.Pool, seller string) (quoteID, prod, uom string) {
 	t.Helper()
 	ctx := context.Background()
 	prod, uom = anchoredProduct(t, pool)
@@ -84,7 +84,7 @@ func qd2SeedMarginQuote(t *testing.T, pool *pgxpool.Pool, alice string) (quoteID
 		INSERT INTO quotes (quote_no, customer_id, branch_id, status, salesperson_id,
 		                    subtotal_cents, tax_cents, total_cents)
 		VALUES ($1, $2::uuid, $3::uuid, 'DRAFT', $4::uuid, 2900, 0, 2900) RETURNING id::text`,
-		fmt.Sprintf("#Q-QD2-%d", tag), cust, intTrenton, alice).Scan(&quoteID); err != nil {
+		fmt.Sprintf("#Q-QD2-%d", tag), cust, intTrenton, seller).Scan(&quoteID); err != nil {
 		t.Fatalf("seed quote: %v", err)
 	}
 	for _, ln := range []struct {
@@ -118,8 +118,8 @@ func qd2SeedMarginQuote(t *testing.T, pool *pgxpool.Pool, alice string) (quoteID
 func TestQD2_MarginAgreement_ScreenAndFloorDecision(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
-	quoteID, prod, uom := qd2SeedMarginQuote(t, pool, alice)
+	seller := qd1User(t, pool, "seller")
+	quoteID, prod, uom := qd2SeedMarginQuote(t, pool, seller)
 
 	// The production shape: the real pricing service (category resolver,
 	// UOM converter, identity margin gate) as the floor arbiter, the real
@@ -143,7 +143,7 @@ func TestQD2_MarginAgreement_ScreenAndFloorDecision(t *testing.T) {
 		withCaller(qCallerFrom).
 		withNow(func() time.Time { return now })
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, alice)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
 	// The screen's margin glance.
 	glance, err := svc.MarginGlance(ctx, quoteID)
@@ -204,7 +204,7 @@ func TestQD2_MarginAgreement_ScreenAndFloorDecision(t *testing.T) {
 		t.Fatalf("pricing context: %v", err)
 	}
 	out, err := svc.decideLineFloor(ctx, identity.StaffContext{
-		UserID: alice, RoleCode: "INSIDE_SALES", Tier: identity.TierFrontline,
+		UserID: seller, RoleCode: "INSIDE_SALES", Tier: identity.TierFrontline,
 		Scope: identity.ScopeBranch, Status: identity.StatusActive,
 		Branches: map[string]bool{intTrenton: true},
 	}, quoteID, branchID, prod, 2, 10, "", uom, 1000, 2000, uom, nil)

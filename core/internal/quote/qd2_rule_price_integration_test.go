@@ -121,9 +121,9 @@ func qd2CleanAudit(t *testing.T, pool *pgxpool.Pool, quoteID string) {
 func TestQD2_RulePriceBelowFloor_AddLineAcceptedAsSalesAndManager(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
+	seller := qd1User(t, pool, "seller")
 	mgr := qd1User(t, pool, "mgr")
-	_, quoteID, prod, uom := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	_, quoteID, prod, uom := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 	qd2CleanAudit(t, pool, quoteID)
 
 	for _, tc := range []struct {
@@ -131,7 +131,7 @@ func TestQD2_RulePriceBelowFloor_AddLineAcceptedAsSalesAndManager(t *testing.T) 
 		role string
 		user string
 	}{
-		{name: "sales", role: "INSIDE_SALES", user: alice},
+		{name: "sales", role: "INSIDE_SALES", user: seller},
 		{name: "sales manager", role: "SALES_MANAGER", user: mgr},
 	} {
 		pricer := qd2Pricer{blocked: true, finalCents: 600, marginBps: 500, floorBps: 1200}
@@ -158,15 +158,15 @@ func TestQD2_RulePriceBelowFloor_AddLineAcceptedAsSalesAndManager(t *testing.T) 
 func TestQD2_RulePriceBelowFloor_MarkedAndLogged(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
-	_, quoteID, prod, uom := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, prod, uom := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 	qd2CleanAudit(t, pool, quoteID)
 
 	pricer := qd2Pricer{blocked: true, finalCents: 600, marginBps: 500, floorBps: 1200}
 	arb := qd1Arbiter{marginBps: 500, floorBps: 1200}
 	svc := qd2Svc(t, pool, now, pricer, &arb)
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, alice)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
 	res, err := svc.AddLine(ctx, quoteID, prod, "qd2 below floor rule price", "3", uom)
 	if err != nil {
@@ -197,8 +197,8 @@ func TestQD2_RulePriceBelowFloor_MarkedAndLogged(t *testing.T) {
 	if row.Action != "UPDATE" {
 		t.Errorf("the rule price row is an UPDATE row, got %q", row.Action)
 	}
-	if row.UserID != alice {
-		t.Errorf("the row must name who wrote the line, got %q want %s", row.UserID, alice)
+	if row.UserID != seller {
+		t.Errorf("the row must name who wrote the line, got %q want %s", row.UserID, seller)
 	}
 	if row.FieldName != "line_2" {
 		t.Errorf("the row names its line (the seeded quote's second), got %q", row.FieldName)

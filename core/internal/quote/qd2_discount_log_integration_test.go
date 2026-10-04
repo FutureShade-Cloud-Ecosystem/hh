@@ -51,14 +51,14 @@ func qd2TrailField(t *testing.T, pool *pgxpool.Pool, quoteID, field string, line
 func TestQD2_DiscountAboveFloor_UpdateRowAndTrail(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 	qd2CleanAudit(t, pool, quoteID)
 
 	arb := qd1Arbiter{marginBps: 2000, floorBps: 1200}
 	svc := qd2Svc(t, pool, now, qd2Pricer{}, &arb)
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, alice)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
 	res, err := svc.SetLineDiscount(ctx, quoteID, 1, 10)
 	if err != nil {
@@ -81,8 +81,8 @@ func TestQD2_DiscountAboveFloor_UpdateRowAndTrail(t *testing.T) {
 	if row.BypassReason != "" {
 		t.Errorf("an UPDATE row names no bypass authority, got %q", row.BypassReason)
 	}
-	if row.UserID != alice {
-		t.Errorf("the row must name who discounted the line, got %q want %s", row.UserID, alice)
+	if row.UserID != seller {
+		t.Errorf("the row must name who discounted the line, got %q want %s", row.UserID, seller)
 	}
 	if row.FieldName != "line_1" {
 		t.Errorf("the row names its line, got %q", row.FieldName)
@@ -113,15 +113,15 @@ func TestQD2_DiscountAboveFloor_UpdateRowAndTrail(t *testing.T) {
 func TestQD2_QtyRepriceAboveFloor_UpdateRow(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	seller := qd1User(t, pool, "seller")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 	qd1SetDisc(t, pool, quoteID, 1, 20)
 	qd2CleanAudit(t, pool, quoteID)
 
 	arb := qd1Arbiter{marginBps: 2000, floorBps: 1200}
 	svc := qd2Svc(t, pool, now, qd2Pricer{}, &arb)
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, alice)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
 	if _, err := svc.EditLineQty(ctx, quoteID, 1, "5"); err != nil {
 		t.Fatalf("a reprice above the floor must be accepted: %v", err)
