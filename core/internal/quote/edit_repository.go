@@ -194,6 +194,21 @@ func (r *Repository) UpdateLineGuarded(ctx context.Context, w quoteEditWrite, pl
 	if before.ProductID != w.ProductID {
 		return before, after, totals, status, errFloorStateChanged
 	}
+	// And the same product re-added in another unit inside that window: the
+	// price and qty_base were resolved for the unit the caller saw, so a row
+	// entered in another unit under the lock would show an entered quantity
+	// and unit that disagree with both (review round 4, P3-6).
+	if w.UOMEntered != "" {
+		var rowUOM string
+		if err := tx.QueryRow(ctx,
+			`SELECT uom_entered::text FROM quote_lines WHERE quote_id = $1 AND line_no = $2`,
+			w.QuoteID, w.LineNo).Scan(&rowUOM); err != nil {
+			return before, after, totals, status, fmt.Errorf("read quote line unit: %w", err)
+		}
+		if rowUOM != w.UOMEntered {
+			return before, after, totals, status, errFloorStateChanged
+		}
+	}
 	if plan.expectedDisc >= 0 || plan.lineID != "" {
 		// The floor decision priced THIS stored discount on THIS row; a
 		// different one under the lock means figures nobody decided on (a

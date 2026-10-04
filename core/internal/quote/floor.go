@@ -211,10 +211,14 @@ func (s *StaffService) callerClearsOwnBranchFloor(c identity.StaffContext, branc
 	return clears
 }
 
-// floorApprovers answers who may approve a below floor price, as ERP role
-// codes: the configuration's floor list plus the branch scoped quote floor
-// approvers (CP0-1 answer B), never a code constant.
-func (s *StaffService) floorApprovers() []string {
+// floorApprovers answers who may approve a below floor price filed by a
+// caller of filerRole, as ERP role codes: the configuration's floor list,
+// plus the branch scoped quote floor approvers (CP0-1 answer B) only when the
+// filer is a salesperson role the branch arm may answer (row 743). The
+// allowlist is identity's own (FloorBranchFiler), the one the decide rule
+// reads, so the names cannot drift from who could decide. A request filed by
+// any other role goes to leadership alone, so only leadership is named.
+func (s *StaffService) floorApprovers(filerRole string) []string {
 	if s.roles == nil {
 		return nil
 	}
@@ -234,8 +238,10 @@ func (s *StaffService) floorApprovers() []string {
 			add(r)
 		}
 	}
-	for _, r := range s.roles.QuoteFloorBranchApprovers() {
-		add(r)
+	if identity.FloorBranchFiler(filerRole) {
+		for _, r := range s.roles.QuoteFloorBranchApprovers() {
+			add(r)
+		}
 	}
 	return out
 }
@@ -377,7 +383,7 @@ func (s *StaffService) decideLineFloor(ctx context.Context, caller identity.Staf
 	// stands.
 	refusal := &FloorRefusalError{
 		Policy:        string(identity.PolicyMargin),
-		Approvers:     s.floorApprovers(),
+		Approvers:     s.floorApprovers(caller.RoleCode),
 		ManagerMaySet: s.managerMaySet(),
 	}
 	if s.seesCostAndMargin(caller) {
