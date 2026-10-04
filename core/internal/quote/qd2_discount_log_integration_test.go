@@ -395,10 +395,12 @@ func TestQD2_QtyRepriceRulePriceRow_CarriesTheLinesDiscount(t *testing.T) {
 	}
 }
 
-// The change trail rides the write's own transaction: a record hook that
-// fails refuses the discount, the line stands undiscounted, and the pricing
-// log row the same transaction had already inserted goes with it. Moving
-// either hook after the commit fails this test.
+// The change trail rides the write's own transaction: the record hook runs
+// first, so a record hook that fails refuses the discount before the pricing
+// hook runs, the line stands undiscounted and no pricing log row exists. This
+// test proves the record hook is inside the transaction (moving it after the
+// commit fails it); that the pricing hook is inside the transaction too is
+// proved by TestQD2_PricingLogRow_FailingAppendRollsTheWriteBack.
 func TestQD2_DiscountTrail_RidesTheWriteTransaction(t *testing.T) {
 	pool := intPool(t)
 	now := qd2Clock()
