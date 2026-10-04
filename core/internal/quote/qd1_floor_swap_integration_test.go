@@ -217,3 +217,61 @@ func TestQD1_RowSwapInsideTheWindowCannotRideTheReprice(t *testing.T) {
 		t.Fatalf("the swapped row must be untouched, got product %s total %d", got.ProductID, got.LineTotalCents)
 	}
 }
+
+// qd1SwapPricer runs the swap inside the pricing call, after the product
+// was read and before the row id is: the window the quantity reprice used to
+// pin from the wrong read (P2-1, round 3).
+type qd1SwapPricer struct {
+	qPricer
+	swap func()
+}
+
+func (p *qd1SwapPricer) ResolvePrice(ctx context.Context, in pricing.ResolveInput) (pricing.Breakdown, error) {
+	if p.swap != nil {
+		p.swap()
+		p.swap = nil
+	}
+	return p.qPricer.ResolvePrice(ctx, in)
+}
+
+// P2-1: the reprice priced product X from the first read and pinned the row
+// id from a later one, so a swap to product Y inside the pricing call rode
+// through and left X's price on Y's row. The priced product is now compared
+// with the row's product under the lock on every reprice, the discount-0 form
+// (no floor question) included.
+func TestQD1_RepriceRefusesARowSwappedToAnotherProductWhilePriced(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		disc int
+	}{{"discount 0", 0}, {"discount 10", 10}} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := intPool(t)
+			now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+			seller := qd1User(t, pool, "seller")
+			_, quoteID, prod, uom := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+			otherProd := qd1OtherProduct(t, pool, prod)
+			if tc.disc > 0 {
+				qd1SetDisc(t, pool, quoteID, 1, tc.disc)
+			}
+			arb := &qd1Arbiter{marginBps: 5000, floorBps: 1200}
+			arb.records = pricing.NewService(pricing.NewRepository(pool))
+			svc := qd1SvcArbiter(t, pool, now, arb)
+			pr := &qd1SwapPricer{}
+			pr.swap = func() { qd1SwapRow(t, pool, quoteID, otherProd, uom, tc.disc) }
+			svc.WithPricing(pr)
+			ctx := qd1WithRole(qCtxAs(intStaff(intTrenton)), "INSIDE_SALES", intTrenton, seller)
+
+			_, err := svc.EditLineQty(ctx, quoteID, 1, "50")
+			if !errors.Is(err, errFloorStateChanged) {
+				t.Fatalf("a reprice must refuse a row swapped to another product while priced, got %T: %v", err, err)
+			}
+			got := liveLine(t, pool, quoteID, 1)
+			if got.ProductID != otherProd || got.QtyEntered != "2.0000" || got.UnitPriceCents != 1000 {
+				t.Fatalf("the swapped row must be untouched, got %+v", got)
+			}
+			if rows := qd1BypassRows(t, pool, quoteID); len(rows) != 0 {
+				t.Fatalf("a refused write logs nothing, got %v", rows)
+			}
+		})
+	}
+}

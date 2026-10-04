@@ -248,7 +248,7 @@ type quoteEditWrite struct {
 	QuoteID        string
 	LineNo         int
 	AllowedFrom    []string
-	ProductID      string
+	ProductID      string // a reprice: the product the price was read for, pinned under the lock
 	Description    string
 	QtyEntered     string
 	UOMEntered     string
