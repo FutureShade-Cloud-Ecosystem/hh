@@ -17,7 +17,7 @@
 import { css, html, nothing, type TemplateResult } from "lit";
 import { state } from "lit/decorators.js";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
-import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
+import { baseStyles, button } from "@hardscapehouse/design-system/src/primitives.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import {
   acceptanceAmountPhrase,
@@ -47,27 +47,27 @@ export class QuotePublicPage extends HHElement {
            the reference page finishes at. */
         max-width: 780px;
         margin: 0 auto;
-        padding: 24px 18px 60px;
+        padding: var(--hh-s-24) var(--hh-s-16) var(--hh-s-64);
         font-family: var(--hh-font-ui);
         color: var(--hh-text);
       }
       h1 {
         font-size: 1.3rem;
-        margin: 0 0 2px;
+        margin: 0 0 var(--hh-s-4);
       }
       /* Full text ink, NOT the dimmed one: this line sits on the page rather
          than on a card, and it is load bearing information, not decoration. */
       .sub {
         color: var(--hh-text);
         font-size: 0.88rem;
-        margin-bottom: 18px;
+        margin-bottom: var(--hh-s-20);
       }
       .card {
         border: 1px solid var(--hh-line);
-        border-radius: 10px;
-        padding: 16px 18px;
+        border-radius: var(--hh-radius-card);
+        padding: var(--hh-s-16) var(--hh-s-20);
         background: var(--hh-card);
-        margin-bottom: 16px;
+        margin-bottom: var(--hh-s-16);
       }
       table {
         width: 100%;
@@ -101,10 +101,10 @@ export class QuotePublicPage extends HHElement {
         color: var(--hh-text-dim);
         font-weight: 600;
         border-bottom: 1px solid var(--hh-line);
-        padding: 6px 4px;
+        padding: var(--hh-s-8) var(--hh-s-4);
       }
       td {
-        padding: 7px 4px;
+        padding: var(--hh-s-8) var(--hh-s-4);
         border-bottom: 1px solid var(--hh-line);
       }
       td.num,
@@ -121,11 +121,11 @@ export class QuotePublicPage extends HHElement {
         background: var(--hh-row-alt);
       }
       .totals {
-        margin-top: 12px;
+        margin-top: var(--hh-s-12);
         display: flex;
         flex-direction: column;
         align-items: flex-end;
-        gap: 3px;
+        gap: var(--hh-s-4);
         font-size: 0.9rem;
       }
       .totals .grand {
@@ -136,12 +136,12 @@ export class QuotePublicPage extends HHElement {
         color: var(--hh-text-dim);
         font-size: 0.78rem;
         font-weight: 400;
-        margin-top: 2px;
+        margin-top: var(--hh-s-2);
       }
       label {
         display: block;
         font-size: 0.86rem;
-        margin-bottom: 4px;
+        margin-bottom: var(--hh-s-4);
         font-weight: 600;
       }
       input[type="text"] {
@@ -149,17 +149,17 @@ export class QuotePublicPage extends HHElement {
         box-sizing: border-box;
         width: 100%;
         max-width: 22rem;
-        padding: 7px 9px;
+        padding: var(--hh-s-8);
         border: 1px solid var(--hh-line);
-        border-radius: 6px;
+        border-radius: var(--hh-radius-control);
         background: var(--hh-card);
         color: var(--hh-text);
       }
       .check {
         display: flex;
         align-items: flex-start;
-        gap: 8px;
-        margin: 14px 0;
+        gap: var(--hh-s-8);
+        margin: var(--hh-s-16) 0;
         font-size: 0.88rem;
         line-height: 1.45;
       }
@@ -177,44 +177,29 @@ export class QuotePublicPage extends HHElement {
         outline: 2px solid var(--hh-focus-ring);
         outline-offset: 2px;
       }
-      /* The brand gold is a fill, never an ink: its ink is the invariant
-         accent ink, in both themes. */
-      button {
-        font: inherit;
+      /* The button itself is the design system's primitive (.btn-primary, and its
+         disabled swap) from baseStyles; only the label's weight is this page's. */
+      .btn {
         font-weight: 600;
-        padding: 9px 18px;
-        border-radius: 7px;
-        border: 1px solid transparent;
-        background: var(--hh-accent);
-        color: var(--hh-accent-ink);
-        cursor: pointer;
-      }
-      /* Disabled must LOOK disabled: the fill drops and goes grey, a token
-         swap, never a fade. */
-      button:disabled {
-        background: var(--hh-disabled-fill);
-        color: var(--hh-disabled-ink);
-        border-color: var(--hh-disabled-line);
-        cursor: default;
       }
       .err {
         color: var(--hh-danger);
         font-size: 0.9rem;
-        margin-top: 10px;
+        margin-top: var(--hh-s-12);
       }
       .note {
         color: var(--hh-text-dim);
         font-size: 0.78rem;
-        margin-top: 10px;
+        margin-top: var(--hh-s-12);
         line-height: 1.5;
       }
       .card-h2 {
         font-size: 1rem;
-        margin: 0 0 10px;
+        margin: 0 0 var(--hh-s-12);
       }
       .ok h2 {
         font-size: 1.05rem;
-        margin: 0 0 6px;
+        margin: 0 0 var(--hh-s-8);
       }
       /* The success mark rides the heading's words (colour never encodes
          state alone): the design system's done-marker path in the success
@@ -224,10 +209,10 @@ export class QuotePublicPage extends HHElement {
         height: 1.05em;
         color: var(--hh-success);
         vertical-align: -0.14em;
-        margin-right: 6px;
+        margin-right: var(--hh-s-8);
       }
       .ok .sub {
-        margin-bottom: 12px;
+        margin-bottom: var(--hh-s-12);
       }
       .gone {
         font-size: 0.95rem;
@@ -237,11 +222,11 @@ export class QuotePublicPage extends HHElement {
          carries a heading like every other card and clears the viewport top
          with room of its own, not the host padding alone. */
       .refusal {
-        margin-top: 24px;
+        margin-top: var(--hh-s-24);
       }
       .refusal h2,
       .closed h2 {
-        margin: 0 0 8px;
+        margin: 0 0 var(--hh-s-8);
       }
       .refusal .gone,
       .closed .gone {
@@ -251,7 +236,7 @@ export class QuotePublicPage extends HHElement {
         width: 36px;
         height: 36px;
         object-fit: cover;
-        border-radius: 6px;
+        border-radius: var(--hh-radius-control);
         border: 1px solid var(--hh-line);
         display: block;
       }
@@ -268,10 +253,10 @@ export class QuotePublicPage extends HHElement {
       }
       .termsfacts {
         border-top: 1px solid var(--hh-line);
-        margin-top: 10px;
+        margin-top: var(--hh-s-12);
       }
       .termsfacts p {
-        margin: 8px 0 0;
+        margin: var(--hh-s-8) 0 0;
       }
     `,
   ];
@@ -597,9 +582,7 @@ export class QuotePublicPage extends HHElement {
             )}
           </label>
         </div>
-        <button type="button" data-action="accept" ?disabled=${this.busy}>
-          ${this.busy ? "Recording…" : "Accept quote"}
-        </button>
+        ${button({ label: this.busy ? "Recording…" : "Accept quote", action: "accept", disabled: this.busy })}
         ${this.error ? html`<p class="err" role="alert">${this.error}</p>` : nothing}
         <p class="note">
           Accepting records your typed name, the date and time, and the link you used. This is an electronic acceptance:

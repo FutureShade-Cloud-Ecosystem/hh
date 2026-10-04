@@ -76,3 +76,17 @@ test("the entry page tells the browser to send no referrer", () => {
   const page = readFileSync(join(appDir, "index.html"), "utf8");
   assert.match(page, /<meta\s+name="referrer"\s+content="no-referrer"\s*\/?>/);
 });
+
+test("the page's styling comes from the design system's tokens and its button primitive", () => {
+  const source = readFileSync(join(srcDir, "quote-public.ts"), "utf8");
+  assert.deepEqual(source.match(/border-radius:\s*\d+px/g) ?? [], [], "radii are tokens, not raw px");
+  assert.deepEqual(
+    source.match(/(?:padding|margin|gap)[a-z-]*:[^;]*\b\d+px/g) ?? [],
+    [],
+    "paddings, margins and gaps ride the --hh-s-* grid, not raw px",
+  );
+  assert.match(source, /import \{[^}]*\bbutton\b[^}]*\} from "@hardscapehouse\/design-system\/src\/primitives\.js"/);
+  assert.match(source, /\bbutton\(\{/);
+  assert.doesNotMatch(source, /<button\b/, "no hand-rolled button element");
+  assert.doesNotMatch(source, /var\(--hh-accent\)/, "the fill is the primitive's --brand-fill, not a raw accent");
+});
