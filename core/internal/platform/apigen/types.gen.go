@@ -5437,6 +5437,49 @@ type PricingAuditLogRow struct {
 	BypassReason  *string   `json:"bypass_reason,omitempty"`
 }
 
+type PricingFloorPreviewRequest struct {
+	Kind          string                      `json:"kind"`
+	Id            *string                     `json:"id,omitempty"`
+	BranchId      *string                     `json:"branch_id,omitempty"`
+	Rule          *PricingRuleWrite           `json:"rule,omitempty"`
+	CustomerId    *string                     `json:"customer_id,omitempty"`
+	Override      *PricingOverrideWrite       `json:"override,omitempty"`
+	CategoryId    *string                     `json:"category_id,omitempty"`
+	Policy        *PricingCategoryPolicyWrite `json:"policy,omitempty"`
+	QuantityBreak *PricingQuantityBreakWrite  `json:"quantity_break,omitempty"`
+}
+
+type PricingFloorPreviewItem struct {
+	ProductId          string  `json:"product_id"`
+	Sku                string  `json:"sku"`
+	Name               string  `json:"name"`
+	CategoryId         *string `json:"category_id,omitempty"`
+	CustomerType       *string `json:"customer_type,omitempty"`
+	FinalCents         int64   `json:"final_cents"`
+	MarginBps          int64   `json:"margin_bps"`
+	FloorBps           int64   `json:"floor_bps"`
+	PriceUom           string  `json:"price_uom"`
+	Source             string  `json:"source"`
+	PreviousFinalCents int64   `json:"previous_final_cents"`
+	PreviousMarginBps  int64   `json:"previous_margin_bps"`
+	AlreadyUnderFloor  bool    `json:"already_under_floor"`
+}
+
+type PricingFloorPreview struct {
+	Items     []PricingFloorPreviewItem `json:"items"`
+	Evaluated int                       `json:"evaluated"`
+	NotGraded int                       `json:"not_graded"`
+	Truncated bool                      `json:"truncated"`
+}
+
+type PricingFloorConfirmation struct {
+	EntityType    string   `json:"entity_type"`
+	EntityId      string   `json:"entity_id"`
+	ProductIds    []string `json:"product_ids"`
+	RefEntityType *string  `json:"ref_entity_type,omitempty"`
+	RefEntityId   *string  `json:"ref_entity_id,omitempty"`
+}
+
 type PricingLowMarginRequest struct {
 	Lines []PricingResolveRequest `json:"lines"`
 }
