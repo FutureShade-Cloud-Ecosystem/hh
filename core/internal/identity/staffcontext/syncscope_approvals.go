@@ -347,20 +347,38 @@ func (s *ApprovalsSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since
 }
 
 // readerFor resolves the caller's authority once and answers, per request,
-// whether the caller may read its card (mayReadRequestWith under the
-// published floor set). A caller with no linked user, or whose authority
-// cannot be read, reads no floor request: the door fails closed.
+// whether the REST list would show the caller that request (the census
+// round): the list route's own wall (Work on the counter, the Quote Desk or
+// Manager Home), the list's branch reach (a dealer wide caller reads every
+// branch, a scoped one only its granted branches, none when it holds none),
+// and the floor card rule (mayReadRequestWith under the published floor
+// set). One addition to the list: a caller always reads back its own filings,
+// whatever branch they sit in, so a device holds what it pushed (the rail
+// does not fence the filing branch by reach). A caller with no linked user,
+// an unreadable authority or a role the list route refuses reads nothing:
+// the door fails closed.
 func (s *ApprovalsSyncStore) readerFor(ctx context.Context, f sync.ScopeFilter) func(ApprovalRequest) bool {
 	fa := syncFloorApprovers()
 	var caller StaffContext
+	resolved := false
 	if s.link != nil && f.Actor != "" {
 		if uid, ok := s.link(ctx, f.Actor); ok && uid != "" {
 			if c, err := s.resolve(ctx, uid, f.OrgID); err == nil {
 				caller = c
+				resolved = holdsLevel(c, roleconfig.LevelWork, approvalFileSurfaces, "read approval requests") == nil
 			}
 		}
 	}
-	return func(r ApprovalRequest) bool { return mayReadRequestWith(fa, caller, r) }
+	return func(r ApprovalRequest) bool {
+		if !resolved {
+			return false
+		}
+		own := caller.UserID != "" && r.RequestedBy == caller.UserID
+		if caller.Scope != ScopeGlobal && !caller.Branches[r.BranchID] && !own {
+			return false
+		}
+		return mayReadRequestWith(fa, caller, r)
+	}
 }
 
 // FindApplied resolves one idempotency key to the row it applied,
