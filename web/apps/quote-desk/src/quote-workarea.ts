@@ -1243,18 +1243,23 @@ export class QdQuoteWorkarea extends LitElement {
     for (const input of this.renderRoot.querySelectorAll<HTMLInputElement>('[data-field="terms"]')) {
       const field = input.getAttribute("data-terms-field") ?? "";
       const canonical = this.termsTextOf(field);
-      if (canonical !== null && input.value !== canonical) input.value = canonical;
+      if (canonical !== null && input.value !== canonical && !this.isTypingIn(input)) input.value = canonical;
     }
     const deliveryFee = this.renderRoot.querySelector<HTMLInputElement>('[data-field="delivery-fee"]');
     if (deliveryFee !== null && this.terms !== null) {
       const canonical = this.terms.deliveryFeeCents > 0 ? (this.terms.deliveryFeeCents / 100).toFixed(2) : "";
-      if (deliveryFee.value !== canonical) deliveryFee.value = canonical;
+      if (deliveryFee.value !== canonical && !this.isTypingIn(deliveryFee)) deliveryFee.value = canonical;
     }
     const depositPct = this.renderRoot.querySelector<HTMLInputElement>('[data-field="deposit-pct"]');
     if (depositPct !== null && this.terms !== null) {
       const canonical = this.terms.depositPct > 0 ? String(this.terms.depositPct) : "";
-      if (depositPct.value !== canonical) depositPct.value = canonical;
+      if (depositPct.value !== canonical && !this.isTypingIn(depositPct)) depositPct.value = canonical;
     }
+  }
+
+  /** True while the box holds the caret: a render or a late read never rewrites what is being typed. */
+  private isTypingIn(input: HTMLInputElement): boolean {
+    return this.renderRoot instanceof ShadowRoot && this.renderRoot.activeElement === input;
   }
 
   private termsTextOf(field: string): string | null {
@@ -1330,6 +1335,7 @@ export class QdQuoteWorkarea extends LitElement {
       this.view = null;
       this.terms = null;
       this.termsUnsaved = false;
+      this.termsPending = {};
       this.glance = null;
       this.addons = [];
       return;
@@ -1358,8 +1364,9 @@ export class QdQuoteWorkarea extends LitElement {
     }
     const terms = await client.readTerms(this.quoteId);
     if (terms.ok) {
-      this.terms = terms.value;
-      this.termsUnsaved = this.termsTimer !== undefined;
+      // A read that was in flight when the person edited must not land over the edit: the unsaved edits ride on top.
+      this.terms = { ...terms.value, ...this.termsPending };
+      this.termsUnsaved = this.termsPendingCount() > 0;
     }
     // The margin glance: byte absent fields for a refused caller. An empty
     // object means no margin surface for you, never an error.
@@ -1840,9 +1847,19 @@ export class QdQuoteWorkarea extends LitElement {
   /** True from a terms edit until the server has answered its save: the totals card then shows local figures, labelled. */
   @state() private termsUnsaved = false;
 
+  /** The edits the server has not yet answered, laid over every read until its save lands. */
+  private termsPending: Partial<TermsRef> = {};
+  private termsEditSeq = 0;
+
+  private termsPendingCount(): number {
+    return Object.keys(this.termsPending).length;
+  }
+
   private termsEdit(patch: Partial<TermsRef>): void {
     if (this.terms === null) return;
     this.termsUnsaved = true;
+    this.termsEditSeq += 1;
+    this.termsPending = { ...this.termsPending, ...patch };
     this.terms = { ...this.terms, ...patch };
     if (this.termsTimer !== undefined) clearTimeout(this.termsTimer);
     this.termsTimer = setTimeout(() => void this.putTermsNow(true), 600);
@@ -1888,6 +1905,7 @@ export class QdQuoteWorkarea extends LitElement {
       clearTimeout(this.termsTimer);
       this.termsTimer = undefined;
     }
+    const sent = this.termsEditSeq;
     const result = await client.putTerms(this.quoteId, {
       depositRequired: t.depositRequired,
       depositPct: t.depositPct,
@@ -1902,12 +1920,14 @@ export class QdQuoteWorkarea extends LitElement {
       requestedDate: t.requestedDate,
       deliveryFeeCents: t.deliveryFeeCents,
     });
+    // What was edited while this save was in flight is still unsaved and stays laid over the answer.
+    if (this.termsEditSeq === sent) this.termsPending = {};
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "save the quote terms"));
       return;
     }
-    this.termsUnsaved = false;
-    this.terms = result.value;
+    this.terms = { ...result.value, ...this.termsPending };
+    this.termsUnsaved = this.termsPendingCount() > 0;
     if (reloadAfter) {
       await this.loadAll();
       this.quoteChanged();
