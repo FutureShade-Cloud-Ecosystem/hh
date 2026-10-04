@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // P2-A: the exact probe of the review. An outside transaction holds the quote row lock, attempt 1
@@ -96,4 +98,41 @@ func TestIntegration_QD3g_RetryThroughDeadLinkWaitsForInFlightAccept(t *testing.
 type answerOrErr struct {
 	res AcceptanceResult
 	err error
+}
+
+// qd3gAccepted mints, accepts once under key A and kills the link; it returns the service that sees
+// the dead link and the first outcome.
+func qd3gAccepted(t *testing.T, pool *pgxpool.Pool, now time.Time) (svc *StaffService, quoteID, token string, first AcceptanceResult) {
+	t.Helper()
+	svc, quoteID, token, linkID := qd3fMinted(t, pool, now)
+	first, err := svc.AcceptByTokenKeyed(context.Background(), token, qd3fCustomer, true, qd3dKeyA)
+	if err != nil {
+		t.Fatalf("attempt 1: %v", err)
+	}
+	if err := svc.RevokeShareLink(qCtxAs(intStaff(intTrenton)), quoteID, linkID); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	return svc, quoteID, token, first
+}
+
+// P2-B: on a dead link the same key with another typed name is refused with the generic 410 and the
+// first name never appears in that answer. A mutant that skips the name check on this path replays the
+// first acceptance, name included, to anyone holding the old token and the key.
+func TestIntegration_QD3g_DeadLinkOtherNameNeverReplayed(t *testing.T) {
+	pool := intPool(t)
+	now := qd3fNow()
+	for _, multi := range []bool{true, false} {
+		setMultiAccept(t, pool, multi)
+		svc, quoteID, token, first := qd3gAccepted(t, pool, now)
+		w := qd3dPost(t, svc, context.Background(), token, qd3dKeyA, "Customer Two")
+		if w.Code != http.StatusGone {
+			t.Fatalf("multi=%v: dead link, same key, other name = %d (%s), want 410", multi, w.Code, w.Body.String())
+		}
+		if strings.Contains(w.Body.String(), qd3fCustomer) || strings.Contains(w.Body.String(), first.QuoteNo) {
+			t.Errorf("the refusal must carry nothing of the first acceptance: %s", w.Body.String())
+		}
+		if n := acceptanceRows(t, pool, quoteID); n != 1 {
+			t.Errorf("acceptance rows = %d, want 1", n)
+		}
+	}
 }
