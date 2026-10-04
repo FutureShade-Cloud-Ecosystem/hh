@@ -77,6 +77,8 @@ export class QdQuoteEdit extends PanelBase {
   @state() private addQty = "";
   @state() private links: ShareLinkRow[] = [];
   @state() private mintedToken = "";
+  /** The id of the link that token belongs to, when the list names it: revoking that link clears the token. */
+  private mintedLinkId = "";
   @state() private compareLine: number | null = null;
   @state() private compareRows: ComparisonRow[] = [];
   @state() private compareQuery = "";
@@ -121,6 +123,9 @@ export class QdQuoteEdit extends PanelBase {
       this.error = "";
       this.notice = "";
       this.mintedToken = "";
+      this.mintedLinkId = "";
+      this.view = null;
+      this.links = [];
       this.converted = null;
       this.compareLine = null;
       this.compareRows = [];
@@ -142,13 +147,23 @@ export class QdQuoteEdit extends PanelBase {
 
   // ── reads ─────────────────────────────────────────────────────────────────
 
+  /**
+   * A read is only ever applied to the quote that asked for it: a slow answer
+   * for the quote that was open before is dropped, never shown over the one
+   * open now, and a save can only be made from a view of the open quote.
+   */
+  private loadSeq = 0;
+
   private async load(): Promise<void> {
     const client = this.client;
     if (client === null || this.quoteId === "") {
+      this.loadSeq += 1;
       this.view = null;
       return;
     }
+    const seq = ++this.loadSeq;
     const result = await client.readQuote(this.quoteId);
+    if (seq !== this.loadSeq) return;
     if (!result.ok) {
       this.error = this.refuse(result, "read this quote");
       this.view = null;
@@ -163,7 +178,7 @@ export class QdQuoteEdit extends PanelBase {
     this.qtyDraft = typing !== null && typing.field === "qty" ? { [typing.line]: typing.value } : {};
     this.discDraft = typing !== null && typing.field === "disc" ? { [typing.line]: typing.value } : {};
     this.expiryDraft = typing !== null && typing.field === "expiry" ? typing.value : (result.value.valid_until ?? "");
-    await Promise.all([this.loadDiscounts(), this.loadLinks()]);
+    await Promise.all([this.loadDiscounts(seq), this.loadLinks(seq)]);
   }
 
   /** The quantity, discount or expiry box holding focus, with what is in it, or null. */
@@ -183,20 +198,22 @@ export class QdQuoteEdit extends PanelBase {
    * and the dealer's per line discount switch (the surface config). Both are
    * the server's answers; an unreadable answer offers no discount control.
    */
-  private async loadDiscounts(): Promise<void> {
+  private async loadDiscounts(seq: number): Promise<void> {
     const client = this.client;
     if (client === null) return;
     const [terms, config] = await Promise.all([client.readTerms(this.quoteId), client.surfaceConfig(this.branchId)]);
+    if (seq !== this.loadSeq) return;
     const byLine: Record<number, number> = {};
     if (terms.ok) for (const line of terms.value.lines) byLine[line.lineNo] = line.discPct;
     this.discByLine = byLine;
     this.discEnabled = terms.ok && config.ok && config.value.policy?.lineDiscountsEnabled !== false;
   }
 
-  private async loadLinks(): Promise<void> {
+  private async loadLinks(seq: number): Promise<void> {
     const client = this.client;
     if (client === null) return;
     const result = await client.listShareLinks(this.quoteId);
+    if (seq !== this.loadSeq) return;
     this.links = result.ok ? result.value : [];
   }
 
@@ -223,8 +240,11 @@ export class QdQuoteEdit extends PanelBase {
     this.busy = true;
     this.error = "";
     this.notice = "";
+    const quoteAtStart = this.quoteId;
     const result = await action();
     this.busy = false;
+    // The quote the person moved to meanwhile owns the screen now: this answer says nothing about it.
+    if (quoteAtStart !== this.quoteId) return result.ok;
     if (!result.ok) {
       const refusal = result.status === 409 && floor !== undefined ? parseFloorRefusal(result.error) : null;
       if (refusal !== null && floor !== undefined) {
@@ -418,8 +438,11 @@ export class QdQuoteEdit extends PanelBase {
     this.busy = true;
     this.error = "";
     this.notice = "";
-    const result = await client.mintShareLink(this.quoteId);
+    const quoteAtStart = this.quoteId;
+    const knownLinks = new Set(this.links.map((l) => l.id));
+    const result = await client.mintShareLink(quoteAtStart);
     this.busy = false;
+    if (quoteAtStart !== this.quoteId) return;
     if (!result.ok) {
       this.error = this.refuse(result, "create a share link");
       return;
@@ -430,17 +453,34 @@ export class QdQuoteEdit extends PanelBase {
     this.mintedToken = result.value;
     this.notice = LINK_CREATED_NOTICE;
     await this.load();
+    // The just-minted link is the live row that was not there before; revoking it must clear its URL.
+    const fresh = this.links.filter((l) => l.live && !knownLinks.has(l.id));
+    this.mintedLinkId = fresh.length === 1 ? (fresh[0]?.id ?? "") : "";
     this.announceChanged();
   }
 
   private async revokeLink(id: string): Promise<void> {
     const client = this.client;
     if (client === null) return;
-    await this.write("revoke this link", () => client.revokeShareLink(this.quoteId, id));
+    const revoked = await this.write("revoke this link", () => client.revokeShareLink(this.quoteId, id));
+    // A revoked link is dead: its address and the "copy this now" offer go with it.
+    if (revoked && id === this.mintedLinkId) {
+      this.mintedToken = "";
+      this.mintedLinkId = "";
+    }
   }
 
   private async copyLink(): Promise<void> {
-    await navigator.clipboard?.writeText(this.shareUrl(this.mintedToken));
+    // The clipboard is only there on a secure page: say so rather than claim a copy that did not happen.
+    try {
+      if (navigator.clipboard === undefined) throw new Error("no clipboard");
+      await navigator.clipboard.writeText(this.shareUrl(this.mintedToken));
+    } catch {
+      this.error = "The link could not be copied from this page. Select it in the box and copy it yourself.";
+      this.notice = "";
+      return;
+    }
+    this.error = "";
     this.notice = "Link copied. Nothing was emailed: paste it to send it.";
   }
 

@@ -64,15 +64,25 @@ export class QdQuoteHistory extends PanelBase {
   ];
 
   protected override willUpdate(changed: Map<string, unknown>): void {
-    if (changed.has("quoteId") || changed.has("client")) this.reload();
+    if (changed.has("quoteId") || changed.has("client")) {
+      // The last quote's changes never sit under the next quote's heading or error.
+      this.changes = [];
+      this.loaded = false;
+      this.error = "";
+      this.reload();
+    }
   }
 
   reload(): void {
     void this.load();
   }
 
+  /** An answer for the quote that was open before is dropped, never shown over the one open now. */
+  private loadSeq = 0;
+
   private async load(): Promise<void> {
     const client = this.client;
+    const seq = ++this.loadSeq;
     if (client === null || this.quoteId === "") {
       this.changes = [];
       this.loaded = false;
@@ -80,6 +90,7 @@ export class QdQuoteHistory extends PanelBase {
     }
     this.error = "";
     const result = await client.editHistory(this.quoteId);
+    if (seq !== this.loadSeq) return;
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "read this quote's history"));
       return;
