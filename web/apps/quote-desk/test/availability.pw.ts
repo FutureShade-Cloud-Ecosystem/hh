@@ -118,3 +118,17 @@ test("a stock change shows when quote-changed reaches the panel", async ({ page,
   await panel(page).evaluate((el) => el.dispatchEvent(new CustomEvent("quote-changed", { bubbles: true, composed: true, detail: { quoteId: "q-1001" } })));
   await expect(panel(page).getByTestId("av-chip").first()).toHaveText("only 5 of 120");
 });
+
+// Visual review round 1, P3: a row said only its line number. It now names the
+// product, read from the quote's own lines, beside the number.
+test("each availability row names its product beside the line number", async ({ page }) => {
+  await signIn(page);
+  await openQuote(page, "Q-1002");
+  const firstName = (await page.locator("qd-quote-edit").getByTestId("qe-line").first().innerText()).trim();
+  const row = panel(page).getByTestId("av-line").first();
+  const label = (await row.locator("td").first().innerText()).trim();
+  expect(label).toMatch(/^1\s*·\s*\S+/);
+  const named = label.replace(/^1\s*·\s*/, "");
+  expect(named.length).toBeGreaterThan(3);
+  expect(firstName).toContain(named);
+});

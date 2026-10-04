@@ -32,6 +32,8 @@ import {
 @customElement("qd-quote-availability")
 export class QdQuoteAvailability extends PanelBase {
   @state() private lines: LineAvailability[] = [];
+  /** The product name of each line, read from the quote itself (the availability wire carries only the product id). */
+  @state() private names: Record<number, string> = {};
   @state() private seamWired = true;
   @state() private loaded = false;
   @state() private peeks: Record<string, BranchStock[]> = {};
@@ -103,8 +105,9 @@ export class QdQuoteAvailability extends PanelBase {
       return;
     }
     this.error = "";
-    const result = await client.availability(quoteId);
+    const [result, quote] = await Promise.all([client.availability(quoteId), client.readQuote(quoteId)]);
     if (quoteId !== this.quoteId) return;
+    this.names = quote.ok ? Object.fromEntries(quote.value.lines.map((line) => [line.line_no, line.description])) : {};
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "read this quote's availability"));
       return;
@@ -146,7 +149,7 @@ export class QdQuoteAvailability extends PanelBase {
     const held = softHeldNote(l);
     return html`
       <tr data-testid="av-line" data-line-no=${l.line_no}>
-        <td>${l.line_no}</td>
+        <td>${l.line_no}${(this.names[l.line_no] ?? "") !== "" ? html` · ${this.names[l.line_no]}` : nothing}</td>
         <td class="num">${formatQty(l.qty_base)}</td>
         <td>
           <span class="${availabilityChip(l.grade)}" data-testid="av-chip" data-avail-grade=${l.grade}>${availabilityLabel(l)}</span>
