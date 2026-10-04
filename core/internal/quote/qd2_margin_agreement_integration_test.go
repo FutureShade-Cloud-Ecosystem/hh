@@ -12,14 +12,17 @@
 // The figures are pinned as literals, not recomputed from the seed, so a
 // drift on either side fails the test rather than echoing the other side:
 // with the weighted average cost at 500 cents, a 550 cent rule price is
-// ((550-500)*10000)/550 = 909 bps (below the 1200 bps default floor), and
-// a 1000 cent rule price discounted 10 percent nets 900 cents at
-// ((900-500)*10000)/900 = 4444 bps.
+// ((550-500)*10000)/550 = 909 bps (below whatever floor the policy row or
+// the default sets), and a 1000 cent rule price discounted 10 percent nets
+// 900 cents at ((900-500)*10000)/900 = 4444 bps. Which floor applies is
+// QD-1's question, not this test's: the pins are the margins, and both hold
+// above and below a category floor alike.
 package quote
 
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,6 +34,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// qd2TagSeq mints unique row tags from a counter, not the wall clock: this
+// file pins one injected clock (the fixed `now` below) and reads no other,
+// so the dated test audit keeps it under its guard without a signoff.
+var qd2TagSeq int64
+
 // qd2SeedMarginQuote seeds alice's Trenton quote with the two lines the
 // agreement is pinned on: line 1 at a 550 cent rule price (below the floor
 // at its rule price, CP0-3's case) and line 2 at a 1000 cent rule price
@@ -40,7 +48,7 @@ func qd2SeedMarginQuote(t *testing.T, pool *pgxpool.Pool, alice string) (quoteID
 	t.Helper()
 	ctx := context.Background()
 	prod, uom = anchoredProduct(t, pool)
-	tag := time.Now().UnixNano()
+	tag := atomic.AddInt64(&qd2TagSeq, 1)
 
 	// The one cost row both reads strike over, restored to what it was.
 	var hadCost *int64
@@ -50,8 +58,8 @@ func qd2SeedMarginQuote(t *testing.T, pool *pgxpool.Pool, alice string) (quoteID
 		t.Fatalf("read the standing cost row: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO product_branch_costs (product_id, branch_id, avg_unit_cost_cents, updated_at)
-		VALUES ($1::uuid, $2::uuid, 500, now())
+		INSERT INTO product_branch_costs (product_id, branch_id, avg_unit_cost_cents)
+		VALUES ($1::uuid, $2::uuid, 500)
 		ON CONFLICT (product_id, branch_id) DO UPDATE SET avg_unit_cost_cents = 500`, prod, intTrenton); err != nil {
 		t.Fatalf("seed the cost row: %v", err)
 	}
@@ -184,7 +192,8 @@ func TestQD2_MarginAgreement_ScreenAndFloorDecision(t *testing.T) {
 			atRule.BelowFloor)
 	}
 	if !atRule.BelowFloor {
-		t.Fatal("line 1: fixture drifted, 550 over a 500 cost must sit below the 1200 bps default floor")
+		t.Fatalf("line 1: fixture drifted, 550 over a 500 cost must sit below the floor the decision read (%d bps)",
+			atRule.FloorBps)
 	}
 
 	// Line 2, discounted: the margin the floor DECISION uses (decideLineFloor,
