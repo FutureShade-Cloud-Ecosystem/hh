@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -51,4 +52,113 @@ func (s *SyncStore) authorizeSyncWrite(ctx context.Context, f sync.ScopeFilter, 
 		return quoteRefused(err)
 	}
 	return nil
+}
+
+// syncCaller resolves the caller behind the sync filter as an active staff
+// user of the filter's org. Every failure is an error the callers read as no
+// authority: an unlinked caller, an unreadable authority, an inactive user.
+func (s *SyncStore) syncCaller(ctx context.Context, f sync.ScopeFilter) (identity.StaffContext, error) {
+	uid := s.quoteActor(ctx, f)
+	if uid == "" {
+		return identity.StaffContext{}, errors.New("a pushed quote operation needs the caller's linked staff user")
+	}
+	caller, err := identity.NewApprovalRepository(s.pool).ResolveStaffInOrg(ctx, uid, f.OrgID)
+	if err != nil {
+		return identity.StaffContext{}, fmt.Errorf("the caller's authority could not be read: %w", err)
+	}
+	if caller.Status != identity.StatusActive {
+		return identity.StaffContext{}, ErrForbidden
+	}
+	return caller, nil
+}
+
+// authorizeSyncCreate is the REST create route's rule for a pushed create:
+// the caller needs Work on the Quote Desk and the quote's branch in reach
+// (CreateQuote's own two checks). Failure is the operation's rejection.
+func (s *SyncStore) authorizeSyncCreate(ctx context.Context, f sync.ScopeFilter, branchID string) error {
+	caller, err := s.syncCaller(ctx, f)
+	if err != nil {
+		return quoteRefused(err)
+	}
+	if !deskLevelFor(publishedRoles.Load(), caller).AtLeast(roleconfig.LevelWork) || !caller.CanAccessBranch(branchID) {
+		return quoteRefused(ErrForbidden)
+	}
+	return nil
+}
+
+// syncReadScope is what the caller may read through the door: the REST list
+// rule (StaffQuoteList). Nothing without a Quote Desk level of Read or
+// better; at Work the caller's own quotes; at Manage or Read every quote of
+// the branches the caller reaches (a global caller reaches every branch).
+// The quote's figures are server totals, never cost, so no cost list gates
+// the projection. ok=false means nothing is readable: the door fails closed
+// on an unlinked caller, an unreadable authority, an unpublished
+// configuration.
+type syncReadScope struct {
+	ok       bool
+	global   bool
+	branches []string
+	owner    string // non-empty: only quotes this user owns (the Work rung)
+}
+
+func (s *SyncStore) syncReadScope(ctx context.Context, f sync.ScopeFilter) syncReadScope {
+	caller, err := s.syncCaller(ctx, f)
+	if err != nil {
+		return syncReadScope{}
+	}
+	level := deskLevelFor(publishedRoles.Load(), caller)
+	if !level.AtLeast(roleconfig.LevelRead) {
+		return syncReadScope{}
+	}
+	rs := syncReadScope{ok: true}
+	if level == roleconfig.LevelWork {
+		if caller.UserID == "" {
+			return syncReadScope{}
+		}
+		rs.owner = caller.UserID
+	}
+	global, ids := callerBranchScope(caller)
+	if !global && len(ids) == 0 {
+		return syncReadScope{}
+	}
+	rs.global, rs.branches = global, ids
+	return rs
+}
+
+// predicate renders the scope as SQL over quotes, with its arguments
+// numbered from argN.
+func (r syncReadScope) predicate(argN int) (string, []any) {
+	var sb strings.Builder
+	var args []any
+	if !r.global {
+		fmt.Fprintf(&sb, " AND branch_id = ANY($%d::uuid[])", argN)
+		args = append(args, r.branches)
+		argN++
+	}
+	if r.owner != "" {
+		fmt.Fprintf(&sb, " AND COALESCE(salesperson_id, created_by) = $%d::uuid", argN)
+		args = append(args, r.owner)
+	}
+	return sb.String(), args
+}
+
+// reaches answers whether one row, by its branch and owner, sits inside the
+// scope: the per-row form of predicate.
+func (r syncReadScope) reaches(branchID, ownerID string) bool {
+	if !r.ok {
+		return false
+	}
+	if !r.global {
+		in := false
+		for _, b := range r.branches {
+			if b == branchID {
+				in = true
+				break
+			}
+		}
+		if !in {
+			return false
+		}
+	}
+	return r.owner == "" || r.owner == ownerID
 }

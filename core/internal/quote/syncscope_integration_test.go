@@ -321,8 +321,20 @@ func TestQuotesOrgIsolation(t *testing.T) {
 	northID := syncCreate(t, f, syncKit(f).Create(""))
 	// A south quote through the module's own insert, org stamped from
 	// the branch.
+	// Created by the staff member who holds a grant in both orgs: the
+	// south pull is read through the Quote Desk ladder (P2-C), where Work
+	// lists its own quotes in the branches it reaches, so the south quote is
+	// that member's own and the member is granted the south branch.
+	if _, err := f.pool.Exec(ctx, `INSERT INTO user_branch_grants (user_id, branch_id, org_id)
+		VALUES ($1::uuid, $2::uuid, $3::uuid) ON CONFLICT (user_id, branch_id) DO NOTHING`,
+		testkit.UserTwoOrgID, testkit.BranchSouthAID, testkit.OrgSouthID); err != nil {
+		t.Fatalf("grant the south branch: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(), `DELETE FROM user_branch_grants WHERE user_id = $1::uuid`, testkit.UserTwoOrgID)
+	})
 	southID, _, err := f.repo.CreateQuote(ctx, QuoteCreate{
-		CustomerID: testkit.TenantGammaID, BranchID: testkit.BranchSouthAID, CreatedBy: "",
+		CustomerID: testkit.TenantGammaID, BranchID: testkit.BranchSouthAID, CreatedBy: testkit.UserTwoOrgID,
 	})
 	if err != nil {
 		t.Fatalf("south create: %v", err)
@@ -347,7 +359,7 @@ func TestQuotesOrgIsolation(t *testing.T) {
 	}
 	// The south quote IS visible through the south filter (the module
 	// path stamped its org from the branch).
-	southFilter := sync.ScopeFilter{OrgID: testkit.OrgSouthID, Actor: testkit.SubInsideSales}
+	southFilter := sync.ScopeFilter{OrgID: testkit.OrgSouthID, Actor: testkit.SubTwoOrg}
 	southPull, err := f.engine.Pull(ctx, f.info, southFilter, 0, 200)
 	if err != nil {
 		t.Fatalf("south pull: %v", err)
