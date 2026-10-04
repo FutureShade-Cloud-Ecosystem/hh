@@ -17,6 +17,9 @@ import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import "./quote-workarea.js";
 import "./panel-seams.js";
+import "./edit-panel.js";
+import "./history-panel.js";
+import "./settings-panel.js";
 import {
   SEAM_APPROVALS,
   SEAM_ASSIST,
@@ -36,6 +39,7 @@ import {
   quoteStatusWord,
 } from "./_quote-edit.js";
 import { spokenRefusal } from "./_quote-workarea.js";
+import { OPEN_SETTINGS_EVENT } from "./panel-seams.js";
 import type { QdClient, QuoteRow } from "./qd-client.js";
 
 interface BranchRow {
@@ -199,6 +203,7 @@ export class QdQuoteBuilder extends LitElement {
     this.renderRoot.addEventListener("change", this.onFieldChange as EventListener);
     this.renderRoot.addEventListener("quote-changed", this.onQuoteChanged as EventListener);
     this.renderRoot.addEventListener("quote-open", this.onQuoteOpen as EventListener);
+    window.addEventListener(OPEN_SETTINGS_EVENT, this.onOpenSettings);
     this.renderRoot.addEventListener("customer-picked", this.onCustomerPicked as EventListener);
     this.renderRoot.addEventListener("customer-cleared", this.onCustomerCleared as EventListener);
   }
@@ -221,6 +226,7 @@ export class QdQuoteBuilder extends LitElement {
     this.renderRoot.removeEventListener("change", this.onFieldChange as EventListener);
     this.renderRoot.removeEventListener("quote-changed", this.onQuoteChanged as EventListener);
     this.renderRoot.removeEventListener("quote-open", this.onQuoteOpen as EventListener);
+    window.removeEventListener(OPEN_SETTINGS_EVENT, this.onOpenSettings);
     this.renderRoot.removeEventListener("customer-picked", this.onCustomerPicked as EventListener);
     this.renderRoot.removeEventListener("customer-cleared", this.onCustomerCleared as EventListener);
   }
@@ -239,10 +245,15 @@ export class QdQuoteBuilder extends LitElement {
       picker.branchId = this.newBranch;
       if (picker.labelText === undefined || picker.labelText === "") picker.labelText = "Customer";
     }
-    // The seam rows receive the open quote the same way a real panel would.
-    for (const seam of this.renderRoot.querySelectorAll<HTMLElement & Record<string, unknown>>("qd-panel-seam")) {
+    // The seam rows and the panels mounted in their place receive the open
+    // quote the same way: the edit panel, the change history and the settings
+    // also take the validated client.
+    for (const seam of this.renderRoot.querySelectorAll<HTMLElement & Record<string, unknown>>(
+      "qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings",
+    )) {
       seam.quoteId = this.selected;
       seam.branchId = this.selectedBranch() || this.newBranch;
+      if (seam.tagName !== "QD-PANEL-SEAM") seam.client = this.client;
     }
     // The new quote form's uncontrolled fields.
     const branchSelect = this.renderRoot.querySelector<HTMLSelectElement>('[data-field="new-branch"]');
@@ -336,9 +347,21 @@ export class QdQuoteBuilder extends LitElement {
     this.newCustomer = null;
   };
 
+  /**
+   * The work area's Screen settings button asks for the settings region: the
+   * detail disclosure opens and the settings panel opens its screen settings.
+   */
+  private readonly onOpenSettings = (): void => {
+    const details = this.renderRoot.querySelector<HTMLDetailsElement>('[data-testid="qb-detail"]');
+    if (details !== null) details.open = true;
+    this.renderRoot.querySelector<HTMLElement & { openScreenSettings?: () => void }>("qd-quote-settings")?.openScreenSettings?.();
+  };
+
   private reloadDetailPanels(): void {
     this.renderRoot
-      ?.querySelectorAll<HTMLElement & { reload?: () => void }>("qd-quote-workarea, qd-panel-seam")
+      ?.querySelectorAll<HTMLElement & { reload?: () => void }>(
+        "qd-quote-workarea, qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings",
+      )
       .forEach((el) => el.reload?.());
   }
 
@@ -456,21 +479,21 @@ export class QdQuoteBuilder extends LitElement {
       ${this.error !== "" ? html`<header><span class="err" role="alert">${this.error}</span></header>` : nothing}
       <qd-quote-workarea></qd-quote-workarea>
       <div style="margin-top: 12px">${this.renderList()}</div>
-      <details class="box" style="margin-top: 12px">
+      <details class="box" style="margin-top: 12px" data-testid="qb-detail">
         <summary style="cursor: pointer">Quote detail &amp; admin</summary>
         <div class="stack seams" style="margin-top: 10px">
           ${this.selected !== ""
             ? html`
-                ${this.renderSeam(SEAM_EDIT_PANEL, "The quote's line editor (the second coder's panel)")}
+                <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>
                 ${this.renderSeam(SEAM_ASSIST, "The assist panel (the third coder's panel)")}
-                ${this.renderSeam(SEAM_HISTORY, "The change history (the second coder's panel)")}
+                <qd-quote-history data-seam=${SEAM_HISTORY}></qd-quote-history>
                 ${this.renderSeam(SEAM_FOLLOWUPS, "The follow-ups panel (the third coder's panel)")}
                 ${this.renderSeam(SEAM_HOLD_EXPIRY, "The hold expiry status (the third coder's panel)")}
                 ${this.renderSeam(SEAM_AVAILABILITY, "The availability chips (the third coder's panel)")}
                 ${this.renderSeam(SEAM_APPROVALS, "The approvals list (the third coder's panel)")}
-                ${this.renderSeam(SEAM_SETTINGS, "The screen settings (the second coder's panel)")}
               `
             : html`<div class="box"><p class="empty">Select a quote to open it.</p></div>`}
+          <qd-quote-settings data-seam=${SEAM_SETTINGS}></qd-quote-settings>
         </div>
       </details>
     `;

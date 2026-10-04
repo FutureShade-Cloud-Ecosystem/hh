@@ -9,6 +9,11 @@
 // and approvals seams and replaces the floor refusal dialog seam in
 // floor-refusal.ts. A seam is replaced by mounting the real panel in its
 // place; the names below are the contract.
+//
+// FILLED: the edit panel (edit-panel.ts), the change history
+// (history-panel.ts) and the settings (settings-panel.ts) are mounted in
+// place of their seams by the builder. Their names stay here so the seam
+// contract is one list.
 export const SEAM_EDIT_PANEL = "edit-panel";
 export const SEAM_HISTORY = "history";
 export const SEAM_SETTINGS = "settings";
@@ -17,6 +22,18 @@ export const SEAM_FOLLOWUPS = "followups";
 export const SEAM_HOLD_EXPIRY = "hold-expiry";
 export const SEAM_AVAILABILITY = "availability";
 export const SEAM_APPROVALS = "approvals";
+// The QD-5 seam: the quote's related documents and the converted order's
+// payment. The edit panel hosts it under the convert control; QD-5 replaces
+// the body of this slot. It renders nothing today.
+export const SEAM_PAYMENT = "payment";
+
+/**
+ * The window event the work area's Screen settings button fires. The builder
+ * answers it by opening the detail disclosure and the settings region: the
+ * work area owns the button, the builder owns the region, and neither imports
+ * the other's panels.
+ */
+export const OPEN_SETTINGS_EVENT = "qd-open-settings";
 
 import { LitElement, html } from "lit";
 import { customElement } from "lit/decorators.js";

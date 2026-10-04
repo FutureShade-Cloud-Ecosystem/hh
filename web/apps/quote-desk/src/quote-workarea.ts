@@ -97,6 +97,7 @@ import {
   type ResolvedItem,
 } from "./quote-surface.js";
 import { floorRefusalMessage, openFloorRefusalDialog, parseFloorRefusal } from "./floor-refusal.js";
+import { OPEN_SETTINGS_EVENT } from "./panel-seams.js";
 import type { QdClient, SurfaceConfig, TermsRef } from "./qd-client.js";
 import { WorkspaceStore } from "./workspace-store.js";
 import type { AddonSuggestion } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
@@ -1299,8 +1300,9 @@ export class QdQuoteWorkarea extends LitElement {
         void this.resetWorkspace();
         break;
       case "settings":
-        // The closed control: the reason is spoken, no request is made.
-        this.notice = "The screen settings panel is not on this surface yet.";
+        // The settings region lives under the quote detail disclosure; the
+        // builder answers this event by opening it.
+        window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT));
         break;
       case "add-another":
         this.focusScan();
@@ -2371,20 +2373,7 @@ export class QdQuoteWorkarea extends LitElement {
         </div>
         <div class="panelbtns">
           ${this.config?.profile === "admin"
-            ? html`<button
-                type="button"
-                class="pbtn"
-                data-action="settings"
-                data-testid="qb-settings-btn"
-                aria-disabled="true"
-                title="The screen settings panel is the second coder's item and is not on this surface yet"
-                aria-describedby="qb-settings-desc"
-              >
-                Screen settings
-              </button>
-              <span id="qb-settings-desc" class="sr-only"
-                >The screen settings panel is not on this surface yet.</span
-              >`
+            ? html`<button type="button" class="pbtn" data-action="settings" data-testid="qb-settings-btn">Screen settings</button>`
             : nothing}
           <button
             type="button"
