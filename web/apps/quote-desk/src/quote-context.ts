@@ -18,6 +18,7 @@ export class QuoteContext {
   /** Counts the contexts a scope has opened: a context made later has a bigger epoch. */
   readonly epoch: number;
   private aborted = false;
+  private reads = 0;
 
   constructor(id: string, epoch: number) {
     this.id = id;
@@ -33,16 +34,31 @@ export class QuoteContext {
     this.aborted = true;
   }
 
+  /**
+   * Begins a read of this quote and numbers it. A read begun later supersedes every older one still out, so reads of
+   * one quote land in the order they were asked: the answers of an older read are dropped by guardedRead.
+   */
+  startRead(): number {
+    this.reads += 1;
+    return this.reads;
+  }
+
+  /** True while no newer read of this quote has begun. */
+  isLatestRead(seq: number): boolean {
+    return seq === this.reads;
+  }
+
+  /** The answer of read number `seq`, or undefined when the context went stale or a newer read began while the call was out. */
+  async guardedRead<T>(seq: number, call: Promise<T>): Promise<T | undefined> {
+    const answer = await call;
+    return this.aborted || seq !== this.reads ? undefined : answer;
+  }
+
   /** The answer, or undefined when the context went stale while the call was in flight. */
   async guarded<T>(call: Promise<T>): Promise<T | undefined> {
     const answer = await call;
     return this.aborted ? undefined : answer;
   }
-}
-
-/** Resolves to undefined when the context is stale at the time the call answers. */
-export function guarded<T>(ctx: QuoteContext, call: Promise<T>): Promise<T | undefined> {
-  return ctx.guarded(call);
 }
 
 /** Holds the live context for one place that shows a quote, and replaces it (cancelling the old) on each open. */

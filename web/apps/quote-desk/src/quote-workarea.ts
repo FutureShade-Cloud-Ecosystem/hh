@@ -1460,7 +1460,16 @@ export class QdQuoteWorkarea extends LitElement {
     return { field, line: Number(active.getAttribute("data-line")), value: active.value };
   }
 
+  /** The newest read of the quote on screen: a read that finds itself superseded hands its caller this one to wait on. */
+  private newestRead: Promise<void> = Promise.resolve();
+
   async loadAll(): Promise<void> {
+    const read = this.readAll();
+    this.newestRead = read;
+    return read;
+  }
+
+  private async readAll(): Promise<void> {
     const client = this.client;
     if (client === null) return;
     const ctx = this.ctx;
@@ -1473,11 +1482,14 @@ export class QdQuoteWorkarea extends LitElement {
       this.addons = [];
       return;
     }
+    // Each edit reads twice (this panel's own and the builder's fan-out): the later read supersedes the earlier,
+    // so an older answer that arrives last never lands over a newer one.
+    const seq = ctx.startRead();
     // A refresh never CLEARS the error here: a refusal the user has not read
     // yet must survive the re-read that follows it; errors clear on the next
     // user gesture. An answer for a quote that is no longer open says nothing.
-    const view = await ctx.guarded(client.readQuote(ctx.id));
-    if (view === undefined) return;
+    const view = await ctx.guardedRead(seq, client.readQuote(ctx.id));
+    if (view === undefined) return this.supersededBy(ctx, seq);
     if (!view.ok) {
       this.error = "Could not read this quote.";
       return;
@@ -1500,11 +1512,11 @@ export class QdQuoteWorkarea extends LitElement {
     const unsent = this.flushes.get(ctx.id);
     if (unsent !== undefined) {
       const landed = await waitUpTo(UNSENT_WAIT_MS, unsent);
-      if (ctx.stale) return;
+      if (ctx.stale || !ctx.isLatestRead(seq)) return this.supersededBy(ctx, seq);
       if (!landed) this.error = "A terms change you made on this quote is still being saved. What is shown may not include it yet.";
     }
-    const terms = await ctx.guarded(client.readTerms(ctx.id));
-    if (terms === undefined) return;
+    const terms = await ctx.guardedRead(seq, client.readTerms(ctx.id));
+    if (terms === undefined) return this.supersededBy(ctx, seq);
     if (terms.ok) {
       // A read that was in flight when the person edited must not land over the edit: the unsaved edits ride on top.
       this.terms = { ...terms.value, ...this.termsPending };
@@ -1512,15 +1524,20 @@ export class QdQuoteWorkarea extends LitElement {
     }
     // The margin glance: byte absent fields for a refused caller. An empty
     // object means no margin surface for you, never an error.
-    const glance = await ctx.guarded(client.marginGlance(ctx.id));
-    if (glance === undefined) return;
+    const glance = await ctx.guardedRead(seq, client.marginGlance(ctx.id));
+    if (glance === undefined) return this.supersededBy(ctx, seq);
     if (glance.ok) this.glance = glance.value;
-    void this.loadAddons(ctx);
-    void this.hydrateCustomer(ctx);
+    void this.loadAddons(ctx, seq);
+    void this.hydrateCustomer(ctx, seq);
+  }
+
+  /** A read that was dropped because a newer read of the same quote began finishes when that newer read does; one dropped because the quote was left finishes at once. */
+  private supersededBy(ctx: QuoteContext, seq: number): Promise<void> {
+    return !ctx.stale && !ctx.isLatestRead(seq) ? this.newestRead : Promise.resolve();
   }
 
   /** The identity card's credit facts: best effort search by name matched on id. */
-  private async hydrateCustomer(ctx: QuoteContext): Promise<void> {
+  private async hydrateCustomer(ctx: QuoteContext, seq: number): Promise<void> {
     const v = this.view;
     if (v === null) return;
     if (this.customer?.id === v.customer_id) return;
@@ -1528,26 +1545,26 @@ export class QdQuoteWorkarea extends LitElement {
     const name = v.customer_name.trim();
     if (name === "") return;
     try {
-      const hits = await ctx.guarded(searchCustomers(name, 10, this.branchId));
+      const hits = await ctx.guardedRead(seq, searchCustomers(name, 10, this.branchId));
       if (hits === undefined) return;
       this.customer = hits.find((h) => h.id === v.customer_id) ?? null;
     } catch {
-      if (!ctx.stale) this.customer = null; // the card renders without the credit line, honest absence
+      if (!ctx.stale && ctx.isLatestRead(seq)) this.customer = null; // the card renders without the credit line, honest absence
     }
   }
 
   /** The add-ons strip: the quote's lines feed the same suggestions read the counter uses. */
-  private async loadAddons(ctx: QuoteContext): Promise<void> {
+  private async loadAddons(ctx: QuoteContext, seq: number): Promise<void> {
     const ids = (this.view?.lines ?? []).map((l) => l.product_id).filter(Boolean);
     if (ids.length === 0) {
       this.addons = [];
       return;
     }
     try {
-      const rows = await ctx.guarded(addonSuggestions(ids));
+      const rows = await ctx.guardedRead(seq, addonSuggestions(ids));
       if (rows !== undefined) this.addons = rows;
     } catch {
-      if (!ctx.stale) this.addons = []; // empty never error: the strip hides entirely
+      if (!ctx.stale && ctx.isLatestRead(seq)) this.addons = []; // empty never error: the strip hides entirely
     }
   }
 

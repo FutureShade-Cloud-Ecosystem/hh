@@ -38,6 +38,7 @@ for (const mutant of mutants) {
     const text = `${run.stdout}${run.stderr}`;
     const failed = /\d+ failed/.test(text) && run.status !== 0;
     results.push({ id: mutant.id, outcome: failed ? "RED (killed)" : "GREEN (SURVIVED)", test: mutant.test });
+    if (!failed) console.log(text.split("\n").filter((line) => !line.includes("Lit is in dev mode")).slice(-12).join("\n"));
   } finally {
     writeFileSync(path, original);
   }

@@ -2,14 +2,13 @@
 // here on their own, apart from any screen.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { QuoteContext, QuoteScope, guarded } from "../src/quote-context.js";
+import { QuoteContext, QuoteScope, waitUpTo } from "../src/quote-context.js";
 
 const later = (value) => new Promise((resolve) => setTimeout(() => resolve(value), 5));
 
 test("an answer comes back while the context is live", async () => {
   const ctx = new QuoteContext("q-1", 1);
   assert.equal(await ctx.guarded(later("answer")), "answer");
-  assert.equal(await guarded(ctx, later(7)), 7);
   assert.equal(ctx.stale, false);
 });
 
@@ -49,4 +48,26 @@ test("opening the same quote again is a new context: work still out for the firs
   assert.equal(await call, undefined);
   assert.equal(back.stale, false);
   assert.notEqual(back, visit);
+});
+
+test("a newer read of the same quote supersedes an older one still out: the older answer is dropped", async () => {
+  const ctx = new QuoteContext("q-1", 1);
+  const older = ctx.startRead();
+  const call = ctx.guardedRead(older, later("older"));
+  const newer = ctx.startRead();
+  assert.ok(newer > older);
+  assert.equal(await call, undefined);
+  assert.equal(await ctx.guardedRead(newer, later("newer")), "newer");
+});
+
+test("a read answered before a newer one began is kept", async () => {
+  const ctx = new QuoteContext("q-1", 1);
+  const first = ctx.startRead();
+  assert.equal(await ctx.guardedRead(first, Promise.resolve("first")), "first");
+  ctx.startRead();
+});
+
+test("waitUpTo says whether the work finished inside the bound", async () => {
+  assert.equal(await waitUpTo(500, later("done")), true);
+  assert.equal(await waitUpTo(20, new Promise(() => undefined)), false);
 });

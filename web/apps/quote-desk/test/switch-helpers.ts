@@ -70,7 +70,14 @@ export interface Held {
 export async function hold(
   page: Page,
   url: RegExp,
-  options: { method?: string; times?: number; refuse?: { status: number; error: string }; match?: (request: Request) => boolean } = {},
+  options: {
+    method?: string;
+    times?: number;
+    refuse?: { status: number; error: string };
+    match?: (request: Request) => boolean;
+    /** Ask the server at once and hold only the answer, so a late release delivers what the server said then. */
+    snapshot?: boolean;
+  } = {},
 ): Promise<Held> {
   const door = gate();
   const seen: string[] = [];
@@ -89,8 +96,11 @@ export async function hold(
     held += 1;
     seen.push(`${request.method()} ${request.url()}`);
     askedNow();
+    const taken = options.snapshot === true ? await route.fetch() : undefined;
     await door.opened;
-    if (options.refuse !== undefined) {
+    if (taken !== undefined) {
+      await route.fulfill({ response: taken });
+    } else if (options.refuse !== undefined) {
       await route.fulfill({ status: options.refuse.status, contentType: "application/json", body: JSON.stringify({ error: options.refuse.error }) });
     } else {
       await route.continue();

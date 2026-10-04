@@ -1,7 +1,18 @@
 // PR 121 round 3, Part A findings: each test holds one answer back behind a delayed route, so the order of events
 // is exact and does not depend on the machine's speed.
 import { expect, test } from "@playwright/test";
-import { hold, open, row, seed, settle, signIn, writes } from "./switch-helpers.js";
+import { gate, hold, open, row, seed, settle, signIn, writes } from "./switch-helpers.js";
+
+/** Wait until the page has finished every request except the ones held: no new response for a stretch. */
+async function quiet(page: import("@playwright/test").Page): Promise<void> {
+  let count = 0;
+  page.on("requestfinished", () => (count += 1));
+  let last = -1;
+  while (last !== count) {
+    last = count;
+    await page.waitForTimeout(400);
+  }
+}
 
 test.beforeEach(async ({ request }) => {
   await request.post("/_stub/reset");
@@ -218,4 +229,68 @@ test("P3 the scan box's outcome line clears when another quote opens", async ({ 
   await expect(page.getByTestId("pos-scan-msg")).toContainText("Added Polymeric Locking Sand");
   await open(page, "Q-1004");
   await expect(page.getByTestId("pos-scan-msg")).toHaveText("");
+});
+
+test("P3 reads of one quote land in the order they were asked: an older read answered late does not undo a newer one", async ({ page }) => {
+  await signIn(page);
+  await open(page, "Q-1001");
+  await expect(page.getByTestId("qb-line")).toHaveCount(2);
+  // The first read of the quote is asked while it has two lines and is held; the add that follows reads three.
+  const older = await hold(page, /\/api\/v1\/quotes\/q-1001$/, { method: "GET", times: 1, snapshot: true });
+  await page.getByTestId("qb-save-draft").click();
+  await older.asked;
+  const scan = page.getByTestId("pos-scan-input");
+  await scan.fill("PSN-100");
+  await scan.press("Enter");
+  await expect(page.getByTestId("qb-line")).toHaveCount(3);
+  // Every other read the add set going has landed before the older one is let go.
+  await quiet(page);
+  older.open();
+  await settle(page);
+  await expect(page.getByTestId("qb-line")).toHaveCount(3);
+});
+
+test("P3 a scan that waits for the quote being opened waits for the newest read when its own read was superseded", async ({ page }) => {
+  await signIn(page);
+  // Every read of the quote asked before the second read is held on one gate, every one asked after it on another.
+  const first = gate();
+  const second = gate();
+  let phase = 0;
+  let sawFirst: () => void = () => undefined;
+  let sawSecond: () => void = () => undefined;
+  const arrivedFirst = new Promise<void>((resolve) => (sawFirst = resolve));
+  const arrivedSecond = new Promise<void>((resolve) => (sawSecond = resolve));
+  await page.route(/\/api\/v1\/quotes\/q-1001$/, async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    if (phase === 0) {
+      sawFirst();
+      await first.opened;
+    } else {
+      sawSecond();
+      await second.opened;
+    }
+    await route.continue();
+  });
+  await row(page, "Q-1001").click();
+  await arrivedFirst;
+  // A second read of the same quote is asked while the opening read is out (an edit on a panel does exactly this).
+  phase = 1;
+  await page.getByTestId("qb-list").evaluate((el) => el.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: "q-1001" }, bubbles: true, composed: true })));
+  await arrivedSecond;
+  await settle(page);
+  // A scan arrives while the quote has no figures yet: it waits for the opening read.
+  await page.locator("qd-quote-workarea").evaluate((el) => {
+    el.shadowRoot?.dispatchEvent(
+      new CustomEvent("pos-add-product", { detail: { product: { id: "p-polymer-sand", base_uom: "bag", name: "Polymeric Locking Sand" } }, bubbles: true, composed: true }),
+    );
+  });
+  first.open();
+  await settle(page);
+  await expect(page.getByText("Pick a customer first")).toHaveCount(0);
+  second.open();
+  await expect(page.getByTestId("qb-line")).toHaveCount(3);
+  await expect(page.getByText("Pick a customer first")).toHaveCount(0);
 });

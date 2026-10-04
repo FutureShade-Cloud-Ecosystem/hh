@@ -2,14 +2,14 @@
   {
     "id": "wa-terms-read",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(client.readTerms(ctx.id))",
+    "find": "await ctx.guardedRead(seq, client.readTerms(ctx.id))",
     "replace": "await client.readTerms(ctx.id)",
     "test": "guard terms read:"
   },
   {
     "id": "wa-margin-glance",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(client.marginGlance(ctx.id))",
+    "find": "await ctx.guardedRead(seq, client.marginGlance(ctx.id))",
     "replace": "await client.marginGlance(ctx.id)",
     "test": "guard margin glance:"
   },
@@ -58,14 +58,14 @@
   {
     "id": "wa-customer-search",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(searchCustomers(name, 10, this.branchId))",
+    "find": "await ctx.guardedRead(seq, searchCustomers(name, 10, this.branchId))",
     "replace": "await searchCustomers(name, 10, this.branchId)",
     "test": "guard customer search:"
   },
   {
     "id": "wa-addons",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(addonSuggestions(ids))",
+    "find": "await ctx.guardedRead(seq, addonSuggestions(ids))",
     "replace": "await addonSuggestions(ids)",
     "test": "guard add-ons:"
   },
@@ -166,5 +166,26 @@
     "find": "?.announce?.(\"\", \"ok\"); // the gun's outcome line is the old quote's\n",
     "replace": ";\n",
     "test": "P3 the scan box's outcome line clears"
+  },
+  {
+    "id": "wa-view-read",
+    "file": "src/quote-workarea.ts",
+    "find": "await ctx.guardedRead(seq, client.readQuote(ctx.id))",
+    "replace": "await client.readQuote(ctx.id)",
+    "test": "a slow read of the quote just left never lands over the quote now open"
+  },
+  {
+    "id": "ctx-read-order",
+    "file": "src/quote-context.ts",
+    "find": "return this.aborted || seq !== this.reads ? undefined : answer;",
+    "replace": "return this.aborted ? undefined : answer;",
+    "test": "P3 reads of one quote land in the order"
+  },
+  {
+    "id": "wa-superseded-waits",
+    "file": "src/quote-workarea.ts",
+    "find": "return !ctx.stale && !ctx.isLatestRead(seq) ? this.newestRead : Promise.resolve();",
+    "replace": "return Promise.resolve();",
+    "test": "P3 a scan that waits for the quote being opened"
   }
 ]
