@@ -7,6 +7,7 @@ package pricing
 // rule above floor price rides at, which QD-2 completes).
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -155,5 +156,29 @@ func TestRecordFloorDecision_WritesBypassRow(t *testing.T) {
 	})
 	if len(st.audits) != 2 || st.audits[1].Action != "UPDATE" {
 		t.Fatalf("the UPDATE row must ride the same single call site, got %+v", st.audits)
+	}
+}
+
+// P2-2 (round 3): a failed category read must refuse the decision. The seam
+// once swallowed the error, left the category id empty and answered from the
+// 1200 default, so a transient catalog error accepted a discount the
+// category's own 2000 floor would have refused. The resolver returns the
+// same error (service.go, resolve category); the decision does too.
+func TestEvaluateLineFloor_ACategoryReadErrorRefusesTheDecision(t *testing.T) {
+	st := &fakeStore{
+		listPrice: &ListPrice{ProductID: "blu60", ListPriceCents: 10000, PriceUOM: "EA"},
+		catPolicies: map[string]CategoryPolicy{
+			"pavers": {CategoryID: "pavers", MarginFloorBps: 2000},
+		},
+	}
+	boom := errors.New("catalog down")
+	s := NewService(st).WithUOMConverter(fakeUOM{stdFactors()}).WithMarginGate(NewIdentityMarginGate()).
+		WithCategoryResolver(errCat{err: boom})
+	ans, err := s.EvaluateLineFloor(context.Background(), FloorQuestion{
+		CustomerType: "CONTRACTOR", ProductID: "blu60", QtyEntered: 1, UOMEntered: "EA",
+		RuleUnitCents: 10000, CandidateUnitCents: 4700, PriceUOM: "EA", CostCents: 4000,
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("a failed category read must return the error, got answer %+v err %v", ans, err)
 	}
 }
