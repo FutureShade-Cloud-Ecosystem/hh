@@ -372,7 +372,10 @@ export class QdQuoteAssist extends PanelBase {
       for (const p of payloads) {
         // ONE REQUEST PER LINE through the audited write: each line is priced, holds stock and
         // writes its own audit row, and a partial failure names the line that caused it.
-        const result = await ctx.guarded(client.addLine(ctx.id, p.product_id, p.qty_entered, p.uom_entered));
+        // The add that is out when the person leaves has usually landed: its answer is counted even though it is dropped.
+        const result = await ctx.guarded(client.addLine(ctx.id, p.product_id, p.qty_entered, p.uom_entered), (late) => {
+          if (late.ok) added += 1;
+        });
         if (result === undefined) {
           // The person opened another quote: the loop stops, no line goes to it, and what landed is said.
           this.addNote = interruptedAddText(added, payloads.length);

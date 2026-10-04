@@ -260,6 +260,7 @@ export function addResultText(added: number, failures: readonly { ref: string; m
  * names no quote, because it is read on the quote opened since.
  */
 export function interruptedAddText(added: number, total: number): string {
+  if (added >= total) return `You moved to another quote while lines were being added. All ${total} selected line${total === 1 ? " was" : "s were"} added to the quote you left.`;
   const landed = added === 0 ? "None of the" : `${added} of the`;
   return `You moved to another quote while lines were being added. ${landed} ${total} selected line${total === 1 ? " was" : "s were"} added to the quote you left, and the rest were not added.`;
 }

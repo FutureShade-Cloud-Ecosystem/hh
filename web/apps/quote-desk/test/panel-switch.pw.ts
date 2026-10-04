@@ -158,6 +158,11 @@ test("a confirm loop cut short by a quote switch says how far it got, and writes
   await settle(page);
   expect(seen.filter((w) => w.includes("/quotes/q-1003/"))).toEqual([]);
   await expect(assist(page).getByTestId("qa-add-note")).toContainText("moved to another quote");
+  // The one add that was out landed on the quote left: the note counts it, and the line is there on return.
+  await expect(assist(page).getByTestId("qa-add-note")).toContainText("1 of the 2 selected lines were added to the quote you left");
+  await row(page, "Q-1001").click();
+  await expect(edit(page).getByTestId("qe-title")).toContainText("Q-1001");
+  await expect(edit(page).getByTestId("qe-line")).toHaveCount(3);
 });
 
 test("a re-hold answer that lands after another quote opened says nothing on that quote", async ({ page, request }) => {

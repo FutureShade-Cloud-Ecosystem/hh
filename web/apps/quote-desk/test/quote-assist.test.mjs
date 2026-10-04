@@ -457,5 +457,7 @@ test("interruptedAddText says how far a cut short confirm run got and names no q
   assert.match(interruptedAddText(1, 3), /1 of the 3 selected lines were added to the quote you left, and the rest were not added/);
   assert.match(interruptedAddText(0, 2), /None of the 2 selected lines were added/);
   assert.match(interruptedAddText(0, 1), /None of the 1 selected line was added/);
+  assert.match(interruptedAddText(2, 2), /All 2 selected lines were added to the quote you left/);
+  assert.match(interruptedAddText(1, 1), /All 1 selected line was added to the quote you left/);
   assert.doesNotMatch(interruptedAddText(1, 3), /q-\d|Q-\d/);
 });

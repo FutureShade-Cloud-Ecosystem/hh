@@ -187,5 +187,19 @@
     "find": "return !ctx.stale && !ctx.isLatestRead(seq) ? this.newestRead : Promise.resolve();",
     "replace": "return Promise.resolve();",
     "test": "P3 a scan that waits for the quote being opened"
+  },
+  {
+    "id": "as-late-add-counted",
+    "file": "src/assist-panel.ts",
+    "find": "          if (late.ok) added += 1;\n",
+    "replace": "",
+    "test": "P2-1 an add that was out when the person left lands"
+  },
+  {
+    "id": "as-late-add-announces",
+    "file": "src/assist-panel.ts",
+    "find": "          if (added > 0) this.dispatchEvent(new CustomEvent(\"quote-changed\", { detail: { quoteId: ctx.id }, bubbles: true, composed: true }));\n",
+    "replace": "",
+    "test": "P2-1 an add that was out when the person left lands"
   }
 ]

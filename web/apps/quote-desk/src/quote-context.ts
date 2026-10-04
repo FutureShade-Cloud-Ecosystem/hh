@@ -54,10 +54,16 @@ export class QuoteContext {
     return this.aborted || seq !== this.reads ? undefined : answer;
   }
 
-  /** The answer, or undefined when the context went stale while the call was in flight. */
-  async guarded<T>(call: Promise<T>): Promise<T | undefined> {
+  /**
+   * The answer, or undefined when the context went stale while the call was in flight. A write that was out when the
+   * quote was left may well have landed on the server: `onLate` is handed that dropped answer, so the caller can
+   * count it or tell the screens that the quote changed, without applying it to the quote now open.
+   */
+  async guarded<T>(call: Promise<T>, onLate?: (answer: T) => void): Promise<T | undefined> {
     const answer = await call;
-    return this.aborted ? undefined : answer;
+    if (!this.aborted) return answer;
+    onLate?.(answer);
+    return undefined;
   }
 }
 
