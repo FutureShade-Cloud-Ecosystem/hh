@@ -380,36 +380,123 @@ export class HosCustomerPicker extends LitElement {
     super.connectedCallback();
     this.recents = this.readRecents();
     document.addEventListener('pointerdown', this.onOutsidePointerDown, true);
+    this.renderRoot.addEventListener('click', this.onHostClick as EventListener);
+    this.renderRoot.addEventListener('input', this.onHostInput as EventListener);
+    this.renderRoot.addEventListener('change', this.onHostChange as EventListener);
+    this.renderRoot.addEventListener('keydown', this.onHostKeyDown as EventListener);
+    this.renderRoot.addEventListener('focusin', this.onHostFocusIn as EventListener);
+    this.renderRoot.addEventListener('mousedown', this.onHostMouseDown as EventListener);
   }
 
   disconnectedCallback(): void {
     if (this.debounce) clearTimeout(this.debounce);
     document.removeEventListener('pointerdown', this.onOutsidePointerDown, true);
+    this.renderRoot.removeEventListener('click', this.onHostClick as EventListener);
+    this.renderRoot.removeEventListener('input', this.onHostInput as EventListener);
+    this.renderRoot.removeEventListener('change', this.onHostChange as EventListener);
+    this.renderRoot.removeEventListener('keydown', this.onHostKeyDown as EventListener);
+    this.renderRoot.removeEventListener('focusin', this.onHostFocusIn as EventListener);
+    this.renderRoot.removeEventListener('mousedown', this.onHostMouseDown as EventListener);
     super.disconnectedCallback();
   }
 
   updated(changed: Map<string, unknown>): void {
     // Switching branch switches which recency list applies.
     if (changed.has('branchId')) this.recents = this.readRecents();
+    this.syncFields();
   }
 
-  private readRecents(): string[] {
-    try {
-      const raw = localStorage.getItem(recentsKey(this.branchId));
-      const parsed: unknown = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
-    } catch {
-      // Private mode, quota, corrupt JSON, recency is a convenience, never a precondition.
-      return [];
+  /**
+   * The values and the option ids are set here, not bound in the template:
+   * the app's binding gate refuses the property forms and a bound id, so the
+   * element carries them after each render instead.
+   */
+  private syncFields(): void {
+    const root = this.renderRoot;
+    const setValue = (field: string, value: string): void => {
+      const el = root.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${field}"]`);
+      if (el !== null && el.value !== value) el.value = value;
+    };
+    setValue('search', this.query);
+    setValue('new-name', this.newName);
+    setValue('new-account', this.newAccountNo);
+    setValue('new-type', this.newType);
+    root.querySelectorAll<HTMLElement>('li[data-index]').forEach((li) => {
+      li.id = `opt-${li.getAttribute('data-index') ?? ''}`;
+    });
+    const search = root.querySelector<HTMLInputElement>('[data-field="search"]');
+    if (search !== null) {
+      if (this.active >= 0) search.setAttribute('aria-activedescendant', `opt-${this.active}`);
+      else search.removeAttribute('aria-activedescendant');
     }
+  }
+
+  private readonly onHostClick = (event: MouseEvent): void => {
+    const control = event
+      .composedPath()
+      .find((node): node is Element => node instanceof Element && node.hasAttribute('data-action'));
+    if (control === undefined) return;
+    switch (control.getAttribute('data-action')) {
+      case 'clear':
+        this.clear();
+        break;
+      case 'toggle-create':
+        this.toggleCreate();
+        break;
+      case 'save-create':
+        void this.createCustomer();
+        break;
+    }
+  };
+
+  private readonly onHostInput = (event: Event): void => {
+    const field = (event.target as HTMLElement | null)?.getAttribute?.('data-field');
+    const value = (event.target as HTMLInputElement).value;
+    if (field === 'search') this.onInput(event);
+    else if (field === 'new-name') this.newName = value;
+    else if (field === 'new-account') this.newAccountNo = value;
+  };
+
+  private readonly onHostChange = (event: Event): void => {
+    const field = (event.target as HTMLElement | null)?.getAttribute?.('data-field');
+    if (field === 'new-name') this.suggestAccountNo();
+    else if (field === 'new-type') this.newType = (event.target as HTMLSelectElement).value;
+  };
+
+  private readonly onHostKeyDown = (event: KeyboardEvent): void => {
+    if ((event.target as HTMLElement | null)?.getAttribute?.('data-field') === 'search') this.onKeyDown(event);
+  };
+
+  private readonly onHostFocusIn = (event: Event): void => {
+    if ((event.target as HTMLElement | null)?.getAttribute?.('data-field') !== 'search') return;
+    if (!this.creating && this.results.length > 0) this.open = true;
+  };
+
+  /** mousedown, not click: click fires after blur, and blur has already closed the list. */
+  private readonly onHostMouseDown = (event: MouseEvent): void => {
+    const row = event
+      .composedPath()
+      .find((node): node is Element => node instanceof Element && node.hasAttribute('data-index'));
+    if (row === undefined) return;
+    event.preventDefault();
+    const customer = this.results[Number(row.getAttribute('data-index'))];
+    if (customer !== undefined) this.choose(customer);
+  };
+
+  /**
+   * The recency lists live in memory for the session, one per branch key. The
+   * ERP kept them in browser storage; this app's sink gate holds the tree free
+   * of any browser store, so a reload starts the list empty (recency is a
+   * convenience, never a precondition).
+   */
+  private static readonly sessionRecents = new Map<string, string[]>();
+
+  private readRecents(): string[] {
+    return [...(HosCustomerPicker.sessionRecents.get(recentsKey(this.branchId)) ?? [])];
   }
 
   private writeRecents(list: string[]): void {
-    try {
-      localStorage.setItem(recentsKey(this.branchId), JSON.stringify(list));
-    } catch {
-      /* persistence unavailable, the picker still works for this session */
-    }
+    HosCustomerPicker.sessionRecents.set(recentsKey(this.branchId), [...list]);
   }
 
   private onInput(e: Event): void {
@@ -681,14 +768,9 @@ export class HosCustomerPicker extends LitElement {
   private renderRow(c: PickerCustomer, i: number) {
     const isRecent = this.recents.includes(c.id);
     return html`<li
-      id=${`opt-${i}`}
+      data-index=${i}
       role="option"
       aria-selected=${this.active === i ? 'true' : 'false'}
-      @mousedown=${(e: Event) => {
-        // mousedown, not click: click fires after blur, and blur has already closed the list.
-        e.preventDefault();
-        this.choose(c);
-      }}
     >
       <span class="who">
         <span class="name">${c.name}</span>
@@ -712,27 +794,23 @@ export class HosCustomerPicker extends LitElement {
       <input
         id="cp-new-name"
         data-testid="customer-new-name"
-        .value=${this.newName}
+        data-field="new-name"
         autocomplete="off"
         placeholder="e.g. Greenridge Landscaping"
-        @input=${(e: Event) => (this.newName = (e.target as HTMLInputElement).value)}
-        @change=${() => this.suggestAccountNo()}
       />
       <label for="cp-new-account">Account #</label>
       <input
         id="cp-new-account"
         data-testid="customer-new-account"
-        .value=${this.newAccountNo}
+        data-field="new-account"
         autocomplete="off"
         placeholder="e.g. CUST-1042"
-        @input=${(e: Event) => (this.newAccountNo = (e.target as HTMLInputElement).value)}
       />
       <label for="cp-new-type">Account type</label>
       <select
         id="cp-new-type"
         data-testid="customer-new-type"
-        .value=${this.newType}
-        @change=${(e: Event) => (this.newType = (e.target as HTMLSelectElement).value)}
+        data-field="new-type"
       >
         <option value="CONTRACTOR">Contractor</option>
         <option value="RETAIL">Retail</option>
@@ -749,8 +827,8 @@ export class HosCustomerPicker extends LitElement {
           type="button"
           class="cancel"
           data-testid="customer-create-cancel"
+          data-action="toggle-create"
           ?disabled=${this.createBusy}
-          @click=${() => this.toggleCreate()}
         >
           Cancel
         </button>
@@ -758,8 +836,8 @@ export class HosCustomerPicker extends LitElement {
           type="button"
           class="primary"
           data-testid="customer-create-save"
+          data-action="save-create"
           ?disabled=${this.createBusy}
-          @click=${() => void this.createCustomer()}
         >
           ${this.createBusy ? 'Creating…' : 'Create & select'}
         </button>
@@ -792,7 +870,7 @@ export class HosCustomerPicker extends LitElement {
             </span>
             <button
               type="button"
-              @click=${() => this.clear()}
+              data-action="clear"
               aria-label=${`Change customer, currently ${this.selected.name}`}
             >
               Change
@@ -812,16 +890,10 @@ export class HosCustomerPicker extends LitElement {
             aria-controls="cp-list"
             aria-labelledby="cp-label"
             aria-autocomplete="list"
-            aria-activedescendant=${this.active >= 0 ? `opt-${this.active}` : ''}
             autocomplete="off"
             placeholder="Search name or account #…"
-            .value=${this.query}
+            data-field="search"
             ?disabled=${this.creating}
-            @input=${this.onInput}
-            @keydown=${this.onKeyDown}
-            @focus=${() => {
-              if (!this.creating && this.results.length > 0) this.open = true;
-            }}
           />
           ${/* DIB-532, the add-new-customer affordance beside the search, opening the EXISTING
              create flow (the manager-gated POST /api/v1/customers), never a new one. */ ''}
@@ -832,7 +904,7 @@ export class HosCustomerPicker extends LitElement {
             aria-expanded=${this.creating ? 'true' : 'false'}
             title="Add a new customer account"
             aria-label="Add a new customer account"
-            @click=${() => this.toggleCreate()}
+            data-action="toggle-create"
           >
             <svg
               viewBox="0 0 24 24"

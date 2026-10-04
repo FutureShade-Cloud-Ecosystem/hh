@@ -2174,9 +2174,9 @@ export class QdQuoteWorkarea extends LitElement {
           <tr>
             ${cols.map(
               (c) => html`<th
-                class=${c.id === "line.qty" || c.id === "line.unit_price" || c.id === "line.disc_pct" || c.id === "line.total" || c.id === "line.unit_cost" || c.id === "line.margin_pct"
+                class="${c.id === "line.qty" || c.id === "line.unit_price" || c.id === "line.disc_pct" || c.id === "line.total" || c.id === "line.unit_cost" || c.id === "line.margin_pct"
                   ? "num"
-                  : ""}
+                  : ""}"
                 data-column=${c.id}
               >
                 ${c.id === "line.thumb" ? "" : c.label}
