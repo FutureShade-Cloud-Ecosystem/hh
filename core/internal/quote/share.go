@@ -204,6 +204,8 @@ type shareStore interface {
 	// AcceptQuoteGuarded flips SENT -> ACCEPTED under the quote row lock, writes the acceptance record
 	// and the audit row on the SAME transaction, and returns the agreed money.
 	AcceptQuoteGuarded(ctx context.Context, in acceptWrite, hooks acceptHooks) (AcceptanceResult, error)
+	// ReplayKeyedAcceptance is the read-only lookup of an earlier acceptance by key for a dead link.
+	ReplayKeyedAcceptance(ctx context.Context, in acceptWrite) (AcceptanceResult, bool, error)
 	// MarkSent moves DRAFT -> SENT under the lock. Idempotent for an already-SENT quote.
 	MarkSent(ctx context.Context, quoteID, actorID string, hooks quoteDateHooks) error
 }
@@ -373,7 +375,8 @@ func (s *StaffService) resolveLive(ctx context.Context, rawToken string) (ShareL
 		return ShareLink{}, "", err // ErrLinkNotFound, the token never existed
 	}
 	if link.RevokedAt != nil || !s.now().Before(link.ExpiresAt) {
-		return ShareLink{}, "", ErrLinkGone // it existed and died, 410, not 404
+		// The dead row is returned with the 410 so a keyed accept can look for its own first outcome.
+		return link, quoteID, ErrLinkGone // it existed and died, 410, not 404
 	}
 	link.Live = true
 	return link, quoteID, nil
@@ -422,6 +425,13 @@ func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedNa
 	}
 	link, quoteID, err := s.resolveLive(ctx, rawToken)
 	if err != nil {
+		if errors.Is(err, ErrLinkGone) && idemKey != "" {
+			// QD-3d: the retry of a committed acceptance can arrive after its link died. Its first
+			// outcome is replayed (read only, nothing written); anything else stays the 410.
+			if res, ok := s.replayThroughDeadLink(ctx, link, quoteID, typedName, idemKey); ok {
+				return res, nil
+			}
+		}
 		return AcceptanceResult{}, err
 	}
 	name := strings.TrimSpace(typedName)
@@ -449,6 +459,23 @@ func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedNa
 	}
 	_ = s.shares.LogShareEvent(ctx, link.ID, "ACCEPT")
 	return res, nil
+}
+
+// replayThroughDeadLink answers the first outcome of a keyed acceptance whose link has since been
+// revoked or has expired, or reports false and leaves the caller's 410 standing. A lookup error, a
+// different typed name or no matching acceptance are all the 410: a dead link reveals nothing more.
+func (s *StaffService) replayThroughDeadLink(ctx context.Context, link ShareLink, quoteID, typedName, idemKey string) (AcceptanceResult, bool) {
+	name := strings.TrimSpace(typedName)
+	if name == "" || len(name) > maxTypedName {
+		return AcceptanceResult{}, false
+	}
+	res, found, err := s.shares.ReplayKeyedAcceptance(ctx, acceptWrite{
+		QuoteID: quoteID, ShareLinkID: link.ID, TypedName: name, IdempotencyKey: idemKey,
+	})
+	if err != nil || !found {
+		return AcceptanceResult{}, false
+	}
+	return res, true
 }
 
 // recordAcceptance writes the QUOTE_ACCEPTED audit row on the acceptance's own transaction and returns
