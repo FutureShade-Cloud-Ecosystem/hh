@@ -489,8 +489,13 @@ func nameQuoteField(err error, field QuoteEditField) error {
 
 // priceLine resolves the pre-tax price trio for (product, qty, uom) at today's rates through the SAME
 // pricing seam the POS ring, the order edit and the portal reorder use. The quote module does not own
-// UOM factor math or price derivation, so it asks pricing rather than reimplementing either; that also
-// keeps the A-20 margin gate live on a quoted line, so a staff quote cannot quietly go out below floor.
+// UOM factor math or price derivation, so it asks pricing rather than reimplementing either.
+//
+// A line at its RULE PRICE is accepted wherever the floor sits (plan 4.1, defect D1, CP0-3 answer A):
+// the price is the dealer's own rule, the salesperson has nothing to ask for, and the till prices the
+// same line the same way. The resolver's margin and floor figures are KEPT on the returned breakdown,
+// so the write's caller can log the below floor rule price for the pricing editors; the floor question
+// itself is asked only by the two writes that put a line below its rule price (floor.go).
 //
 // A nil seam FAILS CLOSED (ErrEditNotConfigured → 503): quoting a line at a stale or zero price would be
 // worse than refusing the edit.
@@ -516,9 +521,6 @@ func (s *StaffService) priceLine(ctx context.Context, customerID, branchID, prod
 	if err != nil {
 		return pricing.LinePrice{}, httpx.BadRequestf("cannot price this line: %v", err)
 	}
-	if bd.Blocked {
-		return pricing.LinePrice{}, &PriceBlockedError{Policy: bd.BlockPolicy}
-	}
 	if bd.QtyBase > maxQuoteQty {
 		return pricing.LinePrice{}, httpx.BadRequestf(
 			"resulting base quantity exceeds the %d maximum for a quote line", maxQuoteQty)
@@ -530,17 +532,6 @@ func (s *StaffService) priceLine(ctx context.Context, customerID, branchID, prod
 		QtyBase:        bd.QtyBase,
 		Breakdown:      bd,
 	}, nil
-}
-
-// PriceBlockedError is returned when pricing a quote line lands below the margin floor. Carries the
-// policy so the 409 can name it. A legitimate business refusal, not a fault.
-type PriceBlockedError struct{ Policy string }
-
-func (e *PriceBlockedError) Error() string {
-	if e.Policy == "" {
-		return "quote: line is below the margin floor"
-	}
-	return fmt.Sprintf("quote: line is below the margin floor (%s)", e.Policy)
 }
 
 // - quantity helpers -

@@ -118,6 +118,9 @@ func (s *StaffService) AddLine(ctx context.Context, quoteID, productID, descript
 	if err != nil {
 		return QuoteEditResult{}, nameQuoteField(err, FieldQuoteLineAdd)
 	}
+	// CP0-3 answer A: an accepted line at a below floor rule price is
+	// logged for the pricing editors (the mark rides the read).
+	s.recordRulePriceBelowFloor(ctx, caller, quoteID, productID, after.LineNo, lp.Breakdown)
 	return QuoteEditResult{Line: &after, Totals: totals, Status: status}, nil
 }
 
@@ -182,6 +185,9 @@ func (s *StaffService) EditLineQty(ctx context.Context, quoteID string, lineNo i
 	if out != nil {
 		s.completeFloorWrite(ctx, caller, quoteID, cur.ProductID, lineNo, out.plan.expectedDisc, out)
 	}
+	// CP0-3 answer A: a reprice that struck a below floor rule price is
+	// logged for the pricing editors like the add that first wrote it.
+	s.recordRulePriceBelowFloor(ctx, caller, quoteID, cur.ProductID, lineNo, lp.Breakdown)
 	return QuoteEditResult{Line: &after, Totals: totals, Status: status}, nil
 }
 

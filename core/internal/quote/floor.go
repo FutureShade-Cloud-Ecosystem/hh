@@ -4,11 +4,12 @@ package quote
 // line below its rule price (defects D2, D5, D6) and the request door of
 // plan 1.1. Three cases:
 //
-//	at the rule price           the decision is not asked (QD-2 owns the read
-//	                             side of a rule price below the floor)
-//	below rule, above floor     accepted, no manager; the UPDATE log row is
-//	                             QD-2's half and rides the one call site
-//	                             below (recordFloorDecision)
+//	at the rule price           the decision is not asked; a rule price
+//	                             below the floor is accepted, marked on the
+//	                             read and logged (CP0-3 answer A,
+//	                             recordRulePriceBelowFloor)
+//	below rule, above floor     accepted, no manager; one UPDATE log row
+//	                             (completeFloorWrite) and the change trail
 //	below floor                 refused with a typed 409 unless (a) the
 //	                             caller clears the floor itself
 //	                             (floor_clearers_own_branch, in its own
@@ -329,8 +330,8 @@ func (s *StaffService) decideLineFloor(ctx context.Context, caller identity.Staf
 
 	if !answer.BelowFloor || answer.EnforcementDisabled {
 		// Below the rule price, above the floor (or no floor question):
-		// accepted, no manager. The UPDATE log row is QD-2's half; it rides
-		// the one call site in completeFloorWrite.
+		// accepted, no manager. The UPDATE log row rides the one call
+		// site in completeFloorWrite.
 		return out, nil
 	}
 	out.belowFloor = true
@@ -417,8 +418,8 @@ func (s *StaffService) lineQtyUom(ctx context.Context, quoteID string, lineNo in
 
 // completeFloorWrite writes the pricing log row a finished floor write
 // owes: the BYPASS row for a cleared below floor price (the honoured
-// override's shape), and the UPDATE row for a below rule above floor write,
-// which QD-2 completes. THE single call site for both.
+// override's shape), and the UPDATE row for a below rule above floor write
+// (plan 4.2). THE single call site for both.
 func (s *StaffService) completeFloorWrite(ctx context.Context, caller identity.StaffContext,
 	quoteID, productID string, lineNo, discPct int, out *floorOutcome,
 ) {
@@ -443,9 +444,33 @@ func (s *StaffService) completeFloorWrite(ctx context.Context, caller identity.S
 		})
 		return
 	}
-	// The below rule above floor UPDATE row: QD-2 completes this half. The
-	// call site is here and only here, so the row lands in one place when
-	// that half turns on.
+	// The below rule above floor UPDATE row (plan 4.2) lands here.
+}
+
+// recordRulePriceBelowFloor writes the pricing log row a finished write
+// owes when it accepts a line at a rule price that sits below the floor
+// (CP0-3 answer A): accepted with no manager, logged for the pricing
+// editors so a rule that sells under the floor is seen. bd is the
+// resolver's own answer, so the row carries the same figures the resolve
+// struck; the rule and the net are the same price (no discount was asked),
+// and the row names the product when no category rode the breakdown, the
+// FloorRecord fallback that keeps the NOT NULL entity id honest.
+func (s *StaffService) recordRulePriceBelowFloor(ctx context.Context, caller identity.StaffContext,
+	quoteID, productID string, lineNo int, bd pricing.Breakdown,
+) {
+	if s.floor == nil || !bd.Blocked {
+		return
+	}
+	s.floor.RecordFloorDecision(ctx, pricing.FloorRecord{
+		UserID: caller.UserID, QuoteID: quoteID, LineNo: lineNo,
+		ProductID:     productID,
+		RuleUnitCents: bd.FinalCents,
+		NetUnitCents:  bd.FinalCents,
+		DiscPct:       0,
+		MarginBps:     bd.MarginBps,
+		FloorBps:      bd.FloorBps,
+		Action:        "UPDATE",
+	})
 }
 
 // - the note bound -
