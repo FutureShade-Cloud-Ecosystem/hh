@@ -602,8 +602,8 @@ for (const path of Object.keys(doc.paths).sort()) {
     // accepted beside any operation that declares it, not bound to the
     // return route; a per-operation bound would be a later tightening.
     //
-    // Idempotency-Key is the one header that IS a generated argument: it is chosen per operation
-    // attempt and resent unchanged on every retry of it, so a client-wide provider cannot carry it.
+    // Idempotency-Key is the one header that IS a generated argument: it is chosen once per acceptance
+    // and resent unchanged on every retry of it, so a client-wide provider cannot carry it.
     // The operation's call options gain an optional idempotencyKey (ApiKeyedCallOptions), and only
     // operations whose contract declares the header get it.
     const KNOWN_HEADER_PARAMS = new Set(["X-Org", "X-Approver-Authorization", "Idempotency-Key"]);
