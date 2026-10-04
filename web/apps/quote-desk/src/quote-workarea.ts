@@ -1606,6 +1606,16 @@ export class QdQuoteWorkarea extends LitElement {
       .composedPath()
       .find((node): node is Element => node instanceof Element && node.hasAttribute("data-role"));
     if (control?.getAttribute("data-role") === "divider") this.onDividerKey(event);
+    // Escape closes an open popover (help, columns, send channels) and returns to the control that opened it.
+    if (event.key === "Escape" && (this.columnsOpen || this.sendOpen || this.helpOpen)) {
+      const opener = this.columnsOpen ? "qb-columns-btn" : this.sendOpen ? "qb-send-channel" : "qb-help";
+      this.columnsOpen = false;
+      this.sendOpen = false;
+      this.helpOpen = false;
+      event.stopPropagation();
+      void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>(`[data-testid="${opener}"]`)?.focus());
+      return;
+    }
     // The commit chord, the counter's muscle memory: Ctrl or Cmd and Enter
     // sends, from inside any field.
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && this.isConnected && this.offsetParent !== null) {

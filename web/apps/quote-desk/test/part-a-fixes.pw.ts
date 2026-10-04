@@ -225,3 +225,46 @@ test("a typed delivery fee of $25 or 1,250 is refused in words, never saved as z
   await fee.blur();
   await expect(page.getByTestId("qb-totals")).toContainText("CA$25.00");
 });
+
+// ── P3: popovers, the picker's words ──
+
+test("Escape closes the help, columns and send channel popovers", async ({ page }) => {
+  await signIn(page);
+  await startQuote(page);
+  await page.getByTestId("qb-help").click();
+  await expect(page.getByTestId("qb-help")).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("qb-help")).toHaveAttribute("aria-expanded", "false");
+  await page.getByTestId("qb-columns-btn").click();
+  await expect(page.locator('[data-field="column"]').first()).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-field="column"]')).toHaveCount(0);
+  await page.getByTestId("qb-send-channel").click();
+  await expect(page.getByTestId("qb-send-channel")).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("qb-send-channel")).toHaveAttribute("aria-expanded", "false");
+});
+
+for (const [status, words] of [
+  [403, "customer: only a manager creates accounts here"],
+  [409, "customer: that account number belongs to Greenridge"],
+] as const) {
+  test(`the customer picker says the server's words on a ${status}`, async ({ page }) => {
+    await page.route("**/api/v1/customers", async (route) => {
+      if (route.request().method() === "POST") {
+        await route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ error: words }) });
+      } else {
+        await route.continue();
+      }
+    });
+    await signIn(page);
+    const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
+    await picker.getByTestId("customer-add-new").click();
+    await picker.getByTestId("customer-new-name").fill("Greenridge Landscaping");
+    await picker.getByTestId("customer-new-account").fill("CUST-9001");
+    await picker.getByTestId("customer-create-save").click();
+    const said = words.replace(/^customer: /, "");
+    await expect(picker.getByRole("alert")).toContainText(said.charAt(0).toUpperCase() + said.slice(1));
+    await expect(picker.getByRole("alert")).not.toContainText("manager sign-in");
+  });
+}

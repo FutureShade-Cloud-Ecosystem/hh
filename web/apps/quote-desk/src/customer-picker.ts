@@ -3,6 +3,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { api } from '@hardscapehouse/pos-kit/src/ported/ports.js';
+import { spokenRefusal } from './_quote-workarea.js';
 import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
 import {
   customerTypeWord,
@@ -694,24 +695,27 @@ export class HosCustomerPicker extends LitElement {
         method: 'POST',
         body: JSON.stringify({ account_no: acct, name, customer_type: this.newType }),
       });
+      // The server's own words come first; the counter wording below is only the fallback when it sent none.
+      const serverWords = async (fallback: string): Promise<string> => {
+        try {
+          const body = (await res.clone().json()) as { error?: string; detail?: string };
+          const said = (body.detail || body.error || '').trim();
+          return said === '' ? fallback : spokenRefusal(said);
+        } catch {
+          return fallback;
+        }
+      };
       if (res.status === 403) {
-        // The write guard is the manager gate, say so in counter words, change nothing else.
-        this.createError = 'Creating accounts needs a manager sign-in.';
+        // The write guard is the manager gate: change nothing else.
+        this.createError = await serverWords('Creating accounts needs a manager sign-in.');
         return;
       }
       if (res.status === 409) {
-        this.createError = `Account # ${acct} already exists, pick another.`;
+        this.createError = await serverWords(`Account # ${acct} already exists, pick another.`);
         return;
       }
       if (!res.ok) {
-        let msg = 'Could not create the account.';
-        try {
-          const body = (await res.json()) as { error?: string; detail?: string };
-          msg = body.detail || body.error || msg;
-        } catch {
-          /* keep the fallback wording */
-        }
-        this.createError = msg;
+        this.createError = await serverWords('Could not create the account.');
         return;
       }
       const acctBody = (await res.json()) as {
