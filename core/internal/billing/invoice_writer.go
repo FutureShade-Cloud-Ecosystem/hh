@@ -487,7 +487,27 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 	dueDate := w.now().AddDate(0, 0, terms).Format("2006-01-02")
 
 	var doc InvoiceDoc
+	var covered *InvoiceDoc
 	insert := func(tx pgx.Tx) error {
+		// The order's row lock is this transaction's FIRST statement (QD-5 review round 2): the writers
+		// that bill an order (the counter's, the group's, the whole order's) serialise on it, and the
+		// existence checks that follow see whatever the one ahead of them committed.
+		if f.OrderID != "" {
+			if err := lockOrder(ctx, tx, f.OrderID); err != nil {
+				return err
+			}
+			// A group is covered by the counter's whole order document when that document committed
+			// while this call waited for the lock: nothing new is written, the groups link to it.
+			if sourceKind == SourceMultiShip {
+				if whole, ok, err := findByKeyOn(ctx, tx, wholeOrderKey(f.OrderID)); err != nil {
+					return err
+				} else if ok && whole.AtCounter {
+					whole.Reused = true
+					covered = &whole
+					return nil
+				}
+			}
+		}
 		var invoiceID, invoiceNo string
 		// FINALIZED, not DRAFT. The order was delivered; the document is real the moment it exists,
 		// and a DRAFT invoice is a promise to remember to finalize it that nobody keeps.
@@ -567,6 +587,9 @@ VALUES ($1, 'INVOICE', $2, $3, 'invoice', $4, $5, $6, clock_timestamp())`,
 		return doc, nil
 	}
 	err = w.inTx(ctx, insert)
+	if err == nil && covered != nil {
+		return *covered, nil
+	}
 	if err != nil {
 		// The genuine race: a concurrent caller won the UNIQUE index. Return THEIR document.
 		if isUniqueViolation(err) {
@@ -697,6 +720,19 @@ func (e *OrderAlreadyInvoicedError) Error() string {
 		"record the payment against that invoice from the receivables register"
 }
 
+// lockOrder takes the order's row lock for the rest of the transaction: the one lock every writer that
+// bills an order takes first, so a group invoice and a counter invoice of one order queue behind each
+// other. Order edits, reservations and shipment groups already take the same lock first. An order that
+// does not exist locks nothing and is left to the facts read to refuse.
+func lockOrder(ctx context.Context, q keyQuerier, orderID string) error {
+	var id string
+	err := q.QueryRow(ctx, `SELECT id::text FROM orders WHERE id = $1::uuid FOR UPDATE`, orderID).Scan(&id)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("billing: lock the order: %w", err)
+	}
+	return nil
+}
+
 // otherLiveInvoice names an invoice of the order that is not the counter's whole order document: any
 // live INVOICE of the order under any other key (a shipment group's, a fulfilment document raised before
 // the counter's key existed). "" when there is none.
@@ -732,6 +768,11 @@ func (w *InvoiceWriter) AgreedOrderInvoiceTx(ctx context.Context, tx pgx.Tx, ord
 }
 
 func (w *InvoiceWriter) agreedOrderInvoice(ctx context.Context, ctxTx pgx.Tx, q keyQuerier, orderID string) (InvoiceDoc, bool, error) {
+	if ctxTx != nil {
+		if err := lockOrder(ctx, ctxTx, orderID); err != nil {
+			return InvoiceDoc{}, false, err
+		}
+	}
 	if doc, ok, err := findByKeyOn(ctx, q, wholeOrderKey(orderID)); err != nil {
 		return InvoiceDoc{}, false, err
 	} else if ok {
@@ -769,7 +810,15 @@ func (w *InvoiceWriter) InvoiceOrderAtAgreed(ctx context.Context, orderID string
 	if w.pool == nil {
 		return InvoiceDoc{}, errNoDB
 	}
-	return w.invoiceOrderAtAgreed(ctx, nil, w.pool, orderID)
+	// On a transaction of its own, so the order's lock and the checks that follow it are one unit with
+	// the write.
+	var doc InvoiceDoc
+	err := w.inTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		doc, err = w.invoiceOrderAtAgreed(ctx, tx, tx, orderID)
+		return err
+	})
+	return doc, err
 }
 
 // InvoiceOrderAtAgreedTx is InvoiceOrderAtAgreed on the caller's transaction (QD-5): the existing
@@ -780,6 +829,11 @@ func (w *InvoiceWriter) InvoiceOrderAtAgreedTx(ctx context.Context, tx pgx.Tx, o
 }
 
 func (w *InvoiceWriter) invoiceOrderAtAgreed(ctx context.Context, ctxTx pgx.Tx, q keyQuerier, orderID string) (InvoiceDoc, error) {
+	if ctxTx != nil {
+		if err := lockOrder(ctx, ctxTx, orderID); err != nil {
+			return InvoiceDoc{}, err
+		}
+	}
 	if doc, ok, err := findByKeyOn(ctx, q, wholeOrderKey(orderID)); err != nil {
 		return InvoiceDoc{}, err
 	} else if ok {
