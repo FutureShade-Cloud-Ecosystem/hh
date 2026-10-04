@@ -17,7 +17,7 @@
 // "Sales manager".
 import { css, html, nothing, type TemplateResult } from "lit";
 import type { DemoFlow } from "@hardscapehouse/api-client";
-import { drawIcon, iconForId } from "../ported/_icon-consumer.js";
+import { drawIcon, iconForId } from "./_icon-consumer.js";
 
 /**
  * The decided matrix's labels for the roles whose screens are not in this

@@ -21,7 +21,7 @@
 // comes and goes. Hiding with CSS alone would leave every control inside reachable by Tab while
 // invisible, which is worse than no accordion at all.
 
-import type { FlowStepId } from './_pos-flow.js';
+import type { FlowStepId } from '@hardscapehouse/pos-kit/src/ported/_pos-flow.js';
 
 /** The DOM id of a step's header button: the thing aria-labelledby on the region points at. */
 export function headerId(step: FlowStepId): string {
