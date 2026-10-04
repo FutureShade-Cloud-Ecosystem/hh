@@ -14,7 +14,19 @@
 // the work area parses it through floor-refusal.ts, which validates it field
 // by field like every other read.
 import { err, ok, type ApiClient, type Result } from "@hardscapehouse/api-client";
+import type {
+  IdentityApproval,
+  IdentityPolicyCheckResponse,
+  QuoteAssistExtraction,
+  QuoteAssistScopeGaps,
+  QuoteBranchStock,
+  QuoteFloorApprovalAnswer,
+  QuoteFollowUpHistory,
+  QuoteHoldExpiryView,
+  QuoteLineAvailability,
+} from "@hardscapehouse/api-client";
 import {
+  staffIdentity,
   staffBranches,
   staffProduct,
   staffQuote,
@@ -39,6 +51,18 @@ import {
   type ScopeRuleRow,
   type ShareLinkRow,
 } from "./_panel-wire.js";
+import {
+  readApprovals,
+  readAvailability,
+  readBranchStocks,
+  readExtraction,
+  readFloorAnswer,
+  readFollowUps,
+  readHoldExpiry,
+  readHoldsApplied,
+  readPolicyCheck,
+  readScopeGaps,
+} from "./_seam-wire.js";
 import type { CurationProfile } from "./_quote-settings.js";
 import type { GlanceIn } from "./_quote-workarea.js";
 import type { WireItem } from "./quote-surface.js";
@@ -632,29 +656,24 @@ export class QdClient {
   }
 
   /**
-   * The request door the third coder's dialog files through (the QD-1
-   * operation). Exposed here so the dialog lands on the same validated door
-   * the rest of the surface speaks; the work area itself does not call it.
+   * The request door the refusal dialog files through (the QD-1 operation).
+   * The answer is the contract's own: whether a request was filed, whether
+   * the caller may clear its own price, and the request's state as the
+   * server holds it. The app never decides either fact.
    */
   async requestFloorApproval(
     quoteId: string,
     lineNo: number,
     discPct: number,
     note: string,
-  ): Promise<Result<{ filed: boolean; mayClearItself: boolean }>> {
+  ): Promise<Result<QuoteFloorApprovalAnswer>> {
     const result = await staffQuote.quoteRequestFloorApproval(this.#client, quoteId, lineNo, {
       disc_pct: discPct,
       ...(note === "" ? {} : { note }),
     });
     if (!result.ok) return result;
-    const record = result.value as unknown;
-    if (!isRecord(record)) return err("the request door's answer is not readable");
-    const filed = booleanAt(record, "filed");
-    const mayClearItself = booleanAt(record, "may_clear_itself");
-    if (filed === null || mayClearItself === null) {
-      return err("the request door's answer is missing its own facts");
-    }
-    return ok({ filed, mayClearItself });
+    const answer = readFloorAnswer(result.value);
+    return answer === null ? err("the request door's answer is not readable") : ok(answer);
   }
 
   /** The surface config read: the curation rows, the workspace row and the policy. */
@@ -806,6 +825,102 @@ export class QdClient {
       profile,
       items: items.map((item) => ({ kind: item.kind, id: item.id, position: item.position, visible: item.visible })),
     });
+    return result.ok ? ok(true) : result;
+  }
+
+  // ── the third coder's panels: assist, follow-ups, holds, availability, the
+  // floor check and the approvals list ────────────────────────────────────────
+
+  /** Read a pasted job description into proposed lines. Nothing is written. */
+  async assistExtract(text: string, branchId: string, useAi: boolean): Promise<Result<QuoteAssistExtraction>> {
+    const result = await staffQuoteassist.quoteAssistExtract(this.#client, { text, branch_id: branchId, use_ai: useAi });
+    if (!result.ok) return result;
+    const extraction = readExtraction(result.value);
+    return extraction === null ? err("the assist answer is not readable") : ok(extraction);
+  }
+
+  /** What the yard's scope rules say the quote is missing. */
+  async assistScopeGaps(quoteId: string): Promise<Result<QuoteAssistScopeGaps>> {
+    const result = await staffQuoteassist.quoteAssistScopeGaps(this.#client, { quote_id: quoteId });
+    if (!result.ok) return result;
+    const gaps = readScopeGaps(result.value);
+    return gaps === null ? err("the scope gaps are not readable") : ok(gaps);
+  }
+
+  /** Has this customer heard from us, and when next. */
+  async followUps(quoteId: string): Promise<Result<QuoteFollowUpHistory>> {
+    return this.followUpAnswer(await staffQuote.quoteFollowUpHistory(this.#client, quoteId));
+  }
+
+  async stopFollowUps(quoteId: string): Promise<Result<QuoteFollowUpHistory>> {
+    return this.followUpAnswer(await staffQuote.quoteDisableFollowUps(this.#client, quoteId));
+  }
+
+  async resumeFollowUps(quoteId: string): Promise<Result<QuoteFollowUpHistory>> {
+    return this.followUpAnswer(await staffQuote.quoteEnableFollowUps(this.#client, quoteId));
+  }
+
+  private followUpAnswer(result: Result<unknown>): Result<QuoteFollowUpHistory> {
+    if (!result.ok) return result;
+    const history = readFollowUps(result.value);
+    return history === null ? err("the follow-up history is not readable") : ok(history);
+  }
+
+  /** When the quote's soft stock holds lapse with its validity. */
+  async holdExpiry(quoteId: string): Promise<Result<QuoteHoldExpiryView>> {
+    const result = await staffQuote.quoteQuoteHoldExpiry(this.#client, quoteId);
+    if (!result.ok) return result;
+    const view = readHoldExpiry(result.value);
+    return view === null ? err("the hold expiry status is not readable") : ok(view);
+  }
+
+  /** Re-hold the stock where the server allows it; answers the holds applied. */
+  async resyncHolds(quoteId: string): Promise<Result<number>> {
+    const result = await staffQuote.quoteResyncQuoteHolds(this.#client, quoteId);
+    if (!result.ok) return result;
+    const applied = readHoldsApplied(result.value);
+    return applied === null ? err("the re-hold answer is not readable") : ok(applied);
+  }
+
+  /** A chip per line, graded against what is available at the branch. */
+  async availability(quoteId: string): Promise<Result<{ lines: QuoteLineAvailability[]; seamWired: boolean }>> {
+    const result = await staffQuote.quoteQuoteAvailability(this.#client, quoteId);
+    if (!result.ok) return result;
+    const view = readAvailability(result.value);
+    return view === null ? err("the availability is not readable") : ok(view);
+  }
+
+  /** The cross branch peek behind a short line. */
+  async availabilityBranches(productId: string): Promise<Result<QuoteBranchStock[]>> {
+    const result = await staffQuote.quoteAvailabilityBranches(this.#client, productId);
+    if (!result.ok) return result;
+    const rows = readBranchStocks(result.value);
+    return rows === null ? err("the branch stock is not readable") : ok(rows);
+  }
+
+  /** Check a price and cost against the margin policy. The server owns the arithmetic and the verdict. */
+  async checkPolicy(priceCents: number, costCents: number, branchId: string): Promise<Result<IdentityPolicyCheckResponse>> {
+    const result = await staffIdentity.identityCheckPolicy(this.#client, {
+      price_cents: priceCents,
+      cost_cents: costCents,
+      branch_id: branchId,
+    });
+    if (!result.ok) return result;
+    const verdict = readPolicyCheck(result.value);
+    return verdict === null ? err("the policy check is not readable") : ok(verdict);
+  }
+
+  /** The approval requests the server returns for this caller, optionally by status. */
+  async listApprovals(status: "PENDING" | "APPROVED" | "REJECTED" | ""): Promise<Result<IdentityApproval[]>> {
+    const result = await staffIdentity.identityListApprovals(this.#client, status === "" ? undefined : { status });
+    if (!result.ok) return result;
+    const rows = readApprovals(result.value);
+    return rows === null ? err("the approvals list is not readable") : ok(rows);
+  }
+
+  /** Decide one approval. The server decides whether this caller may; its refusal comes back verbatim. */
+  async decideApproval(id: string, approve: boolean, reason: string): Promise<Result<true>> {
+    const result = await staffIdentity.identityDecideApproval(this.#client, id, { approve, reason });
     return result.ok ? ok(true) : result;
   }
 }
