@@ -40,59 +40,77 @@ export class QuoteDeskApp extends HHElement {
         background: var(--hh-page);
         color: var(--hh-text);
       }
-      header {
+      header.bar {
         display: flex;
         align-items: center;
-        justify-content: space-between;
         flex-wrap: wrap;
-        gap: var(--hh-s-12);
+        gap: var(--hh-s-8) var(--hh-s-16);
         min-height: 48px;
         box-sizing: border-box;
         padding: var(--hh-s-8) var(--hh-s-20);
+        background: var(--hh-card);
         border-bottom: 1px solid var(--hh-line);
       }
-      header h1 {
-        font-size: 15px;
-        margin: 0;
-      }
-      header .title-row {
+      .brand {
         display: flex;
         align-items: center;
         gap: var(--hh-s-12);
-        margin-left: auto;
       }
-      header .signed-in {
+      .mark {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        border-radius: var(--hh-radius-control);
+        background: var(--hh-accent);
+        color: var(--hh-accent-ink);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+      .brand h1 {
+        font-size: 17px;
+        font-weight: 600;
         margin: 0;
+        white-space: nowrap;
+      }
+      .bar-demo {
+        display: flex;
+        min-width: 0;
+      }
+      .bar-user {
+        margin: 0 0 0 auto;
         display: flex;
         align-items: center;
         gap: var(--hh-s-8);
       }
-      header .role-name {
+      .role-name {
         margin: 0;
         font-weight: 600;
         font-size: 13px;
+        padding: var(--hh-s-4) var(--hh-s-12);
+        border: 1px solid var(--hh-line);
+        border-radius: var(--hh-radius-pill);
+        background: var(--hh-page);
+        white-space: nowrap;
       }
-      header button {
+      header.bar button {
         min-height: 0;
-        padding: 7px 12px;
-        font-size: 11px;
+        padding: 7px 14px;
+        font-size: 12px;
         line-height: normal;
-        color: var(--hh-text-dim);
+        white-space: nowrap;
       }
-      header button:hover:not(:disabled) {
+      header.bar button:hover:not(:disabled) {
         border-color: var(--hh-accent-text);
         color: var(--hh-accent-text);
       }
-      header .demo-banner {
-        margin: 0;
-        padding: var(--hh-s-4) var(--hh-s-12);
-        align-items: center;
-        gap: var(--hh-s-8);
-      }
-      header .demo-banner .word,
-      header .demo-banner .copy {
-        font-size: 12px;
-        line-height: 1.3;
+      @media (max-width: 1100px) {
+        .bar-demo {
+          order: 3;
+          flex-basis: 100%;
+        }
       }
       main {
         padding: var(--hh-s-4) 0;
@@ -286,38 +304,26 @@ export class QuoteDeskApp extends HHElement {
     const demoPresent =
       this.#surface === "desk" || (this.#flowsState.kind === "ready" && this.#flowsState.flows.length > 0);
     return html`
-      ${this.#surface === "desk"
-        ? nothing
-        : html`
-            <header>
-              ${demoPresent ? demoBanner() : nothing}
-              <div class="title-row">
-                <h1>Quote Desk</h1>
-                ${this.#roleLabel === null
-                  ? nothing
-                  : html`
-                      <p class="signed-in">
-                        <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
-                        <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
-                          Sign out
-                        </button>
-                      </p>
-                    `}
-              </div>
-            </header>
-          `}
+      <header class="bar" data-testid="qd-bar">
+        <div class="brand">
+          <span class="mark" data-testid="qd-mark" aria-hidden="true">QD</span>
+          <h1 data-testid="qd-title">Quote Desk</h1>
+        </div>
+        ${demoPresent ? html`<div class="bar-demo">${demoBanner()}</div>` : nothing}
+        ${this.#roleLabel === null
+          ? nothing
+          : html`
+              <p class="bar-user">
+                <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
+                <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
+                  Sign out
+                </button>
+              </p>
+            `}
+      </header>
       <main>
         ${this.#surface === "desk"
           ? html`
-              <div class="surfacebar">
-                <p class="demo-banner">${demoBanner()}</p>
-                <p class="signed-in">
-                  <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
-                  <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
-                    Sign out
-                  </button>
-                </p>
-              </div>
               <div class="surface">
                 <qd-quote-builder></qd-quote-builder>
               </div>

@@ -4,27 +4,32 @@
 // rather than in a shared shell chrome. It marks the box as the demo, on the
 // entry page and the desk alike. It renders only once the flows route has
 // answered with cards: a box that is not the demo does not get to look like
-// one. The gold is a fill and carries the accent ink, per the sheet's gold
-// rule.
+// one. The gold is an outline and text on the page (the sheet's accent-text), a
+// slim strip, not a fill.
 import { css, html, type TemplateResult } from "lit";
 
 export const demoBannerStyles = css`
+  /* A slim strip in the signed-in bar, the gold as an outline and ink rather
+     than a full-bleed fill (visual review round 1, P2-1). */
   .demo-banner {
-    display: flex;
+    display: inline-flex;
     flex-wrap: wrap;
-    align-items: baseline;
-    gap: var(--hh-s-12);
-    background: var(--hh-accent);
-    color: var(--hh-accent-ink);
-    border-radius: var(--hh-radius-control);
-    padding: var(--hh-s-8) var(--hh-s-12);
-    margin: 0 0 var(--hh-s-12);
+    align-items: center;
+    gap: var(--hh-s-8);
+    border: 1px solid var(--hh-accent);
+    color: var(--hh-accent-text);
+    border-radius: var(--hh-radius-pill);
+    padding: var(--hh-s-2) var(--hh-s-12);
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.3;
   }
   .demo-banner .word {
     font-weight: 700;
   }
   .demo-banner .copy {
-    font-size: var(--hh-s-12);
+    font-size: 12px;
+    color: var(--hh-text-dim);
   }
 `;
 
