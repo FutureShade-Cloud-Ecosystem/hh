@@ -203,13 +203,26 @@ func (s *Approvals) notifyApprovalDecided(ctx context.Context, req ApprovalReque
 }
 
 // resolveApproverIDs resolves the eligible approver user ids for a (policy, branch): the candidate pool
-// filtered through CanApprove (ResolveApprovers).
+// filtered through CanApprove. The margin arm reads the CONFIGURED floor set the service was wired with
+// (D11, CP0-1 answer B): the fan-out notifies exactly the authority the decide path holds, so a branch
+// floor request reaches the branch's Sales manager, never only the carried default set.
 func (s *Approvals) resolveApproverIDs(ctx context.Context, policy PolicyType, branchID string) ([]string, error) {
 	candidates, err := s.store.ListApproverCandidates(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return ResolveApprovers(candidates, policy, branchID), nil
+	return ResolveApproversFloor(candidates, policy, branchID, s.floorApprovers), nil
+}
+
+// CanDecide answers whether the caller's authority decides the policy in
+// the branch under the CONFIGURED floor set the service was wired with
+// (D11): the same rule the Decide path runs (four eyes and PENDING are
+// the caller's own to check), offered so a surface that must show what
+// waits on this person (the Home queue's approvals count) reads the
+// configured authority and never a second copy derived from the carried
+// default.
+func (s *Approvals) CanDecide(caller StaffContext, policy PolicyType, branchID string) bool {
+	return CanApproveFloor(caller, policy, branchID, s.floorApprovers)
 }
 
 // ApprovalReconcilePending is one still-PENDING request the messaging sweep must ensure has a card in each
@@ -260,7 +273,11 @@ func (s *Approvals) ApprovalReconcile(ctx context.Context, decidedSince time.Tim
 				RequestedBy: r.RequestedBy,
 				Detail:      r.Detail,
 				DeepLink:    approvalDeepLink(r),
-				ApproverIDs: ResolveApprovers(candidates, r.Policy, r.BranchID),
+				// The same configured authority the filed fan-out and the
+				// decide path hold (D11): a sweep re-fans to exactly who may
+				// decide, so a newly configured branch approver's card
+				// arrives and a deconfigured one's stops.
+				ApproverIDs: ResolveApproversFloor(candidates, r.Policy, r.BranchID, s.floorApprovers),
 			})
 		case ApprovalApproved, ApprovalRejected:
 			decided = append(decided, ApprovalReconcileDecided{

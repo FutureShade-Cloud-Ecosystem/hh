@@ -109,13 +109,13 @@ func qd1SeedOwnedQuote(t *testing.T, pool *pgxpool.Pool, status string, ownerID 
 func TestQD1_Row3_WorkCallerCannotEditAnotherSalespersonsQuote(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
-	bob := qd1User(t, pool, "bob")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	seller := qd1User(t, pool, "seller")
+	peer := qd1User(t, pool, "peer")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 
 	svc := qd1Svc(t, pool, now)
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, bob)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, peer)
 
 	_, err := svc.EditLineQty(ctx, quoteID, 1, "5")
 	if err == nil {
@@ -127,6 +127,9 @@ func TestQD1_Row3_WorkCallerCannotEditAnotherSalespersonsQuote(t *testing.T) {
 	}
 	if !strings.Contains(owner.Error(), "Sales manager") {
 		t.Errorf("row 3: the refusal must name the Sales manager as the way forward, got %q", owner.Error())
+	}
+	if !strings.Contains(owner.Error(), "seller") {
+		t.Errorf("row 3: the refusal must name the quote's owner (plan 3.4), got %q", owner.Error())
 	}
 	// The row is untouched.
 	if got := liveLine(t, pool, quoteID, 1); got.QtyEntered != "2.0000" {
@@ -140,13 +143,13 @@ func TestQD1_Row3_WorkCallerCannotEditAnotherSalespersonsQuote(t *testing.T) {
 func TestQD1_WorkCallerReadsOthersQuoteWithEmptyOfferAndOwnerNamed(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
-	bob := qd1User(t, pool, "bob")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	seller := qd1User(t, pool, "seller")
+	peer := qd1User(t, pool, "peer")
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 
 	svc := qd1Svc(t, pool, now)
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, bob)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, peer)
 
 	view, err := svc.StaffQuoteRead(ctx, quoteID)
 	if err != nil {
@@ -155,13 +158,13 @@ func TestQD1_WorkCallerReadsOthersQuoteWithEmptyOfferAndOwnerNamed(t *testing.T)
 	if len(view.EditableFields) != 0 {
 		t.Errorf("editable_fields must be empty for a Work caller who does not own the quote, got %v", view.EditableFields)
 	}
-	if view.OwnerID != alice {
-		t.Errorf("the view must carry the quote's owner, want %s got %q", alice, view.OwnerID)
+	if view.OwnerID != seller {
+		t.Errorf("the view must carry the quote's owner, want %s got %q", seller, view.OwnerID)
 	}
 
 	// The owner's own read offers the fields.
 	ownCtx := qCtxAs(intStaff(intTrenton))
-	ownCtx = qd1WithRole(ownCtx, "INSIDE_SALES", intTrenton, alice)
+	ownCtx = qd1WithRole(ownCtx, "INSIDE_SALES", intTrenton, seller)
 	own, err := svc.StaffQuoteRead(ownCtx, quoteID)
 	if err != nil {
 		t.Fatalf("the owner's read: %v", err)
@@ -228,14 +231,14 @@ func TestQD1_OwnIsSalespersonElseCreator(t *testing.T) {
 func TestQD1_Row4_WorkCallerListDefaultsToOwnQuotes(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
-	bob := qd1User(t, pool, "bob")
-	_, aliceQuote, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
-	_, bobQuote, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", bob, true)
+	seller := qd1User(t, pool, "seller")
+	peer := qd1User(t, pool, "peer")
+	_, aliceQuote, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
+	_, bobQuote, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", peer, true)
 
 	svc := qd1Svc(t, pool, now)
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, alice)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
 	rows, err := svc.StaffQuoteList(ctx, Filter{})
 	if err != nil {
@@ -245,8 +248,8 @@ func TestQD1_Row4_WorkCallerListDefaultsToOwnQuotes(t *testing.T) {
 	for _, r := range rows {
 		if r.ID == aliceQuote {
 			sawAlice = true
-			if r.OwnerID != alice {
-				t.Errorf("the summary must carry the owner, want %s got %q", alice, r.OwnerID)
+			if r.OwnerID != seller {
+				t.Errorf("the summary must carry the owner, want %s got %q", seller, r.OwnerID)
 			}
 		}
 		if r.ID == bobQuote {
@@ -262,7 +265,7 @@ func TestQD1_Row4_WorkCallerListDefaultsToOwnQuotes(t *testing.T) {
 
 	// A Manage caller's list is not filtered to its own.
 	mgrCtx := qCtxAs(intStaff(intTrenton))
-	mgrCtx = qd1WithRole(mgrCtx, "SALES_MANAGER", intTrenton, bob)
+	mgrCtx = qd1WithRole(mgrCtx, "SALES_MANAGER", intTrenton, peer)
 	mrows, err := svc.StaffQuoteList(mgrCtx, Filter{})
 	if err != nil {
 		t.Fatalf("manager list: %v", err)
@@ -282,19 +285,19 @@ func TestQD1_Row4_WorkCallerListDefaultsToOwnQuotes(t *testing.T) {
 func TestQD1_CreateSetsSalespersonToCaller(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
+	seller := qd1User(t, pool, "seller")
 	cust := qd1Customer(t, pool)
 
 	svc := qd1Svc(t, pool, now)
 	ctx := qCtxAs(intStaff(intTrenton))
-	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, alice)
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
 
 	view, err := svc.CreateQuote(ctx, QuoteCreate{CustomerID: cust, BranchID: intTrenton})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if view.OwnerID != alice {
-		t.Errorf("creating a quote must set the salesperson to the caller, owner %q want %s", view.OwnerID, alice)
+	if view.OwnerID != seller {
+		t.Errorf("creating a quote must set the salesperson to the caller, owner %q want %s", view.OwnerID, seller)
 	}
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM quotes WHERE id = $1`, view.ID)
@@ -305,9 +308,9 @@ func TestQD1_CreateSetsSalespersonToCaller(t *testing.T) {
 func TestQD1_ManageCallerEditsAnyQuoteInBranch(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
+	seller := qd1User(t, pool, "seller")
 	mgr := qd1User(t, pool, "mgr")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 
 	svc := qd1Svc(t, pool, now)
 	ctx := qCtxAs(intStaff(intTrenton))
@@ -323,9 +326,9 @@ func TestQD1_ManageCallerEditsAnyQuoteInBranch(t *testing.T) {
 func TestQD1_Row2_GeneralManagerCannotEdit(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
+	seller := qd1User(t, pool, "seller")
 	gm := qd1User(t, pool, "gm")
-	_, quoteID, prod, uom := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	_, quoteID, prod, uom := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 
 	svc := qd1Svc(t, pool, now)
 	ctx := qCtxAs(intStaff(intTrenton))
@@ -344,9 +347,9 @@ func TestQD1_Row2_GeneralManagerCannotEdit(t *testing.T) {
 func TestQD1_Row1_NoQuoteDeskRoleCannotEdit(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
+	seller := qd1User(t, pool, "seller")
 	fc := qd1User(t, pool, "fc")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 
 	svc := qd1Svc(t, pool, now)
 	ctx := qCtxAs(intStaff(intTrenton))
@@ -362,9 +365,9 @@ func TestQD1_Row1_NoQuoteDeskRoleCannotEdit(t *testing.T) {
 func TestQD1_Row7_SalesManagerOtherBranchRefused(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
+	seller := qd1User(t, pool, "seller")
 	mgr := qd1User(t, pool, "mgr")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 
 	svc := qd1Svc(t, pool, now)
 	// The manager reaches Trenton alone; the quote sits in Trenton, so use a
@@ -386,9 +389,9 @@ func TestQD1_Row7_SalesManagerOtherBranchRefused(t *testing.T) {
 func TestQD1_Row14_YardManagerConvertRefused(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
+	seller := qd1User(t, pool, "seller")
 	ym := qd1User(t, pool, "ym")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "ACCEPTED", alice, true)
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "ACCEPTED", seller, true)
 
 	svc := qd1Svc(t, pool, now)
 	ctx := qCtxAs(intStaff(intTrenton))
@@ -409,16 +412,16 @@ func TestQD1_Row14_YardManagerConvertRefused(t *testing.T) {
 func TestQD1_MarginGlanceAnswersByConfigCostList(t *testing.T) {
 	pool := intPool(t)
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	alice := qd1User(t, pool, "alice")
+	seller := qd1User(t, pool, "seller")
 	hr := qd1User(t, pool, "hr")
-	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", alice, true)
+	_, quoteID, _, _ := qd1SeedOwnedQuote(t, pool, "DRAFT", seller, true)
 	qd1SeedCost(t, pool, quoteID)
 
 	svc := qd1Svc(t, pool, now)
 
 	// Inside Sales is on the configuration's cost_visibility list (r3 X3).
 	salesCtx := qCtxAs(intStaff(intTrenton))
-	salesCtx = qd1WithRole(salesCtx, "INSIDE_SALES", intTrenton, alice)
+	salesCtx = qd1WithRole(salesCtx, "INSIDE_SALES", intTrenton, seller)
 	m, err := svc.MarginGlance(salesCtx, quoteID)
 	if err != nil {
 		t.Fatalf("glance as inside sales: %v", err)
@@ -486,4 +489,79 @@ func TestQD1_RoleConfigHoldsQuoteDeskCells(t *testing.T) {
 			t.Errorf("quote-desk level for %s: want %s got %s", role, want, got)
 		}
 	}
+}
+
+// The create stamp pins the COLUMN, not the ownership answer: a mutation
+// that drops the salesperson stamp still leaves the caller as creator, and
+// the creator fallback would answer ownership exactly the same. The stamp
+// must be there in its own right, because a quote whose salesperson is
+// later re-assigned must follow the salesperson, and a NULL column cannot.
+func TestQD1_CreateStampsTheSalespersonColumn(t *testing.T) {
+	pool := intPool(t)
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	seller := qd1User(t, pool, "seller")
+	svc := qd1Svc(t, pool, now)
+	ctx := qCtxAs(intStaff(intTrenton))
+	ctx = qd1WithRole(ctx, "INSIDE_SALES", intTrenton, seller)
+
+	var cust string
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO customers (account_no, name, customer_type)
+		VALUES ('QD1-STAMP', 'QD1 stamp customer', 'CONTRACTOR')
+		ON CONFLICT (account_no) DO UPDATE SET name = EXCLUDED.name
+		RETURNING id::text`).Scan(&cust); err != nil {
+		t.Fatalf("seed customer: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = pool.Exec(c, `DELETE FROM quotes WHERE customer_id = $1`, cust)
+		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, cust)
+	})
+	view, err := svc.CreateQuote(ctx, QuoteCreate{CustomerID: cust, BranchID: intTrenton})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	var salesperson, creator any
+	if err := pool.QueryRow(context.Background(),
+		`SELECT salesperson_id::text, created_by::text FROM quotes WHERE id = $1`, view.ID).
+		Scan(&salesperson, &creator); err != nil {
+		t.Fatalf("read the stamps: %v", err)
+	}
+	if salesperson != seller {
+		t.Fatalf("create must stamp the salesperson column itself (the creator fallback must not be what answers), salesperson=%v want %s", salesperson, seller)
+	}
+	if creator != seller {
+		t.Fatalf("create stamps the creator too, got %v", creator)
+	}
+}
+
+// Ownership prefers the SALESPERSON over the creator when both stand on
+// the row: the stamp, not the fallback, is the owner.
+func TestQD1_OwnershipPrefersSalespersonOverCreator(t *testing.T) {
+	pool := intPool(t)
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	creator := qd1User(t, pool, "creator")
+	salesperson := qd1User(t, pool, "assignee")
+	cust, quoteID, prod, uom := qd1SeedOwnedQuote(t, pool, "DRAFT", creator, false)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE quotes SET salesperson_id = $2 WHERE id = $1`, quoteID, salesperson); err != nil {
+		t.Fatalf("stamp the salesperson: %v", err)
+	}
+	_ = cust
+
+	svc := qd1Svc(t, pool, now)
+	// The salesperson edits it.
+	spCtx := qCtxAs(intStaff(intTrenton))
+	spCtx = qd1WithRole(spCtx, "INSIDE_SALES", intTrenton, salesperson)
+	if _, err := svc.EditLineQty(spCtx, quoteID, 1, "5"); err != nil {
+		t.Fatalf("the stamped salesperson must own the quote: %v", err)
+	}
+	// The creator, no longer the salesperson, is refused at Work.
+	crCtx := qCtxAs(intStaff(intTrenton))
+	crCtx = qd1WithRole(crCtx, "INSIDE_SALES", intTrenton, creator)
+	if _, err := svc.EditLineQty(crCtx, quoteID, 1, "6"); err == nil {
+		t.Fatal("the creator must not own a quote whose salesperson is someone else")
+	}
+	_ = prod
+	_ = uom
 }

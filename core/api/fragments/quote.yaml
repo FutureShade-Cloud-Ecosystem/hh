@@ -102,6 +102,7 @@ paths:
         An empty valid_until clears the expiry, after which the quote never
         expires. Refused with 409 when the quote is frozen (accepted,
         converted, or terminal) or already expired.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -140,6 +141,7 @@ paths:
         The line is priced at current rates through the shared pricing seam
         and the quote's soft stock holds are re-derived in the same
         transaction. Quantities are decimal strings, never floats.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -178,6 +180,7 @@ paths:
         A body with qty_entered reprices the line at current rates. A body
         carrying disc_pct without qty_entered is a discount-only write, gated
         by the dealer's line_discounts_enabled policy knob.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -226,6 +229,7 @@ paths:
       operationId: quoteRemoveQuoteLine
       tags: [staff-quote]
       summary: Remove a line from a dealer quote
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -378,6 +382,7 @@ paths:
         detail from its own figures; the caller supplies neither. A caller
         who may clear the floor itself is told so and no request is filed.
         A line not below the floor is a 409: nothing to approve.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -507,14 +512,23 @@ paths:
       tags: [staff-quote]
       summary: Flip the dealer's multi-acceptance switch
       description: >-
-        Admin-gated in the service (Tier-1 global), audited in both
-        directions. allow_multi_accept is required: a body that omits it is
-        refused rather than read as false, because this one field decides
-        whether a duplicate order can be minted.
+        The switch is dealer wide, so CP0-5 answer A gives the write to the
+        General Manager alone: the rule runs in the service, in words, and
+        any other caller is refused with 403 naming the role. The gate
+        sits at read so the General Manager (Read on the Quote Desk)
+        reaches the service. Every flip is audited in both directions.
+        allow_multi_accept is required: a body that omits it is refused
+        rather than read as false, because this one field decides whether
+        a duplicate order can be minted.
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
-        level: manage
+        level: read
+        reason: >-
+          The dealer wide switch is the General Manager's alone under
+          CP0-5 answer A, and that rule runs in the service in words; the
+          gate must let the General Manager (Read on the Quote Desk)
+          through to it.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -569,14 +583,24 @@ paths:
       tags: [staff-quote]
       summary: Write the dealer or branch quote-builder policy
       description: >-
-        Admin-gated in the service (Tier-1 global), exactly like the
-        acceptance settings. Out-of-bounds knobs are refused in words with 422
-        before any database CHECK can fire; the 422 body is the shared Error
-        envelope.
+        The CP0-5 answer A rule runs in the service, in words: a caller
+        holding Manage on the Quote Desk writes a branch row it reaches
+        (the Sales manager under the decided default), and the General
+        Manager alone writes the NULL dealer default row; any other caller
+        is refused with 403 naming the role. The gate therefore sits at
+        read, so both named roles reach the service (the General Manager
+        holds Read on the Quote Desk). Out-of-bounds knobs are refused in
+        words with 422 before any database CHECK can fire; the 422 body is
+        the shared Error envelope.
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
-        level: manage
+        level: read
+        reason: >-
+          The CP0-5 answer A rule runs in the service in words (Manage
+          writes a branch row it reaches, the General Manager the dealer
+          default), so the gate must let both named roles through; the
+          General Manager holds Read on the Quote Desk.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -630,6 +654,7 @@ paths:
         re-checked inside the transaction. The write also stamps the header
         tax from the configured flat rate. Out-of-bounds fields are refused in
         words with 422; the 422 body is the shared Error envelope.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -703,6 +728,7 @@ paths:
         empty, frozen, or expired. The link's underlying states are ACTIVE,
         CONFIRMED, REVOKED; the wire shape carries the computed live flag
         instead.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -767,6 +793,7 @@ paths:
       tags: [staff-quote]
       summary: Revoke one share link immediately
       description: Subsequent use of the revoked link answers 410, not 404
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -877,6 +904,7 @@ paths:
         consent (or opted out) is a 409 in words. The answer is 202 because
         the message is queued, not sent. No payment link is ever included; the
         payload type has no field for one.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -941,6 +969,7 @@ paths:
       operationId: quoteDisableFollowUps
       tags: [staff-quote]
       summary: Stop a quote's follow-up cadence
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -968,6 +997,7 @@ paths:
       tags: [staff-quote]
       summary: Start or resume a quote's follow-up cadence
       description: Enabling a quote that never had a plan creates one
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -1089,6 +1119,7 @@ paths:
       description: >-
         The explicit form of the sync every line write already runs: release
         all, then reserve what the quote now has, under the quote row lock.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -1118,6 +1149,7 @@ paths:
       description: >-
         The only terminal status this endpoint writes is RELEASED; CONSUMED is
         written by the conversion path and nowhere else.
+      x-addition: "the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route"
       x-role: requireStaff
       x-access:
         surfaces: [quote-desk]
@@ -2182,7 +2214,10 @@ components:
       description: >-
         The four-bucket view of one product at one branch. The staff quote
         resource is the canonical dealer_quote (DECISIONS.md D8).
-      required: [product_id, branch_id, branch_code, branch_name, on_hand_base, reserved_base, in_transit_base, available_base, soft_held_base, avg_cost_cents]
+        avg_cost_cents is gated by the dealer's cost_visibility list: it is
+        present for callers on the list and absent otherwise, never zero,
+        never null.
+      required: [product_id, branch_id, branch_code, branch_name, on_hand_base, reserved_base, in_transit_base, available_base, soft_held_base]
       properties:
         product_id: { type: string, format: uuid }
         branch_id: { type: string, format: uuid }
@@ -2195,7 +2230,10 @@ components:
         soft_held_base:
           type: number
           description: Carried and rendered even though it does not gate, because soft interest is worth seeing
-        avg_cost_cents: { type: integer, format: int64 }
+        avg_cost_cents:
+          type: integer
+          format: int64
+          description: Present only for callers the cost_visibility list allows, absent otherwise
     QuoteBranchStockList:
       type: object
       description: >-

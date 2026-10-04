@@ -8921,11 +8921,12 @@ paths:
       tags:
         - staff-identity
       summary: Approve or reject a pending approval request
-      description: "Decide authority is enforced in the service per policy: the rail policies (MARGIN_BELOW_MINIMUM, JE_OVER_THRESHOLD, FREIGHT_ABOVE_QUOTE) are decidable only by the ruled leadership role set, credit policies by leadership tier. Separation of duties bars the requester from deciding their own request. A decision on a JE or freight subject bridges into the owning module inside the same transaction. Deciding an already-decided request returns 409."
+      description: "Decide authority is enforced in the service per policy: the rail policies (MARGIN_BELOW_MINIMUM, JE_OVER_THRESHOLD, FREIGHT_ABOVE_QUOTE) are decidable by the ruled leadership role set, with the margin floor's authority from the dealer's role configuration (a branch scoped Quote Desk manager decides floor requests of its own branch, beside the dealer wide approvers); credit policies by leadership tier. Separation of duties bars the requester from deciding their own request. A decision on a JE or freight subject bridges into the owning module inside the same transaction. Deciding an already-decided request returns 409."
       x-role: requireStaff
       x-access:
         surfaces:
           - manager-home
+          - quote-desk
         level: manage
       parameters:
         - $ref: "#/components/parameters/XOrg"
@@ -18897,6 +18898,7 @@ paths:
         - staff-quote
       summary: Move or clear a quote's valid_until
       description: An empty valid_until clears the expiry, after which the quote never expires. Refused with 409 when the quote is frozen (accepted, converted, or terminal) or already expired.
+      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -18940,6 +18942,7 @@ paths:
         - staff-quote
       summary: Append a priced line to a dealer quote
       description: The line is priced at current rates through the shared pricing seam and the quote's soft stock holds are re-derived in the same transaction. Quantities are decimal strings, never floats.
+      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -18983,6 +18986,7 @@ paths:
         - staff-quote
       summary: Change a quote line's quantity, or set its discount percent
       description: A body with qty_entered reprices the line at current rates. A body carrying disc_pct without qty_entered is a discount-only write, gated by the dealer's line_discounts_enabled policy knob.
+      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19038,6 +19042,7 @@ paths:
       tags:
         - staff-quote
       summary: Remove a line from a dealer quote
+      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19208,6 +19213,7 @@ paths:
         - staff-quote
       summary: File an approval request for a quote line discount below the margin floor
       description: "For a line the caller may edit whose asked discount lands below the margin floor, files one approval request bound to that quote, that line and that discount. The server builds the subject and the detail from its own figures; the caller supplies neither. A caller who may clear the floor itself is told so and no request is filed. A line not below the floor is a 409: nothing to approve."
+      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19352,12 +19358,13 @@ paths:
       tags:
         - staff-quote
       summary: Flip the dealer's multi-acceptance switch
-      description: "Admin-gated in the service (Tier-1 global), audited in both directions. allow_multi_accept is required: a body that omits it is refused rather than read as false, because this one field decides whether a duplicate order can be minted."
+      description: "The switch is dealer wide, so CP0-5 answer A gives the write to the General Manager alone: the rule runs in the service, in words, and any other caller is refused with 403 naming the role. The gate sits at read so the General Manager (Read on the Quote Desk) reaches the service. Every flip is audited in both directions. allow_multi_accept is required: a body that omits it is refused rather than read as false, because this one field decides whether a duplicate order can be minted."
       x-role: requireStaff
       x-access:
         surfaces:
           - quote-desk
-        level: manage
+        level: read
+        reason: The dealer wide switch is the General Manager's alone under CP0-5 answer A, and that rule runs in the service in words; the gate must let the General Manager (Read on the Quote Desk) through to it.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -19415,12 +19422,13 @@ paths:
       tags:
         - staff-quote
       summary: Write the dealer or branch quote-builder policy
-      description: Admin-gated in the service (Tier-1 global), exactly like the acceptance settings. Out-of-bounds knobs are refused in words with 422 before any database CHECK can fire; the 422 body is the shared Error envelope.
+      description: "The CP0-5 answer A rule runs in the service, in words: a caller holding Manage on the Quote Desk writes a branch row it reaches (the Sales manager under the decided default), and the General Manager alone writes the NULL dealer default row; any other caller is refused with 403 naming the role. The gate therefore sits at read, so both named roles reach the service (the General Manager holds Read on the Quote Desk). Out-of-bounds knobs are refused in words with 422 before any database CHECK can fire; the 422 body is the shared Error envelope."
       x-role: requireStaff
       x-access:
         surfaces:
           - quote-desk
-        level: manage
+        level: read
+        reason: The CP0-5 answer A rule runs in the service in words (Manage writes a branch row it reaches, the General Manager the dealer default), so the gate must let both named roles through; the General Manager holds Read on the Quote Desk.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -19480,6 +19488,7 @@ paths:
         - staff-quote
       summary: Write a quote's terms strip
       description: Authorized on the edit matrix's header row (DRAFT and SENT only), re-checked inside the transaction. The write also stamps the header tax from the configured flat rate. Out-of-bounds fields are refused in words with 422; the 422 body is the shared Error envelope.
+      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19556,6 +19565,7 @@ paths:
         - staff-quote
       summary: Mint a public share link for a dealer quote
       description: The raw token is returned exactly once, here, and is unrecoverable afterwards (only its hash is stored). Minting moves a DRAFT quote to SENT and starts its follow-up cadence. A 409 answers a quote that is empty, frozen, or expired. The link's underlying states are ACTIVE, CONFIRMED, REVOKED; the wire shape carries the computed live flag instead.
+      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19631,6 +19641,7 @@ paths:
         - staff-quote
       summary: Revoke one share link immediately
       description: Subsequent use of the revoked link answers 410, not 404
+      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19738,6 +19749,7 @@ paths:
         - staff-quote
       summary: Text a quote's share link to the customer
       description: Consent is checked before anything is minted; a customer without SMS consent (or opted out) is a 409 in words. The answer is 202 because the message is queued, not sent. No payment link is ever included; the payload type has no field for one.
+      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19813,6 +19825,7 @@ paths:
       tags:
         - staff-quote
       summary: Stop a quote's follow-up cadence
+      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19846,6 +19859,7 @@ paths:
         - staff-quote
       summary: Start or resume a quote's follow-up cadence
       description: Enabling a quote that never had a plan creates one
+      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -19978,6 +19992,7 @@ paths:
         - staff-quote
       summary: Re-derive a quote's soft holds from its current lines
       description: "The explicit form of the sync every line write already runs: release all, then reserve what the quote now has, under the quote row lock."
+      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -20011,6 +20026,7 @@ paths:
         - staff-quote
       summary: Close a quote's soft holds (lost or withdrawn)
       description: The only terminal status this endpoint writes is RELEASED; CONSUMED is written by the conversion path and nowhere else.
+      x-addition: the quote desk's own floor request door (plan 1.1, QD-1); no ERP source route
       x-role: requireStaff
       x-access:
         surfaces:
@@ -45654,7 +45670,7 @@ components:
           type: boolean
     QuoteBranchStock:
       type: object
-      description: The four-bucket view of one product at one branch. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
+      description: "The four-bucket view of one product at one branch. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). avg_cost_cents is gated by the dealer's cost_visibility list: it is present for callers on the list and absent otherwise, never zero, never null."
       required:
         - product_id
         - branch_id
@@ -45665,7 +45681,6 @@ components:
         - in_transit_base
         - available_base
         - soft_held_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -45691,6 +45706,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: Present only for callers the cost_visibility list allows, absent otherwise
     QuoteBranchStockList:
       type: object
       description: One product's stock at every branch, plus the seam flag. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).

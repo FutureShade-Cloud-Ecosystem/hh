@@ -1,15 +1,20 @@
 package main
 
 import (
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/config"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/shims"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
@@ -93,4 +98,90 @@ func mustRoleConfigForWire() *roleconfig.Config {
 		panic("wire test: role configuration refused: " + err.Error())
 	}
 	return cfg
+}
+
+// TestW5COverrideAuthority_ManagerScopeIsTheConfiguredList pins the
+// pricing override adapter's manager scope arm to the dealer's configured
+// floor clearers (D6, the QD-1 review's P2-5): the arm once cleared for
+// ANY manager that reached the branch, the Yard manager included, where
+// the configuration names the Sales manager and the Branch manager alone.
+// The approvals arm is pinned the other way: an APPROVED margin card with
+// a subject of its own must not grant a generic resolve, because the
+// adapter carries no subject and an empty subject match is exactly the
+// one-card-clears-everything hole (D3).
+func TestW5COverrideAuthority_ManagerScopeIsTheConfiguredList(t *testing.T) {
+	pool := wiringPool(t)
+	ctx := context.Background()
+	// A real branch row: the planted approval card carries an FK to it.
+	var branch string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE loc_type = 'BRANCH' LIMIT 1`).Scan(&branch); err != nil {
+		t.Fatalf("read a branch: %v", err)
+	}
+	userID := plantW5CProbeUser(t, pool, branch)
+
+	auth := w5cOverrideAuthority{roles: mustRoleConfigForWire()}
+	as := func(role string, tier identity.Tier) context.Context {
+		return identity.ContextWithStaff(ctx, identity.StaffContext{
+			UserID: userID, RoleCode: role, Tier: tier, Status: identity.StatusActive,
+			Branches: map[string]bool{branch: true},
+		})
+	}
+
+	// The configured clearers grant on their own scope.
+	for _, tc := range []struct {
+		role string
+		tier identity.Tier
+	}{
+		{"SALES_MANAGER", identity.TierLeadership},
+		{"BRANCH_MANAGER", identity.TierManager},
+	} {
+		g, err := auth.MarginOverrideAuthority(as(tc.role, tc.tier), userID, branch)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.role, err)
+		}
+		if !g.Granted || g.Source != pricing.AuthorityManagerScope {
+			t.Errorf("%s is on the configured floor clearers list and reaches the branch: want MANAGER_SCOPE, got %+v", tc.role, g)
+		}
+	}
+
+	// The Yard manager: a manager under the old IsManager reading, but not
+	// on the configuration's list. No grant.
+	g, err := auth.MarginOverrideAuthority(as("YARD_MANAGER", identity.TierManager), userID, branch)
+	if err != nil {
+		t.Fatalf("yard manager: %v", err)
+	}
+	if g.Granted {
+		t.Errorf("the Yard manager is not on the configured floor clearers list, yet the adapter granted %+v", g)
+	}
+
+	// An APPROVED margin card for another subject must not grant: the
+	// adapter has no subject to check, so no approval arm may grant at all.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO permission_approval_requests (id, requested_by, branch_id, policy_type, detail, subject_ref, data, status)
+		VALUES ('5c2a0000-0000-4000-8000-000000000001', $1, $2, 'MARGIN_BELOW_MINIMUM',
+		        'w5c probe: an approval bound to another quote', $3, '{}', 'APPROVED')`,
+		userID, branch, "11111111-1111-4111-8111-111111111111"); err != nil {
+		t.Fatalf("plant the approved card: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM permission_approval_requests WHERE id = '5c2a0000-0000-4000-8000-000000000001'`)
+		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	})
+	if g, err := auth.MarginOverrideAuthority(as("INSIDE_SALES", identity.TierFrontline), userID, branch); err != nil || g.Granted {
+		t.Errorf("an approved margin card for another subject must not grant a generic resolve, got %+v err %v", g, err)
+	}
+}
+
+// plantW5CProbeUser plants the caller the adapter test resolves as.
+func plantW5CProbeUser(t *testing.T, pool *pgxpool.Pool, branch string) string {
+	t.Helper()
+	var id string
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO users (email, display_name, platform_user_id, status)
+		VALUES ('w5c-probe@wire.invalid', 'W5C Probe', 'w5c-probe-sub', 'ACTIVE')
+		ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name
+		RETURNING id::text`).Scan(&id); err != nil {
+		t.Fatalf("plant the probe user: %v", err)
+	}
+	return id
 }

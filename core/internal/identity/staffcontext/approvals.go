@@ -674,7 +674,10 @@ func (r *ApprovalRepository) FloorRequestFor(ctx context.Context, requestedBy, b
 		  AND COALESCE(data->>'line_id', '') = $5
 		  AND COALESCE(data->>'product_id', '') = $6
 		  AND (status = 'PENDING' OR (status = 'APPROVED' AND (data->>'used') IS NULL))
-		ORDER BY requested_at DESC LIMIT 1`,
+		  -- An APPROVED and unused request outranks a newer PENDING twin:
+		  -- the newest row alone would hide a request already decided
+		  -- behind one nobody has decided yet.
+		ORDER BY (status = 'APPROVED' AND (data->>'used') IS NULL) DESC, requested_at DESC LIMIT 1`,
 		requestedBy, branchID, subjectRef, lineNo, lineID, productID).Scan(&rec.ID, &status, &rec.LineNo, &rec.DiscPct)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return FloorRequestRecord{}, false, nil

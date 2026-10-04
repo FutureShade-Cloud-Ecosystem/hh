@@ -44,6 +44,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -56,6 +57,42 @@ import (
 // own repository writes draw from too so desk and device share one
 // feed.
 const approvalsSyncScope = "approvals"
+
+// publishedFloor is the margin floor's decide authority the sync door
+// decides with. The composition root wires the rail with the dealer's
+// configured set (Approvals.WithFloorApprovers, built from whatever role
+// configuration document the root loaded), and it constructs this store
+// on a wire the configuration does not pass, so the root PUBLISHES the
+// set it gave the rail (PublishFloorApprovers, beside the rail's own
+// wiring) and every pushed decision reads it: the desk's door and the
+// device's door hold one authority by construction, never a second copy
+// of the mapping. The carried default answers until the root runs, the
+// same default the rail itself holds before its own wiring.
+var publishedFloor = func() *atomic.Pointer[FloorApprovers] {
+	p := &atomic.Pointer[FloorApprovers]{}
+	d := defaultFloorApprovers()
+	p.Store(&d)
+	return p
+}()
+
+// PublishFloorApprovers publishes the configured margin floor decide
+// authority for the sync door: the set the composition root gave the
+// rail. A zero set publishes nothing and the carried default stands, the
+// same fail posture the rail's own WithFloorApprovers holds.
+func PublishFloorApprovers(f FloorApprovers) {
+	if len(f.DealerWide) == 0 && len(f.OwnBranch) == 0 {
+		return
+	}
+	publishedFloor.Store(&f)
+}
+
+// syncFloorApprovers reads the published authority.
+func syncFloorApprovers() FloorApprovers {
+	if f := publishedFloor.Load(); f != nil {
+		return *f
+	}
+	return defaultFloorApprovers()
+}
 
 // approvalsSeqCTE is the data-modifying CTE the rail's single-statement
 // write paths prepend to draw a fresh approvals seq atomically in the
@@ -266,12 +303,18 @@ func approvalCreateFields(fields map[string]any) error {
 
 // approvalCallerPolicy pins the caller-facing policy set: the two
 // system-only policies (a JE card, a freight card) are filed by the
-// ledger and the dispatch gate, and the module's own CreateApproval
-// refuses them with these words; the sync door refuses identically.
+// ledger and the dispatch gate, and the margin floor is the quote
+// module's own (D7, filed through FileFloorApproval, which binds the
+// quote, the line and the discount from its own state); the module's own
+// CreateApproval refuses all three with these words and the sync door
+// refuses identically, so no door files a card whose subject and detail
+// are the filer's own choosing.
 func approvalCallerPolicy(p PolicyType) error {
 	switch p {
-	case PolicyMargin, PolicyCredit, PolicyCOD:
+	case PolicyCredit, PolicyCOD:
 		return nil
+	case PolicyMargin:
+		return fmt.Errorf("identity: margin approvals are filed by the quote desk for a quote line, not directly: %w", sync.ErrOpRefused)
 	case PolicyJEThreshold:
 		return fmt.Errorf("identity: JE approvals are filed by the ledger, not directly: %w", sync.ErrOpRefused)
 	case PolicyFreightAboveQuote:
@@ -484,8 +527,12 @@ func (s *ApprovalsSyncStore) writeDecision(ctx context.Context, tx pgx.Tx, f syn
 	if err != nil {
 		return sync.RowState{}, err
 	}
-	// The module's own validation: authority, four-eyes, PENDING.
-	if err := r.req.Decide(caller, approve); err != nil {
+	// The module's own validation: authority, four-eyes, PENDING. The
+	// margin arm's authority is the CONFIGURED floor set the rail holds
+	// (D11, published by the composition root), so a pushed decision and
+	// a desk decision hold one authority: the branch's configured Sales
+	// manager decides from the device exactly what it decides at the desk.
+	if err := r.req.DecideWithFloor(caller, approve, syncFloorApprovers()); err != nil {
 		return sync.RowState{}, fmt.Errorf("identity: %w: %w", sync.ErrOpRefused, err)
 	}
 	seq, err := allocateApprovalsSeqTx(ctx, tx)
@@ -540,12 +587,12 @@ func (s *ApprovalsSyncStore) writeNote(ctx context.Context, tx pgx.Tx, f sync.Sc
 		return sync.RowState{}, fmt.Errorf("identity: a pushed note needs the caller's linked staff user: %w", sync.ErrOpRefused)
 	}
 
-	var fromDetail, fromStatus, fromRequester string
+	var fromDetail, fromStatus, fromRequester, fromPolicy string
 	err := tx.QueryRow(ctx, `
-		SELECT a.detail, a.status, a.requested_by::text FROM permission_approval_requests a
+		SELECT a.detail, a.status, a.requested_by::text, a.policy_type FROM permission_approval_requests a
 		 WHERE a.id = $1::uuid AND a.deleted_at IS NULL
 		   AND EXISTS (SELECT 1 FROM locations l WHERE l.id = a.branch_id AND l.org_id = $2::uuid)
-		 FOR UPDATE OF a`, id, f.OrgID).Scan(&fromDetail, &fromStatus, &fromRequester)
+		 FOR UPDATE OF a`, id, f.OrgID).Scan(&fromDetail, &fromStatus, &fromRequester, &fromPolicy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
@@ -557,6 +604,14 @@ func (s *ApprovalsSyncStore) writeNote(ctx context.Context, tx pgx.Tx, f sync.Sc
 	}
 	if fromStatus != string(ApprovalPending) {
 		return sync.RowState{}, fmt.Errorf("identity: a decided request is not editable: %w", sync.ErrOpRefused)
+	}
+	// A floor request's detail (and the subject it is bound to) is the
+	// quote desk's own record, built from the server's figures at filing
+	// (D7): the approver reads words the server checked, so the requester
+	// cannot replace them through this door, whatever note rights a plain
+	// filing carries.
+	if PolicyType(fromPolicy) == PolicyMargin {
+		return sync.RowState{}, fmt.Errorf("identity: the floor request's detail is the quote desk's own record, not an editable note: %w", sync.ErrOpRefused)
 	}
 	if detail == fromDetail {
 		// The declared note is already the request's note (a superseded

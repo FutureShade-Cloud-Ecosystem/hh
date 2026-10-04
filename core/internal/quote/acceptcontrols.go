@@ -243,8 +243,13 @@ func (s *StaffService) AcceptanceSettings(ctx context.Context) (AcceptanceSettin
 // that EXISTS with a NULL subject beats a searchable subject on a row that does not (autohold.go's
 // policyEntityID lesson). Re-asserting the current value is not an error: a UI switch re-posts its
 // state, and refusing the no-op turns a double-click into a red banner.
+//
+// The write's rule: the switch is DEALER WIDE (one row, no branch axis), so
+// CP0-5 answer A gives it to the General Manager alone. settingsWriter's
+// empty branch arm holds that, never settingsAdmin, which would let a Sales
+// manager flip what every branch reads.
 func (s *StaffService) SetAllowMultiAccept(ctx context.Context, allow bool, reason string) (AcceptanceSettings, error) {
-	caller, err := s.settingsAdmin(ctx)
+	caller, err := s.settingsWriter(ctx, "")
 	if err != nil {
 		return AcceptanceSettings{}, err
 	}

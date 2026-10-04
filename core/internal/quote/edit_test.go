@@ -92,6 +92,9 @@ type fakeStaffStore struct {
 	// disc and clearing back the floor seam's store read.
 	disc     int
 	clearing *floorClearingStamp
+	// floorReadErr, when set, is the floor state read failing: the read
+	// error leg of the quantity reprice (P2-6).
+	floorReadErr error
 }
 
 func newFakeStaffStore(status string) *fakeStaffStore {
@@ -158,6 +161,9 @@ func (f *fakeStaffStore) QuotePricingContext(_ context.Context, _ string) (strin
 // fake's line is undiscounted unless a test sets disc. The line's own row
 // id is a fixed fixture string: no test here relies on row identity.
 func (f *fakeStaffStore) LineFloorState(_ context.Context, quoteID string, lineNo int) (string, int, int64, int64, string, *floorClearingStamp, error) {
+	if f.floorReadErr != nil {
+		return "", 0, 0, 0, "", nil, f.floorReadErr
+	}
 	if quoteID != qOrg || f.lineGone || lineNo != f.line.LineNo {
 		return "", 0, 0, 0, "", nil, ErrLineNotFound
 	}
@@ -927,3 +933,17 @@ func TestLooksLikeUUID(t *testing.T) {
 // compile-time proof the fake satisfies the real seam.
 var _ staffStore = (*fakeStaffStore)(nil)
 var _ pgx.Tx = pgx.Tx(nil)
+
+// TestQuoteQty_FloorStateReadFailureRefuses (P2-6): a quantity reprice
+// whose floor state read FAILS is refused, never waved through the floor
+// decision as though the line carried no discount.
+func TestQuoteQty_FloorStateReadFailureRefuses(t *testing.T) {
+	svc, store, _ := qFixture(t, "DRAFT")
+	store.floorReadErr = fmt.Errorf("floor state read failed")
+	if _, err := svc.EditLineQty(qCtxAs(qStaff()), qOrg, 1, "5"); err == nil {
+		t.Fatal("a failed floor state read must refuse the quantity change, not skip the floor question")
+	}
+	if store.writes != 0 {
+		t.Errorf("a refused reprice must not write, wrote %d", store.writes)
+	}
+}

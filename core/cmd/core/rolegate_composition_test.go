@@ -342,3 +342,33 @@ func TestRoleGateDealerConfigurationAtTheCounter(t *testing.T) {
 	code, body = rgProbe(t, fx, http.MethodPost, "/api/v1/pricing/rules", rgHeaders(t, fx, xrSubBranchManager))
 	rgAdmitted(t, "the configured editor writes a price rule", code, body)
 }
+
+// TestRoleGateQuoteSettingsAgreesWithCP0_5A is the settings rule's route
+// half (the review's P2-2): the gate must let both roles the rule names
+// REACH the service, because the rule itself runs there in words (the
+// Sales manager writes a branch row, the General Manager the dealer
+// default). At Manage on the Quote Desk the gate refused the General
+// Manager, who holds Read, before the service could run its dealer
+// default arm, so over HTTP nobody could write the dealer wide policy.
+// At Read the gate stays a gate (a role with no Quote Desk level is still
+// refused) and the service holds the rule.
+func TestRoleGateQuoteSettingsAgreesWithCP0_5A(t *testing.T) {
+	fx := newXRoleFixture(t)
+	gm := rgHeaders(t, fx, testkit.SubGeneralMgr)
+	manager := rgHeaders(t, fx, testkit.SubSalesManager)
+	hr := rgHeaders(t, fx, xrSubHR)
+
+	code, body := rgProbe(t, fx, http.MethodPut, "/api/v1/quotes/policy", gm)
+	rgAdmitted(t, "the General Manager reaches the policy write", code, body)
+	code, body = rgProbe(t, fx, http.MethodPut, "/api/v1/quotes/settings/acceptance", gm)
+	rgAdmitted(t, "the General Manager reaches the acceptance write", code, body)
+	code, body = rgProbe(t, fx, http.MethodPut, "/api/v1/quotes/policy", manager)
+	rgAdmitted(t, "the Sales manager reaches the policy write", code, body)
+
+	// The gate is still a gate: a role with no Quote Desk level is refused
+	// both writes outright.
+	code, body = rgProbe(t, fx, http.MethodPut, "/api/v1/quotes/policy", hr)
+	rgRefused(t, "hr is held off the policy write", code, body)
+	code, body = rgProbe(t, fx, http.MethodPut, "/api/v1/quotes/settings/acceptance", hr)
+	rgRefused(t, "hr is held off the acceptance write", code, body)
+}
