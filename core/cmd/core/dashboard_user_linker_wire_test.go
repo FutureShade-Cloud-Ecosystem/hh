@@ -270,10 +270,17 @@ func TestDashboardUserLinkerWiring_NeedsFourEyesSkipsTheManagersOwnRequest(t *te
 	}
 
 	// The manager files their OWN pending margin request through the
-	// approvals rail's own seam.
+	// approvals rail's floor filing door, the only path a margin card is
+	// filed on (D7): CreateApproval refuses the policy outright.
 	rail := staffcontext.NewApprovals(staffcontext.NewApprovalRepository(pool))
-	request, err := rail.CreateApproval(context.Background(), userID, branchID, staffcontext.PolicyMargin,
-		"HH-189 fixture: the general manager's own pending request", "")
+	request, err := rail.FileFloorApproval(context.Background(), staffcontext.FloorApprovalFiling{
+		RequestedBy: userID,
+		BranchID:    branchID,
+		SubjectRef:  "fx189-own-quote",
+		Detail:      "HH-189 fixture: the general manager's own pending request",
+		LineNo:      1,
+		DiscPct:     40,
+	})
 	if err != nil {
 		t.Fatalf("plant own pending approval: %v", err)
 	}
@@ -300,8 +307,14 @@ func TestDashboardUserLinkerWiring_NeedsFourEyesSkipsTheManagersOwnRequest(t *te
 		 RETURNING id::text`).Scan(&otherID); err != nil {
 		t.Fatalf("plant the other requester: %v", err)
 	}
-	other, err := rail.CreateApproval(context.Background(), otherID, branchID, staffcontext.PolicyMargin,
-		"HH-189 fixture: another user's pending request", "")
+	other, err := rail.FileFloorApproval(context.Background(), staffcontext.FloorApprovalFiling{
+		RequestedBy: otherID,
+		BranchID:    branchID,
+		SubjectRef:  "fx189-other-quote",
+		Detail:      "HH-189 fixture: another user's pending request",
+		LineNo:      1,
+		DiscPct:     40,
+	})
 	if err != nil {
 		t.Fatalf("plant the other user's pending approval: %v", err)
 	}
