@@ -256,8 +256,11 @@ export class QdQuoteEdit extends PanelBase {
       await this.load();
       return false;
     }
-    this.notice = "Saved.";
+    // "Saved." is said once the re-read has landed: the boxes and each line's baseline are then the saved
+    // figures, so the next edit made on seeing it is measured against the truth, not the figures before the save.
     await this.load();
+    if (quoteAtStart !== this.quoteId) return true;
+    this.notice = "Saved.";
     this.announceChanged();
     return true;
   }
