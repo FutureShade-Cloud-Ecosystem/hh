@@ -18,8 +18,9 @@
 // callers have all reached such a call, and only then does the real read run. On the unfixed tree
 // the second call is made inside the transaction, so all four callers hold a connection when the
 // gate opens and the reads starve. On the fixed tree no caller makes a second call, so the gate never
-// engages and the confirms finish in milliseconds. Any pool read a future change adds to Write after
-// its transaction opens is a further call and meets the same gate.
+// engages and the confirms finish in milliseconds. The gate counts only calls to the order seam: a
+// further ORDER SEAM call added after the transaction opens meets the same gate, but a pool read made
+// some other way (a direct query on the pool) is not seen by this leg.
 //
 // The signature capturer is a stub that answers a fixed reference: the production capturer lives in
 // the pos module (outside this leg's grant) and this leg isolates the order seam read. The test's own

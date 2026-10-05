@@ -350,7 +350,9 @@ func (s *PickupsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, ke
 	// again from inside the transaction would take a second connection
 	// while the first is held (connection starvation when pool-size
 	// confirms do this together). The set is the one the refusal check
-	// already used, so the semantics are unchanged.
+	// already used. One difference from reading it again inside the
+	// transaction: an order the tenant created in between is not in the
+	// set, and a failed lookup always refuses (see the pull request).
 	tenantOrderIDs, idsOK := s.tenantIDs(ctx, f)
 	if !idsOK {
 		return sync.RowState{}, sync.ErrOpRefused
