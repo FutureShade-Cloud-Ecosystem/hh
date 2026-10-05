@@ -1357,5 +1357,19 @@
     "find": "    if (reason !== \"\" && this.error === CREATE_FAILED_SCAN) this.error = `${reason.replace(/[.!?]?$/, \".\")} ${CREATE_FAILED_SCAN}`;\n",
     "replace": "",
     "test": "P3 a scan made in compose says so at once when the create itself is refused"
+  },
+  {
+    "id": "qb-hold-expiry-unmount",
+    "file": "src/quote-builder.ts",
+    "find": "            <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>\n",
+    "replace": "            ${this.selected === \"\" ? nothing : html`<qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>`}\n",
+    "test": "P2-2 leaving through New Quote: a re-hold that lands while the hold expiry panel is gone still announces its quote"
+  },
+  {
+    "id": "wa-signout-store-close",
+    "file": "src/quote-workarea.ts",
+    "find": "    // be sent once this session has ended, under whoever signs in next.\n    this.store?.close();",
+    "replace": "    // be sent once this session has ended, under whoever signs in next.",
+    "test": "sign out flush: the layout store is stopped when the flush has run, whatever the page does next"
   }
 ]
