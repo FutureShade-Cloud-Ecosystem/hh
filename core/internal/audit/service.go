@@ -442,6 +442,11 @@ var allowedExtraKeys = map[string]bool{
 	"amount_cents":    true, // integer money fact on a payment record (Q-044; an int, never an identifier)
 	"invoice_id":      true, // the invoice a payment slice was applied to (uuid; Q-044)
 	"payment_no":      true, // human payment number "PMT-000042" (6-digit run, under the redaction threshold)
+	// The pos RETURN_COMPLETED completion record (returns.go): the committed
+	// return's own number and total, the two facts a counter trail answers
+	// "which return, how much" with.
+	"return_no":       true, // the return's number, '#RET-' plus a return_no_seq value (repository_w7.go), a sequence count whose digit run stays under the redaction threshold like payment_no
+	"total_cents":     true, // the committed total in cents, an int money fact like amount_cents: non-string Extra values pass the chokepoint unchanged, so the digits never reach the string redactor
 	"source_order_id": true, // CP-04 reorder provenance (uuid; admin-only, NOT in operatorSafeKeys)
 	"lines":           true, // CP-04 reorder line count (an int, never an identifier)
 	// DIB-159 order-status history: from→to status codes on an ORDER_STATUS_CHANGED row.
