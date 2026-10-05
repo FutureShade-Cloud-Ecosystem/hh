@@ -369,7 +369,9 @@ SELECT id::text, amount_cents, created_at, occurred_at FROM customer_transaction
 	// The row keeps its place when its issue day did not move; a move to
 	// another day takes the next free position on that day.
 	newAt := oldAt
-	if oldAt.UTC().Truncate(24*time.Hour) != day {
+	oy, om, od := oldAt.UTC().Date()
+	ny, nm, nd := day.Date()
+	if oy != ny || om != nm || od != nd {
 		newAt, err = ledgerPosition(ctx, tx, customerID, day, ledgerID)
 		if err != nil {
 			return "", err
