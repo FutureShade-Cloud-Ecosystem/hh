@@ -14,20 +14,20 @@ func TestSaleCompletedExtraKeys_IdsAndReferencesSurviveNamesAndAddressesDoNot(t 
 		Action: ActSaleCompleted, EntityType: "pos.sale", EntityID: sampleUUID,
 		Reason: "CASH",
 		Extra: map[string]any{
-			"po_job_ref":       "PO 4471 / SMITH DECK",
+			"po_job_ref":       "PO 4471 / JOB 12",
 			"salesperson_id":   sampleUUID,
-			"job_reference":    "SMITH-DECK",
+			"job_reference":    "JOB-12",
 			"salesperson_name": "A Person",
 			"job_address":      "128 Front St, Trenton ON",
 		},
 	})
-	if e.Changes["po_job_ref"] != "PO 4471 / SMITH DECK" {
+	if e.Changes["po_job_ref"] != "PO 4471 / JOB 12" {
 		t.Errorf("po_job_ref must survive verbatim: %+v", e.Changes)
 	}
 	if e.Changes["salesperson_id"] != sampleUUID {
 		t.Errorf("salesperson_id must survive: %+v", e.Changes)
 	}
-	if e.Changes["job_reference"] != "SMITH-DECK" {
+	if e.Changes["job_reference"] != "JOB-12" {
 		t.Errorf("job_reference must survive verbatim: %+v", e.Changes)
 	}
 	for _, k := range []string{"salesperson_name", "job_address"} {

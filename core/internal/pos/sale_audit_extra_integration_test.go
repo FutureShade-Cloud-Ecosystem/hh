@@ -37,9 +37,9 @@ func TestIntegration_SaleCompletedAuditCarriesIdsAndReferencesNotNamesOrAddresse
 		"sale_type":       SaleCollectNow,
 		"tender":          TenderCash,
 		"lines":           []map[string]any{{"product_id": l2cProductID, "qty_entered": 2, "uom_entered": "SF"}},
-		"po_job_ref":      "PO 4471 / SMITH DECK",
+		"po_job_ref":      "PO 4471 / JOB 12",
 		"salesperson_id":  staffID,
-		"job_reference":   "SMITH-DECK",
+		"job_reference":   "JOB-12",
 		"job_address":     "128 Front St, Trenton ON",
 	}
 	rec := s.do(http.MethodPost, "/api/v1/pos/sales", s.bearer(trentonClerkSub), "", body)
@@ -55,13 +55,13 @@ func TestIntegration_SaleCompletedAuditCarriesIdsAndReferencesNotNamesOrAddresse
 		t.Fatalf("want exactly one SALE_COMPLETED row under the order, got %d", len(rows))
 	}
 	row := rows[0]
-	if row["po_job_ref"] != "PO 4471 / SMITH DECK" {
+	if row["po_job_ref"] != "PO 4471 / JOB 12" {
 		t.Fatalf("the stored sale row must carry po_job_ref: %v", row)
 	}
 	if row["salesperson_id"] != staffID {
 		t.Fatalf("the stored sale row must carry salesperson_id %q: %v", staffID, row)
 	}
-	if row["job_reference"] != "SMITH-DECK" {
+	if row["job_reference"] != "JOB-12" {
 		t.Fatalf("the stored sale row must carry job_reference: %v", row)
 	}
 	for _, k := range []string{"salesperson_name", "job_address"} {

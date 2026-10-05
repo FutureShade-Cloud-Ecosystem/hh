@@ -445,9 +445,9 @@ var allowedExtraKeys = map[string]bool{
 	// stay dropped here; a name is read from its id when shown). po_job_ref and job_reference are
 	// free text references: a value with a run of seven or more digits redacts to [redacted] like
 	// any string. All three stay admin only, NOT in operatorSafeKeys.
-	"po_job_ref":     true, // the PO or job reference typed at the counter (free text, at most 64 characters)
+	"po_job_ref":     true, // the PO or job reference typed at the counter (FREE TEXT a staff member types, at most 64 characters: nothing but the seven digit rule stops a name riding in it; admin only; ruled in, decision log row 814)
 	"salesperson_id": true, // the credited salesperson's staff id (uuid)
-	"job_reference":  true, // the job reference typed at the counter (free text, at most 64 characters)
+	"job_reference":  true, // the job reference typed at the counter (FREE TEXT a staff member types, at most 64 characters: nothing but the seven digit rule stops a name riding in it; admin only; ruled in, decision log row 814)
 	// The pos TAX_RELIEF_ASSESS record: the declared use and fulfilment vocabulary codes (personal,
 	// commercial, pickup, dibbits_truck and the like), codes, never identifiers. Admin only.
 	"declared_use":    true, // the purchaser's declared use code
