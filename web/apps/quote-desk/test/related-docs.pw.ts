@@ -35,6 +35,7 @@ test.afterAll(async ({ request }) => {
 });
 
 test("a converted quote's family shows itself, the order it became and the door that minted it", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page);
   await openQuote(page, "Q-2101");
   const chips = panel(page).locator(".chip");
@@ -46,6 +47,7 @@ test("a converted quote's family shows itself, the order it became and the door 
   // This desk opens no document from the family: the chips are labels, not dead buttons.
   await expect(panel(page).locator("button.chip")).toHaveCount(0);
   await shot(panel(page).getByTestId("rd-box"), "related-docs-converted");
+  await shot(page, "related-docs-viewport-mine");
 });
 
 test("a quote that became nothing says the empty sentence, which explains itself", async ({ page }) => {

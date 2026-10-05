@@ -95,6 +95,7 @@ test("the cash customer's one action converts, invoices and pays in full, and th
 test("a credit customer's deposit is taken and the balance the server answered is shown", async ({ page }) => {
   await signIn(page);
   await openWithPayment(page, "Q-2101");
+  await shot(pay(page).getByTestId("op-box"), "order-payment-form");
   await take(page, "10.00", "AUTH 123", "CARD");
   const receipt = pay(page).getByTestId("op-receipt");
   await expect(receipt.getByTestId("op-receipt-amount")).toHaveText("CA$10.00");
@@ -105,6 +106,10 @@ test("a credit customer's deposit is taken and the balance the server answered i
   // The figures line names the invoice the server raised, from the family read, never a computed figure.
   await expect(pay(page).getByTestId("op-figures")).toContainText(/Invoice INV-\d+ is Part paid at CA\$37\.06/);
   await shot(pay(page).getByTestId("op-box"), "order-payment-deposit");
+  // The dark theme, cycled from Auto through Light to Dark.
+  await page.getByTestId("theme-control").click();
+  await page.getByTestId("theme-control").click();
+  await shot(pay(page).getByTestId("op-box"), "order-payment-deposit-dark");
 });
 
 test("an unknown outcome says so plainly and a retry with the SAME key replays the first result", async ({ page }) => {
@@ -207,6 +212,7 @@ test("an order already invoiced another route is refused with the clerk wording,
   await take(page, "37.06");
   await expect(pay(page).getByTestId("op-error")).toContainText("already invoiced as INV-3001 by another route");
   await expect(pay(page).getByTestId("op-error")).toContainText("who record the payment against that invoice");
+  await shot(pay(page).getByTestId("op-box"), "order-payment-refused-clerk");
 });
 
 test("an accepted quote of a customer with credit is refused with the convert-first wording", async ({ page }) => {

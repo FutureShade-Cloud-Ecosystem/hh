@@ -153,7 +153,7 @@ export class QdRelatedDocs extends PanelBase {
       ${detail !== "" ? html`<span class="detail">${detail}</span>` : nothing}`;
     return isOpenable(row, this.openKinds)
       ? html`<li>
-          <button class="chip" type="button" title="Open ${chipText(row)}" data-action="open-doc" data-index=${index}>${body}</button>
+          <button class="chip" type="button" data-action="open-doc" data-index=${index}>${body}</button>
         </li>`
       : html`<li><span class="chip">${body}</span></li>`;
   }

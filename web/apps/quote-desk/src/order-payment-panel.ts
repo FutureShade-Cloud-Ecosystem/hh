@@ -35,7 +35,7 @@
 // after the person left the quote is never applied to the quote now open (a
 // late success is announced for ITS quote, so every view of it re-reads; a
 // late refusal is said only on the quote it belongs to).
-import { css, html, nothing } from "lit";
+import { css, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { PanelBase } from "./panel-base.js";
 import { panelStyles } from "./panel-styles.js";
@@ -339,7 +339,7 @@ export class QdOrderPayment extends PanelBase {
   // ── render ────────────────────────────────────────────────────────────────
 
   /** The server's own figures for what this payment lands on: the quote's agreed total before any order exists, then the order row, the invoice row, never a computed figure. */
-  private renderFigures(): typeof nothing | ReturnType<typeof html> {
+  private renderFigures(): TemplateResult | typeof nothing {
     const rows = this.orderRows;
     if (rows.length === 0) {
       // Before any order exists (an accepted quote), the one figure the server holds is the quote's own agreed total.
@@ -359,7 +359,7 @@ export class QdOrderPayment extends PanelBase {
     return html`<p class="figures" data-testid="op-figures">${parts.join(" · ")}</p>`;
   }
 
-  private renderReceipt(): typeof nothing | ReturnType<typeof html> {
+  private renderReceipt(): TemplateResult | typeof nothing {
     const r = this.receipt;
     if (r === null) return nothing;
     const rows = receiptRows(
@@ -403,7 +403,7 @@ export class QdOrderPayment extends PanelBase {
           ${TENDER_METHODS.map(
             (m) => html`<button
               type="button"
-              class=${this.tender === m ? "active" : ""}
+              class="${this.tender === m ? "active" : ""}"
               aria-pressed=${this.tender === m ? "true" : "false"}
               data-action="tender"
               data-tender=${m}

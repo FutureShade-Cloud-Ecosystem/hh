@@ -286,9 +286,7 @@ export class QdQuoteEdit extends PanelBase {
     this.error = "";
     this.notice = "";
     // The write is bound to the quote the context names, never to the quote open when the answer comes back.
-    const result = await ctx.guarded(action(ctx.id), (late) => this.lateAnswer(ctx, late, what, floor, lateNote));
-    // The quote the person moved to meanwhile owns the screen now: this answer says nothing about it.
-    if (result === undefined) return "moved";
+    const result = await action(ctx.id);
     this.busy = false;
     if (!result.ok) {
       const refusal = result.status === 409 && floor !== undefined ? parseFloorRefusal(result.error) : null;
