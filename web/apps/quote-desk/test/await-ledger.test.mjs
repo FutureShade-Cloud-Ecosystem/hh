@@ -141,6 +141,13 @@ const BLIND_SPOTS = [
   ["a listener whose arrow body returns a promise", "class A { async g() {} onX = () => this.g(); }", "promise arrow"],
   ["a promise kept in a field", "class A { p: Promise<void> | null = null; async g() {} m() { this.p = this.g(); } }", "stored promise"],
   ["a for await loop", "class A { async m(it: AsyncIterable<number>) { for await (const x of it) { void x; } } }", "for await"],
+  // Round 5 (the principal's P3-2): six shapes the census missed, each fed as its own small fixture source.
+  ["a block bodied arrow that returns the promise it starts", "class A { async g(): Promise<number> { return 1; } onX = () => { return this.g(); }; }", "promise arrow"],
+  ["an unawaited stored promise kept in a local by declaration", "class A { async g() {} m() { const p = this.g(); void p; } }", "stored promise"],
+  ["a short circuit statement whose arm starts the work", "class A { c = false; async load() {} m() { this.c && this.load(); } }", "floating call"],
+  ["a ternary statement with a promise branch", "class A { c = false; async a() {} async b() {} m() { this.c ? this.a() : this.b(); } }", "floating call"],
+  ["a promise passed to another call as an argument", "declare function run(p: Promise<void>): void; class A { async g() {} m() { run(this.g()); } }", "floating call"],
+  ["a field initializer that starts async work", "class A { async g() {} p = this.g(); }", "stored promise"],
 ];
 
 for (const [name, source, kind] of BLIND_SPOTS) {

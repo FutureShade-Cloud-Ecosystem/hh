@@ -111,9 +111,6 @@ const LATE_LINK_NOTE = "A share link was made on this quote while you were away.
 /** Said when the read of a quote went ahead while a terms save of that quote was still out. */
 const STILL_SAVING = "A terms change you made on this quote is still being saved. What is shown may not include it yet.";
 
-/** How long a scan made in compose waits for the host to hand the quote just made down before it says so. */
-const HANDOFF_WAIT_MS = 3000;
-
 /** Thrown inside the send and link paths when the quote changed under them: caught and said nothing. */
 class StaleQuoteError extends Error {}
 
@@ -143,6 +140,11 @@ interface AddonSuggestionRow {
   default_qty: number;
   list_price_cents?: number;
 }
+
+/** How a wait for the host's hand down ended. */
+type HandoffEnd = "handed" | "gave-up" | "leaving";
+
+const CREATE_FAILED_SCAN = "The new quote could not be made, so nothing was added.";
 
 @customElement("qd-quote-workarea")
 export class QdQuoteWorkarea extends LitElement {
@@ -1130,7 +1132,10 @@ export class QdQuoteWorkarea extends LitElement {
     // A write still out when the work area leaves the page (sign out) must not go on to send follow-ups under the next session.
     this.detached = true;
     this.scope.open("");
-    this.releaseHandoffWaiters();
+    this.releaseHandoffWaiters("leaving");
+    // The layout store stops with the page: whatever it still has queued is dropped, and nothing of this session's
+    // layout is ever sent under the next person's.
+    this.store?.close();
   }
 
   /** True from the moment this work area leaves the page: its context is then cancelled for good. */
@@ -1153,10 +1158,15 @@ export class QdQuoteWorkarea extends LitElement {
     }
   }
 
-  private releaseHandoffWaiters(): void {
+  private releaseHandoffWaiters(end: HandoffEnd = "handed"): void {
     const waiting = this.handoffWaiters;
     this.handoffWaiters = [];
-    for (const release of waiting) release();
+    for (const release of waiting) release(end);
+  }
+
+  /** The host's explicit signal that the new quote will not be handed down: the scans waiting for it say so. Never driven by elapsed time. */
+  giveUpHandoff(): void {
+    this.releaseHandoffWaiters("gave-up");
   }
 
   /** The context of the quote on screen; a quote id that moved without its context following gets a fresh one. */
@@ -1237,6 +1247,25 @@ export class QdQuoteWorkarea extends LitElement {
    */
   private readonly flushes = new Map<string, Promise<void>>();
 
+  /**
+   * One terms PUT per quote at a time, keyed by quote id: a send waits for the last send of the same quote to
+   * answer first. The row is sent whole, so two PUTs of one quote that cross on the wire can land in either order
+   * at the server, and the older row would erase a later edit; in this queue the later row is always the last to
+   * land. A quote's save never waits behind another quote's.
+   */
+  private readonly termsPutBefore = new Map<string, Promise<void>>();
+
+  /** Send one terms PUT of one quote, in its turn: after the send before it of the same quote, whenever that answers. */
+  private queueTermsPut<T>(quoteId: string, send: () => Promise<T>): Promise<T> {
+    const before = this.termsPutBefore.get(quoteId) ?? Promise.resolve();
+    const answer = before.then(send);
+    this.termsPutBefore.set(quoteId, answer.then(
+      () => undefined,
+      () => undefined,
+    ));
+    return answer;
+  }
+
   /** The unsaved terms edit of the quote being left is sent to the quote it was typed on, then cleared. */
   private flushTermsOf(previousId: string): void {
     const client = this.client;
@@ -1252,7 +1281,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.termsEditSeq += 1;
     if (!dirty || client === null || terms === null || previousId === "") return;
     const body = termsBody(terms);
-    const sent = client.putTerms(previousId, body).then((result) => {
+    const sent = this.queueTermsPut(previousId, () => client.putTerms(previousId, body)).then((result) => {
       // Said plainly, naming the quote it was for, because the person has moved on to another.
       if (!result.ok) this.error = `The terms you changed on ${label} were not saved: ${spokenRefusal(quoteErrorMessage(result.status, result.error, "save the quote terms"))}`;
     });
@@ -1265,6 +1294,8 @@ export class QdQuoteWorkarea extends LitElement {
   /** Sign out: the unsaved terms edit and the layout are sent while the session still stands. */
   private readonly onSignOut = (event: Event): void => {
     const detail = (event as CustomEvent<SignOutDetail>).detail;
+    // The session is about to go: a scan parked for a hand down will never be answered, and the screen is going, so it ends without a word.
+    this.releaseHandoffWaiters("leaving");
     detail.waits.push(this.flushForSignOut());
   };
 
@@ -1274,6 +1305,9 @@ export class QdQuoteWorkarea extends LitElement {
     await this.store?.flush();
     // A terms save started by a switch is still the person's unsent work: sign out waits for it too (bounded by the host).
     await Promise.all([...this.flushes.values()]);
+    // The unsent work has been sent or given up on: the layout store stops here, so nothing still queued in it can
+    // be sent once this session has ended, under whoever signs in next.
+    this.store?.close();
   }
 
   private startLoads(): void {
@@ -1946,11 +1980,14 @@ export class QdQuoteWorkarea extends LitElement {
   private opening: Promise<void> = Promise.resolve();
   private createdQuoteId = "";
 
-  /** Scans waiting for the host to hand a quote id down: released the moment this.quoteId changes. */
-  private handoffWaiters: Array<() => void> = [];
+  /** True when the create itself was refused or failed: no quote will be handed down for it. */
+  private createFailed = false;
 
-  private handedDown(): Promise<void> {
-    return new Promise<void>((resolve) => {
+  /** Scans waiting for the host to hand a quote id down: released as handed the moment this.quoteId changes, or as gave-up (the host's signal, or a failed create) or leaving (the page or the session going). */
+  private handoffWaiters: Array<(end: HandoffEnd) => void> = [];
+
+  private handedDown(): Promise<HandoffEnd> {
+    return new Promise<HandoffEnd>((resolve) => {
       this.handoffWaiters.push(resolve);
     });
   }
@@ -1963,10 +2000,20 @@ export class QdQuoteWorkarea extends LitElement {
     // Only while compose is on screen: a scan on an open quote is for that quote and waits for no create.
     if (this.creating !== null && this.quoteId === "") {
       await this.creating;
-      // The host hands the new quote id down on its own render: wait for it to arrive, however long that takes (bounded, and said when it runs out).
-      if (this.createdQuoteId !== "" && this.quoteId === "" && !(await waitUpTo(HANDOFF_WAIT_MS, this.handedDown()))) {
-        this.speakAdd("The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.", "warn");
+      // The create itself failed or was refused: no quote will ever be handed down, so the scan says so at once.
+      if (this.createFailed && this.quoteId === "") {
+        this.speakAdd(CREATE_FAILED_SCAN, "warn");
         return;
+      }
+      // The host hands the new quote id down on its own render: wait for it to arrive, however long that takes: no timer ends this wait, only the host's explicit give up signal, and that is said.
+      if (this.createdQuoteId !== "" && this.quoteId === "") {
+        const end = await this.handedDown();
+        // The page or the session is going: the screen is going with it, so nothing is said.
+        if (end === "leaving") return;
+        if (end === "gave-up") {
+          this.speakAdd("The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.", "warn");
+          return;
+        }
       }
       await this.updateComplete;
       // The person opened a quote that is not the one just made while the scan waited: it was meant for the new quote.
@@ -2176,7 +2223,12 @@ export class QdQuoteWorkarea extends LitElement {
       this.termsTimer = undefined;
     }
     const sent = this.termsEditSeq;
-    const result = await ctx.guarded(client.putTerms(ctx.id, termsBody(t)), this.lateWrite(ctx, "save the quote terms"));
+    // One PUT per quote at a time: this save goes in its turn behind any send of this quote still out (a leave may
+    // have started one), so an older whole row can never land after it and erase it.
+    const result = await ctx.guarded(
+      this.queueTermsPut(ctx.id, () => client.putTerms(ctx.id, termsBody(t))),
+      this.lateWrite(ctx, "save the quote terms"),
+    );
     // The quote changed while this save was out: its answer is not this screen's to show (leaving the quote already sent any later edit to its own quote).
     if (result === undefined) return;
     // What was edited while this save was in flight is still unsaved and stays laid over the answer.
@@ -2402,6 +2454,7 @@ export class QdQuoteWorkarea extends LitElement {
     const release = this.holdBusy(ctx);
     this.error = "";
     this.createdQuoteId = "";
+    this.createFailed = false;
     const days = this.config?.policy?.defaultValidityDays || 30;
     const result = await ctx.guarded(client.createQuote(cust.id, this.branchId, validUntilFromDays(days, this.clockNow)));
     if (result === undefined) {
@@ -2413,6 +2466,9 @@ export class QdQuoteWorkarea extends LitElement {
     release();
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "create a quote"));
+      // No quote will be handed down for this create: whatever is parked waiting for one stops now.
+      this.createFailed = true;
+      this.releaseHandoffWaiters("gave-up");
       return;
     }
     this.customer = cust;
