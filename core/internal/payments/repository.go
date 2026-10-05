@@ -12,6 +12,45 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
+// THE ONE MONEY LOCK ORDER.
+//
+// Every writer that touches a payment, an invoice balance or a feed counter takes its rows in this
+// one order, and a writer that skips a step still keeps the order of the steps it takes:
+//
+//  1. the order row (a writer that works on one order),
+//  2. the payments sequence row (scope_sequences, scope payments), taken WITHOUT advancing it by
+//     LockPaymentsSequenceTx, or by the settle's own incrementing statement where the writer inserts
+//     a payment and has no earlier use for the lock,
+//  3. the existing invoice rows (FOR UPDATE, in the order the writer names them),
+//  4. the invoices sequence row (scope_sequences, scope invoices).
+//
+// The payments counter comes before every invoice because the settle holds an invoice while it
+// waits for the counter, and any writer that holds the counter on its way to that same invoice would
+// otherwise close a cycle (a 40P01 that aborts one side, and on the card path the card is already
+// charged). The cycle was real between the register settle and ReversePayment before this order was
+// written down.
+//
+// Writers and where each sits in the order (LOCK-ORDER.md carries the same table with the reasoning):
+//   - the register's RecordPayment, which reaches the counter's RecordReceipt: steps 2, 3, 4 (lockAndTotal).
+//   - the counter's RecordReceipt: steps 2, 3, 4 (lockAndTotal).
+//   - PayWithStamps and PayWithIntent, and Pay over them, the portal and card settle: steps 2, 3, 4.
+//   - ReversePayment: the payment row, then steps 2, 3 (the contra allocation's foreign key share
+//     locks the invoice), 4. The payment row is no other writer's first lock except NSF's.
+//   - the POS ring: stock rows, then step 2 (the tender's payment insert), then step 4 (a new
+//     invoice). It never touches an existing invoice.
+//   - the till refund and the POS return: the per-sale advisory lock and the returned order lines,
+//     then step 2 (the refund payment's insert) for a cash or card refund, or steps 3 and 4 for an
+//     account credit (which takes no payments row).
+//   - the group and whole-order invoice writers: the order row its caller locked, then step 4 only
+//     (a new invoice).
+//   - the quote counter door, once it lands: the order row, LockPaymentsSequenceTx, then steps 3
+//     and 4 on its own transaction.
+//   - till MarkNSF is the one writer that does NOT follow the order: the payment row, then the
+//     invoices sequence row (its UPDATE draws the counter before it locks the invoice), then the
+//     invoice. Its pair with a settle is a recorded open item, see LOCK-ORDER.md.
+//
+// Reads, and the outbox observer, take none of these rows.
+
 var errNoDB = errors.New("payments: database not configured")
 
 // methodColumns is the canonical public SELECT list for a stored method (kept in one place
@@ -522,12 +561,40 @@ RETURNING id::text, payment_no::text, customer_id::text, method, amount_cents, s
 // was inline here, in the same order, against the same tx. The existing payments unit and integration
 // suites are the proof, and they pass unchanged.
 
+// lockPaymentsSequenceSQL takes the payments feed counter row WITHOUT advancing it: the upsert writes
+// the value it already holds, so the row lock is taken and no feed number is used up. The insert arm
+// seeds a missing row at 0, not at the column default of 1, so the settle's own increment that
+// follows in the same transaction still hands out the first number, 1.
+const lockPaymentsSequenceSQL = `INSERT INTO scope_sequences (scope, next_value) VALUES ('payments', 0)
+	ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value`
+
+// LockPaymentsSequenceTx takes the payments sequence row on the caller's transaction, without
+// advancing it. It is the first money lock every payments writer takes after the order row (see the
+// lock order at the top of this file), exported so a writer that settles through its own transaction,
+// the quote counter door, can take the same lock at the same place in the same order and so cannot
+// close a cycle with a settle, a reversal or a refund.
+func (r *Repository) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) error {
+	if _, err := tx.Exec(ctx, lockPaymentsSequenceSQL); err != nil {
+		return fmt.Errorf("payments: lock payments sequence: %w", err)
+	}
+	return nil
+}
+
 // lockAndTotal locks + re-validates every requested invoice, sums the settled amount and captures a
 // branch for the payment header (payments.branch_id is NOT NULL).
 //
 // The payable ceiling is balance − holdback floored at zero: the Bill 60 legally-retained portion is
 // not collectable and must be excluded before any pay slice (§4.2 #7).
+//
+// The payments sequence row is taken FIRST, before any invoice row, and WITHOUT advancing it (the
+// settle's own INSERT draws its feed number later, once). That is the one money lock order written at
+// the top of this file: every other writer that takes both the payments counter and an invoice takes
+// the counter first, so a settle can never hold an invoice while it waits on a counter row another
+// writer holds on its way to that same invoice.
 func lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Allocation) (int64, string, error) {
+	if _, err := tx.Exec(ctx, lockPaymentsSequenceSQL); err != nil {
+		return 0, "", fmt.Errorf("pay: lock payments sequence: %w", err)
+	}
 	var total int64
 	var branchID string
 	for _, a := range allocs {
