@@ -16,7 +16,7 @@
   {
     "id": "wa-terms-save",
     "file": "src/quote-workarea.ts",
-    "find": "await ctx.guarded(client.putTerms(ctx.id, termsBody(t)), this.lateWrite(ctx, \"save the quote terms\"))",
+    "find": "await ctx.guarded(\n      this.queueTermsPut(ctx.id, () => client.putTerms(ctx.id, termsBody(t))),\n      this.lateWrite(ctx, \"save the quote terms\"),\n    )",
     "replace": "await client.putTerms(ctx.id, termsBody(t))",
     "test": "guard terms save answer:"
   },
@@ -1014,8 +1014,8 @@
   {
     "id": "wa-late-terms",
     "file": "src/quote-workarea.ts",
-    "find": ", this.lateWrite(ctx, \"save the quote terms\")",
-    "replace": "",
+    "find": "this.queueTermsPut(ctx.id, () => client.putTerms(ctx.id, termsBody(t))),\n      this.lateWrite(ctx, \"save the quote terms\"),",
+    "replace": "this.queueTermsPut(ctx.id, () => client.putTerms(ctx.id, termsBody(t))),",
     "test": "B P2-1 work area: a terms save answered after leaving"
   },
   {
@@ -1159,20 +1159,6 @@
     "test": "P3 a policy save refused after the scope moved on says which settings"
   },
   {
-    "id": "ws-serialize",
-    "file": "src/workspace-store.ts",
-    "find": "    if (this.#inFlight !== null) {\n      this.#again = true;\n      return this.#inFlight;\n    }\n",
-    "replace": "",
-    "test": "P3 layout saves reach the server one at a time"
-  },
-  {
-    "id": "ws-latest-after",
-    "file": "src/workspace-store.ts",
-    "find": "      } while (this.#again);",
-    "replace": "      } while (false);",
-    "test": "P3 layout saves reach the server one at a time"
-  },
-  {
     "id": "wa-restore-not-while-creating",
     "file": "src/quote-workarea.ts",
     "find": "    if (this.creating !== null || this.createdQuoteId !== \"\") return;\n",
@@ -1189,16 +1175,58 @@
   {
     "id": "wa-scan-handoff-wait",
     "file": "src/quote-workarea.ts",
-    "find": "!(await waitUpTo(HANDOFF_WAIT_MS, this.handedDown()))",
-    "replace": "false",
+    "find": "const end = await this.handedDown();",
+    "replace": "const end = \"gave-up\" as HandoffEnd;",
     "test": "P3 a scan made in compose waits for the host"
   },
   {
     "id": "wa-scan-handoff-timeout-says",
     "file": "src/quote-workarea.ts",
-    "find": "        this.speakAdd(\"The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.\", \"warn\");\n",
+    "find": "          this.speakAdd(\"The new quote did not open in time, so that scan was not added. Scan it again once the quote is on screen.\", \"warn\");\n",
     "replace": "",
     "test": "P3 a scan made in compose says so when the host never"
+  },
+  {
+    "id": "wa-handoff-give-up",
+    "file": "src/quote-workarea.ts",
+    "find": "    this.releaseHandoffWaiters(\"gave-up\");\n  }",
+    "replace": "  }",
+    "test": "P3 a scan made in compose says so when the host never"
+  },
+  {
+    "id": "wa-handoff-leave-release",
+    "file": "src/quote-workarea.ts",
+    "find": "    this.scope.open(\"\");\n    this.releaseHandoffWaiters(\"leaving\");\n",
+    "replace": "    this.scope.open(\"\");\n",
+    "test": "P3 a scan parked in compose is released when the work area leaves"
+  },
+  {
+    "id": "wa-handoff-leave-silent",
+    "file": "src/quote-workarea.ts",
+    "find": "    this.scope.open(\"\");\n    this.releaseHandoffWaiters(\"leaving\");",
+    "replace": "    this.scope.open(\"\");\n    this.releaseHandoffWaiters(\"handed\");",
+    "test": "P3 a scan parked in compose is released when the work area leaves"
+  },
+  {
+    "id": "wa-handoff-signout-release",
+    "file": "src/quote-workarea.ts",
+    "find": "    this.releaseHandoffWaiters(\"leaving\");\n    detail.waits.push",
+    "replace": "    detail.waits.push",
+    "test": "P3 a scan parked in compose is released at sign out"
+  },
+  {
+    "id": "wa-handoff-create-failed-says",
+    "file": "src/quote-workarea.ts",
+    "find": "        this.speakAdd(CREATE_FAILED_SCAN, \"warn\");\n",
+    "replace": "",
+    "test": "P3 a scan made in compose says so at once when the create itself is refused"
+  },
+  {
+    "id": "wa-handoff-create-failed-flag",
+    "file": "src/quote-workarea.ts",
+    "find": "      this.createFailed = true;\n",
+    "replace": "",
+    "test": "P3 a scan made in compose says so at once when the create itself is refused"
   },
   {
     "id": "wa-handoff-release",
@@ -1248,6 +1276,71 @@
     "find": "      this.notice = late;\n    }\n    // Drafts return",
     "replace": "    }\n    // Drafts return",
     "test": "P3 a link made for the quote left by the work area is said"
+  },
+  {
+    "id": "ws-serialize",
+    "file": "src/workspace-store.ts",
+    "find": "    this.#queued = send;\n    if (this.#inFlight !== null) return this.#inFlight;\n",
+    "replace": "    this.#queued = send;\n",
+    "test": "P3 layout saves reach the server one at a time"
+  },
+  {
+    "id": "ws-latest-after",
+    "file": "src/workspace-store.ts",
+    "find": "      } while (this.#queued !== null);",
+    "replace": "      } while (false);",
+    "test": "P3 layout saves reach the server one at a time"
+  },
+  {
+    "id": "ws-closed-drain",
+    "file": "src/workspace-store.ts",
+    "find": "        if (this.#closed) break;\n",
+    "replace": "",
+    "test": "P2-1 a queued layout save is never sent under the next person's session"
+  },
+  {
+    "id": "ws-reset-queued",
+    "file": "src/workspace-store.ts",
+    "find": "    await this.#enqueue(() => this.#deleteRow());",
+    "replace": "    await this.#deleteRow();",
+    "test": "the reset goes through the same queue as the saves",
+    "runner": "node",
+    "testFile": "test/workspace-store.test.mjs"
+  },
+  {
+    "id": "wa-store-close",
+    "file": "src/quote-workarea.ts",
+    "find": "    // layout is ever sent under the next person's.\n    this.store?.close();",
+    "replace": "    // layout is ever sent under the next person's.",
+    "test": "P2-1 a queued layout save is never sent under the next person's session"
+  },
+  {
+    "id": "wa-terms-put-serial",
+    "file": "src/quote-workarea.ts",
+    "find": "    const answer = before.then(send);",
+    "replace": "    const answer = send();",
+    "test": "P3-1 one terms PUT per quote at a time"
+  },
+  {
+    "id": "qb-edit-panel-mounted",
+    "file": "src/quote-builder.ts",
+    "find": "          <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>",
+    "replace": "          ${this.selected !== \"\" ? html`<qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>` : nothing}",
+    "test": "P2-2 leaving through New Quote: a quantity that lands while its panel is gone"
+  },
+  {
+    "id": "qb-followups-panel-mounted",
+    "file": "src/quote-builder.ts",
+    "find": "          <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>",
+    "replace": "          ${this.selected !== \"\" ? html`<qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>` : nothing}",
+    "test": "P2-2 leaving through New Quote: a follow-ups stop that lands while its panel is gone"
+  },
+  {
+    "id": "bq-changed-by-id",
+    "file": "src/quote-builder.ts",
+    "find": "    const named = event.detail?.quoteId;",
+    "replace": "    const named = (event.detail as { ref?: string } | undefined)?.ref;",
+    "test": "P3-3 the builder reads the changed quote's own id"
   },
   {
     "id": "pm-load-stale-start",

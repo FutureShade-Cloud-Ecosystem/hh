@@ -624,6 +624,29 @@ test("P3 a late layout answer does not resume the remembered quote while a new q
   await expect(page.getByTestId("qb-context")).toContainText("Q-1004");
 });
 
+/** Holds the host's hand down of the new quote id behind a gate the test opens: nothing here is a timer. */
+async function holdHandoff(page: Page): Promise<void> {
+  await page.locator("qd-quote-workarea").evaluate((el) => {
+    el.addEventListener(
+      "quote-open",
+      (event) => {
+        if ((event as CustomEvent<{ quoteId: string }>).detail.quoteId === "") return;
+        event.stopImmediatePropagation();
+        const held = new CustomEvent("quote-open", { detail: (event as CustomEvent).detail, bubbles: true, composed: true });
+        (window as unknown as { __releaseHandoff: () => void }).__releaseHandoff = () => el.dispatchEvent(held);
+      },
+      { once: true },
+    );
+  });
+}
+
+/** True once a scan is parked waiting for the host's hand down (so the gate or the give up reaches it, never before it). */
+async function scanIsWaiting(page: Page): Promise<void> {
+  await expect
+    .poll(() => page.locator("qd-quote-workarea").evaluate((el) => (el as unknown as { handoffWaiters: unknown[] }).handoffWaiters.length), { timeout: 60000 })
+    .toBe(1);
+}
+
 async function scanInCompose(page: Page): Promise<void> {
   // A scan reaches the work area as the scan box's own event: compose has no box, so the event is sent as the gun's would be.
   await page.locator("qd-quote-workarea").evaluate((el) => {
@@ -635,24 +658,19 @@ async function scanInCompose(page: Page): Promise<void> {
 
 test("P3 a scan made in compose waits for the host to hand the new quote down, however long that takes", async ({ page }) => {
   await signIn(page);
-  // The host is slow to hand the new quote id down: the open request is held back and sent on later.
-  await page.locator("qd-quote-workarea").evaluate((el) => {
-    el.addEventListener(
-      "quote-open",
-      (event) => {
-        if ((event as CustomEvent<{ quoteId: string }>).detail.quoteId === "") return;
-        event.stopImmediatePropagation();
-        const held = new CustomEvent("quote-open", { detail: (event as CustomEvent).detail, bubbles: true, composed: true });
-        setTimeout(() => el.dispatchEvent(held), 1500);
-      },
-      { once: true },
-    );
-  });
+  await holdHandoff(page);
+  // The create route is held by a gate, so the scan is made while the quote is being made, however slow the page is.
+  const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
   await picker.getByRole("option", { name: /Fenwick/ }).click();
+  await create.asked;
   await scanInCompose(page);
-  await expect(page.getByTestId("qb-context")).toContainText("Q-1004", { timeout: 10000 });
+  await create.release();
+  await scanIsWaiting(page);
+  await expect(page.getByTestId("qb-error")).toHaveText("");
+  await page.evaluate(() => (window as unknown as { __releaseHandoff: () => void }).__releaseHandoff());
+  await expect(page.getByTestId("qb-context")).toContainText("Q-1004");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await expect(page.getByTestId("qb-error")).toHaveText("");
 });
@@ -674,23 +692,70 @@ test("P3 a scan made in compose that another quote overtook says so", async ({ p
 
 test("P3 a scan made in compose says so when the host never hands the new quote down in time", async ({ page }) => {
   await signIn(page);
-  await page.locator("qd-quote-workarea").evaluate((el) => {
-    el.addEventListener(
-      "quote-open",
-      (event) => {
-        if ((event as CustomEvent<{ quoteId: string }>).detail.quoteId === "") return;
-        event.stopImmediatePropagation();
-        const held = new CustomEvent("quote-open", { detail: (event as CustomEvent).detail, bubbles: true, composed: true });
-        setTimeout(() => el.dispatchEvent(held), 6000);
-      },
-      { once: true },
-    );
-  });
+  await holdHandoff(page);
+  // The create route is held by a gate, so the scan is made while the quote is being made, however slow the page is.
+  const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
   const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
   await picker.getByRole("option", { name: /Fenwick/ }).click();
+  await create.asked;
   await scanInCompose(page);
-  await expect(page.getByTestId("qb-error")).toContainText("did not open in time", { timeout: 10000 });
+  await create.release();
+  await scanIsWaiting(page);
+  // Only the host's explicit give up ends the wait.
+  await page.locator("qd-quote-workarea").evaluate((el) => (el as unknown as { giveUpHandoff: () => void }).giveUpHandoff());
+  await expect(page.getByTestId("qb-error")).toContainText("did not open in time");
+  await expect(page.getByTestId("qb-error")).not.toContainText("Pick a customer");
+});
+
+/** Makes a quote in compose with the hand down held and a scan parked behind it: the state every give up case starts from. */
+async function parkedScan(page: Page): Promise<void> {
+  await signIn(page);
+  await holdHandoff(page);
+  const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST" });
+  const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
+  await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
+  await picker.getByRole("option", { name: /Fenwick/ }).click();
+  await create.asked;
+  await scanInCompose(page);
+  await create.release();
+  await scanIsWaiting(page);
+}
+
+test("P3 a scan parked in compose is released when the work area leaves the page, and says nothing", async ({ page }) => {
+  await parkedScan(page);
+  const left = await page.locator("qd-quote-workarea").evaluate(async (el) => {
+    const w = el as unknown as { handoffWaiters: unknown[]; error: string; notice: string; updateComplete: Promise<unknown> };
+    el.remove();
+    await w.updateComplete;
+    // Let the released scan run to its end (a microtask turn each, no timer).
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    return { waiting: w.handoffWaiters.length, error: w.error, notice: w.notice };
+  });
+  expect(left).toEqual({ waiting: 0, error: "", notice: "" });
+});
+
+test("P3 a scan parked in compose is released at sign out, before the session goes", async ({ page }) => {
+  await parkedScan(page);
+  // The sign out signal alone, with nothing leaving the page: the wait ends with the signal, not with the element going.
+  const waiting = await page.locator("qd-quote-workarea").evaluate((el) => {
+    window.dispatchEvent(new CustomEvent("qd-sign-out", { detail: { waits: [] as Promise<void>[] } }));
+    return (el as unknown as { handoffWaiters: unknown[] }).handoffWaiters.length;
+  });
+  expect(waiting).toBe(0);
+  await expect(page.getByTestId("qb-error")).toHaveText("");
+});
+
+test("P3 a scan made in compose says so at once when the create itself is refused", async ({ page }) => {
+  await signIn(page);
+  const create = await hold(page, /\/api\/v1\/quotes$/, { method: "POST", refuse: { status: 500, error: "quote: the quote store is down" } });
+  const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
+  await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
+  await picker.getByRole("option", { name: /Fenwick/ }).click();
+  await create.asked;
+  await scanInCompose(page);
+  await create.release();
+  await expect(page.getByTestId("qb-error")).toHaveText("The new quote could not be made, so nothing was added.");
   await expect(page.getByTestId("qb-error")).not.toContainText("Pick a customer");
 });
 

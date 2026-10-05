@@ -380,9 +380,17 @@ export class QdQuoteBuilder extends LitElement {
 
   // ── the fan-out and the open events ────────────────────────────────────────
 
-  /** An edit anywhere reaches every mounted panel and the list itself. */
-  private readonly onQuoteChanged = (): void => {
-    this.reloadDetailPanels();
+  /**
+   * An edit anywhere reaches the screens that show it. The announcement names the quote it belongs to by its own id
+   * (a late answer names the quote the write was made on, not the one that happens to be open), so the list re-reads
+   * whichever row changed, the quote bound views re-read only when the change is the quote they are showing, and the
+   * panels no single quote owns (the settings and the approvals) re-read on any edit as before. An announcement that
+   * names no quote at all re-reads everything: it is the old fan-out, and nothing may be lost by the id's absence.
+   */
+  private readonly onQuoteChanged = (event: CustomEvent<{ quoteId?: string }>): void => {
+    const named = event.detail?.quoteId;
+    if (named === undefined || named === this.selected) this.reloadDetailPanels();
+    else this.reloadSessionPanels();
     void this.loadList(true);
   };
 
@@ -419,6 +427,13 @@ export class QdQuoteBuilder extends LitElement {
       ?.querySelectorAll<HTMLElement & { reload?: () => void }>(
         "qd-quote-workarea, qd-panel-seam, qd-quote-edit, qd-quote-history, qd-quote-settings, qd-quote-assist, qd-quote-followups, qd-quote-hold-expiry, qd-quote-availability, qd-quote-guard, qd-approvals",
       )
+      .forEach((el) => el.reload?.());
+  }
+
+  /** The panels no single quote owns: they re-read on any edit, whichever quote it names. */
+  private reloadSessionPanels(): void {
+    this.renderRoot
+      ?.querySelectorAll<HTMLElement & { reload?: () => void }>("qd-quote-settings, qd-approvals")
       .forEach((el) => el.reload?.());
   }
 
@@ -550,17 +565,20 @@ export class QdQuoteBuilder extends LitElement {
       <details class="box" style="margin-top: 12px" data-testid="qb-detail">
         <summary style="cursor: pointer">Quote detail &amp; admin</summary>
         <div class="stack seams" style="margin-top: 10px">
-          ${this.selected !== ""
-            ? html`
-                <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>
-                <qd-quote-assist data-seam=${SEAM_ASSIST}></qd-quote-assist>
-                <qd-quote-history data-seam=${SEAM_HISTORY}></qd-quote-history>
-                <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>
-                <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>
-                <qd-quote-availability data-seam=${SEAM_AVAILABILITY}></qd-quote-availability>
-                <qd-quote-guard></qd-quote-guard>
-              `
-            : html`<div class="box"><p class="empty">Select a quote to open it.</p></div>`}
+          ${this.selected === ""
+            ? html`<div class="box"><p class="empty">Select a quote to open it.</p></div>`
+            : nothing}
+          <!-- The panels stay mounted through New Quote (compose shows none of them, each returns nothing for no
+               quote): a panel taken off the page loses the late answers of writes still out for the quote it left,
+               its announcement dies with it and the panel that comes back is never told what landed. Leaving a quote
+               for another quote was already this way, and New Quote takes that same proven path. -->
+          <qd-quote-edit data-seam=${SEAM_EDIT_PANEL}></qd-quote-edit>
+          <qd-quote-assist data-seam=${SEAM_ASSIST}></qd-quote-assist>
+          <qd-quote-history data-seam=${SEAM_HISTORY}></qd-quote-history>
+          <qd-quote-followups data-seam=${SEAM_FOLLOWUPS}></qd-quote-followups>
+          <qd-quote-hold-expiry data-seam=${SEAM_HOLD_EXPIRY}></qd-quote-hold-expiry>
+          <qd-quote-availability data-seam=${SEAM_AVAILABILITY}></qd-quote-availability>
+          <qd-quote-guard></qd-quote-guard>
           <qd-approvals data-seam=${SEAM_APPROVALS}></qd-approvals>
           <qd-quote-settings data-seam=${SEAM_SETTINGS}></qd-quote-settings>
         </div>

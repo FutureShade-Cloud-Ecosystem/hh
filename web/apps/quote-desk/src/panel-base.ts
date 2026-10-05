@@ -119,7 +119,8 @@ export abstract class PanelBase extends LitElement {
    * What a guarded write does with its answer when the quote was left while it was out. It is never applied to the
    * quote on screen, but a write that succeeded did change its quote, so the screens are told and the person who
    * comes back finds what the server holds. A refusal is said only on the quote it belongs to (when the person is on
-   * it again) and says nothing on any other.
+   * it again) and says nothing on any other. The announcement is made from the panel itself, which is why the builder
+   * keeps every panel mounted through New Quote: a panel taken off the page there would take its late answers with it.
    */
   protected lateWrite(ctx: QuoteContext, say: (refusal: Extract<Result<unknown>, { ok: false }>) => string): (late: Result<unknown>) => void {
     return (late) => {
