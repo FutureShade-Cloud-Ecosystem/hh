@@ -1282,7 +1282,7 @@
     "file": "src/workspace-store.ts",
     "find": "        if (this.#closed) break;\n",
     "replace": "",
-    "test": "P2-1 a queued layout save is never sent under the next person's session"
+    "test": "sign out flush: the layout store is stopped when the flush has run, whatever the page does next"
   },
   {
     "id": "ws-reset-queued",
@@ -1298,7 +1298,7 @@
     "file": "src/quote-workarea.ts",
     "find": "    // layout is ever sent under the next person's.\n    this.store?.close();",
     "replace": "    // layout is ever sent under the next person's.",
-    "test": "P2-1 a queued layout save is never sent under the next person's session"
+    "test": "layout store: a store stopped by the work area leaving sends nothing more of what it had queued, even when the work area is put back"
   },
   {
     "id": "wa-terms-put-serial",

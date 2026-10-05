@@ -165,3 +165,27 @@ test("layout order: a layout change made while the reset's delete is out survive
   expect((JSON.parse(ws.bodies[1] as string) as { arrangement: string }).arrangement).toBe("PRIMARY_RIGHT");
   await expect(page.getByTestId("qb-workspace")).toHaveAttribute("data-arrangement", "PRIMARY_RIGHT");
 });
+
+test("layout store: a store stopped by the work area leaving sends nothing more of what it had queued, even when the work area is put back", async ({ page }) => {
+  await signIn(page, "Sales");
+  await open(page, "Q-1001");
+  await quiet(page);
+  const ws = record(page, /\/my-workspace$/);
+  const first = await hold(page, /\/surfaces\/quotes\.builder\/my-workspace$/, { method: "PUT", times: 1 });
+  await page.getByRole("button", { name: "Swap panels" }).click();
+  await first.asked;
+  // A second change waits in the store's queue behind the held save.
+  await page.locator('[data-action="collapse-primary"]').click();
+  await page.waitForTimeout(900);
+  await page.locator("qd-quote-workarea").evaluate((el) => {
+    const parent = el.parentNode as Node;
+    const next = el.nextSibling;
+    parent.removeChild(el);
+    parent.insertBefore(el, next);
+  });
+  await quiet(page);
+  await first.release();
+  await settle(page);
+  // The same person is back on the page, so the sender would let it go: only the store's own stop keeps it unsent.
+  expect(ws.bodies.filter((body) => body.includes('"primary_collapsed":true'))).toEqual([]);
+});
