@@ -163,6 +163,25 @@ func (r *Repository) ReceiptKeyTakenTx(ctx context.Context, tx pgx.Tx, key strin
 	return ok, err
 }
 
+// LockPaymentsFeedSeqTx takes the payments feed sequence row lock on the CALLER'S transaction
+// (QD-5 review round 4, the sequence order fix). It runs the very upsert every settle runs to draw a
+// payment's feed number (paymentsFeedSeqCTE, the 0213 convention), so it locks the same row, in the
+// same way, the payments writer locks again a moment later for its own numbering: a caller that will
+// raise an invoice and then settle a payment takes this lock FIRST and sits on the one order every
+// writer that both bills and settles follows (payments sequence row before invoices sequence row),
+// so a settle running beside it queues behind the caller's transaction instead of holding the
+// payments row while the caller holds the invoices row, the 40P01 the review reproduced between the
+// counter's door and a register settle. The call draws one number of the feed's sequence (a gap when
+// the caller does not go on to settle), which the convention allows: the counter's own lock is the
+// reuse arm's gap, stated here so nobody reads it as drift.
+func (r *Repository) LockPaymentsFeedSeqTx(ctx context.Context, tx pgx.Tx) error {
+	var next int64
+	if err := tx.QueryRow(ctx, paymentsFeedSeqCTE+`SELECT next_value FROM pseq`).Scan(&next); err != nil {
+		return fmt.Errorf("payments: take the payments feed sequence lock: %w", err)
+	}
+	return nil
+}
+
 // validateReceipt is the request check both entries make before any database is consulted.
 func validateReceipt(in ReceiptRequest) error {
 	if in.IdempotencyKey == "" {

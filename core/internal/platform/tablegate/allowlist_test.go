@@ -515,7 +515,7 @@ var allowlist = []allowlistEntry{
 		// metadata marker the finalized event carries) so it completes the
 		// move instead of raising a second document, per that function's own
 		// comment.
-		reason: "the invoice source seam returns FACTS about the order (the customer's terms beside them); read only, no permission decided here; the invoices read is OrderHasCounterInvoice, new in HH-RD2 (the Quote Desk cycle), a same transaction read, granted to move behind the owning module's transaction taking seam (the till hold's WithCallerTx shape)",
+		reason: "the invoice source seam returns FACTS about the order (the customer's terms beside them); read only, no permission decided here; the invoices read is OrderHasCounterInvoice, new in HH-RD2 (the Quote Desk cycle), a pool read made after the status move commits, by the outbox observer whose claim connection is its own pool (PR 163), not a same transaction read",
 	},
 	{
 		module: "order",

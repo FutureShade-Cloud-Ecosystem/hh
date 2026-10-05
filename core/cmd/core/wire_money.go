@@ -613,6 +613,12 @@ func (a quoteCounterPayer) KeyTakenTx(ctx context.Context, tx pgx.Tx, key string
 	return a.repo.ReceiptKeyTakenTx(ctx, tx, key)
 }
 
+// LockPaymentsFeedSeqTx binds the door's sequence order seam to the payments module's own lock on
+// the caller's transaction, the same adapter belt as the other two methods.
+func (a quoteCounterPayer) LockPaymentsFeedSeqTx(ctx context.Context, tx pgx.Tx) error {
+	return a.repo.LockPaymentsFeedSeqTx(ctx, tx)
+}
+
 func (a quoteCounterPayer) TakePaymentTx(ctx context.Context, tx pgx.Tx, in quote.CounterReceiptInput) (quote.CounterReceipt, error) {
 	out, err := a.repo.RecordReceiptTx(ctx, tx, payments.ReceiptRequest{
 		CustomerID:     in.CustomerID,

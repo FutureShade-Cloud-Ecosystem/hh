@@ -95,6 +95,12 @@ type CounterPayer interface {
 	// KeyTakenTx says whether a payment already holds the key, so the door can tell a replay, which it
 	// answers with the stored payment, from a first payment, which it holds to the invoice's balance.
 	KeyTakenTx(ctx context.Context, tx pgx.Tx, key string) (bool, error)
+	// LockPaymentsFeedSeqTx takes the payments feed sequence row lock on the door's transaction: the
+	// payments module owns the mechanism, and the door takes it BEFORE it raises anything so that it
+	// holds the payments sequence row before the invoices one, the one order every writer that both
+	// bills and settles follows, and a settle beside the door queues behind it instead of deadlocking
+	// with it on the two rows (40P01, an aborted counter action whose card charge already happened).
+	LockPaymentsFeedSeqTx(ctx context.Context, tx pgx.Tx) error
 	TakePaymentTx(ctx context.Context, tx pgx.Tx, in CounterReceiptInput) (CounterReceipt, error)
 }
 
@@ -295,8 +301,13 @@ func (s *StaffService) takeOrderPaymentTx(ctx context.Context, tx pgx.Tx, ps ord
 	if !replay {
 		// Held to what the invoice still owes, not to its total: once a deposit is on it, the rest is the
 		// balance whatever the customer's credit has become since. A customer with no credit pays all of
-		// it at once; nobody pays more than it.
+		// it at once; nobody pays more than it. Nothing owed is its own answer: a cashier who tries
+		// another payment on a paid order is told the order is paid, never asked for a balance of
+		// $0.00.
 		if cash && in.AmountCents != agreed.BalanceCents {
+			if agreed.BalanceCents == 0 {
+				return OrderPaymentResult{}, httpx.BadRequestf("The order is paid in full.")
+			}
 			if agreed.BalanceCents == agreed.TotalCents {
 				return OrderPaymentResult{}, httpx.BadRequestf(
 					"a customer with no credit account pays the whole agreed total of %s", moneyWords(agreed.TotalCents))
@@ -308,6 +319,18 @@ func (s *StaffService) takeOrderPaymentTx(ctx context.Context, tx pgx.Tx, ps ord
 			return OrderPaymentResult{}, httpx.BadRequestf(
 				"the payment is more than the balance of %s", moneyWords(agreed.BalanceCents))
 		}
+	}
+	// The payments sequence row is taken BEFORE the invoice is raised (the sequence order fix): the
+	// settle below takes the payments feed's sequence row and then the invoices feed's, and so does
+	// every other writer that both bills and settles (the register settle, the POS ring, the payments
+	// settle itself). Taking the payments row first puts this action on that one order, so a settle
+	// running beside it queues behind this transaction on the payments row instead of holding it
+	// while this action holds the invoices row: the two rows in opposite orders is the 40P01 the
+	// review reproduced, and the side Postgres aborts here is an action whose card charge has
+	// already happened. The settle's own numbering later re-takes the same lock this transaction
+	// already holds.
+	if err := s.payer.LockPaymentsFeedSeqTx(ctx, tx); err != nil {
+		return OrderPaymentResult{}, err
 	}
 	inv, err := s.invoicer.RaiseAgreedInvoiceTx(ctx, tx, orderID)
 	if err != nil {
