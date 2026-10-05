@@ -1078,7 +1078,7 @@ func (s *Service) PostBill(ctx context.Context, billID string, in PostBillReques
 			bill.BillNo, legs.VarianceCents)
 	}
 
-	journalID, err := s.postBillJournal(ctx, bill, legs)
+	journalID, err := s.postBillJournal(ctx, tx, bill, legs)
 	if err != nil {
 		return BillDetail{}, err
 	}
@@ -1112,11 +1112,16 @@ func (s *Service) PostBill(ctx context.Context, billID string, in PostBillReques
 // postBillJournal resolves the four legs through the posting rules and posts them. Idempotent on the bill id,
 // so a retry after a mid-flight failure re-posts the same (deduped) journal rather than a second payable.
 //
-// The journal is posted BEFORE the bill's own transaction commits, which is the same self-healing dual-write
-// ordering landedcost uses: the GL is idempotent on its key, so a crash between the post and the commit leaves
-// a journal that the retry re-uses, whereas the reverse order could leave a POSTED bill with no journal at all.
-func (s *Service) postBillJournal(ctx context.Context, bill Bill, legs JournalLegs) (string, error) {
-	role := func(r string) (string, error) { return s.rules.ResolveRule(ctx, eventBillPosted, r, bill.BranchID) }
+// The journal is posted THROUGH the bill's own transaction (the rules are read and the journal inserted on
+// tx), so it commits or rolls back with the bill: a failure after the post (the bill's own writes, the commit)
+// leaves no journal behind, and a retry never re-uses a journal whose legs came from an earlier read of the
+// bill. The idempotency key stays as belt and braces. Going through tx also means PostBill holds one pool
+// connection for the whole post, where posting on the pool made every PostBill pin one connection and wait
+// for another (connection starvation by second acquisition).
+func (s *Service) postBillJournal(ctx context.Context, tx pgx.Tx, bill Bill, legs JournalLegs) (string, error) {
+	role := func(r string) (string, error) {
+		return s.rules.ResolveRuleTx(ctx, tx, eventBillPosted, r, bill.BranchID)
+	}
 	apCode, err := role(roleAP)
 	if err != nil {
 		return "", err
@@ -1149,7 +1154,7 @@ func (s *Service) postBillJournal(ctx context.Context, bill Bill, legs JournalLe
 	}
 	glLines = append(glLines, GLLine{AccountCode: apCode, CreditCents: legs.APCents, Memo: "vendor bill " + bill.BillNo})
 
-	return s.gl.PostJournal(ctx, GLJournal{
+	return s.gl.PostJournalTx(ctx, tx, GLJournal{
 		Source:         glSourcePOReceipt,
 		SourceRefID:    bill.ID,
 		IdempotencyKey: "purchasing.bill:" + bill.ID,

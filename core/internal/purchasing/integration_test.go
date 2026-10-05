@@ -130,7 +130,22 @@ func (a itGL) PostJournal(ctx context.Context, in GLJournal) (string, error) {
 	})
 }
 
+func (a itGL) PostJournalTx(ctx context.Context, tx pgx.Tx, in GLJournal) (string, error) {
+	lines := make([]gl.ExternalLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{
+		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
+		Memo: in.Memo, BranchID: in.BranchID, Lines: lines,
+	})
+}
+
 type itRules struct{ svc *gl.Service }
+
+func (a itRules) ResolveRuleTx(ctx context.Context, tx pgx.Tx, e, r, b string) (string, error) {
+	return a.svc.ResolveRuleTx(ctx, tx, e, r, b)
+}
 
 func (a itRules) ResolveRule(ctx context.Context, e, r, b string) (string, error) {
 	return a.svc.ResolveRule(ctx, e, r, b)

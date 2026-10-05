@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -47,10 +48,16 @@ type fakeBillGL struct{}
 
 func (fakeBillGL) PostJournal(context.Context, GLJournal) (string, error) { return "", nil }
 
+func (fakeBillGL) PostJournalTx(context.Context, pgx.Tx, GLJournal) (string, error) { return "", nil }
+
 // fakeBillRules resolves every role to a fixed code without a query.
 type fakeBillRules struct{}
 
 func (fakeBillRules) ResolveRule(context.Context, string, string, string) (string, error) {
+	return "2100", nil
+}
+
+func (fakeBillRules) ResolveRuleTx(context.Context, pgx.Tx, string, string, string) (string, error) {
 	return "2100", nil
 }
 

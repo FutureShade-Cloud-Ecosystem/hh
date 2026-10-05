@@ -1253,6 +1253,18 @@ func (a w4cGLPoster) PostJournal(ctx context.Context, in purchasing.GLJournal) (
 	})
 }
 
+// PostJournalTx is PostJournal through the caller's transaction (gl.Service.PostExternalTx).
+func (a w4cGLPoster) PostJournalTx(ctx context.Context, tx pgx.Tx, in purchasing.GLJournal) (string, error) {
+	lines := make([]gl.ExternalLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{
+		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
+		Memo: in.Memo, BranchID: in.BranchID, Lines: lines,
+	})
+}
+
 // unionPOCreator adapts inventory's POCreator seam onto purchasing's
 // CreatePO; the caller's context carries the staff identity, so
 // purchasing's own branch fence applies.
