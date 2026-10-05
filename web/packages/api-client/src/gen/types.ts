@@ -4999,6 +4999,22 @@ export type PricingClearanceWrite = {
   ends_at: string;
   is_active?: boolean | null;
 };
+export type PricingBranchPrice = {
+  product_id: string;
+  branch_id: string;
+  list_price_cents: number;
+  price_uom: string;
+  updated_at: string;
+};
+export type PricingBranchPriceWrite = {
+  list_price_cents: number;
+  price_uom: string;
+};
+export type PricingBranchPricePage = {
+  items: PricingBranchPrice[];
+  next_cursor?: string | null;
+  limit?: number;
+};
 export type PricingRebateProgram = {
   id: string;
   code: string;

@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { PricingApplyDueResult, PricingAuditLogPage, PricingBatchApplyResult, PricingBatchCreate, PricingBatchImportResult, PricingBatchLinePage, PricingBatchPage, PricingBreakdown, PricingCategoryPolicy, PricingCategoryPolicyPage, PricingCategoryPolicyWrite, PricingChangeLogPage, PricingClearanceItem, PricingClearancePage, PricingClearanceWrite, PricingCreatedRef, PricingFloorConfirmation, PricingFloorPreview, PricingFloorPreviewRequest, PricingImportProfile, PricingImportProfilePage, PricingLowMarginEntry, PricingLowMarginRequest, PricingLowMarginScanPage, PricingMappingWrite, PricingOverride, PricingOverridePage, PricingOverrideWrite, PricingPriceBatch, PricingPriceFileApplyResult, PricingPriceFileForm, PricingPriceFilePreview, PricingPriceFileVendorPage, PricingPriceImportRunPage, PricingPromotion, PricingPromotionPage, PricingPromotionWrite, PricingQuantityBreakHeader, PricingQuantityBreakPage, PricingQuantityBreakWrite, PricingRebateAccrualResult, PricingRebateAccrueRequest, PricingRebateProgram, PricingRebateProgramPage, PricingRebateProgramWrite, PricingResolveRequest, PricingRule, PricingRulePage, PricingRulePatch, PricingRuleWrite, PricingStatusResult, PricingUOMConversion, PricingUOMConversionPage, PricingUOMPlan, PricingUOMPlanInput, PricingVendorRebateLedger } from "./types.js";
+import type { PricingApplyDueResult, PricingAuditLogPage, PricingBatchApplyResult, PricingBatchCreate, PricingBatchImportResult, PricingBatchLinePage, PricingBatchPage, PricingBranchPrice, PricingBranchPricePage, PricingBranchPriceWrite, PricingBreakdown, PricingCategoryPolicy, PricingCategoryPolicyPage, PricingCategoryPolicyWrite, PricingChangeLogPage, PricingClearanceItem, PricingClearancePage, PricingClearanceWrite, PricingCreatedRef, PricingFloorConfirmation, PricingFloorPreview, PricingFloorPreviewRequest, PricingImportProfile, PricingImportProfilePage, PricingLowMarginEntry, PricingLowMarginRequest, PricingLowMarginScanPage, PricingMappingWrite, PricingOverride, PricingOverridePage, PricingOverrideWrite, PricingPriceBatch, PricingPriceFileApplyResult, PricingPriceFileForm, PricingPriceFilePreview, PricingPriceFileVendorPage, PricingPriceImportRunPage, PricingPromotion, PricingPromotionPage, PricingPromotionWrite, PricingQuantityBreakHeader, PricingQuantityBreakPage, PricingQuantityBreakWrite, PricingRebateAccrualResult, PricingRebateAccrueRequest, PricingRebateProgram, PricingRebateProgramPage, PricingRebateProgramWrite, PricingResolveRequest, PricingRule, PricingRulePage, PricingRulePatch, PricingRuleWrite, PricingStatusResult, PricingUOMConversion, PricingUOMConversionPage, PricingUOMPlan, PricingUOMPlanInput, PricingVendorRebateLedger } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -147,6 +147,55 @@ export async function pricingListBatchLines(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "pricingListBatchLines",
+  });
+}
+
+export async function pricingListBranchPrices(
+  client: ApiClient,
+  opts?: { cursor?: string; limit?: number; product_id?: string; branch_id?: string },
+  call?: ApiCallOptions
+): Promise<Result<PricingBranchPricePage>> {
+  return client.request<PricingBranchPricePage>({
+    method: "GET",
+    path: "/api/v1/pricing/branch-prices",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "pricingListBranchPrices",
+  });
+}
+
+export async function pricingPutBranchPrice(
+  client: ApiClient,
+  productId: string | number,
+  branchId: string | number,
+  body: PricingBranchPriceWrite,
+  call?: ApiCallOptions
+): Promise<Result<PricingBranchPrice>> {
+  return client.request<PricingBranchPrice>({
+    method: "PUT",
+    path: "/api/v1/pricing/branch-prices/{productId}/{branchId}",
+    pathParams: { productId, branchId },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "pricingPutBranchPrice",
+  });
+}
+
+export async function pricingDeleteBranchPrice(
+  client: ApiClient,
+  productId: string | number,
+  branchId: string | number,
+  call?: ApiCallOptions
+): Promise<Result<PricingStatusResult>> {
+  return client.request<PricingStatusResult>({
+    method: "DELETE",
+    path: "/api/v1/pricing/branch-prices/{productId}/{branchId}",
+    pathParams: { productId, branchId },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "pricingDeleteBranchPrice",
   });
 }
 
