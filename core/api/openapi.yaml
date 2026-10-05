@@ -10931,6 +10931,182 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/load/branches:
+    put:
+      operationId: loadMapBranches
+      tags:
+        - load
+      summary: Attach the dealer's branch keys to HH's existing branches
+      description: One item per legacy branch key. The record names one field, the yard code of an existing branch row; a name not yet recorded binds to that row and answers attached, a replay answers unchanged, and a record that would re-point a recorded name at a second row refuses as a key conflict. A code that answers no branch row refuses naming the field. No branch is ever created.
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/users:
+    put:
+      operationId: loadMapUsers
+      tags:
+        - load
+      summary: Attach the dealer's user and sales rep keys to existing staff rows
+      description: One item per legacy user key. The record names one field, the verified login email of an existing staff row; a name not yet recorded binds to that row and answers attached, a replay answers unchanged. An email that answers no staff row refuses naming the field, never a value. No user is ever created.
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/categories:
+    put:
+      operationId: loadUpsertCategories
+      tags:
+        - load
+      summary: Upsert product categories, the parent named by legacy key
+      description: One item per category. The record names the code and the name; the parent, named by legacy key, arrives as a reference of kind category and resolves against the registry before any write, so a parent not yet loaded refuses naming the kind and the key. A parent chain that would return to the row the item names refuses as a cycle with nothing of the write standing. A code a staff member already made attaches to that row and takes the load's stamps.
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/load/suppliers:
+    put:
+      operationId: loadUpsertSuppliers
+      tags:
+        - load
+      summary: Upsert the supplier record with its terms, remit address and ordering contact
+      description: One item per supplier. The legacy id is the vendor number, the source's natural key; the record names the supplier name and, named, the payment terms in days, the EDI flag, the remit address, the active flag, the metadata, and the ordering contact (contact name, email, phone) through the purchasing module's own contact store. A contact that names neither an email nor a phone refuses naming the field.
+      x-role: machine
+      security:
+        - MachineBearer: []
+      x-addition: HH-LOAD-1 load doors; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoadSubmitRequest"
+      responses:
+        "200":
+          description: One outcome per item and the batch's counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadSubmitResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The batch id is recorded under another door; the submission is a collision of two doors' batch namespaces, not a replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "The batch contended with another in flight batch on shared names and Postgres rolled it back whole: nothing of it stands, and resubmitting the whole batch is safe. The one answer a caller may retry the batch on, never a per item outcome."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/messaging/channels:
     get:
       operationId: messagingListChannels
@@ -35578,6 +35754,7 @@ components:
           type: string
           enum:
             - created
+            - attached
             - updated
             - unchanged
             - refused
@@ -35602,11 +35779,15 @@ components:
       type: object
       required:
         - created
+        - attached
         - updated
         - unchanged
         - refused
       properties:
         created:
+          type: integer
+          format: int32
+        attached:
           type: integer
           format: int32
         updated:
@@ -35618,6 +35799,65 @@ components:
         refused:
           type: integer
           format: int32
+    LoadSubmitItem:
+      type: object
+      required:
+        - legacy_id
+        - record
+      properties:
+        legacy_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        derived_key:
+          type:
+            - string
+            - "null"
+          format: uuid
+        record:
+          type: object
+          additionalProperties: true
+        requires:
+          type: array
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/LoadKeyRef"
+    LoadSubmitRequest:
+      type: object
+      required:
+        - source_system
+        - batch_id
+        - items
+      properties:
+        source_system:
+          type: string
+          minLength: 1
+          maxLength: 64
+        batch_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        items:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/LoadSubmitItem"
+    LoadSubmitResult:
+      type: object
+      required:
+        - batch_id
+        - counts
+        - items
+      properties:
+        batch_id:
+          type: string
+        counts:
+          $ref: "#/components/schemas/LoadBatchCounts"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LoadBatchItemOutcome"
     LoadBatchView:
       type: object
       required:
