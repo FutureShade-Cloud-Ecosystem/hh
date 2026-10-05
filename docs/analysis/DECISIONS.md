@@ -270,6 +270,12 @@ The demo. Testers sign in by tapping a role. That sign-in exists only in a demo 
 
 Touches: the Counter Till cycle's lanes, the core's role configuration and its checks, the demo build and its deploy, `docs/analysis/DECISIONS.md`.
 
+**D50 (the schema freeze is lifted for every cycle).** Recorded from Colton's answer C to checkpoint question CP0-1 of the HH-LOAD-1 plan (infra `docs/sessions/SESSION-3/HH-LOAD-1/LOAD-0-plan-r1.md`), the principal's Session 2 decision log row 763 (DECISIONS.md is live for this entry under D27). `core/db/SCHEMA-FROZEN` is removed, so `ci`'s freeze check passes inert, as it is written to when the marker is absent, and a pull request no longer needs a `PORTED.md` entry to add a migration. What stands: migrations are forward-only and numbered and a merged migration is never edited (AGENTS.md); the additive rule of `core/db/README.md` holds unless a recorded decision says otherwise; the principal assigns each cycle a block of migration numbers so two lanes never collide; `PORTED.md` keeps recording the ERP's ports (HH-3.7) as before. D47's one schema block for HH-5 stands as that cycle's plan, no longer as an exception to a freeze.
+
+Reason: the load doors cycle needs tables the frozen layout cannot hold (a legacy key registry, a machine identity for FB Move, branch prices, named price profiles), and Colton chose to lift the freeze for every cycle rather than open it for one.
+
+Touches: `core/db/SCHEMA-FROZEN` (removed), `core/db/README.md` (the freeze section), every lane brief that adds a migration (its number block).
+
 ## Carried as verification, not decided
 
 Whether Appwrite Team memberships surface as OIDC claims stays a S2 check. D3 stands either way: if claims are absent, a Function enriches userinfo and the engine resolves the coarse gate from Team membership by lookup.
