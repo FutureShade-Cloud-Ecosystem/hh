@@ -105,6 +105,9 @@ import { WorkspaceStore } from "./workspace-store.js";
 import { QuoteContext, QuoteScope, SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./quote-context.js";
 import type { AddonSuggestion } from "@hardscapehouse/pos-kit/src/ported/pos-api.js";
 
+/** Said on return when the link was made after the person had left: its one-time address went with the answer. */
+const LATE_LINK_NOTE = "A share link was made on this quote while you were away. Its address was shown only once and was not kept: use Copy link again to make one you can copy.";
+
 /** Said when the read of a quote went ahead while a terms save of that quote was still out. */
 const STILL_SAVING = "A terms change you made on this quote is still being saved. What is shown may not include it yet.";
 
@@ -1193,15 +1196,20 @@ export class QdQuoteWorkarea extends LitElement {
     this.ticketMoved();
   }
 
+  /** What a late success changed that the screen cannot show, kept by quote until that quote is read again. */
+  private readonly lateNotes = new Map<string, string>();
+
   /**
    * What a guarded write does with its answer when the quote was left while it was out. It is never applied to the
    * quote on screen, but a write that succeeded did change its quote: the screens are told, by that quote's own id,
    * so the list and every open view of it re-read and the person who comes back finds what the server holds. A refusal
    * is said only on the quote it belongs to, when the person is on it again.
    */
-  private lateWrite(ctx: QuoteContext, what: string): (late: Result<unknown>) => void {
+  private lateWrite(ctx: QuoteContext, what: string, note = ""): (late: Result<unknown>) => void {
     return (late) => {
       if (late.ok) {
+        // What the success changed that the screen cannot show is kept for that quote and said when it is read: the announcement makes it read again.
+        if (note !== "") this.lateNotes.set(ctx.id, note);
         this.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId: ctx.id }, bubbles: true, composed: true }));
         return;
       }
@@ -1538,6 +1546,11 @@ export class QdQuoteWorkarea extends LitElement {
       return;
     }
     this.view = view.value;
+    const late = this.lateNotes.get(ctx.id);
+    if (late !== undefined) {
+      this.lateNotes.delete(ctx.id);
+      this.notice = late;
+    }
     // Drafts return to the server's truth after a re-read, except the box the
     // person is typing in right now: a late re-read must never wipe the figure
     // under their hands, or the blur that should save it sees an empty box.
@@ -2425,7 +2438,7 @@ export class QdQuoteWorkarea extends LitElement {
   private async ensureLink(ctx: QuoteContext): Promise<string> {
     const client = this.client;
     if (client === null || this.mintedToken !== "") return this.mintedToken;
-    const result = await ctx.guarded(client.mintShareLink(ctx.id), this.lateWrite(ctx, "create a share link"));
+    const result = await ctx.guarded(client.mintShareLink(ctx.id), this.lateWrite(ctx, "create a share link", LATE_LINK_NOTE));
     if (result === undefined) throw new StaleQuoteError();
     if (!result.ok) {
       throw new Error(spokenRefusal(quoteErrorMessage(result.status, result.error, "create a share link")));

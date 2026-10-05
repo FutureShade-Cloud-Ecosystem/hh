@@ -690,3 +690,61 @@ test("P3 a scan made in compose says so when the host never hands the new quote 
   await expect(page.getByTestId("qb-error")).toContainText("did not open in time", { timeout: 10000 });
   await expect(page.getByTestId("qb-error")).not.toContainText("Pick a customer");
 });
+
+test("P3 a link made after the person left is said when they come back to the quote", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await openQuote(page, "Q-1001");
+  const mint = await hold(page, /\/quotes\/q-1001\/share-links$/, { method: "POST", times: 1 });
+  await page.locator("qd-quote-edit").getByRole("button", { name: "Create link to copy" }).click();
+  await mint.asked;
+  await openQuote(page, "Q-1003");
+  await mint.release();
+  await settle(page);
+  await openQuote(page, "Q-1001");
+  await expect(page.getByTestId("qe-notice")).toContainText("A share link was made on this quote while you were away");
+});
+
+test("P3 a link made after the person left and came back is said at once", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await openQuote(page, "Q-1001");
+  const mint = await hold(page, /\/quotes\/q-1001\/share-links$/, { method: "POST", times: 1 });
+  await page.locator("qd-quote-edit").getByRole("button", { name: "Create link to copy" }).click();
+  await mint.asked;
+  await openQuote(page, "Q-1003");
+  await openQuote(page, "Q-1001");
+  await mint.release();
+  await expect(page.getByTestId("qe-notice")).toContainText("A share link was made on this quote while you were away");
+});
+
+test("P3 a quantity saved after the person left says the discount half was not sent", async ({ page }) => {
+  await signIn(page, "Sales manager");
+  await openQuote(page, "Q-1001");
+  const line = page.locator("qd-quote-edit").getByTestId("qe-line").first();
+  await line.locator('[data-field="qty"]').fill("3");
+  await line.locator('[data-field="disc"]').fill("4");
+  const patch = await hold(page, /\/quotes\/q-1001\/lines\/1$/, { method: "PATCH", times: 1 });
+  await line.getByRole("button", { name: "Save" }).click();
+  await patch.asked;
+  await openQuote(page, "Q-1003");
+  await patch.release();
+  await settle(page);
+  await openQuote(page, "Q-1001");
+  await expect(page.getByTestId("qe-notice")).toContainText("the discount you also changed was not sent");
+});
+
+test("P3 a link made for the quote left by the work area is said when the person comes back", async ({ page }) => {
+  await stubBrowserChannels(page);
+  await seed(page, { customer_id: "c-fenwick" });
+  await signIn(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-line")).toHaveCount(1);
+  await quiet(page);
+  const mint = await hold(page, /\/quotes\/q-1004\/share-links$/, { method: "POST", times: 1 });
+  await page.getByTestId("qb-copy-link").click();
+  await mint.asked;
+  await open(page, "Q-1001");
+  await mint.release();
+  await settle(page);
+  await open(page, "Q-1004");
+  await expect(page.getByTestId("qb-notice")).toContainText("A share link was made on this quote while you were away");
+});

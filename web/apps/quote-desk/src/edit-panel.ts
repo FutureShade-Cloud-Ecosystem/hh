@@ -65,6 +65,12 @@ type Wrote = "saved" | "refused" | "moved";
 /** The mint's own notice: it is said beside the button that made it, not at the foot of the panel. */
 const LINK_CREATED_NOTICE = "Link created. Nothing was emailed: copy the link and send it yourself.";
 
+/** Said on return when the link was made after the person had left: its one-time address went with the answer. */
+const LATE_LINK_NOTE = "A share link was made on this quote while you were away. Its address was shown only once and was not kept: revoke it and create another to copy one.";
+
+/** Said on return when the quantity landed after the person had left: the discount half was never sent. */
+const LATE_QTY_NOTE = "The quantity you changed was saved while you were away, but the discount you also changed was not sent. Enter it again to save it.";
+
 @customElement("qd-quote-edit")
 export class QdQuoteEdit extends PanelBase {
   @state() private view: QuoteView | null = null;
@@ -182,6 +188,11 @@ export class QdQuoteEdit extends PanelBase {
     // An expiry typed and not saved is the person's: it differs from the expiry the last read showed.
     const expiryUnsaved = this.expiryDraft !== (this.view?.valid_until ?? "");
     this.view = result.value;
+    const late = this.lateNotes.get(ctx.id);
+    if (late !== undefined) {
+      this.lateNotes.delete(ctx.id);
+      this.notice = late;
+    }
     // The line a save was for returns to the server's truth, so a refused edit never leaves a stale value sitting
     // in its box looking saved. The figures typed on the other lines are the person's and stay, as does the box
     // under their hands: a re-read must not wipe what is being typed. A figure typed for a line number the read no
@@ -255,13 +266,14 @@ export class QdQuoteEdit extends PanelBase {
     floor?: { lineNo: number; discPct: number },
     resetLine = 0,
     resetExpiry = false,
+    lateNote = "",
   ): Promise<Wrote> {
     if (this.busy || this.client === null) return "refused";
     this.busy = true;
     this.error = "";
     this.notice = "";
     // The write is bound to the quote the context names, never to the quote open when the answer comes back.
-    const result = await ctx.guarded(action(ctx.id), (late) => this.lateAnswer(ctx, late, what, floor));
+    const result = await ctx.guarded(action(ctx.id), (late) => this.lateAnswer(ctx, late, what, floor, lateNote));
     // The quote the person moved to meanwhile owns the screen now: this answer says nothing about it.
     if (result === undefined) return "moved";
     this.busy = false;
@@ -291,8 +303,10 @@ export class QdQuoteEdit extends PanelBase {
    * has come back to that quote (or the list is showing it) they re-read and show what the server holds. A refusal
    * is said only on the quote it belongs to, when the person is on it again; on any other quote it says nothing.
    */
-  private lateAnswer(ctx: QuoteContext, late: Result<unknown>, what: string, floor?: { lineNo: number; discPct: number }): void {
+  private lateAnswer(ctx: QuoteContext, late: Result<unknown>, what: string, floor?: { lineNo: number; discPct: number }, lateNote = ""): void {
     if (late.ok) {
+      // Kept for that quote and said when it is read: the announcement below makes every view of it, this one included, read it again.
+      if (lateNote !== "") this.lateNotes.set(ctx.id, lateNote);
       this.announceChangedFor(ctx);
       return;
     }
@@ -307,6 +321,10 @@ export class QdQuoteEdit extends PanelBase {
     }
     this.reload();
   }
+
+  /** What a late success changed that the screen cannot show, said to the person who comes back, by quote. */
+  private readonly lateNotes = new Map<string, string>();
+
 
   /**
    * A line save writes the quantity, then the discount, each bound to the quote the save began on. When the
@@ -347,6 +365,8 @@ export class QdQuoteEdit extends PanelBase {
         (id) => client.editLine(id, line.line_no, { qty: rawQty }),
         { lineNo: line.line_no, discPct: current },
         line.line_no,
+        false,
+        discChanged ? LATE_QTY_NOTE : "",
       );
       if (saved !== "saved" || !discChanged) return;
     }
@@ -501,7 +521,7 @@ export class QdQuoteEdit extends PanelBase {
     this.error = "";
     this.notice = "";
     const knownLinks = new Set(this.links.map((l) => l.id));
-    const result = await ctx.guarded(client.mintShareLink(ctx.id), (late) => this.lateAnswer(ctx, late, "create a share link"));
+    const result = await ctx.guarded(client.mintShareLink(ctx.id), (late) => this.lateAnswer(ctx, late, "create a share link", undefined, LATE_LINK_NOTE));
     if (result === undefined) return;
     this.busy = false;
     if (!result.ok) {

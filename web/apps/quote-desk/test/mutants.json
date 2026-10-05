@@ -227,14 +227,14 @@
   {
     "id": "ep-write-late-callback",
     "file": "src/edit-panel.ts",
-    "find": "const result = await ctx.guarded(action(ctx.id), (late) => this.lateAnswer(ctx, late, what, floor));",
+    "find": "const result = await ctx.guarded(action(ctx.id), (late) => this.lateAnswer(ctx, late, what, floor, lateNote));",
     "replace": "const result = await ctx.guarded(action(ctx.id));",
     "test": "P2-3 an add that lands after leaving"
   },
   {
     "id": "ep-mint-late-callback",
     "file": "src/edit-panel.ts",
-    "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id), (late) => this.lateAnswer(ctx, late, \"create a share link\"));",
+    "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id), (late) => this.lateAnswer(ctx, late, \"create a share link\", undefined, LATE_LINK_NOTE));",
     "replace": "const result = await ctx.guarded(client.mintShareLink(ctx.id));",
     "test": "P2-3 a link minted after leaving"
   },
@@ -486,7 +486,7 @@
   {
     "id": "wa-ensure-link",
     "file": "src/quote-workarea.ts",
-    "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id), this.lateWrite(ctx, \"create a share link\"));\n    if (result === undefined) throw new StaleQuoteError();",
+    "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id), this.lateWrite(ctx, \"create a share link\", LATE_LINK_NOTE));\n    if (result === undefined) throw new StaleQuoteError();",
     "replace": "const result = await client.mintShareLink(ctx.id);\n    if (result === undefined) throw new StaleQuoteError();",
     "test": "a send in flight when another quote opens"
   },
@@ -535,7 +535,7 @@
   {
     "id": "ep-write-answer",
     "file": "src/edit-panel.ts",
-    "find": "const result = await ctx.guarded(action(ctx.id), (late) => this.lateAnswer(ctx, late, what, floor));\n    // The quote the person moved to meanwhile owns the screen now: this answer says nothing about it.\n    if (result === undefined) return \"moved\";",
+    "find": "const result = await ctx.guarded(action(ctx.id), (late) => this.lateAnswer(ctx, late, what, floor, lateNote));\n    // The quote the person moved to meanwhile owns the screen now: this answer says nothing about it.\n    if (result === undefined) return \"moved\";",
     "replace": "const result = await action(ctx.id);",
     "test": "guard edit write answer:"
   },
@@ -556,7 +556,7 @@
   {
     "id": "ep-mint-answer",
     "file": "src/edit-panel.ts",
-    "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id), (late) => this.lateAnswer(ctx, late, \"create a share link\"));\n    if (result === undefined) return;",
+    "find": "const result = await ctx.guarded(client.mintShareLink(ctx.id), (late) => this.lateAnswer(ctx, late, \"create a share link\", undefined, LATE_LINK_NOTE));\n    if (result === undefined) return;",
     "replace": "const result = await client.mintShareLink(ctx.id);",
     "test": "guard edit mint answer:"
   },
@@ -1028,7 +1028,7 @@
   {
     "id": "wa-late-mint",
     "file": "src/quote-workarea.ts",
-    "find": ", this.lateWrite(ctx, \"create a share link\")",
+    "find": ", this.lateWrite(ctx, \"create a share link\", LATE_LINK_NOTE)",
     "replace": "",
     "test": "B P2-1 work area: a link made to copy answered after leaving"
   },
@@ -1206,5 +1206,47 @@
     "find": "    if (changed.has(\"quoteId\") && this.quoteId !== \"\") this.releaseHandoffWaiters();\n",
     "replace": "",
     "test": "P3 a scan made in compose waits for the host"
+  },
+  {
+    "id": "ep-late-link-note",
+    "file": "src/edit-panel.ts",
+    "find": "(late) => this.lateAnswer(ctx, late, \"create a share link\", undefined, LATE_LINK_NOTE));",
+    "replace": "(late) => this.lateAnswer(ctx, late, \"create a share link\"));",
+    "test": "P3 a link made after the person left and came back is said at once"
+  },
+  {
+    "id": "ep-late-qty-note",
+    "file": "src/edit-panel.ts",
+    "find": "        discChanged ? LATE_QTY_NOTE : \"\",\n",
+    "replace": "        \"\",\n",
+    "test": "P3 a quantity saved after the person left says the discount half"
+  },
+  {
+    "id": "ep-late-note-kept",
+    "file": "src/edit-panel.ts",
+    "find": "      if (lateNote !== \"\") this.lateNotes.set(ctx.id, lateNote);\n",
+    "replace": "",
+    "test": "P3 a link made after the person left is said"
+  },
+  {
+    "id": "ep-late-note-said",
+    "file": "src/edit-panel.ts",
+    "find": "      this.notice = late;\n    }\n    // The line a save was for",
+    "replace": "    }\n    // The line a save was for",
+    "test": "P3 a link made after the person left is said"
+  },
+  {
+    "id": "wa-late-link-note",
+    "file": "src/quote-workarea.ts",
+    "find": "this.lateWrite(ctx, \"create a share link\", LATE_LINK_NOTE)",
+    "replace": "this.lateWrite(ctx, \"create a share link\")",
+    "test": "P3 a link made for the quote left by the work area is said"
+  },
+  {
+    "id": "wa-late-note-said",
+    "file": "src/quote-workarea.ts",
+    "find": "      this.notice = late;\n    }\n    // Drafts return",
+    "replace": "    }\n    // Drafts return",
+    "test": "P3 a link made for the quote left by the work area is said"
   }
 ]
