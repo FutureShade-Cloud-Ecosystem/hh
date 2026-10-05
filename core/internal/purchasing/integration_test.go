@@ -368,6 +368,19 @@ func (a landedGLBridge) PostJournal(ctx context.Context, in landedcost.GLJournal
 	})
 }
 
+// PostJournalTx is PostJournal through the caller's transaction (gl.Service.PostExternalTx), the tx-aware
+// seam variant landedcost Void posts its reversing journal with.
+func (a landedGLBridge) PostJournalTx(ctx context.Context, tx pgx.Tx, in landedcost.GLJournal) (string, error) {
+	lines := make([]gl.ExternalLine, len(in.Lines))
+	for i, l := range in.Lines {
+		lines[i] = gl.ExternalLine{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return a.svc.PostExternalTx(ctx, tx, gl.ExternalJournal{
+		Source: in.Source, SourceRefID: in.SourceRefID, IdempotencyKey: in.IdempotencyKey,
+		Memo: in.Memo, BranchID: in.BranchID, Lines: lines,
+	})
+}
+
 type landedBridge struct{ svc *inventory.Service }
 
 func (a landedBridge) ReceivedLinesForPO(ctx context.Context, poID string) ([]landedcost.ReceivedLine, error) {
