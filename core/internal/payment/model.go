@@ -68,6 +68,17 @@ var ErrProcessorOutcomeUnknown = errors.New("payment: processor outcome unknown"
 // ErrProcessorDeclined marks a processor's explicit decline (Run result C): no money moved.
 var ErrProcessorDeclined = errors.New("payment: processor declined")
 
+// DeclineError is a processor's decline with its response code and text. It reads as ErrProcessorDeclined
+// under errors.Is, and the Service reads the code from it with errors.As.
+type DeclineError struct{ RespCode, RespText string }
+
+func (e *DeclineError) Error() string {
+	return ErrProcessorDeclined.Error() + " (" + e.RespCode + "): " + e.RespText
+}
+
+// Is makes a DeclineError match the ErrProcessorDeclined sentinel.
+func (e *DeclineError) Is(target error) bool { return target == ErrProcessorDeclined }
+
 // ErrProcessorNotDispatched marks a failure before the processor could have acted on the request (a
 // missing credential, merchant id or host, or a refused key refresh): no money moved and a retry after the
 // cause is fixed is safe.

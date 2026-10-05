@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 )
 
@@ -32,19 +31,21 @@ func (RunPaymentsStub) Name() string { return "run_payments" }
 // Charge "captures" a tokenized payment deterministically. Guards mirror the verified required keys.
 func (RunPaymentsStub) Charge(_ context.Context, creds map[string]string, merchantID string, amountCents int64, paymentToken string) (ChargeResult, error) {
 	if creds["api_key"] == "" {
-		return ChargeResult{}, errors.New("missing processor api_key")
+		return ChargeResult{}, stubNotDispatched("missing processor api_key")
 	}
 	if merchantID == "" {
-		return ChargeResult{}, errors.New("missing merchant id (mid)")
+		return ChargeResult{}, stubNotDispatched("missing merchant id (mid)")
 	}
 	if paymentToken == "" {
-		return ChargeResult{}, errors.New("missing payment token (card must be tokenized client-side)")
+		return ChargeResult{}, stubNotDispatched("missing payment token (card must be tokenized client-side)")
 	}
 	if amountCents <= 0 {
-		return ChargeResult{}, errors.New("amount must be positive")
+		return ChargeResult{}, stubNotDispatched("amount must be positive")
 	}
-	// Deterministic ref: prefer the idempotency key, else hash(token|amount|mid). Minted WITH the
-	// exported constant, so the receipt's check and this mint cannot drift apart silently.
+	// Deterministic ref: prefer the per dispatch key, else hash(token|amount|mid). Service.Capture passes
+	// the attempt id, so two sales with one token and amount get different refs (the old fallback made
+	// them collide); an empty key keeps the fallback for callers that pass none. Minted WITH the exported
+	// constant, so the receipt's check and this mint cannot drift apart silently.
 	seed := creds["__idem"]
 	if seed == "" {
 		seed = fmt.Sprintf("%s|%d|%s", paymentToken, amountCents, merchantID)
@@ -60,16 +61,16 @@ func (RunPaymentsStub) Charge(_ context.Context, creds map[string]string, mercha
 // (W5/A-05: this replaces the W4 ErrNotImplemented seam, purely additive, no signature change.)
 func (RunPaymentsStub) Refund(_ context.Context, creds map[string]string, merchantID, processorRef string, amountCents int64) (RefundResult, error) {
 	if creds["api_key"] == "" {
-		return RefundResult{}, errors.New("missing processor api_key")
+		return RefundResult{}, stubNotDispatched("missing processor api_key")
 	}
 	if merchantID == "" {
-		return RefundResult{}, errors.New("missing merchant id (mid)")
+		return RefundResult{}, stubNotDispatched("missing merchant id (mid)")
 	}
 	if processorRef == "" {
-		return RefundResult{}, errors.New("missing processor ref (the original capture trans_id)")
+		return RefundResult{}, stubNotDispatched("missing processor ref (the original capture trans_id)")
 	}
 	if amountCents <= 0 {
-		return RefundResult{}, errors.New("refund amount must be positive")
+		return RefundResult{}, stubNotDispatched("refund amount must be positive")
 	}
 	// Deterministic ref: prefer the idempotency key, else hash(processorRef|amount|mid).
 	seed := creds["__idem"]
@@ -80,7 +81,30 @@ func (RunPaymentsStub) Refund(_ context.Context, creds map[string]string, mercha
 	return RefundResult{ProcessorRef: "rp_ref_" + hex.EncodeToString(h[:8]), Status: "refunded"}, nil
 }
 
-// Void is not built yet.
-func (RunPaymentsStub) Void(context.Context, map[string]string, string, string, int64) (RefundResult, error) {
-	return RefundResult{}, ErrNotImplemented
+// Void reverses a prior full-amount capture DETERMINISTICALLY (the gate default; no live network call). It
+// mirrors Refund with action "void": a successful void is Run's result=='A' with Status "voided" and a
+// keyed ref (the per dispatch key from creds["__idem"], else a hash of the capture ref, amount and mid).
+// The seed carries its own "void|" tag, so a void and a refund of one capture never share a ref.
+func (RunPaymentsStub) Void(_ context.Context, creds map[string]string, merchantID, processorRef string, amountCents int64) (RefundResult, error) {
+	if creds["api_key"] == "" {
+		return RefundResult{}, stubNotDispatched("missing processor api_key")
+	}
+	if merchantID == "" {
+		return RefundResult{}, stubNotDispatched("missing merchant id (mid)")
+	}
+	if processorRef == "" {
+		return RefundResult{}, stubNotDispatched("missing processor ref (the original capture trans_id)")
+	}
+	if amountCents <= 0 {
+		return RefundResult{}, stubNotDispatched("void amount must be positive")
+	}
+	seed := creds["__idem"]
+	if seed == "" {
+		seed = fmt.Sprintf("%s|%d|%s", processorRef, amountCents, merchantID)
+	}
+	h := sha256.Sum256([]byte("void|" + seed))
+	return RefundResult{ProcessorRef: "rp_void_" + hex.EncodeToString(h[:8]), Status: "voided"}, nil
 }
+
+// stubNotDispatched is a stub guard failure: the stub never reaches a processor, so no money moved.
+func stubNotDispatched(msg string) error { return fmt.Errorf("%w: %s", ErrProcessorNotDispatched, msg) }
