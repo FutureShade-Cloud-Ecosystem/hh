@@ -28,6 +28,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
@@ -77,6 +78,14 @@ type fakeCapturer struct{ n atomic.Int64 }
 
 func (f *fakeCapturer) CaptureTyped(ctx context.Context, in dispatch.TypedAttestation) (string, error) {
 	return fmt.Sprintf("fx169sig-%d", f.n.Add(1)), nil
+}
+
+// CaptureTypedTx keeps the fake satisfiable of the widened dispatch seam
+// (the confirm's capture now rides the caller's transaction). The fake
+// touches no database, so the transaction passes through untouched and
+// the ref sequence is identical either way.
+func (f *fakeCapturer) CaptureTypedTx(ctx context.Context, _ pgx.Tx, in dispatch.TypedAttestation) (string, error) {
+	return f.CaptureTyped(ctx, in)
 }
 
 // tenantOrdersAdap satisfies dispatch.TenantOrderReader over the order

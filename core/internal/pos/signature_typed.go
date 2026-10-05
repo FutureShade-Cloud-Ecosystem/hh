@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
@@ -74,9 +76,12 @@ func DecodeAttestation(plaintext []byte) (SealedAttestation, error) {
 
 // TypedNameCapturer is the widened capture seam. SignatureProvider.Capture cannot carry an
 // attestation (it takes only purpose/refType/refID), so the typed act gets its own method rather
-// than being smuggled through the old one.
+// than being smuggled through the old one. CaptureTypedTx is the same act riding the CALLER'S
+// transaction, for callers already inside one (the dispatch pickups confirm): the row and its audit
+// trail commit or roll back with the caller's write instead of landing on the pool mid-transaction.
 type TypedNameCapturer interface {
 	CaptureTyped(ctx context.Context, in TypedAttestation) (signatureRef string, err error)
+	CaptureTypedTx(ctx context.Context, tx pgx.Tx, in TypedAttestation) (signatureRef string, err error)
 }
 
 // signatureBinder is the lazy persistence binding both providers implement (main.go constructs a
@@ -121,13 +126,16 @@ func (p *TypedNameSignatureProvider) Capture(_ context.Context, _, _, _ string) 
 	return "", errAttestationRequired
 }
 
-// CaptureTyped records the attestation.
+// validateTypedAttestation is THE refusal gate both capture paths run, in this order, returning the
+// trimmed name the sealed payload carries.
 //
 // THE TWO REFUSALS. A blank name is not a signature. And the affirmative is a REQUIRED SEPARATE ACT,
 // not an implied consequence of submitting the form, an attestation someone could produce by
-// accident is not an attestation (share.go AcceptByToken, verbatim reasoning). Both refuse BEFORE
-// anything is sealed or written, so a refused capture leaves no row behind.
-func (p *TypedNameSignatureProvider) CaptureTyped(ctx context.Context, in TypedAttestation) (string, error) {
+// accident is not an attestation (share.go AcceptByToken, verbatim reasoning). Every refusal lands
+// BEFORE anything is sealed or written, so a refused capture leaves no row behind on either path,
+// and the pool capture and the tx capture refuse a given attestation identically because this
+// function is the only gate there is.
+func validateTypedAttestation(in TypedAttestation) (string, error) {
 	name := strings.TrimSpace(in.TypedName)
 	if name == "" {
 		return "", clientErr(http.StatusBadRequest, "pos: type your full name to sign")
@@ -144,10 +152,16 @@ func (p *TypedNameSignatureProvider) CaptureTyped(ctx context.Context, in TypedA
 	if strings.TrimSpace(in.RefID) == "" {
 		return "", clientErr(http.StatusBadRequest, "pos: an attestation must name what it is signing")
 	}
+	return name, nil
+}
 
+// sealTypedAttestation mints the reference, seals the payload, and returns the row both capture
+// paths persist plus the reference the caller and the audit row carry. Shared so a pool capture and
+// a tx capture write the SAME evidence shape.
+func (p *TypedNameSignatureProvider) sealTypedAttestation(ctx context.Context, name string, in TypedAttestation) (signatureRow, string, error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
+		return signatureRow{}, "", err
 	}
 	ref := "sig_" + hex.EncodeToString(b[:])
 	actor := identity.StaffUserIDFromContext(ctx)
@@ -162,7 +176,7 @@ func (p *TypedNameSignatureProvider) CaptureTyped(ctx context.Context, in TypedA
 		ActorID: actor, CapturedAt: now().UTC(), Ref: ref,
 	})
 	if err != nil {
-		return "", err
+		return signatureRow{}, "", err
 	}
 	// The captured content is sealed before it ever lands, same Encrypt path the stub used, now
 	// carrying something worth encrypting.
@@ -170,48 +184,161 @@ func (p *TypedNameSignatureProvider) CaptureTyped(ctx context.Context, in TypedA
 	if p.vault != nil {
 		sealed, kv, err := p.vault.Encrypt(payload)
 		if err != nil {
-			return "", err
+			return signatureRow{}, "", err
 		}
 		enc, keyVersion = sealed, kv
 	}
+	return signatureRow{
+		Purpose: in.Purpose, RefType: in.RefType, RefID: in.RefID, SignatureEnc: enc,
+		KeyVersion: keyVersion, Provider: ProviderTypedNameV1, CapturedBy: actor,
+	}, ref, nil
+}
 
+// signatureAuditEntry is the audit row both capture paths write. The typed NAME is deliberately NOT
+// on the audit row, audit_log is the who/what/when index, not a second copy of the sealed evidence
+// (ref_type is already allowlisted; a name is not).
+func signatureAuditEntry(in TypedAttestation, actor, ref string) audit.SensitiveAccess {
+	return audit.SensitiveAccess{
+		Action: audit.ActSignatureCapture, EntityType: "signature", EntityID: in.RefID,
+		ActorID: actor, Purpose: in.Purpose, MaskedRef: ref,
+		Extra: map[string]any{"ref_type": in.RefType},
+	}
+}
+
+// CaptureTyped records the attestation on the SHARED POOL: the standalone capture, for callers with
+// no transaction of their own (the public will-call confirm, the delivery POD, the pos HTTP
+// handler). A caller already inside a transaction must call CaptureTypedTx instead, a pool write
+// here would be a second acquisition while that transaction holds its connection.
+func (p *TypedNameSignatureProvider) CaptureTyped(ctx context.Context, in TypedAttestation) (string, error) {
+	name, err := validateTypedAttestation(in)
+	if err != nil {
+		return "", err
+	}
+	row, ref, err := p.sealTypedAttestation(ctx, name, in)
+	if err != nil {
+		return "", err
+	}
 	if p.store != nil {
-		if _, err := p.store.InsertSignature(ctx, signatureRow{
-			Purpose: in.Purpose, RefType: in.RefType, RefID: in.RefID, SignatureEnc: enc,
-			KeyVersion: keyVersion, Provider: ProviderTypedNameV1, CapturedBy: actor,
-		}); err != nil {
+		if _, err := p.store.InsertSignature(ctx, row); err != nil {
 			return "", err
 		}
 	}
 	if p.audit != nil {
-		// The typed NAME is deliberately NOT on the audit row, audit_log is the who/what/when
-		// index, not a second copy of the sealed evidence (ref_type is already allowlisted; a
-		// name is not).
-		_ = p.audit.Record(ctx, audit.SensitiveAccess{
-			Action: audit.ActSignatureCapture, EntityType: "signature", EntityID: in.RefID,
-			ActorID: actor, Purpose: in.Purpose, MaskedRef: ref,
-			Extra: map[string]any{"ref_type": in.RefType},
-		})
+		// The pool capture's audit write stays best effort: this caller has no transaction, so
+		// there is nothing to abort, and the standalone capture has always declined to fail the
+		// response over the trail row. CaptureTypedTx is the strict one.
+		_ = p.audit.Record(ctx, signatureAuditEntry(in, row.CapturedBy, ref))
 	}
 	return ref, nil
 }
 
-// CaptureTypedSignature is the service entry point for the typed-name attestation, mirroring
-// CaptureSignature (service.go): it binds the A-19-internal persistence deps lazily, then delegates.
-// A provider that cannot take an attestation (the old simulated stub) is refused honestly rather
-// than silently downgraded to a fabricated capture.
-func (s *Service) CaptureTypedSignature(ctx context.Context, in TypedAttestation) (string, error) {
+// txRidingAudit is the narrow seam the tx capture needs of the wired recorder, satisfied by
+// audit.Service.RecordTx. A recorder that cannot take the transaction cannot write the evidence row
+// ON it, and writing it on the pool instead would be a second acquisition while the caller's
+// transaction holds its connection, the exact defect this capture exists to delete, so the
+// capability is demanded and never fallen back.
+type txRidingAudit interface {
+	RecordTx(ctx context.Context, q audit.Execer, a audit.SensitiveAccess) error
+}
+
+// insertSignatureOnTx is the statement the tx capture runs on the CALLER'S transaction. It is the
+// pool capture's insert (Repository.InsertSignature) verbatim, one writer, two surfaces, so a
+// signature row reads the same however it was captured: editing one means editing the other. The
+// statement lives here rather than behind the store seam because the capture must write through the
+// caller's own transaction handle, and the store seam's contract is pool writes.
+const insertSignatureOnTx = `
+INSERT INTO pos_signature (purpose, ref_type, ref_id, signature_enc, provider, captured_by)
+VALUES ($1, $2, $3, $4, $5, $6) RETURNING id::text`
+
+// CaptureTypedTx records the attestation on the CALLER'S transaction: the signature row inserts on
+// it, the audit row writes on it through RecordTx, so both commit or roll back WITH the caller's
+// mutation, and a capture inside a transaction never asks the shared pool for a second connection.
+//
+// ORDERING AND THE AUDIT SEMANTICS. The attestation refusals run first (the shared gate, identical
+// refusals on both paths), then the caller's transaction and the wiring are checked, then the two
+// writes run. Unlike the pool capture, whose audit row is best effort because its caller has
+// nothing to abort, a FAILED audit write here FAILS THE CAPTURE: the error propagates, the caller's
+// transaction rolls back, and nothing commits, because a SensitiveAccess row that cannot be written
+// must not be lost silently under a confirm that says the act happened. A wired recorder that
+// cannot ride the transaction at all refuses for the same reason, and an unbound provider refuses
+// rather than answer success for a capture that persisted nothing, which on a transaction path
+// would commit the caller's mutation believing it carried evidence.
+func (p *TypedNameSignatureProvider) CaptureTypedTx(ctx context.Context, tx pgx.Tx, in TypedAttestation) (string, error) {
+	name, err := validateTypedAttestation(in)
+	if err != nil {
+		return "", err
+	}
+	if tx == nil {
+		return "", clientErr(http.StatusInternalServerError, "pos: capturing inside a transaction requires that transaction")
+	}
+	if p.store == nil {
+		return "", clientErr(http.StatusInternalServerError, "pos: the signature provider is not bound to a store, it cannot capture inside a transaction")
+	}
+	var ride txRidingAudit
+	if p.audit != nil {
+		r, ok := p.audit.(txRidingAudit)
+		if !ok {
+			return "", clientErr(http.StatusInternalServerError, "pos: the wired audit recorder cannot write on the caller's transaction")
+		}
+		ride = r
+	}
+	row, ref, err := p.sealTypedAttestation(ctx, name, in)
+	if err != nil {
+		return "", err
+	}
+	var id string
+	if err := tx.QueryRow(ctx, insertSignatureOnTx, row.Purpose, row.RefType, row.RefID, row.SignatureEnc,
+		row.Provider, nullStr(row.CapturedBy)).Scan(&id); err != nil {
+		return "", err
+	}
+	if ride != nil {
+		if err := ride.RecordTx(ctx, tx, signatureAuditEntry(in, row.CapturedBy, ref)); err != nil {
+			return "", err
+		}
+	}
+	return ref, nil
+}
+
+// captureTypedProvider is the shared entry check of both service capture entry points: it binds the
+// A-19-internal persistence deps lazily (a provider is constructed with the vault only; store, audit
+// and clock arrive from the service at first capture), then returns the typed-name capturer,
+// refusing honestly rather than silently downgrading when the wired provider cannot take an
+// attestation (the old simulated stub).
+func (s *Service) captureTypedProvider() (TypedNameCapturer, error) {
 	if s.sig == nil {
-		return "", errNoSigProvider
+		return nil, errNoSigProvider
 	}
 	if b, ok := s.sig.(signatureBinder); ok {
 		b.bind(s.store, s.audit, s.now)
 	}
 	tp, ok := s.sig.(TypedNameCapturer)
 	if !ok {
-		return "", errNoTypedProvider
+		return nil, errNoTypedProvider
+	}
+	return tp, nil
+}
+
+// CaptureTypedSignature is the service entry point for the typed-name attestation on the SHARED
+// POOL, mirroring CaptureSignature (service.go). Callers with no transaction of their own capture
+// here; a caller already inside a transaction must call CaptureTypedSignatureTx instead.
+func (s *Service) CaptureTypedSignature(ctx context.Context, in TypedAttestation) (string, error) {
+	tp, err := s.captureTypedProvider()
+	if err != nil {
+		return "", err
 	}
 	return tp.CaptureTyped(ctx, in)
+}
+
+// CaptureTypedSignatureTx is CaptureTypedSignature riding the CALLER'S transaction: the dispatch
+// pickups confirm (and any other caller already inside a transaction) captures through here, so the
+// signature row and its audit row commit or roll back with the caller's write and no capture asks
+// the shared pool for a second connection mid-transaction.
+func (s *Service) CaptureTypedSignatureTx(ctx context.Context, tx pgx.Tx, in TypedAttestation) (string, error) {
+	tp, err := s.captureTypedProvider()
+	if err != nil {
+		return "", err
+	}
+	return tp.CaptureTypedTx(ctx, tx, in)
 }
 
 var (

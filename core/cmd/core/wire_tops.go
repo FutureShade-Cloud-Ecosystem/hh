@@ -70,6 +70,9 @@ type smsBelt struct {
 	resolver  *messagingprovider.ConsentResolver
 	prefs     *messagingprovider.PrefsStore
 	policySet bool
+	// policy is the send-window and rate gate the sms drain consults; the worker's claim store is a
+	// second Outbox over a different pool and must share this one pointer (its rate state is the gate).
+	policy *messagingprovider.SendPolicy
 }
 
 // buildSmsBelt constructs the belt exactly as the pin's W2-B block did,
@@ -101,7 +104,7 @@ func buildSmsBelt(pool *pgxpool.Pool, log *slog.Logger) *smsBelt {
 		log.Warn(msg, "var", fb.Var, "value", fb.Value, "default", fb.Default)
 	}
 	smsOutbox.WithSendPolicy(smsPolicy).WithLogger(log)
-	return &smsBelt{notifier: smsNotifier, outbox: smsOutbox, resolver: smsResolver, prefs: smsPrefs, policySet: true}
+	return &smsBelt{notifier: smsNotifier, outbox: smsOutbox, resolver: smsResolver, prefs: smsPrefs, policySet: true, policy: smsPolicy}
 }
 
 // topsSpine carries what the worker role needs from the tops wiring: the

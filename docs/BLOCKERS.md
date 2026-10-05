@@ -1463,3 +1463,18 @@ table's own narrowness test (an unlisted name refused even inside the
 prefix) keeps biting everywhere else. If the lead or a reviewer rules the
 edit out of bounds for this lane, it reverts as one line and the decision it
 forces is whether the discard notification may reach its host at all.
+
+## gl is back in the integration job (decision log row 802, appended; the entries above are never edited)
+
+The two red tests the HH-191 entry and its round 2 correction record for internal/gl are repaired and the package
+rejoins the integration job's run (the `gl` word leaves `red=` in `.github/workflows/ci.yml`). Neither was a code
+defect; both were stale tests, repaired test only, zero production lines:
+- `TestIntegration_ListJournals_SourceRefID_HandlerGate`: the contract's `GlJournalPage` is a cursor page (items,
+  next_cursor, limit) with no `total`, and the handler runs no count query; the test decoded a `total` the wire never
+  carries. The page was always right. It now pins the contract's page (the matching journal, and `next_cursor` null on a
+  complete last page).
+- `TestIntegration_M2C1_DemoSeed_StagingTieOutTies`: migration 0221 deliberately posts 0056's four demonstration
+  journals back out as POSTED reversing entries, so the June closing balance of every fixture account nets to zero and
+  the static fixture cannot tie. The test is now `TestIntegration_M2C1_DemoSeed_RetiredSeedNetsZero` and pins the
+  retirement; the tie-out machinery stays proven by `bistrack_tieout_integration_test.go`.
+The packages still excluded after this change, and why, are in the stand-in's red list reading in the pull request body.

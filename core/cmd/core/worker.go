@@ -28,9 +28,60 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messagingprovider"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// claimStores are the two outbox stores the worker's dispatchers drain through. Each claim loop holds
+// its claimed row in an open transaction while the registered handlers run, and eight of the ten
+// handlers ask the shared pool for a SECOND connection inside that window. If the claim connection
+// came from the shared pool the dispatcher would be one of its holders, and at a pool of 4 (pgx's default is max(4, CPUs))
+// it starves with the other holders (a wait Postgres cannot see). Each store therefore draws its claim
+// connection from its own one-connection pool, so a held claim never takes a shared connection. The
+// enqueue and requeue paths keep the shared pool.
+type claimStores struct {
+	events *notify.PgOutboxStore
+	sms    *messagingprovider.Outbox
+
+	eventsPool *pgxpool.Pool
+	smsPool    *pgxpool.Pool
+}
+
+// claimPoolConns is the size of each claim pool: a dispatcher is one goroutine and holds one claim
+// transaction at a time, so one connection per claim loop is all it can use.
+const claimPoolConns = 1
+
+// buildClaimStores is the worker's one point where the two claim stores are built. Each pool is made
+// through the same connect path as the shared pool (platform/db, the shared pool's own connection string), so the session
+// settings match, and differs only in size. The sms store shares the belt's send policy pointer, whose
+// rate state is the gate the drain consults.
+func buildClaimStores(ctx context.Context, shared *pgxpool.Pool, policy *messagingprovider.SendPolicy, log *slog.Logger) (*claimStores, error) {
+	// The shared pool's own connection string, so the claim pools dial exactly what it dials.
+	databaseURL := shared.Config().ConnString()
+	eventsPool, err := db.ConnectWithMaxConns(ctx, databaseURL, claimPoolConns)
+	if err != nil {
+		return nil, fmt.Errorf("events claim pool: %w", err)
+	}
+	smsPool, err := db.ConnectWithMaxConns(ctx, databaseURL, claimPoolConns)
+	if err != nil {
+		eventsPool.Close()
+		return nil, fmt.Errorf("sms claim pool: %w", err)
+	}
+	return &claimStores{
+		events:     notify.NewPgOutboxStore(eventsPool),
+		sms:        messagingprovider.NewOutbox(smsPool).WithSendPolicy(policy).WithLogger(log),
+		eventsPool: eventsPool,
+		smsPool:    smsPool,
+	}, nil
+}
+
+// Close releases the claim pools; the dispatchers stop on the same context before this runs.
+func (c *claimStores) Close() {
+	c.eventsPool.Close()
+	c.smsPool.Close()
+}
 
 // worker builds the graph, registers every loop's handlers in the pin's
 // order (the MUST-run-AFTER ordering the pin's comments carry: the
@@ -53,7 +104,12 @@ func worker(getenv func(string) string) error {
 	// dispatcher drains them and delivers through the Notifier port (the
 	// dev log stub unless a live provider is configured; the loud warning
 	// lives in the tops wiring where the notifier is built).
-	dispatcher := notify.NewDispatcher(graph.money.outboxStore, log)
+	claims, err := buildClaimStores(ctx, pool, graph.tops.sms.policy, log)
+	if err != nil {
+		return err
+	}
+	defer claims.Close()
+	dispatcher := notify.NewDispatcher(claims.events, log)
 	portal.RegisterNotificationHandlers(dispatcher, graph.tops.notifier, graph.cfg.PortalBaseURL, log)
 	// W5 A-01: the GL posting consumer owns all eight financial topics.
 	graph.money.glSvc.RegisterPostingHandlers(dispatcher)
@@ -76,7 +132,7 @@ func worker(getenv func(string) string) error {
 	// carry): events_outbox claims by STATUS alone, so a new topic on the
 	// shared dispatcher would race the frozen handler map; sms_outbox is a
 	// disjoint table, and a carrier outage cannot touch a GL journal.
-	smsDispatcher := notify.NewDispatcher(graph.tops.sms.outbox, log)
+	smsDispatcher := notify.NewDispatcher(claims.sms, log)
 	registerSmsConsumers(graph.tops.sms, graph.tops.notifier, smsDispatcher, log)
 	go smsDispatcher.Run(ctx)
 
