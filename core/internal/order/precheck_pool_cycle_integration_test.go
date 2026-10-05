@@ -10,7 +10,7 @@
 // client-side half), and the process stalls to the action timeout.
 //
 // The leg runs the REAL stack end to end: the real order service and repository, the REAL billing
-// repository behind the invoice seam, all on ONE pool built at 4 connections (the deploy default,
+// repository behind the invoice seam, all on ONE pool built at 4 connections (pgx's default is max(4, CPUs),
 // pinned explicitly so the leg measures it on any machine). The overlap is forced, not left to
 // scheduling: a blocker transaction on a SEPARATE two-connection helper pool holds the FOR UPDATE row lock of
 // every order the callers are about to touch, so each caller opens its transaction (one pool connection
