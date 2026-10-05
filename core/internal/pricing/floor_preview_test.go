@@ -280,3 +280,37 @@ func TestPreviewFloor_ANewBreachIsNotHiddenBehindAnOldOne(t *testing.T) {
 		t.Fatalf("the item must be the newly under case (a customer at list price), not the contractor who was already under: %+v", out.Items[0])
 	}
 }
+
+// The reviewer's P2-B case: when EVERY customer type already sits under the floor, the one
+// item must still speak the type the change undercut (its price dropped), not an unchanged
+// type that merely has the lowest margin. The panel judges the item it gets: an unchanged
+// one reads "no worse" and saves with no warning and no log row.
+func TestPreviewFloor_AnUndercutTypeIsNotHiddenBehindAnUnchangedOne(t *testing.T) {
+	st := &fakeStore{}
+	for _, ty := range []string{"CONTRACTOR", "BUILDER", "GOVERNMENT", "INTERNAL"} {
+		deep := tierRule(9500) // 95 percent off: 500, far under the floor already
+		deep.CustomerType = ty
+		deep.ID, deep.IsActive = "deep-"+ty, true
+		st.rules = append(st.rules, *deep)
+	}
+	retail := tierRule(7000) // 70 percent off: 3000, under the floor already
+	retail.CustomerType = "RETAIL"
+	retail.ID, retail.IsActive = "retail", true
+	st.rules = append(st.rules, *retail)
+	s := previewSvc(st)
+	out, err := s.PreviewFloor(context.Background(), FloorChange{Kind: "quantity_break", Break: &QuantityBreakHeader{
+		Code: "B90", Name: "Ninety off from zero", CategoryID: "pavers", ThresholdUOM: "PLT",
+		Items: []QuantityBreakItem{{FromQty: 0, ValueType: BreakPctOff, DiscountBps: p64(9000), PriceUOM: "SF"}}}})
+	if err != nil {
+		t.Fatalf("PreviewFloor: %v", err)
+	}
+	if len(out.Items) != 1 {
+		t.Fatalf("one product, one item: %+v", out)
+	}
+	it := out.Items[0]
+	// The break prices at 1000; the deeper 95 percent rules keep their 500, so RETAIL is the
+	// only type whose price dropped (3000 to 1000), and that drop is what the warning must say.
+	if it.CustomerType != "RETAIL" || it.FinalCents != 1000 || it.PreviousFinalCents != 3000 || !it.AlreadyUnderFloor {
+		t.Fatalf("the item must be the undercut RETAIL case (1000 was 3000, already under), got %+v", it)
+	}
+}

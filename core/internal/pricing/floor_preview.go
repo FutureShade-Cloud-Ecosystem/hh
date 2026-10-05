@@ -456,11 +456,17 @@ func notGradable(err error) bool {
 }
 
 // worseBreach orders two breaches of one product: a newly under case outranks one that was
-// under already, because the warning is about what this change does; among the same kind
-// the lower margin is worse.
+// under already, because the warning is about what this change does; among already-under
+// combinations one whose price the change DROPPED outranks one it left standing, for the same
+// reason (every type already under is the case where the dropped one is the whole story); among
+// the same kind the lower margin is worse.
 func worseBreach(a, b FloorPreviewItem) bool {
 	if a.AlreadyUnderFloor != b.AlreadyUnderFloor {
 		return !a.AlreadyUnderFloor
+	}
+	aDropped, bDropped := a.FinalCents < a.PreviousFinalCents, b.FinalCents < b.PreviousFinalCents
+	if aDropped != bDropped {
+		return aDropped
 	}
 	return a.MarginBps < b.MarginBps
 }

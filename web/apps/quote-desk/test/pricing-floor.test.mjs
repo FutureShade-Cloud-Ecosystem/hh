@@ -58,6 +58,14 @@ test("the editor confirms what the new price makes worse, not what was already u
   assert.equal(alreadyUnderCount(p), 1);
   assert.equal(needsConfirm(p), true);
   assert.equal(needsConfirm(preview([])), false);
+  // The reviewer's P2-B shape: the server answers ONE item, an already-under combination whose
+  // price the change dropped (a 90 percent break undercutting the RETAIL tier alone). That one
+  // item alone must open the warning, never read as "no worse" and saved past with no log row.
+  const undercut = item({ customerType: "RETAIL", alreadyUnderFloor: true, finalCents: 1000, previousFinalCents: 3000, marginBps: -6000 });
+  const single = preview([undercut]);
+  assert.equal(needsConfirm(single), true);
+  assert.deepEqual(affectedItems(single).map((i) => i.customerType), ["RETAIL"]);
+  assert.match(itemLine(undercut), /\(was CA\$30\.00\)/);
 });
 
 test("the editor is never saved past a check that could not grade, nor past a count it could not cover", () => {
