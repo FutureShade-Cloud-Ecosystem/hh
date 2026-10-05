@@ -128,6 +128,7 @@ func TestLoadDoorsWrongCallerRow6ThroughTheRealWiring(t *testing.T) {
 	for _, probe := range []struct{ method, target string }{
 		{http.MethodGet, "/api/v1/load/batches/b-1"},
 		{http.MethodPost, "/api/v1/load/keys/resolve"},
+		{http.MethodPut, "/api/v1/load/receivables"},
 	} {
 		rec := serveLoad(t, offRec.inner, probe.method, probe.target, "", "", `{}`)
 		if rec.Code != http.StatusNotFound {
@@ -200,6 +201,25 @@ func TestLoadDoorsWrongCallerRow6ThroughTheRealWiring(t *testing.T) {
 		`{"source_system":"fixture","items":[{"kind":"probe","legacy_id":"k-absent"}]}`)
 	if resolve.Code != http.StatusOK {
 		t.Fatalf("right caller resolve: status %d body %q, want the handler's 200", resolve.Code, resolve.Body.String())
+	}
+
+	// The receivables door (LD-11) through the same wiring: the staff
+	// bearer is the gate's one 403, a float amount is the boundary's 400
+	// naming the item and the field, and a customer no load recorded
+	// refuses the whole batch as 422 naming the kind and the key.
+	const missingBody = `{"source_system":"fixture","batch_id":"b-wire-1","items":[{"legacy_id":"AR-W-1",` +
+		`"requires":[{"kind":"customer","legacy_id":"C-NONE"},{"kind":"branch","legacy_id":"B-NONE"}],` +
+		`"record":{"source_doc_no":"D-1","issue_date":"2032-06-01","due_date":"2032-07-01","open_amount_cents":1000}}]}`
+	if rec := serveLoad(t, mux, http.MethodPut, "/api/v1/load/receivables", staff, testkit.OrgNorthSlug, missingBody); rec.Code != http.StatusForbidden || rec.Body.String() != string(authz.BodyForbidden) {
+		t.Fatalf("receivables, staff bearer: status %d body %q, want the one 403 body", rec.Code, rec.Body.String())
+	}
+	floatBody := strings.Replace(missingBody, `"open_amount_cents":1000`, `"open_amount_cents":10.5`, 1)
+	if rec := serveLoad(t, mux, http.MethodPut, "/api/v1/load/receivables", right, testkit.OrgNorthSlug, floatBody); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "open_amount_cents") {
+		t.Fatalf("receivables, float money: status %d body %q, want a 400 naming open_amount_cents", rec.Code, rec.Body.String())
+	}
+	refused := serveLoad(t, mux, http.MethodPut, "/api/v1/load/receivables", right, testkit.OrgNorthSlug, missingBody)
+	if refused.Code != http.StatusUnprocessableEntity || !strings.Contains(refused.Body.String(), "customer") || !strings.Contains(refused.Body.String(), "C-NONE") {
+		t.Fatalf("receivables, unknown customer: status %d body %q, want a 422 naming the kind and the key", refused.Code, refused.Body.String())
 	}
 	_ = ctx
 }
