@@ -8,9 +8,10 @@ package load
 // before any store call, and the door's own record rules answer 400
 // naming the item and the field. The money batch's batch level answers
 // map here: a refused batch is 422 (correctable content), a divergent
-// replay and a contended batch are 409 (the caller's next move is a
-// fresh, faithful submission), and the retryable contended answer is
-// exactly what a caller retries.
+// replay and a batch id under another door are 409 (the caller's next
+// move is a fresh, faithful submission), and a contended batch is the
+// retryable 503 with Retry-After, the same answer the other load doors
+// give: money batches re-run whole.
 
 import (
 	"encoding/json"
@@ -104,9 +105,10 @@ func receivablesWire(req apigen.LoadReceivablesUpsertRequest) ([]Item, error) {
 
 // receivablesErrorAnswer maps the door's errors onto the contract's
 // statuses: the boundary's item errors and the frame's field errors are
-// 400, the refused batch is 422, and the divergent replay, the other
-// door's batch id and the contended batch are 409, the caller's next
-// move a fresh submission. Everything else is the server's own 500.
+// 400, the refused batch is 422, the divergent replay and the other
+// door's batch id are 409 (the caller's next move a fresh submission),
+// and the contended batch is the retryable 503. Everything else is the
+// server's own 500.
 func receivablesErrorAnswer(err error) (int, string) {
 	var item *ItemError
 	if errors.As(err, &item) {
@@ -121,7 +123,7 @@ func receivablesErrorAnswer(err error) (int, string) {
 	}
 	switch {
 	case errors.Is(err, ErrBatchContended):
-		return http.StatusConflict, "the batch contended with another batch and rolled back whole; resubmit it"
+		return http.StatusServiceUnavailable, "the batch contended with another in flight batch and rolled back whole; resubmit the batch"
 	case errors.Is(err, ErrBatchDoorMismatch):
 		return http.StatusConflict, "the batch id is recorded under another door"
 	case errors.Is(err, ErrMissingField), errors.Is(err, ErrBatchBound), errors.Is(err, ErrBatchActor):
@@ -136,6 +138,11 @@ func receivablesErrorAnswer(err error) (int, string) {
 // message: keys and fields only, never a record value.
 func (h *Handler) writeReceivablesError(w http.ResponseWriter, err error) {
 	status, msg := receivablesErrorAnswer(err)
+	if status == http.StatusServiceUnavailable {
+		// The retryable answer, the same the other load doors give: the
+		// batch rolled back whole and its id was never recorded.
+		w.Header().Set("Retry-After", "1")
+	}
 	if status == http.StatusInternalServerError {
 		h.log.Error("load: receivables batch failed", "err", err)
 		httpx.Error(w, status, msg)

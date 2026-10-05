@@ -110,7 +110,16 @@ paths:
         returns the outcomes it first recorded and writes nothing; a
         replay carrying a changed or added item refuses with 409; a
         batch that contended with another batch on shared names rolled
-        back whole and answers 409, resubmit it. No journal, no
+        back whole and answers 503 with Retry-After: resubmit the whole
+        batch (money batches re-run whole; the id was never recorded).
+        An item restated on a later batch updates its document in
+        place, with three refusals that name their own reason: sign_changed
+        (the restated amount changed sign; a source item that changed
+        sign is a different document), target_worked_in_hh (HH has worked
+        the loaded document since it loaded, so a reload never overwrites
+        it), and update_target_missing (the registry names a document
+        that is truly gone). One worked item refuses the whole reload, so
+        FB Move's reload must exclude items HH has worked. No journal, no
         finalized event, no customer message, reminder or credit sweep
         is triggered by a load: the imported document emits none of the
         events those paths hang off. Money is integer cents, never a
@@ -139,13 +148,19 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
-          description: The batch id is recorded under another door, the replay carries a changed or added item, or the batch contended with another batch and rolled back whole; resubmission is the caller's answer
+          description: The batch id is recorded under another door, or the replay carries an item the played batch never recorded or whose content differs from what it recorded
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "422":
           description: The batch refused whole; the refusing item's legacy id, reason, field and detail ride the Error envelope, keys and fields only, never a record value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The batch contended with another in flight batch and rolled back whole, nothing landed and the id was never recorded; Retry-After names the pause, and the caller resubmits the whole batch
           content:
             application/json:
               schema:

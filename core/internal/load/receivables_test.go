@@ -17,8 +17,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -365,7 +368,7 @@ func TestReceivablesErrorAnswerTable(t *testing.T) {
 			LegacyID: "AR-L-1", Status: OutcomeRefused, Reason: ReasonMissingReference,
 			Field: "customer", Detail: "reference not loaded: kind customer legacy key CUST-9",
 		}}, http.StatusUnprocessableEntity},
-		{"a contended batch, retryable", fmt.Errorf("%w: deadlock detected", ErrBatchContended), http.StatusConflict},
+		{"a contended batch, retryable", fmt.Errorf("%w: deadlock detected", ErrBatchContended), http.StatusServiceUnavailable},
 		{"another door's batch id", ErrBatchDoorMismatch, http.StatusConflict},
 		{"a divergent replay", &BatchRefusal{Refusing: Outcome{
 			LegacyID: "AR-L-1", Status: OutcomeRefused, Reason: ReasonReplayChanged,
@@ -411,5 +414,23 @@ func TestReceivablesDateRuleParsesStrictDayShapes(t *testing.T) {
 		if _, err := time.Parse("2006-01-02", bad); err == nil {
 			t.Fatalf("an invalid date accepted: %s", bad)
 		}
+	}
+}
+
+// A contended batch answers the retryable status the other load doors
+// answer (503 with Retry-After): the batch rolled back whole and its id
+// was never recorded, so the caller resubmits it whole.
+func TestReceivablesContendedBatchAnswersRetryable503WithRetryAfter(t *testing.T) {
+	h := &Handler{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	rec := httptest.NewRecorder()
+	h.writeReceivablesError(rec, fmt.Errorf("%w: deadlock detected", ErrBatchContended))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a contended batch answered %d, want 503", rec.Code)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "1" {
+		t.Fatalf("Retry-After is %q, want 1", got)
+	}
+	if !strings.Contains(rec.Body.String(), "resubmit") {
+		t.Fatalf("the body %q does not tell the caller to resubmit", rec.Body.String())
 	}
 }
