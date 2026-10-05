@@ -147,6 +147,10 @@ type posStore interface {
 	EmitEvent(ctx context.Context, tx pgx.Tx, topic string, payload any) error
 	// signature persistence (non-tx write, standalone capture)
 	InsertSignature(ctx context.Context, sig signatureRow) (string, error)
+	// InsertSignatureTx is the same insert on the CALLER'S transaction (nil tx means the pool, the
+	// shape of the tree's other store seams): the tx capture writes the row through the caller's
+	// transaction so it commits or rolls back with it, and both capture paths share ONE statement.
+	InsertSignatureTx(ctx context.Context, tx pgx.Tx, sig signatureRow) (string, error)
 
 	// -- W7 counter-v2 (pos-owned 0043 tables; the invoice-credit write stays in the M2-debt family) --
 	// POS policy (branch row overrides the org NULL row)

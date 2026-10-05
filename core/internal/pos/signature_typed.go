@@ -241,15 +241,6 @@ type txRidingAudit interface {
 	RecordTx(ctx context.Context, q audit.Execer, a audit.SensitiveAccess) error
 }
 
-// insertSignatureOnTx is the statement the tx capture runs on the CALLER'S transaction. It is the
-// pool capture's insert (Repository.InsertSignature) verbatim, one writer, two surfaces, so a
-// signature row reads the same however it was captured: editing one means editing the other. The
-// statement lives here rather than behind the store seam because the capture must write through the
-// caller's own transaction handle, and the store seam's contract is pool writes.
-const insertSignatureOnTx = `
-INSERT INTO pos_signature (purpose, ref_type, ref_id, signature_enc, provider, captured_by)
-VALUES ($1, $2, $3, $4, $5, $6) RETURNING id::text`
-
 // CaptureTypedTx records the attestation on the CALLER'S transaction: the signature row inserts on
 // it, the audit row writes on it through RecordTx, so both commit or roll back WITH the caller's
 // mutation, and a capture inside a transaction never asks the shared pool for a second connection.
@@ -286,9 +277,11 @@ func (p *TypedNameSignatureProvider) CaptureTypedTx(ctx context.Context, tx pgx.
 	if err != nil {
 		return "", err
 	}
-	var id string
-	if err := tx.QueryRow(ctx, insertSignatureOnTx, row.Purpose, row.RefType, row.RefID, row.SignatureEnc,
-		row.Provider, nullStr(row.CapturedBy)).Scan(&id); err != nil {
+	// The insert rides the caller's transaction through the store seam (Repository.InsertSignatureTx,
+	// the module's ONE pos_signature insert), the same statement the pool capture persists through,
+	// so the row commits or rolls back with the caller's write and the two capture paths cannot
+	// carry statements that drift apart.
+	if _, err := p.store.InsertSignatureTx(ctx, tx, row); err != nil {
 		return "", err
 	}
 	if ride != nil {
