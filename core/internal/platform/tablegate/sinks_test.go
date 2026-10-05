@@ -136,3 +136,86 @@ func TestQueriesFileContentIsChecked(t *testing.T) {
 		t.Fatalf("the planted queries file surfaced something else: %v", v)
 	}
 }
+
+// TestCompositeConstFieldSQLIsSeen pins the P1 of round 3: a composite
+// literal inside a function body whose field is built from PACKAGE consts
+// (pos's parkedFrom shape: `Page: "SELECT " + parkedColumns + parkedFrom +
+// "WHERE ..."`). The field's value is only pure when the consts resolve
+// beside the locals; round 2 dropped them and the file read locations
+// unseen.
+func TestCompositeConstFieldSQLIsSeen(t *testing.T) {
+	src := "package p\n\n" +
+		"const parkedColumns = `p.id::text, p.branch_id::text, `\n" +
+		"const parkedFrom = `FROM pos_parked_tickets p JOIN locations l ON l.id = p.branch_id\n`\n\n" +
+		"func build() string {\n" +
+		"\treturn readcache.Query{Page: `SELECT ` + parkedColumns + parkedFrom + `WHERE p.branch_id = $1::uuid`}.Page\n" +
+		"}\n"
+	v := sinkViolations("pos", "core/internal/pos/fixture_syncscope.go", src)
+	joined := strings.Join(v, "\n")
+	if !strings.Contains(joined, `"locations"`) {
+		t.Fatalf("the const-built composite field's locations read was NOT seen: %v", v)
+	}
+}
+
+// TestProseAtSinkCallSiteStaysIgnored pins the round 3 sink argument rule:
+// at a same-named sink call site a raw argument contributes only when it
+// tokenizes as a statement. The plain English phrase that failed the round
+// 2 census with unmapped table "the" stays invisible, while a real
+// statement at the same site still fails.
+func TestProseAtSinkCallSiteStaysIgnored(t *testing.T) {
+	src := "package p\n\n" +
+		"func (r *repo) exec(ctx context.Context, sql string, args ...any) error {\n" +
+		"\t_, err := r.pool.Exec(ctx, sql, args...)\n" +
+		"\treturn err\n" +
+		"}\n\n" +
+		"func (r *repo) pull(ctx context.Context, id string) error {\n" +
+		"\tif err := r.exec(ctx, `UPDATE portal_users SET status = status WHERE id = $1`); err != nil {\n" +
+		"\t\treturn err\n" +
+		"\t}\n" +
+		"\treturn r.exec(ctx, id+` moved from the yard`)\n" +
+		"}\n"
+	v := sinkViolations("portal", "core/internal/portal/fixture_syncscope.go", src)
+	joined := strings.Join(v, "\n")
+	if strings.Contains(joined, `"the"`) {
+		t.Fatalf("the plain English phrase at the sink call site entered a corpus: %v", v)
+	}
+	if strings.Contains(joined, "CROSS-MODULE ACCESS") {
+		t.Fatalf("the same-module corpus produced a cross-module violation: %v", v)
+	}
+	// the same site with a real statement still fails
+	src2 := "package p\n\n" +
+		"func (r *repo) exec(ctx context.Context, sql string, args ...any) error {\n" +
+		"\t_, err := r.pool.Exec(ctx, sql, args...)\n" +
+		"\treturn err\n" +
+		"}\n\n" +
+		"func (r *repo) pull(ctx context.Context, id string) error {\n" +
+		"\treturn r.exec(ctx, id+` moved from the yard`), r.exec(ctx, `UPDATE orders SET status = status WHERE id = $1`)\n" +
+		"}\n"
+	v2 := sinkViolations("portal", "core/internal/portal/fixture_syncscope.go", src2)
+	if len(v2) == 0 || !strings.Contains(strings.Join(v2, "\n"), `"orders"`) {
+		t.Fatalf("a real statement at the sink call site was not failed: %v", v2)
+	}
+}
+
+// TestTransitiveWrapperSQLIsSeen pins the wrapper over a wrapper: execVia
+// forwards its string parameter to the exec sink, so execVia is itself a
+// sink and its call sites are collected. Round 2 resolved one level only
+// and this shape was invisible.
+func TestTransitiveWrapperSQLIsSeen(t *testing.T) {
+	src := "package p\n\n" +
+		"func (r *repo) exec(ctx context.Context, sql string, args ...any) error {\n" +
+		"\t_, err := r.pool.Exec(ctx, sql, args...)\n" +
+		"\treturn err\n" +
+		"}\n\n" +
+		"func (r *repo) execVia(ctx context.Context, stmt string, args ...any) error {\n" +
+		"\treturn r.exec(ctx, stmt, args...)\n" +
+		"}\n\n" +
+		"func (r *repo) touch(ctx context.Context, id string) error {\n" +
+		"\treturn r.execVia(ctx, `UPDATE orders SET status = status WHERE id = $1`, id)\n" +
+		"}\n"
+	v := sinkViolations("portal", "core/internal/portal/fixture_repository.go", src)
+	joined := strings.Join(v, "\n")
+	if !strings.Contains(joined, `"orders"`) || !strings.Contains(joined, "write") {
+		t.Fatalf("the wrapper-over-wrapper carried UPDATE of orders was NOT seen: %v", v)
+	}
+}

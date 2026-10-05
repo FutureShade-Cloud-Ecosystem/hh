@@ -425,16 +425,58 @@ var allowlist = []allowlistEntry{
 		reason: "the cross-branch visibility read names the branches it answers for, read only",
 	},
 	{
+		module: "messagingprovider",
+		file:   "core/internal/messagingprovider/collections.go",
+		tables: []string{"ar_notice_log"},
+		writes: []string{"ar_notice_log"},
+		// the file calls ar_notice_log the collections ledger: claimBucket
+		// INSERTs the (invoice, bucket) row that makes the claim atomic,
+		// the sweep links the queued notice to it and backfills the buckets
+		// an invoice sailed past unnotified, and the cooldown read excludes
+		// the just-claimed row so the claim itself never suppresses the
+		// job's own notice. The 0110 topic owns the table (billing); the
+		// sweep's touches are the fence crossing this entry states.
+		reason: "the collections sweep keeps its notice ledger (claim, link, backfill, cooldown) in ar_notice_log, read and written",
+	},
+	{
 		module: "messaging",
 		file:   "core/internal/messaging/payment_rules_repo.go",
 		tables: []string{"customers", "invoices", "locations", "orders", "payment_allocations", "payments", "users"},
 		reason: "payment notification rules evaluate the AR facts (invoice, payment, allocation) they notify about and join the customer, branch and staff names the message names, read only",
 	},
 	{
+		module: "messagingprovider",
+		file:   "core/internal/messagingprovider/collections.go",
+		tables: []string{"ar_notice_log"},
+		writes: []string{"ar_notice_log"},
+		// the file calls ar_notice_log the collections ledger: claimBucket
+		// INSERTs the (invoice, bucket) row that makes the claim atomic,
+		// the sweep links the queued notice to it and backfills the buckets
+		// an invoice sailed past unnotified, and the cooldown read excludes
+		// the just-claimed row so the claim itself never suppresses the
+		// job's own notice. The 0110 topic owns the table (billing); the
+		// sweep's touches are the fence crossing this entry states.
+		reason: "the collections sweep keeps its notice ledger (claim, link, backfill, cooldown) in ar_notice_log, read and written",
+	},
+	{
 		module: "messaging",
 		file:   "core/internal/messaging/repassign_repo.go",
 		tables: []string{"customers", "orders", "users"},
 		reason: "the rep assignment queue joins the customer, order and staff facts each conversation row carries, read only",
+	},
+	{
+		module: "messagingprovider",
+		file:   "core/internal/messagingprovider/collections.go",
+		tables: []string{"ar_notice_log"},
+		writes: []string{"ar_notice_log"},
+		// the file calls ar_notice_log the collections ledger: claimBucket
+		// INSERTs the (invoice, bucket) row that makes the claim atomic,
+		// the sweep links the queued notice to it and backfills the buckets
+		// an invoice sailed past unnotified, and the cooldown read excludes
+		// the just-claimed row so the claim itself never suppresses the
+		// job's own notice. The 0110 topic owns the table (billing); the
+		// sweep's touches are the fence crossing this entry states.
+		reason: "the collections sweep keeps its notice ledger (claim, link, backfill, cooldown) in ar_notice_log, read and written",
 	},
 	{
 		module: "messaging",
@@ -659,6 +701,17 @@ var allowlist = []allowlistEntry{
 		// through the service seam here, tenant-scoped by customer_id; a
 		// PENDING request moves NO money and NO stock.
 		reason: "return requests read the customer's own order and lines to validate the request before the staff approval executes the existing W7 rail; the request tables are this module's own",
+	},
+	{
+		module: "pos",
+		file:   "core/internal/pos/syncscope.go",
+		tables: []string{"locations"},
+		// the file's own header: the org scope rides the branch; the branch
+		// resolves to the org through locations, the join stays inside the
+		// module's own read surface, locations being the shared branch table
+		// every module reads for scoping. The statements live in the
+		// readcache.Query fields, built from the file's shared consts.
+		reason: "the parked tickets sync scope resolves its branch org fence through the locations anchor, read only, stated in the file header",
 	},
 	{
 		module: "pos",

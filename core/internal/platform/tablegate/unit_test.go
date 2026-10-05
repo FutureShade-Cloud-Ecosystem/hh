@@ -56,8 +56,17 @@ func fixtureIndex(src []byte) *pkgIndex {
 	}
 	idx := newPkgIndex(map[string][]string{}, map[string][]string{})
 	building := map[string]bool{}
-	for _, name := range packageSinks(f) {
-		idx.sinks[name] = true
+	for round := 0; round < 4; round++ {
+		changed := false
+		for _, name := range packageSinks(f, idx.sinks) {
+			if !idx.sinks[name] {
+				idx.sinks[name] = true
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
 	}
 	for round := 0; round < 6; round++ {
 		changed := false

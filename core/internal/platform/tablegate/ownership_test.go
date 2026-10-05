@@ -10,7 +10,8 @@ import "strings"
 //
 // DERIVATION (stated per the item):
 //
-//   - The objects: core/db/migrations holds 209 migration files. Stripping
+//   - The objects: core/db/migrations holds 208 .sql migration files plus
+//     its README.md. Stripping
 //     SQL comments and value literals and matching CREATE TABLE (with its
 //     UNLOGGED and IF NOT EXISTS spellings) counts 272 CREATE TABLE
 //     statements, 272 distinct tables, none created twice. Matching CREATE
@@ -68,7 +69,7 @@ import "strings"
 //     payments; if the NSF rail belongs to the till, the lanes and the
 //     decision record should say so and the map should follow.
 //
-//   - The corrections: 15 objects over 11 migrations moved off their
+//   - The corrections: 13 objects over 9 migrations moved off their
 //     topic reading, each ONE way: a source file's own header claims the
 //     object, and the claim contradicts the topic reading. The evidence,
 //     quoted from each claiming header: sync_jobs, sync_discrepancies and
@@ -79,25 +80,32 @@ import "strings"
 //     (compliance/module.go: it owns the 0038 compliance_calendar +
 //     review_status tables; 0038's filename covers the lien and
 //     compliance topics). load_scan_checkpoints to dispatch
-//     (dispatch/repository_w3.go: this file is the scan trail
-//     persistence; 0108's other table, task_status_advance_rules, stays
-//     with tasks). driver_profile to identity (identity/populate.go:
-//     PopulateDriverProfiles is plan step 8, driver_profile from).
-//     payment_config to payment (payment/store.go: it SELECTs/INSERTs
-//     ONLY payment_config, RUN-PAY-owned). portal_payment_methods to
-//     payments (payments/repository.go: Repository owns
-//     portal_payment_methods; 0030's portal topic predates the module
-//     split). return_requests and return_request_lines to pos
-//     (pos/return_requests.go: the portal BFF submits and reads requests
-//     through the service seam HERE). sms_outbox, customer_sms_prefs and
-//     ar_notice_log to messagingprovider (messagingprovider/consumer.go:
-//     consumer owns the two topics on sms_outbox; prefs.go: the consent
-//     record, customer_sms_prefs, migration 0109; collections.go runs
-//     the ar_notice_log writes;
-//     customer/sms_consent_repository.go's own header states NO SQL
-//     AGAINST customer_sms_prefs LIVES HERE, AND NONE MAY).
-//     quote_scope_rules to quoteassist (quoteassist/repository.go: ONE
-//     TABLE, quote_scope_rules, which this package owns outright).
+//     (dispatch/repository_w3.go: the Wave 3 persistence file names the
+//     scan trail as its own subject; 0108's other table,
+//     task_status_advance_rules, stays with tasks). payment_config to
+//     payment (payment/store.go: it SELECTs/INSERTs ONLY payment_config,
+//     RUN-PAY-owned). portal_payment_methods to payments
+//     (payments/repository.go: Repository owns portal_payment_methods;
+//     0030's portal topic predates the module split). return_requests
+//     and return_request_lines to pos (pos/return_requests.go: the
+//     portal BFF submits and reads requests through the service seam
+//     HERE). sms_outbox and customer_sms_prefs to messagingprovider
+//     (messagingprovider/consumer.go: consumer owns the two topics on
+//     sms_outbox; prefs.go: the consent record, customer_sms_prefs,
+//     migration 0109; customer/sms_consent_repository.go's own header
+//     states NO SQL AGAINST customer_sms_prefs LIVES HERE, AND NONE
+//     MAY). quote_scope_rules to quoteassist (quoteassist/repository.go:
+//     ONE TABLE, quote_scope_rules, which this package owns outright).
+//     Two objects the round 2 map corrected are RE-DERIVED this round
+//     and returned to their topic owners, because no header claims them:
+//     driver_profile was the 0215 split's own authoring error (the topic
+//     reading is identity; only identity touches it, so no allowlist
+//     entry is needed) and ar_notice_log returns to billing (0110's
+//     topic split; no messagingprovider header claims it,
+//     collections.go having no file header at all, so its sweep's
+//     touches are an allowlist entry). With those two out, every
+//     remaining correction carries a quoted header claim, and the map
+//     and the rule agree line by line.
 //     KNOWN CONTRADICTION, disclosed beside the payments ruling in the
 //     item report: tax/repository.go's header claims
 //     tax_decision_snapshot as the inherited 0029 tax-owned table, while
@@ -291,7 +299,10 @@ var migrationTopics = map[string]string{
 }
 
 // multiTopicSplits states the per-object attribution inside the five
-// migrations whose filename covers two topics.
+// migrations whose filename covers two topics. (0215's split once sent
+// driver_profile to dispatch by its table name; that was an authoring
+// error the topic reading already avoids: 0215_identity_audit names
+// identity for every table it creates, and the map follows the topic.)
 var multiTopicSplits = map[string]func(table string) string{
 	"0008_quotes_orders": func(table string) string {
 		if strings.HasPrefix(table, "quote") {
@@ -321,9 +332,6 @@ var multiTopicSplits = map[string]func(table string) string{
 		return "customerquote"
 	},
 	"0215_identity_audit": func(table string) string {
-		if table == "driver_profile" {
-			return "dispatch"
-		}
 		return "identity"
 	},
 }
@@ -338,7 +346,7 @@ var ownedObjects = map[string]string{
 	"ar_invoice_disputes":             "billing",           // 0177_ar_invoice_disputes
 	"ar_invoice_policy":               "billing",           // 0178_ar_invoice_register_surface
 	"ar_landing_policy":               "billing",           // 0183_ar_landing_reminders
-	"ar_notice_log":                   "messagingprovider", // 0110_ar_notices_quote_followups
+	"ar_notice_log":                   "billing",           // 0110_ar_notices_quote_followups (topic reading restored; messagingprovider's sweep touches it and is allowlisted)
 	"ar_paper_path_flags":             "billing",           // 0183_ar_landing_reminders
 	"ar_promises_to_pay":              "billing",           // 0176_ar_promises_to_pay
 	"ar_reminder_events":              "billing",           // 0183_ar_landing_reminders
@@ -400,7 +408,7 @@ var ownedObjects = map[string]string{
 	"dispatch_policy":                 "dispatch",          // 0184_dispatch_loadboard
 	"dispatch_reschedules":            "dispatch",          // 0107_dispatch_mto_pod_reschedule
 	"dispatch_trucks":                 "dispatch",          // 0090_dispatch_core
-	"driver_profile":                  "identity",          // 0215_identity_audit
+	"driver_profile":                  "identity",          // 0215_identity_audit (topic reading; the earlier dispatch split was an authoring error, not a correction)
 	"events_outbox":                   "audit",             // 0013_audit_outbox
 	"finstmt_schedules":               "finstmt",           // 0034_financial_statement_views
 	"fiscal_periods":                  "gl",                // 0007_gl_block

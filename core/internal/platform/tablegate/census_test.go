@@ -90,9 +90,21 @@ func buildPkgIndex(t *testing.T, dir string) (*pkgIndex, []*ast.File) {
 	}
 	idx := newPkgIndex(map[string][]string{}, map[string][]string{})
 	building := map[string]bool{}
-	for _, f := range files {
-		for _, name := range packageSinks(f) {
-			idx.sinks[name] = true
+	// sinks resolve to a fixpoint: each round admits wrappers whose string
+	// parameter flows into an already known sink, so a wrapper over a
+	// wrapper resolves a level at a time, bounded by the round cap.
+	for round := 0; round < 4; round++ {
+		changed := false
+		for _, f := range files {
+			for _, name := range packageSinks(f, idx.sinks) {
+				if !idx.sinks[name] {
+					idx.sinks[name] = true
+					changed = true
+				}
+			}
+		}
+		if !changed {
+			break
 		}
 	}
 	for round := 0; round < 6; round++ {

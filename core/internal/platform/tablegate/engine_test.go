@@ -13,27 +13,37 @@ package tablegate
 //     friends), the call sites of the module's SQL sinks, and composite
 //     literal fields whose value tokenizes as a statement. A SQL sink is
 //     any function, method or function literal whose STRING parameter
-//     flows into a pgx call (portal's r.exec and guardedAdminUpdate,
-//     quote's invoicesForTx, messaging's scanMessagePage, order's
-//     guardedChangeUpdate, customer's scan closure): the statements they
-//     run arrive at their call sites, so the gate collects them there,
-//     exactly as it collects direct pgx arguments. Composite fields
+//     flows into a pgx call, or into a call of an already known sink (a
+//     wrapper over a wrapper: execVia forwarding to exec resolves, one
+//     level per fixpoint round, bounded at four; a cycle cannot grow the
+//     set). Sinks match by BARE NAME within the module, so a same-named
+//     call on any receiver is visited; at such a call site a raw argument
+//     contributes only when it tokenizes as a statement (a leading
+//     SELECT, WITH, INSERT, UPDATE or DELETE) and fragments arriving
+//     through the string idiom chain pass as already vetted, so plain
+//     English at a same-named call never enters a corpus. The failure
+//     directions of that rule, stated: a statement split so its tail
+//     argument lacks a leading verb loses the tail at a sink call site
+//     (fail open), and a prose local passed through the idiom chain still
+//     contributes (fail closed, as an unmapped word). Composite fields
 //     (reporting's catalogEntry.sql, the sync skeleton's
 //     readcache.Query.Page and ByID) are read from the literal itself,
-//     because the runner executes them later. Every string literal in a
-//     call's arguments is collected in source order, and names resolve
-//     through the string idioms the tree actually uses: package level
-//     const and var declarations of pure string expressions (backtick or
-//     interpreted literals joined by +), local names assigned the same
-//     inside their function, and package functions (or methods) whose
-//     body returns pure string expressions, resolved with memoization and
-//     a cycle guard (the query helper pattern: convertInsertSQL building
-//     the conversion INSERT beside its caller).
+//     because the runner executes them later; package consts resolve in
+//     the field's expression beside the function's locals (pos's
+//     parkedFrom join lives in a const). Names resolve through the string
+//     idioms the tree actually uses: package level const and var
+//     declarations of pure string expressions (backtick or interpreted
+//     literals joined by +), local names assigned the same inside their
+//     function, and package functions (or methods) whose body returns
+//     pure string expressions, resolved with memoization and a cycle
+//     guard (the query helper pattern: convertInsertSQL building the
+//     conversion INSERT beside its caller).
 //   - Nothing else is read as SQL. Prompt text, message templates and
-//     error prose live in strings that never reach a pgx call or a
-//     statement-shaped field, so they are outside every corpus by
-//     construction; a gate that vacuumed every literal would fail closed
-//     on the English words from and the.
+//     error prose live in strings that never reach a pgx call, a sink
+//     call site's statement-shaped argument, or a statement-shaped
+//     composite field, so they are outside every corpus by construction;
+//     a gate that vacuumed every literal would fail closed on the English
+//     words from and the.
 //   - A corpus is tokenized (SQL line and block comments and quoted value
 //     literals are blanked so words inside them are never read as SQL),
 //     split into statements at depth zero verbs, and each statement yields
@@ -93,9 +103,21 @@ package tablegate
 //     that is an audited fact of this revision, not a property of the
 //     engine, and the day one lands the gate does not see it.
 //   - The SQL sink rule keys on bare function and method names: two
-//     same-named sinks in one module collapse to one, and a sink call's
-//     non-string arguments contribute whatever literals they carry. Both
-//     effects over-capture rather than hide, which fails closed.
+//     same-named sinks in one module collapse to one. The argument
+//     statement filter keeps prose out of the resulting corpora; what
+//     remains of the keying is over-capture (visiting same-named calls
+//     that carry no SQL), which fails closed.
+//   - Two composite literal shapes are not read and do not occur in the
+//     tree today: positional (unkeyed) struct literals (only named fields
+//     are collected), and a statement field built inside a composite
+//     literal nested in a function LITERAL assigned outside the function
+//     whose consts resolve (the collected shapes are package level
+//     declarations and function bodies). If either lands, the gate does
+//     not see it.
+//   - A closure sink is recognized only where the literal is assigned to
+//     a local name in the same function that calls it (customer's scan
+//     shape). A statement-carrying function literal stored in a struct
+//     field or passed across functions is not recognized as a sink.
 //   - Comma separated FROM lists (FROM a, b) capture only a. The tree uses
 //     none today; this engine does not cover the spelling.
 //   - Sequence values fetched through nextval('name') are string arguments,
@@ -178,7 +200,7 @@ func goFileUnits(src []byte, filename string, pkg *pkgIndex) ([]sqlUnit, error) 
 				continue
 			}
 			resolve := localStringValues(d, pkg)
-			localSinks := localSinkNames(d)
+			localSinks := localSinkNames(d, pkg.sinks)
 			name := declName(d)
 			ast.Inspect(d.Body, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
@@ -186,10 +208,11 @@ func goFileUnits(src []byte, filename string, pkg *pkgIndex) ([]sqlUnit, error) 
 					return true
 				}
 				sel := callSelName(call)
-				if !sqlCallMethods[sel] && !pkg.sinks[sel] && !localSinks[sel] {
+				isPGX := sqlCallMethods[sel]
+				if !isPGX && !pkg.sinks[sel] && !localSinks[sel] {
 					return true
 				}
-				w := &corpusWalker{resolve: resolve, pkg: pkg}
+				w := &corpusWalker{resolve: resolve, pkg: pkg, requireStatement: !isPGX}
 				for _, arg := range call.Args {
 					ast.Inspect(arg, func(child ast.Node) bool {
 						w.collect(child)
@@ -201,7 +224,11 @@ func goFileUnits(src []byte, filename string, pkg *pkgIndex) ([]sqlUnit, error) 
 				}
 				return true
 			})
-			units = append(units, compositeSQLUnits(d.Body, resolve, pkg, name)...)
+			// package consts resolve inside function bodies too: the sync
+			// adapters build their readcache statements from shared consts
+			// (pos's parkedColumns/parkedFrom), and the field's value is
+			// only pure when those consts resolve beside the locals.
+			units = append(units, compositeSQLUnits(d.Body, mergeInto(pkg.consts, resolve), pkg, name)...)
 		case *ast.GenDecl:
 			if d.Tok == token.TYPE {
 				continue
@@ -213,11 +240,13 @@ func goFileUnits(src []byte, filename string, pkg *pkgIndex) ([]sqlUnit, error) 
 }
 
 // packageSinks answers the names of the file's functions and methods whose
-// string parameter flows into a pgx call: the body holds a pgx call with an
-// argument (at any depth) that is one of the function's own parameters.
-// Such a function is a SQL sink; the statements it runs arrive at its call
+// string parameter flows into a pgx call, or into a call of an already
+// known sink (a wrapper over a wrapper, resolved one level per fixpoint
+// round by the caller): the body holds such a call with an argument (at
+// any depth) that is one of the function's own parameters. Such a
+// function is a SQL sink; the statements it runs arrive at its call
 // sites, so the gate collects them there.
-func packageSinks(file *ast.File) []string {
+func packageSinks(file *ast.File, known map[string]bool) []string {
 	var names []string
 	for _, decl := range file.Decls {
 		d, ok := decl.(*ast.FuncDecl)
@@ -228,7 +257,7 @@ func packageSinks(file *ast.File) []string {
 		if len(params) == 0 {
 			continue
 		}
-		if paramFlowsIntoPGX(d.Body, params) {
+		if paramFlowsIntoPGX(d.Body, params, known) {
 			names = append(names, d.Name.Name)
 		}
 	}
@@ -238,8 +267,9 @@ func packageSinks(file *ast.File) []string {
 // localSinkNames answers the function's own local names assigned a function
 // literal whose string parameter flows into a pgx call (customer's
 // scan := func(sql string) closure). The closure's call sites sit in the
-// same function, so the names resolve locally.
-func localSinkNames(fn *ast.FuncDecl) map[string]bool {
+// same function, so the names resolve locally; the module's known sinks
+// feed the flow check so a closure over a wrapper resolves too.
+func localSinkNames(fn *ast.FuncDecl, sinks map[string]bool) map[string]bool {
 	out := map[string]bool{}
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		as, ok := n.(*ast.AssignStmt)
@@ -256,7 +286,7 @@ func localSinkNames(fn *ast.FuncDecl) map[string]bool {
 			return true
 		}
 		params := stringParamNames(fl.Type.Params)
-		if len(params) > 0 && paramFlowsIntoPGX(fl.Body, params) {
+		if len(params) > 0 && paramFlowsIntoPGX(fl.Body, params, sinks) {
 			out[name.Name] = true
 		}
 		return true
@@ -284,13 +314,19 @@ func stringParamNames(fields *ast.FieldList) map[string]bool {
 	return out
 }
 
-// paramFlowsIntoPGX answers whether any pgx call in the body takes one of
-// the named parameters as an argument, at any depth.
-func paramFlowsIntoPGX(body ast.Node, params map[string]bool) bool {
+// paramFlowsIntoPGX answers whether any pgx call (or call of an already
+// known SQL sink, so a wrapper over a wrapper resolves, one level per
+// fixpoint round under the caller's bound) in the body takes one of the
+// named parameters as an argument, at any depth.
+func paramFlowsIntoPGX(body ast.Node, params map[string]bool, sinks map[string]bool) bool {
 	flows := false
 	ast.Inspect(body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
-		if !ok || !sqlCallMethods[callSelName(call)] {
+		if !ok {
+			return true
+		}
+		sel := callSelName(call)
+		if !sqlCallMethods[sel] && !sinks[sel] {
 			return true
 		}
 		for _, arg := range call.Args {
@@ -374,10 +410,17 @@ func declName(d *ast.FuncDecl) string {
 }
 
 func genDeclName(d *ast.GenDecl) string {
+	kind := "var"
 	if d.Tok == token.CONST {
-		return "const"
+		kind = "const"
 	}
-	return "var"
+	// name the declaration the composite sits in, so a fact names its site
+	for _, spec := range d.Specs {
+		if vs, ok := spec.(*ast.ValueSpec); ok && len(vs.Names) > 0 {
+			return kind + " " + vs.Names[0].Name
+		}
+	}
+	return kind
 }
 
 func typeName(expr ast.Expr) (string, bool) {
@@ -648,11 +691,17 @@ func mergeInto(base, extra map[string][]string) map[string][]string {
 }
 
 // corpusWalker collects string literal parts at a node, resolving const,
-// local and function-return idents.
+// local and function-return idents. requireStatement marks sink call site
+// collection: there, a raw string literal contributes only when it
+// tokenizes as a statement (a leading SELECT, WITH, INSERT, UPDATE or
+// DELETE), so prose arguments at a same-named call never enter a corpus;
+// fragments that arrive through the string idiom chain (consts, locals,
+// known helpers) are already vetted and pass as they are.
 type corpusWalker struct {
-	resolve map[string][]string
-	pkg     *pkgIndex
-	parts   []string
+	resolve          map[string][]string
+	pkg              *pkgIndex
+	parts            []string
+	requireStatement bool
 }
 
 func (w *corpusWalker) collect(n ast.Node) {
@@ -660,6 +709,9 @@ func (w *corpusWalker) collect(n ast.Node) {
 	case *ast.BasicLit:
 		if node.Kind == token.STRING {
 			if s, err := strconv.Unquote(node.Value); err == nil {
+				if w.requireStatement && !leadingSQLVerb(s) {
+					return
+				}
 				w.parts = append(w.parts, s)
 			}
 		}
