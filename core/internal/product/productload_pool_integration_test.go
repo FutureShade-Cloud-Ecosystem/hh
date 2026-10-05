@@ -250,3 +250,91 @@ func TestProductLoadDeadlockAnswersTheContentionSentinel(t *testing.T) {
 		}
 	}
 }
+
+// TestProductLoadCreateArmDeadlockAnswersTheContentionSentinel is the
+// create arm's deadlock leg, the update arm's twin (the review's
+// finding 9): the batch's item takes the create arm, holds the products
+// scope's sequence row with its draw, and waits on the sku's unique
+// index entry an outside transaction's uncommitted insert holds; the
+// outside then wants the scope row, the cycle closes, and Postgres
+// kills the batch. The sentinel assertion is the create arm's %w bite:
+// it reads the Postgres error through the create wrap's %w, so
+// flattening that wrap to %v turns this leg red with the raw error
+// named.
+func TestProductLoadCreateArmDeadlockAnswersTheContentionSentinel(t *testing.T) {
+	e := productLoadSetup(t)
+	ctx := context.Background()
+	e.prSeedUnit(t, "EA", "Each", "count")
+	// No registry name stands for the item, so the batch runs the create
+	// arm. The scope's sequence row exists before the batch draws, so
+	// the outside transaction's later update waits on the batch's hold
+	// instead of missing a row the batch has not touched yet.
+	if _, err := e.pool.Exec(ctx,
+		`INSERT INTO scope_sequences (scope) VALUES ('products') ON CONFLICT (scope) DO NOTHING`); err != nil {
+		t.Fatalf("plant scope row: %v", err)
+	}
+	outside, err := e.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("outside begin: %v", err)
+	}
+	defer func() { _ = outside.Rollback(ctx) }()
+	// A long deadlock timeout on the outside session, so the batch's own
+	// detection (the default, a second) fires first and the batch is the
+	// victim.
+	if _, err := outside.Exec(ctx, `SET LOCAL deadlock_timeout = '30s'`); err != nil {
+		t.Fatalf("outside timeout: %v", err)
+	}
+	// The outside plants the item's sku uncommitted: the unique index
+	// entry is the lock the batch's insert waits on.
+	if _, err := outside.Exec(ctx,
+		`INSERT INTO products (sku, name, base_uom, price_uom)
+		 VALUES ('FXPR-9201', 'Fixture Create Deadlock', 'EA', 'EA')`); err != nil {
+		t.Fatalf("outside sku hold: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+		_, err := e.door.UpsertBatch(cctx, load.Batch{OrgID: fxProdOrgID,
+			SourceSystem: fxProdSource, BatchID: "b-pr-cdl", Caller: fxProdActorID,
+			Items: []load.Item{prItem("PR-C1", "FXPR-9201", "Fixture Create Deadlock By Load", nil)}})
+		done <- err
+	}()
+	waitForLockWait(t, e.pool)
+	// The outside now wants the products scope's sequence row the batch
+	// holds: the cycle closes and Postgres kills the batch.
+	_, _ = outside.Exec(ctx, `UPDATE scope_sequences SET next_value = next_value WHERE scope = 'products'`)
+	select {
+	case err := <-done:
+		if !errors.Is(err, load.ErrBatchContended) {
+			t.Fatalf("the deadlocked create answered %v, want the ErrBatchContended sentinel", err)
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatalf("the deadlock never resolved")
+	}
+	_ = outside.Rollback(ctx)
+	// Nothing of the victim stands: no batch row, no product row over
+	// the contested sku.
+	var batches, rows int
+	if err := e.pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM load_batch WHERE org_id = $1::uuid AND batch_id = 'b-pr-cdl'),
+		       (SELECT count(*) FROM products WHERE sku = 'FXPR-9201')`, fxProdOrgID).Scan(&batches, &rows); err != nil {
+		t.Fatalf("victim remainder read: %v", err)
+	}
+	if batches != 0 || rows != 0 {
+		t.Fatalf("the victim left %d batch rows and %d product rows: a contended batch rolls back whole", batches, rows)
+	}
+	// The resubmission converges: the outside is gone and the sku is
+	// free, so the create lands.
+	r, err := e.door.UpsertBatch(ctx, load.Batch{OrgID: fxProdOrgID,
+		SourceSystem: fxProdSource, BatchID: "b-pr-cdl", Caller: fxProdActorID,
+		Items: []load.Item{prItem("PR-C1", "FXPR-9201", "Fixture Create Deadlock By Load", nil)}})
+	if err != nil {
+		t.Fatalf("create resubmission: %v", err)
+	}
+	for _, o := range r.Items {
+		if o.Status != load.OutcomeCreated {
+			t.Fatalf("the resubmission answered %+v, want created", o)
+		}
+	}
+}

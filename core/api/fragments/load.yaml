@@ -568,7 +568,12 @@ paths:
         is valid without a unit set row (0002 relates product_uoms to
         products one way and asks no base row of a product), so the door
         creates the product alone; the unit set door (LD-3) replaces the
-        set afterwards. A SKU that would claim a second row, or a row a
+        set afterwards. Until that set lands, the product prices on no
+        conversion: the price resolver reads the set's factors, so the
+        product prices only after the unit set door lands its set (the
+        load order: products, then unit sets), and a reload whose base
+        or price unit would leave the landed set refuses naming the
+        field. A SKU that would claim a second row, or a row a
         second key would claim, refuses as a key conflict naming both
         legacy keys. A row another org owns refuses naming the kind and
         the key; its org is never overwritten. A changed hash updates
