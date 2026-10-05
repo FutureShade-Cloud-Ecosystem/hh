@@ -329,16 +329,16 @@ WHERE id = $1::uuid AND org_id = $2::uuid AND customer_id = $10::uuid
 	if err := tx.QueryRow(ctx, `SELECT invoice_no::text FROM invoices WHERE id = $1::uuid`, in.RowID).Scan(&docNo); err != nil {
 		return "", fmt.Errorf("billing: read imported document number: %w", err)
 	}
-	newAt := rec.issueDate.UTC()
+	day := rec.issueDate.UTC()
 	var ledgerID string
 	var oldAmount int64
-	var oldCreated time.Time
+	var oldCreated, oldAt time.Time
 	err = tx.QueryRow(ctx, `
-SELECT id::text, amount_cents, created_at FROM customer_transactions
- WHERE source_type = 'invoice' AND source_ref_id = $1::uuid FOR UPDATE`, in.RowID).Scan(&ledgerID, &oldAmount, &oldCreated)
+SELECT id::text, amount_cents, created_at, occurred_at FROM customer_transactions
+ WHERE source_type = 'invoice' AND source_ref_id = $1::uuid FOR UPDATE`, in.RowID).Scan(&ledgerID, &oldAmount, &oldCreated, &oldAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := insertLedgerRow(ctx, tx, customerID, txnType, rec.amount, balance, in.RowID, branchID,
-			importMemo(docNo, rec.docNo), newAt); err != nil {
+			importMemo(docNo, rec.docNo), day); err != nil {
 			return "", err
 		}
 		return in.RowID, nil
@@ -346,9 +346,14 @@ SELECT id::text, amount_cents, created_at FROM customer_transactions
 	if err != nil {
 		return "", fmt.Errorf("billing: read imported ledger row: %w", err)
 	}
-	var oldAt time.Time
-	if err := tx.QueryRow(ctx, `SELECT occurred_at FROM customer_transactions WHERE id = $1::uuid`, ledgerID).Scan(&oldAt); err != nil {
-		return "", fmt.Errorf("billing: read imported ledger position: %w", err)
+	// The row keeps its place when its issue day did not move; a move to
+	// another day takes the next free position on that day.
+	newAt := oldAt
+	if oldAt.UTC().Truncate(24*time.Hour) != day {
+		newAt, err = ledgerPosition(ctx, tx, customerID, day, ledgerID)
+		if err != nil {
+			return "", err
+		}
 	}
 	// The running balances after the moved row follow the move: every
 	// other row of the customer that sits after the row's old position
@@ -378,6 +383,28 @@ UPDATE customer_transactions SET txn_type = $2, amount_cents = $3, occurred_at =
 	return in.RowID, nil
 }
 
+// ledgerPosition is the occurred_at a receivables ledger row takes for
+// its issue day: the day itself (midnight UTC) when the customer has no
+// row on that day yet, otherwise one microsecond after the customer's
+// latest row on that day. The recorded day is kept, same day rows get
+// distinct values in write order, and a reader that takes the row with
+// the latest occurred_at and no tie break (the customer, till and quote
+// desk balance reads all do) lands on the last row written, whose
+// running balance is the open total. self is the row being moved, kept
+// out of the reading, or empty for a new row.
+func ledgerPosition(ctx context.Context, tx pgx.Tx, customerID string, day time.Time, self string) (time.Time, error) {
+	var at time.Time
+	if err := tx.QueryRow(ctx, `
+SELECT COALESCE(MAX(occurred_at) + interval '1 microsecond', $2::timestamptz)
+  FROM customer_transactions
+ WHERE customer_id = $1::uuid AND occurred_at >= $2::timestamptz
+   AND occurred_at < $2::timestamptz + interval '1 day'
+   AND ($3 = '' OR id <> $3::uuid)`, customerID, day, self).Scan(&at); err != nil {
+		return time.Time{}, fmt.Errorf("billing: ledger position: %w", err)
+	}
+	return at, nil
+}
+
 // insertLedgerRow lands one receivables ledger row in its date position
 // for the customer: created_at is the statement clock, so same-day rows
 // keep the order the door wrote them in (a transaction's now() would tie
@@ -388,8 +415,12 @@ UPDATE customer_transactions SET txn_type = $2, amount_cents = $3, occurred_at =
 // therefore leaves every running balance true in date order, which is
 // what keeps aging reading right across batches.
 func insertLedgerRow(ctx context.Context, tx pgx.Tx, customerID, txnType string, amount, open int64,
-	docID, branchID, memo string, at time.Time) error {
+	docID, branchID, memo string, day time.Time) error {
 
+	at, err := ledgerPosition(ctx, tx, customerID, day, "")
+	if err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type,
                                    source_ref_id, branch_id, memo, occurred_at, created_at)
